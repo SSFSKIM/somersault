@@ -13,7 +13,7 @@ The repo has two distinct halves — don't confuse them:
 | Path | What it is | Build? |
 |---|---|---|
 | `codex-rs/` | **The product.** The Rust agent harness — a ~90-crate Cargo workspace (also buildable with Bazel). This is what we build and extend. | Yes (Cargo + Bazel) |
-| `Claude Code Src/` | **A reference only.** A separate TypeScript agent harness ("somersault") with its **own** `CLAUDE.md`. Used to research capabilities to port into Codex. Not part of the Rust build or runtime. | No |
+| `Claude Code Src/` | **The source code of Claude Code itself** — Anthropic's official terminal coding agent, the same harness that ships as the compiled `claude` binary. Forked from leaked Claude Code source (project name `somersault`) and extended to be multi-provider. A rich, feature-heavy TypeScript/Bun/React-Ink harness (~2,000 files, ~512K LOC) with its **own** `CLAUDE.md`. An invaluable capabilities reference for what we port into Codex. | No (reference) |
 
 Other top-level dirs: `codex-cli/` (npm wrapper that ships the Rust binary), `sdk/` (Python + TypeScript SDKs), `docs/` (upstream user/dev docs — do not put product docs here per `AGENTS.md`), `scripts/`, `patches/` (Bazel third-party patches).
 
@@ -59,6 +59,15 @@ The fork-local agent docs (`CLAUDE.md`, the per-crate `CLAUDE.md` files, the `AG
 
 `AGENTS.md`, the per-crate `codex-rs/*/README.md` files, and `codex-rs/tui/styles.md` are **upstream-owned and authoritative**. The fork docs deliberately point to them instead of copying them, to limit drift. If a fork doc disagrees with one of these, the upstream doc is correct — update the fork doc to match rather than editing the upstream doc.
 
-## `Claude Code Src/` — reference, not build
+## `Claude Code Src/` — the Claude Code source itself (reference, not built here)
 
-A leaked-and-extended TypeScript harness used purely as a capabilities reference. It has its **own** `CLAUDE.md` and `docs/specs/` — read those when mining ideas from it. Treat `src/main.tsx` there as read-only bundled output. Nothing in this directory is part of the Codex Rust build.
+This directory is **the source code of Claude Code** — Anthropic's official terminal coding agent, the same harness that ships as the compiled `claude` binary (e.g. `~/.local/share/claude/versions/*`, a ~215 MB self-contained Bun executable). It was forked from leaked Claude Code source (project name `somersault`, per `package.json`) and extended to be **multi-provider** (Anthropic **and** OpenAI). The shipping binary is closed-source and unreadable; this tree is the readable source behind it — making it the single most valuable capabilities reference in the repo.
+
+It is a **complete, feature-heavy production coding agent** in TypeScript (Bun runtime + React/Ink terminal UI), ~2,000 source files / ~512K LOC. High-value areas to mine:
+
+- **Query loop** — `src/QueryEngine.ts` (LLM API streaming / retry / thinking) + `src/query.ts` (turn pipeline: message → tool-use → result, system-reminder injection, hook fan-out).
+- **Tool system** — `src/Tool.ts` (the `Tool` interface + `ToolUseContext` god object) and `src/tools.ts` (registry, with the server-side prompt-cache ordering invariant); ~56 tools under `src/tools/` (Bash, file read/write/edit, Grep/Glob, Agent + multi-agent, Task/Todo, MCP, LSP, Skill, plan-mode, cron, …).
+- **~100 slash commands** (`src/commands/`), the **permission decision tree** (`src/hooks/toolPermission/`, `src/types/permissions.ts`), **services** (`src/services/` — `api/`, `mcp/`, `lsp/`, `oauth/`, `analytics/`, `plugins/`, memory), the **multi-agent coordinator** (`src/coordinator/`, `src/tools/shared/spawnMultiAgent.ts`), the **Ink UI** (`src/ink/`, ~140 components), and **file-based memory** (`src/memdir/`).
+- **`docs/specs/`** — a 143-file reverse-engineering spec project that maps the source subsystem-by-subsystem to bit-exact fidelity (system prompts, decision trees, feature-flag matrix). Start at `docs/specs/00-overview.md` (the architectural anchor); verify any spec claim against `src/` before relying on it, as the source has moved past some specs.
+
+Read its **own `CLAUDE.md`** first when working in it — it documents the runtime feature-flag shim, the `@ant/*` stubs, and import conventions. Caveats: `src/main.tsx` (~803 KB) and a few other large files are bundled/minified leaked output — treat them as read-only and find the unbundled equivalents in `entrypoints/`, `bootstrap/`, `cli/`, `setup.ts`. **Nothing in this directory is part of the Codex Rust build** — it is studied to decide what to port into `codex-rs/`.
