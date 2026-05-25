@@ -30,7 +30,8 @@ result
 *~
 
 # cli tools
-CLAUDE.md
+# NOTE: upstream ignores CLAUDE.md; this fork intentionally TRACKS CLAUDE.md so the
+# committed agent-doc hierarchy reaches fresh clones / cloud containers. See docs/fork-overview.md.
 .claude/
 AGENTS.override.md
 
