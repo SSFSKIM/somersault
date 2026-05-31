@@ -32,7 +32,10 @@ result
 # cli tools
 # NOTE: upstream ignores CLAUDE.md; this fork intentionally TRACKS CLAUDE.md so the
 # committed agent-doc hierarchy reaches fresh clones / cloud containers. See docs/fork-overview.md.
-.claude/
+# Track only the shared project settings (.claude/settings.json) so cloud Claude Code
+# inherits plugins/preferences; keep personal state (settings.local.json, worktrees/) ignored.
+.claude/*
+!.claude/settings.json
 AGENTS.override.md
 
 # caches
