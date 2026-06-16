@@ -108,15 +108,18 @@ interface Message {
 interface TeammateSpec {
   name: string;            // unique within the runtime
   teamId: string;
-  agent?: string;          // AgentDefinition key / model hint (maps to 30.9); optional
+  agent?: string;          // per-teammate model hint (30.9); forwarded as the teammate query options.model
   prompt: string;          // seed turn
 }
 ```
 
-**MessageBus (in-process).** A `Map<agentName, Message[]>` of inboxes. `send(to, msg)` appends to the
-recipient's inbox (creating `"coordinator"`'s lazily); sending to an unregistered teammate is an error.
-`drain(agent)` returns and clears that agent's inbox. The bus is synchronous and deterministic — the
-whole substrate is unit-testable with zero network. Reverse-edge / idle subscription is a seam.
+**MessageBus (in-process).** A single transport with two delivery modes. The **coordinator** is a passive
+inbox: `send("coordinator", msg)` buffers, and `drain("coordinator")` returns + clears it (this is what
+`CheckMessages` reads). A **teammate** registers a *subscriber* when it spawns: `send(teammateName, msg)`
+invokes the subscriber (which pushes a user turn into the teammate's query) instead of buffering — this is
+how a coordinator→teammate message is delivered. Sending to an agent that is neither the coordinator nor a
+registered teammate is an error. The bus is synchronous and deterministic — the whole substrate is
+unit-testable with zero network.
 
 **Team registry.** `create(name, members?)` returns a team id + roster; `delete(teamId)` disposes every
 member `TeammateSession` and clears their inboxes. Duplicate teammate names within the runtime are
