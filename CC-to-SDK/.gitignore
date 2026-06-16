@@ -4,3 +4,6 @@ Claude Code Src/
 
 # Probe SDK install
 probes/node_modules/
+
+# Secrets — never commit
+.env
