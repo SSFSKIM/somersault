@@ -5,11 +5,11 @@
     "feature": "ScheduleWakeup tool (/loop dynamic self-pacing)",
     "what": "Tool that schedules when the agent resumes work in /loop dynamic mode (self-paced recurring runs); picks a wake-up delay and re-fires the loop prompt.",
     "ccSource": "n/a (post-Feb); current CC harness tool — absent from Feb src (rg ScheduleWakeup = 0 files)",
-    "verdict": "build",
-    "sdkSurface": "",
-    "bridge": "No SDK tool equivalent. Build self-rescheduling around query() + an external scheduler/cron, or expose it as a createSdkMcpServer() in-process tool. Pairs with the /loop harness skill.",
+    "verdict": "provided",
+    "sdkSurface": "Native ScheduleWakeup tool — ScheduleWakeupInput (delaySeconds clamped [60,3600], reason, /loop prompt, sdk-tools.d.ts:2455); in the default query() tool list (runtime-verified 2026-06-16).",
+    "bridge": "ScheduleWakeup for /loop dynamic self-pacing is a native tool.",
     "targetPhase": "2",
-    "confidence": "doc",
+    "confidence": "verified",
     "snapshot": "post-feb"
   },
   {

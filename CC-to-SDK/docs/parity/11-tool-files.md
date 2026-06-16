@@ -18,5 +18,5 @@
 | 11.14 | UNC-path short-circuit (NTLM leak guard) | ✅ provided | Read/Edit/Write/NotebookEdit tools (claude_code preset) | Security guard internal to the bundled file tools. | P2 | doc | feb |
 | 11.15 | Large file-tool result persistence | ✅ provided | Edit/Write/NotebookEdit tools (claude_code preset) | Persistence handled by toolResultStorage inside CC; SDK gets the path-only envelope. | P2 | doc | feb |
 | 11.16 | Settings-file edit validation | ✅ provided | Edit tool (claude_code preset) | Internal to the bundled Edit tool when targeting settings files. | P3 | inferred | feb |
-| 11.17 | Turn-end file persistence (BYOC/cloud) | 🏗 build | — | Gated on BYOC environment kind + remote-session env; a hosting-infra feature, not an SDK-exposed contract. | Pnon-goal | inferred | feb |
+| 11.17 | Turn-end file persistence (BYOC/cloud) | ✅ provided | Native SDKFilesPersistedEvent (subtype 'files_persisted', sdk.d.ts) — turn-end file persistence event. | Turn-end file persistence is a native SDK event. | Pnon-goal | doc | post-feb |
 | 11.18 | Skill discovery on file access | ✅ provided | Read/Write/Edit tools (claude_code preset) + Options.skills | Triggered inside CC; gate which skills are enabled via Options.skills. | P2 | inferred | feb |
