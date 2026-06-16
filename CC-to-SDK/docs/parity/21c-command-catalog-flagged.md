@@ -1,0 +1,7 @@
+# Parity — 21c-command-catalog-flagged
+
+| id | feature | verdict | SDK surface | bridge / gap | phase | conf | snap |
+|---|---|---|---|---|---|---|---|
+| 21c.1 | Feature-flag-gated mode commands (/proactive,/brief,/assistant,/remote-control,/remoteControlServer,/voice,/web-setup,/peers,/fork,/buddy,/torch,/workflows) | 🚫 not-possible | — | These are dead-code-eliminated at build time by internal feature flags; the public CC binary the SDK spawns does not include them, so they never appear in supportedCommands(). External SDK consumers cannot enable the flags. | Pnon-goal | doc | feb |
+| 21c.2 | /workflows + dynamic workflow commands (WORKFLOW_SCRIPTS) and underlying multi-agent engine | 🔧 configurable | The /workflows command is flag-gated, but the underlying multi-agent capability maps to Options.agents + Agent tool (background:true) and agentProgressSummaries | The slash command is internal-flag-gated, but reproduce the capability with Options.agents (background subagents) and the Agent tool; bundled /deep-research is the public-facing workflow command (post-Feb). | P3 | inferred | feb |
+| 21c.3 | /fork (FORK_SUBAGENT) standalone fork command | ✅ provided | forkSession(sessionId, options?) + Options.forkSession:true on resume produce a forked session ID programmatically | The flag-gated slash command is unavailable, but the SDK exposes forking natively via forkSession() and Options.forkSession, which covers the user-facing intent. | P1 | inferred | feb |

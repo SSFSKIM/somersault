@@ -1,0 +1,17 @@
+# Parity — 10-tool-bash
+
+| id | feature | verdict | SDK surface | bridge / gap | phase | conf | snap |
+|---|---|---|---|---|---|---|---|
+| 10.1 | Single bash command execution | ✅ provided | Bash tool (claude_code preset) — BashInput.command in sdk-tools.d.ts:447 | Use the claude_code tools preset; the SDK's Bash tool is the same harness tool with identical command semantics. | P1 | doc | feb |
+| 10.2 | Configurable per-call timeout | ✅ provided | BashInput.timeout (sdk-tools.d.ts:455, 'max 600000') | Same param surfaced by the bundled Bash tool; the env override knobs live in the spawned CLI process. | P1 | doc | feb |
+| 10.3 | Background shell execution (run_in_background) | ✅ provided | BashInput.run_in_background (sdk-tools.d.ts:473); Query.backgroundTasks()/stopTask(); SDKTaskStarted/Updated/Notification messages | Identical param on the bundled Bash tool; background lifecycle observable via SDKTask* system messages and Query.stopTask(). | P1 | doc | feb |
+| 10.4 | Auto-backgrounding on timeout | ✅ provided | Bash tool (claude_code preset) — behavior internal to the spawned CC process | Runs inside the same Claude Code subprocess the SDK spawns; no SDK-level config needed. | P1 | doc | feb |
+| 10.5 | Assistant-mode auto-background budget (KAIROS) | 🏗 build | — | KAIROS assistant-mode is an internal feature flag not exposed/guaranteed through the SDK; treat the 15s auto-background as an unstable internal behavior, not an SDK contract. | P3 | inferred | feb |
+| 10.6 | OS-level command sandboxing | 🔧 configurable | Options.sandbox: SandboxSettings (sdk.d.ts:1829; enabled/autoAllowBashIfSandboxed/network/failIfUnavailable) | Set Options.sandbox to enable; CC's settings.sandbox.excludedCommands layer also applies via settingSources. | P1 | doc | feb |
+| 10.7 | Per-call sandbox override (dangerouslyDisableSandbox) | ✅ provided | BashInput.dangerouslyDisableSandbox (sdk-tools.d.ts:477) | Surfaced on the bundled Bash tool; gated by sandbox config allowing unsandboxed commands. | P1 | doc | feb |
+| 10.8 | Output truncation / large-output persistence | ✅ provided | Bash tool (claude_code preset); persistedOutputPath/persistedOutputSize in tool result | Internal to the CC process; the SDK receives the same truncated/persisted result envelope. | P1 | doc | feb |
+| 10.9 | tree-sitter Bash AST permission analysis | ✅ provided | Bash tool permission pipeline (claude_code preset); surfaced via canUseTool/permissionMode | Permission analysis runs inside CC; SDK observes/overrides via canUseTool callback and permission rules, not by re-implementing the AST. | P2 | doc | feb |
+| 10.10 | sed-in-place simulated as a file Edit | 🏗 build | — | _simulatedSedEdit is always stripped from the model-facing schema and is internal CC plumbing; not an SDK-exposed capability, though the behavior occurs inside the spawned process. | P3 | inferred | feb |
+| 10.11 | Git/PR operation tracking | 🏗 build | — | OTLP counters and session→PR linking are CC-internal analytics with no SDK surface; not replicable as an SDK contract. | Pnon-goal | inferred | feb |
+| 10.12 | Disable background tasks | 🔧 configurable | Options.env (sdk.d.ts) — pass CLAUDE_CODE_DISABLE_BACKGROUND_TASKS into the spawned process env | Set the env var via Options.env (remember env REPLACES process.env when set — spread it yourself). | P2 | inferred | feb |
+| 10.13 | Image output from bash (data-URI / resize) | ✅ provided | Bash tool (claude_code preset) — isImage flag in result | Internal to CC; SDK receives image content blocks transparently. | P2 | doc | feb |

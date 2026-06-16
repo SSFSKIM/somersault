@@ -42,8 +42,33 @@ Where current CC has features newer than the Feb specs, the live harness is auth
 
 ## Coverage statement
 
-_(filled in Task 9 after extraction — must confirm all 43 areas accounted for, every catalog rollup
-names its subsumed file count, no silent truncation.)_
+**All 51 area slugs are accounted for** (the 43 conceptual subsystems + 8 catalog sub-areas
+`21a–21d`, `37a–37c`, `42a`). The validator (`scripts/validate-parity.mjs`) enforces that every slug
+in `scripts/parity-areas.mjs` has ≥1 row; it passes (`OK: 551 rows, 51 areas covered, 25 verified`).
+
+**551 feature rows** total, grouped into 12 extraction clusters (C1–C12) + a reconciliation file
+(`zz-post-feb.json`). Verdict split: ✅ 313 provided · 🔧 57 configurable · 🏗 123 build ·
+🚫 58 not-possible · ❔ 0 unknown (all resolved).
+
+**Catalog rollups — what was deliberately collapsed (and the file counts subsumed), so coverage is
+honest rather than silently truncated:**
+
+| Catalog area | Source files | Rendered as | How |
+|---|---|---|---|
+| `37a-components-catalog` | **389** components | ~20 family rows | grouped by UI family (permissions ~49, message renderers ~40, PromptInput 17, agents/wizard, MCP dialogs 13, swarm 13, design-system, spinners, tasks…) |
+| `37b-hooks-catalog` | **104** React hooks | 4 rows | grouped by purpose (input/typeahead, data/session, display/resize, swarm/permission/transport) |
+| `37c-ink-primitives-catalog` | **96** ink primitives | 2 rows | host components + render/layout pipeline; events + capability detection |
+| `42a-utils-long-tail` | **327** utils | 5 rows | ~250 internal helpers (build), ~120 subsystem-entry utils (cross-ref owning clusters), user-facing session utils, doctor/installer, ANSI/terminal |
+| `21a–21d` command catalog | **~105** commands / ~179 files | ~20 grouped rows | grouped by category (context/session, config, account, ant-internal, flag-gated, plugin/marketplace) with per-group counts |
+
+Total files subsumed by rollups: **~1,021** (389+104+96+327 + ~105 commands). These are
+intentionally not enumerated per-file (per design §6) because each collapses to a uniform verdict
+(almost entirely 🏗 build for the UI catalogs; internal/non-parity for utils). Every rollup row names
+its count in `what`/`bridge`.
+
+**No silent truncation:** no area was skipped or sampled; the only compression is the documented
+catalog rollups above. Cross-cutting features (permissions UI, MCP UI, swarm UI) are owned once by the
+UI cluster C11 and cross-referenced from their logic clusters (C3/C6/C5) by row id.
 
 ## Probe log
 

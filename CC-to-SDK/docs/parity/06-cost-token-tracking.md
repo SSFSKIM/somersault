@@ -1,0 +1,13 @@
+# Parity — 06-cost-token-tracking
+
+| id | feature | verdict | SDK surface | bridge / gap | phase | conf | snap |
+|---|---|---|---|---|---|---|---|
+| 06.1 | Per-model and total session cost aggregation | ✅ provided | SDKResultMessage total_cost_usd + usage; usage_EXPERIMENTAL_…() method | Cost/usage aggregation is internal to the SDK; read total_cost_usd and usage on the result. Per-model breakdown display is a UI concern (C11). | P1 | doc | feb |
+| 06.2 | Per-call USD cost math from pricing tiers | ✅ provided | internal pricing → SDKResultMessage total_cost_usd | The SDK computes and reports USD cost internally; a consumer needing custom pricing math would compute from usage tokens themselves, but the standard cost is provided. | P1 | inferred | feb |
+| 06.3 | Token counts (input/output/cache read/cache creation) | ✅ provided | SDKResultMessage.usage (input_tokens, output_tokens, cache_*); SDKThinkingTokensMessage | Read the usage object on the result and on partial/usage messages; all token categories CC tracks are present on the SDK usage shape. | P1 | doc | feb |
+| 06.4 | Live context-window usage / percent-left | ✅ provided | Query.getContextUsage() → SDKControlGetContextUsageResponse | Call query.getContextUsage() for live context-window utilization; the rendering of a context bar is deferred to C11. | P1 | verified | feb |
+| 06.5 | Rate-limit info surfaced to the consumer | ✅ provided | SDKRateLimitEvent (rate_limit_event) | Observe SDKRateLimitEvent for rate-limit changes; emitted automatically by the SDK. | P2 | doc | feb |
+| 06.6 | Cost/usage persistence and restore on resume | ✅ provided | Options.resume/continue + persistSession; SDKResultMessage cumulative usage on resumed session | Resume via Options.resume/continue with persistSession; the SDK persists and restores session state including accumulated usage. Project-config storage format is internal. | P2 | inferred | feb |
+| 06.7 | TOKEN_BUDGET per-turn auto-continue nudge | 🏗 build | — | No SDK option exposes the prompt-parsed per-turn token target / auto-continue nudge. Approximate with a Stop hook that re-prompts until a token-usage condition is met, or use maxBudgetUsd/taskBudget for hard caps instead. | P3 | inferred | feb |
+| 06.8 | Session-end cost summary printout | 🏗 build | — | The on-exit stdout summary is a CLI/UI surface, not an SDK feature. Render your own summary from SDKResultMessage cost/usage — defer the display to C11. | P3 | inferred | feb |
+| 06.9 | OpenTelemetry cost/token counters | 🏗 build | — | The SDK does not export OTel counters; wire your own metrics by reading usage/cost off SDKResultMessage and emitting to OTel yourself. Analytics routing is C9 (spec 26). | P3 | inferred | feb |
