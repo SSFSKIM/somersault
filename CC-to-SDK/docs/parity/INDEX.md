@@ -1,15 +1,15 @@
 # CC → Agent SDK Parity Map — Index
 
-Total rows: **551**. Verified (live SDK): **25**. Generated from `docs/parity/data/*.json` via `scripts/render-parity.mjs` — do not hand-edit the tables; edit the JSON and re-render.
+Total rows: **551**. Verified (live SDK): **30**. Generated from `docs/parity/data/*.json` via `scripts/render-parity.mjs` — do not hand-edit the tables; edit the JSON and re-render.
 
 **Navigation:** [methodology](./methodology.md) · [roadmap](./roadmap.md) · [since-February delta](./since-february.md) · [SDK surface](./_sdk-surface.md) · [current-harness surface](./_current-surface.md)
 
 ## Verdict tallies
 | verdict | count |
 |---|---|
-| ✅ provided | 313 |
+| ✅ provided | 318 |
 | 🔧 configurable | 57 |
-| 🏗 build | 123 |
+| 🏗 build | 118 |
 | 🚫 not-possible | 58 |
 | ❔ unknown | 0 |
 
@@ -31,7 +31,7 @@ Total rows: **551**. Verified (live SDK): **25**. Generated from `docs/parity/da
 | 12-tool-search | 13 | ✅ provided |
 | 13-tool-web | 14 | ✅ provided |
 | 14-tool-agent-team | 23 | ✅ provided |
-| 15-tool-tasks | 13 | 🏗 build |
+| 15-tool-tasks | 13 | ✅ provided |
 | 16-tool-mcp-lsp | 15 | ✅ provided |
 | 17-tool-skill | 14 | ✅ provided |
 | 18-tool-modes | 10 | ✅ provided |
@@ -312,15 +312,15 @@ Total rows: **551**. Verified (live SDK): **25**. Generated from `docs/parity/da
 | 14.21 | Custom agent definitions from disk (frontmatter) | 🔧 configurable | settingSources (needs 'project') + plugins (SdkPluginConfig) + agents map | Markdown-frontmatter agents load via settingSources/plugins; programmatic agents go in the agents map. The frontmatter schema is a superset (isolation, hooks) of AgentDefinition, so a few fields (14.16/14.17) need bridging. | P1 | doc | feb |
 | 14.22 | Agent deny-rule restriction (allowedAgentTypes) | 🔧 configurable | disallowedTools / allowedTools (Agent tool gating) + canUseTool | Per-agent-type allow/deny is expressible by gating the Agent tool via canUseTool (inspect subagent_type) or by which agents are registered; CC's Agent(type) rule grammar has no exact SDK equivalent so Codex enforces it in the permission callback. | P2 | inferred | feb |
 | 14.23 | Auto-background a foreground subagent after timeout | 🏗 build | — | The SDK has explicit background vs foreground via AgentDefinition.background but no automatic foreground-to-background promotion timer; Codex would implement the demotion timer itself if desired. | P3 | inferred | feb |
-| 15.1 | Durable task list (TaskCreate) | 🏗 build | — | The SDK exposes no model-facing TaskCreate tool nor a durable task store; Codex must implement the Task* tool family (or an SDK MCP tool via createSdkMcpServer) backed by its own task store to give the model this surface. | P2 | inferred | feb |
-| 15.2 | Task update / status workflow (TaskUpdate) | 🏗 build | — | No SDK TaskUpdate tool exists; reproduce as a custom tool. Note the SDK does provide TaskCreated/TaskCompleted hook events that could fire from a Codex-built task tool. | P2 | inferred | feb |
-| 15.3 | Task retrieval and listing (TaskGet / TaskList) | 🏗 build | — | No SDK equivalent; part of the custom Task* tool family Codex must build on its own task store. | P2 | inferred | feb |
-| 15.4 | Session todo checklist (TodoWrite V1) | 🏗 build | — | The SDK does not expose a TodoWrite tool; Codex implements an equivalent session-scoped checklist tool if the model-visible todo surface is wanted. | P2 | inferred | feb |
+| 15.1 | Durable task list (TaskCreate) | ✅ provided | Native TaskCreate tool — TaskCreateInput (subject/description/activeForm/metadata) at sdk-tools.d.ts:2317; present in a bare query() init tool list (runtime-verified 2026-06-16). | The model already has native TaskCreate by default. The native store is session-scoped (~/.claude/tasks/<session_id>/), NOT shared across query() sessions, so a multi-session swarm still needs a shared store — supplied by the harness file-backed TaskStore (cluster 30; see CORRECTIONS-2026-06-16-native-tools.md). | P1 | verified | post-feb |
+| 15.2 | Task update / status workflow (TaskUpdate) | ✅ provided | Native TaskUpdate tool — TaskUpdateInput with status (incl. deleted), addBlocks/addBlockedBy (DAG), owner at sdk-tools.d.ts:2343; in the default query() tool list (runtime-verified 2026-06-16). | Native TaskUpdate covers the status workflow + dependencies + owner. TaskCreated/TaskCompleted hook events also exist. Shared-across-peers claim semantics still need the harness store (cluster 30). | P1 | verified | post-feb |
+| 15.3 | Task retrieval and listing (TaskGet / TaskList) | ✅ provided | Native TaskGet (TaskGetInput.taskId, sdk-tools.d.ts:2337) + TaskList (TaskListInput {}, 2383); both in the default query() tool list (runtime-verified 2026-06-16). | Native TaskGet/TaskList provide read-only retrieval. The harness store mirrors this for the cross-session swarm list (cluster 30). | P1 | verified | post-feb |
+| 15.4 | Session todo checklist (TodoWrite V1) | ✅ provided | Native TodoWrite tool — TodoWriteInput at sdk-tools.d.ts:678; present in the default query() tool list (runtime-verified 2026-06-16). | Native TodoWrite is the session checklist. CC disables V1 TodoWrite by default in favor of Task* V2, so prefer the Task tools. | P1 | verified | post-feb |
 | 15.5 | Stop a running background task (TaskStop) | ✅ provided | stopTask(taskId) Query method + TaskStop SDK tool + SDKTaskNotification ('stopped') | Map TaskStop tool_use to the SDK's stopTask() control request; the parent observes the stopped task_notification, mirroring CC's emitTaskTerminatedSdk('stopped'). | P1 | doc | feb |
 | 15.6 | Retrieve background-task output (TaskOutput) | 🔧 configurable | Read tool on the task output file + backgroundTasks() + getSubagentMessages | CC itself deprecates TaskOutput in favor of Read on the output-file path; the SDK exposes background-task completion via Task* messages and transcript retrieval, so Codex reads the output file / polls backgroundTasks() rather than a dedicated TaskOutput tool. | P2 | inferred | feb |
 | 15.7 | Background task runtime (AppState.tasks) | ✅ provided | backgroundTasks() Query method + SDKTaskStarted/SDKTaskUpdated/SDKTaskNotification messages + stopTask() | The SDK's Task* message stream + backgroundTasks()/stopTask() expose the runtime-task lifecycle CC tracks internally; Codex consumes these instead of reading AppState.tasks directly. | P1 | doc | feb |
 | 15.8 | run_in_background for shell commands | ✅ provided | Bash tool background mode + SDKTaskStarted/SDKTaskNotification + backgroundTasks() | The SDK's Bash background execution surfaces as a Task started/notification just like CC's LocalShellTask; the output file is readable via the Read tool. | P1 | doc | feb |
-| 15.9 | Task dependencies (blocks / blockedBy) | 🏗 build | — | Dependency graph semantics live entirely in CC's task store; no SDK surface. Part of the custom Task* tool family Codex would build. | P2 | inferred | feb |
+| 15.9 | Task dependencies (blocks / blockedBy) | ✅ provided | Native TaskUpdate.addBlocks/addBlockedBy (sdk-tools.d.ts:2343) build the blocks/blockedBy DAG; the native task file carries blocks/blockedBy arrays (runtime-verified 2026-06-16). | The native task store already models the blocks/blockedBy DAG. Cross-session claim/blocking for the swarm uses the harness store's CAS (cluster 30). | P1 | verified | post-feb |
 | 15.10 | Task ownership / claim by agent | 🏗 build | — | Task ownership/claim is swarm-coordination logic over CC's task store with no SDK equivalent; depends on the multi-agent mailbox (30 cluster). Custom build. | P2 | inferred | feb |
 | 15.11 | TaskCreated / TaskCompleted hooks | ✅ provided | hooks events TaskCreated + TaskCompleted | The SDK exposes TaskCreated/TaskCompleted hook events; a Codex-built task tool fires them, and hook blocking-error semantics map to a deny/abort hook decision. | P1 | doc | feb |
 | 15.12 | Verification-agent nudge on task completion | 🏗 build | — | Gated on the internal VERIFICATION_AGENT feature + tengu_hive_evidence flag; no SDK surface. Codex could emulate via a Stop/TaskCompleted hook that injects the nudge. | P3 | inferred | feb |
