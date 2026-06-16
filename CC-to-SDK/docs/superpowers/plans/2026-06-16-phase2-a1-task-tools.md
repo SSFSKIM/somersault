@@ -631,39 +631,47 @@ git commit -m "feat(harness): TaskStore claim CAS + ownership + list filtering"
 - Create: `src/tasks/server.ts`
 - Test: `test/unit/tasks-server.test.ts`
 
-- [ ] **Step 1: Write the failing test** (drives the handlers directly via the SDK tool definitions)
+**Note (refinement found during execution):** `createSdkMcpServer` does not expose the passed tool
+definitions as a plain array — they live MCP-wrapped under `instance._registeredTools`. So the server
+exports a clean `buildTaskTools(store)` seam returning the `tool()` definition array, which
+`createTaskMcpServer` wraps; tests call handlers off that array directly.
+
+- [ ] **Step 1: Write the failing test** (drives the handlers directly via `buildTaskTools`)
 ```ts
 import { describe, it, expect } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskStore } from "../../src/tasks/store.js";
-import { createTaskMcpServer } from "../../src/tasks/server.js";
+import { buildTaskTools, createTaskMcpServer } from "../../src/tasks/server.js";
 
-// Pull the SDK tool definitions back out of the server instance to call their handlers.
 function tools(store: TaskStore) {
-  const server: any = createTaskMcpServer(store);
-  const list = server.instance?.tools ?? server.tools ?? server._tools;
   const map: Record<string, any> = {};
-  for (const t of list) map[t.name] = t;
+  for (const t of buildTaskTools(store)) map[t.name] = t;
   return map;
 }
 const text = (r: any) => r.content[0].text;
+const newStore = () => new TaskStore({ dir: mkdtempSync(join(tmpdir(), "tasks-")) });
 
 describe("task MCP server", () => {
   it("exposes the four Task tools", () => {
-    const t = tools(new TaskStore({ dir: mkdtempSync(join(tmpdir(), "tasks-")) }));
+    const t = tools(newStore());
     expect(Object.keys(t).sort()).toEqual(["TaskCreate", "TaskGet", "TaskList", "TaskUpdate"]);
   });
+  it("createTaskMcpServer returns an sdk server config named cc-tasks", () => {
+    const srv: any = createTaskMcpServer(newStore());
+    expect(srv.type).toBe("sdk");
+    expect(srv.name).toBe("cc-tasks");
+  });
   it("TaskCreate then TaskGet round-trips through the store", async () => {
-    const t = tools(new TaskStore({ dir: mkdtempSync(join(tmpdir(), "tasks-")) }));
+    const t = tools(newStore());
     const created = await t.TaskCreate.handler({ subject: "hello" }, {});
     expect(JSON.parse(text(created)).id).toBe(1);
     const got = await t.TaskGet.handler({ id: 1 }, {});
     expect(JSON.parse(text(got)).subject).toBe("hello");
   });
   it("domain errors come back as isError results, not throws", async () => {
-    const t = tools(new TaskStore({ dir: mkdtempSync(join(tmpdir(), "tasks-")) }));
+    const t = tools(newStore());
     const bad = await t.TaskUpdate.handler({ id: 99, subject: "x" }, {});
     expect(bad.isError).toBe(true);
     expect(text(bad)).toMatch(/unknown task/);
@@ -686,28 +694,29 @@ import { taskCreateShape, taskUpdateShape, taskGetShape, taskListShape } from ".
 const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data) }] });
 const fail = (message: string) => ({ content: [{ type: "text" as const, text: message }], isError: true });
 
+/** Build the four Task* SDK tool definitions over a TaskStore (exported for direct handler testing). */
+export function buildTaskTools(store: TaskStore) {
+  return [
+    tool("TaskCreate", "Create a durable task (starts pending). Optionally blockedBy other task ids.", taskCreateShape, async (args) => {
+      try { return ok(await store.create(args)); } catch (e) { return fail((e as Error).message); }
+    }),
+    tool("TaskUpdate", "Update a task's fields, status, owner, or dependencies by id.", taskUpdateShape, async (args) => {
+      const { id, ...patch } = args;
+      try { return ok(await store.update(id, patch)); } catch (e) { return fail((e as Error).message); }
+    }),
+    tool("TaskGet", "Get a single task by id.", taskGetShape, async (args) => {
+      const t = await store.get(args.id);
+      return t ? ok(t) : fail(`unknown task id ${args.id}`);
+    }),
+    tool("TaskList", "List non-deleted tasks (showing only unresolved blockers). Filter by status/owner.", taskListShape, async (args) => {
+      return ok(await store.list(args));
+    }),
+  ];
+}
+
 /** Wrap a TaskStore as an in-process SDK MCP server exposing the four Task* tools. */
 export function createTaskMcpServer(store: TaskStore) {
-  return createSdkMcpServer({
-    name: "cc-tasks",
-    version: "0.1.0",
-    tools: [
-      tool("TaskCreate", "Create a durable task (starts pending). Optionally blockedBy other task ids.", taskCreateShape, async (args) => {
-        try { return ok(await store.create(args)); } catch (e) { return fail((e as Error).message); }
-      }),
-      tool("TaskUpdate", "Update a task's fields, status, owner, or dependencies by id.", taskUpdateShape, async (args) => {
-        const { id, ...patch } = args;
-        try { return ok(await store.update(id, patch)); } catch (e) { return fail((e as Error).message); }
-      }),
-      tool("TaskGet", "Get a single task by id.", taskGetShape, async (args) => {
-        const t = await store.get(args.id);
-        return t ? ok(t) : fail(`unknown task id ${args.id}`);
-      }),
-      tool("TaskList", "List non-deleted tasks (showing only unresolved blockers). Filter by status/owner.", taskListShape, async (args) => {
-        return ok(await store.list(args));
-      }),
-    ],
-  });
+  return createSdkMcpServer({ name: "cc-tasks", version: "0.1.0", tools: buildTaskTools(store) });
 }
 ```
 
