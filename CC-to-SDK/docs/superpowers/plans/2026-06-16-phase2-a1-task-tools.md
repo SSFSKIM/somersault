@@ -564,8 +564,14 @@ Expected: FAIL — no claim logic / `list` is not a function.
 
 - [ ] **Step 3: Update `src/tasks/store.ts`**
 
-(a) Replace the status-transition block in `update` (the `if (patch.status !== undefined ...)` block) with this claim-aware version:
+(a) Replace the status-transition block in `update` (the `if (patch.status !== undefined ...)` block) with this claim-aware version. It adds (1) an **upfront ownership CAS** that fires even when the status is unchanged — so a different agent re-asserting `in_progress` on an owned task is rejected — and (2) the explicit-owner reassignment line (`if (patch.owner !== undefined) task.owner = patch.owner`). Place the upfront CAS just after the `const prevOwner = task.owner;` line, and add the owner-reassignment line alongside the other field assignments (after `metadata`, before `blockedBy`):
 ```ts
+      // Ownership CAS: a different agent cannot claim or hold an owned task as in_progress
+      // (fires even when the status is unchanged, so re-asserting in_progress is also gated).
+      if (patch.status === "in_progress" && task.owner && task.owner !== this.agentName) {
+        throw new TaskError(`already owned by ${task.owner}`);
+      }
+
       if (patch.status !== undefined && patch.status !== task.status) {
         if (!this.canTransition(task.status, patch.status)) {
           throw new TaskError(`illegal transition ${task.status}->${patch.status}`);
@@ -576,11 +582,12 @@ Expected: FAIL — no claim logic / `list` is not a function.
             return !bt || bt.status !== "completed";
           });
           if (unresolved.length) throw new TaskError(`blocked by unresolved tasks: ${unresolved.join(",")}`);
-          if (task.owner && task.owner !== this.agentName) throw new TaskError(`already owned by ${task.owner}`);
-          task.owner = this.agentName;
+          task.owner = this.agentName; // claim
         }
         task.status = patch.status;
       }
+      // ...existing subject/description/activeForm/metadata assignments...
+      if (patch.owner !== undefined) task.owner = patch.owner; // explicit reassignment
 ```
 
 (b) Add a `list` method to the `TaskStore` class (after `update`):
