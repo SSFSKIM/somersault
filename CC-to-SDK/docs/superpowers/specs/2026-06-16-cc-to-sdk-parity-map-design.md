@@ -73,6 +73,29 @@ reference harness's 516K LoC actually concentrates, and it is the bulk of the "B
 **Rule:** Feb specs supply the *feature list*; verdicts are set against the *current* SDK + current
 harness. Where current CC has features newer than the Feb specs, the live harness is authoritative.
 
+### 3.1 The February-snapshot delta (first-class requirement)
+
+Both the reverse-engineered specs **and** the `Claude Code Src/src/` reference are a **February
+snapshot**. Current Claude Code (v2.1.x) and the live Agent SDK (v0.3.x) have moved on. Anything
+added since February will be **present in the SDK/current harness but absent from the Feb source** —
+and a purely spec-driven map would silently drop it. Capturing this delta is a first-class goal, not
+a side effect.
+
+Observed-from-this-session examples of likely post-Feb additions (to be confirmed during build):
+- **Tools:** `Monitor`, `CronCreate`/`CronList`/`CronDelete`, `DesignSync`, `EnterWorktree`/`ExitWorktree`,
+  `RemoteTrigger`, `PushNotification`, `ScheduleWakeup`, `Workflow`, `ToolSearch`, `LSP`, `Task*`
+  (`TaskCreate`/`Get`/`List`/`Output`/`Stop`/`Update`), `SendMessage`, `EnterPlanMode`/`ExitPlanMode`.
+- **SDK options/methods:** `effort`, `thinking` (adaptive), `taskBudget`, `maxBudgetUsd`, `sessionStore`/
+  `sessionStoreFlush`, `enableFileCheckpointing`/`rewindFiles`, `outputFormat` (json_schema), `betas`,
+  `onElicitation`, `planModeInstructions`, `agentProgressSummaries`, `forwardSubagentText`, `skills`,
+  `toolAliases`, `toolConfig`, `startup()`/`WarmQuery`, `applyFlagSettings`, `stopTask`, `setMcpServers`.
+- **Permission modes:** `dontAsk`, `auto` (classifier-based).
+- **Capabilities:** background tasks, scheduled/cron cloud agents ("routines"), git-worktree isolation,
+  workflows, fast mode, output styles, prompt suggestions, memory-recall events, claudeai-proxy MCP.
+
+These are illustrative; the build's delta pass (§7 step 2′) enumerates the current surface
+authoritatively and reconciles it against the Feb feature list.
+
 ---
 
 ## 4. Verdict taxonomy (5 buckets)
@@ -100,6 +123,7 @@ harness. Where current CC has features newer than the Feb specs, the live harnes
 | `gap / bridge note` | how to close it on the SDK; rough effort hint |
 | `target phase` | which future build phase it belongs to (feeds `roadmap.md`) |
 | `confidence` | Verified-empirically / Doc-grounded / Inferred |
+| **`snapshot`** | **`Feb-spec`** (present in the Feb reference) / **`Post-Feb`** (new in current CC/SDK, absent from Feb source) — makes the since-February delta queryable on every row |
 
 ---
 
@@ -124,6 +148,12 @@ harness. Where current CC has features newer than the Feb specs, the live harnes
    permission modes, hook events.
 2. **Enumerate current-harness surface** from this session (tools, deferred tools, agent types,
    skills, hook events, output styles) → a "current CC capability" checklist to catch post-Feb features.
+2′. **February-delta reconciliation pass (required).** Treat the current surface as authoritative:
+   enumerate the *current* CC/SDK capability set (live SDK docs + this harness's observable tools/agents/
+   skills/hooks + current CC public docs via WebSearch/WebFetch), then **diff it against the Feb-derived
+   feature list**. Any current capability with no Feb-derived row gets its own row tagged
+   `snapshot: Post-Feb`; any Feb feature removed/renamed in current CC is annotated. Output feeds
+   `since-february.md`.
 3. **Fan out per spec area** (sub-agents, one per area / cluster of areas): each reads its spec(s)
    (+ targeted `src/` checks), emits rows in the schema with a provisional verdict + SDK-surface
    mapping. Areas are independent → parallelizable.
@@ -152,6 +182,8 @@ harness. Where current CC has features newer than the Feb specs, the live harnes
 - `INDEX.md` — master matrix (all rows) + verdict tallies + a coarse 43-area summary table.
 - `NN-<area>.md` — per-area detailed rows (43 files, merged where sensible).
 - `methodology.md` — evidence sources, taxonomy, **coverage statement**, probe log.
+- `since-february.md` — the **post-Feb delta**: every current CC/SDK capability absent from the Feb
+  source, with its verdict and target phase. Ensures new features are affirmatively enumerated.
 - `roadmap.md` — the phase decomposition derived from the map (the payoff artifact).
 - `parity.json` — machine-readable mirror of all rows (optional, for later tooling).
 
@@ -173,5 +205,7 @@ Design doc (this file): `CC-to-SDK/docs/superpowers/specs/2026-06-16-cc-to-sdk-p
 - Every one of the 43 subsystem areas has rows or an explicit, justified rollup.
 - Every row has a verdict + SDK-surface mapping (or `—`) + confidence.
 - ≥15 high-stakes verdicts carry `Verified-empirically` confidence from live SDK runs.
+- **The since-February delta is affirmatively enumerated:** every row carries a `snapshot` tag, and
+  `since-february.md` lists all `Post-Feb` capabilities (the reconciliation pass ran, not just incidental catches).
 - `roadmap.md` sequences all 🔧/🏗 work into coherent future phases with dependencies.
 - A reader can answer, for any CC feature: "Provided / Configurable / Build / Not-possible, and how."
