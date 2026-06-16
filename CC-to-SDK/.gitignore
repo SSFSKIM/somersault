@@ -1,0 +1,6 @@
+# The reverse-engineered reference snapshot is a duplicate of the repo-root
+# "Claude Code Src/" (516K LoC + node_modules) — research input, not a deliverable.
+Claude Code Src/
+
+# Probe SDK install
+probes/node_modules/
