@@ -47,4 +47,15 @@ names its subsumed file count, no silent truncation.)_
 
 ## Probe log
 
-_(filled in Task 8 — one line per live SDK probe: `NN | claim | result | rows updated`.)_
+Live Agent SDK runs (TS, v0.3.178, `probes/probes/*.ts`; raw output in `probe-results/`). Format: `NN | claim | PASS/FAIL | rows verified (ids)`.
+
+- 01 | introspection: built-in tools provided + command/model/agent enumeration + MCP status + context-usage (`supportedCommands/Models/Agents()`, `mcpServerStatus()`, `getContextUsage()`, system/init) | PASS (32 tools, 92 cmds, 5 models, 15 agents, 6 MCP servers, context-usage categories returned) | 03.4, 20.1, 03.11, 16.5, 23.1, 06.4, 21a.3
+- 02 | in-process custom MCP tool via `createSdkMcpServer` + `tool()` | PASS (echo handler ran with arg "PARITY", tool_use observed, result="PARITY") | 16.2, 23.5, 08.1
+- 03 | filesystem commands + skills load via `settingSources:['project']` | PASS (`/probecmd` in supportedCommands + init; `probeskill` referenced/loaded) | 20.2, 02.1
+- 04 | hooks fire + block (PreToolUse decision:block, includeHookEvents) | PASS (PreToolUse callback fired; hook_started/hook_progress/hook_response events; "probe-block" surfaced to model) | 04.3, 02.9
+- 05 | programmatic permission control via `canUseTool` deny | PASS (callback consulted for Write tool, denied with "probe-deny"; note: headless default mode auto-allows safe Bash like `echo hi` without consulting canUseTool — permission-gated tools Write/Edit DO route through it; canUseTool requires streaming-input mode) | 09.1, 09.12, 04.5
+- 06 | structured output via `outputFormat` json_schema | PASS (`result.structured_output = {"answer":"hello"}`) | 01.9, 03.8
+- 07 | session resume + fork | PASS (resume recalled secret MAGENTA-42; forkSession produced a new session id that also recalled the secret) | 41.1, 01.19
+- 08 | programmatic subagent dispatch via `options.agents` + Agent tool | PASS (supportedAgents lists 'probe'; Agent tool_use + parent_tool_use_id seen; subagent returned HELLO) | 14.1, 14.2, 01.22, 30.15
+
+Total: 8/8 probes PASS, 25 rows set to `verified`. No verdicts changed (no probe disproved a verdict).

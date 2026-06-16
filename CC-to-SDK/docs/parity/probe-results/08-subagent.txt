@@ -1,0 +1,7 @@
+=== PROBE 08 subagent ===
+supportedAgents() lists 'probe': true
+Agent tool_use seen: true
+subagent-origin message (parent_tool_use_id) seen: true
+result.subtype: success
+result.result: HELLO
+RESULT: PASS

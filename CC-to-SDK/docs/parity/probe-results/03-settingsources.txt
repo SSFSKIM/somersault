@@ -1,0 +1,8 @@
+=== PROBE 03 settingSources ===
+tmpdir: /var/folders/c1/l4z5k02n2779byvnymzxsvth0000gn/T/probe-settings-qAsAKg
+supportedCommands.count: 27
+probecmd in commands: true | matches: ["probeskill","probecmd"]
+init.slash_commands has probecmd: true
+probeskill referenced anywhere: true
+RESULT: PASS
+skill-load note: skill referenced (loaded)

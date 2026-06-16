@@ -1,0 +1,13 @@
+=== PROBE 01 introspection ===
+init.model: claude-opus-4-8[1m]
+init.apiKeySource: ANTHROPIC_API_KEY
+init.tools.count: 32 sample: ["Task","AskUserQuestion","Bash","CronCreate","CronDelete","CronList","DesignSync","Edit"]
+init.slash_commands.count: 91 sample: ["browse","claude-md-setup","codex","context-restore","context-save","gstack"]
+init.mcp_servers: [{"name":"plugin:context7:context7","status":"failed"},{"name":"plugin:cloudflare:cloudflare-api","status":"pending"},{"name":"plugin:cloudflare:cloudflare-docs","status":"connected"},{"name":"plugin:cloudflare:cloudflare-bindings","status":"pending"},{"name":"plugin:cloudflare:cloudflare-builds","status":"pending"},{"name":"plugin:cloudflare:cloudflare-observability","status":"pending"}]
+init.agents: ["agent-sdk-dev:agent-sdk-verifier-py","agent-sdk-dev:agent-sdk-verifier-ts","claude","code-simplifier:code-simplifier","codex:codex-rescue","Explore","feature-dev:code-architect","feature-dev:code-explorer","feature-dev:code-reviewer","general-purpose","Plan","plugin-dev:agent-creator","plugin-dev:plugin-validator","plugin-dev:skill-reviewer","statusline-setup"]
+supportedCommands(): 92 cmds, sample ["browse","claude-md-setup","codex","context-restore","context-save","gstack"]
+supportedModels(): 5 models, sample []
+supportedAgents(): 15 agents, sample ["agent-sdk-dev:agent-sdk-verifier-py","agent-sdk-dev:agent-sdk-verifier-ts","claude","code-simplifier:code-simplifier","codex:codex-rescue","Explore"]
+mcpServerStatus(): 6 servers [{"name":"plugin:context7:context7","status":"failed","error":"Skipping connection (recent failure cached; retries automatically in 15 min, or edit the plugin config to retry now)","config":{"type":"stdio","command":"npx","args":["-y","@upstash/context7-mcp"]},"scope":"dynamic"},{"name":"plugin:cloudflare:cloudflare-api","status":"connected","serverInfo":{"name":"cloudflare-api","version":"0.1.0"},"config":{"type":"http","url":"https://mcp.cloudflare.com/mcp"},"scope":"dynamic","tools":[{"name":"docs","annotations":{"readOnly":true}},{"name":"search","annotations":{}},{"name":"execute","annota…
+getContextUsage(): {"categories":[{"name":"System prompt","tokens":339,"color":"promptBorder"},{"name":"System tools","tokens":7244,"color":"inactive"},{"name":"MCP tools (deferred)","tokens":2734,"color":"inactive","isDeferred":true},{"name":"System tools (deferred)","tokens":15045,"color":"inactive","isDeferred":true},{"name":"Custom agents","tokens":1855,"color":"permission"},{"name":"Memory files","tokens":4142,…
+RESULT: PASS

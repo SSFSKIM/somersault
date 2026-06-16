@@ -1,0 +1,10 @@
+=== PROBE 04 hooks ===
+PreToolUse hook fired (callback ran): true
+PostToolUse hook fired: false
+hook_* system event subtypes seen: ["hook_started","hook_started","hook_started","hook_started","hook_response","hook_response","hook_response","hook_started","hook_progress","hook_response","hook_progress","hook_started","hook_response","hook_response","hook_started","hook_started","hook_started","hook_response","hook_response"]
+'probe-block' reason present in stream: true
+result.subtype: success
+result.result: The command was blocked — instead of output, it returned an error: `probe-block`.
+
+This looks like a sandbox/permission probe intercepted the call rather than the actual `echo hi` running. A plain `ec…
+RESULT: PASS

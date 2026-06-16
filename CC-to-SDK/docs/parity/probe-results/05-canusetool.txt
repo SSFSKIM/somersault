@@ -1,0 +1,8 @@
+=== PROBE 05 canUseTool ===
+canUseTool called: true | denied tool: Write
+SDKPermissionDeniedMessage seen: false
+'probe-deny' present in stream: true
+result.subtype: success
+result.result: The Write was denied (`probe-deny`), so the file `probe.txt` was not created. This appears to be a permissions/policy restriction blocking writes to that location. Let me know if you'd like me to try a different approach or location.
+RESULT: PASS
+note: in headless default mode the CLI auto-allows safe Bash (e.g. `echo hi`) without consulting canUseTool; permission-gated tools (Write/Edit) DO route through it.

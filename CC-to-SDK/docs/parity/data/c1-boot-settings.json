@@ -113,7 +113,7 @@
     "sdkSurface": "outputFormat (JsonSchemaOutputFormat) + SDKResultMessage error_max_structured_output_retries",
     "bridge": "outputFormat: { type:'json_schema', schema } maps to --json-schema; the retry-exhausted result subtype is already enumerated. Direct.",
     "targetPhase": "1",
-    "confidence": "doc",
+    "confidence": "verified",
     "snapshot": "feb"
   },
   {
@@ -243,7 +243,7 @@
     "sdkSurface": "continue + resume + forkSession + resumeSessionAt + sessionId + Query.forkSession",
     "bridge": "continue/resume/forkSession/resumeSessionAt Options map 1:1 to the flags; the interactive picker form is a UI concern (see 01.30). Headless paths direct.",
     "targetPhase": "1",
-    "confidence": "doc",
+    "confidence": "verified",
     "snapshot": "feb"
   },
   {
@@ -282,7 +282,7 @@
     "sdkSurface": "agents (Record<string,AgentDefinition>) + agent",
     "bridge": "agents replaces the --agents JSON blob with typed defs; agent picks the main-thread agent. Direct.",
     "targetPhase": "1",
-    "confidence": "doc",
+    "confidence": "verified",
     "snapshot": "feb"
   },
   {
@@ -399,7 +399,7 @@
     "sdkSurface": "settingSources (SettingSource[]) + resolveSettings()",
     "bridge": "settingSources picks which of user/project/local to load (the SDK default omits them all unless set); resolveSettings() runs the cascade. Note the SDK default for settingSources differs from the CLI (CLI loads all; SDK loads none) — supply explicitly.",
     "targetPhase": "1",
-    "confidence": "doc",
+    "confidence": "verified",
     "snapshot": "feb"
   },
   {
@@ -503,7 +503,7 @@
     "sdkSurface": "hooks (Partial<Record<HookEvent,HookCallbackMatcher[]>>) + settings.hooks",
     "bridge": "In-process callback hooks via the hooks Option (30 HookEvents), or disk hooks via settings.hooks. Direct; far richer than the 4 disk variants.",
     "targetPhase": "1",
-    "confidence": "doc",
+    "confidence": "verified",
     "snapshot": "feb"
   },
   {

@@ -1,0 +1,6 @@
+=== PROBE 02 sdk-mcp-tool ===
+handlerRan: true handlerArg: "PARITY"
+sawToolUse(echo): true
+result.subtype: success
+result.result: PARITY
+RESULT: PASS

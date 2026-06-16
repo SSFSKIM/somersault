@@ -87,7 +87,7 @@
     "sdkSurface": "Options.resume + Options.continue + Options.forkSession + forkSession() + getSessionMessages() + listSessions()",
     "bridge": "Direct: SDK resume/continue/forkSession cover CC's --resume/--continue/--fork-session. forkSession() also supports upToMessageId for partial-history forks.",
     "targetPhase": "1",
-    "confidence": "doc",
+    "confidence": "verified",
     "snapshot": "feb"
   },
   {

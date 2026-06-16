@@ -1,0 +1,8 @@
+=== PROBE 07 session resume/fork ===
+turn1 session_id: 88175a02-05b2-4f56-9b8c-be28ae558296 | subtype: success
+resume recalled secret: true | reply: MAGENTA-42
+fork session_id: b0dc6f6f-ab0e-4ae4-adde-adac08837fe6 | newId: true
+fork recalled secret: true | reply: MAGENTA-42
+resume PASS: true
+fork PASS: true
+RESULT: PASS
