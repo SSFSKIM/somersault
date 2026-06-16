@@ -1,0 +1,41 @@
+[
+  {
+    "id": "19.90",
+    "area": "19-tool-misc",
+    "feature": "ScheduleWakeup tool (/loop dynamic self-pacing)",
+    "what": "Tool that schedules when the agent resumes work in /loop dynamic mode (self-paced recurring runs); picks a wake-up delay and re-fires the loop prompt.",
+    "ccSource": "n/a (post-Feb); current CC harness tool — absent from Feb src (rg ScheduleWakeup = 0 files)",
+    "verdict": "build",
+    "sdkSurface": "",
+    "bridge": "No SDK tool equivalent. Build self-rescheduling around query() + an external scheduler/cron, or expose it as a createSdkMcpServer() in-process tool. Pairs with the /loop harness skill.",
+    "targetPhase": "2",
+    "confidence": "doc",
+    "snapshot": "post-feb"
+  },
+  {
+    "id": "19.91",
+    "area": "19-tool-misc",
+    "feature": "DesignSync tool",
+    "what": "Current CC extended/deferred tool related to design synchronization; exact mechanism unconfirmed (schema not loaded). Absent from Feb source.",
+    "ccSource": "n/a (post-Feb); current CC deferred tool — absent from Feb src (rg DesignSync = 0 files)",
+    "verdict": "build",
+    "sdkSurface": "",
+    "bridge": "Not exposed by the SDK. Would be a custom tool (createSdkMcpServer) or harness feature. Confirm exact behavior against current CC before building.",
+    "targetPhase": "3",
+    "confidence": "inferred",
+    "snapshot": "post-feb"
+  },
+  {
+    "id": "42.90",
+    "area": "42-misc",
+    "feature": "\"ultracode\" workflow opt-in keyword",
+    "what": "Current-harness convention: the 'ultracode' keyword (or a session toggle) opts into running multi-agent Workflow orchestration by default for substantive tasks. Absent from Feb source.",
+    "ccSource": "n/a (post-Feb); current CC harness behavior — absent from Feb src (rg ultracode = 0 files)",
+    "verdict": "build",
+    "sdkSurface": "",
+    "bridge": "Harness-level UX convention layered on the (Feb-present) Workflow engine. Implement as a prompt/keyword trigger in your harness loop; no SDK surface.",
+    "targetPhase": "2",
+    "confidence": "inferred",
+    "snapshot": "post-feb"
+  }
+]
