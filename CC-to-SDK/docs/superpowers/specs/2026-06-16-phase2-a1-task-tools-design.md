@@ -107,8 +107,9 @@ the claim-refusal rules above apply specifically to the `in_progress` transition
 
 **Dependencies.** `blocks` and `blockedBy` are kept mutually consistent: adding `blockedBy: [X]` to
 task T also adds T to `X.blocks`. Adding a dependency that would create a **cycle** is rejected
-(error result). `TaskList` reports only *unresolved* blockers — `completed` blockers are filtered out
-of the displayed `blockedBy` — matching CC.
+(error result). A blocker only blocks if it **still exists and is neither `completed` nor `deleted`** —
+so deleting a blocker frees its dependents, and a dangling/missing blocker id never traps a task. Both
+the claim check and `TaskList`'s displayed `blockedBy` use this same predicate (no phantom blockers).
 
 **A2 seam.** `TaskStore` accepts an optional `onOwnerChange(task, prevOwner)` callback (no-op by
 default). A2's swarm sets it to push mailbox notifications without modifying A1.
