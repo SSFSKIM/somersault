@@ -4,6 +4,11 @@
 > features → SDK). This scores the inverse: **of the Agent SDK's own capability envelope, how much
 > have we actually realized?** Measured 2026-06-17 against `@anthropic-ai/claude-agent-sdk@0.3.178`
 > from the installed `.d.ts` and live probes — not the Feb snapshot.
+>
+> **Shipped since first draft:** the **session persistence spine** (domain 5) — `resume` /
+> `persistSession` / `sessionStore` config passthrough, `resumeHarness()`, `--resume` / `--no-persist`
+> CLI flags, daemon `spawn({resume})`. Spec `specs/2026-06-17-session-persistence-spine-design.md`,
+> plan `plans/2026-06-17-session-persistence-spine.md`, commits `99cab31..583f0db`.
 
 ## How to read this
 
@@ -16,11 +21,12 @@
    working harness capability (§2). This is the number that answers "considering the SDK's full
    potential, how much have we made?"
 
-**Headline:** we have realized roughly **~45% of the SDK's reachable capability envelope** — strong
+**Headline:** we have realized roughly **~48% of the SDK's reachable capability envelope** — strong
 (60–90%) on the *execution & orchestration* half (turn loop, tools, permissions, multi-agent,
-settings, autonomy), thin (15–25%) on the *state & observability* half (persistence, introspection,
-hooks). That second half is now **verified functional headlessly** (§4), which makes it the build
-frontier rather than an open question.
+settings, autonomy). The *state & observability* half is now splitting: **persistence is built**
+(domain 5, the spine just shipped), while **introspection/observability** (domain 6) and **hooks**
+(domain 8) remain the near-term frontier — both verified functional headlessly (§4), so they are build
+work rather than open questions.
 
 ---
 
@@ -44,8 +50,8 @@ capability, weighted by what is *reachable* (🚫 items excluded from the denomi
 | 2 | **Tool system** — 37 native tools (default-on), `createSdkMcpServer`+`tool()`, allow/deny/`toolAliases`, `toolConfig` | ~70% | ✅ | 3 MCP servers built (tasks/swarm/brief); gating wired; `toolConfig`/`tools` allowlist-shaping partial |
 | 3 | **Permission & safety** — 6 `permissionMode`s, `canUseTool`, `sandbox`, `allowDangerouslySkip` | ~75% | ✅ | 4/6 modes exercised (default/plan/auto/bypass-gated); `canUseTool` broker in swarm; sandbox modeled |
 | 4 | **Multi-agent** — `agents`/`AgentDefinition`, native subagents, `Agent`/`Task*` tools, coordination | ~70% | ✅ | `swarm/` coordinator + bus + teammates; native subagent transcripts (`listSubagents`) unused |
-| 5 | **Session lifecycle & persistence** — `resume`, `forkSession`, `persistSession`, `sessionStore`, `listSessions`, `getSessionMessages`, `enableFileCheckpointing`+`rewindFiles` | **~15%** | 🟡 frontier | Only `resume` used (daemon). Fork/store/list/rewind all **verified working** (§4) but unbuilt |
-| 6 | **Introspection & observability** — `getContextUsage`, `usage`, `accountInfo`, `mcpServerStatus`, `supportedModels`/`Commands`/`Agents`, `initializationResult` | **~25%** | 🟡 frontier | init/models/commands wired via `bridge/`; `getContextUsage`/`accountInfo`/`usage` **verified working**, unbuilt |
+| 5 | **Session lifecycle & persistence** — `resume`, `forkSession`, `persistSession`, `sessionStore`, `enableFileCheckpointing`+`rewindFiles` | **~60%** | ✅ built | **Spine shipped:** `resume`/`persistSession`/`sessionStore` config, `resumeHarness()`, CLI flags, daemon `spawn({resume})`, `rewindFiles` (Harness.rewind). Deferred: `forkSession`, daemon restart-with-resume, `SessionRecord`-index persistence |
+| 6 | **Introspection & observability** — `getContextUsage`, `usage`, `accountInfo`, `mcpServerStatus`, `listSessions`/`getSessionMessages`, `supportedModels`/`Commands`/`Agents`, `initializationResult` | **~25%** | 🟡 next | init/models/commands/mcpStatus wired via `bridge/`/`Harness`; the **read API** (`getContextUsage`/`accountInfo`/`listSessions`/`getSessionMessages`) is **verified working** (§4) and is the next sub-project |
 | 7 | **Scheduling & autonomy** — proactive self-wake, `CronCreate`, `PushNotification`, assistant worker | ~50%¹ | ✅/🚫 | `proactive/` + `kairos/` latch built; cron dead headless, push has no transport, worker bridge-coupled |
 | 8 | **Extensibility** — `plugins`, `skills`, **30 hook events**, output styles, dynamic MCP | ~40% | ✅/⚪ | plugins/skills/styles/MCP passthrough; **0 of 30 hook events** handled (largest extensibility gap) |
 | 9 | **Settings & config** — `settingSources` cascade, `settings`/`managedSettings`, provider/env, sandbox | ~90% | ✅ | fully modeled in `config/`; `applyFlagSettings` (mid-session merge) unused |
@@ -55,9 +61,10 @@ capability, weighted by what is *reachable* (🚫 items excluded from the denomi
 low number is a design boundary, not a shortfall.
 
 **Reading the shape:** domains 1–4 + 9 (execution, tools, permissions, multi-agent, config) are the
-orchestration substrate — the part the SDK does *not* hand you — and they sit at 60–90%. Domains 5, 6,
-8 (persistence, introspection, hooks) are where the SDK offers ready-made power we have not yet drawn
-on. Domains 7, 10 are capped by bridge-coupling we cannot cross headlessly.
+orchestration substrate — the part the SDK does *not* hand you — and they sit at 60–90%. Domain 5
+(persistence) just joined them with the spine. Domains 6 and 8 (introspection/observability, hooks)
+are where the SDK still offers ready-made power we have not yet drawn on — domain 6 is the active next
+sub-project. Domains 7, 10 are capped by bridge-coupling we cannot cross headlessly.
 
 ---
 
@@ -65,44 +72,45 @@ on. Domains 7, 10 are capped by bridge-coupling we cannot cross headlessly.
 
 | SDK surface | Size | We use | Note |
 |---|---|---|---|
-| `Options` fields | 63 | ~26 modeled in `resolveOptions` + `extraOptions` escape hatch | passthrough makes all 63 *reachable* |
-| `Query` control methods | ~25 | 6 (`interrupt`, `setModel`, `setPermissionMode`, `setMaxThinkingTokens`, init/`supportedModels`/`supportedCommands`) | ~19 unused incl. the whole §4 family |
+| `Options` fields | 63 | ~29 modeled in `resolveOptions` (now incl. `resume`/`persistSession`/`sessionStore`) + `extraOptions` escape hatch | passthrough makes all 63 *reachable* |
+| `Query` control methods | ~25 | 7 (`interrupt`, `setModel`, `setPermissionMode`, `setMaxThinkingTokens`, `rewindFiles`, init/`supportedModels`/`supportedCommands`/`supportedAgents`) | ~18 unused incl. `getContextUsage`/`accountInfo` (domain-6 next) |
 | Core builders (`query`, `createSdkMcpServer`, `tool`) | 3 | 3 | 100% |
 | In-process MCP servers built | — | 3 (`cc-tasks`, `cc-swarm`, `cc-brief`) | — |
 | Native model tools | 37 | 0 reimplemented; 2 deliberately shadowed by our MCP (Task→swarm, Tasks); `CronCreate` probed dead | rely-on, not consume |
 | Subpath exports | 7 | 1 used (`.`), 2 probed-and-rejected (`/assistant`, `/bridge`), 1 types-only (`/sdk-tools`) | — |
 | Hook events (`HOOK_EVENTS`) | 30 | 0 handlers | option wired, no callbacks |
 | `permissionMode` values | 6 | 4 exercised | default/plan/auto/bypass(gated) |
-| Session-store top-level fns | 10 | 0 (we own state in `daemon/registry`) | **all verified working — §4** |
+| Session-store top-level fns | 10 | 0 used — but `resume`/`persistSession`/`sessionStore` (Options) now wired | reader fns (`listSessions`/`getSessionMessages`/`forkSession`/`getSessionInfo`) still 0 → domain-6 next · **all verified working — §4** |
 
 ---
 
-## §4 — The frontier: session-store + introspection (verified live 2026-06-17)
+## §4 — The session-store + introspection family (verified live 2026-06-17)
 
-This is the largest *available-but-unbuilt* lever, and unlike cron/push it is **fully functional
-headlessly with an API key**. Probe (`probe-sessionstore.mjs`, model `claude-haiku-4-5`) results:
+This was the largest *available-but-unbuilt* lever, and unlike cron/push it is **fully functional
+headlessly with an API key**. Probe (`probe-sessionstore.mjs`, model `claude-haiku-4-5`) results, now
+annotated with build status — **✅ shipped** in the persistence spine, **🟡 next** (the domain-6
+observability read API), **⚪ deferred**:
 
-| API | Result | Implication |
+| API | Result | Status / implication |
 |---|---|---|
-| `getContextUsage()` | 17-field breakdown — `totalTokens: 26191`, `maxTokens`, `percentage`, per-category `memoryFiles`/`mcpTools`/`agents`/`skills`/`slashCommands`, `messageBreakdown`, `apiUsage`, autocompact state | Native **context-budget observability** for the daemon/proactive loops — no hand-rolled token accounting |
-| `accountInfo()` | `{tokenSource, apiKeySource, apiProvider}` | provider/auth introspection (API-key session ⇒ no email/org, but provider is known) |
-| `supportedModels` / `Commands` / `Agents` / `mcpServerStatus` | arrays `[6]` / `[94]` / `[15]` / `[6]` | live capability discovery — feed a `/status`-style surface |
-| persist → **resume** round-trip | recalled the codeword across two separate `query()` calls (`true`) | the daemon could persist + rehydrate real sessions instead of in-memory only |
-| `listSessions()` | `array[801]` w/ `sessionId, summary, firstPrompt, gitBranch, cwd, tag, createdAt, lastModified` | a **session browser / history API** for free (caveat: returned the global store; project-scoping needs explicit filtering) |
-| `getSessionMessages(id)` | transcript `array[3]` | transcript replay/inspection |
-| `InMemorySessionStore` injection (`sessionStore`) | custom store received the mirror (`size: 1`) | pluggable persistence backend (DB/S3) via the `SessionStore` POJO-mirror contract |
-| `forkSession(id)` | new `{sessionId}` | branch a conversation — speculative/parallel exploration from a checkpoint |
-| `enableFileCheckpointing` + `Query.rewindFiles(id)` | two-turn edit (VERSION_ONE→TWO) **reverted to VERSION_ONE on disk**; `dryRun` returns `{canRewind, filesChanged, insertions, deletions}` | undo/checkpoint of file edits — time-travel for autonomous runs |
+| persist → **resume** round-trip | recalled the codeword across two separate `query()` calls (`true`) | **✅ shipped** — `resume` config + `resumeHarness()` + daemon `spawn({resume})` |
+| `InMemorySessionStore` injection (`sessionStore`) | custom store received the mirror (`size: 1`) | **✅ shipped** — `sessionStore` config passthrough (BYO backend seam) |
+| `enableFileCheckpointing` + `Query.rewindFiles(id)` | two-turn edit (VERSION_ONE→TWO) **reverted to VERSION_ONE on disk**; `dryRun` returns `{canRewind, filesChanged, insertions, deletions}` | **✅ shipped** — `Harness.rewind` (checkpointing default-on); undo/time-travel for autonomous runs |
+| `getContextUsage()` | 17-field breakdown — `totalTokens: 26191`, `maxTokens`, `percentage`, per-category `memoryFiles`/`mcpTools`/`agents`/`skills`/`slashCommands`, `messageBreakdown`, `apiUsage`, autocompact state | **🟡 next** — native **context-budget observability** for the daemon/proactive loops |
+| `listSessions()` | `array[801]` w/ `sessionId, summary, firstPrompt, gitBranch, cwd, tag, createdAt, lastModified` | **🟡 next** — a **session browser / history API** (caveat: returned the global store; project-scoping needs explicit filtering) |
+| `getSessionMessages(id)` | transcript `array[3]` | **🟡 next** — transcript replay/inspection |
+| `accountInfo()` | `{tokenSource, apiKeySource, apiProvider}` | **🟡 next** — provider/auth introspection (API-key session ⇒ no email/org, but provider known) |
+| `supportedModels` / `Commands` / `Agents` / `mcpServerStatus` | arrays `[6]` / `[94]` / `[15]` / `[6]` | ✅ already wired via `bridge/` + `Harness` capability methods |
+| `forkSession(id)` | new `{sessionId}` | **⚪ deferred** — branch-and-explore; its own later sub-project |
 
 **Wiring lesson (verified):** `rewindFiles()`'s anchor must be a genuine **user-prompt UUID**, resolved
 from the transcript via `getSessionMessages()` — **not** from live stream frames (in streaming mode the
 `type:"user"` frames are tool-results, which carry no checkpoint and return "No file checkpoint found").
-Domain 5 is now **100% verified, zero unknowns.**
 
-**What this unlocks (candidate next sub-project):** swap `daemon/registry`'s in-memory `SessionRecord`
-map for SDK-native persistence (`persistSession`/`sessionStore`), add a read-side **session/observability
-API** (`listSessions` + `getSessionMessages` + `getContextUsage`) the daemon and a future control plane
-can serve, and expose `forkSession` for branch-and-explore. All of it is verified-reachable today.
+**Next sub-project — the observability read API (domain 6):** expose the read-side surface
+(`getContextUsage` + `listSessions` + `getSessionMessages` + `accountInfo`) the daemon and a future
+control plane can serve. `forkSession` branch-and-explore and daemon `SessionRecord`-index persistence
+remain later sub-projects. All verified-reachable today.
 
 ---
 
