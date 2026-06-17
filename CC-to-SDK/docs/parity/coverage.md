@@ -25,6 +25,15 @@
 >   (intent flag consumed in `readLoop`, fire-and-forget, own FIFO waiter). On-demand is **daemon-only** (no
 >   `Query.compact()` method; one-shot has no input queue). Live: 31590→5664 tokens. Spec
 >   `specs/2026-06-17-self-compaction-design.md`, commits `0faf597..b62d006`.
+> - **Lib interactive `Session` primitive** (domain 5/1/6) — `src/session/session.ts` promotes
+>   `DaemonSession`'s streaming engine into a public, daemon-independent `Session` (open → `submit` turns →
+>   `compact()`/control/`getContextUsage`/`rewind` → `.sessionId` (captured from `init`, capture-once) →
+>   `resume` → `dispose`), `openSession`/`resumeSession` factories, a `stream()` convenience; `DaemonSession`
+>   is now a thin `extends Session` subclass (129→19 lines). **Lifts the "multi-turn = daemon-only" restriction:**
+>   on-demand `compact()`, `cc-context`, and the control surface now work library-side too. Spec
+>   `specs/2026-06-17-lib-session-primitive-design.md`, commits `d0e209a..c87a414`. Live 3/3 (stable sessionId,
+>   compact, resume round-trip preserving the id). Keystone of the 3-spec session cluster (Specs 2
+>   daemon-durable-sessions & 3 session-forking depend on `.sessionId`, spec'd & deferred).
 
 ## How to read this
 
@@ -37,11 +46,12 @@
    working harness capability (§2). This is the number that answers "considering the SDK's full
    potential, how much have we made?"
 
-**Headline:** we have realized roughly **~53% of the SDK's reachable capability envelope** — strong
+**Headline:** we have realized roughly **~55% of the SDK's reachable capability envelope** — strong
 (60–90%) on the *execution & orchestration* half (turn loop, tools, permissions, multi-agent,
-settings, autonomy). The *state & observability* half has now largely closed: **persistence** (domain 5)
-and the **observability read API** (domain 6) are both built. The largest remaining near-term frontier
-is **hooks** (domain 8 — 0 of 30 events), verified-reachable and unbuilt.
+settings, autonomy). The *state & observability* half has now largely closed: **persistence** (domain 5,
+incl. the lib interactive `Session` primitive), the **observability read API**, and the **agent-facing
+context tools** (domain 6) are all built. The largest remaining near-term frontier is **hooks**
+(domain 8 — 0 of 30 events), verified-reachable and unbuilt.
 
 ---
 
@@ -61,11 +71,11 @@ capability, weighted by what is *reachable* (🚫 items excluded from the denomi
 
 | # | Capability domain | Realized | State | Evidence / gap |
 |---|---|---|---|---|
-| 1 | **Turn execution & streaming** — `query()` loop, streaming I/O, partial messages, `thinking`/`effort`, `maxTurns`/`maxBudgetUsd`/`taskBudget`, compaction | ~65% | ✅ core | `daemon/session` drives `query()`; **compaction built** (config `autoCompact*` all paths + daemon on-demand `compact()` + agent-triggered `cc-compact`, daemon-only); partial-messages, `thinking`/`effort`, budget caps not surfaced |
+| 1 | **Turn execution & streaming** — `query()` loop, streaming I/O, partial messages, `thinking`/`effort`, `maxTurns`/`maxBudgetUsd`/`taskBudget`, compaction | ~68% | ✅ core | `daemon/session` drives `query()` via a shared `Session` engine; **multi-turn now lib-side too** (`openSession`/`Session.submit`/`stream`); **compaction built** (config `autoCompact*` all paths + on-demand `compact()` + agent-triggered `cc-compact`, now lib + daemon); partial-messages, `thinking`/`effort`, budget caps not surfaced |
 | 2 | **Tool system** — 37 native tools (default-on), `createSdkMcpServer`+`tool()`, allow/deny/`toolAliases`, `toolConfig` | ~70% | ✅ | 3 MCP servers built (tasks/swarm/brief); gating wired; `toolConfig`/`tools` allowlist-shaping partial |
 | 3 | **Permission & safety** — 6 `permissionMode`s, `canUseTool`, `sandbox`, `allowDangerouslySkip` | ~75% | ✅ | 4/6 modes exercised (default/plan/auto/bypass-gated); `canUseTool` broker in swarm; sandbox modeled |
 | 4 | **Multi-agent** — `agents`/`AgentDefinition`, native subagents, `Agent`/`Task*` tools, coordination | ~70% | ✅ | `swarm/` coordinator + bus + teammates; native subagent transcripts (`listSubagents`) unused |
-| 5 | **Session lifecycle & persistence** — `resume`, `forkSession`, `persistSession`, `sessionStore`, `enableFileCheckpointing`+`rewindFiles` | **~60%** | ✅ built | **Spine shipped:** `resume`/`persistSession`/`sessionStore` config, `resumeHarness()`, CLI flags, daemon `spawn({resume})`, `rewindFiles` (Harness.rewind). Deferred: `forkSession`, daemon restart-with-resume, `SessionRecord`-index persistence |
+| 5 | **Session lifecycle & persistence** — `resume`, `forkSession`, `persistSession`, `sessionStore`, `enableFileCheckpointing`+`rewindFiles` | **~72%** | ✅ built | **Spine + interactive primitive shipped:** `resume`/`persistSession`/`sessionStore` config, `resumeHarness()`, CLI flags, daemon `spawn({resume})`, `rewindFiles`; **lib `Session` primitive** (`openSession`/`resumeSession`, multi-turn + `.sessionId` capture + `resume` preserves id, live-verified). Spec'd next (session cluster): Spec 2 daemon restart-with-resume + `SessionRecord` `sessionId` index; Spec 3 `forkSession` branch-and-explore |
 | 6 | **Introspection & observability** — `getContextUsage`, `usage`, `accountInfo`, `mcpServerStatus`, `listSessions`/`getSessionMessages`/`getSessionInfo`, `supportedModels`/`Commands`/`Agents`, `initializationResult` | **~82%** | ✅ built | **Read API + agent-facing tool shipped:** reader module (`listSessions`/`getSessionMessages`/`getSessionInfo`, `cwd`→`dir`), `Harness.getContextUsage()`/`accountInfo()`, daemon `sessions`/`messages` ops + `context_usage`/`account_info` frames; **`cc-context` `GetContextUsage` MCP tool** (model self-introspection, lib + daemon opt-in); models/commands/mcpStatus via `bridge/`. Unbuilt: `usage` (EXPERIMENTAL rate-limit data), `initializationResult` full payload |
 | 7 | **Scheduling & autonomy** — proactive self-wake, `CronCreate`, `PushNotification`, assistant worker | ~50%¹ | ✅/🚫 | `proactive/` + `kairos/` latch built; cron dead headless, push has no transport, worker bridge-coupled |
 | 8 | **Extensibility** — `plugins`, `skills`, **30 hook events**, output styles, dynamic MCP | ~40% | ✅/⚪ | plugins/skills/styles/MCP passthrough; **0 of 30 hook events** handled (largest extensibility gap) |
@@ -77,9 +87,10 @@ low number is a design boundary, not a shortfall.
 
 **Reading the shape:** domains 1–4 + 9 (execution, tools, permissions, multi-agent, config) are the
 orchestration substrate — the part the SDK does *not* hand you — and they sit at 60–90%. Domains 5
-(persistence) and 6 (observability) have now joined them with the spine + read API. **Domain 8 (hooks,
-0 of 30 events) is the largest remaining ready-made-but-unbuilt lever.** Domains 7, 10 are capped by
-bridge-coupling we cannot cross headlessly.
+(persistence — now incl. the lib interactive `Session` primitive) and 6 (observability) have joined them
+with the spine + read API + the interactive session surface. **Domain 8 (hooks, 0 of 30 events) is the
+largest remaining ready-made-but-unbuilt lever.** Domains 7, 10 are capped by bridge-coupling we cannot
+cross headlessly.
 
 ---
 
@@ -116,16 +127,18 @@ annotated with build status — **✅ shipped** (persistence spine or observabil
 | `getSessionMessages(id)` | transcript `array[3]` | **✅ shipped** (observability) — reader + daemon `messages` op |
 | `accountInfo()` | `{tokenSource, apiKeySource, apiProvider}` | **✅ shipped** (observability) — `Harness.accountInfo()` + daemon `account_info` frame |
 | `supportedModels` / `Commands` / `Agents` / `mcpServerStatus` | arrays `[6]` / `[94]` / `[15]` / `[6]` | **✅ shipped** — `bridge/` + `Harness` capability methods |
-| `forkSession(id)` | new `{sessionId}` | **⚪ deferred** — branch-and-explore; its own later sub-project |
+| `forkSession(id)` | new `{sessionId}` (probe: resume PRESERVES the id, fork MINTS a new one) | **⚪ spec'd** — Spec 3 `session-forking` (branch-and-explore); deferred behind Spec 1 |
 
 **Wiring lesson (verified):** `rewindFiles()`'s anchor must be a genuine **user-prompt UUID**, resolved
 from the transcript via `getSessionMessages()` — **not** from live stream frames (in streaming mode the
 `type:"user"` frames are tool-results, which carry no checkpoint and return "No file checkpoint found").
 
 **Next frontier — hooks (domain 8):** 0 of 30 `HOOK_EVENTS` are handled — the largest ready-made,
-verified-reachable, unbuilt lever. Other deferred sub-projects: `forkSession` branch-and-explore,
-session write/mutation ops (`renameSession`/`tagSession`/`deleteSession`), daemon `SessionRecord`-index
-persistence, and the EXPERIMENTAL `usage` (plan rate-limit) surface.
+verified-reachable, unbuilt lever. The **session cluster** is spec'd & partly built: Spec 1 (lib
+`Session` primitive) **shipped**; Spec 2 (`daemon-durable-sessions` — persist `sessionId` on
+`SessionRecord`, restart resumes with context) and Spec 3 (`session-forking` — `forkSession` + daemon
+`fork` op) are spec'd and deferred to implement-later. Other deferred sub-projects: session
+write/mutation ops (`renameSession`/`tagSession`/`deleteSession`) and the EXPERIMENTAL `usage` surface.
 
 ---
 
