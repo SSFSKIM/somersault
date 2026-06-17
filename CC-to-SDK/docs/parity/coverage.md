@@ -1,0 +1,112 @@
+# SDK Potential — Realized vs. Available
+
+> Companion to `parity.json` / `roadmap.md`. Those score **Claude Code feature parity** (551 CC
+> features → SDK). This scores the inverse: **of the Agent SDK's own capability envelope, how much
+> have we actually realized?** Measured 2026-06-17 against `@anthropic-ai/claude-agent-sdk@0.3.178`
+> from the installed `.d.ts` and live probes — not the Feb snapshot.
+
+## How to read this
+
+"How much of the SDK have we used?" has two honest denominators:
+
+1. **Raw API surface** — how many of the SDK's typed knobs we touch (§3). A *low* number here is the
+   intended design: 313 of 551 CC features are verdict `provided`, i.e. the SDK already does them
+   natively, so consuming more of the API would mean re-implementing what is free.
+2. **Capability envelope** — of everything the SDK *makes possible*, how much have we turned into
+   working harness capability (§2). This is the number that answers "considering the SDK's full
+   potential, how much have we made?"
+
+**Headline:** we have realized roughly **~45% of the SDK's reachable capability envelope** — strong
+(60–90%) on the *execution & orchestration* half (turn loop, tools, permissions, multi-agent,
+settings, autonomy), thin (15–25%) on the *state & observability* half (persistence, introspection,
+hooks). That second half is now **verified functional headlessly** (§4), which makes it the build
+frontier rather than an open question.
+
+---
+
+## §1 — Verification status legend
+
+- **✅ built** — shipped in `harness/src`, unit + (mostly) live tested.
+- **🟡 verified-unused** — probed live this session, works headlessly, not yet wired into the harness.
+- **⚪ untouched** — available in the SDK, neither built nor probed.
+- **🚫 unreachable** — bridge-/claude.ai-coupled or build-internal; out by definition.
+
+---
+
+## §2 — Capability-domain scorecard
+
+Each domain is a slice of the SDK's potential. "Realized" = fraction turned into working harness
+capability, weighted by what is *reachable* (🚫 items excluded from the denominator).
+
+| # | Capability domain | Realized | State | Evidence / gap |
+|---|---|---|---|---|
+| 1 | **Turn execution & streaming** — `query()` loop, streaming I/O, partial messages, `thinking`/`effort`, `maxTurns`/`maxBudgetUsd`/`taskBudget` | ~60% | ✅ core | `daemon/session` drives `query()`; partial-messages, `thinking`/`effort`, budget caps not surfaced |
+| 2 | **Tool system** — 37 native tools (default-on), `createSdkMcpServer`+`tool()`, allow/deny/`toolAliases`, `toolConfig` | ~70% | ✅ | 3 MCP servers built (tasks/swarm/brief); gating wired; `toolConfig`/`tools` allowlist-shaping partial |
+| 3 | **Permission & safety** — 6 `permissionMode`s, `canUseTool`, `sandbox`, `allowDangerouslySkip` | ~75% | ✅ | 4/6 modes exercised (default/plan/auto/bypass-gated); `canUseTool` broker in swarm; sandbox modeled |
+| 4 | **Multi-agent** — `agents`/`AgentDefinition`, native subagents, `Agent`/`Task*` tools, coordination | ~70% | ✅ | `swarm/` coordinator + bus + teammates; native subagent transcripts (`listSubagents`) unused |
+| 5 | **Session lifecycle & persistence** — `resume`, `forkSession`, `persistSession`, `sessionStore`, `listSessions`, `getSessionMessages`, `enableFileCheckpointing`+`rewindFiles` | **~15%** | 🟡 frontier | Only `resume` used (daemon). Fork/store/list/rewind all **verified working** (§4) but unbuilt |
+| 6 | **Introspection & observability** — `getContextUsage`, `usage`, `accountInfo`, `mcpServerStatus`, `supportedModels`/`Commands`/`Agents`, `initializationResult` | **~25%** | 🟡 frontier | init/models/commands wired via `bridge/`; `getContextUsage`/`accountInfo`/`usage` **verified working**, unbuilt |
+| 7 | **Scheduling & autonomy** — proactive self-wake, `CronCreate`, `PushNotification`, assistant worker | ~50%¹ | ✅/🚫 | `proactive/` + `kairos/` latch built; cron dead headless, push has no transport, worker bridge-coupled |
+| 8 | **Extensibility** — `plugins`, `skills`, **30 hook events**, output styles, dynamic MCP | ~40% | ✅/⚪ | plugins/skills/styles/MCP passthrough; **0 of 30 hook events** handled (largest extensibility gap) |
+| 9 | **Settings & config** — `settingSources` cascade, `settings`/`managedSettings`, provider/env, sandbox | ~90% | ✅ | fully modeled in `config/`; `applyFlagSettings` (mid-session merge) unused |
+| 10 | **Remote / bridge / voice / UI** — `connectRemoteControl`, remote server, voice, Ink TUI | ~10%¹ | ✅/🚫 | `bridge/` control-protocol shim built; remote/voice/UI are Phase-3, mostly 🚫/non-goal **by design** |
+
+¹ Of the *reachable* sub-surface — much of domains 7 and 10 is 🚫 unreachable (bridge-coupled), so the
+low number is a design boundary, not a shortfall.
+
+**Reading the shape:** domains 1–4 + 9 (execution, tools, permissions, multi-agent, config) are the
+orchestration substrate — the part the SDK does *not* hand you — and they sit at 60–90%. Domains 5, 6,
+8 (persistence, introspection, hooks) are where the SDK offers ready-made power we have not yet drawn
+on. Domains 7, 10 are capped by bridge-coupling we cannot cross headlessly.
+
+---
+
+## §3 — Raw API surface reference
+
+| SDK surface | Size | We use | Note |
+|---|---|---|---|
+| `Options` fields | 63 | ~26 modeled in `resolveOptions` + `extraOptions` escape hatch | passthrough makes all 63 *reachable* |
+| `Query` control methods | ~25 | 6 (`interrupt`, `setModel`, `setPermissionMode`, `setMaxThinkingTokens`, init/`supportedModels`/`supportedCommands`) | ~19 unused incl. the whole §4 family |
+| Core builders (`query`, `createSdkMcpServer`, `tool`) | 3 | 3 | 100% |
+| In-process MCP servers built | — | 3 (`cc-tasks`, `cc-swarm`, `cc-brief`) | — |
+| Native model tools | 37 | 0 reimplemented; 2 deliberately shadowed by our MCP (Task→swarm, Tasks); `CronCreate` probed dead | rely-on, not consume |
+| Subpath exports | 7 | 1 used (`.`), 2 probed-and-rejected (`/assistant`, `/bridge`), 1 types-only (`/sdk-tools`) | — |
+| Hook events (`HOOK_EVENTS`) | 30 | 0 handlers | option wired, no callbacks |
+| `permissionMode` values | 6 | 4 exercised | default/plan/auto/bypass(gated) |
+| Session-store top-level fns | 10 | 0 (we own state in `daemon/registry`) | **all verified working — §4** |
+
+---
+
+## §4 — The frontier: session-store + introspection (verified live 2026-06-17)
+
+This is the largest *available-but-unbuilt* lever, and unlike cron/push it is **fully functional
+headlessly with an API key**. Probe (`probe-sessionstore.mjs`, model `claude-haiku-4-5`) results:
+
+| API | Result | Implication |
+|---|---|---|
+| `getContextUsage()` | 17-field breakdown — `totalTokens: 26191`, `maxTokens`, `percentage`, per-category `memoryFiles`/`mcpTools`/`agents`/`skills`/`slashCommands`, `messageBreakdown`, `apiUsage`, autocompact state | Native **context-budget observability** for the daemon/proactive loops — no hand-rolled token accounting |
+| `accountInfo()` | `{tokenSource, apiKeySource, apiProvider}` | provider/auth introspection (API-key session ⇒ no email/org, but provider is known) |
+| `supportedModels` / `Commands` / `Agents` / `mcpServerStatus` | arrays `[6]` / `[94]` / `[15]` / `[6]` | live capability discovery — feed a `/status`-style surface |
+| persist → **resume** round-trip | recalled the codeword across two separate `query()` calls (`true`) | the daemon could persist + rehydrate real sessions instead of in-memory only |
+| `listSessions()` | `array[801]` w/ `sessionId, summary, firstPrompt, gitBranch, cwd, tag, createdAt, lastModified` | a **session browser / history API** for free (caveat: returned the global store; project-scoping needs explicit filtering) |
+| `getSessionMessages(id)` | transcript `array[3]` | transcript replay/inspection |
+| `InMemorySessionStore` injection (`sessionStore`) | custom store received the mirror (`size: 1`) | pluggable persistence backend (DB/S3) via the `SessionStore` POJO-mirror contract |
+| `forkSession(id)` | new `{sessionId}` | branch a conversation — speculative/parallel exploration from a checkpoint |
+
+**Not yet probed:** `enableFileCheckpointing` + `rewindFiles()` (needs a tool-edit + user-message-id to
+exercise) — the one piece of domain 5 still unverified.
+
+**What this unlocks (candidate next sub-project):** swap `daemon/registry`'s in-memory `SessionRecord`
+map for SDK-native persistence (`persistSession`/`sessionStore`), add a read-side **session/observability
+API** (`listSessions` + `getSessionMessages` + `getContextUsage`) the daemon and a future control plane
+can serve, and expose `forkSession` for branch-and-explore. All of it is verified-reachable today.
+
+---
+
+## §5 — Permanently out of reach (the 🚫 floor)
+
+58 parity items are `not-possible` and ~77 are non-goals: claude.ai bridge-coupled surfaces
+(`connectRemoteControl`, `runAssistantWorker`, `RemoteTrigger`, native `CronCreate` firing,
+`PushNotification` transport), build-internal feature-flag/DCE gating, and the interactive Ink TUI
+(deferred under the "harden & ship over Phase 3" decision). These are excluded from every "realized"
+fraction above — measuring against them would understate true coverage of the reachable envelope.
