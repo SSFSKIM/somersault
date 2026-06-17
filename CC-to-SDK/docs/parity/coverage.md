@@ -18,6 +18,13 @@
 >   tokensRemaining, status}`), opt-in via `createHarness({ contextTool })` and daemon-wide
 >   `DaemonOptions.contextTool`; late-bound `QueryHolder` seam (no re-entrancy deadlock). Read-only.
 >   Spec `specs/2026-06-17-context-introspection-tool-design.md`, commits `eb4415a..9fd074b`.
+> - **Self-compaction** (domain 1/6, context lifecycle) — config knobs `autoCompactEnabled`/`autoCompactWindow`
+>   (→ `options.settings`, all paths), a daemon on-demand `compact()` op (`DaemonSession.compact()` injects
+>   `/compact` via a shared `enqueueTurn`, parses `compact_result`/`compact_boundary` → `CompactOutcome`), and an
+>   opt-in agent-facing `cc-compact` `RequestCompaction` tool that fires `/compact` at the turn boundary
+>   (intent flag consumed in `readLoop`, fire-and-forget, own FIFO waiter). On-demand is **daemon-only** (no
+>   `Query.compact()` method; one-shot has no input queue). Live: 31590→5664 tokens. Spec
+>   `specs/2026-06-17-self-compaction-design.md`, commits `0faf597..b62d006`.
 
 ## How to read this
 
@@ -54,7 +61,7 @@ capability, weighted by what is *reachable* (🚫 items excluded from the denomi
 
 | # | Capability domain | Realized | State | Evidence / gap |
 |---|---|---|---|---|
-| 1 | **Turn execution & streaming** — `query()` loop, streaming I/O, partial messages, `thinking`/`effort`, `maxTurns`/`maxBudgetUsd`/`taskBudget` | ~60% | ✅ core | `daemon/session` drives `query()`; partial-messages, `thinking`/`effort`, budget caps not surfaced |
+| 1 | **Turn execution & streaming** — `query()` loop, streaming I/O, partial messages, `thinking`/`effort`, `maxTurns`/`maxBudgetUsd`/`taskBudget`, compaction | ~65% | ✅ core | `daemon/session` drives `query()`; **compaction built** (config `autoCompact*` all paths + daemon on-demand `compact()` + agent-triggered `cc-compact`, daemon-only); partial-messages, `thinking`/`effort`, budget caps not surfaced |
 | 2 | **Tool system** — 37 native tools (default-on), `createSdkMcpServer`+`tool()`, allow/deny/`toolAliases`, `toolConfig` | ~70% | ✅ | 3 MCP servers built (tasks/swarm/brief); gating wired; `toolConfig`/`tools` allowlist-shaping partial |
 | 3 | **Permission & safety** — 6 `permissionMode`s, `canUseTool`, `sandbox`, `allowDangerouslySkip` | ~75% | ✅ | 4/6 modes exercised (default/plan/auto/bypass-gated); `canUseTool` broker in swarm; sandbox modeled |
 | 4 | **Multi-agent** — `agents`/`AgentDefinition`, native subagents, `Agent`/`Task*` tools, coordination | ~70% | ✅ | `swarm/` coordinator + bus + teammates; native subagent transcripts (`listSubagents`) unused |
@@ -83,7 +90,7 @@ bridge-coupling we cannot cross headlessly.
 | `Options` fields | 63 | ~29 modeled in `resolveOptions` (now incl. `resume`/`persistSession`/`sessionStore`) + `extraOptions` escape hatch | passthrough makes all 63 *reachable* |
 | `Query` control methods | ~25 | 9 (`interrupt`, `setModel`, `setPermissionMode`, `setMaxThinkingTokens`, `rewindFiles`, `getContextUsage`, `accountInfo`, init/`supportedModels`/`supportedCommands`/`supportedAgents`) | ~16 unused; `usage` (EXPERIMENTAL) + mutation/store-mgmt methods remain |
 | Core builders (`query`, `createSdkMcpServer`, `tool`) | 3 | 3 | 100% |
-| In-process MCP servers built | — | 4 (`cc-tasks`, `cc-swarm`, `cc-brief`, `cc-context`) | `cc-context` = agent self-introspection (1 tool, `GetContextUsage`) |
+| In-process MCP servers built | — | 5 (`cc-tasks`, `cc-swarm`, `cc-brief`, `cc-context`, `cc-compact`) | `cc-context` = self-introspection (`GetContextUsage`); `cc-compact` = self-compaction (`RequestCompaction`) |
 | Native model tools | 37 | 0 reimplemented; 2 deliberately shadowed by our MCP (Task→swarm, Tasks); `CronCreate` probed dead | rely-on, not consume |
 | Subpath exports | 7 | 1 used (`.`), 2 probed-and-rejected (`/assistant`, `/bridge`), 1 types-only (`/sdk-tools`) | — |
 | Hook events (`HOOK_EVENTS`) | 30 | 0 handlers | option wired, no callbacks |
