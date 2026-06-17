@@ -38,7 +38,14 @@
 >   intact) instead of going fresh (the `supervisor.ts:248` bug). Resumes the CAPTURED id, not the spawn-time hint;
 >   fresh if none captured (graceful degradation). Link-not-swap (registry stays the operational store; the SDK
 >   owns the transcript). Spec `specs/2026-06-17-daemon-durable-sessions-design.md`, commits `42acf43..880d0a5`.
->   Live 1/1 (a daemon turn captured a real UUID; that id resumed + recalled). Spec 3 (`session-forking`) still spec'd & deferred.
+>   Live 1/1 (a daemon turn captured a real UUID; that id resumed + recalled).
+> - **Session forking** (domain 5) — `src/sessions/fork.ts` `forkSession(id, opts?)` wraps the SDK fork fn
+>   (`cwd`→`dir` + DI, mirrors `reader.ts`) + a daemon `fork` op (`supervisor.fork(id)` reads the live
+>   `Session.sessionId`, mints a fork, spawns a new session resuming it). Fork MINTS a new id (original
+>   untouched), reached via `resumeSession(forkId)` — the explicit branch, vs `resume` which preserves the id.
+>   Spec `specs/2026-06-17-session-forking-design.md`, commits `d968a1b..7abd8c4`. Live 1/1 (the branch recalled
+>   the pre-fork codeword but NOT the original's post-fork one — a true independent branch). **Completes the
+>   3-spec session cluster.**
 
 ## How to read this
 
@@ -51,11 +58,11 @@
    working harness capability (§2). This is the number that answers "considering the SDK's full
    potential, how much have we made?"
 
-**Headline:** we have realized roughly **~55% of the SDK's reachable capability envelope** — strong
+**Headline:** we have realized roughly **~57% of the SDK's reachable capability envelope** — strong
 (60–90%) on the *execution & orchestration* half (turn loop, tools, permissions, multi-agent,
 settings, autonomy). The *state & observability* half has now largely closed: **persistence** (domain 5,
-incl. the lib interactive `Session` primitive), the **observability read API**, and the **agent-facing
-context tools** (domain 6) are all built. The largest remaining near-term frontier is **hooks**
+~85% — the full session cluster: interactive `Session` primitive, durable daemon sessions, forking), the
+**observability read API**, and the **agent-facing context tools** (domain 6) are all built. The largest remaining near-term frontier is **hooks**
 (domain 8 — 0 of 30 events), verified-reachable and unbuilt.
 
 ---
@@ -80,7 +87,7 @@ capability, weighted by what is *reachable* (🚫 items excluded from the denomi
 | 2 | **Tool system** — 37 native tools (default-on), `createSdkMcpServer`+`tool()`, allow/deny/`toolAliases`, `toolConfig` | ~70% | ✅ | 3 MCP servers built (tasks/swarm/brief); gating wired; `toolConfig`/`tools` allowlist-shaping partial |
 | 3 | **Permission & safety** — 6 `permissionMode`s, `canUseTool`, `sandbox`, `allowDangerouslySkip` | ~75% | ✅ | 4/6 modes exercised (default/plan/auto/bypass-gated); `canUseTool` broker in swarm; sandbox modeled |
 | 4 | **Multi-agent** — `agents`/`AgentDefinition`, native subagents, `Agent`/`Task*` tools, coordination | ~70% | ✅ | `swarm/` coordinator + bus + teammates; native subagent transcripts (`listSubagents`) unused |
-| 5 | **Session lifecycle & persistence** — `resume`, `forkSession`, `persistSession`, `sessionStore`, `enableFileCheckpointing`+`rewindFiles` | **~78%** | ✅ built | **Spine + interactive primitive + durable daemon sessions shipped:** `resume`/`persistSession`/`sessionStore` config, `resumeHarness()`, CLI flags, daemon `spawn({resume})`, `rewindFiles`; **lib `Session` primitive** (`openSession`/`resumeSession`, multi-turn + `.sessionId` capture + `resume` preserves id); **daemon durable sessions** (`SessionRecord.sessionId` persisted on submit; on-failure `restart()` resumes the captured session, context intact). Spec'd next: Spec 3 `forkSession` branch-and-explore; deferred: surviving a full daemon-process restart (boot rehydration) |
+| 5 | **Session lifecycle & persistence** — `resume`, `forkSession`, `persistSession`, `sessionStore`, `enableFileCheckpointing`+`rewindFiles` | **~85%** | ✅ built | **Full session cluster shipped (3 of 3):** `resume`/`persistSession`/`sessionStore` config, `resumeHarness()`, CLI flags, daemon `spawn({resume})`, `rewindFiles`; **lib `Session` primitive** (`openSession`/`resumeSession`, multi-turn + `.sessionId` capture + `resume` preserves id); **daemon durable sessions** (`SessionRecord.sessionId` persisted; on-failure `restart()` resumes the captured session); **forking** (`forkSession` lib wrapper + daemon `fork` op — mints a new id, branch reached via resume). Deferred: surviving a full daemon-process restart (boot rehydration); session write/mutation ops |
 | 6 | **Introspection & observability** — `getContextUsage`, `usage`, `accountInfo`, `mcpServerStatus`, `listSessions`/`getSessionMessages`/`getSessionInfo`, `supportedModels`/`Commands`/`Agents`, `initializationResult` | **~82%** | ✅ built | **Read API + agent-facing tool shipped:** reader module (`listSessions`/`getSessionMessages`/`getSessionInfo`, `cwd`→`dir`), `Harness.getContextUsage()`/`accountInfo()`, daemon `sessions`/`messages` ops + `context_usage`/`account_info` frames; **`cc-context` `GetContextUsage` MCP tool** (model self-introspection, lib + daemon opt-in); models/commands/mcpStatus via `bridge/`. Unbuilt: `usage` (EXPERIMENTAL rate-limit data), `initializationResult` full payload |
 | 7 | **Scheduling & autonomy** — proactive self-wake, `CronCreate`, `PushNotification`, assistant worker | ~50%¹ | ✅/🚫 | `proactive/` + `kairos/` latch built; cron dead headless, push has no transport, worker bridge-coupled |
 | 8 | **Extensibility** — `plugins`, `skills`, **30 hook events**, output styles, dynamic MCP | ~40% | ✅/⚪ | plugins/skills/styles/MCP passthrough; **0 of 30 hook events** handled (largest extensibility gap) |
@@ -111,7 +118,7 @@ cross headlessly.
 | Subpath exports | 7 | 1 used (`.`), 2 probed-and-rejected (`/assistant`, `/bridge`), 1 types-only (`/sdk-tools`) | — |
 | Hook events (`HOOK_EVENTS`) | 30 | 0 handlers | option wired, no callbacks |
 | `permissionMode` values | 6 | 4 exercised | default/plan/auto/bypass(gated) |
-| Session-store top-level fns | 10 | 3 used (`listSessions`/`getSessionMessages`/`getSessionInfo` via `sessions/reader.ts`); `resume`/`persistSession`/`sessionStore` (Options) wired | unused: `forkSession` (deferred) + write/mutation fns (`renameSession`/`tagSession`/`deleteSession`, non-goal) |
+| Session-store top-level fns | 10 | 4 used (`listSessions`/`getSessionMessages`/`getSessionInfo` via `sessions/reader.ts`, `forkSession` via `sessions/fork.ts`); `resume`/`persistSession`/`sessionStore` (Options) wired | unused: write/mutation fns (`renameSession`/`tagSession`/`deleteSession`, non-goal) |
 
 ---
 
@@ -132,19 +139,18 @@ annotated with build status — **✅ shipped** (persistence spine or observabil
 | `getSessionMessages(id)` | transcript `array[3]` | **✅ shipped** (observability) — reader + daemon `messages` op |
 | `accountInfo()` | `{tokenSource, apiKeySource, apiProvider}` | **✅ shipped** (observability) — `Harness.accountInfo()` + daemon `account_info` frame |
 | `supportedModels` / `Commands` / `Agents` / `mcpServerStatus` | arrays `[6]` / `[94]` / `[15]` / `[6]` | **✅ shipped** — `bridge/` + `Harness` capability methods |
-| `forkSession(id)` | new `{sessionId}` (probe: resume PRESERVES the id, fork MINTS a new one) | **⚪ spec'd** — Spec 3 `session-forking` (branch-and-explore); deferred behind Spec 1 |
+| `forkSession(id)` | new `{sessionId}` (resume PRESERVES the id, fork MINTS a new one) | **✅ shipped** — `sessions/fork.ts` (`cwd`→`dir` wrapper) + daemon `fork` op; live-verified true independent branch (Spec 3 `session-forking`) |
 
 **Wiring lesson (verified):** `rewindFiles()`'s anchor must be a genuine **user-prompt UUID**, resolved
 from the transcript via `getSessionMessages()` — **not** from live stream frames (in streaming mode the
 `type:"user"` frames are tool-results, which carry no checkpoint and return "No file checkpoint found").
 
 **Next frontier — hooks (domain 8):** 0 of 30 `HOOK_EVENTS` are handled — the largest ready-made,
-verified-reachable, unbuilt lever. The **session cluster** is 2-of-3 built: Spec 1 (lib `Session`
-primitive) and Spec 2 (`daemon-durable-sessions` — `sessionId` on `SessionRecord`, restart resumes with
-context) are **shipped**; Spec 3 (`session-forking` — `forkSession` + daemon `fork` op) is spec'd and
-deferred to implement-later. Other deferred sub-projects: surviving a full daemon-process restart (boot
-rehydration), session write/mutation ops (`renameSession`/`tagSession`/`deleteSession`), and the
-EXPERIMENTAL `usage` surface.
+verified-reachable, unbuilt lever — and now the clear top priority, since the **session cluster is COMPLETE
+(3 of 3)**: Spec 1 (lib `Session` primitive), Spec 2 (`daemon-durable-sessions` — restart resumes with
+context), and Spec 3 (`session-forking` — `forkSession` + daemon `fork` op) are all **shipped**. Remaining
+deferred sub-projects: surviving a full daemon-process restart (boot rehydration), session write/mutation
+ops (`renameSession`/`tagSession`/`deleteSession`), and the EXPERIMENTAL `usage` (plan rate-limit) surface.
 
 ---
 
