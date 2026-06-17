@@ -92,9 +92,12 @@ headlessly with an API key**. Probe (`probe-sessionstore.mjs`, model `claude-hai
 | `getSessionMessages(id)` | transcript `array[3]` | transcript replay/inspection |
 | `InMemorySessionStore` injection (`sessionStore`) | custom store received the mirror (`size: 1`) | pluggable persistence backend (DB/S3) via the `SessionStore` POJO-mirror contract |
 | `forkSession(id)` | new `{sessionId}` | branch a conversation — speculative/parallel exploration from a checkpoint |
+| `enableFileCheckpointing` + `Query.rewindFiles(id)` | two-turn edit (VERSION_ONE→TWO) **reverted to VERSION_ONE on disk**; `dryRun` returns `{canRewind, filesChanged, insertions, deletions}` | undo/checkpoint of file edits — time-travel for autonomous runs |
 
-**Not yet probed:** `enableFileCheckpointing` + `rewindFiles()` (needs a tool-edit + user-message-id to
-exercise) — the one piece of domain 5 still unverified.
+**Wiring lesson (verified):** `rewindFiles()`'s anchor must be a genuine **user-prompt UUID**, resolved
+from the transcript via `getSessionMessages()` — **not** from live stream frames (in streaming mode the
+`type:"user"` frames are tool-results, which carry no checkpoint and return "No file checkpoint found").
+Domain 5 is now **100% verified, zero unknowns.**
 
 **What this unlocks (candidate next sub-project):** swap `daemon/registry`'s in-memory `SessionRecord`
 map for SDK-native persistence (`persistSession`/`sessionStore`), add a read-side **session/observability
