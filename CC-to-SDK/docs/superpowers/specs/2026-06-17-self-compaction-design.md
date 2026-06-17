@@ -231,7 +231,11 @@ gated suite does not re-run the nondeterministic model-driven path.
 
 ## §8 Non-goals (separate / later)
 
-- ❌ One-shot `createHarness` on-demand compaction (no input queue — impossible; lib gets config only).
+- ❌ One-shot `createHarness` on-demand compaction (no input queue — impossible; lib gets config only). On-demand
+  compaction is inherently a **multi-turn-session** capability, and the daemon's `DaemonSession` is currently the
+  harness's only multi-turn surface — hence daemon-only (decided 2026-06-17). A future **lib-level interactive
+  `Session` primitive** (extracting `DaemonSession`'s streaming core for non-daemon use) would universalize
+  on-demand compaction, the context tool, and proactive — but that is its own sub-project, deferred.
 - ❌ A `Query.compact()` control frame (no such SDK method).
 - ❌ Registering the literal SDK `Stop` hook (we use the daemon's existing `readLoop` turn-completion — same
   boundary; verified the Stop hook is available if ever preferred).
