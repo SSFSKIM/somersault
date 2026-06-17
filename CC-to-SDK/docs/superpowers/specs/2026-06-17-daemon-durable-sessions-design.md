@@ -30,6 +30,17 @@ Surviving a full daemon **process** restart (boot-time rehydration of prior sess
 scope** here (§8) — chosen 2026-06-17 ("restart-resume + persist id"). This spec makes sessions *resumable by id*;
 auto-rehydrating them on a new daemon boot is a follow-on.
 
+**Link, not swap (decided 2026-06-17).** This spec does NOT replace the daemon's `SessionRegistry` with the SDK's
+native session store — it *links* them. The two stores hold different things: the SDK store owns the **transcript**
+(`~/.claude/projects/`, already default-on — the daemon never persisted transcripts itself) and the read-side
+(`listSessions`/`getSessionMessages`, already wired as `listPersistedSessions`/`getPersistedMessages`), whereas the
+`SessionRegistry` owns **operational/liveness** state — `daemonPid`, `status` (idle/busy/errored/restarting),
+`restarts`, pool membership, the `sess-N` handle — *none of which the SDK session store models*. So a literal swap
+is impossible without losing the daemon's `ps`/reaper/restart bookkeeping. The correct move is to store the SDK
+`session_id` ON the operational record (the link) and use SDK-native resume for continuity. (Wiring a *pluggable*
+transcript backend — `sessionStore`/`persistSession` through the daemon's `makeSession`, which today bypasses
+`resolveOptions` — was considered and **declined** for this spec; default disk persistence suffices.)
+
 ## §2 Verification evidence
 
 Relies entirely on facts already probed (no new probe needed):
