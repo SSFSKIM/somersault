@@ -30,7 +30,7 @@ complement on the declared/REST layer, e.g. which models support a beta, but nev
 |---|---|---|
 | `effort: 'low'…'max'` | accepted headless; thinking block emitted even at `effort:'low'` | A passthrough |
 | `thinking: {type:'adaptive'\|'enabled',budgetTokens\|'disabled'}` | accepted (enabled + adaptive) | A passthrough |
-| `maxBudgetUsd` | generous = normal; **exceeded → subprocess exits 1, NO result frame, iterator THROWS** (`error_max_budget_usd` never emitted) | A passthrough + §6 |
+| `maxBudgetUsd` | generous = normal; **exceeded → hard stop, timing-dependent**: throws (subprocess exit 1, no result frame) when it trips mid-stream, OR resolves with an empty/cut-off result when it trips before output — the cap prevents a normal completion either way | A passthrough + §6 |
 | `taskBudget: {total}` | **model-gated**: `opus-4-8` ✅; `sonnet-4-6` + `haiku` → `400 "does not support user-configurable task budgets"` | A passthrough + §6 |
 | `includePartialMessages` | emits `SDKPartialAssistantMessage` (`type:'stream_event'`): `message_start / content_block_start / content_block_delta(text_delta) / content_block_stop / message_delta / message_stop`; **already flows through `Session.stream()`** (readLoop routes non-result frames to the consumer) | A passthrough (no engine change) |
 | `forwardSubagentText` | nested subagent messages carry `parent_tool_use_id` | A passthrough |
@@ -129,11 +129,14 @@ SDK store fn operating on `~/.claude/projects` (scoped by `dir`); daemon op → 
 
 ## §6 — Error handling (probe-driven)
 
-- **`maxBudgetUsd`-exceeded throws** `Error: Claude Code process exited with code 1` with **no result frame**.
-  We **pass it through — do not swallow or translate it.** The same string also means credit-exhausted and
-  taskBudget-400, so a translation layer would be a fragile lie; and those two emit an `is_error` result
-  *first* whereas budget-exceeded emits none — that presence/absence is the only honest discriminator, left
-  to the caller. Documented on the `maxBudgetUsd` field; the live test asserts the throw.
+- **`maxBudgetUsd`-exceeded is a hard stop, timing-dependent** (refined 2026-06-18 from the live e2e):
+  it either throws `Error: Claude Code process exited with code 1` (mid-stream subprocess exit, no result
+  frame) OR resolves with an empty/cut-off result (the graceful `error_max_budget_usd` path, when the cap
+  trips before any output — a probe of raw `query()` at 0.003/0.02 threw, but the `Session` path at 0.0001
+  resolved with `{result: undefined}`). We **pass both through — do not swallow or translate** the throw
+  (the `"exited code 1"` string is shared by credit-exhausted and taskBudget-400, so translating it would
+  be a fragile lie; those two emit an `is_error` result *first* whereas a mid-stream budget crash emits
+  none). The cap's observable contract is "no normal completion"; the live test asserts `rejected || !result`.
 - **`taskBudget` on an unsupported model** returns an `is_error:true` result (`"…does not support
   user-configurable task budgets"`), then a teardown throw. Passthrough; documented as opus-class; its live
   test pins `claude-opus-4-8`.
