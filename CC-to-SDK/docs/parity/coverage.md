@@ -46,6 +46,15 @@
 >   Spec `specs/2026-06-17-session-forking-design.md`, commits `d968a1b..7abd8c4`. Live 1/1 (the branch recalled
 >   the pre-fork codeword but NOT the original's post-fork one — a true independent branch). **Completes the
 >   3-spec session cluster.**
+> - **SDK capability closeout** (P1–P4 frontier, 2026-06-18) — three parts on existing seams: **(A) turn
+>   controls** `effort`/`thinking`/`maxBudgetUsd`/`taskBudget`/`includePartialMessages`/`forwardSubagentText`
+>   via `resolveOptions` passthrough (domain 1); **(B) introspection methods** `usage()`/`initializationResult()`
+>   on `Harness`+`Session`, `applyFlagSettings()` on `Session`, + daemon `usage`/`init`/`apply_flag_settings`
+>   ops (domains 6/9); **(C) session-store mutation** `renameSession`/`tagSession`/`deleteSession` lib wrappers
+>   + daemon `rename`/`tag`/`delete` ops (domain 5). Live-probed first (probes 11–15); `maxBudgetUsd` is
+>   pass-through-don't-swallow (exceed-path is throw OR empty result, timing-dependent); `taskBudget` opus-4-8-only;
+>   `usage()` wraps the unstable SDK method name. Spec `specs/2026-06-18-sdk-capability-closeout-design.md`,
+>   commits `83762229c6..ee389d80da` (6 tasks, subagent-driven). Unit 340/340, live 6/6 keyed.
 
 ## How to read this
 
@@ -58,14 +67,16 @@
    working harness capability (§2). This is the number that answers "considering the SDK's full
    potential, how much have we made?"
 
-**Headline:** we have realized roughly **~57% of the SDK's reachable capability envelope** — strong
+**Headline:** we have realized roughly **~63% of the SDK's reachable capability envelope** — strong
 (60–90%) on the *execution & orchestration* half (turn loop, tools, permissions, multi-agent,
-settings, autonomy). The *state & observability* half has now largely closed: **persistence** (domain 5,
-~85% — the full session cluster: interactive `Session` primitive, durable daemon sessions, forking), the
-**observability read API**, the **agent-facing context tools** (domain 6), and now **programmatic hooks**
-(domain 8 — typed `config.hooks` passthrough + builders) are all built. The remaining frontiers are more
-incremental: turn-level surfaces (partial messages, `thinking`/`effort`, budget caps) and deeper
-plugin/skill lifecycle integration.
+settings, autonomy). The *state & observability* half has now largely closed, and the **SDK capability
+closeout** (2026-06-18) pushed the last ready-made frontiers in: **turn controls** (`effort`/`thinking`/
+`maxBudgetUsd`/`taskBudget`/`includePartialMessages`/`forwardSubagentText` — domain 1 → ~85%),
+**introspection methods** (`usage()`/`initializationResult()`/`applyFlagSettings()` — domain 6 → ~88%),
+and **session-store mutation** (`rename`/`tag`/`delete` — domain 5 → ~90%) now join the persistence
+cluster, observability read API, agent-facing context tools, and programmatic hooks (domain 8) already
+built. The remaining frontiers are narrow and mostly out of reach: daemon-process boot-rehydration,
+`toolConfig` shaping, and rate-limit surfacing (`null` on API-key auth — bridge-coupled).
 
 ---
 
@@ -85,15 +96,15 @@ capability, weighted by what is *reachable* (🚫 items excluded from the denomi
 
 | # | Capability domain | Realized | State | Evidence / gap |
 |---|---|---|---|---|
-| 1 | **Turn execution & streaming** — `query()` loop, streaming I/O, partial messages, `thinking`/`effort`, `maxTurns`/`maxBudgetUsd`/`taskBudget`, compaction | ~68% | ✅ core | `daemon/session` drives `query()` via a shared `Session` engine; **multi-turn now lib-side too** (`openSession`/`Session.submit`/`stream`); **compaction built** (config `autoCompact*` all paths + on-demand `compact()` + agent-triggered `cc-compact`, now lib + daemon); partial-messages, `thinking`/`effort`, budget caps not surfaced |
+| 1 | **Turn execution & streaming** — `query()` loop, streaming I/O, partial messages, `thinking`/`effort`, `maxTurns`/`maxBudgetUsd`/`taskBudget`, compaction | **~85%** | ✅ built | `daemon/session` drives `query()` via a shared `Session` engine; **multi-turn lib-side** (`openSession`/`Session.submit`/`stream`); **compaction built**; **turn controls SHIPPED** (closeout) — `effort`/`thinking`/`maxBudgetUsd`/`taskBudget`/`includePartialMessages`/`forwardSubagentText` config passthrough (`maxBudgetUsd` exceed-path is pass-through-don't-swallow; `taskBudget` opus-4-8-only; partial frames already flow through `stream()`). Remaining: deeper partial-stream ergonomics |
 | 2 | **Tool system** — 37 native tools (default-on), `createSdkMcpServer`+`tool()`, allow/deny/`toolAliases`, `toolConfig` | ~70% | ✅ | 3 MCP servers built (tasks/swarm/brief); gating wired; `toolConfig`/`tools` allowlist-shaping partial |
-| 3 | **Permission & safety** — 6 `permissionMode`s, `canUseTool`, `sandbox`, `allowDangerouslySkip` | ~75% | ✅ | 4/6 modes exercised (default/plan/auto/bypass-gated); `canUseTool` broker in swarm; sandbox modeled |
+| 3 | **Permission & safety** — 6 `permissionMode`s, `canUseTool`, `sandbox`, `allowDangerouslySkip` | ~80% | ✅ | **6/6 modes** now characterized (default/plan/auto/bypass + `acceptEdits`/`dontAsk` added in closeout — `acceptEdits` keeps the `canUseTool` broker for non-edits, `dontAsk` replaces it); `canUseTool` broker in swarm; sandbox modeled |
 | 4 | **Multi-agent** — `agents`/`AgentDefinition`, native subagents, `Agent`/`Task*` tools, coordination | ~70% | ✅ | `swarm/` coordinator + bus + teammates; native subagent transcripts (`listSubagents`) unused |
-| 5 | **Session lifecycle & persistence** — `resume`, `forkSession`, `persistSession`, `sessionStore`, `enableFileCheckpointing`+`rewindFiles` | **~85%** | ✅ built | **Full session cluster shipped (3 of 3):** `resume`/`persistSession`/`sessionStore` config, `resumeHarness()`, CLI flags, daemon `spawn({resume})`, `rewindFiles`; **lib `Session` primitive** (`openSession`/`resumeSession`, multi-turn + `.sessionId` capture + `resume` preserves id); **daemon durable sessions** (`SessionRecord.sessionId` persisted; on-failure `restart()` resumes the captured session); **forking** (`forkSession` lib wrapper + daemon `fork` op — mints a new id, branch reached via resume). Deferred: surviving a full daemon-process restart (boot rehydration); session write/mutation ops |
-| 6 | **Introspection & observability** — `getContextUsage`, `usage`, `accountInfo`, `mcpServerStatus`, `listSessions`/`getSessionMessages`/`getSessionInfo`, `supportedModels`/`Commands`/`Agents`, `initializationResult` | **~82%** | ✅ built | **Read API + agent-facing tool shipped:** reader module (`listSessions`/`getSessionMessages`/`getSessionInfo`, `cwd`→`dir`), `Harness.getContextUsage()`/`accountInfo()`, daemon `sessions`/`messages` ops + `context_usage`/`account_info` frames; **`cc-context` `GetContextUsage` MCP tool** (model self-introspection, lib + daemon opt-in); models/commands/mcpStatus via `bridge/`. Unbuilt: `usage` (EXPERIMENTAL rate-limit data), `initializationResult` full payload |
+| 5 | **Session lifecycle & persistence** — `resume`, `forkSession`, `persistSession`, `sessionStore`, `enableFileCheckpointing`+`rewindFiles` | **~90%** | ✅ built | **Full session cluster shipped (3 of 3):** `resume`/`persistSession`/`sessionStore` config, `resumeHarness()`, CLI flags, daemon `spawn({resume})`, `rewindFiles`; **lib `Session` primitive** (`openSession`/`resumeSession`, multi-turn + `.sessionId` capture + `resume` preserves id); **daemon durable sessions** (`SessionRecord.sessionId` persisted; on-failure `restart()` resumes the captured session); **forking** (`forkSession` lib wrapper + daemon `fork` op — mints a new id, branch reached via resume); **session-store mutation SHIPPED** (closeout) — `renameSession`/`tagSession`/`deleteSession` lib wrappers (mirror `fork.ts`) + daemon `rename`/`tag`/`delete` ops, live-verified CRUD on the default file store. Deferred: surviving a full daemon-process restart (boot rehydration) |
+| 6 | **Introspection & observability** — `getContextUsage`, `usage`, `accountInfo`, `mcpServerStatus`, `listSessions`/`getSessionMessages`/`getSessionInfo`, `supportedModels`/`Commands`/`Agents`, `initializationResult` | **~88%** | ✅ built | **Read API + agent-facing tool + introspection methods shipped:** reader module, `Harness.getContextUsage()`/`accountInfo()`, daemon `sessions`/`messages`/`context_usage`/`account_info`; **`cc-context` MCP tool**; **closeout added** `usage()`/`initializationResult()`/`applyFlagSettings()` on `Harness`+`Session` + daemon `usage`/`init`/`apply_flag_settings` ops (live-verified; `usage()` wraps the unstable SDK method name). Remaining: `usage().rate_limits` is `null` on API-key auth (only populated on claude.ai plan auth — bridge-coupled) |
 | 7 | **Scheduling & autonomy** — proactive self-wake, `CronCreate`, `PushNotification`, assistant worker | ~50%¹ | ✅/🚫 | `proactive/` + `kairos/` latch built; cron dead headless, push has no transport, worker bridge-coupled |
 | 8 | **Extensibility** — `plugins`, `skills`, **30 hook events**, output styles, dynamic MCP | **~60%** | ✅ | plugins/skills/styles/MCP passthrough; **programmatic hooks shipped** — typed `config.hooks` → `options.hooks` (all 30 reachable), `injectContext`/`guardTool`/`blockTool`/`observe` builders + `mergeHooks` for the live-verified subset (8 of 30 fire headlessly; `SessionStart`/`SessionEnd` dormant via the programmatic path — documented, no builder), daemon path via `sessionOptions`. Deeper plugin/skill lifecycle integration remains |
-| 9 | **Settings & config** — `settingSources` cascade, `settings`/`managedSettings`, provider/env, sandbox | ~90% | ✅ | fully modeled in `config/`; `applyFlagSettings` (mid-session merge) unused |
+| 9 | **Settings & config** — `settingSources` cascade, `settings`/`managedSettings`, provider/env, sandbox | ~92% | ✅ | fully modeled in `config/`; **`applyFlagSettings` (mid-session merge) now wired** (closeout — `Session.applyFlagSettings()` + daemon `apply_flag_settings` op, streaming-input only) |
 | 10 | **Remote / bridge / voice / UI** — `connectRemoteControl`, remote server, voice, Ink TUI | ~10%¹ | ✅/🚫 | `bridge/` control-protocol shim built; remote/voice/UI are Phase-3, mostly 🚫/non-goal **by design** |
 
 ¹ Of the *reachable* sub-surface — much of domains 7 and 10 is 🚫 unreachable (bridge-coupled), so the
@@ -114,15 +125,15 @@ passthrough). The remaining ready-made levers are incremental — turn-level sur
 
 | SDK surface | Size | We use | Note |
 |---|---|---|---|
-| `Options` fields | 63 | ~29 modeled in `resolveOptions` (now incl. `resume`/`persistSession`/`sessionStore`) + `extraOptions` escape hatch | passthrough makes all 63 *reachable* |
-| `Query` control methods | ~25 | 9 (`interrupt`, `setModel`, `setPermissionMode`, `setMaxThinkingTokens`, `rewindFiles`, `getContextUsage`, `accountInfo`, init/`supportedModels`/`supportedCommands`/`supportedAgents`) | ~16 unused; `usage` (EXPERIMENTAL) + mutation/store-mgmt methods remain |
+| `Options` fields | 63 | ~35 modeled in `resolveOptions` (now incl. `resume`/`persistSession`/`sessionStore` + turn controls `effort`/`thinking`/`maxBudgetUsd`/`taskBudget`/`includePartialMessages`/`forwardSubagentText`) + `extraOptions` escape hatch | passthrough makes all 63 *reachable* |
+| `Query` control methods | ~25 | 12 (`interrupt`, `setModel`, `setPermissionMode`, `setMaxThinkingTokens`, `rewindFiles`, `getContextUsage`, `accountInfo`, **`usage`**, **`initializationResult`**, **`applyFlagSettings`**, `supportedModels`/`Commands`/`Agents`) | ~13 unused; `usage().rate_limits` is `null` on API-key auth (bridge-coupled) |
 | Core builders (`query`, `createSdkMcpServer`, `tool`) | 3 | 3 | 100% |
 | In-process MCP servers built | — | 5 (`cc-tasks`, `cc-swarm`, `cc-brief`, `cc-context`, `cc-compact`) | `cc-context` = self-introspection (`GetContextUsage`); `cc-compact` = self-compaction (`RequestCompaction`) |
 | Native model tools | 37 | 0 reimplemented; 2 deliberately shadowed by our MCP (Task→swarm, Tasks); `CronCreate` probed dead | rely-on, not consume |
 | Subpath exports | 7 | 1 used (`.`), 2 probed-and-rejected (`/assistant`, `/bridge`), 1 types-only (`/sdk-tools`) | — |
 | Hook events (`HOOK_EVENTS`) | 30 | first-class `config.hooks` + 4 builders + `mergeHooks` | 8 verified-fired headlessly; all 30 reachable via passthrough; SessionStart/End dormant (documented) |
-| `permissionMode` values | 6 | 4 exercised | default/plan/auto/bypass(gated) |
-| Session-store top-level fns | 10 | 4 used (`listSessions`/`getSessionMessages`/`getSessionInfo` via `sessions/reader.ts`, `forkSession` via `sessions/fork.ts`); `resume`/`persistSession`/`sessionStore` (Options) wired | unused: write/mutation fns (`renameSession`/`tagSession`/`deleteSession`, non-goal) |
+| `permissionMode` values | 6 | **6 characterized** | default/plan/auto/bypass(gated) + `acceptEdits`/`dontAsk` (closeout) |
+| Session-store top-level fns | 10 | **7 used** (`listSessions`/`getSessionMessages`/`getSessionInfo` via `sessions/reader.ts`, `forkSession` via `sessions/fork.ts`, **`renameSession`/`tagSession`/`deleteSession` via `sessions/mutate.ts`**); `resume`/`persistSession`/`sessionStore` (Options) wired | all documented store fns now wrapped |
 
 ---
 
@@ -156,14 +167,24 @@ via the existing `sessionOptions` factory (no daemon code change). Live-probed f
 `10`): **8 of 30 events fire headlessly** (PreToolUse/PostToolUse/PostToolBatch/UserPromptSubmit/Stop/
 SubagentStart/SubagentStop/MessageDisplay); context-injection + tool-block + subagent-attribution all
 verified; `SessionStart`/`SessionEnd` dormant via the programmatic path (documented, no builder). Unit
-+15 (328 total¹), live 2/2 keyed. The **session cluster is also COMPLETE (3 of 3)**.
++15 (328 total), live 2/2 keyed. The **session cluster is also COMPLETE (3 of 3)**.
 
-**Remaining frontiers** (incremental, ready-made): turn-level surfaces (partial messages, `thinking`/`effort`,
-budget caps) in domain 1; the EXPERIMENTAL `usage` (plan rate-limit) + full `initializationResult` in
-domain 6; deeper plugin/skill lifecycle integration in domain 8; and the deferred session sub-projects
-(daemon-process-restart boot rehydration, session write/mutation ops `renameSession`/`tagSession`/`deleteSession`).
+**SDK capability closeout (domains 1/3/5/6/9) — SHIPPED** (`sdk-capability-closeout`, 2026-06-18): the P1–P4
+turn-level + introspection + session-mutation frontiers, all live-probed first (probes 11–15) then built on
+existing seams: **(A)** `effort`/`thinking`/`maxBudgetUsd`/`taskBudget`/`includePartialMessages`/
+`forwardSubagentText` config passthrough; **(B)** `usage()`/`initializationResult()` on `Harness`+`Session`,
+`applyFlagSettings()` on `Session`, + daemon `usage`/`init`/`apply_flag_settings` ops; **(C)** `renameSession`/
+`tagSession`/`deleteSession` wrappers + daemon `rename`/`tag`/`delete` ops; plus the `acceptEdits`/`dontAsk`
+permission modes characterized. `maxBudgetUsd` exceed-path is pass-through-don't-swallow (throw OR empty
+result, timing-dependent); `taskBudget` opus-4-8-only. Commits `83762229c6..ee389d80da` (6 tasks). Unit
+340/340¹, live 6/6 keyed. See [[sdk-turn-controls-and-store-mutation-verified]].
 
-¹ unit suite count at hooks completion; verify with `npx vitest run test/unit` as the suite grows.
+**Remaining frontiers** (now narrow): deeper partial-stream ergonomics in domain 1; deeper plugin/skill
+lifecycle integration in domain 8; and the deferred **daemon-process-restart boot rehydration** (the one
+remaining non-knob session item — needs its own heavier spec). Mostly-out-of-reach: `toolConfig` shaping
+(marginal) and `usage().rate_limits`/`SDKRateLimitEvent` surfacing (`null` on API-key auth — bridge-coupled).
+
+¹ unit suite count at closeout completion; verify with `npx vitest run test/unit` as the suite grows.
 
 ---
 
