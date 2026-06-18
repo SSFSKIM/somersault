@@ -55,6 +55,15 @@
 >   pass-through-don't-swallow (exceed-path is throw OR empty result, timing-dependent); `taskBudget` opus-4-8-only;
 >   `usage()` wraps the unstable SDK method name. Spec `specs/2026-06-18-sdk-capability-closeout-design.md`,
 >   commits `83762229c6..ee389d80da` (6 tasks, subagent-driven). Unit 340/340, live 6/6 keyed.
+> - **Daemon boot-rehydration** (domain 5, 2026-06-18) — the last non-knob session item: a restarted daemon
+>   transparently re-adopts the sessions it owned instead of reaping them. Lazy + opt-in: `SessionRegistry.rehydrate(pid)`
+>   claims orphaned-resumable records (reaps errored/no-sessionId, leaves live-pid alone) and the `restart` policy is
+>   now persisted on `SessionRecord`; `DaemonSupervisor` gains a `rehydrate` flag + an `ensureLive(id)` seam that
+>   revives a claimed session on first access (resumes the captured `sessionId` — continue, not branch) — **no subprocess
+>   at boot, no new daemon op, `server.ts` untouched.** Graceful `stop`/`shutdown` forget unrevived claims (only a crash
+>   rehydrates). Premise live-verified (probe 16, cross-process resume). Spec `specs/2026-06-18-daemon-boot-rehydration-design.md`,
+>   commits `8931bf97f8..5bb3339bbf` (4 tasks, subagent-driven). Unit 348/348, live 1/1 keyed. **The session cluster +
+>   its durability story are now complete.**
 
 ## How to read this
 
@@ -67,16 +76,18 @@
    working harness capability (§2). This is the number that answers "considering the SDK's full
    potential, how much have we made?"
 
-**Headline:** we have realized roughly **~63% of the SDK's reachable capability envelope** — strong
+**Headline:** we have realized roughly **~64% of the SDK's reachable capability envelope** — strong
 (60–90%) on the *execution & orchestration* half (turn loop, tools, permissions, multi-agent,
 settings, autonomy). The *state & observability* half has now largely closed, and the **SDK capability
 closeout** (2026-06-18) pushed the last ready-made frontiers in: **turn controls** (`effort`/`thinking`/
 `maxBudgetUsd`/`taskBudget`/`includePartialMessages`/`forwardSubagentText` — domain 1 → ~85%),
 **introspection methods** (`usage()`/`initializationResult()`/`applyFlagSettings()` — domain 6 → ~88%),
-and **session-store mutation** (`rename`/`tag`/`delete` — domain 5 → ~90%) now join the persistence
+and **session-store mutation** (`rename`/`tag`/`delete`) now join the persistence
 cluster, observability read API, agent-facing context tools, and programmatic hooks (domain 8) already
-built. The remaining frontiers are narrow and mostly out of reach: daemon-process boot-rehydration,
-`toolConfig` shaping, and rate-limit surfacing (`null` on API-key auth — bridge-coupled).
+built. **Daemon-process boot-rehydration** (2026-06-18) then closed the last non-knob session item — a
+restarted daemon re-adopts its sessions and resumes their context on first access (domain 5 → ~93%). The
+remaining frontiers are narrow and mostly out of reach: `toolConfig` shaping, and rate-limit surfacing
+(`null` on API-key auth — bridge-coupled).
 
 ---
 
@@ -100,7 +111,7 @@ capability, weighted by what is *reachable* (🚫 items excluded from the denomi
 | 2 | **Tool system** — 37 native tools (default-on), `createSdkMcpServer`+`tool()`, allow/deny/`toolAliases`, `toolConfig` | ~70% | ✅ | 3 MCP servers built (tasks/swarm/brief); gating wired; `toolConfig`/`tools` allowlist-shaping partial |
 | 3 | **Permission & safety** — 6 `permissionMode`s, `canUseTool`, `sandbox`, `allowDangerouslySkip` | ~80% | ✅ | **6/6 modes** now characterized (default/plan/auto/bypass + `acceptEdits`/`dontAsk` added in closeout — `acceptEdits` keeps the `canUseTool` broker for non-edits, `dontAsk` replaces it); `canUseTool` broker in swarm; sandbox modeled |
 | 4 | **Multi-agent** — `agents`/`AgentDefinition`, native subagents, `Agent`/`Task*` tools, coordination | ~70% | ✅ | `swarm/` coordinator + bus + teammates; native subagent transcripts (`listSubagents`) unused |
-| 5 | **Session lifecycle & persistence** — `resume`, `forkSession`, `persistSession`, `sessionStore`, `enableFileCheckpointing`+`rewindFiles` | **~90%** | ✅ built | **Full session cluster shipped (3 of 3):** `resume`/`persistSession`/`sessionStore` config, `resumeHarness()`, CLI flags, daemon `spawn({resume})`, `rewindFiles`; **lib `Session` primitive** (`openSession`/`resumeSession`, multi-turn + `.sessionId` capture + `resume` preserves id); **daemon durable sessions** (`SessionRecord.sessionId` persisted; on-failure `restart()` resumes the captured session); **forking** (`forkSession` lib wrapper + daemon `fork` op — mints a new id, branch reached via resume); **session-store mutation SHIPPED** (closeout) — `renameSession`/`tagSession`/`deleteSession` lib wrappers (mirror `fork.ts`) + daemon `rename`/`tag`/`delete` ops, live-verified CRUD on the default file store. Deferred: surviving a full daemon-process restart (boot rehydration) |
+| 5 | **Session lifecycle & persistence** — `resume`, `forkSession`, `persistSession`, `sessionStore`, `enableFileCheckpointing`+`rewindFiles` | **~93%** | ✅ built | **Full session cluster shipped (3 of 3):** `resume`/`persistSession`/`sessionStore` config, `resumeHarness()`, CLI flags, daemon `spawn({resume})`, `rewindFiles`; **lib `Session` primitive** (`openSession`/`resumeSession`, multi-turn + `.sessionId` capture + `resume` preserves id); **daemon durable sessions** (`SessionRecord.sessionId` persisted; on-failure `restart()` resumes the captured session); **forking** (`forkSession` lib wrapper + daemon `fork` op — mints a new id, branch reached via resume); **session-store mutation SHIPPED** (closeout) — `renameSession`/`tagSession`/`deleteSession` lib wrappers (mirror `fork.ts`) + daemon `rename`/`tag`/`delete` ops, live-verified CRUD on the default file store; **boot-rehydration SHIPPED** (`daemon-boot-rehydration`, 2026-06-18) — lazy opt-in: a restarted daemon re-adopts orphaned `SessionRecord`s (`SessionRegistry.rehydrate` claims/reaps; `restart` policy now persisted) and revives each on first access via the `ensureLive` seam (`DaemonOptions.rehydrate`, no subprocess at boot / no new daemon op), live-verified cross-instance resume |
 | 6 | **Introspection & observability** — `getContextUsage`, `usage`, `accountInfo`, `mcpServerStatus`, `listSessions`/`getSessionMessages`/`getSessionInfo`, `supportedModels`/`Commands`/`Agents`, `initializationResult` | **~88%** | ✅ built | **Read API + agent-facing tool + introspection methods shipped:** reader module, `Harness.getContextUsage()`/`accountInfo()`, daemon `sessions`/`messages`/`context_usage`/`account_info`; **`cc-context` MCP tool**; **closeout added** `usage()`/`initializationResult()`/`applyFlagSettings()` on `Harness`+`Session` + daemon `usage`/`init`/`apply_flag_settings` ops (live-verified; `usage()` wraps the unstable SDK method name). Remaining: `usage().rate_limits` is `null` on API-key auth (only populated on claude.ai plan auth — bridge-coupled) |
 | 7 | **Scheduling & autonomy** — proactive self-wake, `CronCreate`, `PushNotification`, assistant worker | ~50%¹ | ✅/🚫 | `proactive/` + `kairos/` latch built; cron dead headless, push has no transport, worker bridge-coupled |
 | 8 | **Extensibility** — `plugins`, `skills`, **30 hook events**, output styles, dynamic MCP | **~60%** | ✅ | plugins/skills/styles/MCP passthrough; **programmatic hooks shipped** — typed `config.hooks` → `options.hooks` (all 30 reachable), `injectContext`/`guardTool`/`blockTool`/`observe` builders + `mergeHooks` for the live-verified subset (8 of 30 fire headlessly; `SessionStart`/`SessionEnd` dormant via the programmatic path — documented, no builder), daemon path via `sessionOptions`. Deeper plugin/skill lifecycle integration remains |
@@ -179,10 +190,19 @@ permission modes characterized. `maxBudgetUsd` exceed-path is pass-through-don't
 result, timing-dependent); `taskBudget` opus-4-8-only. Commits `83762229c6..ee389d80da` (6 tasks). Unit
 340/340¹, live 6/6 keyed. See [[sdk-turn-controls-and-store-mutation-verified]].
 
+**Daemon boot-rehydration (domain 5) — SHIPPED** (`daemon-boot-rehydration`, 2026-06-18): lazy, opt-in — a
+restarted daemon re-adopts orphaned `SessionRecord`s instead of reaping them. `SessionRegistry.rehydrate(pid)`
+claims orphaned-resumable records (normalize→idle, reap errored/no-sessionId, leave live-pid alone); the
+`restart` policy is now persisted on the record; `DaemonSupervisor` gains a `rehydrate` flag + an `ensureLive(id)`
+seam that revives a claimed session on first access (resumes the captured `sessionId` — continue, not branch) —
+**no subprocess at boot, no new daemon op, `server.ts` untouched.** Graceful `stop`/`shutdown` forget unrevived
+claims (only a crash rehydrates). Premise live-verified by probe 16 (cross-process resume, `db4e30bc23`). Commits
+`8931bf97f8..5bb3339bbf` (4 tasks, subagent-driven; one review-fix: shutdown clears unrevived claims). Unit
+348/348, live 1/1 keyed. See [[harden-and-ship-over-phase3]].
+
 **Remaining frontiers** (now narrow): deeper partial-stream ergonomics in domain 1; deeper plugin/skill
-lifecycle integration in domain 8; and the deferred **daemon-process-restart boot rehydration** (the one
-remaining non-knob session item — needs its own heavier spec). Mostly-out-of-reach: `toolConfig` shaping
-(marginal) and `usage().rate_limits`/`SDKRateLimitEvent` surfacing (`null` on API-key auth — bridge-coupled).
+lifecycle integration in domain 8. Mostly-out-of-reach: `toolConfig` shaping (marginal) and
+`usage().rate_limits`/`SDKRateLimitEvent` surfacing (`null` on API-key auth — bridge-coupled).
 
 ¹ unit suite count at closeout completion; verify with `npx vitest run test/unit` as the suite grows.
 
