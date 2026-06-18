@@ -62,8 +62,10 @@
 (60–90%) on the *execution & orchestration* half (turn loop, tools, permissions, multi-agent,
 settings, autonomy). The *state & observability* half has now largely closed: **persistence** (domain 5,
 ~85% — the full session cluster: interactive `Session` primitive, durable daemon sessions, forking), the
-**observability read API**, and the **agent-facing context tools** (domain 6) are all built. The largest remaining near-term frontier is **hooks**
-(domain 8 — 0 of 30 events), verified-reachable and unbuilt.
+**observability read API**, the **agent-facing context tools** (domain 6), and now **programmatic hooks**
+(domain 8 — typed `config.hooks` passthrough + builders) are all built. The remaining frontiers are more
+incremental: turn-level surfaces (partial messages, `thinking`/`effort`, budget caps) and deeper
+plugin/skill lifecycle integration.
 
 ---
 
@@ -90,7 +92,7 @@ capability, weighted by what is *reachable* (🚫 items excluded from the denomi
 | 5 | **Session lifecycle & persistence** — `resume`, `forkSession`, `persistSession`, `sessionStore`, `enableFileCheckpointing`+`rewindFiles` | **~85%** | ✅ built | **Full session cluster shipped (3 of 3):** `resume`/`persistSession`/`sessionStore` config, `resumeHarness()`, CLI flags, daemon `spawn({resume})`, `rewindFiles`; **lib `Session` primitive** (`openSession`/`resumeSession`, multi-turn + `.sessionId` capture + `resume` preserves id); **daemon durable sessions** (`SessionRecord.sessionId` persisted; on-failure `restart()` resumes the captured session); **forking** (`forkSession` lib wrapper + daemon `fork` op — mints a new id, branch reached via resume). Deferred: surviving a full daemon-process restart (boot rehydration); session write/mutation ops |
 | 6 | **Introspection & observability** — `getContextUsage`, `usage`, `accountInfo`, `mcpServerStatus`, `listSessions`/`getSessionMessages`/`getSessionInfo`, `supportedModels`/`Commands`/`Agents`, `initializationResult` | **~82%** | ✅ built | **Read API + agent-facing tool shipped:** reader module (`listSessions`/`getSessionMessages`/`getSessionInfo`, `cwd`→`dir`), `Harness.getContextUsage()`/`accountInfo()`, daemon `sessions`/`messages` ops + `context_usage`/`account_info` frames; **`cc-context` `GetContextUsage` MCP tool** (model self-introspection, lib + daemon opt-in); models/commands/mcpStatus via `bridge/`. Unbuilt: `usage` (EXPERIMENTAL rate-limit data), `initializationResult` full payload |
 | 7 | **Scheduling & autonomy** — proactive self-wake, `CronCreate`, `PushNotification`, assistant worker | ~50%¹ | ✅/🚫 | `proactive/` + `kairos/` latch built; cron dead headless, push has no transport, worker bridge-coupled |
-| 8 | **Extensibility** — `plugins`, `skills`, **30 hook events**, output styles, dynamic MCP | ~40% | ✅/⚪ | plugins/skills/styles/MCP passthrough; **0 of 30 hook events** handled (largest extensibility gap) |
+| 8 | **Extensibility** — `plugins`, `skills`, **30 hook events**, output styles, dynamic MCP | **~60%** | ✅ | plugins/skills/styles/MCP passthrough; **programmatic hooks shipped** — typed `config.hooks` → `options.hooks` (all 30 reachable), `injectContext`/`guardTool`/`blockTool`/`observe` builders + `mergeHooks` for the live-verified subset (8 of 30 fire headlessly; `SessionStart`/`SessionEnd` dormant via the programmatic path — documented, no builder), daemon path via `sessionOptions`. Deeper plugin/skill lifecycle integration remains |
 | 9 | **Settings & config** — `settingSources` cascade, `settings`/`managedSettings`, provider/env, sandbox | ~90% | ✅ | fully modeled in `config/`; `applyFlagSettings` (mid-session merge) unused |
 | 10 | **Remote / bridge / voice / UI** — `connectRemoteControl`, remote server, voice, Ink TUI | ~10%¹ | ✅/🚫 | `bridge/` control-protocol shim built; remote/voice/UI are Phase-3, mostly 🚫/non-goal **by design** |
 
@@ -100,9 +102,11 @@ low number is a design boundary, not a shortfall.
 **Reading the shape:** domains 1–4 + 9 (execution, tools, permissions, multi-agent, config) are the
 orchestration substrate — the part the SDK does *not* hand you — and they sit at 60–90%. Domains 5
 (persistence — now incl. the lib interactive `Session` primitive) and 6 (observability) have joined them
-with the spine + read API + the interactive session surface. **Domain 8 (hooks, 0 of 30 events) is the
-largest remaining ready-made-but-unbuilt lever.** Domains 7, 10 are capped by bridge-coupling we cannot
-cross headlessly.
+with the spine + read API + the interactive session surface. **Domain 8 (hooks) now ships first-class
+programmatic hooks** (`config.hooks` + builders; 8 of 30 events verified-fired, all 30 reachable via
+passthrough). The remaining ready-made levers are incremental — turn-level surfaces (partial messages,
+`thinking`/`effort`, budget caps) in domain 1 and `usage`/`initializationResult` in domain 6. Domains 7,
+10 are capped by bridge-coupling we cannot cross headlessly.
 
 ---
 
@@ -116,7 +120,7 @@ cross headlessly.
 | In-process MCP servers built | — | 5 (`cc-tasks`, `cc-swarm`, `cc-brief`, `cc-context`, `cc-compact`) | `cc-context` = self-introspection (`GetContextUsage`); `cc-compact` = self-compaction (`RequestCompaction`) |
 | Native model tools | 37 | 0 reimplemented; 2 deliberately shadowed by our MCP (Task→swarm, Tasks); `CronCreate` probed dead | rely-on, not consume |
 | Subpath exports | 7 | 1 used (`.`), 2 probed-and-rejected (`/assistant`, `/bridge`), 1 types-only (`/sdk-tools`) | — |
-| Hook events (`HOOK_EVENTS`) | 30 | 0 handlers | option wired, no callbacks |
+| Hook events (`HOOK_EVENTS`) | 30 | first-class `config.hooks` + 4 builders + `mergeHooks` | 8 verified-fired headlessly; all 30 reachable via passthrough; SessionStart/End dormant (documented) |
 | `permissionMode` values | 6 | 4 exercised | default/plan/auto/bypass(gated) |
 | Session-store top-level fns | 10 | 4 used (`listSessions`/`getSessionMessages`/`getSessionInfo` via `sessions/reader.ts`, `forkSession` via `sessions/fork.ts`); `resume`/`persistSession`/`sessionStore` (Options) wired | unused: write/mutation fns (`renameSession`/`tagSession`/`deleteSession`, non-goal) |
 
@@ -145,12 +149,21 @@ annotated with build status — **✅ shipped** (persistence spine or observabil
 from the transcript via `getSessionMessages()` — **not** from live stream frames (in streaming mode the
 `type:"user"` frames are tool-results, which carry no checkpoint and return "No file checkpoint found").
 
-**Next frontier — hooks (domain 8):** 0 of 30 `HOOK_EVENTS` are handled — the largest ready-made,
-verified-reachable, unbuilt lever — and now the clear top priority, since the **session cluster is COMPLETE
-(3 of 3)**: Spec 1 (lib `Session` primitive), Spec 2 (`daemon-durable-sessions` — restart resumes with
-context), and Spec 3 (`session-forking` — `forkSession` + daemon `fork` op) are all **shipped**. Remaining
-deferred sub-projects: surviving a full daemon-process restart (boot rehydration), session write/mutation
-ops (`renameSession`/`tagSession`/`deleteSession`), and the EXPERIMENTAL `usage` (plan rate-limit) surface.
+**Hooks (domain 8) — SHIPPED** (`hooks-support`, 2026-06-18): first-class programmatic hooks — typed
+`config.hooks` → `options.hooks` passthrough (all 30 `HOOK_EVENTS` reachable), the `injectContext` /
+`guardTool` / `blockTool` / `observe` builders + `mergeHooks`, public type re-exports, and the daemon path
+via the existing `sessionOptions` factory (no daemon code change). Live-probed first (`probes/probes/09-hooks-coverage.ts`,
+`10`): **8 of 30 events fire headlessly** (PreToolUse/PostToolUse/PostToolBatch/UserPromptSubmit/Stop/
+SubagentStart/SubagentStop/MessageDisplay); context-injection + tool-block + subagent-attribution all
+verified; `SessionStart`/`SessionEnd` dormant via the programmatic path (documented, no builder). Unit
++15 (328 total¹), live 2/2 keyed. The **session cluster is also COMPLETE (3 of 3)**.
+
+**Remaining frontiers** (incremental, ready-made): turn-level surfaces (partial messages, `thinking`/`effort`,
+budget caps) in domain 1; the EXPERIMENTAL `usage` (plan rate-limit) + full `initializationResult` in
+domain 6; deeper plugin/skill lifecycle integration in domain 8; and the deferred session sub-projects
+(daemon-process-restart boot rehydration, session write/mutation ops `renameSession`/`tagSession`/`deleteSession`).
+
+¹ unit suite count at hooks completion; verify with `npx vitest run test/unit` as the suite grows.
 
 ---
 
