@@ -64,6 +64,13 @@
 >   rehydrates). Premise live-verified (probe 16, cross-process resume). Spec `specs/2026-06-18-daemon-boot-rehydration-design.md`,
 >   commits `8931bf97f8..5bb3339bbf` (4 tasks, subagent-driven). Unit 348/348, live 1/1 keyed. **The session cluster +
 >   its durability story are now complete.**
+> - **Public-API hardening** (harden-and-ship sub-project 2, 2026-06-18) — a packaging/quality milestone (no new
+>   SDK capability, so no domain-% change): the public boundary of `src/index.ts` is now **curated** (5 plumbing
+>   exports pruned), **validated** (zod `HarnessConfigError` fail-fast guard at every front door, matching — not
+>   exceeding — the SDK), **leak-free** (teardown-liveness sweep across Session/harness/daemon/swarm — all surfaces
+>   already correct, invariants now locked), and **frozen** (44-name surface snapshot + `harness/API-STABILITY.md`
+>   tiers). Keyless (no live test). Commits `f9aab5ac00..12e74819b1` (6 tasks). Unit 366/366. The harness is now
+>   publish-ready (still `private:true`). See memory `harden-and-ship-over-phase3`.
 
 ## How to read this
 
