@@ -1,0 +1,35 @@
+import { describe, it, expect } from "vitest";
+import { renderMessage } from "../src/render.js";
+
+const asst = (content: unknown[]) => ({ type: "assistant", message: { content } });
+
+describe("renderMessage", () => {
+  it("renders assistant text verbatim, one line per newline", () => {
+    expect(renderMessage(asst([{ type: "text", text: "hello\nworld" }]))).toEqual([{ text: "hello" }, { text: "world" }]);
+  });
+  it("renders thinking dimmed", () => {
+    expect(renderMessage(asst([{ type: "thinking", thinking: "hmm" }]))).toEqual([{ text: "hmm", dim: true }]);
+  });
+  it("renders Edit as a colored diff", () => {
+    const out = renderMessage(asst([{ type: "tool_use", name: "Edit", input: { file_path: "f.ts", old_string: "a", new_string: "b" } }]));
+    expect(out[0]).toEqual({ text: "⚙ Edit f.ts" });
+    expect(out).toContainEqual({ text: "  - a", color: "red" });
+    expect(out).toContainEqual({ text: "  + b", color: "green" });
+  });
+  it("renders Bash as a command marker", () => {
+    expect(renderMessage(asst([{ type: "tool_use", name: "Bash", input: { command: "echo hi" } }]))).toEqual([{ text: "⚙ Bash echo hi" }]);
+  });
+  it("renders Read as a file ref", () => {
+    expect(renderMessage(asst([{ type: "tool_use", name: "Read", input: { file_path: "x.ts" } }]))).toEqual([{ text: "⚙ Read x.ts" }]);
+  });
+  it("renders an unknown tool with the generic fallback", () => {
+    expect(renderMessage(asst([{ type: "tool_use", name: "Grep", input: { pattern: "foo" } }]))).toEqual([{ text: "⚙ Grep(foo)" }]);
+  });
+  it("renders a tool_result as dimmed indented output", () => {
+    const m = { type: "user", message: { content: [{ type: "tool_result", content: "line1\nline2" }] } };
+    expect(renderMessage(m)).toEqual([{ text: "  │ line1", dim: true }, { text: "  │ line2", dim: true }]);
+  });
+  it("ignores result/system messages", () => {
+    expect(renderMessage({ type: "result", result: "ok" })).toEqual([]);
+  });
+});

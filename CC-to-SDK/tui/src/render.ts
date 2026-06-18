@@ -1,0 +1,53 @@
+// tui/src/render.ts — pure, UI-agnostic rich formatter: one SDK message → renderable lines (data, not ink).
+export interface RenderLine { text: string; color?: string; dim?: boolean; }
+
+const trunc = (s: string, n = 48) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+const firstArg = (input: Record<string, unknown>): string => {
+  const v = Object.values(input ?? {})[0];
+  return v === undefined ? "" : trunc(typeof v === "string" ? v : JSON.stringify(v));
+};
+const path = (input: Record<string, unknown>) => String(input.file_path ?? input.path ?? "");
+
+function toolUseLines(name: string, input: Record<string, unknown>): RenderLine[] {
+  if (name === "Edit") {
+    const out: RenderLine[] = [{ text: `⚙ Edit ${path(input)}` }];
+    if (typeof input.old_string === "string") for (const l of input.old_string.split("\n")) out.push({ text: `  - ${l}`, color: "red" });
+    if (typeof input.new_string === "string") for (const l of input.new_string.split("\n")) out.push({ text: `  + ${l}`, color: "green" });
+    return out;
+  }
+  if (name === "Write") {
+    const out: RenderLine[] = [{ text: `⚙ Write ${path(input)}` }];
+    if (typeof input.content === "string") for (const l of input.content.split("\n")) out.push({ text: `  + ${l}`, color: "green" });
+    return out;
+  }
+  if (name === "Bash") return [{ text: `⚙ Bash ${trunc(String(input.command ?? ""), 80)}` }];
+  if (name === "Read") return [{ text: `⚙ Read ${path(input)}` }];
+  return [{ text: `⚙ ${name}(${firstArg(input)})` }];
+}
+
+function resultLines(content: unknown): RenderLine[] {
+  const text = typeof content === "string" ? content
+    : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === "string" ? b.text : "")).join("") : "";
+  if (!text.trim()) return [];
+  return text.split("\n").slice(0, 12).map((l) => ({ text: `  │ ${trunc(l, 100)}`, dim: true }));
+}
+
+/** Map one SDK message to renderable lines. Unknown/empty/result/system → []. */
+export function renderMessage(m: any): RenderLine[] {
+  if (!m || typeof m !== "object") return [];
+  if (m.type === "assistant") {
+    const out: RenderLine[] = [];
+    for (const b of m.message?.content ?? []) {
+      if (b?.type === "text" && b.text) for (const l of String(b.text).split("\n")) out.push({ text: l });
+      else if (b?.type === "thinking" && b.thinking) for (const l of String(b.thinking).split("\n")) out.push({ text: l, dim: true });
+      else if (b?.type === "tool_use") out.push(...toolUseLines(b.name, b.input ?? {}));
+    }
+    return out;
+  }
+  if (m.type === "user") {
+    const out: RenderLine[] = [];
+    for (const b of m.message?.content ?? []) if (b?.type === "tool_result") out.push(...resultLines(b.content));
+    return out;
+  }
+  return [];
+}
