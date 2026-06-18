@@ -79,6 +79,14 @@
 >   every `cc-harness` import in the README is a real export (value names from `Object.keys(index.js)`, type names
 >   from `index.ts` source) so the docs can't silently rot. Keyless. Commits `9977f73dcf..9e9d906af3` (3 tasks).
 >   Unit 368/368. Front door now accurate + complete (still `private:true`). See memory `harden-and-ship-over-phase3`.
+> - **Test & CI hardening** (harden-and-ship sub-project 4, 2026-06-18) — an enforcement milestone (no new SDK
+>   capability): CC-to-SDK had **zero CI**; this adds `.github/workflows/cc-to-sdk.yml`, a **keyless** gate that
+>   runs `npm ci → typecheck → build → test:unit → verify:pack` on Node **[18, 22]**, path-scoped to `CC-to-SDK/**`
+>   (disjoint from the upstream Rust syncs the fork receives) with SHA-pinned house actions + least-privilege
+>   `permissions: contents: read`. So the guards sub-projects 2–3 built (frozen surface, README-drift, validation,
+>   teardown) are now **enforced on every change**, not just on demand. One file, no source/lockfile change (`npm ci`
+>   verified green as-is). Commit `3103c675b5` (+ hardening `c1c2a69f88`). **With this, the whole harden-and-ship
+>   track — packaging · boundary · docs · test+CI — is COMPLETE.** See memory `harden-and-ship-over-phase3`.
 
 ## How to read this
 
