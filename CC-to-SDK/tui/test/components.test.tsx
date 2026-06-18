@@ -67,6 +67,7 @@ describe("<Composer>", () => {
   it("submits typed text on Enter and clears", async () => {
     const got: string[] = [];
     const { stdin, lastFrame } = render(<Composer onSubmit={(t) => got.push(t)} />);
+    await tickInput(); // let TextInput subscribe before writing
     stdin.write("hi there");
     await tickInput();
     expect(lastFrame()).toContain("hi there");
@@ -80,6 +81,7 @@ describe("<ConfirmDialog>", () => {
   it("calls onConfirm on 'y'", async () => {
     let confirmed = false, cancelled = false;
     const { stdin, lastFrame } = render(<ConfirmDialog message="Stop session X?" onConfirm={() => (confirmed = true)} onCancel={() => (cancelled = true)} />);
+    await tickInput(); // let useInput subscribe before writing
     expect(lastFrame()).toContain("Stop session X?");
     expect(lastFrame()).toContain("(y/n)");
     stdin.write("y");
@@ -90,6 +92,7 @@ describe("<ConfirmDialog>", () => {
   it("calls onCancel on 'n'", async () => {
     let cancelled = false;
     const { stdin } = render(<ConfirmDialog message="m" onConfirm={() => {}} onCancel={() => (cancelled = true)} />);
+    await tickInput(); // let useInput subscribe before writing
     stdin.write("n");
     await tickInput();
     expect(cancelled).toBe(true);
