@@ -71,6 +71,14 @@
 >   already correct, invariants now locked), and **frozen** (44-name surface snapshot + `harness/API-STABILITY.md`
 >   tiers). Keyless (no live test). Commits `f9aab5ac00..12e74819b1` (6 tasks). Unit 366/366. The harness is now
 >   publish-ready (still `private:true`). See memory `harden-and-ship-over-phase3`.
+> - **Public-API docs** (harden-and-ship sub-project 3, 2026-06-18) — a documentation milestone (no new SDK
+>   capability, so no domain-% change): `harness/README.md` is **rewritten** around the frozen 44-export surface
+>   (a tour of all 9 core surfaces with runnable examples, the refreshed `HarnessConfig` table, the CC-faithful
+>   bridges de-Phase-framed); `package.json` gains **publish metadata** (`description`/`keywords`/`repository`/
+>   `homepage`/`license: Apache-2.0`); and a **self-maintaining drift gate** (`test/unit/readme.test.ts`) asserts
+>   every `cc-harness` import in the README is a real export (value names from `Object.keys(index.js)`, type names
+>   from `index.ts` source) so the docs can't silently rot. Keyless. Commits `9977f73dcf..9e9d906af3` (3 tasks).
+>   Unit 368/368. Front door now accurate + complete (still `private:true`). See memory `harden-and-ship-over-phase3`.
 
 ## How to read this
 
