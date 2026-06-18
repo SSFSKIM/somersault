@@ -6,7 +6,6 @@ import { PermissionDialog } from "../src/PermissionDialog.js";
 import { ChatStatusBar } from "../src/ChatStatusBar.js";
 import type { PermissionDecision } from "cc-harness";
 
-const frame = (f: () => string | undefined) => f() ?? "";
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
