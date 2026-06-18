@@ -21,6 +21,17 @@ design or build on it** — write a probe in `probes/probes/`, run it live, and 
 design. This has repeatedly flipped premises (cron/push are dead headless; session-store + hooks are alive;
 of 30 hook events only 8 fire headlessly). Declared ≠ reachable. Don't trust `sdk.d.ts` alone.
 
+**Two research layers — use the right tool for each.** Probing answers *runtime reachability* (the
+declared-vs-reachable question, which only a live run can settle). For the *declared-surface* layer —
+Claude API / REST facts, model ids, which models support a beta, pricing/token rules, the standard
+`stream_event` / tool-use / messages schemas — reach for the **`ant` CLI** (Anthropic's Claude
+Developer Platform CLI: `ant messages|models|batches…`) or the **`/claude-api` skill** instead of
+grepping `sdk.d.ts` by hand. They're faster and authoritative for "what exists / intended semantics,"
+but they sit on the *declared* side of the line: they cannot tell you whether the installed
+`@anthropic-ai/claude-agent-sdk` actually delivers it headlessly. Use them to ground a probe, never to
+replace it (e.g. `ant models` would have hinted `taskBudget` is opus-class — but only the probe proved
+sonnet/haiku 400 and that `maxBudgetUsd`-exceeded throws instead of returning a result).
+
 ## Workflow
 
 Features go **brainstorm → spec (`docs/superpowers/specs/`) → plan (`docs/superpowers/plans/`) →
