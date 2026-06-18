@@ -1,8 +1,10 @@
 # CLAUDE.md — tui
 
-`cc-harness-tui`: the interactive **Ink** terminal console (`cc-harness-console` bin) for the cc-harness daemon.
-Consumes the core's public `connectDaemon`/`DaemonClient` from `cc-harness`. Sibling of `harness/`; depends on
-it via `file:../harness`. Parent context: `../CLAUDE.md` (CC-to-SDK) + repo root `../CLAUDE.md`.
+`cc-harness-tui`: ships **two bins**:
+- **`cc-harness-console`** (incr 2) — interactive Ink daemon console; consumes `connectDaemon`/`DaemonClient` from `cc-harness`.
+- **`cc-harness-chat`** (incr 3) — in-process chat REPL; drives a live `openSession`/`Session` with rich tool rendering and inline permission dialogs.
+
+Sibling of `harness/`; depends on it via `file:../harness`. Parent context: `../CLAUDE.md` (CC-to-SDK) + repo root `../CLAUDE.md`.
 
 ## Build-first rule (important)
 
@@ -29,6 +31,7 @@ npm run cli                 # tsx src/cli.tsx — launch the console
 
 ## Module map
 
+### Daemon console (`cc-harness-console`)
 - **`useDaemon.ts`** — poll loop + selection + submit stream + control ops (model/permission/compact/fork/proactive/stop/spawn) + idempotent teardown
 - **`format.ts`** — pure, operator-grade stream-line formatter (text + tool-use markers)
 - **`Pool.tsx`** — session-list panel (id, model, ctx%, status, selection highlight)
@@ -38,6 +41,13 @@ npm run cli                 # tsx src/cli.tsx — launch the console
 - **`ConfirmDialog.tsx`** — double-border modal for destructive ops (y/Y confirm, n/N/Esc cancel)
 - **`App.tsx`** — master-detail composition + ink `useInput` key routing + confirm-gated stop
 - **`cli.tsx`** — bin entry: parses `--socket`, renders `<App>`
+
+### Chat REPL (`cc-harness-chat`)
+- **`render.ts`** — pure rich tool-rendering formatter (generic + bespoke Edit/Write/Bash/Read); the chat REPL's superset of `format.ts`
+- **`uiBroker.ts`** — a `PermissionBroker` (from `cc-harness`) whose `request()` is fulfilled by a late-bound React handler
+- **`useChat.ts`** — owns the in-process `Session` (default mode) + transcript + submit stream + permission state + mode switch + idempotent teardown
+- **`Transcript.tsx` / `PermissionDialog.tsx` / `ChatStatusBar.tsx`** — chat REPL panes
+- **`ChatApp.tsx`** — chat composition (transcript + composer/dialog + status); `chat.tsx` — `cc-harness-chat` bin entry
 
 ## Conventions
 
