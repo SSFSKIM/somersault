@@ -17,6 +17,7 @@ Highest-level structure only — scan before grepping; the detailed SQ/EQ flow a
   - `sandboxing/`, `linux-sandbox/`, `windows-sandbox-rs/`, `execpolicy/` — per-OS command sandboxing
   - extension surfaces (most likely to expand): `hooks/`, `skills/`+`core-skills/`, `plugin/`+`core-plugins/`, `memories/`, `code-mode/`, `cloud-tasks/`
 - **`Claude Code Src/`** — TypeScript reference harness; research only, **not built** (has its own `CLAUDE.md`)
+- **`CC-to-SDK/`** — this fork's **own** work (independent of the Rust harness): a TypeScript project replicating Claude Code features on the **Claude Agent SDK** — headless lib `harness/`, parity scorecard `docs/parity/`, design docs `docs/superpowers/`, live SDK `probes/`. **Has its own `CLAUDE.md`.**
 - `codex-cli/` npm wrapper · `sdk/` Python+TS SDKs · `docs/` (incl. `fork-overview.md`) · `scripts/` · `patches/` (Bazel third-party)
 
 ## AGENTS.md is canonical for Rust conventions — read it
