@@ -28,7 +28,9 @@ describe("<ChatApp>", () => {
   it("submits a typed prompt and streams the reply", async () => {
     const { stdin, lastFrame } = render(<ChatApp session={fakeSession()} broker={createUiBroker()} />);
     await waitFor(() => frame(lastFrame).includes("›"));      // composer mounted → TextInput live
-    stdin.write("hi"); stdin.write("\r");
+    stdin.write("hi");
+    await waitFor(() => frame(lastFrame).includes("hi"));     // value landed in TextInput before Enter
+    stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("ok"));
     expect(lastFrame()).toContain("ok");
   });
@@ -41,7 +43,9 @@ describe("<ChatApp>", () => {
     });
     const { stdin, lastFrame } = render(<ChatApp session={session} broker={ui} />);
     await waitFor(() => frame(lastFrame).includes("›"));
-    stdin.write("edit it"); stdin.write("\r");
+    stdin.write("edit it");
+    await waitFor(() => frame(lastFrame).includes("edit it"));   // value landed before Enter
+    stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Permission needed"));   // dialog up
     expect(lastFrame()).toContain("Edit");
     stdin.write("a");
