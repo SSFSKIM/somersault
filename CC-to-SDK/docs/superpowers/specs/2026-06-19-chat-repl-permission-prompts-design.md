@@ -26,11 +26,14 @@ the daemon wire supports today. (See [[phase3-observability-dashboard-shipped]].
 ## Locked decisions (from the brainstorm)
 
 1. **Surface:** standalone in-process REPL over `openSession` (daemon-attached = increment 4).
-2. **Default permission mode:** the REPL starts in SDK **`auto`** — tools run, **no prompts**. The SDK
-   `auto`/`bypass`/`dontAsk` modes are *broker-replacing* (they bypass `canUseTool` entirely — verified;
-   the harness's own `config/types.ts` documents it). Switching to a **broker-live** mode
-   (`default`/`acceptEdits`/`plan`) at runtime activates the inline dialog. Prompts are an **opt-in toggle**,
-   exactly like increment 2's console exposed `setPermissionMode`.
+2. **Default permission mode (corrected by probe 17d — see "Live-probe results"):** the REPL starts in
+   **`default`** — *broker-live*, so the inline dialog fires on edits/dangerous ops **from the first turn**
+   (reads + safe bash are auto-allowed by the SDK's built-in classifier). Toggling to **`bypassPermissions`**
+   at runtime silences all prompts (verified broker-free). **NB: SDK `auto` is NOT a no-prompt mode** —
+   probe 17d showed `auto` fires the broker on edits, behaving like `default`; only `bypassPermissions` is
+   reliably silent. The two meaningful poles the mode-switch key exposes are **`default` (prompt) ↔
+   `bypassPermissions` (silent)** (`acceptEdits`/`plan` also reachable via the cycler). Runtime switching is
+   `session.setPermissionMode(...)`, as increment 2's console already exercised.
 3. **Dialog choices:** **allow once · always-for-this-tool · deny.** "Always" is remembered for the
    session (by tool name) so the tool is not re-prompted.
 4. **Rich rendering (targeted):** a generic structured renderer for **all** tools (name + key inputs +
@@ -63,8 +66,7 @@ cc-harness-tui/src/           ← the REPL (a second bin in the existing package
   chat.tsx          bin entry (cc-harness-chat → dist/chat.js)
   (reuse Composer.tsx from increment 2)
 
-probes/probes/17-canusetool-contract.ts   ← pre-plan gate (must pass before the plan locks)
-  (complements existing 15-permission-modes.ts)
+probes/probes/17{,b,c,d}-*.ts             ← pre-plan gate — DONE, ran keyed 2026-06-19 (see "Live-probe results")
 ```
 
 ### Why the policy lives in core (Approach A)
@@ -182,13 +184,15 @@ Parses args (`--model`, `--cwd`, optional `--resume <sessionId>` via `resumeSess
 
 ## Permission data-flow
 
-1. **auto mode** → tools run; `render.ts` shows them; no dialog.
-2. user presses the **mode-switch key** → `session.setPermissionMode("default")` → broker now live.
-3. next escalated tool → SDK calls the gate → not in `allowed` → `broker.request(req)` parks a deferred + sets
-   `pendingPermission`.
-4. `<PermissionDialog>` renders. User presses `a`/`A`/`d`.
-5. keypress → `resolve(decision)` → gate maps to `PermissionResult` → SDK proceeds (runs/skips the tool);
+1. **default mode (startup, broker-live)** → reads + safe bash auto-allowed (silent); an **Edit/Write or
+   dangerous op** → SDK calls the gate.
+2. gate: tool not in `allowed` → `broker.request(req)` parks a deferred + sets `pendingPermission`.
+3. `<PermissionDialog>` renders (prompt **reconstructed from `toolName`+`input`** — UI hints absent
+   headlessly). User presses `a`/`A`/`d`.
+4. keypress → `resolve(decision)` → gate maps to `PermissionResult` → SDK proceeds (runs/skips the tool);
    `A` adds the tool to `allowed`, suppressing its next prompt.
+5. **mode-switch key** → cycles `default ↔ bypassPermissions` via `session.setPermissionMode(...)`; in
+   `bypassPermissions` the gate is never consulted → no dialogs.
 6. **interrupt/quit while pending** → teardown settles the deferred → deny (SDK await never hangs).
 
 ## Liveness & teardown discipline
@@ -202,23 +206,31 @@ tests written up front:
   no-op — assert the deferred is resolved exactly once and `dispose` called at most once).
 - **`disposed` ref guards every async `setState`** — no state update after unmount.
 
-## Live-probe gate — MUST pass before the plan locks
+## Live-probe results (RAN 2026-06-19, keyed — `probes/probes/17*.ts`)
 
-Per the live-probe-first discipline (the A1 lesson): write `probes/probes/17-canusetool-contract.ts`
-(complementing the existing `15-permission-modes.ts`) and run it keyed against the **installed** SDK before
-the plan is finalized. It must confirm:
+Per the live-probe-first discipline (the A1 lesson), the `canUseTool` contract was probed live against SDK
+0.3.178 **before this spec was finalized** (`17-canusetool-contract.ts`, `17b-canusetool-settingsources.ts`,
+`17c-canusetool-edit-gated.ts`, `17d-mode-broker-table.ts`). The probes flipped two premises — exactly what
+the discipline exists to catch. Verified:
 
-1. `canUseTool` **is consulted** in `default` mode, and for which tools (does it fire for reads, or only
-   writes/Bash?). This sets which tools ever reach the gate.
-2. The **callback payload** actually delivered headlessly — in particular whether `options.title` /
-   `displayName` / `description` / `suggestions` are **present or absent** (they come from the
-   claude.ai-coupled bridge; the dialog must work when they are absent).
-3. The exact accepted **return shape** (`{behavior:"allow", updatedInput}` / `{behavior:"deny", message}`).
-4. A runtime **`auto → default` `setPermissionMode`** switch starts routing through the gate mid-session.
-5. **`auto` mode does NOT consult** the gate (confirms "auto default = no prompts").
+1. **Broker fires in `default`/`auto` for mutations** (Edit/Write), deterministic across runs. **Reads + safe
+   bash** (`echo`-class) are auto-allowed by the SDK's built-in classifier and bypass the broker. **Read-gating
+   is non-deterministic** (sometimes routes, sometimes not) — the design must not assume reads never prompt.
+2. **UI hints absent headlessly** — the `options` payload carried **no** `title`/`displayName`/`description`/
+   `suggestions` (the bridge that renders them is claude.ai-coupled). → the dialog **reconstructs the prompt
+   from `toolName`+`input`** (as the design already specifies).
+3. **Return shapes work:** `{behavior:"allow", updatedInput}` allows; `{behavior:"deny", message}` **denies
+   safely** — a denied Edit left the file `ORIGINAL` and the turn completed `subtype=success`, no crash.
+4. **Mode×broker table (Edit op, 2/2 deterministic):** `bypassPermissions` = silent · `acceptEdits` = silent
+   on edits (but fired for Read) · `default` = fires · **`auto` = fires**. So `auto` is **NOT** a no-prompt
+   mode (flips spec decision #2, and corrects [[sdk-permissionmode-canusetool-matrix]] which claimed
+   "auto/bypass replace canUseTool" — true for `bypass`, false for `auto`). → REPL default = `default`
+   (broker-live); `bypassPermissions` is the silence toggle.
+5. `session.setPermissionMode` is the runtime mode lever (verified previously; increment 2's console
+   exercises it).
 
-The probe result pins the gate's mapping and the dialog's prompt-reconstruction fallback. If (1)/(2) differ
-from the assumptions above, the spec is adjusted before planning.
+These results are baked into Decision #2, the gate behavior, and the data-flow above. No premise remains
+unverified going into the plan.
 
 ## Test plan
 
@@ -256,7 +268,8 @@ changes shape (purely additive).
 `src/ChatStatusBar.tsx`, `src/ChatApp.tsx`, `src/chat.tsx`, `test/render.test.ts`, `test/chat.test.tsx`,
 `test/live/chat.e2e.test.ts`
 **Modify (tui):** `package.json` (add bin), `CLAUDE.md` (document the second bin)
-**Create (probes):** `probes/probes/17-canusetool-contract.ts`
+**Probes (DONE — created + run keyed 2026-06-19):** `17-canusetool-contract.ts`,
+`17b-canusetool-settingsources.ts`, `17c-canusetool-edit-gated.ts`, `17d-mode-broker-table.ts`
 **Update on ship:** `docs/parity/coverage.md` Domain 10; the parity memory.
 
 ## Out of scope / future
