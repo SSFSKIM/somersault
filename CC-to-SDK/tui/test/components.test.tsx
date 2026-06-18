@@ -57,3 +57,41 @@ describe("<StatusBar>", () => {
     expect(lastFrame()).toContain("esc cancel");
   });
 });
+
+import { Composer } from "../src/Composer.js";
+import { ConfirmDialog } from "../src/ConfirmDialog.js";
+
+const tickInput = () => new Promise((r) => setTimeout(r, 10));
+
+describe("<Composer>", () => {
+  it("submits typed text on Enter and clears", async () => {
+    const got: string[] = [];
+    const { stdin, lastFrame } = render(<Composer onSubmit={(t) => got.push(t)} />);
+    stdin.write("hi there");
+    await tickInput();
+    expect(lastFrame()).toContain("hi there");
+    stdin.write("\r"); // Enter
+    await tickInput();
+    expect(got).toEqual(["hi there"]);
+  });
+});
+
+describe("<ConfirmDialog>", () => {
+  it("calls onConfirm on 'y'", async () => {
+    let confirmed = false, cancelled = false;
+    const { stdin, lastFrame } = render(<ConfirmDialog message="Stop session X?" onConfirm={() => (confirmed = true)} onCancel={() => (cancelled = true)} />);
+    expect(lastFrame()).toContain("Stop session X?");
+    expect(lastFrame()).toContain("(y/n)");
+    stdin.write("y");
+    await tickInput();
+    expect(confirmed).toBe(true);
+    expect(cancelled).toBe(false);
+  });
+  it("calls onCancel on 'n'", async () => {
+    let cancelled = false;
+    const { stdin } = render(<ConfirmDialog message="m" onConfirm={() => {}} onCancel={() => (cancelled = true)} />);
+    stdin.write("n");
+    await tickInput();
+    expect(cancelled).toBe(true);
+  });
+});
