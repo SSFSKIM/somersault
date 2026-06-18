@@ -359,7 +359,8 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { SwarmRuntime } from "cc-harness";
 
 const swarm = new SwarmRuntime({ query }, { cwd: process.cwd() });
-swarm.spawnTeammate({ name: "reviewer", teamId: "core", prompt: "Review the diff for bugs." });
+const team = swarm.createTeam("core");
+swarm.spawnTeammate({ name: "reviewer", teamId: team.id, prompt: "Review the diff for bugs." });
 // … coordinate via swarm.bus / swarm.tasks …
 await swarm.disposeAll();
 ```
