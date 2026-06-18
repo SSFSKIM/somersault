@@ -31,7 +31,7 @@ export interface DaemonView {
   fork(): void;
   toggleProactive(): void;
   spawn(): void;
-  stop(): void;
+  stop(id?: string): void;
   teardown(): void;
 }
 
@@ -89,6 +89,7 @@ export function useDaemon(client: DaemonClient, opts: UseDaemonOpts = {}): Daemo
   const select = useCallback((delta: number) => {
     setSelectedIndex((i) => { const n = rows.length; if (!n) return 0; return (((i + delta) % n) + n) % n; });
     models.current = undefined;                           // reset the model-cycle cache on selection change
+    pmIndex.current = 0;                                  // reset permission-mode cursor on selection change
   }, [rows.length]);
 
   const focusInput = useCallback(() => setFocus("input"), []);
@@ -139,7 +140,12 @@ export function useDaemon(client: DaemonClient, opts: UseDaemonOpts = {}): Daemo
       .catch((e) => { if (!disposed.current) setStatus(`spawn: ${msg(e)}`); });
   }, [client, tick]);
 
-  const stop = useCallback(() => run("stopped", (id) => client.stop(id).then(() => { void tick(); return "stopped"; })), [run, client, tick]);
+  const stop = useCallback((id?: string) => {
+    const target = id ?? selected?.id;
+    if (!target) { setStatus("no session selected"); return; }
+    client.stop(target).then(() => { if (!disposed.current) { setStatus("stopped"); void tick(); } })
+      .catch((e) => { if (!disposed.current) setStatus(`stop: ${msg(e)}`); });
+  }, [selected?.id, client, tick]);
 
   return { snapshot, selectedIndex: idx, selected, focus, stream, status,
     select, focusInput, focusList, submit, interrupt, cycleModel, cyclePermissionMode, compact, fork, toggleProactive, spawn, stop, teardown };

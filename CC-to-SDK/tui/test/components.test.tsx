@@ -97,4 +97,20 @@ describe("<ConfirmDialog>", () => {
     await tickInput();
     expect(cancelled).toBe(true);
   });
+  it("calls onCancel on Esc", async () => {
+    let cancelled = false;
+    const { stdin } = render(<ConfirmDialog message="m" onConfirm={() => {}} onCancel={() => (cancelled = true)} />);
+    await tickInput();
+    stdin.write("");           // Esc
+    await tickInput();
+    expect(cancelled).toBe(true);
+  });
+  it("confirms on uppercase Y", async () => {
+    let confirmed = false;
+    const { stdin } = render(<ConfirmDialog message="m" onConfirm={() => (confirmed = true)} onCancel={() => {}} />);
+    await tickInput();
+    stdin.write("Y");
+    await tickInput();
+    expect(confirmed).toBe(true);
+  });
 });

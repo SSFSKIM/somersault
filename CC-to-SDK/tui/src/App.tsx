@@ -30,7 +30,7 @@ export function App({ client, hookOpts }: { client: DaemonClient; socketPath?: s
     else if (input === "n") d.spawn();
     else if (input === "x" && d.selected) {
       const id = d.selected.id;
-      setConfirm({ message: `Stop session ${id}?`, action: d.stop });
+      setConfirm({ message: `Stop session ${id}?`, action: () => d.stop(id) });
     }
   }, { isActive: d.focus === "list" && !confirm });
 
