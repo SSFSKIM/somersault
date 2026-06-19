@@ -17,7 +17,7 @@ export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume }: {
   const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession } = useChat(makeSession, broker, { ...(hookOpts ?? {}), cwd, initialResume });
   useInput((input, key) => {
     if (key.escape) { interrupt(); return; }
-    if (key.tab) cycleMode();   // Tab cycles the permission mode (default ↔ bypassPermissions)
+    if (key.tab) cycleMode();   // Tab cycles the permission ladder (default → acceptEdits → auto; bypass via /yolo)
   }, { isActive: !state.pending && !state.picker.open });
   return (
     <Box flexDirection="column">

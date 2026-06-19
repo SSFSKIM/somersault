@@ -148,7 +148,8 @@ export function useChat(
   function resolvePermission(d: PermissionDecision) { pendingRef.current?.resolve(d); setPending(null); }
   // Apply a permission mode. `auto` is model-gated (probe 24): if the live model can't run auto, swap to a
   // supported one FIRST (verified to take effect at runtime) with a notice, then set the mode. Disposed-guarded
-  // across each await so a late settle never touches state after unmount.
+  // across each await — incl. a macrotask yield before setPermissionMode so a cycle fired right after unmount
+  // (ink runs the disposed-sentinel cleanup one macrotask late) is caught and never mutates state post-unmount.
   async function applyMode(next: string) {
     if (disposed.current) return;
     if (next === "auto") {
