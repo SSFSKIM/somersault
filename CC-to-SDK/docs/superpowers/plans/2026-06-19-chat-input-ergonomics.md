@@ -608,9 +608,13 @@ describe("ChatComposer", () => {
     const got: string[] = [];
     const { stdin, lastFrame } = render(<ChatComposer onSubmit={(t) => got.push(t)} cwd={tmpdir()} />);
     await new Promise((r) => setTimeout(r, 20));                  // let useInput subscribe before keys
-    stdin.write("a"); stdin.write("\\"); stdin.write("\r");      // "a\" then Enter → continuation
-    await waitFor(() => (lastFrame() ?? "").includes("a"));
-    stdin.write("b"); stdin.write("\r");                         // submit "a\nb"
+    // ink timing discipline: await a re-render between dependent keystrokes so each useInput call sees the
+    // updated reducer state (a non-functional setState reads a render-time closure; see plan Global Constraints).
+    stdin.write("a"); await waitFor(() => (lastFrame() ?? "").includes("a"));
+    stdin.write("\\"); await waitFor(() => (lastFrame() ?? "").includes("\\"));   // line now "a\"
+    stdin.write("\r"); await new Promise((r) => setTimeout(r, 20));              // `\`+Enter → continuation (2 lines)
+    stdin.write("b"); await waitFor(() => (lastFrame() ?? "").includes("b"));
+    stdin.write("\r");                                                          // submit "a\nb"
     await waitFor(() => got.length === 1);
     expect(got[0]).toBe("a\nb");
   });
