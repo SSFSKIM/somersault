@@ -1,0 +1,39 @@
+// tui/test/commands.test.ts — pure parser + formatters.
+import { describe, it, expect } from "vitest";
+import { parseCommand, COMMANDS, formatHelp, formatModel, formatCompact, formatContext, formatResumed, formatUnknown } from "../src/commands.js";
+
+describe("parseCommand", () => {
+  it("splits a slash command into name + args", () => {
+    expect(parseCommand("/model claude-opus-4-8")).toEqual({ name: "model", args: "claude-opus-4-8" });
+    expect(parseCommand("/help")).toEqual({ name: "help", args: "" });
+    expect(parseCommand("  /compact  ")).toEqual({ name: "compact", args: "" });
+  });
+  it("returns null for non-commands and a bare slash", () => {
+    expect(parseCommand("hello")).toBeNull();
+    expect(parseCommand("/")).toBeNull();
+    expect(parseCommand("  ")).toBeNull();
+  });
+});
+
+describe("formatters", () => {
+  it("help lists every command", () => {
+    const lines = formatHelp().map((l) => l.text).join("\n");
+    for (const c of COMMANDS) expect(lines).toContain(`/${c.name}`);
+  });
+  it("model: set vs show-current", () => {
+    expect(formatModel("opus")).toEqual([{ text: "model → opus" }]);
+    expect(formatModel(undefined, "sonnet")).toEqual([{ text: "model: sonnet", dim: true }]);
+  });
+  it("compact: success shows before→after, failure is dim", () => {
+    expect(formatCompact({ ok: true, preTokens: 31000, postTokens: 6000 })).toEqual([{ text: "✦ compacted 31k → 6k" }]);
+    expect(formatCompact({ ok: false, error: "Not enough messages" })[0].dim).toBe(true);
+  });
+  it("context renders a one-line digest", () => {
+    expect(formatContext({ percentUsed: 9, tokensUsed: 18500, maxTokens: 200000, tokensRemaining: 181500, status: "ok" }))
+      .toEqual([{ text: "ctx 9% · 18.5k / 200k · ok", dim: true }]);
+  });
+  it("resumed + unknown", () => {
+    expect(formatResumed("refactor auth", "a3f1b2c3d4")).toEqual([{ text: '↻ resumed "refactor auth" (a3f1b2c3)', dim: true }]);
+    expect(formatUnknown("zzz")).toEqual([{ text: "Unknown command: /zzz · try /help", color: "red" }]);
+  });
+});
