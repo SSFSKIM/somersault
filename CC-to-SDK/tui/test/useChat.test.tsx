@@ -80,18 +80,17 @@ describe("useChat", () => {
     expect(session.disposed).toBe(1);
   });
 
-  it("/resume opens the picker and a pick swaps the session (old disposed, marker shown)", async () => {
-    let disposed = 0;
+  it("/resume → pick fetches the transcript and replays it (old session disposed)", async () => {
+    let disposed = 0; let calls = 0;
     const oldSession = fakeSession({ async dispose() { disposed++; } });
     const newSession = fakeSession();
-    let calls = 0;
     const makeSession = (resume?: string) => { calls++; return resume ? newSession : oldSession; };
-    const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }] };
-    let pick: ((s: any) => void) | undefined, close: (() => void) | undefined;
+    const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
+    let pick: ((s: any) => void) | undefined;
     function ResumeHost() {
       const c = useChat(makeSession, createUiBroker(), {}, deps);
-      pick = (c as any).pickSession; close = (c as any).closePicker;
-      const api = (c as any);
+      pick = (c as any).pickSession;
       (ResumeHost as any).run = c.submit;
       return <Text>{c.state.picker.open ? `PICKER:${c.state.picker.sessions.length}` : "NOPICK"} {c.state.lines.map((l) => l.text).join("|")}</Text>;
     }
@@ -100,10 +99,39 @@ describe("useChat", () => {
     (ResumeHost as any).run("/resume");
     await waitFor(() => frame(lastFrame).includes("PICKER:1"));
     pick!({ sessionId: "old1234567890", summary: "prior", lastModified: 1 });
-    await waitFor(() => frame(lastFrame).includes("↻ resumed"));
-    await waitFor(() => disposed === 1);     // old session disposed by the effect on session change
+    await waitFor(() => frame(lastFrame).includes("› prior prompt"));
+    await waitFor(() => frame(lastFrame).includes("resumed here · live"));
+    await waitFor(() => disposed === 1);
     expect(disposed).toBe(1);
-    expect(calls).toBe(2);                    // initial + resumed
+    expect(calls).toBe(2);                    // initial makeSession() + resumeInto's makeSession(id)
+  });
+
+  it("initialResume {kind:'id'} replays the session on mount", async () => {
+    const msgs = [{ type: "user", message: { content: [{ type: "text", text: "launch prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    const deps = { listSessions: async () => [], getSessionMessages: async () => msgs };
+    function H() { const c = useChat((r?: string) => fakeSession(), createUiBroker(), { initialResume: { kind: "id", id: "abc12345" } }, deps); return <Text>{c.state.lines.map((l) => l.text).join("|")}</Text>; }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => (lastFrame() ?? "").includes("launch prompt"));
+    expect(lastFrame() ?? "").toContain("resumed here · live");
+  });
+  it("/continue resumes the most-recent session", async () => {
+    const msgs = [{ type: "user", message: { content: [{ type: "text", text: "recent work" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    const deps = { listSessions: async () => [{ sessionId: "s-old", summary: "", lastModified: 1 }, { sessionId: "s-new", summary: "", lastModified: 9 }], getSessionMessages: async (id: string) => (id === "s-new" ? msgs : []) };
+    let api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat((r?: string) => fakeSession(), createUiBroker(), {}, deps); api.run = c.submit; return <Text>{c.state.lines.map((l) => l.text).join("|")}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/continue");
+    await waitFor(() => (lastFrame() ?? "").includes("recent work"));
+  });
+  it("/continue with no sessions shows a notice", async () => {
+    const deps = { listSessions: async () => [], getSessionMessages: async () => [] };
+    let api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat((r?: string) => fakeSession(), createUiBroker(), {}, deps); api.run = c.submit; return <Text>{c.state.lines.map((l) => l.text).join("|")}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/continue");
+    await waitFor(() => (lastFrame() ?? "").includes("No sessions to continue"));
   });
 
   it("dispatches /model, /compact, /context, /clear, /help locally — never to the model", async () => {

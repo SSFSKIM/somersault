@@ -6,8 +6,9 @@ import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
 import { TaskList, type TaskItem } from "./taskList.js";
-import { parseCommand, formatHelp, formatModel, formatCompact, formatContext, formatUnknown, formatResumed, type ParsedCommand } from "./commands.js";
-import { summarizeUsage, listSessions as realListSessions } from "cc-harness";
+import { parseCommand, formatHelp, formatModel, formatCompact, formatContext, formatUnknown, pickMostRecent, type ParsedCommand, type InitialResume } from "./commands.js";
+import { replayLines } from "./replay.js";
+import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "cc-harness";
 import type { CompactOutcome, RawContextUsage } from "cc-harness";
 
 /** The subset of the lib Session the REPL drives (the real Session satisfies this). */
@@ -27,7 +28,12 @@ export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pendi
 
 const OTHER_POLE: Record<string, string> = { default: "bypassPermissions", bypassPermissions: "default" };
 
-export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBrokerHandle, opts: { initialMode?: string } = {}, deps: { listSessions: () => Promise<SessionInfo[]> } = { listSessions: () => realListSessions({ limit: 30 }) as Promise<SessionInfo[]> }) {
+export function useChat(
+  makeSession: (resume?: string) => ChatSession,
+  ui: UiBrokerHandle,
+  opts: { initialMode?: string; cwd?: string; initialResume?: InitialResume } = {},
+  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]> } = {},
+) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const [lines, setLines] = useState<RenderLine[]>([]);
   const [streaming, setStreaming] = useState<RenderLine[]>([]);
@@ -43,6 +49,9 @@ export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBro
   const disposed = useRef(false);
   const pendingRef = useRef<Pending | null>(null);
   pendingRef.current = pending;
+  const listSessions = deps.listSessions ?? (() => realListSessions({ cwd: opts.cwd, limit: 30 }) as Promise<SessionInfo[]>);
+  const getSessionMessages = deps.getSessionMessages ?? ((id: string) => realGetSessionMessages(id, { cwd: opts.cwd }) as Promise<any[]>);
+  const ranInitial = useRef(false);
 
   // Unmount-only sentinel: mark disposed + settle any parked permission promise (never on a session swap).
   useEffect(() => () => { disposed.current = true; pendingRef.current?.resolve({ kind: "deny" }); }, []);
@@ -56,6 +65,12 @@ export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBro
     }));
     return () => { ui.setHandler(null); };
   }, [ui]);
+  // Launch-time resume: run once on mount if an initialResume intent was passed.
+  useEffect(() => {
+    if (ranInitial.current || !opts.initialResume) return; ranInitial.current = true;
+    if (opts.initialResume.kind === "id") void resumeInto(opts.initialResume.id);
+    else void doContinue();
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   async function refreshCtx() {
     try {
@@ -79,23 +94,41 @@ export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBro
         case "clear": if (!disposed.current) setLines([]); break;
         case "help": append(formatHelp()); break;
         case "resume": void openPicker(); break;
+        case "continue": void doContinue(); break;
         default: append(formatUnknown(cmd.name));
       }
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
   }
 
   async function openPicker() {
-    try { const sessions = await deps.listSessions(); if (!disposed.current) setPicker({ open: true, sessions }); }
+    try { const sessions = await listSessions(); if (!disposed.current) setPicker({ open: true, sessions }); }
     catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
   }
   function closePicker() { if (!disposed.current) setPicker({ open: false, sessions: [] }); }
+  // Fetch the persisted transcript FIRST; only swap + replay if it has history (never drop into a broken resume).
+  async function resumeInto(id: string) {
+    if (disposed.current) return;
+    let msgs: any[] = [];
+    try { msgs = await getSessionMessages(id); } catch { msgs = []; }
+    if (disposed.current) return;
+    if (!msgs.length) { append([{ text: `⚠ couldn't resume ${id.slice(0, 8)} — no history found`, dim: true }]); return; }
+    setSession(makeSession(id));                                   // [session] effect disposes the old
+    setStreaming([]);
+    setLines(replayLines(msgs, { id }));
+    taskListRef.current.reset(); setTasks([]);
+  }
+  async function doContinue() {
+    try {
+      const sessions = await listSessions();
+      const id = pickMostRecent(sessions);
+      if (!id) { append([{ text: "No sessions to continue here", dim: true }]); return; }
+      await resumeInto(id);
+    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+  }
   function pickSession(info: SessionInfo) {
     if (disposed.current) return;
-    setSession(makeSession(info.sessionId));                       // effect disposes the old, wires the new
-    setStreaming([]);
-    setLines(formatResumed(info.summary || info.firstPrompt || "session", info.sessionId));
     setPicker({ open: false, sessions: [] });
-    taskListRef.current.reset(); setTasks([]);
+    void resumeInto(info.sessionId);
   }
 
   function submit(prompt: string) {
