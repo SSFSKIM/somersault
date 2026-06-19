@@ -5,6 +5,7 @@ import type { PermissionDecision, PermissionRequest } from "cc-harness";
 import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
+import { TaskList, type TaskItem } from "./taskList.js";
 import { parseCommand, formatHelp, formatModel, formatCompact, formatContext, formatUnknown, formatResumed, type ParsedCommand } from "./commands.js";
 import { summarizeUsage, listSessions as realListSessions } from "cc-harness";
 import type { CompactOutcome, RawContextUsage } from "cc-harness";
@@ -22,7 +23,7 @@ export interface ChatSession {
 }
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
 export interface Pending { req: PermissionRequest; resolve: (d: PermissionDecision) => void; }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; }
 
 const OTHER_POLE: Record<string, string> = { default: "bypassPermissions", bypassPermissions: "default" };
 
@@ -36,6 +37,9 @@ export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBro
   const [ctxPct, setCtxPct] = useState<number | undefined>(undefined);
   const [model, setModel] = useState<string | undefined>(undefined);
   const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[] }>({ open: false, sessions: [] });
+  const taskListRef = useRef(new TaskList());
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [subagentActive, setSubagentActive] = useState(false);
   const disposed = useRef(false);
   const pendingRef = useRef<Pending | null>(null);
   pendingRef.current = pending;
@@ -91,6 +95,7 @@ export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBro
     setStreaming([]);
     setLines(formatResumed(info.summary || info.firstPrompt || "session", info.sessionId));
     setPicker({ open: false, sessions: [] });
+    taskListRef.current.reset(); setTasks([]);
   }
 
   function submit(prompt: string) {
@@ -100,13 +105,13 @@ export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBro
     setLines((l) => [...l, { text: `› ${prompt}`, dim: true }]);
     setStreaming([]); setBusy(true);
     const lt = new LiveTurn();
-    session.submit(prompt, (m) => { if (disposed.current) return; lt.ingest(m); setStreaming(lt.snapshot()); })
+    session.submit(prompt, (m) => { if (disposed.current) return; lt.ingest(m); taskListRef.current.ingest(m); setStreaming(lt.snapshot()); setTasks(taskListRef.current.snapshot()); setSubagentActive(lt.subagentActive); })
       .then(() => {}, (e) => { lt.fail((e as Error).message); })
-      .finally(() => { if (disposed.current) return; setLines((l) => [...l, ...lt.finalize()]); setStreaming([]); setBusy(false); if (lt.model) setModel(lt.model); void refreshCtx(); });
+      .finally(() => { if (disposed.current) return; setLines((l) => [...l, ...lt.finalize()]); setStreaming([]); setBusy(false); setSubagentActive(false); if (lt.model) setModel(lt.model); void refreshCtx(); });
   }
   function resolvePermission(d: PermissionDecision) { pendingRef.current?.resolve(d); setPending(null); }
   function cycleMode() { const next = OTHER_POLE[mode] ?? "default"; void session.setPermissionMode(next).catch(() => {}); if (!disposed.current) setMode(next); }
   function interrupt() { void session.interrupt().catch(() => {}); }
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession };
 }

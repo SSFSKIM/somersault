@@ -126,4 +126,24 @@ describe("useChat", () => {
     expect(modelSet).toBe("opus");
     expect(submitted).toBe(0);     // no slash command ever reached session.submit
   });
+
+  it("accumulates tasks from a turn's frames and exposes them in state", async () => {
+    const fake = fakeSession({ async submit(_p: string, onMessage: (m: unknown) => void) {
+      onMessage({ type: "assistant", message: { content: [{ type: "tool_use", id: "tc1", name: "TaskCreate", input: { subject: "build it" } }] } });
+      onMessage({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tc1", content: "Task #1 created successfully: build it" }] } });
+      return { result: "done" };
+    } });
+    let tasks: any[] = [];
+    function TaskHost() {
+      const c = useChat(() => fake, createUiBroker());
+      tasks = (c.state as any).tasks;
+      (TaskHost as any).run = c.submit;
+      return <Text>{tasks.map((t) => t.subject).join("|")}</Text>;
+    }
+    const { lastFrame } = render(<TaskHost />);
+    await new Promise((r) => setTimeout(r, 20));
+    (TaskHost as any).run("go");
+    await waitFor(() => frame(lastFrame).includes("build it"));
+    expect(tasks).toEqual([{ id: "1", subject: "build it", status: "pending" }]);
+  });
 });

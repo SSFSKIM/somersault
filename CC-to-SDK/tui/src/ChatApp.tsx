@@ -10,6 +10,7 @@ import { Composer } from "./Composer.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { ChatStatusBar } from "./ChatStatusBar.js";
 import { SessionPicker } from "./SessionPicker.js";
+import { TaskPanel } from "./TaskPanel.js";
 
 export function ChatApp({ makeSession, broker, hookOpts }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string } }) {
   const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession } = useChat(makeSession, broker, hookOpts ?? {});
@@ -20,6 +21,7 @@ export function ChatApp({ makeSession, broker, hookOpts }: { makeSession: (resum
   return (
     <Box flexDirection="column">
       <Transcript lines={state.lines} streaming={state.streaming} />
+      <TaskPanel tasks={state.tasks} />
       {state.picker.open
         ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
         : state.pending
