@@ -4,6 +4,7 @@ import { render } from "ink-testing-library";
 import { Transcript } from "../src/Transcript.js";
 import { PermissionDialog } from "../src/PermissionDialog.js";
 import { ChatStatusBar } from "../src/ChatStatusBar.js";
+import { SessionPicker } from "../src/SessionPicker.js";
 import type { PermissionDecision } from "cc-harness";
 
 async function waitFor(cond: () => boolean, timeout = 2000) {
@@ -53,5 +54,37 @@ describe("<ChatStatusBar>", () => {
     const f = lastFrame() ?? "";
     expect(f).not.toContain("streaming");
     expect(f).not.toContain("model ");
+  });
+});
+describe("SessionPicker", () => {
+  const sessions = [
+    { sessionId: "aaaaaaaa1111", summary: "first session", lastModified: 1 },
+    { sessionId: "bbbbbbbb2222", summary: "second session", lastModified: 2 },
+  ];
+  it("↓ then Enter picks the second session", async () => {
+    let picked: any;
+    const { stdin, lastFrame } = render(<SessionPicker sessions={sessions} onPick={(s) => { picked = s; }} onCancel={() => {}} />);
+    await waitFor(() => (lastFrame() ?? "").includes("resume a session"));
+    await new Promise((r) => setTimeout(r, 20)); // let useInput subscribe (passive effect)
+    stdin.write("\x1b[B");                                                    // down arrow
+    // wait until bbbbbbbb is highlighted (inverse) — proves selection moved to index 1
+    await waitFor(() => (lastFrame() ?? "").match(/\x1b\[7m[^\x1b]*bbbbbbbb/) !== null);
+    await new Promise((r) => setTimeout(r, 20)); // let useInput re-register with updated idx closure
+    stdin.write("\r");                                                        // enter
+    await waitFor(() => picked !== undefined);
+    expect(picked.sessionId).toBe("bbbbbbbb2222");
+  });
+  it("Esc cancels", async () => {
+    let cancelled = false;
+    const { stdin, lastFrame } = render(<SessionPicker sessions={sessions} onPick={() => {}} onCancel={() => { cancelled = true; }} />);
+    await waitFor(() => (lastFrame() ?? "").includes("resume a session"));
+    await new Promise((r) => setTimeout(r, 20)); // let useInput subscribe (passive effect)
+    stdin.write("\x1b");                                                      // escape
+    await waitFor(() => cancelled);
+    expect(cancelled).toBe(true);
+  });
+  it("shows 'no sessions' when empty", () => {
+    const { lastFrame } = render(<SessionPicker sessions={[]} onPick={() => {}} onCancel={() => {}} />);
+    expect(lastFrame() ?? "").toContain("no sessions");
   });
 });
