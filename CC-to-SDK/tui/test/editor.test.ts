@@ -1,8 +1,7 @@
 // tui/test/editor.test.ts — pure editor-reducer units. Probe 17d7116: a paste arrives as one `input` with
 // embedded \n; submit = a lone key.return; `\`+Enter = continuation.
 import { describe, it, expect } from "vitest";
-import { applyKey, initialEditorState, stripPasteMarkers, type EditorState, type KeyFlags } from "../src/editor.js";
-import { setMentionFiles } from "../src/editor.js";
+import { applyKey, initialEditorState, setMentionFiles, stripPasteMarkers, type EditorState, type KeyFlags } from "../src/editor.js";
 
 const type = (s: EditorState, text: string): EditorState => applyKey(s, text, {}).state;
 const press = (s: EditorState, key: KeyFlags): EditorState => applyKey(s, "", key).state;

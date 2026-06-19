@@ -1,6 +1,6 @@
 // tui/src/ChatApp.tsx — composes the transcript, the composer (or the permission dialog when one is
 // pending), and the status bar. Global keys (Esc interrupt, Tab cycle mode) are inactive while a dialog
-// is up so the dialog owns input. Reuses increment 2's <Composer>.
+// is up so the dialog owns input. Renders increment 8's multiline <ChatComposer>.
 import React from "react";
 import { Box, useInput } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";

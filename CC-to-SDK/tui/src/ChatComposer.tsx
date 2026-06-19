@@ -41,6 +41,8 @@ export function ChatComposer({ onSubmit, cwd }: { onSubmit: (text: string) => vo
   const disposed = useRef(false);
   useEffect(() => () => { disposed.current = true; }, []);
 
+  // Read stateRef.current (NOT the closure `state`): Ink re-registers this handler in a passive effect that
+  // flushes after commit, so a closure read lags one render and would submit stale text. The ref updates every render.
   useInput((input, key) => { const r = applyKey(stateRef.current, input, key); if (r.submit != null) onSubmit(r.submit); setState(r.state); });
 
   // A just-opened mention has empty files → walk cwd once and feed the results in.
@@ -53,7 +55,7 @@ export function ChatComposer({ onSubmit, cwd }: { onSubmit: (text: string) => vo
 
   return (
     <Box flexDirection="column">
-      <Box borderStyle="round" paddingX={1}><Text>{"› "}</Text><Box flexDirection="column" flexShrink={0}>{renderBuffer(state)}</Box></Box>
+      <Box borderStyle="round" paddingX={1}><Text>{"› "}</Text><Box flexDirection="column">{renderBuffer(state)}</Box></Box>
       {state.mention ? <MentionPopup state={state} /> : null}
     </Box>
   );
