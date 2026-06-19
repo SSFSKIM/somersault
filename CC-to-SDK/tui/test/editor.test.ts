@@ -2,6 +2,7 @@
 // embedded \n; submit = a lone key.return; `\`+Enter = continuation.
 import { describe, it, expect } from "vitest";
 import { applyKey, initialEditorState, stripPasteMarkers, type EditorState, type KeyFlags } from "../src/editor.js";
+import { setMentionFiles } from "../src/editor.js";
 
 const type = (s: EditorState, text: string): EditorState => applyKey(s, text, {}).state;
 const press = (s: EditorState, key: KeyFlags): EditorState => applyKey(s, "", key).state;
@@ -85,5 +86,50 @@ describe("editor history", () => {
     s = press(s, { upArrow: true });                              // interior move, not history
     expect(s.cursor.row).toBe(1);
     expect(text(s)).toBe("a\nb\nc");
+  });
+});
+
+describe("editor @-mention", () => {
+  const open = () => {                                             // open a mention with two candidate files
+    let s = type(initialEditorState(), "@");
+    s = setMentionFiles(s, ["src/app.ts", "src/util/fs.ts"]);
+    return s;
+  };
+  it("opens a mention on '@' at a word boundary and lists files", () => {
+    const s = open();
+    expect(s.mention).not.toBeNull();
+    expect(s.mention!.items.length).toBe(2);
+  });
+  it("does NOT open a mention when '@' follows a non-space character", () => {
+    let s = type(initialEditorState(), "a");
+    s = type(s, "@");
+    expect(s.mention).toBeNull();
+  });
+  it("filters the candidate list as the query is typed", () => {
+    let s = open();
+    s = type(s, "fs");                                             // query "fs"
+    expect(s.mention!.query).toBe("fs");
+    expect(s.mention!.items[0].path).toBe("src/util/fs.ts");
+  });
+  it("Up/Down move the highlight; Enter accepts the highlighted path and closes", () => {
+    let s = open();
+    s = press(s, { downArrow: true });                            // highlight index 1
+    expect(s.mention!.index).toBe(1);
+    const r = applyKey(s, "", { return: true });                 // accept (not submit)
+    expect(r.submit).toBeUndefined();
+    expect(r.state.mention).toBeNull();
+    expect(text(r.state)).toBe("@src/util/fs.ts ");               // inserted token + trailing space
+  });
+  it("Esc closes the mention but keeps the typed text", () => {
+    let s = open(); s = type(s, "ap");
+    s = press(s, { escape: true });
+    expect(s.mention).toBeNull();
+    expect(text(s)).toBe("@ap");
+  });
+  it("backspacing past the '@' anchor closes the mention", () => {
+    let s = open();                                               // buffer "@", cursor after @
+    s = press(s, { backspace: true });                           // deletes the '@'
+    expect(s.mention).toBeNull();
+    expect(text(s)).toBe("");
   });
 });

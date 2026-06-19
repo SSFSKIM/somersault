@@ -2,6 +2,7 @@
 // walk is injected by the component. Probe 17d7116: a multi-line write is ONE useInput call (input = whole
 // string, embedded \n/\r, no key.return) → paste = insert-and-split; submit = a lone key.return; `\`+Enter =
 // continuation. rankCandidates (pure) is added in the mention pass.
+import { rankCandidates } from "./fileComplete.js";
 export interface Cursor { row: number; col: number }
 export interface Candidate { path: string; score: number }
 export interface MentionState { anchor: Cursor; query: string; files: string[]; items: Candidate[]; index: number }
@@ -84,16 +85,57 @@ function historyNext(s: EditorState): EditorState {
   if (idx >= s.history.length) return setBuffer({ ...s, histIndex: null, stash: null }, s.stash ?? "");
   return setBuffer({ ...s, histIndex: idx }, s.history[idx]);
 }
-function onUp(s: EditorState): EditorState { if (s.cursor.row === 0) return historyPrev(s); return moveCursorVert(s, -1); }
-function onDown(s: EditorState): EditorState { if (s.cursor.row === s.lines.length - 1) return historyNext(s); return moveCursorVert(s, 1); }
+function atWordBoundary(s: EditorState): boolean {
+  const { row, col } = s.cursor; const at = col - 1;            // the just-inserted '@' is at col-1
+  if (at <= 0) return true;
+  return /\s/.test(s.lines[row][at - 1] ?? "");
+}
+function openMention(s: EditorState): EditorState {
+  return { ...s, mention: { anchor: { row: s.cursor.row, col: s.cursor.col - 1 }, query: "", files: [], items: [], index: 0 } };
+}
+function refreshMention(s: EditorState): EditorState {
+  const m = s.mention; if (!m) return s; const { row, col } = s.cursor;
+  if (row !== m.anchor.row || col <= m.anchor.col) return { ...s, mention: null };   // cursor left the token
+  const query = s.lines[row].slice(m.anchor.col + 1, col);
+  if (/\s/.test(query)) return { ...s, mention: null };          // a space ends the mention
+  return { ...s, mention: { ...m, query, items: rankCandidates(m.files, query), index: 0 } };
+}
+const syncMention = (s: EditorState): EditorState => (s.mention ? refreshMention(s) : s);
+function afterInsert(next: EditorState, prev: EditorState, t: string): EditorState {
+  if (t === "@" && atWordBoundary(next)) return openMention(next);
+  return prev.mention ? refreshMention(next) : next;
+}
+function moveMention(s: EditorState, delta: number): EditorState {
+  const m = s.mention!; if (m.items.length === 0) return s;
+  return { ...s, mention: { ...m, index: Math.max(0, Math.min(m.items.length - 1, m.index + delta)) } };
+}
+function acceptMention(s: EditorState): EditorState {
+  const m = s.mention; if (!m || m.items.length === 0) return { ...s, mention: null };
+  const chosen = m.items[Math.min(m.index, m.items.length - 1)]; const row = m.anchor.row; const line = s.lines[row];
+  const replacement = "@" + chosen.path + " ";                  // insert "@path " (trailing space for ergonomics)
+  const lines = [...s.lines]; lines[row] = line.slice(0, m.anchor.col) + replacement + line.slice(s.cursor.col);
+  return { ...s, lines, cursor: { row, col: m.anchor.col + replacement.length }, mention: null };
+}
+export function setMentionFiles(s: EditorState, files: string[]): EditorState {
+  if (!s.mention) return s;
+  return { ...s, mention: { ...s.mention, files, items: rankCandidates(files, s.mention.query), index: 0 } };
+}
+function onUp(s: EditorState): EditorState { if (s.mention) return moveMention(s, -1); if (s.cursor.row === 0) return historyPrev(s); return moveCursorVert(s, -1); }
+function onDown(s: EditorState): EditorState { if (s.mention) return moveMention(s, 1); if (s.cursor.row === s.lines.length - 1) return historyNext(s); return moveCursorVert(s, 1); }
 
 export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorResult {
-  if (key.return) { if (s.lines[s.cursor.row].endsWith("\\")) return { state: continueLine(s) }; return submitTurn(s); }
-  if (key.backspace || key.delete) return { state: deleteLeft(s) };
-  if (key.leftArrow) return { state: moveLeft(s) };
-  if (key.rightArrow) return { state: moveRight(s) };
+  if (key.return) {
+    if (s.lines[s.cursor.row].endsWith("\\")) return { state: continueLine(s) };
+    if (s.mention) return { state: acceptMention(s) };
+    return submitTurn(s);
+  }
+  if (key.tab) return { state: s.mention ? acceptMention(s) : s };
+  if (key.escape) return { state: s.mention ? { ...s, mention: null } : s };
+  if (key.backspace || key.delete) return { state: syncMention(deleteLeft(s)) };
+  if (key.leftArrow) return { state: syncMention(moveLeft(s)) };
+  if (key.rightArrow) return { state: syncMention(moveRight(s)) };
   if (key.upArrow) return { state: onUp(s) };
   if (key.downArrow) return { state: onDown(s) };
-  if (input) { const t = stripPasteMarkers(input); return t ? { state: insertText(s, t) } : { state: s }; }
+  if (input) { const t = stripPasteMarkers(input); if (!t) return { state: s }; return { state: afterInsert(insertText(s, t), s, t) }; }
   return { state: s };
 }
