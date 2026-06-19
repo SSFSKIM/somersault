@@ -16,7 +16,9 @@ function renderBuffer(state: EditorState): React.ReactNode {
   return lines.map((line, r) => {
     if (r !== cursor.row) return <Text key={r}>{line.length ? line : " "}</Text>;
     const before = line.slice(0, cursor.col), at = line[cursor.col] ?? " ", after = line.slice(cursor.col + 1);
-    return <Text key={r}>{before}<Text inverse>{at}</Text>{after}</Text>;
+    // Box flexDirection="row" keeps before/cursor/after on one line; nested <Text inverse> inside <Text> breaks layout
+    // in Ink 5.x on re-render, causing chars after the first to bleed onto the border.
+    return <Box key={r} flexDirection="row"><Text>{before}</Text><Text inverse>{at}</Text><Text>{after}</Text></Box>;
   });
 }
 
@@ -51,7 +53,7 @@ export function ChatComposer({ onSubmit, cwd }: { onSubmit: (text: string) => vo
 
   return (
     <Box flexDirection="column">
-      <Box borderStyle="round" paddingX={1}><Text>{"› "}</Text><Box flexDirection="column">{renderBuffer(state)}</Box></Box>
+      <Box borderStyle="round" paddingX={1}><Text>{"› "}</Text><Box flexDirection="column" flexShrink={0}>{renderBuffer(state)}</Box></Box>
       {state.mention ? <MentionPopup state={state} /> : null}
     </Box>
   );

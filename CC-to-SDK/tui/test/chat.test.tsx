@@ -29,7 +29,7 @@ describe("<ChatApp>", () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeSession()} broker={createUiBroker()} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));      // composer mounted → TextInput live
     stdin.write("hi");
-    await new Promise((r) => setTimeout(r, 50));             // wait for ChatComposer stateRef to settle
+    await waitFor(() => frame(lastFrame).includes("hi"));   // typed text landed in the composer before Enter
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("ok"));
     expect(lastFrame()).toContain("ok");
@@ -44,7 +44,7 @@ describe("<ChatApp>", () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} broker={ui} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
     stdin.write("edit it");
-    await new Promise((r) => setTimeout(r, 50));               // wait for ChatComposer stateRef to settle
+    await waitFor(() => frame(lastFrame).includes("edit it"));   // typed text landed in the composer before Enter
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Permission needed"));   // dialog up
     expect(lastFrame()).toContain("Edit");

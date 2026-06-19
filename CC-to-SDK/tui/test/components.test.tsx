@@ -145,4 +145,11 @@ describe("ChatComposer", () => {
     await waitFor(() => (lastFrame() ?? "").includes("alpha.ts"));
     expect(lastFrame() ?? "").toContain("alpha.ts");
   });
+  it("renders a multi-character single-line buffer contiguously (no border bleed)", async () => {
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("hello");
+    await waitFor(() => (lastFrame() ?? "").includes("hello"));
+    expect(lastFrame() ?? "").toContain("hello");
+  });
 });
