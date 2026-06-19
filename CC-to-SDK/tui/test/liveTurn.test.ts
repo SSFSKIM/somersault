@@ -109,4 +109,13 @@ describe("LiveTurn", () => {
     expect(texts(lt)).toContain("no partials here");
     expect(lt.model).toBe("claude-sonnet-4-6");
   });
+
+  it("shows elapsed on a still-running tool only after ≥1s, via an injected clock", () => {
+    let t = 1000; const lt = new LiveTurn(() => t);
+    lt.ingest(se({ type: "message_start" }));
+    lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tk", name: "Bash", input: {} } }));
+    expect(texts(lt).find((x) => x.startsWith("⟳ Bash"))).toBe("⟳ Bash");   // 0s → no suffix
+    t = 4000;                                                                 // 3s later
+    expect(texts(lt).find((x) => x.startsWith("⟳ Bash"))).toBe("⟳ Bash 3s"); // elapsed shown
+  });
 });

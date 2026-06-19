@@ -6,7 +6,7 @@ import { trunc, toolTarget } from "./render.js";
 type Block =
   | { kind: "text"; index: number; text: string }
   | { kind: "thinking"; index: number; text: string; collapsed: boolean }
-  | { kind: "tool"; index: number; id: string; name: string; target: string; status: "running" | "done" | "error"; preview?: string };
+  | { kind: "tool"; index: number; id: string; name: string; target: string; status: "running" | "done" | "error"; preview?: string; startedAt: number };
 type ToolBlock = Block & { kind: "tool" };
 
 const ev = (m: any) => (m?.type === "stream_event" ? m.event : undefined);
@@ -18,6 +18,7 @@ function firstResultLine(content: unknown): string {
 function collapseThinking(blocks: Block[]): void { for (const b of blocks) if (b.kind === "thinking") b.collapsed = true; }
 
 export class LiveTurn {
+  constructor(private now: () => number = () => Date.now()) {}
   private committed: Block[] = [];     // blocks from completed messages, in order
   private current: Block[] = [];       // blocks of the in-flight message, in start order
   private byTool = new Map<string, ToolBlock>();
@@ -59,7 +60,7 @@ export class LiveTurn {
       if (cb.type === "thinking") this.current.push({ kind: "thinking", index: i, text: "", collapsed: false });
       else if (cb.type === "text") this.current.push({ kind: "text", index: i, text: "" });
       else if (cb.type === "tool_use") {
-        const tb: ToolBlock = { kind: "tool", index: i, id: String(cb.id ?? ""), name: String(cb.name ?? ""), target: "", status: "running" };
+        const tb: ToolBlock = { kind: "tool", index: i, id: String(cb.id ?? ""), name: String(cb.name ?? ""), target: "", status: "running", startedAt: this.now() };
         this.current.push(tb); if (tb.id) this.byTool.set(tb.id, tb);
       }
       return;
@@ -89,7 +90,7 @@ export class LiveTurn {
         const id = String(b.id ?? ""); const ex = id ? this.byTool.get(id) : undefined;
         if (ex) { ex.name = String(b.name ?? ex.name); ex.target = toolTarget(ex.name, b.input ?? {}); }
         else {
-          const tb: ToolBlock = { kind: "tool", index: i, id, name: String(b.name ?? ""), target: toolTarget(String(b.name ?? ""), b.input ?? {}), status: "running" };
+          const tb: ToolBlock = { kind: "tool", index: i, id, name: String(b.name ?? ""), target: toolTarget(String(b.name ?? ""), b.input ?? {}), status: "running", startedAt: this.now() };
           this.current.push(tb); if (id) this.byTool.set(id, tb);
         }
       }
@@ -114,6 +115,8 @@ export class LiveTurn {
     const label = b.target ? `${b.name} ${b.target}` : b.name;
     if (b.status === "error") return [{ text: `✗ ${label}`, color: "red" }];
     if (b.status === "done") return [{ text: `✓ ${label}${b.preview ? "  │ " + b.preview : ""}` }];
-    return this.ended ? [{ text: `· ${label}`, dim: true }] : [{ text: `⟳ ${label}` }];  // running (settled after finalize)
+    if (this.ended) return [{ text: `· ${label}`, dim: true }];               // settled after finalize
+    const s = Math.floor((this.now() - b.startedAt) / 1000);
+    return [{ text: `⟳ ${label}${s >= 1 ? ` ${s}s` : ""}` }];                 // running, elapsed ≥1s
   }
 }
