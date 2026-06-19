@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import React from "react";
 import { render } from "ink-testing-library";
+import { ChatComposer } from "../src/ChatComposer.js";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Transcript } from "../src/Transcript.js";
 import { PermissionDialog } from "../src/PermissionDialog.js";
 import { ChatStatusBar } from "../src/ChatStatusBar.js";
@@ -114,5 +118,31 @@ describe("TaskPanel", () => {
   it("renders nothing when empty", () => {
     const { lastFrame } = render(<TaskPanel tasks={[]} />);
     expect((lastFrame() ?? "").trim()).toBe("");
+  });
+});
+
+describe("ChatComposer", () => {
+  it("submits on Enter and inserts a newline on \\+Enter", async () => {
+    const got: string[] = [];
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={(t) => got.push(t)} cwd={tmpdir()} />);
+    await new Promise((r) => setTimeout(r, 20));                  // let useInput subscribe before keys
+    // ink timing discipline: await a re-render between dependent keystrokes so each useInput call sees the
+    // updated reducer state (a non-functional setState reads a render-time closure; see plan Global Constraints).
+    stdin.write("a"); await waitFor(() => (lastFrame() ?? "").includes("a"));
+    stdin.write("\\"); await waitFor(() => (lastFrame() ?? "").includes("\\"));   // line now "a\"
+    stdin.write("\r"); await new Promise((r) => setTimeout(r, 20));              // `\`+Enter → continuation (2 lines)
+    stdin.write("b"); await waitFor(() => (lastFrame() ?? "").includes("b"));
+    stdin.write("\r");                                                          // submit "a\nb"
+    await waitFor(() => got.length === 1);
+    expect(got[0]).toBe("a\nb");
+  });
+  it("opens the @-popup listing files from the fixture cwd", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-comp-"));
+    writeFileSync(join(dir, "alpha.ts"), "x");
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={dir} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("@");
+    await waitFor(() => (lastFrame() ?? "").includes("alpha.ts"));
+    expect(lastFrame() ?? "").toContain("alpha.ts");
   });
 });
