@@ -39,7 +39,7 @@ npm run cli                 # tsx src/cli.tsx — launch the console
 - **`Composer.tsx`** — text-input bar for submitting prompts
 - **`StatusBar.tsx`** — bottom bar: daemon up/down, focus mode, status message, key hints
 - **`ConfirmDialog.tsx`** — double-border modal for destructive ops (y/Y confirm, n/N/Esc cancel)
-- **`App.tsx`** — master-detail composition + ink `useInput` key routing + confirm-gated stop
+- **`App.tsx`** — master-detail composition + ink `useInput` key routing + confirm-gated stop; renders the shared `PermissionDialog` when `snapshot.pending` is non-empty, answering via `respondPermission` (increment 4)
 - **`cli.tsx`** — bin entry: parses `--socket`, renders `<App>`
 
 ### Chat REPL (`cc-harness-chat`)
