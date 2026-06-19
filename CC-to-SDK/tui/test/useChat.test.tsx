@@ -175,3 +175,71 @@ describe("useChat", () => {
     expect(tasks).toEqual([{ id: "1", subject: "build it", status: "pending" }]);
   });
 });
+
+describe("permission ladder", () => {
+  function LadderHost({ makeSession, api }: { makeSession: () => ChatSession; api: { cyc?: () => void; run?: (s: string) => void } }) {
+    const c = useChat(makeSession, createUiBroker());
+    api.cyc = c.cycleMode; api.run = c.submit;
+    return <Text>mode:{c.state.mode} model:{c.state.model ?? "-"} {c.state.lines.map((l) => l.text).join("|")}</Text>;
+  }
+  it("Tab cycles default → acceptEdits → auto → default (bypass off-cycle)", async () => {
+    const setModeCalls: string[] = [];
+    const session = fakeSession({ async setPermissionMode(m: string) { setModeCalls.push(m); } });
+    const api: { cyc?: () => void } = {};
+    const { lastFrame } = render(<LadderHost makeSession={() => session} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("mode:default"));
+    api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:acceptEdits"));
+    api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:auto"));
+    api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:default"));
+    expect(setModeCalls).toEqual(["acceptEdits", "auto", "default"]);
+  });
+  it("entering auto on an unsupported model swaps to a supported one with a notice", async () => {
+    const setModelCalls: (string | undefined)[] = [];
+    const session = fakeSession({ async setModel(m?: string) { setModelCalls.push(m); } });
+    const api: { cyc?: () => void; run?: (s: string) => void } = {};
+    const { lastFrame } = render(<LadderHost makeSession={() => session} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("mode:default"));
+    api.run!("/model claude-haiku-4-5");
+    await waitFor(() => frame(lastFrame).includes("model:claude-haiku-4-5"));
+    api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:acceptEdits"));
+    api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:auto"));
+    expect(setModelCalls).toContain("claude-sonnet-4-6");
+    expect(frame(lastFrame)).toContain("switched model to claude-sonnet-4-6");
+  });
+  it("entering auto on a supported model does not swap the model", async () => {
+    const setModelCalls: (string | undefined)[] = [];
+    const session = fakeSession({ async setModel(m?: string) { setModelCalls.push(m); } });
+    const api: { cyc?: () => void; run?: (s: string) => void } = {};
+    const { lastFrame } = render(<LadderHost makeSession={() => session} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("mode:default"));
+    api.run!("/model claude-opus-4-8");
+    await waitFor(() => frame(lastFrame).includes("model:claude-opus-4-8"));
+    api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:acceptEdits"));
+    api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:auto"));
+    expect(setModelCalls).toEqual(["claude-opus-4-8"]);
+    expect(frame(lastFrame)).not.toContain("switched model");
+  });
+  it("/yolo enables bypassPermissions; Tab from bypass returns to default", async () => {
+    const setModeCalls: string[] = [];
+    const session = fakeSession({ async setPermissionMode(m: string) { setModeCalls.push(m); } });
+    const api: { cyc?: () => void; run?: (s: string) => void } = {};
+    const { lastFrame } = render(<LadderHost makeSession={() => session} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("mode:default"));
+    api.run!("/yolo");
+    await waitFor(() => frame(lastFrame).includes("mode:bypassPermissions"));
+    api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:default"));
+    expect(setModeCalls).toEqual(["bypassPermissions", "default"]);
+  });
+  it("cycleMode after unmount is a no-op (early disposed guard)", async () => {
+    const setModeCalls: string[] = [];
+    const session = fakeSession({ async setPermissionMode(m: string) { setModeCalls.push(m); } });
+    const api: { cyc?: () => void } = {};
+    const { lastFrame, unmount } = render(<LadderHost makeSession={() => session} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("mode:default"));
+    const cyc = api.cyc!;
+    unmount();
+    cyc();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(setModeCalls).toEqual([]);
+  });
+});

@@ -8,7 +8,7 @@ import type { UiBrokerHandle } from "./uiBroker.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { parseCommand, formatHelp, formatModel, formatCompact, formatContext, formatUnknown, pickMostRecent, type ParsedCommand, type InitialResume } from "./commands.js";
 import { replayLines } from "./replay.js";
-import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "cc-harness";
+import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel } from "cc-harness";
 import type { CompactOutcome, RawContextUsage } from "cc-harness";
 
 /** The subset of the lib Session the REPL drives (the real Session satisfies this). */
@@ -26,7 +26,9 @@ export interface SessionInfo { sessionId: string; summary: string; firstPrompt?:
 export interface Pending { req: PermissionRequest; resolve: (d: PermissionDecision) => void; }
 export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; }
 
-const OTHER_POLE: Record<string, string> = { default: "bypassPermissions", bypassPermissions: "default" };
+const LADDER = ["default", "acceptEdits", "auto"] as const;   // Tab cycles these; bypassPermissions is off-cycle (/yolo)
+/** Next mode on the Tab ladder; any off-ladder mode (bypassPermissions/plan/…) re-enters at "default". */
+function ladderNext(mode: string): string { const i = (LADDER as readonly string[]).indexOf(mode); return i >= 0 ? LADDER[(i + 1) % LADDER.length] : "default"; }
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
@@ -95,6 +97,7 @@ export function useChat(
         case "help": append(formatHelp()); break;
         case "resume": void openPicker(); break;
         case "continue": void doContinue(); break;
+        case "yolo": void applyMode("bypassPermissions"); break;
         default: append(formatUnknown(cmd.name));
       }
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
@@ -143,7 +146,26 @@ export function useChat(
       .finally(() => { if (disposed.current) return; setLines((l) => [...l, ...lt.finalize()]); setStreaming([]); setBusy(false); setSubagentActive(false); if (lt.model) setModel(lt.model); void refreshCtx(); });
   }
   function resolvePermission(d: PermissionDecision) { pendingRef.current?.resolve(d); setPending(null); }
-  function cycleMode() { const next = OTHER_POLE[mode] ?? "default"; void session.setPermissionMode(next).catch(() => {}); if (!disposed.current) setMode(next); }
+  // Apply a permission mode. `auto` is model-gated (probe 24): if the live model can't run auto, swap to a
+  // supported one FIRST (verified to take effect at runtime) with a notice, then set the mode. Disposed-guarded
+  // across each await so a late settle never touches state after unmount.
+  async function applyMode(next: string) {
+    if (disposed.current) return;
+    if (next === "auto") {
+      const target = resolveAutoModel(model);
+      if (model !== target) {
+        await session.setModel(target).catch(() => {});
+        if (disposed.current) return;
+        setModel(target);
+        append([{ text: model ? `↻ auto — switched model to ${target} (${model} doesn't support auto)` : `↻ auto — using ${target} (auto needs Opus 4.6+/Sonnet 4.6)`, dim: true }]);
+      }
+    }
+    await new Promise<void>((r) => setTimeout(r, 0));
+    if (disposed.current) return;
+    await session.setPermissionMode(next).catch(() => {});
+    if (!disposed.current) setMode(next);
+  }
+  function cycleMode() { void applyMode(ladderNext(mode)); }
   function interrupt() { void session.interrupt().catch(() => {}); }
 
   return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession };

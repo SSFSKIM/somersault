@@ -19,7 +19,7 @@ async function pressUntil(stdin: { write: (s: string) => void }, key: string, co
 function fakeSession(onSubmit?: () => Promise<void>): ChatSession & { modes: string[] } {
   const s: any = { modes: [],
     async submit(_p: string, onMessage: (m: unknown) => void) { onMessage({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }); if (onSubmit) await onSubmit(); return { result: "done" }; },
-    async setPermissionMode(m: string) { s.modes.push(m); }, async interrupt() {}, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
+    async setPermissionMode(m: string) { s.modes.push(m); }, async setModel() {}, async interrupt() {}, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
     async dispose() {}, sessionId: "sess-1" };
   return s;
 }
@@ -53,11 +53,12 @@ describe("<ChatApp>", () => {
     expect(decided).toEqual({ kind: "allow_once" });
   });
 
-  it("Tab toggles the permission mode default ↔ bypassPermissions", async () => {
+  it("Tab cycles the permission ladder default → acceptEdits → auto", async () => {
     const session = fakeSession();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} broker={createUiBroker()} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("mode"));
-    await pressUntil(stdin, "\t", () => session.modes.includes("bypassPermissions")); // Tab cycles mode
-    expect(session.modes[0]).toBe("bypassPermissions");
+    await pressUntil(stdin, "\t", () => session.modes.includes("auto"));   // Tab cycles default→acceptEdits→auto
+    expect(session.modes[0]).toBe("acceptEdits");
+    expect(session.modes).toContain("auto");
   });
 });

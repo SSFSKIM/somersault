@@ -41,6 +41,9 @@ describe("resume helpers", () => {
   it("/continue is in the command table", () => {
     expect(COMMANDS.some((c) => c.name === "continue")).toBe(true);
   });
+  it("/yolo is in the command table", () => {
+    expect(COMMANDS.some((c) => c.name === "yolo")).toBe(true);
+  });
   it("pickMostRecent returns the max-lastModified session id", () => {
     expect(pickMostRecent([{ sessionId: "a", lastModified: 5 }, { sessionId: "b", lastModified: 9 }, { sessionId: "c", lastModified: 2 }])).toBe("b");
     expect(pickMostRecent([])).toBeUndefined();

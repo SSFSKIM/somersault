@@ -21,6 +21,7 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "clear", summary: "clear the screen (session context kept)" },
   { name: "resume", summary: "resume a prior session" },
   { name: "continue", summary: "resume the most-recent session" },
+  { name: "yolo", summary: "enable bypassPermissions (ungated tool access)" },
   { name: "help", summary: "list commands" },
 ];
 
