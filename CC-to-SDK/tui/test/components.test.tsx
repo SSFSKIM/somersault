@@ -56,6 +56,14 @@ describe("<ChatStatusBar>", () => {
     expect(f).not.toContain("streaming");
     expect(f).not.toContain("model ");
   });
+  it("shows a subagent-running indicator", () => {
+    const { lastFrame } = render(<ChatStatusBar mode="default" busy={true} ctxPct={10} hasPending={false} subagentActive={true} />);
+    expect(lastFrame() ?? "").toContain("⚙ subagent running");
+  });
+  it("hides the subagent indicator when inactive", () => {
+    const { lastFrame } = render(<ChatStatusBar mode="default" busy={true} ctxPct={10} hasPending={false} subagentActive={false} />);
+    expect(lastFrame() ?? "").not.toContain("subagent running");
+  });
 });
 describe("SessionPicker", () => {
   const sessions = [
