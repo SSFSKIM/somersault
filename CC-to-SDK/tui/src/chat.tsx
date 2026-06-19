@@ -5,11 +5,13 @@ import { render } from "ink";
 import { openSession } from "cc-harness";
 import { createUiBroker } from "./uiBroker.js";
 import { ChatApp } from "./ChatApp.js";
+import { parseResumeIntent } from "./commands.js";
 
 const args = process.argv.slice(2);
 function flag(name: string): string | undefined { const i = args.indexOf(name); return i >= 0 && args[i + 1] != null ? args[i + 1] : undefined; }
 
 const ui = createUiBroker();
 const base = { model: flag("--model"), cwd: flag("--cwd") ?? process.cwd(), permissionMode: "default" as const, permissionBroker: ui.broker, contextTool: true, includePartialMessages: true, forwardSubagentText: true };
+const initialResume = parseResumeIntent(args);
 const makeSession = (resume?: string) => openSession({ ...base, ...(resume ? { resume } : {}) });
-render(<ChatApp makeSession={makeSession} broker={ui} cwd={base.cwd} />);
+render(<ChatApp makeSession={makeSession} broker={ui} cwd={base.cwd} initialResume={initialResume} />);

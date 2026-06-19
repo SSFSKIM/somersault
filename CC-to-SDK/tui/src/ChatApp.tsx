@@ -5,6 +5,7 @@ import React from "react";
 import { Box, useInput } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
+import type { InitialResume } from "./commands.js";
 import { Transcript } from "./Transcript.js";
 import { ChatComposer } from "./ChatComposer.js";
 import { PermissionDialog } from "./PermissionDialog.js";
@@ -12,8 +13,8 @@ import { ChatStatusBar } from "./ChatStatusBar.js";
 import { SessionPicker } from "./SessionPicker.js";
 import { TaskPanel } from "./TaskPanel.js";
 
-export function ChatApp({ makeSession, broker, hookOpts, cwd }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string }; cwd: string }) {
-  const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession } = useChat(makeSession, broker, hookOpts ?? {});
+export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string }; cwd: string; initialResume?: InitialResume }) {
+  const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession } = useChat(makeSession, broker, { ...(hookOpts ?? {}), cwd, initialResume });
   useInput((input, key) => {
     if (key.escape) { interrupt(); return; }
     if (key.tab) cycleMode();   // Tab cycles the permission mode (default ↔ bypassPermissions)
