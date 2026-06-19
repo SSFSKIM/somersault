@@ -22,7 +22,7 @@ export function ChatApp({ session, broker, hookOpts }: { session: ChatSession; b
       {state.pending
         ? <PermissionDialog req={state.pending.req} onDecision={resolvePermission} />
         : <Composer onSubmit={submit} />}
-      <ChatStatusBar mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} />
+      <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} />
     </Box>
   );
 }

@@ -41,4 +41,17 @@ describe("<ChatStatusBar>", () => {
     expect(lastFrame()).toContain("default");
     expect(lastFrame()).toContain("42%");
   });
+  it("shows the model and a live streaming indicator while busy", () => {
+    const { lastFrame } = render(<ChatStatusBar model="claude-sonnet-4-6" mode="default" busy={true} ctxPct={34} hasPending={false} />);
+    const f = lastFrame() ?? "";
+    expect(f).toContain("claude-sonnet-4-6");
+    expect(f).toContain("⟳ streaming");
+    expect(f).toContain("ctx 34%");
+  });
+  it("hides the streaming indicator and model segment when idle/absent", () => {
+    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} ctxPct={10} hasPending={false} />);
+    const f = lastFrame() ?? "";
+    expect(f).not.toContain("streaming");
+    expect(f).not.toContain("model ");
+  });
 });
