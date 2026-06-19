@@ -10,5 +10,5 @@ const args = process.argv.slice(2);
 function flag(name: string): string | undefined { const i = args.indexOf(name); return i >= 0 && args[i + 1] != null ? args[i + 1] : undefined; }
 
 const ui = createUiBroker();
-const session = openSession({ model: flag("--model"), cwd: flag("--cwd") ?? process.cwd(), permissionMode: "default", permissionBroker: ui.broker, contextTool: true });
+const session = openSession({ model: flag("--model"), cwd: flag("--cwd") ?? process.cwd(), permissionMode: "default", permissionBroker: ui.broker, contextTool: true, includePartialMessages: true });
 render(<ChatApp session={session} broker={ui} />);
