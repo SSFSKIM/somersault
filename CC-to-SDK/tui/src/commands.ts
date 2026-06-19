@@ -39,9 +39,6 @@ export function formatCompact(o: CompactOutcome): RenderLine[] {
 export function formatContext(s: ContextUsageSummary): RenderLine[] {
   return [{ text: `ctx ${s.percentUsed}% · ${k(s.tokensUsed)} / ${k(s.maxTokens)} · ${s.status}`, dim: true }];
 }
-export function formatResumed(summary: string, id: string): RenderLine[] {
-  return [{ text: `↻ resumed "${summary}" (${id.slice(0, 8)})`, dim: true }];
-}
 export function formatUnknown(name: string): RenderLine[] {
   return [{ text: `Unknown command: /${name} · try /help`, color: "red" }];
 }

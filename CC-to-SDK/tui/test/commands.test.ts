@@ -1,6 +1,6 @@
 // tui/test/commands.test.ts — pure parser + formatters.
 import { describe, it, expect } from "vitest";
-import { parseCommand, COMMANDS, formatHelp, formatModel, formatCompact, formatContext, formatResumed, formatUnknown, pickMostRecent, parseResumeIntent } from "../src/commands.js";
+import { parseCommand, COMMANDS, formatHelp, formatModel, formatCompact, formatContext, formatUnknown, pickMostRecent, parseResumeIntent } from "../src/commands.js";
 
 describe("parseCommand", () => {
   it("splits a slash command into name + args", () => {
@@ -32,8 +32,7 @@ describe("formatters", () => {
     expect(formatContext({ percentUsed: 9, tokensUsed: 18500, maxTokens: 200000, tokensRemaining: 181500, status: "ok" }))
       .toEqual([{ text: "ctx 9% · 18.5k / 200k · ok", dim: true }]);
   });
-  it("resumed + unknown", () => {
-    expect(formatResumed("refactor auth", "a3f1b2c3d4")).toEqual([{ text: '↻ resumed "refactor auth" (a3f1b2c3)', dim: true }]);
+  it("unknown", () => {
     expect(formatUnknown("zzz")).toEqual([{ text: "Unknown command: /zzz · try /help", color: "red" }]);
   });
 });
