@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Transcript } from "../src/Transcript.js";
 import { PermissionDialog } from "../src/PermissionDialog.js";
-import { ChatStatusBar } from "../src/ChatStatusBar.js";
+import { ChatStatusBar, modeColor } from "../src/ChatStatusBar.js";
 import { SessionPicker } from "../src/SessionPicker.js";
 import { TaskPanel } from "../src/TaskPanel.js";
 import type { PermissionDecision } from "cc-harness";
@@ -118,6 +118,15 @@ describe("TaskPanel", () => {
   it("renders nothing when empty", () => {
     const { lastFrame } = render(<TaskPanel tasks={[]} />);
     expect((lastFrame() ?? "").trim()).toBe("");
+  });
+});
+
+describe("modeColor", () => {
+  it("maps each permission mode to a color", () => {
+    expect(modeColor("default")).toBe("green");
+    expect(modeColor("acceptEdits")).toBe("yellow");
+    expect(modeColor("auto")).toBe("cyan");
+    expect(modeColor("bypassPermissions")).toBe("red");
   });
 });
 
