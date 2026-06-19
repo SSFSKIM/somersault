@@ -1,12 +1,12 @@
 // tui/src/liveTurn.ts — pure reducer: SDK turn frames (stream_event partials + full assistant/user/result)
-// → live RenderLine[] snapshots. Owns ALL streaming state so useChat/render stay lean. No React, no SDK, no clock.
+// → live RenderLine[] snapshots. Owns ALL streaming state so useChat/render stay lean. No React, no SDK; clock is injected.
 import type { RenderLine } from "./render.js";
 import { trunc, toolTarget } from "./render.js";
 
 type Block =
   | { kind: "text"; index: number; text: string }
   | { kind: "thinking"; index: number; text: string; collapsed: boolean }
-  | { kind: "tool"; index: number; id: string; name: string; target: string; status: "running" | "done" | "error"; preview?: string; startedAt: number };
+  | { kind: "tool"; index: number; id: string; name: string; target: string; status: "running" | "done" | "error"; preview?: string; startedAt: number; nested?: RenderLine[]; toolCount?: number; doneAt?: number };
 type ToolBlock = Block & { kind: "tool" };
 
 const ev = (m: any) => (m?.type === "stream_event" ? m.event : undefined);
@@ -32,9 +32,22 @@ export class LiveTurn {
     const e = ev(m);
     if (e) { this.sawPartials = true; this.onStreamEvent(e); return; }
     const mm = m as any;
+    const ptid = mm?.parent_tool_use_id;
+    if (ptid) { this.onNested(String(ptid), mm); return; }     // subagent inner turn (whole message; never partial)
     if (mm?.type === "assistant") this.onAssistant(mm);
     else if (mm?.type === "user") this.onUser(mm);
     // result / system / unknown → ignored (the turn's end is driven by useChat resolving)
+  }
+
+  private onNested(ptid: string, mm: any): void {
+    const agent = this.byTool.get(ptid);
+    if (!agent || agent.kind !== "tool") return;               // unknown parent → ignore
+    if (!agent.nested) { agent.nested = []; agent.toolCount = 0; }
+    for (const b of mm.message?.content ?? []) {
+      if (b?.type === "text" && b.text) for (const l of String(b.text).split("\n")) agent.nested.push({ text: `  │ ${l}`, dim: true });
+      else if (b?.type === "tool_use") { agent.toolCount = (agent.toolCount ?? 0) + 1; agent.nested.push({ text: `  ⚙ ${b.name}${b.input ? " " + toolTarget(String(b.name), b.input) : ""}`, dim: true }); }
+      else if (b?.type === "tool_result") { const p = trunc(firstResultLine(b.content)); if (p) agent.nested.push({ text: `  ⎿ ${p}`, dim: true }); }
+    }
   }
 
   fail(message: string): void { this.errorLine = message; }
@@ -104,6 +117,7 @@ export class LiveTurn {
       if (!tb) continue;
       tb.status = b.is_error ? "error" : "done";
       if (!b.is_error) { const p = trunc(firstResultLine(b.content)); if (p) tb.preview = p; }
+      if (tb.name === "Agent") tb.doneAt = this.now();          // collapse Agent on its top-level result
     }
   }
 
@@ -113,10 +127,16 @@ export class LiveTurn {
       return b.collapsed ? [{ text: "✦ Thinking", dim: true }]
         : (b.text ? b.text.split("\n").map((t) => ({ text: t, dim: true })) : []);
     const label = b.target ? `${b.name} ${b.target}` : b.name;
+    if (b.name === "Agent") {
+      if (b.doneAt != null) { const s = Math.floor((b.doneAt - b.startedAt) / 1000); return [{ text: `⚙ ${label} ✓ (${b.toolCount ?? 0} tools · ${s}s)` }]; }
+      return [{ text: `⚙ ${label}` }, ...(b.nested ?? [])];      // expanded while running
+    }
     if (b.status === "error") return [{ text: `✗ ${label}`, color: "red" }];
     if (b.status === "done") return [{ text: `✓ ${label}${b.preview ? "  │ " + b.preview : ""}` }];
     if (this.ended) return [{ text: `· ${label}`, dim: true }];               // settled after finalize
     const s = Math.floor((this.now() - b.startedAt) / 1000);
     return [{ text: `⟳ ${label}${s >= 1 ? ` ${s}s` : ""}` }];                 // running, elapsed ≥1s
   }
+
+  get subagentActive(): boolean { return [...this.byTool.values()].some((b) => b.name === "Agent" && b.doneAt == null); }
 }

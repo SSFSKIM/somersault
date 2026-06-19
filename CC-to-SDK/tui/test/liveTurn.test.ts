@@ -118,4 +118,27 @@ describe("LiveTurn", () => {
     t = 4000;                                                                 // 3s later
     expect(texts(lt).find((x) => x.startsWith("⟳ Bash"))).toBe("⟳ Bash 3s"); // elapsed shown
   });
+
+  it("nests subagent (Agent) turns under the parent and collapses on the top-level result", () => {
+    let t = 0; const lt = new LiveTurn(() => t);
+    // top-level Agent tool_use (full message — no partials for the agent's own content)
+    lt.ingest({ type: "assistant", message: { content: [{ type: "tool_use", id: "ag1", name: "Agent", input: { description: "research" } }] } });
+    expect(lt.subagentActive).toBe(true);
+    expect(texts(lt).some((x) => x.startsWith("⚙ Agent"))).toBe(true);
+    // nested subagent turns (parent_tool_use_id = ag1)
+    lt.ingest({ type: "user", parent_tool_use_id: "ag1", message: { content: [{ type: "text", text: "do the thing" }] } });
+    lt.ingest({ type: "assistant", parent_tool_use_id: "ag1", message: { content: [{ type: "tool_use", id: "b1", name: "Bash", input: { command: "echo hi" } }] } });
+    lt.ingest({ type: "user", parent_tool_use_id: "ag1", message: { content: [{ type: "tool_result", tool_use_id: "b1", content: "hi" }] } });
+    lt.ingest({ type: "assistant", parent_tool_use_id: "ag1", message: { content: [{ type: "text", text: "the output is hi" }] } });
+    const expanded = texts(lt);
+    expect(expanded.some((x) => x.includes("Bash"))).toBe(true);             // nested tool shown while running
+    expect(expanded.some((x) => x.includes("the output is hi"))).toBe(true);// nested text shown
+    // top-level Agent result closes + collapses
+    t = 12000;
+    lt.ingest({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "ag1", content: "done" }] } });
+    expect(lt.subagentActive).toBe(false);
+    const collapsed = texts(lt);
+    expect(collapsed.some((x) => /⚙ Agent .*✓ \(1 tools? · 12s\)/.test(x))).toBe(true);
+    expect(collapsed.some((x) => x.includes("the output is hi"))).toBe(false); // nested hidden after collapse
+  });
 });
