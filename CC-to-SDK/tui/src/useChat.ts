@@ -5,7 +5,7 @@ import type { PermissionDecision, PermissionRequest } from "cc-harness";
 import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
-import { parseCommand, formatHelp, formatModel, formatCompact, formatContext, formatUnknown, type ParsedCommand } from "./commands.js";
+import { parseCommand, formatHelp, formatModel, formatCompact, formatContext, formatUnknown, formatResumed, type ParsedCommand } from "./commands.js";
 import { summarizeUsage, listSessions as realListSessions } from "cc-harness";
 import type { CompactOutcome, RawContextUsage } from "cc-harness";
 
@@ -85,6 +85,13 @@ export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBro
     catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
   }
   function closePicker() { if (!disposed.current) setPicker({ open: false, sessions: [] }); }
+  function pickSession(info: SessionInfo) {
+    if (disposed.current) return;
+    setSession(makeSession(info.sessionId));                       // effect disposes the old, wires the new
+    setStreaming([]);
+    setLines(formatResumed(info.summary || info.firstPrompt || "session", info.sessionId));
+    setPicker({ open: false, sessions: [] });
+  }
 
   function submit(prompt: string) {
     if (disposed.current || busy || !prompt.trim()) return;
@@ -101,7 +108,5 @@ export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBro
   function cycleMode() { const next = OTHER_POLE[mode] ?? "default"; void session.setPermissionMode(next).catch(() => {}); if (!disposed.current) setMode(next); }
   function interrupt() { void session.interrupt().catch(() => {}); }
 
-  void setSession; // used by Task 5 — suppress unused warning
-
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession };
 }

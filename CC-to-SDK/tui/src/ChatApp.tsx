@@ -9,19 +9,22 @@ import { Transcript } from "./Transcript.js";
 import { Composer } from "./Composer.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { ChatStatusBar } from "./ChatStatusBar.js";
+import { SessionPicker } from "./SessionPicker.js";
 
 export function ChatApp({ makeSession, broker, hookOpts }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string } }) {
-  const { state, submit, resolvePermission, cycleMode, interrupt } = useChat(makeSession, broker, hookOpts ?? {});
+  const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession } = useChat(makeSession, broker, hookOpts ?? {});
   useInput((input, key) => {
     if (key.escape) { interrupt(); return; }
     if (key.tab) cycleMode();   // Tab cycles the permission mode (default ↔ bypassPermissions)
-  }, { isActive: !state.pending });
+  }, { isActive: !state.pending && !state.picker.open });
   return (
     <Box flexDirection="column">
       <Transcript lines={state.lines} streaming={state.streaming} />
-      {state.pending
-        ? <PermissionDialog req={state.pending.req} onDecision={resolvePermission} />
-        : <Composer onSubmit={submit} />}
+      {state.picker.open
+        ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
+        : state.pending
+          ? <PermissionDialog req={state.pending.req} onDecision={resolvePermission} />
+          : <Composer onSubmit={submit} />}
       <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} />
     </Box>
   );

@@ -80,6 +80,32 @@ describe("useChat", () => {
     expect(session.disposed).toBe(1);
   });
 
+  it("/resume opens the picker and a pick swaps the session (old disposed, marker shown)", async () => {
+    let disposed = 0;
+    const oldSession = fakeSession({ async dispose() { disposed++; } });
+    const newSession = fakeSession();
+    let calls = 0;
+    const makeSession = (resume?: string) => { calls++; return resume ? newSession : oldSession; };
+    const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }] };
+    let pick: ((s: any) => void) | undefined, close: (() => void) | undefined;
+    function ResumeHost() {
+      const c = useChat(makeSession, createUiBroker(), {}, deps);
+      pick = (c as any).pickSession; close = (c as any).closePicker;
+      const api = (c as any);
+      (ResumeHost as any).run = c.submit;
+      return <Text>{c.state.picker.open ? `PICKER:${c.state.picker.sessions.length}` : "NOPICK"} {c.state.lines.map((l) => l.text).join("|")}</Text>;
+    }
+    const { lastFrame } = render(<ResumeHost />);
+    await waitFor(() => frame(lastFrame).includes("NOPICK"));
+    (ResumeHost as any).run("/resume");
+    await waitFor(() => frame(lastFrame).includes("PICKER:1"));
+    pick!({ sessionId: "old1234567890", summary: "prior", lastModified: 1 });
+    await waitFor(() => frame(lastFrame).includes("↻ resumed"));
+    await waitFor(() => disposed === 1);     // old session disposed by the effect on session change
+    expect(disposed).toBe(1);
+    expect(calls).toBe(2);                    // initial + resumed
+  });
+
   it("dispatches /model, /compact, /context, /clear, /help locally — never to the model", async () => {
     let submitted = 0, modelSet = "";
     const fake = fakeSession({
