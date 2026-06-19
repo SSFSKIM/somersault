@@ -10,8 +10,8 @@ import { Composer } from "./Composer.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { ChatStatusBar } from "./ChatStatusBar.js";
 
-export function ChatApp({ session, broker, hookOpts }: { session: ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string } }) {
-  const { state, submit, resolvePermission, cycleMode, interrupt } = useChat(session, broker, hookOpts ?? {});
+export function ChatApp({ makeSession, broker, hookOpts }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string } }) {
+  const { state, submit, resolvePermission, cycleMode, interrupt } = useChat(makeSession, broker, hookOpts ?? {});
   useInput((input, key) => {
     if (key.escape) { interrupt(); return; }
     if (key.tab) cycleMode();   // Tab cycles the permission mode (default ↔ bypassPermissions)

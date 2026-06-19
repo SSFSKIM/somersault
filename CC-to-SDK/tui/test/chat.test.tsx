@@ -26,7 +26,7 @@ function fakeSession(onSubmit?: () => Promise<void>): ChatSession & { modes: str
 
 describe("<ChatApp>", () => {
   it("submits a typed prompt and streams the reply", async () => {
-    const { stdin, lastFrame } = render(<ChatApp session={fakeSession()} broker={createUiBroker()} />);
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeSession()} broker={createUiBroker()} />);
     await waitFor(() => frame(lastFrame).includes("›"));      // composer mounted → TextInput live
     stdin.write("hi");
     await waitFor(() => frame(lastFrame).includes("hi"));     // value landed in TextInput before Enter
@@ -41,7 +41,7 @@ describe("<ChatApp>", () => {
     const session = fakeSession(async () => {
       await ui.broker.request({ toolName: "Edit", input: { file_path: "f.ts" }, toolUseID: "t", signal: new AbortController().signal }).then((d) => { decided = d; });
     });
-    const { stdin, lastFrame } = render(<ChatApp session={session} broker={ui} />);
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} broker={ui} />);
     await waitFor(() => frame(lastFrame).includes("›"));
     stdin.write("edit it");
     await waitFor(() => frame(lastFrame).includes("edit it"));   // value landed before Enter
@@ -55,7 +55,7 @@ describe("<ChatApp>", () => {
 
   it("Tab toggles the permission mode default ↔ bypassPermissions", async () => {
     const session = fakeSession();
-    const { stdin, lastFrame } = render(<ChatApp session={session} broker={createUiBroker()} />);
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} broker={createUiBroker()} />);
     await waitFor(() => frame(lastFrame).includes("mode"));
     await pressUntil(stdin, "\t", () => session.modes.includes("bypassPermissions")); // Tab cycles mode
     expect(session.modes[0]).toBe("bypassPermissions");

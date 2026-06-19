@@ -19,8 +19,8 @@ function fakeSession(overrides: Partial<ChatSession> = {}): ChatSession & { disp
     async dispose() { s.disposed++; }, sessionId: "sess-1", ...overrides };
   return s;
 }
-function Host({ session, ui, prompt }: { session: ChatSession; ui: ReturnType<typeof createUiBroker>; prompt?: string }) {
-  const c = useChat(session, ui);
+function Host({ makeSession, ui, prompt }: { makeSession: () => ChatSession; ui: ReturnType<typeof createUiBroker>; prompt?: string }) {
+  const c = useChat(makeSession, ui);
   useEffect(() => { if (prompt) c.submit(prompt); /* fire once */ }, []); // eslint-disable-line
   return <Text>{c.state.pending ? `PENDING:${c.state.pending.req.toolName}` : c.state.busy ? "BUSY" : "IDLE"} m:{c.state.model ?? "-"} {c.state.lines.map((l) => l.text).join("|")}</Text>;
 }
@@ -33,13 +33,13 @@ describe("uiBroker", () => {
 
 describe("useChat", () => {
   it("streams a submitted turn into the transcript", async () => {
-    const { lastFrame } = render(<Host session={fakeSession()} ui={createUiBroker()} prompt="hi" />);
+    const { lastFrame } = render(<Host makeSession={() => fakeSession()} ui={createUiBroker()} prompt="hi" />);
     await waitFor(() => frame(lastFrame).includes("working"));
     expect(lastFrame()).toContain("working");
   });
   it("surfaces a broker request as pending state", async () => {
     const ui = createUiBroker();
-    const { lastFrame } = render(<Host session={fakeSession()} ui={ui} />);
+    const { lastFrame } = render(<Host makeSession={() => fakeSession()} ui={ui} />);
     await new Promise((r) => setTimeout(r, 20)); // let the mount effect set the handler
     void ui.broker.request({ toolName: "Edit", input: {}, toolUseID: "t", signal: new AbortController().signal });
     await waitFor(() => frame(lastFrame).includes("PENDING:Edit"));
@@ -54,7 +54,7 @@ describe("useChat", () => {
       onMessage({ type: "assistant", message: { model: "claude-sonnet-4-6", content: [{ type: "text", text: "PINECONE" }] } });
       return { result: "PINECONE" };
     } });
-    const { lastFrame } = render(<Host session={fake} ui={createUiBroker()} prompt="hi" />);
+    const { lastFrame } = render(<Host makeSession={() => fake} ui={createUiBroker()} prompt="hi" />);
     await waitFor(() => frame(lastFrame).includes("PINECONE") && frame(lastFrame).includes("m:claude-sonnet-4-6"));
     expect(lastFrame()).toContain("PINECONE");
     expect(lastFrame()).toContain("m:claude-sonnet-4-6");
@@ -62,7 +62,7 @@ describe("useChat", () => {
   it("settles a parked permission promise → deny on unmount, and disposes the session exactly once", async () => {
     const ui = createUiBroker();
     const session = fakeSession();
-    const { unmount } = render(<Host session={session} ui={ui} />);
+    const { unmount } = render(<Host makeSession={() => session} ui={ui} />);
     await new Promise((r) => setTimeout(r, 20));
     let decided: PermissionDecision | undefined;
     void ui.broker.request({ toolName: "Edit", input: {}, toolUseID: "t", signal: new AbortController().signal }).then((d) => { decided = d; });

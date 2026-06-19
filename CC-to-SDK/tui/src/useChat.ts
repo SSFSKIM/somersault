@@ -20,7 +20,8 @@ export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pendi
 
 const OTHER_POLE: Record<string, string> = { default: "bypassPermissions", bypassPermissions: "default" };
 
-export function useChat(session: ChatSession, ui: UiBrokerHandle, opts: { initialMode?: string } = {}) {
+export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBrokerHandle, opts: { initialMode?: string } = {}) {
+  const [session, setSession] = useState<ChatSession>(() => makeSession());
   const [lines, setLines] = useState<RenderLine[]>([]);
   const [streaming, setStreaming] = useState<RenderLine[]>([]);
   const [pending, setPending] = useState<Pending | null>(null);
