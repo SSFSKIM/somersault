@@ -6,13 +6,13 @@ import { Box, useInput } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
 import { Transcript } from "./Transcript.js";
-import { Composer } from "./Composer.js";
+import { ChatComposer } from "./ChatComposer.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { ChatStatusBar } from "./ChatStatusBar.js";
 import { SessionPicker } from "./SessionPicker.js";
 import { TaskPanel } from "./TaskPanel.js";
 
-export function ChatApp({ makeSession, broker, hookOpts }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string } }) {
+export function ChatApp({ makeSession, broker, hookOpts, cwd }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string }; cwd: string }) {
   const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession } = useChat(makeSession, broker, hookOpts ?? {});
   useInput((input, key) => {
     if (key.escape) { interrupt(); return; }
@@ -26,7 +26,7 @@ export function ChatApp({ makeSession, broker, hookOpts }: { makeSession: (resum
         ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
         : state.pending
           ? <PermissionDialog req={state.pending.req} onDecision={resolvePermission} />
-          : <Composer onSubmit={submit} />}
+          : <ChatComposer onSubmit={submit} cwd={cwd} />}
       <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} subagentActive={state.subagentActive} />
     </Box>
   );

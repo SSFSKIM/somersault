@@ -12,4 +12,4 @@ function flag(name: string): string | undefined { const i = args.indexOf(name); 
 const ui = createUiBroker();
 const base = { model: flag("--model"), cwd: flag("--cwd") ?? process.cwd(), permissionMode: "default" as const, permissionBroker: ui.broker, contextTool: true, includePartialMessages: true, forwardSubagentText: true };
 const makeSession = (resume?: string) => openSession({ ...base, ...(resume ? { resume } : {}) });
-render(<ChatApp makeSession={makeSession} broker={ui} />);
+render(<ChatApp makeSession={makeSession} broker={ui} cwd={base.cwd} />);
