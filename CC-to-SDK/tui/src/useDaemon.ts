@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { collect } from "cc-harness";
+import { collect, resolveAutoModel } from "cc-harness";
 import type { DaemonClient, DashboardSnapshot, SessionRow, PendingEntry, PermissionDecision } from "cc-harness";
 
 const PERMISSION_MODES = ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"] as const;
@@ -112,8 +112,13 @@ export function useDaemon(client: DaemonClient, opts: UseDaemonOpts = {}): Daemo
   const cyclePermissionMode = useCallback(() => {
     pmIndex.current = (pmIndex.current + 1) % PERMISSION_MODES.length;
     const mode = PERMISSION_MODES[pmIndex.current];
+    if (mode === "auto") {                                  // auto is model-gated (probe 24) — force a supported model first
+      const cur = modelId(selected?.model);
+      const target = resolveAutoModel(cur);
+      if (target !== cur) run(`model=${target}`, ctl(`model=${target}`, { type: "set_model", model: target }));
+    }
     run(`mode=${mode}`, ctl(`mode=${mode}`, { type: "set_permission_mode", mode }));
-  }, [run]);
+  }, [run, selected?.model]);
 
   const cycleModel = useCallback(() => {
     const id = selected?.id; if (!id) { setStatus("no session selected"); return; }

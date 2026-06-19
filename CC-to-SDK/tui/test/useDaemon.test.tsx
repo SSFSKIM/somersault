@@ -89,4 +89,18 @@ describe("useDaemon", () => {
     view.teardown();
     expect(sched.cancels.length).toBe(1);
   });
+
+  it("cyclePermissionMode → auto forces a supported model first (set_model before set_permission_mode)", async () => {
+    const c = fakeClient();
+    render(<Probe client={c} opts={{ schedule: manualSchedule().schedule, now: () => 0 }} />);
+    await flush();
+    for (let i = 0; i < 5; i++) { view.cyclePermissionMode(); await flush(); }   // default→acceptEdits→bypass→plan→dontAsk→auto
+    const frames = c.calls.control.map((x: any) => x[1]);
+    expect(frames).toContainEqual({ type: "set_model", model: "claude-sonnet-4-6" });   // "m" is unsupported → forced to sonnet
+    expect(c.calls.control.at(-1)).toEqual(["sess-1", { type: "set_permission_mode", mode: "auto" }]);
+    const modelIdx = frames.findIndex((f: any) => f.type === "set_model" && f.model === "claude-sonnet-4-6");
+    const autoIdx = frames.findIndex((f: any) => f.type === "set_permission_mode" && f.mode === "auto");
+    expect(modelIdx).toBeGreaterThanOrEqual(0);
+    expect(modelIdx).toBeLessThan(autoIdx);                          // repair op precedes the mode op
+  });
 });
