@@ -708,6 +708,11 @@ git add tui/src/ChatComposer.tsx tui/test/components.test.tsx
 git commit -m "feat(tui): ChatComposer — multiline input view (cursor + @-popup + walk)"
 ```
 
+> **Post-implementation corrections (2026-06-20 — the verbatim component above had two latent Ink bugs; the shipped `ChatComposer.tsx` differs in exactly these two spots):**
+> 1. **stale-closure → use a latest-ref.** Ink re-registers the `useInput` handler in a passive effect that flushes after commit, so reading the closure `state` lags one render and submits stale text (deterministic). Add `const stateRef = useRef(state); stateRef.current = state;` and read `applyKey(stateRef.current, input, key)` in the handler (not `applyKey(state, …)`).
+> 2. **render bleed → row of segments, not nested inverse Text.** A nested `<Text inverse>{at}</Text>` inside the line `<Text>` breaks Ink-5.x differential re-render (chars after the first bleed onto the box border). Render the cursor row as `<Box key={r} flexDirection="row"><Text>{before}</Text><Text inverse>{at}</Text><Text>{after}</Text></Box>`. (No `flexShrink` needed on the buffer column — the Box-row alone fixes it.)
+> The T5 component test's three dependent keystrokes must each be followed by an `await waitFor`/settle (already reflected above).
+
 ---
 
 ### Task 6: Wire `ChatComposer` into `ChatApp`/`chat.tsx` (thread `cwd`)
