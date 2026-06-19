@@ -15,7 +15,8 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 function fakeSession(overrides: Partial<ChatSession> = {}): ChatSession & { disposed: number } {
   const s: any = { disposed: 0,
     async submit(_p: string, onMessage: (m: unknown) => void) { onMessage({ type: "assistant", message: { content: [{ type: "text", text: "working" }] } }); return { result: "done" }; },
-    async setPermissionMode() {}, async interrupt() {}, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
+    async setPermissionMode() {}, async setModel() {}, async compact() { return { ok: true, preTokens: 0, postTokens: 0 }; },
+    async interrupt() {}, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
     async dispose() { s.disposed++; }, sessionId: "sess-1", ...overrides };
   return s;
 }
@@ -23,6 +24,12 @@ function Host({ makeSession, ui, prompt }: { makeSession: () => ChatSession; ui:
   const c = useChat(makeSession, ui);
   useEffect(() => { if (prompt) c.submit(prompt); /* fire once */ }, []); // eslint-disable-line
   return <Text>{c.state.pending ? `PENDING:${c.state.pending.req.toolName}` : c.state.busy ? "BUSY" : "IDLE"} m:{c.state.model ?? "-"} {c.state.lines.map((l) => l.text).join("|")}</Text>;
+}
+
+function CmdHost({ makeSession, api }: { makeSession: () => ChatSession; api: { run?: (s: string) => void } }) {
+  const c = useChat(makeSession, createUiBroker());
+  api.run = c.submit;
+  return <Text>{c.state.busy ? "BUSY" : "IDLE"} {c.state.lines.map((l) => l.text).join("|")}</Text>;
 }
 
 describe("uiBroker", () => {
@@ -71,5 +78,26 @@ describe("useChat", () => {
     await waitFor(() => decided !== undefined);
     expect(decided).toEqual({ kind: "deny" });
     expect(session.disposed).toBe(1);
+  });
+
+  it("dispatches /model, /compact, /context, /clear, /help locally — never to the model", async () => {
+    let submitted = 0, modelSet = "";
+    const fake = fakeSession({
+      async submit() { submitted++; return { result: "x" }; },
+      async setModel(m?: string) { modelSet = m ?? ""; },
+      async compact() { return { ok: true, preTokens: 9000, postTokens: 2000 }; },
+      async getContextUsage() { return { totalTokens: 50, maxTokens: 200 }; },
+    });
+    const api: { run?: (s: string) => void } = {};
+    const { lastFrame } = render(<CmdHost makeSession={() => fake} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    api.run!("/model opus");   await waitFor(() => frame(lastFrame).includes("model → opus"));
+    api.run!("/compact");      await waitFor(() => frame(lastFrame).includes("✦ compacted 9k → 2k"));
+    api.run!("/context");      await waitFor(() => frame(lastFrame).includes("ctx 25%"));
+    api.run!("/help");         await waitFor(() => frame(lastFrame).includes("/model"));
+    api.run!("/zzz");          await waitFor(() => frame(lastFrame).includes("Unknown command: /zzz"));
+    api.run!("/clear");        await waitFor(() => !frame(lastFrame).includes("Unknown command"));
+    expect(modelSet).toBe("opus");
+    expect(submitted).toBe(0);     // no slash command ever reached session.submit
   });
 });

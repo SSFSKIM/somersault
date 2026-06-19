@@ -5,22 +5,28 @@ import type { PermissionDecision, PermissionRequest } from "cc-harness";
 import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
+import { parseCommand, formatHelp, formatModel, formatCompact, formatContext, formatUnknown, type ParsedCommand } from "./commands.js";
+import { summarizeUsage, listSessions as realListSessions } from "cc-harness";
+import type { CompactOutcome, RawContextUsage } from "cc-harness";
 
 /** The subset of the lib Session the REPL drives (the real Session satisfies this). */
 export interface ChatSession {
   submit(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown }>;
   setPermissionMode(mode: string): Promise<void>;
+  setModel(model?: string): Promise<void>;
+  compact(): Promise<CompactOutcome>;
   interrupt(): Promise<void>;
   getContextUsage(): Promise<unknown>;
   dispose(): Promise<void>;
   readonly sessionId?: string;
 }
+export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
 export interface Pending { req: PermissionRequest; resolve: (d: PermissionDecision) => void; }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; }
 
 const OTHER_POLE: Record<string, string> = { default: "bypassPermissions", bypassPermissions: "default" };
 
-export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBrokerHandle, opts: { initialMode?: string } = {}) {
+export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBrokerHandle, opts: { initialMode?: string } = {}, deps: { listSessions: () => Promise<SessionInfo[]> } = { listSessions: () => realListSessions({ limit: 30 }) as Promise<SessionInfo[]> }) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const [lines, setLines] = useState<RenderLine[]>([]);
   const [streaming, setStreaming] = useState<RenderLine[]>([]);
@@ -29,22 +35,24 @@ export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBro
   const [busy, setBusy] = useState(false);
   const [ctxPct, setCtxPct] = useState<number | undefined>(undefined);
   const [model, setModel] = useState<string | undefined>(undefined);
+  const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[] }>({ open: false, sessions: [] });
   const disposed = useRef(false);
   const pendingRef = useRef<Pending | null>(null);
   pendingRef.current = pending;
+
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
+  // Final teardown: only on unmount. Must precede the handler effect so disposed is set first.
+  useEffect(() => () => { disposed.current = true; pendingRef.current?.resolve({ kind: "deny" }); void sessionRef.current.dispose().catch(() => {}); }, []);
 
   useEffect(() => {
     ui.setHandler((req) => new Promise<PermissionDecision>((resolve) => {
       if (disposed.current) return resolve({ kind: "deny" });
       setPending({ req, resolve });
     }));
-    return () => {
-      disposed.current = true;
-      ui.setHandler(null);
-      pendingRef.current?.resolve({ kind: "deny" }); // never leave the SDK await hanging
-      void session.dispose().catch(() => {});
-    };
-  }, [session, ui]);
+    return () => { ui.setHandler(null); };
+  }, [ui]);
 
   async function refreshCtx() {
     try {
@@ -53,8 +61,36 @@ export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBro
     } catch { /* best-effort */ }
   }
 
+  function append(ls: RenderLine[]) { if (!disposed.current && ls.length) setLines((l) => [...l, ...ls]); }
+
+  async function handleCommand(cmd: ParsedCommand) {
+    setLines((l) => [...l, { text: `› /${cmd.name}${cmd.args ? " " + cmd.args : ""}`, dim: true }]);
+    try {
+      switch (cmd.name) {
+        case "model":
+          if (cmd.args) { await session.setModel(cmd.args); if (!disposed.current) setModel(cmd.args); append(formatModel(cmd.args)); }
+          else append(formatModel(undefined, model));
+          break;
+        case "compact": append(formatCompact(await session.compact())); break;
+        case "context": append(formatContext(summarizeUsage((await session.getContextUsage()) as RawContextUsage))); break;
+        case "clear": if (!disposed.current) setLines([]); break;
+        case "help": append(formatHelp()); break;
+        case "resume": void openPicker(); break;
+        default: append(formatUnknown(cmd.name));
+      }
+    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+  }
+
+  async function openPicker() {
+    try { const sessions = await deps.listSessions(); if (!disposed.current) setPicker({ open: true, sessions }); }
+    catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+  }
+  function closePicker() { if (!disposed.current) setPicker({ open: false, sessions: [] }); }
+
   function submit(prompt: string) {
     if (disposed.current || busy || !prompt.trim()) return;
+    const cmd = parseCommand(prompt);
+    if (cmd) { void handleCommand(cmd); return; }
     setLines((l) => [...l, { text: `› ${prompt}`, dim: true }]);
     setStreaming([]); setBusy(true);
     const lt = new LiveTurn();
@@ -66,5 +102,7 @@ export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBro
   function cycleMode() { const next = OTHER_POLE[mode] ?? "default"; void session.setPermissionMode(next).catch(() => {}); if (!disposed.current) setMode(next); }
   function interrupt() { void session.interrupt().catch(() => {}); }
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model } as ChatState, submit, resolvePermission, cycleMode, interrupt };
+  void setSession; // used by Task 5 — suppress unused warning
+
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker };
 }
