@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { collect } from "cc-harness";
-import type { DaemonClient, DashboardSnapshot, SessionRow } from "cc-harness";
+import type { DaemonClient, DashboardSnapshot, SessionRow, PendingEntry, PermissionDecision } from "cc-harness";
 
 const PERMISSION_MODES = ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"] as const;
-const EMPTY: DashboardSnapshot = { daemonUp: false, sessions: [], at: 0 };
+const EMPTY: DashboardSnapshot = { daemonUp: false, sessions: [], at: 0, pending: [] };
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const modelId = (m: unknown) => (typeof m === "string" ? m : ((m as any)?.id ?? (m as any)?.model ?? String(m)));
 
@@ -33,6 +33,8 @@ export interface DaemonView {
   spawn(): void;
   stop(id?: string): void;
   teardown(): void;
+  pending: PendingEntry[];
+  respond(toolUseID: string, decision: PermissionDecision): void;
 }
 
 export function useDaemon(client: DaemonClient, opts: UseDaemonOpts = {}): DaemonView {
@@ -147,6 +149,12 @@ export function useDaemon(client: DaemonClient, opts: UseDaemonOpts = {}): Daemo
       .catch((e) => { if (!disposed.current) setStatus(`stop: ${msg(e)}`); });
   }, [selected?.id, client, tick]);
 
-  return { snapshot, selectedIndex: idx, selected, focus, stream, status,
-    select, focusInput, focusList, submit, interrupt, cycleModel, cyclePermissionMode, compact, fork, toggleProactive, spawn, stop, teardown };
+  const respond = useCallback((toolUseID: string, decision: PermissionDecision) => {
+    client.respondPermission(toolUseID, decision)
+      .then(() => { if (!disposed.current) void tick(); })       // refresh the poll so the dialog clears
+      .catch((e) => { if (!disposed.current) setStatus(`respond: ${msg(e)}`); });
+  }, [client, tick]);
+
+  return { snapshot, selectedIndex: idx, selected, focus, stream, status, pending: snapshot.pending,
+    select, focusInput, focusList, submit, interrupt, cycleModel, cyclePermissionMode, compact, fork, toggleProactive, spawn, stop, respond, teardown };
 }

@@ -28,6 +28,8 @@ function fakeClient(over: Partial<DaemonClient> = {}): DaemonClient & { calls: a
     async fork() { return { id: "fk", sessionId: "sid" }; },
     async startProactive() { return { state: "running", tickCount: 0, idleCount: 0, errorCount: 0 }; },
     async stopProactive() {},
+    async pendingPermissions() { return []; },
+    async respondPermission() {},
   };
   return Object.assign({ ...base, ...over }, { calls });
 }

@@ -7,11 +7,13 @@ import { Detail } from "./Detail.js";
 import { Composer } from "./Composer.js";
 import { StatusBar } from "./StatusBar.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
+import { PermissionDialog } from "./PermissionDialog.js";
 
 export function App({ client, hookOpts }: { client: DaemonClient; socketPath?: string; hookOpts?: UseDaemonOpts }) {
   const d = useDaemon(client, hookOpts);
   const { exit } = useApp();
   const [confirm, setConfirm] = useState<{ message: string; action: () => void } | null>(null);
+  const pending = d.pending[0];
 
   const quit = () => { d.teardown(); exit(); };
 
@@ -32,10 +34,10 @@ export function App({ client, hookOpts }: { client: DaemonClient; socketPath?: s
       const id = d.selected.id;
       setConfirm({ message: `Stop session ${id}?`, action: () => d.stop(id) });
     }
-  }, { isActive: d.focus === "list" && !confirm });
+  }, { isActive: d.focus === "list" && !confirm && !pending });
 
   // input-mode: Esc returns to the list (typing + Enter are handled by Composer's TextInput)
-  useInput((_input, key) => { if (key.escape) d.focusList(); }, { isActive: d.focus === "input" && !confirm });
+  useInput((_input, key) => { if (key.escape) d.focusList(); }, { isActive: d.focus === "input" && !confirm && !pending });
 
   return (
     <Box flexDirection="column">
@@ -44,6 +46,7 @@ export function App({ client, hookOpts }: { client: DaemonClient; socketPath?: s
         <Detail row={d.selected} stream={d.stream} />
       </Box>
       {d.focus === "input" ? <Composer onSubmit={(t) => { d.submit(t); d.focusList(); }} /> : null}
+      {pending ? <PermissionDialog req={pending} onDecision={(dec) => d.respond(pending.toolUseID, dec)} /> : null}
       {confirm ? <ConfirmDialog message={confirm.message} onConfirm={() => { confirm.action(); setConfirm(null); }} onCancel={() => setConfirm(null)} /> : null}
       <StatusBar daemonUp={d.snapshot.daemonUp} focus={d.focus} status={d.status} />
     </Box>

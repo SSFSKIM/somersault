@@ -2,7 +2,7 @@
 // prompt is reconstructed from toolName+input (title used only if the SDK ever provides it).
 import React from "react";
 import { Box, Text, useInput } from "ink";
-import type { PermissionRequest, PermissionDecision } from "cc-harness";
+import type { PermissionDecision } from "cc-harness";
 
 const briefArg = (input: Record<string, unknown>) => {
   const v = Object.values(input ?? {})[0];
@@ -10,7 +10,7 @@ const briefArg = (input: Record<string, unknown>) => {
   return s.length > 48 ? s.slice(0, 47) + "…" : s;
 };
 
-export function PermissionDialog({ req, onDecision }: { req: PermissionRequest; onDecision: (d: PermissionDecision) => void }) {
+export function PermissionDialog({ req, onDecision }: { req: { toolName: string; input: Record<string, unknown>; title?: string }; onDecision: (d: PermissionDecision) => void }) {
   useInput((input) => {
     if (input === "a") onDecision({ kind: "allow_once" });
     else if (input === "A") onDecision({ kind: "allow_always" });
