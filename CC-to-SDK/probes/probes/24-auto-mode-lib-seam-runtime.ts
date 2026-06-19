@@ -18,7 +18,7 @@
 //  P2c (D): runtime REPAIR — start default+haiku (turn1 ⇒ called), setModel(sonnet)+setPermissionMode(auto),
 //           turn2 ⇒ 0 calls? ⇒ an unsupported session can be repaired into EFFECTIVE auto live (Gap C crux).
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { brief } from "../lib/runProbe.ts";
@@ -59,6 +59,27 @@ async function oneShot(label: string, model: string, mode: string, file: string)
   return { calls: calls.length, written, toolUse };
 }
 
+// ── acceptEdits cell (Run E): an EDIT on an existing file, a WRITE of a new file, then a BASH. acceptEdits
+// should auto-accept Edit/Write (NOT in canUseTool) but route Bash to the broker (IN canUseTool). The earlier
+// Write-only run showed Write hit canUseTool — this disambiguates whether Edit (modify) is auto-accepted. ──
+async function acceptEditsCell(label: string, model: string) {
+  const dir = freshDir(); writeFileSync(join(dir, "doc.txt"), "FOO\n");
+  const calls: string[] = []; let result: any; let err: string | undefined;
+  const prompt = "Do three things with tools, in order: (1) use the Edit tool to replace FOO with BAR in doc.txt; (2) use the Write tool to create new.txt containing HI; (3) use the Bash tool to run exactly `echo hi`. Then reply OK.";
+  try {
+    for await (const m of query({ prompt, options: {
+      model, cwd: dir, maxTurns: 8, permissionMode: "acceptEdits" as any, settingSources: [] as any,
+      canUseTool: async (tool: string, input: Record<string, unknown>) => { calls.push(tool); return { behavior: "allow", updatedInput: input }; },
+    } as any })) {
+      const mm = m as any;
+      if (mm.type === "result") result = mm;
+    }
+  } catch (e) { err = (e as Error).message; }
+  console.log(`\n[${label}] model=${model} mode=acceptEdits`);
+  console.log(`   canUseTool calls: ${brief(calls, 160)} | doc edited: ${existsSync(join(dir, "doc.txt"))} | new.txt: ${existsSync(join(dir, "new.txt"))} | result.subtype: ${result?.subtype ?? "-"}${err ? " | ERR: " + err : ""}`);
+  return { sawEdit: calls.includes("Edit"), sawWrite: calls.includes("Write"), sawBash: calls.includes("Bash") };
+}
+
 // ── streaming cell with mid-session control changes (Runs C, D) ────────────
 async function streaming(label: string, model: string, startMode: string, steps: { prompt: string; after?: (q: any) => Promise<void> }[]) {
   const dir = freshDir();
@@ -97,10 +118,12 @@ const D = await streaming("D · P2c runtime REPAIR setModel(sup)+setPermissionMo
   { prompt: writePrompt("d1.txt", "ONE"), after: async (q) => { await q.setModel(SUP); await q.setPermissionMode("auto"); } },
   { prompt: writePrompt("d2.txt", "TWO") },
 ]);
+const E = await acceptEditsCell("E · P3 acceptEdits = auto-accept edits, gate the rest", SUP);
 
 console.log("\n=== VERDICTS ===");
 console.log(`P1  auto+supported bypasses broker:   ${A.calls === 0 && A.written ? "YES (0 canUseTool, file written)" : `NO/UNCLEAR (calls=${A.calls}, written=${A.written})`}`);
 console.log(`P2a auto+unsupported DEGRADES:         ${B.calls >= 1 ? "YES (canUseTool consulted ⇒ behaving as default)" : `NO/UNCLEAR (calls=${B.calls})`}`);
 console.log(`P2b runtime setPermissionMode(auto):   ${C.t1 >= 1 && C.t2 === 0 ? "TAKES EFFECT (gated→silent across turns)" : `UNCLEAR (t1=${C.t1}, t2=${C.t2})`}`);
 console.log(`P2c runtime setModel+auto REPAIR:      ${D.t2 === 0 ? "REPAIRS to effective auto (t2=0)" : `does NOT repair (t1=${D.t1}, t2=${D.t2})`}`);
+console.log(`P3  acceptEdits auto-accepts Edit:    ${!E.sawEdit ? "YES (Edit NOT in canUseTool)" : "NO (Edit hit canUseTool)"} | auto-accepts Write: ${!E.sawWrite ? "YES" : "NO (Write hit canUseTool)"} | gates Bash: ${E.sawBash ? "YES (Bash in canUseTool)" : "NO/UNCLEAR"}`);
 process.exit(0);
