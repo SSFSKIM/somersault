@@ -5,6 +5,7 @@ import { Transcript } from "../src/Transcript.js";
 import { PermissionDialog } from "../src/PermissionDialog.js";
 import { ChatStatusBar } from "../src/ChatStatusBar.js";
 import { SessionPicker } from "../src/SessionPicker.js";
+import { TaskPanel } from "../src/TaskPanel.js";
 import type { PermissionDecision } from "cc-harness";
 
 async function waitFor(cond: () => boolean, timeout = 2000) {
@@ -86,5 +87,24 @@ describe("SessionPicker", () => {
   it("shows 'no sessions' when empty", () => {
     const { lastFrame } = render(<SessionPicker sessions={[]} onPick={() => {}} onCancel={() => {}} />);
     expect(lastFrame() ?? "").toContain("no sessions");
+  });
+});
+
+describe("TaskPanel", () => {
+  it("renders a glyph per status and the subject", () => {
+    const { lastFrame } = render(<TaskPanel tasks={[
+      { id: "1", subject: "build the parser", status: "in_progress" },
+      { id: "2", subject: "write tests", status: "pending" },
+      { id: "3", subject: "ship it", status: "completed" },
+    ]} />);
+    const f = lastFrame() ?? "";
+    expect(f).toContain("▶ build the parser");
+    expect(f).toContain("☐ write tests");
+    expect(f).toContain("☑ ship it");
+    expect(f).toContain("Tasks");
+  });
+  it("renders nothing when empty", () => {
+    const { lastFrame } = render(<TaskPanel tasks={[]} />);
+    expect((lastFrame() ?? "").trim()).toBe("");
   });
 });
