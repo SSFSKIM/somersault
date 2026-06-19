@@ -60,3 +60,16 @@ describe("toolDiffLines", () => {
     expect(out.at(-1)).toEqual({ text: "  … 16 more lines", dim: true });
   });
 });
+
+describe("renderMessage (replay additions)", () => {
+  it("renders a user-text prompt as a dim '› ' line", () => {
+    const m = { type: "user", message: { role: "user", content: [{ type: "text", text: "fix the parser" }] } };
+    expect(renderMessage(m)).toEqual([{ text: "› fix the parser", dim: true }]);
+  });
+  it("renders a multi-line Write via toolDiffLines (capped at 24)", () => {
+    const content = Array.from({ length: 30 }, (_, i) => `L${i}`).join("\n");
+    const out = renderMessage({ type: "assistant", message: { content: [{ type: "tool_use", name: "Write", input: { file_path: "b.ts", content } }] } });
+    expect(out[0]).toEqual({ text: "⚙ Write b.ts" });
+    expect(out.at(-1)).toEqual({ text: "  … 6 more lines", dim: true });   // 30 added − cap 24 = 6
+  });
+});

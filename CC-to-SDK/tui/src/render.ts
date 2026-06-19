@@ -16,17 +16,6 @@ export function toolTarget(name: string, input: Record<string, unknown>): string
 }
 
 function toolUseLines(name: string, input: Record<string, unknown>): RenderLine[] {
-  if (name === "Edit") {
-    const out: RenderLine[] = [{ text: `⚙ Edit ${path(input)}` }];
-    if (typeof input.old_string === "string") for (const l of input.old_string.split("\n")) out.push({ text: `  - ${l}`, color: "red" });
-    if (typeof input.new_string === "string") for (const l of input.new_string.split("\n")) out.push({ text: `  + ${l}`, color: "green" });
-    return out;
-  }
-  if (name === "Write") {
-    const out: RenderLine[] = [{ text: `⚙ Write ${path(input)}` }];
-    if (typeof input.content === "string") for (const l of input.content.split("\n")) out.push({ text: `  + ${l}`, color: "green" });
-    return out;
-  }
   if (name === "Bash") return [{ text: `⚙ Bash ${trunc(String(input.command ?? ""), 80)}` }];
   if (name === "Read") return [{ text: `⚙ Read ${path(input)}` }];
   return [{ text: `⚙ ${name}(${firstArg(input)})` }];
@@ -58,13 +47,16 @@ export function renderMessage(m: any): RenderLine[] {
     for (const b of m.message?.content ?? []) {
       if (b?.type === "text" && b.text) for (const l of String(b.text).split("\n")) out.push({ text: l });
       else if (b?.type === "thinking" && b.thinking) for (const l of String(b.thinking).split("\n")) out.push({ text: l, dim: true });
-      else if (b?.type === "tool_use") out.push(...toolUseLines(b.name, b.input ?? {}));
+      else if (b?.type === "tool_use") out.push(...(b.name === "Edit" || b.name === "Write" ? toolDiffLines(b.name, b.input ?? {}) : toolUseLines(b.name, b.input ?? {})));
     }
     return out;
   }
   if (m.type === "user") {
     const out: RenderLine[] = [];
-    for (const b of m.message?.content ?? []) if (b?.type === "tool_result") out.push(...resultLines(b.content));
+    for (const b of m.message?.content ?? []) {
+      if (b?.type === "text" && b.text) for (const l of String(b.text).split("\n")) out.push({ text: `› ${l}`, dim: true });
+      else if (b?.type === "tool_result") out.push(...resultLines(b.content));
+    }
     return out;
   }
   return [];
