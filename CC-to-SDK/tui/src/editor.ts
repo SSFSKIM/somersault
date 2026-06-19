@@ -69,9 +69,23 @@ function submitTurn(s: EditorState): EditorResult {
   return { state: initialEditorState(history), submit: t };
 }
 
-// onUp/onDown: cursor movement at the buffer edges (history recall is added in the history pass).
-function onUp(s: EditorState): EditorState { return s.cursor.row === 0 ? s : moveCursorVert(s, -1); }
-function onDown(s: EditorState): EditorState { return s.cursor.row === s.lines.length - 1 ? s : moveCursorVert(s, 1); }
+function setBuffer(s: EditorState, t: string): EditorState {
+  const lines = splitLines(t); const r = lines.length - 1;
+  return { ...s, lines, cursor: { row: r, col: lines[r].length } };
+}
+function historyPrev(s: EditorState): EditorState {
+  if (s.history.length === 0) return s;
+  if (s.histIndex === null) { const idx = s.history.length - 1; return setBuffer({ ...s, stash: bufferText(s), histIndex: idx }, s.history[idx]); }
+  const idx = Math.max(0, s.histIndex - 1); return setBuffer({ ...s, histIndex: idx }, s.history[idx]);
+}
+function historyNext(s: EditorState): EditorState {
+  if (s.histIndex === null) return s;
+  const idx = s.histIndex + 1;
+  if (idx >= s.history.length) return setBuffer({ ...s, histIndex: null, stash: null }, s.stash ?? "");
+  return setBuffer({ ...s, histIndex: idx }, s.history[idx]);
+}
+function onUp(s: EditorState): EditorState { if (s.cursor.row === 0) return historyPrev(s); return moveCursorVert(s, -1); }
+function onDown(s: EditorState): EditorState { if (s.cursor.row === s.lines.length - 1) return historyNext(s); return moveCursorVert(s, 1); }
 
 export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorResult {
   if (key.return) { if (s.lines[s.cursor.row].endsWith("\\")) return { state: continueLine(s) }; return submitTurn(s); }

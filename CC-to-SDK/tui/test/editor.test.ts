@@ -63,3 +63,27 @@ describe("editor core", () => {
     expect(s.cursor).toEqual({ row: 1, col: 0 });
   });
 });
+
+describe("editor history", () => {
+  const withHistory = (h: string[]) => initialEditorState(h);
+  it("Up on the first line recalls the previous prompt; Down returns toward the draft", () => {
+    let s = withHistory(["first", "second"]);
+    s = type(s, "draft");                                          // a live draft
+    s = press(s, { upArrow: true });                              // newest
+    expect(text(s)).toBe("second");
+    s = press(s, { upArrow: true });                              // older
+    expect(text(s)).toBe("first");
+    s = press(s, { upArrow: true });                              // clamp at oldest
+    expect(text(s)).toBe("first");
+    s = press(s, { downArrow: true });                            // newer
+    expect(text(s)).toBe("second");
+    s = press(s, { downArrow: true });                            // past newest → restore draft
+    expect(text(s)).toBe("draft");
+  });
+  it("does not recall history when the cursor is on an interior line (moves the cursor instead)", () => {
+    let s = type(initialEditorState(), "a\nb\nc");                 // 3 lines, cursor {2,1}
+    s = press(s, { upArrow: true });                              // interior move, not history
+    expect(s.cursor.row).toBe(1);
+    expect(text(s)).toBe("a\nb\nc");
+  });
+});
