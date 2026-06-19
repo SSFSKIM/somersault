@@ -1,6 +1,6 @@
 // tui/test/commands.test.ts — pure parser + formatters.
 import { describe, it, expect } from "vitest";
-import { parseCommand, COMMANDS, formatHelp, formatModel, formatCompact, formatContext, formatResumed, formatUnknown } from "../src/commands.js";
+import { parseCommand, COMMANDS, formatHelp, formatModel, formatCompact, formatContext, formatResumed, formatUnknown, pickMostRecent, parseResumeIntent } from "../src/commands.js";
 
 describe("parseCommand", () => {
   it("splits a slash command into name + args", () => {
@@ -35,5 +35,21 @@ describe("formatters", () => {
   it("resumed + unknown", () => {
     expect(formatResumed("refactor auth", "a3f1b2c3d4")).toEqual([{ text: '↻ resumed "refactor auth" (a3f1b2c3)', dim: true }]);
     expect(formatUnknown("zzz")).toEqual([{ text: "Unknown command: /zzz · try /help", color: "red" }]);
+  });
+});
+
+describe("resume helpers", () => {
+  it("/continue is in the command table", () => {
+    expect(COMMANDS.some((c) => c.name === "continue")).toBe(true);
+  });
+  it("pickMostRecent returns the max-lastModified session id", () => {
+    expect(pickMostRecent([{ sessionId: "a", lastModified: 5 }, { sessionId: "b", lastModified: 9 }, { sessionId: "c", lastModified: 2 }])).toBe("b");
+    expect(pickMostRecent([])).toBeUndefined();
+  });
+  it("parseResumeIntent reads --resume <id>, --continue, -c", () => {
+    expect(parseResumeIntent(["--resume", "sess-1"])).toEqual({ kind: "id", id: "sess-1" });
+    expect(parseResumeIntent(["--continue"])).toEqual({ kind: "continue" });
+    expect(parseResumeIntent(["-c"])).toEqual({ kind: "continue" });
+    expect(parseResumeIntent(["--model", "x"])).toBeUndefined();
   });
 });

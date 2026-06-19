@@ -20,6 +20,7 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "context", summary: "show context-window usage" },
   { name: "clear", summary: "clear the screen (session context kept)" },
   { name: "resume", summary: "resume a prior session" },
+  { name: "continue", summary: "resume the most-recent session" },
   { name: "help", summary: "list commands" },
 ];
 
@@ -43,4 +44,21 @@ export function formatResumed(summary: string, id: string): RenderLine[] {
 }
 export function formatUnknown(name: string): RenderLine[] {
   return [{ text: `Unknown command: /${name} · try /help`, color: "red" }];
+}
+
+export type InitialResume = { kind: "id"; id: string } | { kind: "continue" };
+
+/** The session id with the greatest lastModified, or undefined for an empty list. */
+export function pickMostRecent(sessions: { sessionId: string; lastModified: number }[]): string | undefined {
+  let best: { sessionId: string; lastModified: number } | undefined;
+  for (const s of sessions) if (!best || s.lastModified > best.lastModified) best = s;
+  return best?.sessionId;
+}
+
+/** CLI args → an initial-resume intent: `--resume <id>` / `--continue` / `-c`. */
+export function parseResumeIntent(args: string[]): InitialResume | undefined {
+  const ri = args.indexOf("--resume");
+  if (ri >= 0 && args[ri + 1]) return { kind: "id", id: args[ri + 1] };
+  if (args.includes("--continue") || args.includes("-c")) return { kind: "continue" };
+  return undefined;
 }
