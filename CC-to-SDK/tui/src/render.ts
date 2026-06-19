@@ -1,12 +1,19 @@
 // tui/src/render.ts — pure, UI-agnostic rich formatter: one SDK message → renderable lines (data, not ink).
 export interface RenderLine { text: string; color?: string; dim?: boolean; }
 
-const trunc = (s: string, n = 48) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+export const trunc = (s: string, n = 48): string => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 const firstArg = (input: Record<string, unknown>): string => {
   const v = Object.values(input ?? {})[0];
   return v === undefined ? "" : trunc(typeof v === "string" ? v : JSON.stringify(v));
 };
 const path = (input: Record<string, unknown>) => String(input.file_path ?? input.path ?? "");
+
+/** The salient argument of a tool, used by the live one-line tool marker and the diff header. */
+export function toolTarget(name: string, input: Record<string, unknown>): string {
+  if (name === "Bash") return trunc(String(input.command ?? ""), 80);
+  if (name === "Edit" || name === "Write" || name === "Read") return path(input);
+  return firstArg(input);
+}
 
 function toolUseLines(name: string, input: Record<string, unknown>): RenderLine[] {
   if (name === "Edit") {

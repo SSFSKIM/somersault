@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderMessage } from "../src/render.js";
+import { renderMessage, trunc, toolTarget } from "../src/render.js";
 
 const asst = (content: unknown[]) => ({ type: "assistant", message: { content } });
 
@@ -33,3 +33,14 @@ describe("renderMessage", () => {
     expect(renderMessage({ type: "result", result: "ok" })).toEqual([]);
   });
 });
+
+describe("toolTarget", () => {
+  it("Edit/Write/Read → the file path", () => {
+    expect(toolTarget("Edit", { file_path: "f.ts" })).toBe("f.ts");
+    expect(toolTarget("Read", { file_path: "x.ts" })).toBe("x.ts");
+    expect(toolTarget("Write", { path: "y.ts" })).toBe("y.ts");
+  });
+  it("Bash → the command", () => { expect(toolTarget("Bash", { command: "echo hi" })).toBe("echo hi"); });
+  it("unknown tool → its first arg", () => { expect(toolTarget("Grep", { pattern: "foo" })).toBe("foo"); });
+});
+describe("trunc", () => { it("truncates with an ellipsis", () => { expect(trunc("abcdef", 4)).toBe("abc…"); }); });
