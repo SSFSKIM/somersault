@@ -60,3 +60,13 @@ export function parseResumeIntent(args: string[]): InitialResume | undefined {
   if (args.includes("--continue") || args.includes("-c")) return { kind: "continue" };
   return undefined;
 }
+
+export const PERMISSION_MODES = ["default", "acceptEdits", "auto", "bypassPermissions", "plan", "dontAsk"] as const;
+export type LaunchMode = typeof PERMISSION_MODES[number];
+
+/** `--permission-mode <m>` → a valid SDK permission mode, or "default" if absent/unknown. */
+export function parseLaunchMode(args: string[]): LaunchMode {
+  const i = args.indexOf("--permission-mode");
+  const m = i >= 0 ? args[i + 1] : undefined;
+  return m && (PERMISSION_MODES as readonly string[]).includes(m) ? (m as LaunchMode) : "default";
+}

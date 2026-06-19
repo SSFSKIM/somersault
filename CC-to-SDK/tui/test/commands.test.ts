@@ -1,6 +1,6 @@
 // tui/test/commands.test.ts — pure parser + formatters.
 import { describe, it, expect } from "vitest";
-import { parseCommand, COMMANDS, formatHelp, formatModel, formatCompact, formatContext, formatUnknown, pickMostRecent, parseResumeIntent } from "../src/commands.js";
+import { parseCommand, COMMANDS, formatHelp, formatModel, formatCompact, formatContext, formatUnknown, pickMostRecent, parseResumeIntent, parseLaunchMode } from "../src/commands.js";
 
 describe("parseCommand", () => {
   it("splits a slash command into name + args", () => {
@@ -53,5 +53,14 @@ describe("resume helpers", () => {
     expect(parseResumeIntent(["--continue"])).toEqual({ kind: "continue" });
     expect(parseResumeIntent(["-c"])).toEqual({ kind: "continue" });
     expect(parseResumeIntent(["--model", "x"])).toBeUndefined();
+  });
+});
+
+describe("parseLaunchMode", () => {
+  it("reads a valid --permission-mode, else default", () => {
+    expect(parseLaunchMode(["--permission-mode", "auto"])).toBe("auto");
+    expect(parseLaunchMode(["--permission-mode", "acceptEdits"])).toBe("acceptEdits");
+    expect(parseLaunchMode(["--permission-mode", "bogus"])).toBe("default");
+    expect(parseLaunchMode(["--model", "x"])).toBe("default");
   });
 });
