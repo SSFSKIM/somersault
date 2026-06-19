@@ -44,3 +44,19 @@ describe("toolTarget", () => {
   it("unknown tool → its first arg", () => { expect(toolTarget("Grep", { pattern: "foo" })).toBe("foo"); });
 });
 describe("trunc", () => { it("truncates with an ellipsis", () => { expect(trunc("abcdef", 4)).toBe("abc…"); }); });
+
+import { toolDiffLines } from "../src/render.js";
+describe("toolDiffLines", () => {
+  it("renders Edit + / - lines with a header", () => {
+    expect(toolDiffLines("Edit", { file_path: "f.ts", old_string: "a", new_string: "b" })).toEqual([
+      { text: "⚙ Edit f.ts" }, { text: "  - a", color: "red" }, { text: "  + b", color: "green" },
+    ]);
+  });
+  it("caps long diffs and notes the remainder", () => {
+    const new_string = Array.from({ length: 40 }, (_, i) => `line${i}`).join("\n");
+    const out = toolDiffLines("Write", { file_path: "big.ts", content: new_string }, 24);
+    expect(out[0]).toEqual({ text: "⚙ Write big.ts" });
+    expect(out.filter((l) => l.text.startsWith("  +")).length).toBe(24);
+    expect(out.at(-1)).toEqual({ text: "  … 16 more lines", dim: true });
+  });
+});

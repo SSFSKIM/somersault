@@ -1,12 +1,12 @@
 // tui/src/liveTurn.ts — pure reducer: SDK turn frames (stream_event partials + full assistant/user/result)
 // → live RenderLine[] snapshots. Owns ALL streaming state so useChat/render stay lean. No React, no SDK; clock is injected.
 import type { RenderLine } from "./render.js";
-import { trunc, toolTarget } from "./render.js";
+import { trunc, toolTarget, toolDiffLines } from "./render.js";
 
 type Block =
   | { kind: "text"; index: number; text: string }
   | { kind: "thinking"; index: number; text: string; collapsed: boolean }
-  | { kind: "tool"; index: number; id: string; name: string; target: string; status: "running" | "done" | "error"; preview?: string; startedAt: number; nested?: RenderLine[]; toolCount?: number; doneAt?: number };
+  | { kind: "tool"; index: number; id: string; name: string; target: string; status: "running" | "done" | "error"; preview?: string; startedAt: number; nested?: RenderLine[]; toolCount?: number; doneAt?: number; input?: Record<string, unknown> };
 type ToolBlock = Block & { kind: "tool" };
 
 const ev = (m: any) => (m?.type === "stream_event" ? m.event : undefined);
@@ -101,9 +101,10 @@ export class LiveTurn {
         if (!this.find(i)) this.current.push({ kind: "thinking", index: i, text: String(b.thinking ?? ""), collapsed: false });
       } else if (b?.type === "tool_use") {
         const id = String(b.id ?? ""); const ex = id ? this.byTool.get(id) : undefined;
-        if (ex) { ex.name = String(b.name ?? ex.name); ex.target = toolTarget(ex.name, b.input ?? {}); }
+        if (ex) { ex.name = String(b.name ?? ex.name); ex.target = toolTarget(ex.name, b.input ?? {}); if (ex.name === "Edit" || ex.name === "Write") ex.input = b.input ?? {}; }
         else {
-          const tb: ToolBlock = { kind: "tool", index: i, id, name: String(b.name ?? ""), target: toolTarget(String(b.name ?? ""), b.input ?? {}), status: "running", startedAt: this.now() };
+          const nm = String(b.name ?? "");
+          const tb: ToolBlock = { kind: "tool", index: i, id, name: nm, target: toolTarget(nm, b.input ?? {}), status: "running", startedAt: this.now(), input: (nm === "Edit" || nm === "Write") ? (b.input ?? {}) : undefined };
           this.current.push(tb); if (id) this.byTool.set(id, tb);
         }
       }
@@ -130,6 +131,10 @@ export class LiveTurn {
     if (b.name === "Agent") {
       if (b.doneAt != null) { const s = Math.floor((b.doneAt - b.startedAt) / 1000); return [{ text: `⚙ ${label} ✓ (${b.toolCount ?? 0} tools · ${s}s)` }]; }
       return [{ text: `⚙ ${label}` }, ...(b.nested ?? [])];      // expanded while running
+    }
+    if ((b.name === "Edit" || b.name === "Write") && b.input) {
+      const head = b.status === "done" ? `✓ ${label}` : b.status === "error" ? `✗ ${label}` : this.ended ? `· ${label}` : `⟳ ${label}`;
+      return [{ text: head, ...(b.status === "error" ? { color: "red" } : {}) }, ...toolDiffLines(b.name, b.input).slice(1)];   // diff body under the status header
     }
     if (b.status === "error") return [{ text: `✗ ${label}`, color: "red" }];
     if (b.status === "done") return [{ text: `✓ ${label}${b.preview ? "  │ " + b.preview : ""}` }];

@@ -32,6 +32,17 @@ function toolUseLines(name: string, input: Record<string, unknown>): RenderLine[
   return [{ text: `⚙ ${name}(${firstArg(input)})` }];
 }
 
+/** Truncation-aware Edit/Write diff: header + capped +/- lines + a "… N more lines" note. Reused by liveTurn. */
+export function toolDiffLines(name: string, input: Record<string, unknown>, cap = 24): RenderLine[] {
+  const head: RenderLine = { text: `⚙ ${name} ${String(input.file_path ?? input.path ?? "")}` };
+  const body: RenderLine[] = [];
+  if (typeof input.old_string === "string") for (const l of input.old_string.split("\n")) body.push({ text: `  - ${l}`, color: "red" });
+  const added = typeof input.new_string === "string" ? input.new_string : typeof input.content === "string" ? input.content : "";
+  if (added) for (const l of added.split("\n")) body.push({ text: `  + ${l}`, color: "green" });
+  if (body.length <= cap) return [head, ...body];
+  return [head, ...body.slice(0, cap), { text: `  … ${body.length - cap} more lines`, dim: true }];
+}
+
 function resultLines(content: unknown): RenderLine[] {
   const text = typeof content === "string" ? content
     : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === "string" ? b.text : "")).join("") : "";

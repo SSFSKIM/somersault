@@ -119,6 +119,16 @@ describe("LiveTurn", () => {
     expect(texts(lt).find((x) => x.startsWith("⟳ Bash"))).toBe("⟳ Bash 3s"); // elapsed shown
   });
 
+  it("renders an inline diff for an Edit tool (not just a one-line marker)", () => {
+    const lt = new LiveTurn();
+    lt.ingest(se({ type: "message_start" }));
+    lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "e1", name: "Edit", input: {} } }));
+    lt.ingest({ type: "assistant", message: { content: [{ type: "tool_use", id: "e1", name: "Edit", input: { file_path: "f.ts", old_string: "x", new_string: "y" } }] } });
+    const out = texts(lt);
+    expect(out).toContain("  - x");
+    expect(out).toContain("  + y");
+  });
+
   it("nests subagent (Agent) turns under the parent and collapses on the top-level result", () => {
     let t = 0; const lt = new LiveTurn(() => t);
     // top-level Agent tool_use (full message — no partials for the agent's own content)
