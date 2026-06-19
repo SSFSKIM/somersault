@@ -740,9 +740,10 @@ In the returned object (after `stopProactive`, line 52) add:
 In `harness/test/unit/index.test.ts`, add to the increment-4 `it` (or a new `it` after it):
 
 ```ts
-  it("exports the daemon permission client methods (advanced-seam, increment 4)", () => {
-    const _pin: Pick<api.DaemonClient, "pendingPermissions" | "respondPermission"> | undefined = undefined;
-    expect(_pin).toBeUndefined();
+  it("exports the daemon permission client methods on connectDaemon's return (advanced-seam, increment 4)", () => {
+    const c = api.connectDaemon("/x", (async () => []) as any);
+    expect(typeof c.pendingPermissions).toBe("function");
+    expect(typeof c.respondPermission).toBe("function");
   });
 ```
 
