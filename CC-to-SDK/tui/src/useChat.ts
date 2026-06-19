@@ -40,12 +40,11 @@ export function useChat(makeSession: (resume?: string) => ChatSession, ui: UiBro
   const pendingRef = useRef<Pending | null>(null);
   pendingRef.current = pending;
 
-  const sessionRef = useRef(session);
-  sessionRef.current = session;
-
-  // Final teardown: only on unmount. Must precede the handler effect so disposed is set first.
-  useEffect(() => () => { disposed.current = true; pendingRef.current?.resolve({ kind: "deny" }); void sessionRef.current.dispose().catch(() => {}); }, []);
-
+  // Unmount-only sentinel: mark disposed + settle any parked permission promise (never on a session swap).
+  useEffect(() => () => { disposed.current = true; pendingRef.current?.resolve({ kind: "deny" }); }, []);
+  // Dispose the PREVIOUS session whenever it changes (a /resume swap) and on unmount. Must not touch `disposed`.
+  useEffect(() => () => { void session.dispose().catch(() => {}); }, [session]);
+  // Late-bound permission handler, keyed on the broker identity only.
   useEffect(() => {
     ui.setHandler((req) => new Promise<PermissionDecision>((resolve) => {
       if (disposed.current) return resolve({ kind: "deny" });
