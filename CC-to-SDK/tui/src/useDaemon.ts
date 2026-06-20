@@ -95,6 +95,7 @@ export function useDaemon(client: DaemonClient, opts: UseDaemonOpts = {}): Daemo
     setSelectedIndex((i) => { const n = rows.length; if (!n) return 0; return (((i + delta) % n) + n) % n; });
     models.current = undefined;                           // reset the model-cycle cache on selection change
     pmIndex.current = 0;                                  // reset permission-mode cursor on selection change
+    thinkIndex.current = 0;                               // reset thinking cursor on selection change (mirror pmIndex)
   }, [rows.length]);
 
   const focusInput = useCallback(() => setFocus("input"), []);
