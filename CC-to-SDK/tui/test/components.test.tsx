@@ -217,6 +217,12 @@ describe("Pool", () => {
     const { lastFrame } = render(<Pool rows={rows} selectedIndex={0} />);
     expect(lastFrame()).toContain("▶");        // status is idle (·) → the ▶ is the proactive marker
   });
+  it("Pool appends the paused glyph for a paused session", () => {
+    const rows = [{ id: "sess-pause", status: "idle", model: "opus", ctxPercent: 5, proactive: "paused" }] as any;
+    const { lastFrame } = render(<Pool rows={rows} selectedIndex={0} />);
+    expect(lastFrame()).toContain("⏸");        // status is idle (·) → the ⏸ is the proactive marker
+    expect(lastFrame()).not.toContain("▶");
+  });
   it("Pool shows no proactive glyph for an idle (non-proactive) session", () => {
     const rows = [{ id: "sess-idle", status: "idle", model: "opus", ctxPercent: 5 }] as any;
     const { lastFrame } = render(<Pool rows={rows} selectedIndex={0} />);
