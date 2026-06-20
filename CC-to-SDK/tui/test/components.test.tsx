@@ -68,6 +68,11 @@ describe("<ChatStatusBar>", () => {
     const { lastFrame } = render(<ChatStatusBar mode="default" busy={true} ctxPct={10} hasPending={false} subagentActive={false} />);
     expect(lastFrame() ?? "").not.toContain("subagent running");
   });
+  it("shows the thinking level", () => {
+    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} hasPending={false} thinkLevel="high" />);
+    expect(lastFrame()).toContain("think");
+    expect(lastFrame()).toContain("high");
+  });
 });
 describe("SessionPicker", () => {
   const sessions = [

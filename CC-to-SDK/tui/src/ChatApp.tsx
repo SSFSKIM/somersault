@@ -28,7 +28,7 @@ export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume }: {
         : state.pending
           ? <PermissionDialog req={state.pending.req} onDecision={resolvePermission} />
           : <ChatComposer onSubmit={submit} cwd={cwd} />}
-      <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} subagentActive={state.subagentActive} />
+      <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} subagentActive={state.subagentActive} thinkLevel={state.thinkLevel} />
     </Box>
   );
 }
