@@ -129,6 +129,12 @@ describe("LiveTurn", () => {
     expect(out).toContain("  + y");
   });
 
+  it("renders live assistant text as markdown", () => {
+    const lt = new LiveTurn(() => 0);
+    lt.ingest({ type: "assistant", message: { content: [{ type: "text", text: "# Heading" }] } });
+    expect(lt.snapshot()).toContainEqual({ text: "Heading", bold: true });
+  });
+
   it("nests subagent (Agent) turns under the parent and collapses on the top-level result", () => {
     let t = 0; const lt = new LiveTurn(() => t);
     // top-level Agent tool_use (full message — no partials for the agent's own content)

@@ -24,6 +24,11 @@ describe("<Transcript>", () => {
     expect(lastFrame()).toContain("committed");
     expect(lastFrame()).toContain("live");
   });
+  it("Transcript renders bold and italic RenderLine fields", () => {
+    const { lastFrame } = render(<Transcript lines={[{ text: "B", bold: true }, { text: "I", italic: true }]} streaming={[]} />);
+    expect(lastFrame()).toContain("B");
+    expect(lastFrame()).toContain("I");
+  });
 });
 describe("<PermissionDialog>", () => {
   it("reconstructs the prompt from toolName+input (no SDK title)", () => {

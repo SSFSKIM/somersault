@@ -1,5 +1,6 @@
 // tui/src/render.ts — pure, UI-agnostic rich formatter: one SDK message → renderable lines (data, not ink).
 export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; }
+import { renderMarkdown } from "./markdown.js";
 
 export const trunc = (s: string, n = 48): string => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 const firstArg = (input: Record<string, unknown>): string => {
@@ -45,7 +46,7 @@ export function renderMessage(m: any): RenderLine[] {
   if (m.type === "assistant") {
     const out: RenderLine[] = [];
     for (const b of m.message?.content ?? []) {
-      if (b?.type === "text" && b.text) for (const l of String(b.text).split("\n")) out.push({ text: l });
+      if (b?.type === "text" && b.text) out.push(...renderMarkdown(String(b.text)));
       else if (b?.type === "thinking" && b.thinking) for (const l of String(b.thinking).split("\n")) out.push({ text: l, dim: true });
       else if (b?.type === "tool_use") out.push(...(b.name === "Edit" || b.name === "Write" ? toolDiffLines(b.name, b.input ?? {}) : toolUseLines(b.name, b.input ?? {})));
     }

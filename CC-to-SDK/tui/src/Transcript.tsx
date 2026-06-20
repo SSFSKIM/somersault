@@ -3,7 +3,7 @@ import React from "react";
 import { Box, Text, Static } from "ink";
 import type { RenderLine } from "./render.js";
 
-const Line = ({ l }: { l: RenderLine }) => <Text color={l.color} dimColor={l.dim}>{l.text || " "}</Text>;
+const Line = ({ l }: { l: RenderLine }) => <Text color={l.color} dimColor={l.dim} bold={l.bold} italic={l.italic}>{l.text || " "}</Text>;
 
 export function Transcript({ lines, streaming }: { lines: RenderLine[]; streaming: RenderLine[] }) {
   return (

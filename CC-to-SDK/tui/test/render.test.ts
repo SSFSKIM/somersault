@@ -61,6 +61,17 @@ describe("toolDiffLines", () => {
   });
 });
 
+describe("renderMessage (markdown wiring)", () => {
+  it("renders assistant text as markdown (whole-line bold) and leaves thinking plain", () => {
+    const lines = renderMessage({ type: "assistant", message: { content: [
+      { type: "text", text: "**hi**" },
+      { type: "thinking", thinking: "**not parsed**" },
+    ] } });
+    expect(lines).toContainEqual({ text: "hi", bold: true });           // text → markdown
+    expect(lines).toContainEqual({ text: "**not parsed**", dim: true }); // thinking → raw dim (NOT parsed)
+  });
+});
+
 describe("renderMessage (replay additions)", () => {
   it("renders a user-text prompt as a dim '› ' line", () => {
     const m = { type: "user", message: { role: "user", content: [{ type: "text", text: "fix the parser" }] } };

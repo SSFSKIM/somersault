@@ -2,6 +2,7 @@
 // → live RenderLine[] snapshots. Owns ALL streaming state so useChat/render stay lean. No React, no SDK; clock is injected.
 import type { RenderLine } from "./render.js";
 import { trunc, toolTarget, toolDiffLines } from "./render.js";
+import { renderMarkdown } from "./markdown.js";
 
 type Block =
   | { kind: "text"; index: number; text: string }
@@ -123,7 +124,7 @@ export class LiveTurn {
   }
 
   private renderBlock(b: Block): RenderLine[] {
-    if (b.kind === "text") return b.text ? b.text.split("\n").map((t) => ({ text: t })) : [];
+    if (b.kind === "text") return b.text ? renderMarkdown(b.text) : [];
     if (b.kind === "thinking")
       return b.collapsed ? [{ text: "✦ Thinking", dim: true }]
         : (b.text ? b.text.split("\n").map((t) => ({ text: t, dim: true })) : []);
