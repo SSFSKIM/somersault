@@ -10,6 +10,7 @@ import { PermissionDialog } from "../src/PermissionDialog.js";
 import { ChatStatusBar, modeColor } from "../src/ChatStatusBar.js";
 import { SessionPicker } from "../src/SessionPicker.js";
 import { TaskPanel } from "../src/TaskPanel.js";
+import { ThinkingIndicator } from "../src/ThinkingIndicator.js";
 import type { PermissionDecision } from "cc-harness";
 
 async function waitFor(cond: () => boolean, timeout = 2000) {
@@ -137,6 +138,14 @@ describe("modeColor", () => {
     expect(modeColor("acceptEdits")).toBe("yellow");
     expect(modeColor("auto")).toBe("cyan");
     expect(modeColor("bypassPermissions")).toBe("red");
+  });
+});
+
+describe("ThinkingIndicator", () => {
+  it("ThinkingIndicator shows a spinner frame and elapsed seconds", () => {
+    const { lastFrame } = render(<ThinkingIndicator startedAt={0} now={() => 3000} />);
+    expect(lastFrame()).toContain("Thinking…");
+    expect(lastFrame()).toContain("3s");
   });
 });
 

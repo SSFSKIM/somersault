@@ -26,7 +26,7 @@ export interface ChatSession {
 }
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
 export interface Pending { req: PermissionRequest; resolve: (d: PermissionDecision) => void; }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; turnStartedAt: number; }
 
 const LADDER = ["default", "acceptEdits", "auto"] as const;   // Tab cycles these; bypassPermissions is off-cycle (/yolo)
 /** Next mode on the Tab ladder; any off-ladder mode (bypassPermissions/plan/…) re-enters at "default". */
@@ -44,6 +44,7 @@ export function useChat(
   const [pending, setPending] = useState<Pending | null>(null);
   const [mode, setMode] = useState(opts.initialMode ?? "default");
   const [busy, setBusy] = useState(false);
+  const [turnStartedAt, setTurnStartedAt] = useState(0);
   const [ctxPct, setCtxPct] = useState<number | undefined>(undefined);
   const [model, setModel] = useState<string | undefined>(undefined);
   const [thinkLevel, setThinkLevel] = useState(opts.initialThink ?? "default");
@@ -151,7 +152,7 @@ export function useChat(
     const cmd = parseCommand(prompt);
     if (cmd) { void handleCommand(cmd); return; }
     setLines((l) => [...l, { text: `› ${prompt}`, dim: true }]);
-    setStreaming([]); setBusy(true);
+    setStreaming([]); setBusy(true); setTurnStartedAt(Date.now());
     const lt = new LiveTurn();
     session.submit(prompt, (m) => { if (disposed.current) return; lt.ingest(m); taskListRef.current.ingest(m); setStreaming(lt.snapshot()); setTasks(taskListRef.current.snapshot()); setSubagentActive(lt.subagentActive); })
       .then(() => {}, (e) => { lt.fail((e as Error).message); })
@@ -181,5 +182,5 @@ export function useChat(
   function cycleMode() { void applyMode(ladderNext(mode)); }
   function interrupt() { void session.interrupt().catch(() => {}); }
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel, turnStartedAt } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession };
 }

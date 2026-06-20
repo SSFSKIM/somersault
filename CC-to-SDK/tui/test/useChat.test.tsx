@@ -155,6 +155,20 @@ describe("useChat", () => {
     expect(submitted).toBe(0);     // no slash command ever reached session.submit
   });
 
+  it("submit sets turnStartedAt and busy during the turn", async () => {
+    let hung: (() => void) | null = null;
+    const fake = fakeSession({ async submit(_p: string, onMessage: (m: unknown) => void) { await new Promise<void>((r) => { hung = r; }); return { result: "x" }; } });
+    const api: { run?: (p: string) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake, createUiBroker()); api.run = c.submit; api.state = c.state; return <Text>{String(c.state.busy)}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("hello");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.state.busy).toBe(true);
+    expect(api.state.turnStartedAt).toBeGreaterThan(0);
+    if (hung) (hung as () => void)();
+  });
+
   it("accumulates tasks from a turn's frames and exposes them in state", async () => {
     const fake = fakeSession({ async submit(_p: string, onMessage: (m: unknown) => void) {
       onMessage({ type: "assistant", message: { content: [{ type: "tool_use", id: "tc1", name: "TaskCreate", input: { subject: "build it" } }] } });
