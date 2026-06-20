@@ -186,4 +186,13 @@ describe("editor / command palette", () => {
     expect(s.mention!.items.length).toBe(2);
     expect(s.command).toBeNull();
   });
+  it("backspacing past the leading '/' closes the command popup", () => {
+    let s = open(); s = type(s, "re");          // "/re" — command open
+    s = press(s, { backspace: true });          // "/r"
+    s = press(s, { backspace: true });          // "/"
+    expect(s.command).not.toBeNull();           // still open at the bare "/"
+    s = press(s, { backspace: true });          // "" — leading slash gone
+    expect(s.command).toBeNull();
+    expect(text(s)).toBe("");
+  });
 });
