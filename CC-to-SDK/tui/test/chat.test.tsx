@@ -20,6 +20,7 @@ function fakeSession(onSubmit?: () => Promise<void>): ChatSession & { modes: str
   const s: any = { modes: [],
     async submit(_p: string, onMessage: (m: unknown) => void) { onMessage({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }); if (onSubmit) await onSubmit(); return { result: "done" }; },
     async setPermissionMode(m: string) { s.modes.push(m); }, async setModel() {}, async setMaxThinkingTokens() {}, async interrupt() {}, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
+    async capabilities() { return { models: [{ value: "claude-opus-4-8" }], commands: [], mcpServers: [] }; },
     async dispose() {}, sessionId: "sess-1" };
   return s;
 }

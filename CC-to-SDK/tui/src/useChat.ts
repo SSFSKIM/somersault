@@ -8,6 +8,7 @@ import type { UiBrokerHandle } from "./uiBroker.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatUnknown, pickMostRecent, type ParsedCommand, type InitialResume } from "./commands.js";
 import { parseThinkArg } from "./thinkLevels.js";
+import type { ModelInfo } from "./ModelPicker.js";
 import { replayLines } from "./replay.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel } from "cc-harness";
 import type { CompactOutcome, RawContextUsage } from "cc-harness";
@@ -18,6 +19,7 @@ export interface ChatSession {
   setPermissionMode(mode: string): Promise<void>;
   setModel(model?: string): Promise<void>;
   setMaxThinkingTokens(maxTokens: number | null): Promise<void>;
+  capabilities(): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] }>;
   compact(): Promise<CompactOutcome>;
   interrupt(): Promise<void>;
   getContextUsage(): Promise<unknown>;
@@ -26,7 +28,7 @@ export interface ChatSession {
 }
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
 export interface Pending { req: PermissionRequest; resolve: (d: PermissionDecision) => void; }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; turnStartedAt: number; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; }
 
 const LADDER = ["default", "acceptEdits", "auto"] as const;   // Tab cycles these; bypassPermissions is off-cycle (/yolo)
 /** Next mode on the Tab ladder; any off-ladder mode (bypassPermissions/plan/…) re-enters at "default". */
@@ -49,6 +51,7 @@ export function useChat(
   const [model, setModel] = useState<string | undefined>(undefined);
   const [thinkLevel, setThinkLevel] = useState(opts.initialThink ?? "default");
   const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[] }>({ open: false, sessions: [] });
+  const [modelPicker, setModelPicker] = useState<{ open: boolean; models: ModelInfo[] }>({ open: false, models: [] });
   const taskListRef = useRef(new TaskList());
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [subagentActive, setSubagentActive] = useState(false);
@@ -93,7 +96,7 @@ export function useChat(
       switch (cmd.name) {
         case "model":
           if (cmd.args) { await session.setModel(cmd.args); if (!disposed.current) setModel(cmd.args); append(formatModel(cmd.args)); }
-          else append(formatModel(undefined, model));
+          else { await openModelPicker(); }
           break;
         case "compact": append(formatCompact(await session.compact())); break;
         case "context": append(formatContext(summarizeUsage((await session.getContextUsage()) as RawContextUsage))); break;
@@ -147,6 +150,22 @@ export function useChat(
     void resumeInto(info.sessionId);
   }
 
+  async function openModelPicker() {
+    try {
+      const caps = await session.capabilities();
+      if (disposed.current) return;
+      const models: ModelInfo[] = (caps.models as any[]).map((m) => ({ value: String(m?.value ?? m), displayName: m?.displayName, description: m?.description }));
+      if (!models.length) { append([{ text: "no models available", dim: true }]); return; }
+      setModelPicker({ open: true, models });
+    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+  }
+  function closeModelPicker() { if (!disposed.current) setModelPicker({ open: false, models: [] }); }
+  function pickModel(m: ModelInfo) {
+    if (disposed.current) return;
+    setModelPicker({ open: false, models: [] });
+    void (async () => { await session.setModel(m.value).catch(() => {}); if (!disposed.current) { setModel(m.value); append(formatModel(m.value)); } })();
+  }
+
   function submit(prompt: string) {
     if (disposed.current || busy || !prompt.trim()) return;
     const cmd = parseCommand(prompt);
@@ -182,5 +201,5 @@ export function useChat(
   function cycleMode() { void applyMode(ladderNext(mode)); }
   function interrupt() { void session.interrupt().catch(() => {}); }
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel, turnStartedAt } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel, turnStartedAt, modelPicker } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel };
 }

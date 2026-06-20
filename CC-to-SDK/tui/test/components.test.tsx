@@ -9,6 +9,7 @@ import { Transcript } from "../src/Transcript.js";
 import { PermissionDialog } from "../src/PermissionDialog.js";
 import { ChatStatusBar, modeColor } from "../src/ChatStatusBar.js";
 import { SessionPicker } from "../src/SessionPicker.js";
+import { ModelPicker } from "../src/ModelPicker.js";
 import { TaskPanel } from "../src/TaskPanel.js";
 import { ThinkingIndicator } from "../src/ThinkingIndicator.js";
 import type { PermissionDecision } from "cc-harness";
@@ -110,6 +111,44 @@ describe("SessionPicker", () => {
   it("shows 'no sessions' when empty", () => {
     const { lastFrame } = render(<SessionPicker sessions={[]} onPick={() => {}} onCancel={() => {}} />);
     expect(lastFrame() ?? "").toContain("no sessions");
+  });
+});
+
+describe("ModelPicker", () => {
+  it("renders models and shows the header", () => {
+    const models = [{ value: "claude-opus-4-8", displayName: "Opus 4.8", description: "best" }, { value: "sonnet", displayName: "Sonnet" }];
+    const { lastFrame } = render(<ModelPicker models={models} onPick={() => {}} onCancel={() => {}} />);
+    expect(lastFrame()).toContain("Opus 4.8");
+    expect(lastFrame()).toContain("Sonnet");
+    expect(lastFrame()).toContain("switch model");
+  });
+  it("ModelPicker renders models and selects on Enter", async () => {
+    const picked: string[] = [];
+    const models = [{ value: "claude-opus-4-8", displayName: "Opus 4.8", description: "best" }, { value: "sonnet", displayName: "Sonnet" }];
+    const { lastFrame, stdin } = render(<ModelPicker models={models} onPick={(m) => picked.push(m.value)} onCancel={() => {}} />);
+    expect(lastFrame()).toContain("Opus 4.8");
+    expect(lastFrame()).toContain("Sonnet");
+    await new Promise((r) => setTimeout(r, 20));  // let useInput subscribe before keys
+    stdin.write("\x1b[B");                        // ↓ to the 2nd model
+    await waitFor(() => (lastFrame() ?? "").match(/\x1b\[7m[^\x1b]*Sonnet/) !== null);
+    await new Promise((r) => setTimeout(r, 20)); // let useInput re-register with updated idx closure
+    stdin.write("\r");                              // Enter
+    await waitFor(() => picked.length > 0);
+    expect(picked).toEqual(["sonnet"]);
+  });
+  it("Esc cancels the model picker", async () => {
+    let cancelled = false;
+    const models = [{ value: "claude-opus-4-8", displayName: "Opus 4.8" }];
+    const { stdin, lastFrame } = render(<ModelPicker models={models} onPick={() => {}} onCancel={() => { cancelled = true; }} />);
+    await waitFor(() => (lastFrame() ?? "").includes("switch model"));
+    await new Promise((r) => setTimeout(r, 0));
+    stdin.write("\x1b");
+    await waitFor(() => cancelled);
+    expect(cancelled).toBe(true);
+  });
+  it("shows 'no models' when empty", () => {
+    const { lastFrame } = render(<ModelPicker models={[]} onPick={() => {}} onCancel={() => {}} />);
+    expect(lastFrame() ?? "").toContain("no models");
   });
 });
 

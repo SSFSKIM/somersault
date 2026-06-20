@@ -11,25 +11,28 @@ import { ChatComposer } from "./ChatComposer.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { ChatStatusBar } from "./ChatStatusBar.js";
 import { SessionPicker } from "./SessionPicker.js";
+import { ModelPicker } from "./ModelPicker.js";
 import { TaskPanel } from "./TaskPanel.js";
 import { ThinkingIndicator } from "./ThinkingIndicator.js";
 
 export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string; initialThink?: string }; cwd: string; initialResume?: InitialResume }) {
-  const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession } = useChat(makeSession, broker, { ...(hookOpts ?? {}), cwd, initialResume });
+  const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel } = useChat(makeSession, broker, { ...(hookOpts ?? {}), cwd, initialResume });
   useInput((input, key) => {
     if (key.escape) { interrupt(); return; }
     if (key.tab) cycleMode();   // Tab cycles the permission ladder (default → acceptEdits → auto; bypass via /yolo)
-  }, { isActive: !state.pending && !state.picker.open });
+  }, { isActive: !state.pending && !state.picker.open && !state.modelPicker.open });
   return (
     <Box flexDirection="column">
       <Transcript lines={state.lines} streaming={state.streaming} />
       {state.busy && state.streaming.length === 0 ? <ThinkingIndicator startedAt={state.turnStartedAt} /> : null}
       <TaskPanel tasks={state.tasks} />
-      {state.picker.open
-        ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
-        : state.pending
-          ? <PermissionDialog req={state.pending.req} onDecision={resolvePermission} />
-          : <ChatComposer onSubmit={submit} cwd={cwd} />}
+      {state.modelPicker.open
+        ? <ModelPicker models={state.modelPicker.models} onPick={pickModel} onCancel={closeModelPicker} />
+        : state.picker.open
+          ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
+          : state.pending
+            ? <PermissionDialog req={state.pending.req} onDecision={resolvePermission} />
+            : <ChatComposer onSubmit={submit} cwd={cwd} />}
       <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} subagentActive={state.subagentActive} thinkLevel={state.thinkLevel} />
     </Box>
   );

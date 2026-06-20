@@ -16,6 +16,7 @@ function fakeSession(overrides: Partial<ChatSession> = {}): ChatSession & { disp
   const s: any = { disposed: 0,
     async submit(_p: string, onMessage: (m: unknown) => void) { onMessage({ type: "assistant", message: { content: [{ type: "text", text: "working" }] } }); return { result: "done" }; },
     async setPermissionMode() {}, async setModel() {}, async setMaxThinkingTokens() {}, async compact() { return { ok: true, preTokens: 0, postTokens: 0 }; },
+    async capabilities() { return { models: [{ value: "claude-opus-4-8", displayName: "Opus 4.8" }, { value: "sonnet", displayName: "Sonnet" }], commands: [], mcpServers: [] }; },
     async interrupt() {}, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
     async dispose() { s.disposed++; }, sessionId: "sess-1", ...overrides };
   return s;
@@ -255,6 +256,32 @@ describe("permission ladder", () => {
     cyc();
     await new Promise((r) => setTimeout(r, 20));
     expect(setModeCalls).toEqual([]);
+  });
+});
+
+describe("model picker", () => {
+  it("/model with no arg opens the model picker from capabilities()", async () => {
+    const fake = fakeSession({ async capabilities() { return { models: [{ value: "claude-opus-4-8", displayName: "Opus 4.8" }], commands: [], mcpServers: [] }; } });
+    const api: { run?: (p: string) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake, createUiBroker()); api.run = c.submit; api.state = c.state; return <Text>{String(c.state.modelPicker.open)}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/model");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.state.modelPicker.open).toBe(true);
+    expect(api.state.modelPicker.models[0].value).toBe("claude-opus-4-8");
+  });
+  it("/model <name> keeps the free-text fast-path (no picker, setModel called)", async () => {
+    let set = "";
+    const fake = fakeSession({ async setModel(m?: string) { set = m ?? ""; } });
+    const api: { run?: (p: string) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake, createUiBroker()); api.run = c.submit; api.state = c.state; return <Text>x</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/model sonnet");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(set).toBe("sonnet");
+    expect(api.state.modelPicker.open).toBe(false);
   });
 });
 
