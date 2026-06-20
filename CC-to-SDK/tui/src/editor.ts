@@ -3,11 +3,13 @@
 // string, embedded \n/\r, no key.return) → paste = insert-and-split; submit = a lone key.return; `\`+Enter =
 // continuation. rankCandidates (pure) is added in the mention pass.
 import { rankCandidates } from "./fileComplete.js";
+import { rankCommands, type CommandEntry } from "./commandComplete.js";
 export interface Cursor { row: number; col: number }
 export interface Candidate { path: string; score: number }
 export interface MentionState { anchor: Cursor; query: string; files: string[]; items: Candidate[]; index: number }
+export interface CommandState { query: string; items: CommandEntry[]; catalog: CommandEntry[]; index: number }
 export interface EditorState {
-  lines: string[]; cursor: Cursor; history: string[]; histIndex: number | null; stash: string | null; mention: MentionState | null;
+  lines: string[]; cursor: Cursor; history: string[]; histIndex: number | null; stash: string | null; mention: MentionState | null; command: CommandState | null;
 }
 export interface EditorResult { state: EditorState; submit?: string }
 /** Minimal structural subset of ink's Key the reducer reads (so editor.ts needs no ink import). */
@@ -17,7 +19,7 @@ export interface KeyFlags {
 }
 
 export function initialEditorState(history: string[] = []): EditorState {
-  return { lines: [""], cursor: { row: 0, col: 0 }, history: [...history], histIndex: null, stash: null, mention: null };
+  return { lines: [""], cursor: { row: 0, col: 0 }, history: [...history], histIndex: null, stash: null, mention: null, command: null };
 }
 
 const PASTE_MARKERS = /\x1b?\[20[01]~/g;                    // \x1b[200~ / \x1b[201~ and ESC-stripped [200~/[201~
@@ -100,11 +102,6 @@ function refreshMention(s: EditorState): EditorState {
   if (/\s/.test(query)) return { ...s, mention: null };          // a space ends the mention
   return { ...s, mention: { ...m, query, items: rankCandidates(m.files, query), index: 0 } };
 }
-const syncMention = (s: EditorState): EditorState => (s.mention ? refreshMention(s) : s);
-function afterInsert(next: EditorState, prev: EditorState, t: string): EditorState {
-  if (t === "@" && atWordBoundary(next)) return openMention(next);
-  return prev.mention ? refreshMention(next) : next;
-}
 function moveMention(s: EditorState, delta: number): EditorState {
   const m = s.mention!; if (m.items.length === 0) return s;
   return { ...s, mention: { ...m, index: Math.max(0, Math.min(m.items.length - 1, m.index + delta)) } };
@@ -120,20 +117,60 @@ export function setMentionFiles(s: EditorState, files: string[]): EditorState {
   if (!s.mention) return s;
   return { ...s, mention: { ...s.mention, files, items: rankCandidates(files, s.mention.query), index: 0 } };
 }
-function onUp(s: EditorState): EditorState { if (s.mention) return moveMention(s, -1); if (s.cursor.row === 0) return historyPrev(s); return moveCursorVert(s, -1); }
-function onDown(s: EditorState): EditorState { if (s.mention) return moveMention(s, 1); if (s.cursor.row === s.lines.length - 1) return historyNext(s); return moveCursorVert(s, 1); }
+function openCommand(s: EditorState): EditorState {
+  return { ...s, command: { query: "", items: [], catalog: [], index: 0 } };       // anchor is implicit: the '/' at row 0 col 0
+}
+function refreshCommand(s: EditorState): EditorState {
+  const c = s.command; if (!c) return s; const { row, col } = s.cursor;
+  if (row !== 0 || col <= 0 || s.lines[0][0] !== "/") return { ...s, command: null };  // cursor left the leading-slash token
+  const query = s.lines[0].slice(1, col);
+  if (/\s/.test(query)) return { ...s, command: null };                                // a space ends the command name
+  return { ...s, command: { ...c, query, items: rankCommands(c.catalog, query), index: 0 } };
+}
+export function setCommandCatalog(s: EditorState, catalog: CommandEntry[]): EditorState {
+  if (!s.command) return s;
+  return { ...s, command: { ...s.command, catalog, items: rankCommands(catalog, s.command.query), index: 0 } };
+}
+function moveCommand(s: EditorState, delta: number): EditorState {
+  const c = s.command!; if (c.items.length === 0) return s;
+  return { ...s, command: { ...c, index: Math.max(0, Math.min(c.items.length - 1, c.index + delta)) } };
+}
+function completeCommandName(s: EditorState): EditorState {
+  const c = s.command; if (!c || c.items.length === 0) return { ...s, command: null };
+  const name = c.items[Math.min(c.index, c.items.length - 1)].name;
+  const repl = "/" + name + " ";
+  const lines = [...s.lines]; lines[0] = repl + s.lines[0].slice(s.cursor.col);
+  return { ...s, lines, cursor: { row: 0, col: repl.length }, command: null };
+}
+function submitCommand(s: EditorState): EditorResult {
+  const c = s.command!;
+  const name = c.items.length ? c.items[Math.min(c.index, c.items.length - 1)].name : s.lines[0].slice(1);
+  const t = "/" + name;
+  const history = s.history.length && s.history[s.history.length - 1] === t ? s.history : [...s.history, t];
+  return { state: initialEditorState(history), submit: t };
+}
+const syncCompletions = (s: EditorState): EditorState => (s.command ? refreshCommand(s) : (s.mention ? refreshMention(s) : s));
+function afterInsert(next: EditorState, prev: EditorState, t: string): EditorState {
+  if (prev.command) return refreshCommand(next);                                            // command open → refresh (no mention)
+  if (t === "/" && prev.lines.length === 1 && prev.lines[0] === "") return openCommand(next); // buffer-leading '/'
+  if (t === "@" && atWordBoundary(next)) return openMention(next);
+  return prev.mention ? refreshMention(next) : next;
+}
+function onUp(s: EditorState): EditorState { if (s.command) return moveCommand(s, -1); if (s.mention) return moveMention(s, -1); if (s.cursor.row === 0) return historyPrev(s); return moveCursorVert(s, -1); }
+function onDown(s: EditorState): EditorState { if (s.command) return moveCommand(s, 1); if (s.mention) return moveMention(s, 1); if (s.cursor.row === s.lines.length - 1) return historyNext(s); return moveCursorVert(s, 1); }
 
 export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorResult {
   if (key.return) {
     if (s.lines[s.cursor.row].endsWith("\\")) return { state: continueLine(s) };
+    if (s.command) return submitCommand(s);
     if (s.mention) return { state: acceptMention(s) };
     return submitTurn(s);
   }
-  if (key.tab) return { state: s.mention ? acceptMention(s) : s };
-  if (key.escape) return { state: s.mention ? { ...s, mention: null } : s };
-  if (key.backspace || key.delete) return { state: syncMention(deleteLeft(s)) };
-  if (key.leftArrow) return { state: syncMention(moveLeft(s)) };
-  if (key.rightArrow) return { state: syncMention(moveRight(s)) };
+  if (key.tab) { if (s.command) return { state: completeCommandName(s) }; return { state: s.mention ? acceptMention(s) : s }; }
+  if (key.escape) { if (s.command) return { state: { ...s, command: null } }; return { state: s.mention ? { ...s, mention: null } : s }; }
+  if (key.backspace || key.delete) return { state: syncCompletions(deleteLeft(s)) };
+  if (key.leftArrow) return { state: syncCompletions(moveLeft(s)) };
+  if (key.rightArrow) return { state: syncCompletions(moveRight(s)) };
   if (key.upArrow) return { state: onUp(s) };
   if (key.downArrow) return { state: onDown(s) };
   if (input) { const t = stripPasteMarkers(input); if (!t) return { state: s }; return { state: afterInsert(insertText(s, t), s, t) }; }

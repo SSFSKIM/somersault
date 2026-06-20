@@ -1,7 +1,8 @@
 // tui/test/editor.test.ts — pure editor-reducer units. Probe 17d7116: a paste arrives as one `input` with
 // embedded \n; submit = a lone key.return; `\`+Enter = continuation.
 import { describe, it, expect } from "vitest";
-import { applyKey, initialEditorState, setMentionFiles, stripPasteMarkers, type EditorState, type KeyFlags } from "../src/editor.js";
+import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, type EditorState, type KeyFlags } from "../src/editor.js";
+import type { CommandEntry } from "../src/commandComplete.js";
 
 const type = (s: EditorState, text: string): EditorState => applyKey(s, text, {}).state;
 const press = (s: EditorState, key: KeyFlags): EditorState => applyKey(s, "", key).state;
@@ -130,5 +131,59 @@ describe("editor @-mention", () => {
     s = press(s, { backspace: true });                           // deletes the '@'
     expect(s.mention).toBeNull();
     expect(text(s)).toBe("");
+  });
+});
+
+describe("editor / command palette", () => {
+  const CAT: CommandEntry[] = [
+    { name: "brainstorming", description: "plan a feature", source: "catalog" },
+    { name: "review", description: "review code", source: "catalog" },
+    { name: "model", description: "switch model", source: "local" },
+  ];
+  const open = () => setCommandCatalog(type(initialEditorState(), "/"), CAT);
+  it("opens a command popup on a buffer-leading '/' and lists the catalog", () => {
+    const s = open();
+    expect(s.command).not.toBeNull();
+    expect(s.command!.items.length).toBe(3);
+  });
+  it("does NOT open a command when '/' is not at buffer start", () => {
+    let s = type(initialEditorState(), "a"); s = type(s, "/");
+    expect(s.command).toBeNull();
+  });
+  it("filters the catalog as the query is typed", () => {
+    let s = open(); s = type(s, "rev");
+    expect(s.command!.query).toBe("rev");
+    expect(s.command!.items[0].name).toBe("review");
+  });
+  it("Tab completes the highlighted command name and closes the popup", () => {
+    let s = open(); s = type(s, "br");
+    s = press(s, { tab: true });
+    expect(s.command).toBeNull();
+    expect(text(s)).toBe("/brainstorming ");
+  });
+  it("Enter on an open command submits '/name' (runs it)", () => {
+    let s = open(); s = type(s, "br");
+    const r = applyKey(s, "", { return: true });
+    expect(r.submit).toBe("/brainstorming");
+    expect(r.state.command).toBeNull();
+  });
+  it("a space ends the command name and closes the popup (now typing args)", () => {
+    let s = open(); s = type(s, "review"); s = type(s, " ");
+    expect(s.command).toBeNull();
+    expect(text(s)).toBe("/review ");
+  });
+  it("Esc closes the command popup but keeps the typed text", () => {
+    let s = open(); s = type(s, "re"); s = press(s, { escape: true });
+    expect(s.command).toBeNull();
+    expect(text(s)).toBe("/re");
+  });
+  it("Up/Down move the command highlight", () => {
+    let s = open(); s = press(s, { downArrow: true });
+    expect(s.command!.index).toBe(1);
+  });
+  it("the @-mention path still works (regression)", () => {
+    let s = type(initialEditorState(), "@"); s = setMentionFiles(s, ["a.ts", "b.ts"]);
+    expect(s.mention!.items.length).toBe(2);
+    expect(s.command).toBeNull();
   });
 });
