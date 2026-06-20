@@ -237,6 +237,41 @@ lifecycle integration in domain 8. Mostly-out-of-reach: `toolConfig` shaping (ma
 
 ---
 
+## §6 — App-server: a Codex-protocol drop-in (new product surface, 2026-06-21)
+
+**`cc-codex-appserver`** (new peer package `CC-to-SDK/app-server/`, sibling of `tui/`) — a **drop-in
+replacement for `codex app-server`**: it speaks the Codex **v2 JSON-RPC** protocol (NDJSON over stdio,
+no `jsonrpc` field) but is backed by the Claude Agent SDK via the public `cc-harness` `Session`. The
+consumer is the **Director** (`~/Documents/GitHub/agent-harness`), which spawns one server per worker
+turn; the binary replaces `codex app-server` with no change to the Director's transport/handshake/turn
+loop. The required surface was derived from the consumer's own source (`app_server.py` +
+`_mock_app_server.py` + tests), not guessed.
+
+- **Architecture** (`engine → translator → peer`, one-directional, review-enforced): a bidirectional
+  JSON-RPC stdio peer; a pure translator mapping the SDK message stream → Codex notifications
+  (`item/completed` agentMessage `commentary`/`final_answer`, `turn/completed`,
+  `thread/tokenUsage/updated`); a thread/turn registry over `openSession`. Required surface =
+  `initialize`/`initialized`/`thread/start`/`turn/start` + an approvals-only server→client request path.
+- **dynamicTools executed server-side** (no `item/tool/call` round-trip): `linear_graphql` → an
+  in-process Linear MCP; `report_outcome` → an in-process MCP tool whose structured payload rides
+  **`turn/completed.params.outcome`**, with the Director auto-selecting that channel via an `initialize`
+  capability (`outcomeOnTurnCompleted:true`).
+- **Posture**: `approvals_reviewer=auto_review` (the Director's default) → `permissionMode:"auto"` (the
+  SDK AI classifier self-governs, no round-trip); `on-request`/`untrusted` without auto_review →
+  `default` + a broker emitting `item/commandExecution|fileChange/requestApproval`.
+- **Proven**: a cross-repo contract test drives the REAL built binary with a faithful port of the
+  Director's wire client (verified line-for-line against `app_server.py` — drop-in fit, not a mock); a
+  **keyed live e2e is GREEN** (a real SDK turn completes end-to-end, 11.7 s under OAuth). 44 unit + 2
+  contract + 1 gated-live; 12 TDD tasks, subagent-driven.
+- **Open**: the in-process Linear guardrail is minimal (a sanitized denylist that closes the
+  comment/multi-op/string bypasses but cannot catch otherwise-named destructive mutations) — the
+  production control should be a **read-only Linear API key** (or the official remote Linear MCP); the
+  Director-side companion change (read `turn/completed.outcome`, point `--codex` at the bin, env
+  allowlist for the Claude/Linear auth) lands in `agent-harness`. Spec/plan
+  `2026-06-21-claude-codex-appserver`.
+
+---
+
 ## §5 — Permanently out of reach (the 🚫 floor)
 
 58 parity items are `not-possible` and ~77 are non-goals: claude.ai bridge-coupled surfaces
