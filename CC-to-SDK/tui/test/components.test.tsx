@@ -234,7 +234,7 @@ describe("Pool", () => {
 describe("ChatComposer", () => {
   it("submits on Enter and inserts a newline on \\+Enter", async () => {
     const got: string[] = [];
-    const { stdin, lastFrame } = render(<ChatComposer onSubmit={(t) => got.push(t)} cwd={tmpdir()} />);
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={(t) => got.push(t)} cwd={tmpdir()} commandCatalog={[]} />);
     await new Promise((r) => setTimeout(r, 20));                  // let useInput subscribe before keys
     // ink timing discipline: await a re-render between dependent keystrokes so each useInput call sees the
     // updated reducer state (a non-functional setState reads a render-time closure; see plan Global Constraints).
@@ -249,17 +249,30 @@ describe("ChatComposer", () => {
   it("opens the @-popup listing files from the fixture cwd", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-comp-"));
     writeFileSync(join(dir, "alpha.ts"), "x");
-    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={dir} />);
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={dir} commandCatalog={[]} />);
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("@");
     await waitFor(() => (lastFrame() ?? "").includes("alpha.ts"));
     expect(lastFrame() ?? "").toContain("alpha.ts");
   });
   it("renders a multi-character single-line buffer contiguously (no border bleed)", async () => {
-    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} />);
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("hello");
     await waitFor(() => (lastFrame() ?? "").includes("hello"));
     expect(lastFrame() ?? "").toContain("hello");
+  });
+  it("ChatComposer shows the command palette on '/' and filters as you type", async () => {
+    const CAT = [{ name: "brainstorming", description: "plan", source: "catalog" }, { name: "review", description: "review code", source: "catalog" }] as any;
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} />);
+    await new Promise((r) => setTimeout(r, 10));        // let useInput subscribe (passive effect)
+    stdin.write("/");
+    await new Promise((r) => setTimeout(r, 10));        // open + catalog-injection effect
+    expect(lastFrame()).toContain("/brainstorming");
+    expect(lastFrame()).toContain("/review");
+    stdin.write("rev");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(lastFrame()).toContain("/review");
+    expect(lastFrame()).not.toContain("/brainstorming");
   });
 });
