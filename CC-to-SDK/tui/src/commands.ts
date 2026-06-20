@@ -2,6 +2,7 @@
 import type { CompactOutcome, ContextUsageSummary } from "cc-harness";
 import type { RenderLine } from "./render.js";
 import { THINK_LEVELS } from "./thinkLevels.js";
+import type { CommandEntry } from "./commandComplete.js";
 
 export interface ParsedCommand { name: string; args: string }
 
@@ -26,6 +27,11 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "think", summary: "<off|low|medium|high|xhigh|max|N> — set thinking budget (no arg shows current)" },
   { name: "help", summary: "list commands" },
 ];
+
+/** The 9 local engine-driving commands as CommandEntry[] (the palette merges these with the live catalog). */
+export const LOCAL_COMMAND_ENTRIES: CommandEntry[] = COMMANDS.map((c) => ({ name: c.name, description: c.summary, source: "local" }));
+/** Local command names — dispatch routes these to the engine switch (never submit-as-prompt). */
+export const LOCAL_NAMES = new Set(COMMANDS.map((c) => c.name));
 
 const k = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : `${n}`);   // 31000→"31k", 18500→"18.5k"
 
