@@ -26,6 +26,7 @@ export function App({ client, hookOpts }: { client: DaemonClient; socketPath?: s
     else if (input === "i") d.interrupt();
     else if (input === "m") d.cycleModel();
     else if (input === "p") d.cyclePermissionMode();
+    else if (input === "t") d.cycleThinking();
     else if (input === "/") d.compact();
     else if (input === "f") d.fork();
     else if (input === "P") d.toggleProactive();

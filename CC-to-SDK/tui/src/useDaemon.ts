@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { collect, resolveAutoModel } from "cc-harness";
 import type { DaemonClient, DashboardSnapshot, SessionRow, PendingEntry, PermissionDecision } from "cc-harness";
+import { THINK_LEVELS, thinkBudget } from "./thinkLevels.js";
 
 const PERMISSION_MODES = ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"] as const;
 const EMPTY: DashboardSnapshot = { daemonUp: false, sessions: [], at: 0, pending: [] };
@@ -27,6 +28,7 @@ export interface DaemonView {
   interrupt(): void;
   cycleModel(): void;
   cyclePermissionMode(): void;
+  cycleThinking(): void;
   compact(): void;
   fork(): void;
   toggleProactive(): void;
@@ -52,6 +54,7 @@ export function useDaemon(client: DaemonClient, opts: UseDaemonOpts = {}): Daemo
   const inFlight = useRef(false);
   const cancelRef = useRef<() => void>(() => {});
   const pmIndex = useRef(0);
+  const thinkIndex = useRef(0);
   const models = useRef<{ list: string[]; idx: number } | undefined>(undefined);
 
   const rows = snapshot.sessions;
@@ -135,6 +138,12 @@ export function useDaemon(client: DaemonClient, opts: UseDaemonOpts = {}): Daemo
     }).catch((e) => { if (!disposed.current) setStatus(`initialize: ${msg(e)}`); });
   }, [selected?.id, client, run]);
 
+  const cycleThinking = useCallback(() => {
+    thinkIndex.current = (thinkIndex.current + 1) % THINK_LEVELS.length;
+    const level = THINK_LEVELS[thinkIndex.current];
+    run(`thinking=${level}`, ctl(`thinking=${level}`, { type: "set_thinking", maxTokens: thinkBudget(level) }));
+  }, [run]);
+
   const toggleProactive = useCallback(() => {
     const active = selected?.proactive === "running" || selected?.proactive === "paused";
     run("proactive", (id) => active
@@ -161,5 +170,5 @@ export function useDaemon(client: DaemonClient, opts: UseDaemonOpts = {}): Daemo
   }, [client, tick]);
 
   return { snapshot, selectedIndex: idx, selected, focus, stream, status, pending: snapshot.pending,
-    select, focusInput, focusList, submit, interrupt, cycleModel, cyclePermissionMode, compact, fork, toggleProactive, spawn, stop, respond, teardown };
+    select, focusInput, focusList, submit, interrupt, cycleModel, cyclePermissionMode, cycleThinking, compact, fork, toggleProactive, spawn, stop, respond, teardown };
 }

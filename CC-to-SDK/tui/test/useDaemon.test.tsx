@@ -103,4 +103,14 @@ describe("useDaemon", () => {
     expect(modelIdx).toBeGreaterThanOrEqual(0);
     expect(modelIdx).toBeLessThan(autoIdx);                          // repair op precedes the mode op
   });
+
+  it("cycleThinking cycles the thinking budget via set_thinking control frames", async () => {
+    const c = fakeClient();
+    render(<Probe client={c} opts={{ schedule: manualSchedule().schedule, now: () => 0 }} />);
+    await flush();
+    view.cycleThinking(); await flush();
+    expect(c.calls.control.at(-1)).toEqual(["sess-1", { type: "set_thinking", maxTokens: 4000 }]);    // off→low
+    view.cycleThinking(); await flush();
+    expect(c.calls.control.at(-1)).toEqual(["sess-1", { type: "set_thinking", maxTokens: 10000 }]);   // low→medium
+  });
 });
