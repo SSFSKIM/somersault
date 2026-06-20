@@ -6,7 +6,8 @@ import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
 import { TaskList, type TaskItem } from "./taskList.js";
-import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatUnknown, pickMostRecent, type ParsedCommand, type InitialResume } from "./commands.js";
+import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatUnknown, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, type ParsedCommand, type InitialResume } from "./commands.js";
+import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
 import type { ModelInfo } from "./ModelPicker.js";
 import { replayLines } from "./replay.js";
@@ -28,7 +29,7 @@ export interface ChatSession {
 }
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
 export interface Pending { req: PermissionRequest; resolve: (d: PermissionDecision) => void; }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; }
 
 const LADDER = ["default", "acceptEdits", "auto"] as const;   // Tab cycles these; bypassPermissions is off-cycle (/yolo)
 /** Next mode on the Tab ladder; any off-ladder mode (bypassPermissions/plan/…) re-enters at "default". */
@@ -52,6 +53,8 @@ export function useChat(
   const [thinkLevel, setThinkLevel] = useState(opts.initialThink ?? "default");
   const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[] }>({ open: false, sessions: [] });
   const [modelPicker, setModelPicker] = useState<{ open: boolean; models: ModelInfo[] }>({ open: false, models: [] });
+  const [commandCatalog, setCommandCatalog] = useState<CommandEntry[]>(LOCAL_COMMAND_ENTRIES);   // local-only until the live fetch resolves
+  const catalogNames = useRef<Set<string>>(new Set());                                            // catalog (non-local) names → routed to submit-as-prompt
   const taskListRef = useRef(new TaskList());
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [subagentActive, setSubagentActive] = useState(false);
@@ -80,6 +83,21 @@ export function useChat(
     if (opts.initialResume.kind === "id") void resumeInto(opts.initialResume.id);
     else void doContinue();
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Fetch the live command catalog once per session (capabilities() works pre-turn — probe 29). On a /resume
+  // swap the session changes → re-fetch. A failure/empty leaves the local-only palette (still fully usable).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const caps = await session.capabilities();
+        if (cancelled || disposed.current) return;
+        const catalog = (caps.commands as unknown[]).map(toCatalogEntry).filter((e): e is CommandEntry => !!e);
+        catalogNames.current = new Set(catalog.map((c) => c.name));
+        setCommandCatalog(mergeCommands(LOCAL_COMMAND_ENTRIES, catalog));
+      } catch { /* keep the local-only catalog */ }
+    })();
+    return () => { cancelled = true; };
+  }, [session]);
 
   async function refreshCtx() {
     try {
@@ -166,16 +184,23 @@ export function useChat(
     void (async () => { await session.setModel(m.value).catch(() => {}); if (!disposed.current) { setModel(m.value); append(formatModel(m.value)); } })();
   }
 
-  function submit(prompt: string) {
-    if (disposed.current || busy || !prompt.trim()) return;
-    const cmd = parseCommand(prompt);
-    if (cmd) { void handleCommand(cmd); return; }
+  function runTurn(prompt: string) {
     setLines((l) => [...l, { text: `› ${prompt}`, dim: true }]);
     setStreaming([]); setBusy(true); setTurnStartedAt(Date.now());
     const lt = new LiveTurn();
     session.submit(prompt, (m) => { if (disposed.current) return; lt.ingest(m); taskListRef.current.ingest(m); setStreaming(lt.snapshot()); setTasks(taskListRef.current.snapshot()); setSubagentActive(lt.subagentActive); })
       .then(() => {}, (e) => { lt.fail((e as Error).message); })
       .finally(() => { if (disposed.current) return; setLines((l) => [...l, ...lt.finalize()]); setStreaming([]); setBusy(false); setSubagentActive(false); if (lt.model) setModel(lt.model); void refreshCtx(); });
+  }
+  function submit(prompt: string) {
+    if (disposed.current || busy || !prompt.trim()) return;
+    const cmd = parseCommand(prompt);
+    if (cmd) {
+      if (LOCAL_NAMES.has(cmd.name)) { void handleCommand(cmd); return; }      // local → engine switch
+      if (catalogNames.current.has(cmd.name)) { runTurn(prompt); return; }     // catalog → run "/name …" as a turn (probe 31)
+      void handleCommand(cmd); return;                                          // unknown → formatUnknown (switch default)
+    }
+    runTurn(prompt);
   }
   function resolvePermission(d: PermissionDecision) { pendingRef.current?.resolve(d); setPending(null); }
   // Apply a permission mode. `auto` is model-gated (probe 24): if the live model can't run auto, swap to a
@@ -201,5 +226,5 @@ export function useChat(
   function cycleMode() { void applyMode(ladderNext(mode)); }
   function interrupt() { void session.interrupt().catch(() => {}); }
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel, turnStartedAt, modelPicker } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel, turnStartedAt, modelPicker, commandCatalog } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel };
 }

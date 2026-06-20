@@ -170,6 +170,21 @@ describe("useChat", () => {
     if (hung) (hung as () => void)();
   });
 
+  it("a catalog command (not local) is submitted as a turn, not treated as unknown", async () => {
+    const submitted: string[] = [];
+    const fake = fakeSession({
+      async capabilities() { return { models: [], commands: [{ name: "review", description: "review code" }], mcpServers: [] }; },
+      async submit(p: string, onMessage: (m: unknown) => void) { submitted.push(p); onMessage({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }); return { result: "ok" }; },
+    });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, createUiBroker()); api.run = c.submit; return <Text>{(c.state as any).commandCatalog.map((e: any) => e.name).join(",")}</Text>; }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => frame(lastFrame).includes("review"));     // wait for the init catalog fetch
+    api.run!("/review");
+    await waitFor(() => submitted.includes("/review"));
+    expect(submitted).toContain("/review");
+  });
+
   it("accumulates tasks from a turn's frames and exposes them in state", async () => {
     const fake = fakeSession({ async submit(_p: string, onMessage: (m: unknown) => void) {
       onMessage({ type: "assistant", message: { content: [{ type: "tool_use", id: "tc1", name: "TaskCreate", input: { subject: "build it" } }] } });
