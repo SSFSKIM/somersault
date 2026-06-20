@@ -1,5 +1,5 @@
 // tui/src/render.ts — pure, UI-agnostic rich formatter: one SDK message → renderable lines (data, not ink).
-export interface RenderLine { text: string; color?: string; dim?: boolean; }
+export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; }
 
 export const trunc = (s: string, n = 48): string => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 const firstArg = (input: Record<string, unknown>): string => {
