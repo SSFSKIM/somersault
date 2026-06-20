@@ -1,6 +1,7 @@
 // tui/src/commands.ts — pure slash-command surface: parse + table + result-line formatters. No React/SDK side effects.
 import type { CompactOutcome, ContextUsageSummary } from "cc-harness";
 import type { RenderLine } from "./render.js";
+import { THINK_LEVELS } from "./thinkLevels.js";
 
 export interface ParsedCommand { name: string; args: string }
 
@@ -73,4 +74,11 @@ export function parseLaunchMode(args: string[]): LaunchMode {
   const i = args.indexOf("--permission-mode");
   const m = i >= 0 ? args[i + 1] : undefined;
   return m && (PERMISSION_MODES as readonly string[]).includes(m) ? (m as LaunchMode) : "default";
+}
+
+/** `--think <level>` → a valid level name (off|low|medium|high|xhigh|max), or undefined if absent/unknown. */
+export function parseLaunchThink(args: string[]): string | undefined {
+  const i = args.indexOf("--think");
+  const v = i >= 0 ? args[i + 1] : undefined;
+  return v && (THINK_LEVELS as readonly string[]).includes(v) ? v : undefined;
 }

@@ -13,7 +13,7 @@ import { ChatStatusBar } from "./ChatStatusBar.js";
 import { SessionPicker } from "./SessionPicker.js";
 import { TaskPanel } from "./TaskPanel.js";
 
-export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string }; cwd: string; initialResume?: InitialResume }) {
+export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string; initialThink?: string }; cwd: string; initialResume?: InitialResume }) {
   const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession } = useChat(makeSession, broker, { ...(hookOpts ?? {}), cwd, initialResume });
   useInput((input, key) => {
     if (key.escape) { interrupt(); return; }

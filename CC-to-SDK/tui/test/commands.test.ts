@@ -1,6 +1,6 @@
 // tui/test/commands.test.ts — pure parser + formatters.
 import { describe, it, expect } from "vitest";
-import { parseCommand, COMMANDS, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatUnknown, pickMostRecent, parseResumeIntent, parseLaunchMode } from "../src/commands.js";
+import { parseCommand, COMMANDS, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatUnknown, pickMostRecent, parseResumeIntent, parseLaunchMode, parseLaunchThink } from "../src/commands.js";
 
 describe("parseCommand", () => {
   it("splits a slash command into name + args", () => {
@@ -69,5 +69,14 @@ describe("parseLaunchMode", () => {
     expect(parseLaunchMode(["--permission-mode", "acceptEdits"])).toBe("acceptEdits");
     expect(parseLaunchMode(["--permission-mode", "bogus"])).toBe("default");
     expect(parseLaunchMode(["--model", "x"])).toBe("default");
+  });
+});
+
+describe("parseLaunchThink", () => {
+  it("reads a valid --think level, else undefined", () => {
+    expect(parseLaunchThink(["--think", "high"])).toBe("high");
+    expect(parseLaunchThink(["--think", "off"])).toBe("off");
+    expect(parseLaunchThink(["--think", "bogus"])).toBeUndefined();
+    expect(parseLaunchThink(["--model", "x"])).toBeUndefined();
   });
 });
