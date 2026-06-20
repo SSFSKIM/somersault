@@ -87,6 +87,12 @@
 >   teardown) are now **enforced on every change**, not just on demand. One file, no source/lockfile change (`npm ci`
 >   verified green as-is). Commit `3103c675b5` (+ hardening `c1c2a69f88`). **With this, the whole harden-and-ship
 >   track — packaging · boundary · docs · test+CI — is COMPLETE.** See memory `harden-and-ship-over-phase3`.
+> - **Increment A — harness defaults & daemon config parity** (2026-06-20) — `resolveOptions` now centrally
+>   enforces opus-4-8 · xhigh · auto as harness-wide defaults (auto model-gate centralized so every
+>   `createHarness`/`openSession`/`resumeSession` caller is born auto-safe); daemon `makeSession` now routes
+>   through `resolveOptions` (closing the bare-daemon gap: a `spawn({})` with no model/mode picks up the CC
+>   system-prompt preset, `settingSources`, tool preset, and the opus-4-8 default — live-proved no-400 via
+>   gated e2e `test/live/daemon-defaults.e2e.test.ts`).
 
 ## How to read this
 
