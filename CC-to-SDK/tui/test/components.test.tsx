@@ -12,6 +12,7 @@ import { SessionPicker } from "../src/SessionPicker.js";
 import { ModelPicker } from "../src/ModelPicker.js";
 import { TaskPanel } from "../src/TaskPanel.js";
 import { ThinkingIndicator } from "../src/ThinkingIndicator.js";
+import { Detail } from "../src/Detail.js";
 import type { PermissionDecision } from "cc-harness";
 
 async function waitFor(cond: () => boolean, timeout = 2000) {
@@ -185,6 +186,27 @@ describe("ThinkingIndicator", () => {
     const { lastFrame } = render(<ThinkingIndicator startedAt={0} now={() => 3000} />);
     expect(lastFrame()).toContain("Thinking…");
     expect(lastFrame()).toContain("3s");
+  });
+});
+
+describe("Detail", () => {
+  it("Detail renders the live-state line (mode · ctx · tokens · age · proactive)", () => {
+    const row = { id: "sess-1", status: "idle", model: "opus", permissionMode: "acceptEdits", ctxPercent: 42, tokens: 1234, createdAt: 0, proactive: "running" } as any;
+    const { lastFrame } = render(<Detail row={row} stream={[]} now={() => 65000} />);
+    const f = lastFrame() ?? "";
+    expect(f).toContain("acceptEdits");
+    expect(f).toContain("42%");
+    expect(f).toContain("1234 tok");
+    expect(f).toContain("1m");          // 65000ms → 65s → "1m"
+    expect(f).toContain("running");
+  });
+  it("Detail falls back gracefully for a sparse row", () => {
+    const row = { id: "s", status: "idle", createdAt: 0 } as any;
+    const { lastFrame } = render(<Detail row={row} stream={[]} now={() => 0} />);
+    const f = lastFrame() ?? "";
+    expect(f).toContain("mode default");
+    expect(f).toContain("ctx -");
+    expect(f).toContain("idle");
   });
 });
 
