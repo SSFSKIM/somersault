@@ -33,6 +33,7 @@ function CommandPopup({ state }: { state: EditorState }) {
       {visible.map((e, i) => (
         <Box key={e.name} flexDirection="row">
           <Text inverse={start + i === c.index}>/{e.name}</Text>
+          {e.argumentHint ? <Text dimColor>{" " + e.argumentHint}</Text> : null}
           {e.description ? <Text dimColor>{"  " + e.description.split("\n")[0].slice(0, 48)}</Text> : null}
         </Box>
       ))}

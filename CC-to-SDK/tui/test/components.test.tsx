@@ -275,4 +275,14 @@ describe("ChatComposer", () => {
     expect(lastFrame()).toContain("/review");
     expect(lastFrame()).not.toContain("/brainstorming");
   });
+  it("ChatComposer renders a command's argumentHint in the palette row", async () => {
+    const CAT = [{ name: "review", description: "review code", argumentHint: "<pr>", source: "catalog" }] as any;
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} />);
+    await new Promise((r) => setTimeout(r, 10));        // let useInput subscribe
+    stdin.write("/");
+    await new Promise((r) => setTimeout(r, 10));        // open + catalog injection
+    expect(lastFrame()).toContain("/review");
+    expect(lastFrame()).toContain("<pr>");
+    await new Promise((r) => setTimeout(r, 0));
+  });
 });
