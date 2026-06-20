@@ -6,7 +6,7 @@ import { THINK_LEVELS, thinkBudget } from "./thinkLevels.js";
 const PERMISSION_MODES = ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"] as const;
 const EMPTY: DashboardSnapshot = { daemonUp: false, sessions: [], at: 0, pending: [] };
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const modelId = (m: unknown) => (typeof m === "string" ? m : ((m as any)?.id ?? (m as any)?.model ?? String(m)));
+const modelId = (m: unknown) => (typeof m === "string" ? m : ((m as any)?.value ?? (m as any)?.id ?? (m as any)?.model ?? String(m)));
 
 export interface UseDaemonOpts {
   intervalMs?: number;

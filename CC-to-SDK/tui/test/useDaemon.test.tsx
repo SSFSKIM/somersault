@@ -113,4 +113,23 @@ describe("useDaemon", () => {
     view.cycleThinking(); await flush();
     expect(c.calls.control.at(-1)).toEqual(["sess-1", { type: "set_thinking", maxTokens: 10000 }]);   // low→medium
   });
+
+  it("cycleModel maps the SDK model objects by .value (never [object Object])", async () => {
+    const calls: any = { control: [] };
+    const c = fakeClient({
+      async control(id, frame) {
+        calls.control.push([id, frame]);
+        if ((frame as any).type === "initialize") return { ok: true, models: [{ value: "opus" }, { value: "haiku" }] } as any;
+        return { ok: true } as any;
+      },
+    });
+    render(<Probe client={c} opts={{ schedule: manualSchedule().schedule, now: () => 0 }} />);
+    await flush();
+    view.cycleModel(); await flush();
+    expect(calls.control.at(-1)).toEqual(["sess-1", { type: "set_model", model: "opus" }]);
+    view.cycleModel(); await flush();
+    expect(calls.control.at(-1)).toEqual(["sess-1", { type: "set_model", model: "haiku" }]);
+    const sent = calls.control.filter((x: any) => x[1].type === "set_model").map((x: any) => x[1].model);
+    expect(sent).not.toContain("[object Object]");
+  });
 });
