@@ -13,6 +13,7 @@ import { ModelPicker } from "../src/ModelPicker.js";
 import { TaskPanel } from "../src/TaskPanel.js";
 import { ThinkingIndicator } from "../src/ThinkingIndicator.js";
 import { Detail } from "../src/Detail.js";
+import { Pool } from "../src/Pool.js";
 import type { PermissionDecision } from "cc-harness";
 
 async function waitFor(cond: () => boolean, timeout = 2000) {
@@ -207,6 +208,20 @@ describe("Detail", () => {
     expect(f).toContain("mode default");
     expect(f).toContain("ctx -");
     expect(f).toContain("idle");
+  });
+});
+
+describe("Pool", () => {
+  it("Pool appends a proactive glyph for a running session", () => {
+    const rows = [{ id: "sess-run", status: "idle", model: "opus", ctxPercent: 5, proactive: "running" }] as any;
+    const { lastFrame } = render(<Pool rows={rows} selectedIndex={0} />);
+    expect(lastFrame()).toContain("▶");        // status is idle (·) → the ▶ is the proactive marker
+  });
+  it("Pool shows no proactive glyph for an idle (non-proactive) session", () => {
+    const rows = [{ id: "sess-idle", status: "idle", model: "opus", ctxPercent: 5 }] as any;
+    const { lastFrame } = render(<Pool rows={rows} selectedIndex={0} />);
+    expect(lastFrame()).not.toContain("▶");
+    expect(lastFrame()).not.toContain("⏸");
   });
 });
 
