@@ -6,7 +6,8 @@ import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
 import { TaskList, type TaskItem } from "./taskList.js";
-import { parseCommand, formatHelp, formatModel, formatCompact, formatContext, formatUnknown, pickMostRecent, type ParsedCommand, type InitialResume } from "./commands.js";
+import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatUnknown, pickMostRecent, type ParsedCommand, type InitialResume } from "./commands.js";
+import { parseThinkArg } from "./thinkLevels.js";
 import { replayLines } from "./replay.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel } from "cc-harness";
 import type { CompactOutcome, RawContextUsage } from "cc-harness";
@@ -16,6 +17,7 @@ export interface ChatSession {
   submit(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown }>;
   setPermissionMode(mode: string): Promise<void>;
   setModel(model?: string): Promise<void>;
+  setMaxThinkingTokens(maxTokens: number | null): Promise<void>;
   compact(): Promise<CompactOutcome>;
   interrupt(): Promise<void>;
   getContextUsage(): Promise<unknown>;
@@ -24,7 +26,7 @@ export interface ChatSession {
 }
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
 export interface Pending { req: PermissionRequest; resolve: (d: PermissionDecision) => void; }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; }
 
 const LADDER = ["default", "acceptEdits", "auto"] as const;   // Tab cycles these; bypassPermissions is off-cycle (/yolo)
 /** Next mode on the Tab ladder; any off-ladder mode (bypassPermissions/plan/…) re-enters at "default". */
@@ -33,7 +35,7 @@ function ladderNext(mode: string): string { const i = (LADDER as readonly string
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
   ui: UiBrokerHandle,
-  opts: { initialMode?: string; cwd?: string; initialResume?: InitialResume } = {},
+  opts: { initialMode?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string } = {},
   deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]> } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
@@ -44,6 +46,7 @@ export function useChat(
   const [busy, setBusy] = useState(false);
   const [ctxPct, setCtxPct] = useState<number | undefined>(undefined);
   const [model, setModel] = useState<string | undefined>(undefined);
+  const [thinkLevel, setThinkLevel] = useState(opts.initialThink ?? "default");
   const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[] }>({ open: false, sessions: [] });
   const taskListRef = useRef(new TaskList());
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -98,6 +101,15 @@ export function useChat(
         case "resume": void openPicker(); break;
         case "continue": void doContinue(); break;
         case "yolo": void applyMode("bypassPermissions"); break;
+        case "think":
+          if (cmd.args) {
+            const parsed = parseThinkArg(cmd.args);
+            if (!parsed) { append([{ text: `thinking: unknown level "${cmd.args}" · try off/low/medium/high/xhigh/max or a number`, color: "red" }]); break; }
+            await session.setMaxThinkingTokens(parsed.budget);
+            if (!disposed.current) setThinkLevel(parsed.level);
+            append(formatThink(parsed.level));
+          } else append(formatThink(undefined, thinkLevel));
+          break;
         default: append(formatUnknown(cmd.name));
       }
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
@@ -169,5 +181,5 @@ export function useChat(
   function cycleMode() { void applyMode(ladderNext(mode)); }
   function interrupt() { void session.interrupt().catch(() => {}); }
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession };
 }

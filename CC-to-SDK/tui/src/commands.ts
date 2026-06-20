@@ -22,6 +22,7 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "resume", summary: "resume a prior session" },
   { name: "continue", summary: "resume the most-recent session" },
   { name: "yolo", summary: "enable bypassPermissions (ungated tool access)" },
+  { name: "think", summary: "<off|low|medium|high|xhigh|max|N> — set thinking budget (no arg shows current)" },
   { name: "help", summary: "list commands" },
 ];
 
@@ -32,6 +33,9 @@ export function formatHelp(): RenderLine[] {
 }
 export function formatModel(next?: string, current?: string): RenderLine[] {
   return next ? [{ text: `model → ${next}` }] : [{ text: `model: ${current ?? "(default)"}`, dim: true }];
+}
+export function formatThink(next?: string, current?: string): RenderLine[] {
+  return next ? [{ text: `thinking → ${next}` }] : [{ text: `thinking: ${current ?? "default"}`, dim: true }];
 }
 export function formatCompact(o: CompactOutcome): RenderLine[] {
   return o.ok ? [{ text: `✦ compacted ${k(o.preTokens ?? 0)} → ${k(o.postTokens ?? 0)}` }]

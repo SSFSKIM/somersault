@@ -19,7 +19,7 @@ async function pressUntil(stdin: { write: (s: string) => void }, key: string, co
 function fakeSession(onSubmit?: () => Promise<void>): ChatSession & { modes: string[] } {
   const s: any = { modes: [],
     async submit(_p: string, onMessage: (m: unknown) => void) { onMessage({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }); if (onSubmit) await onSubmit(); return { result: "done" }; },
-    async setPermissionMode(m: string) { s.modes.push(m); }, async setModel() {}, async interrupt() {}, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
+    async setPermissionMode(m: string) { s.modes.push(m); }, async setModel() {}, async setMaxThinkingTokens() {}, async interrupt() {}, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
     async dispose() {}, sessionId: "sess-1" };
   return s;
 }

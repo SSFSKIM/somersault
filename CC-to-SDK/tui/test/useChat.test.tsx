@@ -15,7 +15,7 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 function fakeSession(overrides: Partial<ChatSession> = {}): ChatSession & { disposed: number } {
   const s: any = { disposed: 0,
     async submit(_p: string, onMessage: (m: unknown) => void) { onMessage({ type: "assistant", message: { content: [{ type: "text", text: "working" }] } }); return { result: "done" }; },
-    async setPermissionMode() {}, async setModel() {}, async compact() { return { ok: true, preTokens: 0, postTokens: 0 }; },
+    async setPermissionMode() {}, async setModel() {}, async setMaxThinkingTokens() {}, async compact() { return { ok: true, preTokens: 0, postTokens: 0 }; },
     async interrupt() {}, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
     async dispose() { s.disposed++; }, sessionId: "sess-1", ...overrides };
   return s;
@@ -241,5 +241,40 @@ describe("permission ladder", () => {
     cyc();
     await new Promise((r) => setTimeout(r, 20));
     expect(setModeCalls).toEqual([]);
+  });
+});
+
+describe("thinking control", () => {
+  function ThinkHost({ makeSession, api }: { makeSession: () => ChatSession; api: { run?: (s: string) => void } }) {
+    const c = useChat(makeSession, createUiBroker());
+    api.run = c.submit;
+    return <Text>think:{c.state.thinkLevel} {c.state.lines.map((l) => l.text).join("|")}</Text>;
+  }
+  it("/think <level> sets the thinking budget and updates the indicator", async () => {
+    const budgets: (number | null)[] = [];
+    const session = fakeSession({ async setMaxThinkingTokens(n: number | null) { budgets.push(n); } });
+    const api: { run?: (s: string) => void } = {};
+    const { lastFrame } = render(<ThinkHost makeSession={() => session} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("think:default"));
+    api.run!("/think high"); await waitFor(() => frame(lastFrame).includes("think:high"));
+    expect(budgets).toEqual([16000]);
+    expect(frame(lastFrame)).toContain("thinking → high");
+  });
+  it("/think off disables thinking via setMaxThinkingTokens(0)", async () => {
+    const budgets: (number | null)[] = [];
+    const session = fakeSession({ async setMaxThinkingTokens(n: number | null) { budgets.push(n); } });
+    const api: { run?: (s: string) => void } = {};
+    const { lastFrame } = render(<ThinkHost makeSession={() => session} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("think:default"));
+    api.run!("/think off"); await waitFor(() => frame(lastFrame).includes("think:off"));
+    expect(budgets).toEqual([0]);
+  });
+  it("/think with no arg shows the current level; /think bogus errors", async () => {
+    const session = fakeSession();
+    const api: { run?: (s: string) => void } = {};
+    const { lastFrame } = render(<ThinkHost makeSession={() => session} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("think:default"));
+    api.run!("/think"); await waitFor(() => frame(lastFrame).includes("thinking: default"));
+    api.run!("/think bogus"); await waitFor(() => frame(lastFrame).includes("unknown level"));
   });
 });

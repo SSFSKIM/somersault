@@ -1,6 +1,6 @@
 // tui/test/commands.test.ts — pure parser + formatters.
 import { describe, it, expect } from "vitest";
-import { parseCommand, COMMANDS, formatHelp, formatModel, formatCompact, formatContext, formatUnknown, pickMostRecent, parseResumeIntent, parseLaunchMode } from "../src/commands.js";
+import { parseCommand, COMMANDS, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatUnknown, pickMostRecent, parseResumeIntent, parseLaunchMode } from "../src/commands.js";
 
 describe("parseCommand", () => {
   it("splits a slash command into name + args", () => {
@@ -35,6 +35,10 @@ describe("formatters", () => {
   it("unknown", () => {
     expect(formatUnknown("zzz")).toEqual([{ text: "Unknown command: /zzz · try /help", color: "red" }]);
   });
+  it("think: set vs show-current", () => {
+    expect(formatThink("high")).toEqual([{ text: "thinking → high" }]);
+    expect(formatThink(undefined, "default")).toEqual([{ text: "thinking: default", dim: true }]);
+  });
 });
 
 describe("resume helpers", () => {
@@ -43,6 +47,9 @@ describe("resume helpers", () => {
   });
   it("/yolo is in the command table", () => {
     expect(COMMANDS.some((c) => c.name === "yolo")).toBe(true);
+  });
+  it("/think is in the command table", () => {
+    expect(COMMANDS.some((c) => c.name === "think")).toBe(true);
   });
   it("pickMostRecent returns the max-lastModified session id", () => {
     expect(pickMostRecent([{ sessionId: "a", lastModified: 5 }, { sessionId: "b", lastModified: 9 }, { sessionId: "c", lastModified: 2 }])).toBe("b");
