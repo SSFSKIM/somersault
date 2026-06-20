@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import { openSession, getSessionMessages } from "cc-harness";
 import { replayLines } from "../../src/replay.js";
 
-const live = process.env.ANTHROPIC_API_KEY ? describe : describe.skip;
+const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 
 live("resume replay (live)", () => {
   it("replays a real session's prior prompt from getSessionMessages", async () => {

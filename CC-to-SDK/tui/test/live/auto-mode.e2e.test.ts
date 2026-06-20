@@ -7,7 +7,7 @@ import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const live = process.env.ANTHROPIC_API_KEY ? describe : describe.skip;
+const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 
 live("auto mode (live)", () => {
   it("auto applies a safe write without consulting the broker (model force-upgraded)", async () => {

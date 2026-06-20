@@ -6,7 +6,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { DaemonSupervisor, DaemonServer, connectDaemon } from "cc-harness";
 
 // gates exactly like the harness live suites: no key → skip cleanly
-const live = process.env.ANTHROPIC_API_KEY ? describe : describe.skip;
+const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 
 live("console ↔ real daemon (connectDaemon e2e)", () => {
   it("spawns, submits, streams assistant text, then stops", async () => {

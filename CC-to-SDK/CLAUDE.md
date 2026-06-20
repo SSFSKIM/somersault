@@ -44,5 +44,10 @@ root `../CLAUDE.md` defaults: commit completed work to the current branch (incl.
 ## Commands & secrets
 
 All build/test commands run from **`harness/`** — see `harness/CLAUDE.md`. **Live tests gate on
-`ANTHROPIC_API_KEY`** and read it from **`CC-to-SDK/.env`** (gitignored — never commit or print it). Without
-a key, live suites skip cleanly; run them keyed with `set -a; . ../.env; set +a; npx vitest run test/live/<file>`.
+`ANTHROPIC_API_KEY` _or_ `CLAUDE_CODE_OAUTH_TOKEN`** and read them from **`CC-to-SDK/.env`** (gitignored —
+never commit or print either). Without a key/token, live suites skip cleanly; run them keyed with
+`set -a; . ../.env; set +a; npx vitest run test/live/<file>`. **Prefer the OAuth token** (`claude setup-token`
+→ `CLAUDE_CODE_OAUTH_TOKEN`): it bills your **Pro/Max subscription** instead of metered API credits. The SDK
+spawns the bundled `claude` CLI and inherits the parent env, so the token reaches it; but `ANTHROPIC_API_KEY`
+**shadows** the OAuth token when both are set — keep the API-key line commented in `.env`. Verified by
+`probes/probes/28-oauth-subscription-auth.ts` (`accountInfo()` → `apiProvider:"firstParty"`).

@@ -37,15 +37,21 @@ cd ..                                                                # back to C
 ls tui/dist/chat.js tui/dist/cli.js     # both should print, no "No such file"
 ```
 
-**Load the API key into this shell** (gitignored, lives at `CC-to-SDK/.env`). Every later command in
-this terminal inherits it:
+**Load credentials into this shell** (gitignored, live at `CC-to-SDK/.env`). Every later command in
+this terminal inherits them. Two options:
+
+- **Subscription (preferred — no metered credits):** `claude setup-token` → put the printed
+  `sk-ant-oat01-…` in `.env` as `CLAUDE_CODE_OAUTH_TOKEN=…`, and keep any `ANTHROPIC_API_KEY` line
+  **commented** (it shadows the token when both are set). Bills your Pro/Max plan.
+- **Metered API:** `ANTHROPIC_API_KEY=…` in `.env`. Bills per-token credits.
 
 ```bash
 set -a; . ./.env; set +a
-test -n "$ANTHROPIC_API_KEY" && echo "key loaded (${#ANTHROPIC_API_KEY} chars)" || echo "NO KEY"
+test -n "$CLAUDE_CODE_OAUTH_TOKEN$ANTHROPIC_API_KEY" \
+  && echo "auth loaded (oauth=${CLAUDE_CODE_OAUTH_TOKEN:+yes} apikey=${ANTHROPIC_API_KEY:+yes})" || echo "NO AUTH"
 ```
 
-- [ ] **Key loaded** — prints `key loaded (N chars)`, not `NO KEY`. Without it the bins still launch
+- [ ] **Auth loaded** — prints `auth loaded (...)`, not `NO AUTH`. Without it the bins still launch
   but the first turn errors out on auth.
 
 > Keep this keyed shell open for the whole pass, or re-run the `set -a` line in each new terminal.
@@ -303,7 +309,7 @@ set -a; . ./.env; set +a
 cd tui && npm run test:live        # tui live e2e (chat, console, auto-mode, thinking, resume-replay)
 cd ../harness && npm run test:live # harness live e2e (daemon, sessions, hooks, compaction, …)
 ```
-Without a key these suites **skip cleanly** (they gate on `ANTHROPIC_API_KEY`). Note: these drive the
+Without a key/token these suites **skip cleanly** (they gate on `ANTHROPIC_API_KEY` **or** `CLAUDE_CODE_OAUTH_TOKEN`). Note: these drive the
 lib backend, not the rendered UI — that UI↔model seam is exactly what *this* manual checklist covers.
 
 ---
@@ -313,7 +319,7 @@ lib backend, not the rendered UI — that UI↔model seam is exactly what *this*
 | Symptom | Likely cause / fix |
 |---|---|
 | `Cannot find module 'cc-harness'` on tui build | Build `harness/` **before** `tui/` (§0 order). |
-| First turn errors on auth | Key not loaded in this shell — re-run `set -a; . ./.env; set +a`. |
+| First turn errors on auth | Key/token not loaded — re-run `set -a; . ./.env; set +a`. If using OAuth, ensure `ANTHROPIC_API_KEY` is commented in `.env` (it shadows the token). |
 | `/resume` empty though you have sessions | Wrong `--cwd` — resume is cwd-scoped (§C4). Launch from the original dir. |
 | Console shows `daemon down` | No daemon running — start `node harness/dist/cli.js daemon` first. |
 | `auto` mode never runs ungated for safe ops | Model isn't auto-capable and the self-heal didn't fire — check the status-bar `model` actually changed when you entered `auto`. |

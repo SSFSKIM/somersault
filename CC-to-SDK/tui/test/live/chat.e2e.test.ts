@@ -10,7 +10,7 @@ import { openSession } from "cc-harness";
 import { createUiBroker } from "../../src/uiBroker.js";
 import { renderMessage } from "../../src/render.js";
 
-const live = process.env.ANTHROPIC_API_KEY ? describe : describe.skip;
+const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 
 live("chat REPL e2e (live)", () => {
   it("streams a turn; the broker sees the Edit and the file changes after allow", async () => {

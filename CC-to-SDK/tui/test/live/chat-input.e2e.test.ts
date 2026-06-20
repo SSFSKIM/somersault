@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { openSession } from "cc-harness";
 
-const live = process.env.ANTHROPIC_API_KEY ? describe : describe.skip;
+const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 
 live("chat input ergonomics (live)", () => {
   it("submits a two-line prompt and completes a turn", async () => {

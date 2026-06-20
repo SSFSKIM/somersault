@@ -4,7 +4,7 @@ import { openSession } from "cc-harness";
 import { LiveTurn } from "../../src/liveTurn.js";
 import { TaskList } from "../../src/taskList.js";
 
-const live = process.env.ANTHROPIC_API_KEY ? describe : describe.skip;
+const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 
 live("chat rich rendering (live)", () => {
   it("nests a subagent and reduces a task", async () => {

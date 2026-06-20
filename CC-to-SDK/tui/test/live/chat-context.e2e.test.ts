@@ -4,7 +4,7 @@ import { openSession, summarizeUsage } from "cc-harness";
 import type { RawContextUsage } from "cc-harness";
 import { formatContext } from "../../src/commands.js";
 
-const live = process.env.ANTHROPIC_API_KEY ? describe : describe.skip;
+const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 
 live("chat /context (live)", () => {
   it("reports non-zero usage after a real turn", async () => {

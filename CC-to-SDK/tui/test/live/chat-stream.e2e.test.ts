@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { openSession } from "cc-harness";
 import { LiveTurn } from "../../src/liveTurn.js";
 
-const live = process.env.ANTHROPIC_API_KEY ? describe : describe.skip;
+const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 
 live("chat live streaming (live)", () => {
   it("streams ≥2 growing snapshots, finalizes the answer, and captures the model", async () => {

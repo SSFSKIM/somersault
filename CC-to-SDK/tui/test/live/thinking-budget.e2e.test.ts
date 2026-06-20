@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { openSession } from "cc-harness";
 
-const live = process.env.ANTHROPIC_API_KEY ? describe : describe.skip;
+const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 const reason = "Reason step by step, then answer: if a train travels 60 km in 45 minutes, what is its speed in km/h? Show your reasoning.";
 function countThinking(msgs: any[]): number {
   let n = 0;
