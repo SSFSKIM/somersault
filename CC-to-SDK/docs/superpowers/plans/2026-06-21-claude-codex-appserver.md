@@ -452,8 +452,10 @@ git commit -m "feat(app-server): pure SDK->Codex turn translator (commentary/fin
 **Interfaces:**
 - Consumes: `peer.ts` (`Peer`), `translator.ts` (`TurnTranslator`), `protocol.ts`, `cc-harness` (`openSession`, `Session`).
 - Produces:
-  - `registry.ts`: `interface ThreadEntry { session: Session; turnSeq: number; usage: UsageTotals }`; `class Registry { newThread(session): { id: string }; get(id): ThreadEntry | undefined; nextTurnId(id): string; addUsage(id, perTurn: UsageTotals): UsageTotals }`. **`addUsage` accumulates across turns** (cumulative; F8).
-  - `handlers.ts`: `interface OpenFn { (cfg: any): Session }`; `class AppServer { constructor(peer: Peer, deps?: { open?: OpenFn }); handleRequest(method, params, id): void }`. Wires initialize/initialized/thread/start/turn/start. The `initialize` result includes `capabilities: { outcomeOnTurnCompleted: true }`.
+  - `registry.ts`: `interface ThreadEntry { session: Session; turnSeq: number }`; `class Registry { newThread(session): { id: string }; get(id): ThreadEntry | undefined; nextTurnId(id): string; disposeAll(): Promise<void> }`. **No usage accumulation** — `session.usage()` is already cumulative per session (probe 32), so the handler emits the latest absolute value each turn.
+  - `handlers.ts`: `interface OpenFn { (cfg: any): Session }`; `function toUsageTotals(u: any): UsageTotals` (parses the probe-32 shape — see below); `class AppServer { constructor(peer: Peer, deps?: { open?: OpenFn }); handleRequest(method, params, id): void }`. Wires initialize/initialized/thread/start/turn/start. The `initialize` result includes `capabilities: { outcomeOnTurnCompleted: true }`.
+
+**Probe-32 findings (authoritative for this task):** `session.usage()` → `{ session: { model_usage: { "<model>": { inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, … } } } }`, **cumulative across the session's turns**. So `toUsageTotals` sums across model entries and the handler emits the latest absolute total each turn (the Director keeps the latest as the ticket total — §6.2). Assistant text is in `message.content[]` `{type:"text"}` blocks (interleaved `{type:"thinking"}` blocks ignored — `extractAssistantText` already does this); `result` resolves to the final text string.
 
 - [ ] **Step 1: Write the failing test** (drives the full happy path with a fake `QueryFn` → fake `Session`)
 
@@ -515,30 +517,23 @@ describe("AppServer happy path", () => {
 
 ```ts
 import type { Session } from "cc-harness";
-import type { UsageTotals } from "./protocol.js";
 
-export interface ThreadEntry { session: Session; turnSeq: number; usage: UsageTotals }
+export interface ThreadEntry { session: Session; turnSeq: number }
 
 export class Registry {
   private threads = new Map<string, ThreadEntry>();
   private threadN = 0;
   newThread(session: Session): { id: string } {
     const id = `thr_${++this.threadN}`;
-    this.threads.set(id, { session, turnSeq: 0, usage: { totalTokens: 0, inputTokens: 0, outputTokens: 0 } });
+    this.threads.set(id, { session, turnSeq: 0 });
     return { id };
   }
   get(id: string): ThreadEntry | undefined { return this.threads.get(id); }
   nextTurnId(id: string): string { const e = this.threads.get(id); if (!e) throw new Error(`unknown thread ${id}`); return `turn_${id}_${++e.turnSeq}`; }
-  /** Accumulate per-turn usage into the thread's cumulative total (F8). If the probe finds usage is already
-   *  cumulative, the caller passes the absolute total and this still works (max guards a non-decreasing total). */
-  addUsage(id: string, perTurn: UsageTotals): UsageTotals {
-    const e = this.threads.get(id); if (!e) throw new Error(`unknown thread ${id}`);
-    e.usage = { totalTokens: e.usage.totalTokens + perTurn.totalTokens, inputTokens: e.usage.inputTokens + perTurn.inputTokens, outputTokens: e.usage.outputTokens + perTurn.outputTokens };
-    return e.usage;
-  }
   async disposeAll(): Promise<void> { for (const e of this.threads.values()) { try { await e.session.dispose(); } catch {} } this.threads.clear(); }
 }
 ```
+(`session.usage()` is cumulative per session — no per-thread accumulation needed; the handler emits the latest absolute value.)
 
 - [ ] **Step 4: Implement `src/handlers.ts`** (happy path; posture/outcome/approvals are wired in later tasks)
 
@@ -551,11 +546,18 @@ import { ERR, type ThreadStartParams, type TurnStartParams, type UsageTotals } f
 
 export interface OpenFn { (cfg: any): Session }
 
-/** Coerce an SDK usage object (probe-pinned field names) into UsageTotals. Lenient: missing -> 0. */
+/** Sum the CUMULATIVE per-model token usage from session.usage() (probe 32 shape) into absolute UsageTotals.
+ *  inputTokens folds in cached input (cacheRead+cacheCreation) for a meaningful total. Lenient: missing -> 0. */
 export function toUsageTotals(u: any): UsageTotals {
   const n = (v: any) => (typeof v === "number" ? v : 0);
-  const input = n(u?.input_tokens ?? u?.inputTokens), output = n(u?.output_tokens ?? u?.outputTokens);
-  return { inputTokens: input, outputTokens: output, totalTokens: n(u?.total_tokens ?? u?.totalTokens) || input + output };
+  const models = u?.session?.model_usage ?? {};
+  let input = 0, output = 0;
+  for (const k of Object.keys(models)) {
+    const m = models[k];
+    input += n(m?.inputTokens) + n(m?.cacheReadInputTokens) + n(m?.cacheCreationInputTokens);
+    output += n(m?.outputTokens);
+  }
+  return { inputTokens: input, outputTokens: output, totalTokens: input + output };
 }
 
 export class AppServer {
@@ -588,14 +590,14 @@ export class AppServer {
     this.peer.notify("turn/started", { turn: { id: turnId } });
     const text = (params.input ?? []).map((p) => p.text ?? "").join("");
     const tr = new TurnTranslator(params.threadId, turnId);
-    void this.runTurn(entry, params.threadId, turnId, text, tr);
+    void this.runTurn(entry, text, tr);
   }
 
-  private async runTurn(entry: { session: Session }, threadId: string, turnId: string, text: string, tr: TurnTranslator): Promise<void> {
+  private async runTurn(entry: { session: Session }, text: string, tr: TurnTranslator): Promise<void> {
     try {
       const { result } = await entry.session.submit(text, (m) => { for (const o of tr.onMessage(m)) this.peer.notify((o as any).method, (o as any).params); });
       let usage: UsageTotals | undefined;
-      try { usage = this.reg.addUsage(threadId, toUsageTotals(await entry.session.usage())); } catch { /* telemetry only */ }
+      try { usage = toUsageTotals(await entry.session.usage()); } catch { /* telemetry only — usage() is cumulative per session */ }
       for (const o of tr.finalize({ text: String(result ?? ""), isError: false, usage })) this.peer.notify((o as any).method, (o as any).params);
     } catch (e) {
       console.error("[appserver] turn error:", (e as Error).message);
