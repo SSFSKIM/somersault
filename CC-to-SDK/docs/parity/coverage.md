@@ -251,23 +251,30 @@ loop. The required surface was derived from the consumer's own source (`app_serv
   JSON-RPC stdio peer; a pure translator mapping the SDK message stream → Codex notifications
   (`item/completed` agentMessage `commentary`/`final_answer`, `turn/completed`,
   `thread/tokenUsage/updated`); a thread/turn registry over `openSession`. Required surface =
-  `initialize`/`initialized`/`thread/start`/`turn/start` + an approvals-only server→client request path.
-- **dynamicTools executed server-side** (no `item/tool/call` round-trip): `linear_graphql` → an
-  in-process Linear MCP; `report_outcome` → an in-process MCP tool whose structured payload rides
-  **`turn/completed.params.outcome`**, with the Director auto-selecting that channel via an `initialize`
-  capability (`outcomeOnTurnCompleted:true`).
+  `initialize`/`initialized`/`thread/start`/`turn/start` + two server→client request paths:
+  approvals and `item/tool/call` (dynamic tools).
+- **dynamicTools brokered to the client** (the **B2** rework — faithful codex behavior, no Claude-specific
+  channel): every Director-advertised tool (`linear_graphql`, `report_outcome`) is relayed back over the
+  codex **`item/tool/call`** server→client request (`broker.ts` → `peer.request`), with the documented
+  `item/started`→request→`item/completed` lifecycle. The guardrail (`authority.py`) and the
+  `LINEAR_API_KEY` therefore stay **entirely Director-side** — the server holds no key and no guardrail.
+  `normalizeSpecs` accepts the flat form the Director sends and expands `{type:"namespace"}` specs;
+  `report_outcome` rides the same path (the earlier `turn/completed.outcome` channel + capability +
+  Director companion were dropped — a drop-in conforms to the consumer, not the reverse).
 - **Posture**: `approvals_reviewer=auto_review` (the Director's default) → `permissionMode:"auto"` (the
-  SDK AI classifier self-governs, no round-trip); `on-request`/`untrusted` without auto_review →
-  `default` + a broker emitting `item/commandExecution|fileChange/requestApproval`.
+  SDK AI classifier self-governs; brokered tools are allowlisted so they fire under `auto` — probe 34b);
+  `on-request`/`untrusted` without auto_review → `default` + a broker emitting
+  `item/commandExecution|fileChange/requestApproval`.
 - **Proven**: a cross-repo contract test drives the REAL built binary with a faithful port of the
-  Director's wire client (verified line-for-line against `app_server.py` — drop-in fit, not a mock); a
-  **keyed live e2e is GREEN** (a real SDK turn completes end-to-end, 11.7 s under OAuth). 44 unit + 2
-  contract + 1 gated-live; 12 TDD tasks, subagent-driven.
-- **Open**: the in-process Linear guardrail is minimal (a sanitized denylist that closes the
-  comment/multi-op/string bypasses but cannot catch otherwise-named destructive mutations) — the
-  production control should be a **read-only Linear API key** (or the official remote Linear MCP); the
-  Director-side companion change (read `turn/completed.outcome`, point `--codex` at the bin, env
-  allowlist for the Claude/Linear auth) lands in `agent-harness`. Spec/plan
+  Director's wire client and asserts a full `item/tool/call` round-trip (drop-in fit, not a mock); a
+  **keyed live e2e is GREEN** (a real SDK turn completes end-to-end under OAuth). A1: probe 34 (an SDK MCP
+  handler can park on an out-of-band reply) + probe 34b (a brokered tool fires under `permissionMode:auto`).
+  38 unit+contract + 1 gated-live; an independent `codex review` pass (0 P1; 2 P2 protocol-fidelity fixes
+  folded in: `item.id` lifecycle shape + namespace expansion).
+- **Cutover (Director-side, zero code)**: point `--codex` at `node <abs>/CC-to-SDK/app-server/dist/bin.js`
+  and declare the auth vars (`CLAUDE_CODE_OAUTH_TOKEN`, `LINEAR_API_KEY`) in `.harness.json`
+  `worker_policy.worker_env`. The stock Director already brokers `item/tool/call` (linear_graphql via
+  `authority.py`, report_outcome via its sink) — no companion needed. Spec/plan
   `2026-06-21-claude-codex-appserver`.
 
 ---
