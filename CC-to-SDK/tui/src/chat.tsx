@@ -19,7 +19,7 @@ const launchThink = parseLaunchThink(args);
 const thinking = launchThink === "off" ? { type: "disabled" as const }
                : launchThink ? { type: "enabled" as const, budgetTokens: thinkBudget(launchThink) }
                : undefined;
-const base = { model: flag("--model"), cwd: flag("--cwd") ?? process.cwd(), permissionMode: launchMode, ...(thinking ? { thinking } : {}), permissionBroker: ui.broker, contextTool: true, includePartialMessages: true, forwardSubagentText: true };
+const base = { model: flag("--model"), cwd: flag("--cwd") ?? process.cwd(), permissionMode: launchMode, ...(thinking ? { thinking } : {}), permissionBroker: ui.broker, contextTool: true, compactTool: true, includePartialMessages: true, forwardSubagentText: true };
 const initialResume = parseResumeIntent(args);
 const makeSession = (resume?: string) => openSession({ ...base, ...(resume ? { resume } : {}) });
 render(<ChatApp makeSession={makeSession} broker={ui} cwd={base.cwd} initialResume={initialResume} hookOpts={{ initialMode: launchMode, initialThink: launchThink ?? "default" }} />);
