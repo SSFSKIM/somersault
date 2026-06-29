@@ -26,10 +26,10 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | 1. Input / composer ergonomics | ~45% | ~88% |
 | 2. Transcript / message rendering | ~50% | ~64% |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~54% |
-| 4. Modals / overlays | ~60% | ~60% |
+| 4. Modals / overlays | ~60% | ~78% |
 | 5. Slash commands | ~55% | ~70% |
 | 6. Polish (glyphs, colors, affordances) | ~40% | ~70% |
-| **Overall (impact-weighted)** | **~46%** | **~72%** |
+| **Overall (impact-weighted)** | **~46%** | **~75%** |
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -139,8 +139,8 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 
 | Feature | Status | Priority | Notes / CC reference |
 |---|---|---|---|
-| Permission approval dialog | 🟡 | MED | we have `[a]/[A]/[d]`; CC: numbered "Yes / Yes-allow-session / No" + tool detail |
-| Bash permission shows full command | 🟡 | MED | we show brief arg; CC highlights the command |
+| Permission approval dialog | ✅ | — | **U9** numbered arrow-selectable Yes / Yes-don't-ask-again / No (↑↓·Enter·1/2/3·Esc; legacy a/A/d kept) |
+| Bash permission shows full command | ✅ | — | **U9** `$ <command>` shown in full; file tools show the path |
 | Model picker | ✅ | — | `ModelPicker.tsx` |
 | Resume session picker | ✅ | — | `SessionPicker.tsx` |
 | Task/todo panel | ✅ | — | `TaskPanel.tsx` |
@@ -192,8 +192,12 @@ asterisk-pulse verb spinner, `●`/`⎿` transcript, `!`/`#` modes, queueing, re
 again to exit" when idle, interrupts when busy; `ChatComposer` Ctrl-D-on-empty = EOF exit; bin renders
 with `exitOnCtrlC:false`; 2 tests).
 
+✅ **U9 — richer permission dialog** (`PermissionDialog` rewrite: numbered arrow-selectable Yes /
+Yes-don't-ask-again / No over the tool + full target; ↑↓·Enter·1/2/3·Esc; legacy a/A/d kept; shared by
+chat REPL + daemon console; 4 tests).
+
 ### Next candidates
-- **U9 — richer permission dialog** (§4): numbered "Yes / Yes-allow-session / No", full Bash command shown.
-- **U10 — inline markdown spans** (§2): mixed bold/italic within a line (needs span-aware RenderLine).
-- **U11 — Esc-Esc rewind / message edit** (§1, highest CC-fidelity, hard): revert to a prior message.
+- **U10 — live token counter in spinner** (§3): CC shows running output tokens; we show elapsed only.
+- **U11 — inline markdown spans** (§2): mixed bold/italic within a line (needs span-aware RenderLine).
+- **U12 — Esc-Esc rewind / message edit** (§1, highest CC-fidelity, hard): revert to a prior message.
 - Lower still: plan-mode approval, tables, code-block syntax highlight, vim mode, `/copy`.

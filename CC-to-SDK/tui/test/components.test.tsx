@@ -35,19 +35,43 @@ describe("<Transcript>", () => {
   });
 });
 describe("<PermissionDialog>", () => {
-  it("reconstructs the prompt from toolName+input (no SDK title)", () => {
+  it("reconstructs a CC-style numbered prompt from toolName+input (no SDK title)", () => {
     const { lastFrame } = render(<PermissionDialog req={req} onDecision={() => {}} />);
-    expect(lastFrame()).toContain("Edit");
-    expect(lastFrame()).toContain("[a] allow once");
+    const f = lastFrame() ?? "";
+    expect(f).toContain("Allow Claude to use");
+    expect(f).toContain("Edit");
+    expect(f).toContain("f.ts");                          // the full target shown
+    expect(f).toContain("1. Yes");
+    expect(f).toContain("don't ask again");
+    expect(f).toContain("No, and tell Claude");
   });
-  it("maps a/A/d to allow_once/allow_always/deny", async () => {
+  it("shows the full Bash command with a $ prefix", () => {
+    const bashReq = { toolName: "Bash", input: { command: "rm -rf build && make" }, toolUseID: "t", signal: new AbortController().signal };
+    const f = render(<PermissionDialog req={bashReq} onDecision={() => {}} />).lastFrame() ?? "";
+    expect(f).toContain("$ rm -rf build && make");
+  });
+  it("number keys 1/2/3 and legacy a/A/d both map to allow_once/allow_always/deny", async () => {
     const got: PermissionDecision[] = [];
     const { stdin } = render(<PermissionDialog req={req} onDecision={(d) => got.push(d)} />);
     await new Promise((r) => setTimeout(r, 20)); // let useInput subscribe (passive effect) before non-idempotent keys
-    stdin.write("a"); await waitFor(() => got.length === 1);
-    stdin.write("A"); await waitFor(() => got.length === 2);
-    stdin.write("d"); await waitFor(() => got.length === 3);
-    expect(got).toEqual([{ kind: "allow_once" }, { kind: "allow_always" }, { kind: "deny" }]);
+    stdin.write("1"); await waitFor(() => got.length === 1);
+    stdin.write("2"); await waitFor(() => got.length === 2);
+    stdin.write("3"); await waitFor(() => got.length === 3);
+    stdin.write("a"); await waitFor(() => got.length === 4);   // legacy shortcuts still work
+    expect(got).toEqual([{ kind: "allow_once" }, { kind: "allow_always" }, { kind: "deny" }, { kind: "allow_once" }]);
+  });
+  it("↓ then Enter selects 'No' (deny); Esc denies directly", async () => {
+    const got: PermissionDecision[] = [];
+    const a = render(<PermissionDialog req={req} onDecision={(d) => got.push(d)} />);
+    await new Promise((r) => setTimeout(r, 20));
+    a.stdin.write("\x1b[B"); a.stdin.write("\x1b[B");          // ↓↓ to option 3
+    await new Promise((r) => setTimeout(r, 20));
+    a.stdin.write("\r"); await waitFor(() => got.length === 1);
+    expect(got[0]).toEqual({ kind: "deny" });
+    const b = render(<PermissionDialog req={req} onDecision={(d) => got.push(d)} />);
+    await new Promise((r) => setTimeout(r, 20));
+    b.stdin.write("\x1b"); await waitFor(() => got.length === 2);   // Esc = deny
+    expect(got[1]).toEqual({ kind: "deny" });
   });
 });
 describe("<ChatStatusBar>", () => {

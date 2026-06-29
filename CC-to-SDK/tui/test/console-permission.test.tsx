@@ -23,7 +23,7 @@ describe("<App> daemon permission dialog", () => {
   it("surfaces a parked permission as a dialog and 'a' answers allow_once", async () => {
     const responded: Array<[string, unknown]> = [];
     const { stdin, lastFrame } = render(<App client={fakeClient(responded)} hookOpts={{ schedule: () => () => {} }} />);
-    await waitFor(() => frame(lastFrame).includes("Permission needed")); // poll surfaced the parked request
+    await waitFor(() => frame(lastFrame).includes("Allow Claude to use")); // poll surfaced the parked request
     expect(lastFrame()).toContain("Edit");
     stdin.write("a");
     await waitFor(() => responded.length > 0);

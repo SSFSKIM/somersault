@@ -47,7 +47,7 @@ describe("<ChatApp>", () => {
     stdin.write("edit it");
     await waitFor(() => frame(lastFrame).includes("edit it"));   // typed text landed in the composer before Enter
     stdin.write("\r");
-    await waitFor(() => frame(lastFrame).includes("Permission needed"));   // dialog up
+    await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));   // dialog up
     expect(lastFrame()).toContain("Edit");
     stdin.write("a");
     await waitFor(() => decided !== undefined);
