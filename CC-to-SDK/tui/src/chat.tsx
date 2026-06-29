@@ -24,4 +24,5 @@ const base = { model: flag("--model"), cwd: flag("--cwd") ?? process.cwd(), perm
 const initialResume = parseResumeIntent(args);
 const makeSession = (resume?: string) => openSession({ ...base, ...(resume ? { resume } : {}) });
 const banner = welcomeBanner({ cwd: base.cwd, model: base.model, mode: launchMode });
-render(<ChatApp makeSession={makeSession} broker={ui} cwd={base.cwd} initialResume={initialResume} initialLines={banner} hookOpts={{ initialMode: launchMode, initialThink: launchThink ?? "default" }} />);
+// exitOnCtrlC:false → Ctrl-C reaches our handler (interrupt a turn, else double-press to exit).
+render(<ChatApp makeSession={makeSession} broker={ui} cwd={base.cwd} initialResume={initialResume} initialLines={banner} hookOpts={{ initialMode: launchMode, initialThink: launchThink ?? "default" }} />, { exitOnCtrlC: false });

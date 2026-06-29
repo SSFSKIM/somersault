@@ -53,7 +53,7 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[] }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -62,7 +62,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog }: { onSubmit: (tex
 
   // Read stateRef.current (NOT the closure `state`): Ink re-registers this handler in a passive effect that
   // flushes after commit, so a closure read lags one render and would submit stale text. The ref updates every render.
-  useInput((input, key) => { const r = applyKey(stateRef.current, input, key); if (r.submit != null) onSubmit(r.submit); setState(r.state); });
+  useInput((input, key) => {
+    const s = stateRef.current;
+    if (key.ctrl && input === "d" && s.lines.length === 1 && s.lines[0] === "") { onExit?.(); return; }   // Ctrl-D on empty = EOF exit
+    const r = applyKey(s, input, key); if (r.submit != null) onSubmit(r.submit); setState(r.state);
+  });
 
   // A just-opened mention has empty files → walk cwd once and feed the results in.
   const needWalk = state.mention != null && state.mention.files.length === 0;

@@ -64,6 +64,26 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).toContain("more");
   });
 
+  it("Ctrl-C while idle arms 'press again to exit'; while busy it interrupts instead", async () => {
+    let release = () => {}; let interrupts = 0;
+    const session: any = { modes: [],
+      async submit(_p: string, onMessage: (m: unknown) => void) { onMessage({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }); await new Promise<void>((res) => { release = res; }); return { result: "done" }; },
+      async setPermissionMode() {}, async setModel() {}, async setMaxThinkingTokens() {}, async interrupt() { interrupts++; }, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
+      async capabilities() { return { models: [{ value: "x" }], commands: [], mcpServers: [] }; }, async usage() { return {}; }, async dispose() {}, sessionId: "s" };
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} broker={createUiBroker()} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("\x03");                                                      // Ctrl-C idle → arm
+    await waitFor(() => frame(lastFrame).includes("Press Ctrl-C again to exit"));
+    expect(interrupts).toBe(0);
+    stdin.write("hi"); await waitFor(() => frame(lastFrame).includes("hi"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("ok"));  // turn started, hanging
+    stdin.write("\x03");                                                      // Ctrl-C busy → interrupt
+
+    await waitFor(() => interrupts === 1);
+    release();
+    expect(interrupts).toBe(1);
+  });
+
   it("Tab cycles the permission ladder default → acceptEdits → auto", async () => {
     const session = fakeSession();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} broker={createUiBroker()} cwd={process.cwd()} />);

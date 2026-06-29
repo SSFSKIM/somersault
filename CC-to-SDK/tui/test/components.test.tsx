@@ -250,6 +250,17 @@ describe("ChatComposer", () => {
     await waitFor(() => got.length === 1);
     expect(got[0]).toBe("a\nb");
   });
+  it("Ctrl-D on an empty buffer calls onExit; with text it does not", async () => {
+    let exits = 0;
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x04");                                  // Ctrl-D on empty → exit
+    await waitFor(() => exits === 1);
+    stdin.write("x"); await waitFor(() => (lastFrame() ?? "").includes("x"));
+    stdin.write("\x04");                                  // Ctrl-D with text → no exit
+    await new Promise((r) => setTimeout(r, 30));
+    expect(exits).toBe(1);
+  });
   it("shows the placeholder + footer hint when empty, and hides them once you type", async () => {
     const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
     await new Promise((r) => setTimeout(r, 20));

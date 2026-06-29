@@ -23,13 +23,13 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 
 | Category | Parity (start) | Parity (now) |
 |---|---|---|
-| 1. Input / composer ergonomics | ~45% | ~80% |
+| 1. Input / composer ergonomics | ~45% | ~88% |
 | 2. Transcript / message rendering | ~50% | ~64% |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~54% |
 | 4. Modals / overlays | ~60% | ~60% |
 | 5. Slash commands | ~55% | ~70% |
-| 6. Polish (glyphs, colors, affordances) | ~40% | ~66% |
-| **Overall (impact-weighted)** | **~46%** | **~70%** |
+| 6. Polish (glyphs, colors, affordances) | ~40% | ~70% |
+| **Overall (impact-weighted)** | **~46%** | **~72%** |
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -90,7 +90,7 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | Ctrl-W (kill word back) | ✅ | — | **U7** `editor.ts` |
 | Word movement (Alt/Ctrl ←→) | ❌ | LOW | `useTextInput.ts` |
 | Ctrl-L (clear screen) | ✅ | — | **U7** clears model + remounts Static + ANSI screen-clear (CC parity) |
-| Ctrl-C twice / Ctrl-D to exit | ❌ | MED | Ink's default exitOnCtrlC handles single-press exit; double-press affordance is U8 |
+| Ctrl-C twice / Ctrl-D to exit | ✅ | — | **U8** Ctrl-C interrupts a turn, else "Press Ctrl-C again to exit"; Ctrl-D on empty = EOF exit |
 | Queued messages while busy | ✅ | — | **U6** turns queue while busy + drain FIFO on turn end; `⋯ queued:` indicator; Esc clears |
 | Placeholder / ghost text ("Ask Claude…") | ✅ | — | **U7** dim placeholder on empty buffer |
 | `?` shortcuts / help menu | 🟡 | LOW | **U7** footer key-hint line (`⏎ send · \⏎ newline · @ files · / commands · ! bash · Tab mode`); no separate overlay |
@@ -169,7 +169,8 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | Random thinking verbs | ✅ | **U2** |
 | `●`/`⎿` message prefix glyphs + accent colors | ✅ | **U3** (`>` user echo kept as `›` by choice) |
 | "esc to interrupt" everywhere a turn runs | ✅ | **U2** |
-| Double-Esc to exit / rewind affordance | ❌ | MED |
+| Ctrl-C interrupt + double-press-to-exit | ✅ | **U8** |
+| Double-Esc to rewind affordance | ❌ | MED |
 | Newline instructions hint | ✅ | **U7** footer (`\⏎ newline`) |
 | Focus borders / input box styling | 🟡 | LOW |
 
@@ -187,8 +188,11 @@ unit tests, typecheck + build green, commit, update this scorecard.
 **Round 1 (U1–U7) complete: overall ~46% → ~70%.** The recognizable CC look-and-feel (welcome banner,
 asterisk-pulse verb spinner, `●`/`⎿` transcript, `!`/`#` modes, queueing, readline keys) is in place.
 
-### Next candidates (Round 2, lower ROI per item)
-- **U8 — Ctrl-C-twice / Ctrl-D exit affordance** (§1): "Press Ctrl-C again to exit" (needs `exitOnCtrlC:false`).
+**Round 2:** ✅ **U8 — Ctrl-C interrupt + double-press exit + Ctrl-D** (`ChatApp` arms "Press Ctrl-C
+again to exit" when idle, interrupts when busy; `ChatComposer` Ctrl-D-on-empty = EOF exit; bin renders
+with `exitOnCtrlC:false`; 2 tests).
+
+### Next candidates
 - **U9 — richer permission dialog** (§4): numbered "Yes / Yes-allow-session / No", full Bash command shown.
 - **U10 — inline markdown spans** (§2): mixed bold/italic within a line (needs span-aware RenderLine).
 - **U11 — Esc-Esc rewind / message edit** (§1, highest CC-fidelity, hard): revert to a prior message.
