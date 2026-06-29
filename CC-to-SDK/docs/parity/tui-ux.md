@@ -27,9 +27,9 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | 2. Transcript / message rendering | ~50% | ~62% |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~54% |
 | 4. Modals / overlays | ~60% | ~60% |
-| 5. Slash commands | ~55% | ~55% |
+| 5. Slash commands | ~55% | ~68% |
 | 6. Polish (glyphs, colors, affordances) | ~40% | ~62% |
-| **Overall (impact-weighted)** | **~46%** | **~57%** |
+| **Overall (impact-weighted)** | **~46%** | **~59%** |
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -45,6 +45,11 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
   the `<Line>` view renders as its own `<Text>`) lets the bullet keep the accent color while the text
   keeps its markdown style; nested/subagent replay strips it. Both live (`liveTurn`) and replayed
   (`render`) paths. 4 tests updated.
+- **U4 — `/cost` + `/status`** (`commands.ts` formatters + `useChat` dispatch). `/cost` reads
+  `session.usage()` (`SDKControlGetUsageResponse`) → total cost (or "included in your `<plan>` plan" on
+  subscription auth) + in/out tokens + duration + per-model breakdown; `/status` snapshots the live
+  local state (model · mode · thinking · context% · cwd · session id). Added `usage()` to the
+  `ChatSession` interface. 7 tests.
 
 ---
 
@@ -105,7 +110,7 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | Elapsed timer during turn | ✅ | — | **U2** whole-turn elapsed in the spinner |
 | Context-left % + threshold warning | 🟡 | MED | we show ctx%; no auto-compact warning color |
 | Permission-mode indicator (color) | ✅ | — | `ChatStatusBar.tsx` modeColor |
-| Cost in status / `/cost` | ❌ | MED | `cost-tracker.ts`; we have `usage()` unused |
+| Cost in status / `/cost` | ✅ | — | **U4** `/cost` via `session.usage()` |
 | `? for shortcuts` hint line | ❌ | MED | `PromptInputFooter.tsx` |
 | Vim mode indicator | ❌ | LOW | tied to vim mode |
 
@@ -129,8 +134,8 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 |---|---|---|
 | `/clear` `/compact` `/context` `/model` `/resume` `/continue` `/help` `/think` `/yolo` | ✅ | local, dispatched |
 | live skill/plugin/user catalog (105) | ✅ | command palette (Increment D) |
-| `/cost` | ❌ | MED — `usage()` is already wired lib-side |
-| `/status` | ❌ | LOW — session/model/mode/ctx summary |
+| `/cost` | ✅ | **U4** — `session.usage()` → cost (or "included in <plan>") + tokens + duration + per-model |
+| `/status` | ✅ | **U4** — model · mode · thinking · context · cwd · session snapshot |
 | `/vim` | ❌ | LOW |
 | `/doctor` `/config` `/theme` `/terminal-setup` | 🚫/LOW | env/IDE-coupled |
 | `/copy` | ❌ | LOW — clipboard |

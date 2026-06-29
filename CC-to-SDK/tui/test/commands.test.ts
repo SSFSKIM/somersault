@@ -1,6 +1,6 @@
 // tui/test/commands.test.ts — pure parser + formatters.
 import { describe, it, expect } from "vitest";
-import { parseCommand, COMMANDS, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatUnknown, pickMostRecent, parseResumeIntent, parseLaunchMode, parseLaunchThink } from "../src/commands.js";
+import { parseCommand, COMMANDS, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, pickMostRecent, parseResumeIntent, parseLaunchMode, parseLaunchThink } from "../src/commands.js";
 
 describe("parseCommand", () => {
   it("splits a slash command into name + args", () => {
@@ -38,6 +38,28 @@ describe("formatters", () => {
   it("think: set vs show-current", () => {
     expect(formatThink("high")).toEqual([{ text: "thinking → high" }]);
     expect(formatThink(undefined, "default")).toEqual([{ text: "thinking: default", dim: true }]);
+  });
+  it("cost: shows total, tokens, duration, per-model breakdown", () => {
+    const lines = formatCost({ session: { total_cost_usd: 0.0123, total_duration_ms: 65000, model_usage: { "claude-opus-4-8": { inputTokens: 1200, outputTokens: 340, costUSD: 0.0123 } } }, subscription_type: null }).map((l) => l.text).join("\n");
+    expect(lines).toContain("$0.0123");
+    expect(lines).toContain("1.2k in · 340 out");
+    expect(lines).toContain("1m 05s");
+    expect(lines).toContain("claude-opus-4-8");
+  });
+  it("cost: subscription auth shows 'included in your <plan> plan' instead of $0", () => {
+    const lines = formatCost({ session: { total_cost_usd: 0, model_usage: {} }, subscription_type: "max" }).map((l) => l.text).join("\n");
+    expect(lines).toContain("included in your max plan");
+  });
+  it("status: snapshots model · mode · thinking · context · session", () => {
+    const lines = formatStatus({ model: "claude-opus-4-8", mode: "acceptEdits", thinkLevel: "high", ctxPct: 42, sessionId: "abcdef1234", cwd: "/x" }).map((l) => l.text).join("\n");
+    expect(lines).toContain("acceptEdits");
+    expect(lines).toContain("high");
+    expect(lines).toContain("42% used");
+    expect(lines).toContain("abcdef12");
+  });
+  it("cost/status are in the command table", () => {
+    expect(COMMANDS.some((c) => c.name === "cost")).toBe(true);
+    expect(COMMANDS.some((c) => c.name === "status")).toBe(true);
   });
 });
 

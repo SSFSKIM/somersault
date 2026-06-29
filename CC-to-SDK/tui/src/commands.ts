@@ -3,6 +3,7 @@ import type { CompactOutcome, ContextUsageSummary } from "cc-harness";
 import type { RenderLine } from "./render.js";
 import { THINK_LEVELS } from "./thinkLevels.js";
 import type { CommandEntry } from "./commandComplete.js";
+import { formatElapsed } from "./spinner.js";
 
 export interface ParsedCommand { name: string; args: string }
 
@@ -20,6 +21,8 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "model", summary: "<name> — switch model (no arg shows current)" },
   { name: "compact", summary: "compact the conversation context" },
   { name: "context", summary: "show context-window usage" },
+  { name: "cost", summary: "show session cost + token usage" },
+  { name: "status", summary: "show model · mode · context · session" },
   { name: "clear", summary: "clear the screen (session context kept)" },
   { name: "resume", summary: "resume a prior session" },
   { name: "continue", summary: "resume the most-recent session" },
@@ -50,6 +53,44 @@ export function formatCompact(o: CompactOutcome): RenderLine[] {
 }
 export function formatContext(s: ContextUsageSummary): RenderLine[] {
   return [{ text: `ctx ${s.percentUsed}% · ${k(s.tokensUsed)} / ${k(s.maxTokens)} · ${s.status}`, dim: true }];
+}
+
+/** The session-cumulative usage shape from Session.usage() (SDKControlGetUsageResponse subset). */
+export interface SessionUsage {
+  session?: { total_cost_usd?: number; total_duration_ms?: number; model_usage?: Record<string, { inputTokens?: number; outputTokens?: number; costUSD?: number }> };
+  subscription_type?: string | null;
+}
+const sum = (ms: Record<string, { inputTokens?: number; outputTokens?: number }>, key: "inputTokens" | "outputTokens"): number =>
+  Object.values(ms).reduce((a, m) => a + (m[key] ?? 0), 0);
+
+/** `/cost` — total cost (or "included in <plan>" on subscription auth), tokens, duration, per-model rows. */
+export function formatCost(u: SessionUsage): RenderLine[] {
+  const s = u.session ?? {}; const models = s.model_usage ?? {};
+  const cost = s.total_cost_usd ?? 0;
+  const costText = cost > 0 ? `$${cost.toFixed(4)}` : u.subscription_type ? `included in your ${u.subscription_type} plan` : "$0.00";
+  const out: RenderLine[] = [
+    { text: "Session cost", bold: true },
+    { text: `  total      ${costText}` },
+    { text: `  tokens     ${k(sum(models, "inputTokens"))} in · ${k(sum(models, "outputTokens"))} out`, dim: true },
+    { text: `  duration   ${formatElapsed(s.total_duration_ms ?? 0)}`, dim: true },
+  ];
+  for (const [name, m] of Object.entries(models))
+    out.push({ text: `  ${name}  ${k(m.inputTokens ?? 0)} in · ${k(m.outputTokens ?? 0)} out${m.costUSD ? ` · $${m.costUSD.toFixed(4)}` : ""}`, dim: true });
+  return out;
+}
+
+/** `/status` — a one-glance snapshot of the live session (purely local state, no SDK call). */
+export function formatStatus(s: { model?: string; mode: string; thinkLevel?: string; ctxPct?: number; sessionId?: string; cwd?: string }): RenderLine[] {
+  const out: RenderLine[] = [
+    { text: "Status", bold: true },
+    { text: `  model      ${s.model ?? "(default)"}`, dim: true },
+    { text: `  mode       ${s.mode}`, dim: true },
+    { text: `  thinking   ${s.thinkLevel ?? "default"}`, dim: true },
+  ];
+  if (s.ctxPct != null) out.push({ text: `  context    ${s.ctxPct}% used`, dim: true });
+  if (s.cwd) out.push({ text: `  cwd        ${s.cwd}`, dim: true });
+  if (s.sessionId) out.push({ text: `  session    ${s.sessionId.slice(0, 8)}`, dim: true });
+  return out;
 }
 export function formatUnknown(name: string): RenderLine[] {
   return [{ text: `Unknown command: /${name} · try /help`, color: "red" }];

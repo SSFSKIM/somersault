@@ -18,6 +18,7 @@ function fakeSession(overrides: Partial<ChatSession> = {}): ChatSession & { disp
     async setPermissionMode() {}, async setModel() {}, async setMaxThinkingTokens() {}, async compact() { return { ok: true, preTokens: 0, postTokens: 0 }; },
     async capabilities() { return { models: [{ value: "claude-opus-4-8", displayName: "Opus 4.8" }, { value: "sonnet", displayName: "Sonnet" }], commands: [], mcpServers: [] }; },
     async interrupt() {}, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
+    async usage() { return { session: { total_cost_usd: 0.0123, total_duration_ms: 4200, model_usage: { "claude-opus-4-8": { inputTokens: 1200, outputTokens: 340, costUSD: 0.0123 } } }, subscription_type: null }; },
     async dispose() { s.disposed++; }, sessionId: "sess-1", ...overrides };
   return s;
 }
@@ -168,6 +169,18 @@ describe("useChat", () => {
     api.run!("/clear");        await waitFor(() => !frame(lastFrame).includes("Unknown command"));
     expect(modelSet).toBe("opus");
     expect(submitted).toBe(0);     // no slash command ever reached session.submit
+  });
+
+  it("dispatches /cost (session.usage) and /status (local state) locally", async () => {
+    let submitted = 0;
+    const fake = fakeSession({ async submit() { submitted++; return { result: "x" }; } });
+    const api: { run?: (s: string) => void } = {};
+    const { lastFrame } = render(<CmdHost makeSession={() => fake} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    api.run!("/cost");    await waitFor(() => frame(lastFrame).includes("$0.0123"));
+    api.run!("/status");  await waitFor(() => frame(lastFrame).includes("Status"));
+    expect(frame(lastFrame)).toContain("sess-1".slice(0, 8));   // /status shows the session id
+    expect(submitted).toBe(0);
   });
 
   it("submit sets turnStartedAt and busy during the turn", async () => {

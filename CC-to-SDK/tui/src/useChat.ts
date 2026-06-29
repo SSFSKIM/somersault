@@ -6,7 +6,7 @@ import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
 import { TaskList, type TaskItem } from "./taskList.js";
-import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatUnknown, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, type ParsedCommand, type InitialResume } from "./commands.js";
+import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
 import type { ModelInfo } from "./ModelPicker.js";
@@ -24,6 +24,7 @@ export interface ChatSession {
   compact(): Promise<CompactOutcome>;
   interrupt(): Promise<void>;
   getContextUsage(): Promise<unknown>;
+  usage(): Promise<unknown>;
   dispose(): Promise<void>;
   readonly sessionId?: string;
 }
@@ -120,6 +121,8 @@ export function useChat(
           break;
         case "compact": append(formatCompact(await session.compact())); break;
         case "context": append(formatContext(summarizeUsage((await session.getContextUsage()) as RawContextUsage))); break;
+        case "cost": append(formatCost((await session.usage()) as SessionUsage)); break;
+        case "status": append(formatStatus({ model, mode, thinkLevel, ctxPct, sessionId: session.sessionId, cwd: opts.cwd })); break;
         case "clear": if (!disposed.current) setLines([]); break;
         case "help": append(formatHelp()); break;
         case "resume": void openPicker(); break;
