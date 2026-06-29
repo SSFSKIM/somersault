@@ -24,12 +24,12 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | Category | Parity (start) | Parity (now) |
 |---|---|---|
 | 1. Input / composer ergonomics | ~45% | ~45% |
-| 2. Transcript / message rendering | ~50% | ~54% |
+| 2. Transcript / message rendering | ~50% | ~62% |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~54% |
 | 4. Modals / overlays | ~60% | ~60% |
 | 5. Slash commands | ~55% | ~55% |
-| 6. Polish (glyphs, colors, affordances) | ~40% | ~54% |
-| **Overall (impact-weighted)** | **~46%** | **~53%** |
+| 6. Polish (glyphs, colors, affordances) | ~40% | ~62% |
+| **Overall (impact-weighted)** | **~46%** | **~57%** |
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -39,6 +39,12 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
   (`·✢✳✶✻✽` out-and-back, Claude accent) + a random verb from the **verbatim 187-verb** CC vocabulary
   (fixed per turn) + the `(elapsed · esc to interrupt)` affordance. Shown for the **whole turn** (below
   streamed content), not just the pre-first-frame gap; superseded `ThinkingIndicator`. 8 tests.
+- **U3 — Message identity glyphs** (`theme.ts` + `RenderLine.gutter` + `withAssistantBullet`). Every
+  assistant response now opens with the accent `●` bullet (continuation lines aligned), and tool results
+  render as a dim `⎿` tree — CC's signature transcript shape. The `gutter` field (a leading styled marker
+  the `<Line>` view renders as its own `<Text>`) lets the bullet keep the accent color while the text
+  keeps its markdown style; nested/subagent replay strips it. Both live (`liveTurn`) and replayed
+  (`render`) paths. 4 tests updated.
 
 ---
 
@@ -70,11 +76,11 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 
 | Feature | Status | Priority | Notes / CC reference |
 |---|---|---|---|
-| User prompt echo | 🟡 | MED | we show `› text` dim; CC uses `>` + distinct style |
-| Assistant message identity (`●` bullet, accent) | ❌ | **HIGH** | CC prefixes assistant turns with a colored bullet; we render bare markdown |
+| User prompt echo | 🟡 | LOW | we show `› text` dim (intentional clean variant); CC uses `>` |
+| Assistant message identity (`●` bullet, accent) | ✅ | — | **U3** accent `●` gutter + aligned continuation (live + replay) |
 | Thinking blocks (stream + collapse) | ✅ | — | `liveTurn.ts` `✦ Thinking`; CC `✻`/token count |
-| Tool-use rows | 🟡 | MED | we use `⚙`; CC uses `●`+`⎿` result tree |
-| Tool result tree glyph (`⎿`) | ❌ | MED | CC indents results under `⎿` |
+| Tool-use rows | 🟡 | LOW | we use `⚙`/live `⟳✓✗` status; CC uses `●` |
+| Tool result tree glyph (`⎿`) | ✅ | — | **U3** dim `⎿` result tree |
 | Markdown: headers/lists/quote/fenced | ✅ | — | `markdown.ts` (lightweight) |
 | Markdown: inline mixed bold/italic spans | ❌ | MED | we strip mixed-style lines (one RenderLine = one style) |
 | Markdown: tables | ❌ | LOW | `MarkdownTable.tsx` |
@@ -135,7 +141,7 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 |---|---|---|
 | Asterisk-pulse spinner animation | ✅ | **U2** |
 | Random thinking verbs | ✅ | **U2** |
-| `●`/`>` message prefix glyphs + accent colors | ❌ | **HIGH** |
+| `●`/`⎿` message prefix glyphs + accent colors | ✅ | **U3** (`>` user echo kept as `›` by choice) |
 | "esc to interrupt" everywhere a turn runs | ✅ | **U2** |
 | Double-Esc to exit / rewind affordance | ❌ | MED |
 | Newline instructions hint | ❌ | LOW |

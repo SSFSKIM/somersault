@@ -4,8 +4,8 @@
 // per RenderLine, so the box is uniformly accent-colored (CC's logo lines are colored too).
 // CC ref: components/LogoV2/WelcomeV2.tsx ("✻ Welcome to Claude Code") + feedConfigs "Tips for getting started".
 import type { RenderLine } from "./render.js";
-
-export const ACCENT = "#d97757"; // Claude brand orange (CC "claude" theme color)
+import { ACCENT } from "./theme.js";
+export { ACCENT };
 
 /** Collapse $HOME to `~` so the cwd line stays short. */
 export function shortCwd(cwd: string, home = process.env.HOME ?? ""): string {

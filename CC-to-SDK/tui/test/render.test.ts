@@ -1,11 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { renderMessage, trunc, toolTarget } from "../src/render.js";
+import { ACCENT } from "../src/theme.js";
 
 const asst = (content: unknown[]) => ({ type: "assistant", message: { content } });
+const BULLET = { text: "● ", color: ACCENT };
 
 describe("renderMessage", () => {
-  it("renders assistant text verbatim, one line per newline", () => {
-    expect(renderMessage(asst([{ type: "text", text: "hello\nworld" }]))).toEqual([{ text: "hello" }, { text: "world" }]);
+  it("renders assistant text with the ● bullet gutter + indented continuation", () => {
+    expect(renderMessage(asst([{ type: "text", text: "hello\nworld" }]))).toEqual([
+      { text: "hello", gutter: BULLET }, { text: "  world" },
+    ]);
   });
   it("renders thinking dimmed", () => {
     expect(renderMessage(asst([{ type: "thinking", thinking: "hmm" }]))).toEqual([{ text: "hmm", dim: true }]);
@@ -25,9 +29,9 @@ describe("renderMessage", () => {
   it("renders an unknown tool with the generic fallback", () => {
     expect(renderMessage(asst([{ type: "tool_use", name: "Grep", input: { pattern: "foo" } }]))).toEqual([{ text: "⚙ Grep(foo)" }]);
   });
-  it("renders a tool_result as dimmed indented output", () => {
+  it("renders a tool_result as a dimmed ⎿ result tree", () => {
     const m = { type: "user", message: { content: [{ type: "tool_result", content: "line1\nline2" }] } };
-    expect(renderMessage(m)).toEqual([{ text: "  │ line1", dim: true }, { text: "  │ line2", dim: true }]);
+    expect(renderMessage(m)).toEqual([{ text: "  ⎿ line1", dim: true }, { text: "  ⎿ line2", dim: true }]);
   });
   it("ignores result/system messages", () => {
     expect(renderMessage({ type: "result", result: "ok" })).toEqual([]);
@@ -67,8 +71,8 @@ describe("renderMessage (markdown wiring)", () => {
       { type: "text", text: "**hi**" },
       { type: "thinking", thinking: "**not parsed**" },
     ] } });
-    expect(lines).toContainEqual({ text: "hi", bold: true });           // text → markdown
-    expect(lines).toContainEqual({ text: "**not parsed**", dim: true }); // thinking → raw dim (NOT parsed)
+    expect(lines).toContainEqual({ text: "hi", bold: true, gutter: BULLET }); // text → markdown + ● bullet
+    expect(lines).toContainEqual({ text: "**not parsed**", dim: true });      // thinking → raw dim (NOT parsed, no bullet)
   });
 });
 

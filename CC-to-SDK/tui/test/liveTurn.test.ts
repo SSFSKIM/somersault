@@ -1,6 +1,7 @@
 // tui/test/liveTurn.test.ts — reducer unit tests over the probe-20 frame sequence.
 import { describe, it, expect } from "vitest";
 import { LiveTurn } from "../src/liveTurn.js";
+import { ACCENT } from "../src/theme.js";
 
 const se = (event: unknown) => ({ type: "stream_event", event });
 const texts = (lt: LiveTurn) => lt.snapshot().map((l) => l.text);
@@ -89,7 +90,7 @@ describe("LiveTurn", () => {
     lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } }));
     lt.fail("stream died");
     const out = lt.finalize();
-    expect(out).toContainEqual({ text: "partial" });
+    expect(out).toContainEqual({ text: "partial", gutter: { text: "● ", color: ACCENT } });
     expect(out).toContainEqual({ text: "✗ stream died", color: "red" });
   });
 
@@ -129,10 +130,10 @@ describe("LiveTurn", () => {
     expect(out).toContain("  + y");
   });
 
-  it("renders live assistant text as markdown", () => {
+  it("renders live assistant text as markdown with the ● bullet", () => {
     const lt = new LiveTurn(() => 0);
     lt.ingest({ type: "assistant", message: { content: [{ type: "text", text: "# Heading" }] } });
-    expect(lt.snapshot()).toContainEqual({ text: "Heading", bold: true });
+    expect(lt.snapshot()).toContainEqual({ text: "Heading", bold: true, gutter: { text: "● ", color: ACCENT } });
   });
 
   it("nests subagent (Agent) turns under the parent and collapses on the top-level result", () => {

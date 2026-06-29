@@ -1,6 +1,17 @@
 // tui/src/render.ts — pure, UI-agnostic rich formatter: one SDK message → renderable lines (data, not ink).
-export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; }
+// A line may carry an optional `gutter`: a leading styled marker (the CC `●` bullet / `⎿` connector) the
+// <Line> view renders as its own <Text> so the glyph keeps its own color independent of the line's text style.
+export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; gutter?: Gutter; }
+export interface Gutter { text: string; color?: string; dim?: boolean; }
 import { renderMarkdown } from "./markdown.js";
+import { ACCENT } from "./theme.js";
+
+/** CC's assistant-message identity: an accent `●` bullet on the first line, continuation lines indented to
+ *  align under the text. Each line keeps its own markdown style; only the bullet carries the accent color. */
+export function withAssistantBullet(lines: RenderLine[]): RenderLine[] {
+  if (lines.length === 0) return lines;
+  return lines.map((l, i) => (i === 0 ? { ...l, gutter: { text: "● ", color: ACCENT } } : { ...l, text: "  " + l.text }));
+}
 
 export const trunc = (s: string, n = 48): string => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 const firstArg = (input: Record<string, unknown>): string => {
@@ -37,7 +48,7 @@ function resultLines(content: unknown): RenderLine[] {
   const text = typeof content === "string" ? content
     : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === "string" ? b.text : "")).join("") : "";
   if (!text.trim()) return [];
-  return text.split("\n").slice(0, 12).map((l) => ({ text: `  │ ${trunc(l, 100)}`, dim: true }));
+  return text.split("\n").slice(0, 12).map((l) => ({ text: `  ⎿ ${trunc(l, 100)}`, dim: true }));
 }
 
 /** Map one SDK message to renderable lines. Unknown/empty/result/system → []. */
@@ -46,7 +57,7 @@ export function renderMessage(m: any): RenderLine[] {
   if (m.type === "assistant") {
     const out: RenderLine[] = [];
     for (const b of m.message?.content ?? []) {
-      if (b?.type === "text" && b.text) out.push(...renderMarkdown(String(b.text)));
+      if (b?.type === "text" && b.text) out.push(...withAssistantBullet(renderMarkdown(String(b.text))));
       else if (b?.type === "thinking" && b.thinking) for (const l of String(b.thinking).split("\n")) out.push({ text: l, dim: true });
       else if (b?.type === "tool_use") out.push(...(b.name === "Edit" || b.name === "Write" ? toolDiffLines(b.name, b.input ?? {}) : toolUseLines(b.name, b.input ?? {})));
     }
