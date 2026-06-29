@@ -15,11 +15,10 @@ describe("renderMarkdown", () => {
     expect(renderMarkdown("# Title")).toEqual([{ text: "Title", bold: true }]);
     expect(renderMarkdown("### Sub")).toEqual([{ text: "Sub", bold: true }]);
   });
-  it("bullet and numbered lists get a • / keep the number; inline markers stripped", () => {
+  it("plain bullet / numbered get a • / keep the number (no inline markup → bare line)", () => {
     expect(renderMarkdown("- item")).toEqual([{ text: "• item" }]);
     expect(renderMarkdown("* item")).toEqual([{ text: "• item" }]);
     expect(renderMarkdown("1. first")).toEqual([{ text: "1. first" }]);
-    expect(renderMarkdown("- use `foo`")).toEqual([{ text: "• use foo" }]);
   });
   it("blockquote → dim with a │ prefix", () => {
     expect(renderMarkdown("> quoted")).toEqual([{ text: "│ quoted", dim: true }]);
@@ -27,8 +26,21 @@ describe("renderMarkdown", () => {
   it("fenced code → fences dropped, body dim + indented", () => {
     expect(renderMarkdown("```\nconst x = 1;\n```")).toEqual([{ text: "  const x = 1;", dim: true }]);
   });
-  it("a mixed-style line strips markers and applies NO per-span color (the accepted limitation)", () => {
-    expect(renderMarkdown("**bold** and normal")).toEqual([{ text: "bold and normal" }]);
-    expect(renderMarkdown("see `x` here")).toEqual([{ text: "see x here" }]);
+  it("a mixed-style line carries per-span segments (text is the plain fallback)", () => {
+    expect(renderMarkdown("**bold** and normal")).toEqual([
+      { text: "bold and normal", segments: [{ text: "bold", bold: true }, { text: " and normal" }] },
+    ]);
+    expect(renderMarkdown("see `x` here")).toEqual([
+      { text: "see x here", segments: [{ text: "see " }, { text: "x", color: "cyan" }, { text: " here" }] },
+    ]);
+  });
+  it("a bullet with an inline span keeps the • marker as a plain leading segment", () => {
+    expect(renderMarkdown("- use `foo`")).toEqual([
+      { text: "• use foo", segments: [{ text: "• " }, { text: "use " }, { text: "foo", color: "cyan" }] },
+    ]);
+  });
+  it("inline italic + bold mix in one line", () => {
+    const out = renderMarkdown("run *fast* and **safe**");
+    expect(out[0].segments).toEqual([{ text: "run " }, { text: "fast", italic: true }, { text: " and " }, { text: "safe", bold: true }]);
   });
 });

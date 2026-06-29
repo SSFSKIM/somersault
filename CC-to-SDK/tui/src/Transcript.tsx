@@ -6,7 +6,9 @@ import type { RenderLine } from "./render.js";
 const Line = ({ l }: { l: RenderLine }) => (
   <Text>
     {l.gutter ? <Text color={l.gutter.color} dimColor={l.gutter.dim}>{l.gutter.text}</Text> : null}
-    <Text color={l.color} dimColor={l.dim} bold={l.bold} italic={l.italic}>{l.text || " "}</Text>
+    {l.segments
+      ? l.segments.map((s, i) => <Text key={i} color={s.color} dimColor={s.dim} bold={s.bold} italic={s.italic}>{s.text}</Text>)
+      : <Text color={l.color} dimColor={l.dim} bold={l.bold} italic={l.italic}>{l.text || " "}</Text>}
   </Text>
 );
 

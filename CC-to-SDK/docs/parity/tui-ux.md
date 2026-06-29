@@ -24,12 +24,12 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | Category | Parity (start) | Parity (now) |
 |---|---|---|
 | 1. Input / composer ergonomics | ~45% | ~88% |
-| 2. Transcript / message rendering | ~50% | ~64% |
+| 2. Transcript / message rendering | ~50% | ~74% |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~62% |
 | 4. Modals / overlays | ~60% | ~78% |
 | 5. Slash commands | ~55% | ~70% |
-| 6. Polish (glyphs, colors, affordances) | ~40% | ~70% |
-| **Overall (impact-weighted)** | **~46%** | **~77%** |
+| 6. Polish (glyphs, colors, affordances) | ~40% | ~74% |
+| **Overall (impact-weighted)** | **~46%** | **~80%** |
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -108,7 +108,7 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | Tool-use rows | 🟡 | LOW | we use `⚙`/live `⟳✓✗` status; CC uses `●` |
 | Tool result tree glyph (`⎿`) | ✅ | — | **U3** dim `⎿` result tree |
 | Markdown: headers/lists/quote/fenced | ✅ | — | `markdown.ts` (lightweight) |
-| Markdown: inline mixed bold/italic spans | ❌ | MED | we strip mixed-style lines (one RenderLine = one style) |
+| Markdown: inline mixed bold/italic spans | ✅ | — | **U11** per-span `segments` (bold/italic/code) rendered within a line |
 | Markdown: tables | ❌ | LOW | `MarkdownTable.tsx` |
 | Markdown: code-block syntax highlight | ❌ | LOW | needs a highlighter; we dim+indent |
 | Edit/Write diff | 🟡 | MED | we show +/- capped; CC adds line numbers + context |
@@ -199,8 +199,11 @@ chat REPL + daemon console; 4 tests).
 ✅ **U10 — live token counter in spinner** (`liveTurn.outputTokens` from `message_delta` usage →
 `useChat.turnTokens` → `TurnSpinner`; spinner status now `(3s · 142 tokens · esc to interrupt)`; 3 tests).
 
+✅ **U11 — inline markdown spans** (`RenderLine.segments` + `markdown.parseInline`/`inlineLine` + `<Line>`
+renders segments; whole-line single styles still fold into the line; `withAssistantBullet` indents the
+first segment too; flows to live streaming + replay free; 5 markdown tests).
+
 ### Next candidates
-- **U11 — inline markdown spans** (§2): mixed bold/italic within a line (needs span-aware RenderLine).
-- **U12 — Esc-Esc rewind / message edit** (§1, highest CC-fidelity, hard): revert to a prior message.
 - **U13 — context threshold warning** (§3): color the ctx% + auto-compact notice as it nears the window.
+- **U12 — Esc-Esc rewind / message edit** (§1, highest CC-fidelity, hard): revert to a prior message.
 - Lower still: plan-mode approval, tables, code-block syntax highlight, vim mode, `/copy`.

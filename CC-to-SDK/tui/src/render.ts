@@ -1,16 +1,26 @@
 // tui/src/render.ts — pure, UI-agnostic rich formatter: one SDK message → renderable lines (data, not ink).
 // A line may carry an optional `gutter`: a leading styled marker (the CC `●` bullet / `⎿` connector) the
 // <Line> view renders as its own <Text> so the glyph keeps its own color independent of the line's text style.
-export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; gutter?: Gutter; }
+// A line is EITHER single-styled (`text` + the style fields) OR carries `segments` for per-span inline
+// styling (mixed bold/italic/code in one line); when `segments` is present the <Line> view renders those
+// and `text` is the plain fallback. `gutter` is a leading styled marker (the CC `●` bullet / `⎿` connector).
+export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; gutter?: Gutter; segments?: Segment[]; }
 export interface Gutter { text: string; color?: string; dim?: boolean; }
+export interface Segment { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; }
 import { renderMarkdown } from "./markdown.js";
 import { ACCENT } from "./theme.js";
+
+/** Prepend `pad` to a line's leading text — to BOTH the plain fallback and the first segment (if any). */
+function indentLine(l: RenderLine, pad: string): RenderLine {
+  if (l.segments && l.segments.length) return { ...l, text: pad + l.text, segments: [{ ...l.segments[0], text: pad + l.segments[0].text }, ...l.segments.slice(1)] };
+  return { ...l, text: pad + l.text };
+}
 
 /** CC's assistant-message identity: an accent `●` bullet on the first line, continuation lines indented to
  *  align under the text. Each line keeps its own markdown style; only the bullet carries the accent color. */
 export function withAssistantBullet(lines: RenderLine[]): RenderLine[] {
   if (lines.length === 0) return lines;
-  return lines.map((l, i) => (i === 0 ? { ...l, gutter: { text: "● ", color: ACCENT } } : { ...l, text: "  " + l.text }));
+  return lines.map((l, i) => (i === 0 ? { ...l, gutter: { text: "● ", color: ACCENT } } : indentLine(l, "  ")));
 }
 
 export const trunc = (s: string, n = 48): string => (s.length > n ? s.slice(0, n - 1) + "…" : s);
