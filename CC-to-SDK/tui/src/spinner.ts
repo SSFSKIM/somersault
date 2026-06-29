@@ -62,7 +62,8 @@ export function formatElapsed(ms: number): string {
   return Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
 }
 
-/** The dim status tail: "(3s · esc to interrupt)". */
-export function spinnerStatus(elapsedMs: number): string {
-  return "(" + formatElapsed(elapsedMs) + " · esc to interrupt)";
+/** The dim status tail: "(3s · 142 tokens · esc to interrupt)" — tokens shown only once > 0. */
+export function spinnerStatus(elapsedMs: number, tokens = 0): string {
+  const parts = [formatElapsed(elapsedMs), ...(tokens > 0 ? [`${tokens} tokens`] : []), "esc to interrupt"];
+  return "(" + parts.join(" · ") + ")";
 }

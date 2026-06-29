@@ -7,7 +7,7 @@ import { Text } from "ink";
 import { ACCENT } from "./banner.js";
 import { glyphFrame, pickVerb, spinnerStatus } from "./spinner.js";
 
-export function TurnSpinner({ startedAt, verb, now = Date.now }: { startedAt: number; verb?: string; now?: () => number }) {
+export function TurnSpinner({ startedAt, verb, tokens = 0, now = Date.now }: { startedAt: number; verb?: string; tokens?: number; now?: () => number }) {
   const [tick, setTick] = useState(0);
   const verbRef = useRef(verb ?? pickVerb());                 // picked once on mount → stable for the turn
   useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 120); return () => clearInterval(t); }, []);
@@ -15,7 +15,7 @@ export function TurnSpinner({ startedAt, verb, now = Date.now }: { startedAt: nu
     <Text>
       <Text color={ACCENT}>{glyphFrame(tick)}</Text>
       <Text>{" " + verbRef.current + "…"}</Text>
-      <Text dimColor>{" " + spinnerStatus(now() - startedAt)}</Text>
+      <Text dimColor>{" " + spinnerStatus(now() - startedAt, tokens)}</Text>
     </Text>
   );
 }

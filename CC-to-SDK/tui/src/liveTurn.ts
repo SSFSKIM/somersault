@@ -27,6 +27,7 @@ export class LiveTurn {
   private ended = false;               // set by finalize() — running tools then render as a settled marker
   private errorLine?: string;
   model?: string;                      // captured from the first assistant frame's message.model
+  outputTokens = 0;                    // running output-token count from message_delta usage (real, not estimated)
 
   /** Feed one frame from Session.submit's onMessage. Ignores unknown/irrelevant frames. */
   ingest(m: unknown): void {
@@ -85,8 +86,10 @@ export class LiveTurn {
       if (b.kind === "text" && d.type === "text_delta") b.text += d.text ?? "";
       else if (b.kind === "thinking" && d.type === "thinking_delta") b.text += d.thinking ?? "";
       // input_json_delta / signature_delta → ignored (target comes from the full message)
+      return;
     }
-    // content_block_stop / message_delta / message_stop → no-op
+    if (e.type === "message_delta" && e.usage && typeof e.usage.output_tokens === "number") this.outputTokens = e.usage.output_tokens;
+    // content_block_stop / message_stop → no-op
   }
 
   private onAssistant(mm: any): void {

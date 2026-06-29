@@ -37,7 +37,7 @@ export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume, ini
     <Box flexDirection="column">
       <Transcript key={state.clearToken} lines={state.lines} streaming={state.streaming} />
       <TaskPanel tasks={state.tasks} />
-      {state.busy ? <TurnSpinner startedAt={state.turnStartedAt} /> : null}
+      {state.busy ? <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} /> : null}
       {state.queue.length > 0 ? (
         <Box flexDirection="column" paddingX={1}>
           {state.queue.map((q, i) => <Text key={i} dimColor>⋯ queued: {q.length > 60 ? q.slice(0, 59) + "…" : q}</Text>)}

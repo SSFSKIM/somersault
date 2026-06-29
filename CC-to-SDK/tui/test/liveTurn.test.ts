@@ -130,6 +130,18 @@ describe("LiveTurn", () => {
     expect(out).toContain("  + y");
   });
 
+  it("captures the running output-token count from message_delta usage", () => {
+    const lt = new LiveTurn();
+    lt.ingest(se({ type: "message_start" }));
+    lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
+    lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hi" } }));
+    expect(lt.outputTokens).toBe(0);
+    lt.ingest(se({ type: "message_delta", delta: { stop_reason: null }, usage: { output_tokens: 42 } }));
+    expect(lt.outputTokens).toBe(42);
+    lt.ingest(se({ type: "message_delta", delta: {}, usage: { output_tokens: 87 } }));
+    expect(lt.outputTokens).toBe(87);
+  });
+
   it("renders live assistant text as markdown with the ● bullet", () => {
     const lt = new LiveTurn(() => 0);
     lt.ingest({ type: "assistant", message: { content: [{ type: "text", text: "# Heading" }] } });

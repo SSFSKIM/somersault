@@ -216,6 +216,10 @@ describe("TurnSpinner", () => {
     // one of the asterisk-pulse frames must be present
     expect(/[·✢✳✶✻✽]/.test(f)).toBe(true);
   });
+  it("shows the live token count once > 0", () => {
+    const f = render(<TurnSpinner startedAt={0} verb="Cogitating" tokens={142} now={() => 3000} />).lastFrame() ?? "";
+    expect(f).toContain("142 tokens");
+  });
 });
 
 describe("Detail", () => {

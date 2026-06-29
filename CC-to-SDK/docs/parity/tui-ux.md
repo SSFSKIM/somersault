@@ -25,11 +25,11 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 |---|---|---|
 | 1. Input / composer ergonomics | ~45% | ~88% |
 | 2. Transcript / message rendering | ~50% | ~64% |
-| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~54% |
+| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~62% |
 | 4. Modals / overlays | ~60% | ~78% |
 | 5. Slash commands | ~55% | ~70% |
 | 6. Polish (glyphs, colors, affordances) | ~40% | ~70% |
-| **Overall (impact-weighted)** | **~46%** | **~75%** |
+| **Overall (impact-weighted)** | **~46%** | **~77%** |
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -127,7 +127,7 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | Spinner glyph (`✻` asterisk-pulse) | ✅ | — | **U2** `spinner.ts` `·✢✳✶✻✽` fwd+reverse, Claude accent |
 | Spinner thinking verbs (187, random) | ✅ | — | **U2** verbatim 187-verb vocabulary, fixed per turn |
 | "esc to interrupt" affordance on spinner | ✅ | — | **U2** `(elapsed · esc to interrupt)` |
-| Live token counter during turn | ❌ | MED | CC shows running output tokens in spinner status |
+| Live token counter during turn | ✅ | — | **U10** real running output tokens from `message_delta` usage, in the spinner |
 | Elapsed timer during turn | ✅ | — | **U2** whole-turn elapsed in the spinner |
 | Context-left % + threshold warning | 🟡 | MED | we show ctx%; no auto-compact warning color |
 | Permission-mode indicator (color) | ✅ | — | `ChatStatusBar.tsx` modeColor |
@@ -196,8 +196,11 @@ with `exitOnCtrlC:false`; 2 tests).
 Yes-don't-ask-again / No over the tool + full target; ↑↓·Enter·1/2/3·Esc; legacy a/A/d kept; shared by
 chat REPL + daemon console; 4 tests).
 
+✅ **U10 — live token counter in spinner** (`liveTurn.outputTokens` from `message_delta` usage →
+`useChat.turnTokens` → `TurnSpinner`; spinner status now `(3s · 142 tokens · esc to interrupt)`; 3 tests).
+
 ### Next candidates
-- **U10 — live token counter in spinner** (§3): CC shows running output tokens; we show elapsed only.
 - **U11 — inline markdown spans** (§2): mixed bold/italic within a line (needs span-aware RenderLine).
 - **U12 — Esc-Esc rewind / message edit** (§1, highest CC-fidelity, hard): revert to a prior message.
+- **U13 — context threshold warning** (§3): color the ctx% + auto-compact notice as it nears the window.
 - Lower still: plan-mode approval, tables, code-block syntax highlight, vim mode, `/copy`.

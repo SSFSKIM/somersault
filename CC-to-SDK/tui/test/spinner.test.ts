@@ -30,7 +30,9 @@ describe("elapsed + status", () => {
     expect(formatElapsed(65000)).toBe("1m 05s");
     expect(formatElapsed(-100)).toBe("0s");
   });
-  it("status tail carries the esc-to-interrupt affordance", () => {
+  it("status tail carries the esc-to-interrupt affordance, with tokens once > 0", () => {
     expect(spinnerStatus(3000)).toBe("(3s · esc to interrupt)");
+    expect(spinnerStatus(3000, 0)).toBe("(3s · esc to interrupt)");
+    expect(spinnerStatus(3000, 142)).toBe("(3s · 142 tokens · esc to interrupt)");
   });
 });

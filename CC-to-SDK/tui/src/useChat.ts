@@ -33,7 +33,7 @@ export interface ChatSession {
 }
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
 export interface Pending { req: PermissionRequest; resolve: (d: PermissionDecision) => void; }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; }
 
 const LADDER = ["default", "acceptEdits", "auto"] as const;   // Tab cycles these; bypassPermissions is off-cycle (/yolo)
 /** Next mode on the Tab ladder; any off-ladder mode (bypassPermissions/plan/…) re-enters at "default". */
@@ -64,6 +64,7 @@ export function useChat(
   const taskListRef = useRef(new TaskList());
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [subagentActive, setSubagentActive] = useState(false);
+  const [turnTokens, setTurnTokens] = useState(0);    // live output-token count for the in-flight turn (spinner)
   const [queue, setQueue] = useState<string[]>([]);   // prompts/turns submitted while busy; drained FIFO on turn end
   const queueRef = useRef<string[]>([]); queueRef.current = queue;
   const [clearToken, setClearToken] = useState(0);    // bumped on clear → remounts the append-only <Static> so it truly empties
@@ -203,9 +204,9 @@ export function useChat(
 
   function runTurn(prompt: string) {
     setLines((l) => [...l, { text: `› ${prompt}`, dim: true }]);
-    setStreaming([]); setBusy(true); setTurnStartedAt(Date.now());
+    setStreaming([]); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0);
     const lt = new LiveTurn();
-    session.submit(prompt, (m) => { if (disposed.current) return; lt.ingest(m); taskListRef.current.ingest(m); setStreaming(lt.snapshot()); setTasks(taskListRef.current.snapshot()); setSubagentActive(lt.subagentActive); })
+    session.submit(prompt, (m) => { if (disposed.current) return; lt.ingest(m); taskListRef.current.ingest(m); setStreaming(lt.snapshot()); setTasks(taskListRef.current.snapshot()); setSubagentActive(lt.subagentActive); setTurnTokens(lt.outputTokens); })
       .then(() => {}, (e) => { lt.fail((e as Error).message); })
       .finally(() => { if (disposed.current) return; setLines((l) => [...l, ...lt.finalize()]); setStreaming([]); setBusy(false); setSubagentActive(false); if (lt.model) setModel(lt.model); void refreshCtx(); drainNext(); });
   }
@@ -277,5 +278,5 @@ export function useChat(
   function interrupt() { setQueue([]); void session.interrupt().catch(() => {}); }   // Esc stops everything: queue too
   function clear() { if (!disposed.current) { clearScreen(); setLines([]); setStreaming([]); setClearToken((t) => t + 1); } }   // Ctrl-L / /clear: wipe screen + model (session context kept)
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken } as ChatState, submit, resolvePermission, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens } as ChatState, submit, resolvePermission, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel };
 }
