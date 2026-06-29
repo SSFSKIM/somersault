@@ -17,14 +17,15 @@ import { TaskPanel } from "./TaskPanel.js";
 import { TurnSpinner } from "./TurnSpinner.js";
 
 export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume, initialLines }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string; initialThink?: string }; cwd: string; initialResume?: InitialResume; initialLines?: RenderLine[] }) {
-  const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel } = useChat(makeSession, broker, { ...(hookOpts ?? {}), cwd, initialResume, initialLines });
+  const { state, submit, resolvePermission, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel } = useChat(makeSession, broker, { ...(hookOpts ?? {}), cwd, initialResume, initialLines });
   useInput((input, key) => {
+    if (key.ctrl && input === "l") { clear(); return; }   // Ctrl-L clears the scrollback (context kept)
     if (key.escape) { interrupt(); return; }
     if (key.tab) cycleMode();   // Tab cycles the permission ladder (default → acceptEdits → auto; bypass via /yolo)
   }, { isActive: !state.pending && !state.picker.open && !state.modelPicker.open });
   return (
     <Box flexDirection="column">
-      <Transcript lines={state.lines} streaming={state.streaming} />
+      <Transcript key={state.clearToken} lines={state.lines} streaming={state.streaming} />
       <TaskPanel tasks={state.tasks} />
       {state.busy ? <TurnSpinner startedAt={state.turnStartedAt} /> : null}
       {state.queue.length > 0 ? (

@@ -54,6 +54,16 @@ describe("<ChatApp>", () => {
     expect(decided).toEqual({ kind: "allow_once" });
   });
 
+  it("Ctrl-L is wired and keeps input flowing (clear-screen is an ANSI escape Static can't un-draw)", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeSession()} broker={createUiBroker()} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("hi");   await waitFor(() => frame(lastFrame).includes("hi"));
+    stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("ok"));
+    stdin.write("\x0c"); await new Promise((r) => setTimeout(r, 30));       // Ctrl-L — must not crash
+    stdin.write("more"); await waitFor(() => frame(lastFrame).includes("more"));  // composer still responsive after clear
+    expect(frame(lastFrame)).toContain("more");
+  });
+
   it("Tab cycles the permission ladder default → acceptEdits → auto", async () => {
     const session = fakeSession();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} broker={createUiBroker()} cwd={process.cwd()} />);

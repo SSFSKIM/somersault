@@ -14,7 +14,7 @@ export interface EditorState {
 export interface EditorResult { state: EditorState; submit?: string }
 /** Minimal structural subset of ink's Key the reducer reads (so editor.ts needs no ink import). */
 export interface KeyFlags {
-  return?: boolean; backspace?: boolean; delete?: boolean;
+  return?: boolean; backspace?: boolean; delete?: boolean; ctrl?: boolean; meta?: boolean;
   leftArrow?: boolean; rightArrow?: boolean; upArrow?: boolean; downArrow?: boolean; escape?: boolean; tab?: boolean;
 }
 
@@ -64,6 +64,20 @@ function moveRight(s: EditorState): EditorState {
   if (col < s.lines[row].length) return { ...s, cursor: { row, col: col + 1 } };
   if (row < s.lines.length - 1) return { ...s, cursor: { row: row + 1, col: 0 } };
   return s;
+}
+// Readline-style cursor + kill ops, scoped to the current line (the common case).
+function lineStart(s: EditorState): EditorState { return { ...s, cursor: { row: s.cursor.row, col: 0 } }; }
+function lineEnd(s: EditorState): EditorState { return { ...s, cursor: { row: s.cursor.row, col: s.lines[s.cursor.row].length } }; }
+function killToEnd(s: EditorState): EditorState {        // Ctrl-K: delete from cursor to end of line
+  const { row, col } = s.cursor; const lines = [...s.lines]; lines[row] = lines[row].slice(0, col); return { ...s, lines };
+}
+function killToStart(s: EditorState): EditorState {      // Ctrl-U: delete from start of line to cursor
+  const { row, col } = s.cursor; const lines = [...s.lines]; lines[row] = lines[row].slice(col); return { ...s, lines, cursor: { row, col: 0 } };
+}
+function killWordBack(s: EditorState): EditorState {     // Ctrl-W: delete the word before the cursor
+  const { row, col } = s.cursor; if (col === 0) return deleteLeft(s); const line = s.lines[row];
+  let i = col; while (i > 0 && /\s/.test(line[i - 1])) i--; while (i > 0 && !/\s/.test(line[i - 1])) i--;
+  const lines = [...s.lines]; lines[row] = line.slice(0, i) + line.slice(col); return { ...s, lines, cursor: { row, col: i } };
 }
 function moveCursorVert(s: EditorState, delta: number): EditorState {
   const row = s.cursor.row + delta;
@@ -171,6 +185,16 @@ function onUp(s: EditorState): EditorState { if (s.command) return moveCommand(s
 function onDown(s: EditorState): EditorState { if (s.command) return moveCommand(s, 1); if (s.mention) return moveMention(s, 1); if (s.cursor.row === s.lines.length - 1) return historyNext(s); return moveCursorVert(s, 1); }
 
 export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorResult {
+  if (key.ctrl) {                                        // readline keys; other ctrl combos (l/c/d) act at app level → ignore here (never insert)
+    switch (input) {
+      case "a": return { state: syncCompletions(lineStart(s)) };
+      case "e": return { state: syncCompletions(lineEnd(s)) };
+      case "k": return { state: syncCompletions(killToEnd(s)) };
+      case "u": return { state: syncCompletions(killToStart(s)) };
+      case "w": return { state: syncCompletions(killWordBack(s)) };
+      default: return { state: s };
+    }
+  }
   if (key.return) {
     if (s.lines[s.cursor.row].endsWith("\\")) return { state: continueLine(s) };
     if (s.command) return submitCommand(s);

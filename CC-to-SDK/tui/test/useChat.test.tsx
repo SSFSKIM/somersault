@@ -171,6 +171,17 @@ describe("useChat", () => {
     expect(submitted).toBe(0);     // no slash command ever reached session.submit
   });
 
+  it("clear() empties the transcript and fires the terminal clear-screen", async () => {
+    let cleared = 0;
+    const api: { run?: (s: string) => void; clear?: () => void } = {};
+    function H() { const c = useChat(() => fakeSession(), createUiBroker(), {}, { clearScreen: () => { cleared++; } }); api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.lines.length}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("hi");  await waitFor(() => !frame(lastFrame).includes("L:0"));   // lines present
+    api.clear!();    await waitFor(() => frame(lastFrame).includes("L:0"));    // emptied
+    expect(cleared).toBe(1);
+  });
+
   it("queues a turn submitted while busy and drains it (FIFO) when the turn ends", async () => {
     let release = () => {}; let submits = 0;
     const fake = fakeSession({ async submit(_p: string, onMessage: (m: unknown) => void) {

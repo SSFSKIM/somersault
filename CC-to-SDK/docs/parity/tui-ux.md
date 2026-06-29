@@ -23,13 +23,13 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 
 | Category | Parity (start) | Parity (now) |
 |---|---|---|
-| 1. Input / composer ergonomics | ~45% | ~63% |
+| 1. Input / composer ergonomics | ~45% | ~80% |
 | 2. Transcript / message rendering | ~50% | ~64% |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~54% |
 | 4. Modals / overlays | ~60% | ~60% |
-| 5. Slash commands | ~55% | ~68% |
-| 6. Polish (glyphs, colors, affordances) | ~40% | ~64% |
-| **Overall (impact-weighted)** | **~46%** | **~65%** |
+| 5. Slash commands | ~55% | ~70% |
+| 6. Polish (glyphs, colors, affordances) | ~40% | ~66% |
+| **Overall (impact-weighted)** | **~46%** | **~70%** |
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -63,6 +63,14 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
   turn's `finally` re-drains, self-chaining. Only turns queue; local commands + `!`/`#` run immediately
   (control-channel / local, safe mid-turn). `Esc` (interrupt) clears the queue — a clean "stop everything".
   4 tests.
+- **U7 — Editor ergonomics** (`editor.ts` readline keys + `ChatComposer` chrome + `useChat.clear`). Adds
+  the terminal-native muscle-memory keys: **Ctrl-A/E** (line start/end), **Ctrl-K/U** (kill to end/start),
+  **Ctrl-W** (kill word back); unhandled ctrl combos never insert. A dim **placeholder** ("Ask Claude
+  anything…") on the empty buffer and a persistent **footer hint** (`⏎ send · \⏎ newline · @ files · /
+  commands · ! bash · Tab mode`). **Ctrl-L / `/clear`** now *truly* clears — model reset + a `clearToken`
+  that remounts the append-only `<Static>` + an ANSI screen+scrollback clear (`\x1b[2J\x1b[3J\x1b[H`, TTY-only,
+  injectable). 11 tests. (Ink's `<Static>` is write-once — only the ANSI escape erases scrolled history; CC
+  does the same.)
 
 ---
 
@@ -77,15 +85,15 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | `!` bash mode (run shell directly, no model) | ✅ | — | **U5** `bash.ts` local exec in cwd, echoed `! cmd` + `⎿`-style output (local-only by design; no model context injection) |
 | `#` memory mode (append to CLAUDE.md) | ✅ | — | **U5** `memory.ts` appends under `## Memories` |
 | Input mode indicator (bash/memory/command) | ✅ | — | **U5** `inputMode()` → magenta bash / blue memory border + hint |
-| Placeholder / ghost text ("Ask Claude…") | ❌ | MED | CC `usePromptInputPlaceholder.ts` |
-| Ctrl-A / Ctrl-E (line start/end) | ❌ | **HIGH** | `useTextInput.ts` — terminal-native, expected |
-| Ctrl-K / Ctrl-U (kill to end/start) | ❌ | **HIGH** | `useTextInput.ts` |
-| Ctrl-W (kill word back) | ❌ | **HIGH** | `useTextInput.ts` |
-| Word movement (Alt/Ctrl ←→) | ❌ | MED | `useTextInput.ts` |
-| Ctrl-L (clear screen) | ❌ | MED | standard Unix |
-| Ctrl-C twice / Ctrl-D to exit | ❌ | **HIGH** | `earlyInput.ts` — graceful exit affordance |
+| Ctrl-A / Ctrl-E (line start/end) | ✅ | — | **U7** `editor.ts` readline keys |
+| Ctrl-K / Ctrl-U (kill to end/start) | ✅ | — | **U7** `editor.ts` |
+| Ctrl-W (kill word back) | ✅ | — | **U7** `editor.ts` |
+| Word movement (Alt/Ctrl ←→) | ❌ | LOW | `useTextInput.ts` |
+| Ctrl-L (clear screen) | ✅ | — | **U7** clears model + remounts Static + ANSI screen-clear (CC parity) |
+| Ctrl-C twice / Ctrl-D to exit | ❌ | MED | Ink's default exitOnCtrlC handles single-press exit; double-press affordance is U8 |
 | Queued messages while busy | ✅ | — | **U6** turns queue while busy + drain FIFO on turn end; `⋯ queued:` indicator; Esc clears |
-| `?` shortcuts / help menu | ❌ | MED | `PromptInputHelpMenu.tsx` |
+| Placeholder / ghost text ("Ask Claude…") | ✅ | — | **U7** dim placeholder on empty buffer |
+| `?` shortcuts / help menu | 🟡 | LOW | **U7** footer key-hint line (`⏎ send · \⏎ newline · @ files · / commands · ! bash · Tab mode`); no separate overlay |
 | Vim mode (`/vim`) | ❌ | LOW | large; reachable but low ROI |
 | External editor (Ctrl-G / `$EDITOR`) | ❌ | LOW | `PromptInputHelpMenu` |
 | Image paste (Ctrl-V) | 🚫 | — | non-terminal / out of scope here |
@@ -162,7 +170,7 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | `●`/`⎿` message prefix glyphs + accent colors | ✅ | **U3** (`>` user echo kept as `›` by choice) |
 | "esc to interrupt" everywhere a turn runs | ✅ | **U2** |
 | Double-Esc to exit / rewind affordance | ❌ | MED |
-| Newline instructions hint | ❌ | LOW |
+| Newline instructions hint | ✅ | **U7** footer (`\⏎ newline`) |
 | Focus borders / input box styling | 🟡 | LOW |
 
 ---
@@ -172,16 +180,16 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 Ordered by **first-impression impact ÷ effort**. Each increment: pure reducer + thin view, keyless
 unit tests, typecheck + build green, commit, update this scorecard.
 
-- **U1 — Welcome banner** (§2,§3): a launch splash (product name + cwd + model + mode + tips +
-  `? for shortcuts`). First thing a user sees. ✅/❌ tracked above.
-- **U2 — Authentic spinner** (§3,§6): `✻` asterisk-pulse frames + the 187 random verbs +
-  `(Ns · esc to interrupt)` status; show it during streaming too, not just the pre-first-frame gap.
-- **U3 — Message identity** (§2,§6): `●` assistant bullet (accent) + `>` user + `⎿` tool-result tree —
-  CC's recognizable transcript shape.
-- **U4 — `/cost` + `/status`** (§3,§5): cheap, `usage()` already wired.
-- **U5 — `!` bash + `#` memory modes + mode indicator** (§1): distinctive CC input affordances.
-- **U6 — Queued input while busy** (§1): type-ahead during a turn.
-- **U7 — Editor ergonomics** (§1): Ctrl-A/E/K/U/W, Ctrl-L, Ctrl-C-twice/Ctrl-D, placeholder, `?` help.
+- ✅ **U1 — Welcome banner** · ✅ **U2 — Authentic spinner** · ✅ **U3 — Message identity** ·
+  ✅ **U4 — `/cost` + `/status`** · ✅ **U5 — `!` bash + `#` memory + mode indicator** ·
+  ✅ **U6 — Queued input** · ✅ **U7 — Editor ergonomics** (all SHIPPED — see "Shipped" above).
 
-Later / lower ROI: inline markdown spans, plan-mode approval, richer permission dialog, vim mode,
-tables, syntax highlight.
+**Round 1 (U1–U7) complete: overall ~46% → ~70%.** The recognizable CC look-and-feel (welcome banner,
+asterisk-pulse verb spinner, `●`/`⎿` transcript, `!`/`#` modes, queueing, readline keys) is in place.
+
+### Next candidates (Round 2, lower ROI per item)
+- **U8 — Ctrl-C-twice / Ctrl-D exit affordance** (§1): "Press Ctrl-C again to exit" (needs `exitOnCtrlC:false`).
+- **U9 — richer permission dialog** (§4): numbered "Yes / Yes-allow-session / No", full Bash command shown.
+- **U10 — inline markdown spans** (§2): mixed bold/italic within a line (needs span-aware RenderLine).
+- **U11 — Esc-Esc rewind / message edit** (§1, highest CC-fidelity, hard): revert to a prior message.
+- Lower still: plan-mode approval, tables, code-block syntax highlight, vim mode, `/copy`.

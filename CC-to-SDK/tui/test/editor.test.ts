@@ -197,6 +197,38 @@ describe("editor / command palette", () => {
   });
 });
 
+describe("readline keys (ctrl)", () => {
+  const ctrl = (s: EditorState, ch: string): EditorState => applyKey(s, ch, { ctrl: true }).state;
+  it("Ctrl-A / Ctrl-E jump to line start / end", () => {
+    let s = type(initialEditorState(), "hello");
+    s = ctrl(s, "a"); expect(s.cursor.col).toBe(0);
+    s = ctrl(s, "e"); expect(s.cursor.col).toBe(5);
+  });
+  it("Ctrl-K kills to end of line", () => {
+    let s = type(initialEditorState(), "hello world"); s = ctrl(s, "a"); s = applyKey(s, "", { rightArrow: true }).state;  // col 1
+    for (let i = 0; i < 5; i++) s = applyKey(s, "", { rightArrow: true }).state;   // col 6 (after "hello ")
+    s = ctrl(s, "k"); expect(text(s)).toBe("hello ");
+  });
+  it("Ctrl-U kills to start of line", () => {
+    let s = type(initialEditorState(), "hello"); s = ctrl(s, "u");
+    expect(text(s)).toBe(""); expect(s.cursor.col).toBe(0);
+  });
+  it("Ctrl-W kills the previous word", () => {
+    let s = type(initialEditorState(), "foo bar baz"); s = ctrl(s, "w");
+    expect(text(s)).toBe("foo bar "); expect(s.cursor.col).toBe(8);
+    s = ctrl(s, "w"); expect(text(s)).toBe("foo ");
+  });
+  it("an unhandled ctrl combo (e.g. Ctrl-L) never inserts a character", () => {
+    const s = ctrl(initialEditorState(), "l");
+    expect(text(s)).toBe("");
+  });
+  it("Ctrl-A in a /command line closes the popup (cursor left the token)", () => {
+    let s = type(initialEditorState(), "/"); s = type(s, "model");   // "/" opens the popup, then chars refresh it
+    expect(s.command).not.toBeNull();
+    s = ctrl(s, "a"); expect(s.command).toBeNull();
+  });
+});
+
 describe("inputMode", () => {
   it("a leading ! = bash, # = memory, else normal", () => {
     expect(inputMode(type(initialEditorState(), "!ls -a"))).toBe("bash");
