@@ -38,11 +38,13 @@ function ladderNext(mode: string): string { const i = (LADDER as readonly string
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
   ui: UiBrokerHandle,
-  opts: { initialMode?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string } = {},
+  opts: { initialMode?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialLines?: RenderLine[] } = {},
   deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]> } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
-  const [lines, setLines] = useState<RenderLine[]>([]);
+  // Seed the scrollback with the welcome banner — unless we're launching straight into a resume (the
+  // replay fills `lines` and a banner would be misleading above a rejoined transcript).
+  const [lines, setLines] = useState<RenderLine[]>(() => (opts.initialResume ? [] : opts.initialLines ?? []));
   const [streaming, setStreaming] = useState<RenderLine[]>([]);
   const [pending, setPending] = useState<Pending | null>(null);
   const [mode, setMode] = useState(opts.initialMode ?? "default");

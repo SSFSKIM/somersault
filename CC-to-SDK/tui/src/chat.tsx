@@ -7,6 +7,7 @@ import { createUiBroker } from "./uiBroker.js";
 import { ChatApp } from "./ChatApp.js";
 import { parseResumeIntent, parseLaunchMode, parseLaunchThink } from "./commands.js";
 import { thinkBudget } from "./thinkLevels.js";
+import { welcomeBanner } from "./banner.js";
 
 const args = process.argv.slice(2);
 function flag(name: string): string | undefined { const i = args.indexOf(name); return i >= 0 && args[i + 1] != null ? args[i + 1] : undefined; }
@@ -22,4 +23,5 @@ const thinking = launchThink === "off" ? { type: "disabled" as const }
 const base = { model: flag("--model"), cwd: flag("--cwd") ?? process.cwd(), permissionMode: launchMode, ...(thinking ? { thinking } : {}), permissionBroker: ui.broker, contextTool: true, compactTool: true, includePartialMessages: true, forwardSubagentText: true };
 const initialResume = parseResumeIntent(args);
 const makeSession = (resume?: string) => openSession({ ...base, ...(resume ? { resume } : {}) });
-render(<ChatApp makeSession={makeSession} broker={ui} cwd={base.cwd} initialResume={initialResume} hookOpts={{ initialMode: launchMode, initialThink: launchThink ?? "default" }} />);
+const banner = welcomeBanner({ cwd: base.cwd, model: base.model, mode: launchMode });
+render(<ChatApp makeSession={makeSession} broker={ui} cwd={base.cwd} initialResume={initialResume} initialLines={banner} hookOpts={{ initialMode: launchMode, initialThink: launchThink ?? "default" }} />);

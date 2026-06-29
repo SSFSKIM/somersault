@@ -67,6 +67,20 @@ describe("useChat", () => {
     expect(lastFrame()).toContain("PINECONE");
     expect(lastFrame()).toContain("m:claude-sonnet-4-6");
   });
+  it("seeds the welcome banner into the scrollback, but skips it when launching into a resume", async () => {
+    const banner = [{ text: "✻ Welcome to Claude Code" }, { text: "  tips" }];
+    function BannerHost({ resume }: { resume?: boolean }) {
+      const c = useChat(() => fakeSession(), createUiBroker(), { initialLines: banner, ...(resume ? { initialResume: { kind: "continue" } as const } : {}) },
+        { listSessions: async () => [], getSessionMessages: async () => [] });
+      return <Text>{c.state.lines.map((l) => l.text).join("|")}</Text>;
+    }
+    const fresh = render(<BannerHost />);
+    expect(frame(fresh.lastFrame)).toContain("✻ Welcome to Claude Code");
+    const resumed = render(<BannerHost resume />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(frame(resumed.lastFrame)).not.toContain("✻ Welcome to Claude Code");
+  });
+
   it("settles a parked permission promise → deny on unmount, and disposes the session exactly once", async () => {
     const ui = createUiBroker();
     const session = fakeSession();

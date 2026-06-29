@@ -6,6 +6,7 @@ import { Box, useInput } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
 import type { InitialResume } from "./commands.js";
+import type { RenderLine } from "./render.js";
 import { Transcript } from "./Transcript.js";
 import { ChatComposer } from "./ChatComposer.js";
 import { PermissionDialog } from "./PermissionDialog.js";
@@ -15,8 +16,8 @@ import { ModelPicker } from "./ModelPicker.js";
 import { TaskPanel } from "./TaskPanel.js";
 import { ThinkingIndicator } from "./ThinkingIndicator.js";
 
-export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string; initialThink?: string }; cwd: string; initialResume?: InitialResume }) {
-  const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel } = useChat(makeSession, broker, { ...(hookOpts ?? {}), cwd, initialResume });
+export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume, initialLines }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string; initialThink?: string }; cwd: string; initialResume?: InitialResume; initialLines?: RenderLine[] }) {
+  const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel } = useChat(makeSession, broker, { ...(hookOpts ?? {}), cwd, initialResume, initialLines });
   useInput((input, key) => {
     if (key.escape) { interrupt(); return; }
     if (key.tab) cycleMode();   // Tab cycles the permission ladder (default → acceptEdits → auto; bypass via /yolo)
