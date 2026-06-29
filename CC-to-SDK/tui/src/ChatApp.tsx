@@ -2,7 +2,7 @@
 // pending), and the status bar. Global keys (Esc interrupt, Tab cycle mode) are inactive while a dialog
 // is up so the dialog owns input. Renders increment 8's multiline <ChatComposer>.
 import React from "react";
-import { Box, useInput } from "ink";
+import { Box, Text, useInput } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
 import type { InitialResume } from "./commands.js";
@@ -27,6 +27,11 @@ export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume, ini
       <Transcript lines={state.lines} streaming={state.streaming} />
       <TaskPanel tasks={state.tasks} />
       {state.busy ? <TurnSpinner startedAt={state.turnStartedAt} /> : null}
+      {state.queue.length > 0 ? (
+        <Box flexDirection="column" paddingX={1}>
+          {state.queue.map((q, i) => <Text key={i} dimColor>⋯ queued: {q.length > 60 ? q.slice(0, 59) + "…" : q}</Text>)}
+        </Box>
+      ) : null}
       {state.modelPicker.open
         ? <ModelPicker models={state.modelPicker.models} onPick={pickModel} onCancel={closeModelPicker} />
         : state.picker.open

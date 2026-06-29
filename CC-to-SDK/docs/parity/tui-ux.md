@@ -23,13 +23,13 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 
 | Category | Parity (start) | Parity (now) |
 |---|---|---|
-| 1. Input / composer ergonomics | ~45% | ~58% |
+| 1. Input / composer ergonomics | ~45% | ~63% |
 | 2. Transcript / message rendering | ~50% | ~64% |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~54% |
 | 4. Modals / overlays | ~60% | ~60% |
 | 5. Slash commands | ~55% | ~68% |
 | 6. Polish (glyphs, colors, affordances) | ~40% | ~64% |
-| **Overall (impact-weighted)** | **~46%** | **~63%** |
+| **Overall (impact-weighted)** | **~46%** | **~65%** |
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -58,6 +58,11 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
   section. The composer derives the mode purely from the buffer's first char and shows a magenta (bash) /
   blue (memory) border + hint. Side effects injected as `deps` (unit-tested without spawning/writing).
   13 tests.
+- **U6 — Queued input while busy** (`useChat` queue + `ChatApp` indicator). Submitting a prompt while a
+  turn runs enqueues it (shown as `⋯ queued: …`) and it dispatches FIFO when the turn ends — each drained
+  turn's `finally` re-drains, self-chaining. Only turns queue; local commands + `!`/`#` run immediately
+  (control-channel / local, safe mid-turn). `Esc` (interrupt) clears the queue — a clean "stop everything".
+  4 tests.
 
 ---
 
@@ -79,7 +84,7 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | Word movement (Alt/Ctrl ←→) | ❌ | MED | `useTextInput.ts` |
 | Ctrl-L (clear screen) | ❌ | MED | standard Unix |
 | Ctrl-C twice / Ctrl-D to exit | ❌ | **HIGH** | `earlyInput.ts` — graceful exit affordance |
-| Queued messages while busy | ❌ | **HIGH** | `PromptInputQueuedCommands.tsx` — type while Claude works |
+| Queued messages while busy | ✅ | — | **U6** turns queue while busy + drain FIFO on turn end; `⋯ queued:` indicator; Esc clears |
 | `?` shortcuts / help menu | ❌ | MED | `PromptInputHelpMenu.tsx` |
 | Vim mode (`/vim`) | ❌ | LOW | large; reachable but low ROI |
 | External editor (Ctrl-G / `$EDITOR`) | ❌ | LOW | `PromptInputHelpMenu` |

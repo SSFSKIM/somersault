@@ -171,6 +171,44 @@ describe("useChat", () => {
     expect(submitted).toBe(0);     // no slash command ever reached session.submit
   });
 
+  it("queues a turn submitted while busy and drains it (FIFO) when the turn ends", async () => {
+    let release = () => {}; let submits = 0;
+    const fake = fakeSession({ async submit(_p: string, onMessage: (m: unknown) => void) {
+      submits++; onMessage({ type: "assistant", message: { content: [{ type: "text", text: `reply${submits}` }] } });
+      await new Promise<void>((res) => { release = res; }); return { result: "done" };
+    } });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, createUiBroker(), {}); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("first");  await waitFor(() => frame(lastFrame).includes("BUSY"));
+    expect(submits).toBe(1);
+    api.run!("second"); await waitFor(() => frame(lastFrame).includes("q:second"));   // queued, NOT a 2nd submit
+    expect(submits).toBe(1);
+    release();           await waitFor(() => submits === 2);                           // turn ends → drains "second"
+    expect(frame(lastFrame)).not.toContain("q:second");
+    release();           // release the drained turn so it settles cleanly
+  });
+
+  it("interrupt clears the queue; local commands run immediately even while busy", async () => {
+    let release = () => {}; let submits = 0, modelSet = "";
+    const fake = fakeSession({
+      async submit(_p: string, onMessage: (m: unknown) => void) { submits++; onMessage({ type: "assistant", message: { content: [{ type: "text", text: "x" }] } }); await new Promise<void>((res) => { release = res; }); return { result: "done" }; },
+      async setModel(m?: string) { modelSet = m ?? ""; },
+    });
+    const api: { run?: (s: string) => void; stop?: () => void } = {};
+    function H() { const c = useChat(() => fake, createUiBroker(), {}); api.run = c.submit; api.stop = c.interrupt; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")} m:{c.state.model ?? "-"}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("turn");          await waitFor(() => frame(lastFrame).includes("BUSY"));
+    api.run!("queued");        await waitFor(() => frame(lastFrame).includes("q:queued"));
+    api.run!("/model opus");   await waitFor(() => frame(lastFrame).includes("m:opus"));   // local cmd runs mid-turn
+    expect(modelSet).toBe("opus");
+    api.stop!();               await waitFor(() => !frame(lastFrame).includes("q:queued")); // interrupt clears queue
+    release();
+    expect(submits).toBe(1);   // the queued turn never ran (cleared on interrupt)
+  });
+
   it("! runs bash locally (injected) and # appends to memory — neither reaches the model", async () => {
     let submitted = 0, bashCmd = "", memNote = "", memCwd = "";
     const fake = fakeSession({ async submit() { submitted++; return { result: "x" }; } });

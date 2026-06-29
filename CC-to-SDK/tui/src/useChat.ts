@@ -33,7 +33,7 @@ export interface ChatSession {
 }
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
 export interface Pending { req: PermissionRequest; resolve: (d: PermissionDecision) => void; }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; }
 
 const LADDER = ["default", "acceptEdits", "auto"] as const;   // Tab cycles these; bypassPermissions is off-cycle (/yolo)
 /** Next mode on the Tab ladder; any off-ladder mode (bypassPermissions/plan/…) re-enters at "default". */
@@ -64,6 +64,8 @@ export function useChat(
   const taskListRef = useRef(new TaskList());
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [subagentActive, setSubagentActive] = useState(false);
+  const [queue, setQueue] = useState<string[]>([]);   // prompts/turns submitted while busy; drained FIFO on turn end
+  const queueRef = useRef<string[]>([]); queueRef.current = queue;
   const disposed = useRef(false);
   const pendingRef = useRef<Pending | null>(null);
   pendingRef.current = pending;
@@ -201,7 +203,15 @@ export function useChat(
     const lt = new LiveTurn();
     session.submit(prompt, (m) => { if (disposed.current) return; lt.ingest(m); taskListRef.current.ingest(m); setStreaming(lt.snapshot()); setTasks(taskListRef.current.snapshot()); setSubagentActive(lt.subagentActive); })
       .then(() => {}, (e) => { lt.fail((e as Error).message); })
-      .finally(() => { if (disposed.current) return; setLines((l) => [...l, ...lt.finalize()]); setStreaming([]); setBusy(false); setSubagentActive(false); if (lt.model) setModel(lt.model); void refreshCtx(); });
+      .finally(() => { if (disposed.current) return; setLines((l) => [...l, ...lt.finalize()]); setStreaming([]); setBusy(false); setSubagentActive(false); if (lt.model) setModel(lt.model); void refreshCtx(); drainNext(); });
+  }
+  // After a turn ends, dispatch the next queued prompt (if any) on the next macrotask, so busy=false has
+  // committed before dispatch may set it true again. Each drained turn's finally re-drains → self-chaining.
+  function drainNext() {
+    const q = queueRef.current;
+    if (disposed.current || q.length === 0) return;
+    const next = q[0]; setQueue(q.slice(1));
+    setTimeout(() => { if (!disposed.current) dispatch(next); }, 0);
   }
   // ! bash mode — echo the command, run it locally in cwd, append its output (no model turn; CC's shell escape).
   async function runBashMode(command: string) {
@@ -216,8 +226,8 @@ export function useChat(
     try { const path = appendMemory(note, cwd); append([{ text: `✓ noted in ${shortCwd(path)}`, dim: true }]); }
     catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
   }
-  function submit(prompt: string) {
-    if (disposed.current || busy || !prompt.trim()) return;
+  /** Route one prompt: ! bash · # memory · /local-command · /catalog-or-prompt turn. */
+  function dispatch(prompt: string) {
     if (prompt.startsWith("!")) { void runBashMode(prompt.slice(1).trim()); return; }
     if (prompt.startsWith("#")) { void memoryMode(prompt.slice(1).trim()); return; }
     const cmd = parseCommand(prompt);
@@ -227,6 +237,16 @@ export function useChat(
       void handleCommand(cmd); return;                                          // unknown → formatUnknown (switch default)
     }
     runTurn(prompt);
+  }
+  // While a turn runs, regular prompts + catalog commands QUEUE (drained FIFO on turn end); local commands and
+  // !/# run immediately (control-channel / local — safe mid-turn). Type-ahead while Claude works (CC parity).
+  function submit(prompt: string) {
+    if (disposed.current || !prompt.trim()) return;
+    if (!busy) { dispatch(prompt); return; }
+    if (prompt.startsWith("!") || prompt.startsWith("#")) { dispatch(prompt); return; }
+    const cmd = parseCommand(prompt);
+    if (cmd && LOCAL_NAMES.has(cmd.name)) { dispatch(prompt); return; }
+    setQueue((q) => [...q, prompt]);                                            // turn while busy → enqueue
   }
   function resolvePermission(d: PermissionDecision) { pendingRef.current?.resolve(d); setPending(null); }
   // Apply a permission mode. `auto` is model-gated (probe 24): if the live model can't run auto, swap to a
@@ -250,7 +270,7 @@ export function useChat(
     if (!disposed.current) setMode(next);
   }
   function cycleMode() { void applyMode(ladderNext(mode)); }
-  function interrupt() { void session.interrupt().catch(() => {}); }
+  function interrupt() { setQueue([]); void session.interrupt().catch(() => {}); }   // Esc stops everything: queue too
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel, turnStartedAt, modelPicker, commandCatalog } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue } as ChatState, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel };
 }
