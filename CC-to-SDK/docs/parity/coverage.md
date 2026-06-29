@@ -93,6 +93,15 @@
 >   through `resolveOptions` (closing the bare-daemon gap: a `spawn({})` with no model/mode picks up the CC
 >   system-prompt preset, `settingSources`, tool preset, and the opus-4-8 default — live-proved no-400 via
 >   gated e2e `test/live/daemon-defaults.e2e.test.ts`).
+> - **TUI/UX parity round (`cc-harness-chat`, 2026-06-29)** — a 13-increment push (U1–U13) bringing the
+>   interactive REPL to the look-and-feel of the real Claude Code, scored in the new **`tui-ux.md`**
+>   scorecard (the source of truth for *visual/interaction* parity, vs this file's *SDK-capability* parity):
+>   welcome banner, the authentic ✻ asterisk-pulse spinner with the 187 random verbs + live tokens +
+>   esc-to-interrupt, `●`/`⎿` message identity, inline markdown spans, `!` bash + `#` memory modes,
+>   queued-while-busy input, readline editor keys (Ctrl-A/E/K/U/W) + placeholder + Ctrl-C/D/L, the CC-style
+>   numbered permission dialog, `/cost`+`/status`, and a context-threshold warning. Overall TUI/UX parity
+>   **~46% → ~82%**; **entirely `tui/`-side** (one tiny harness-agnostic addition: none — no `harness/src`
+>   change). Domain 10 below.
 
 ## How to read this
 
