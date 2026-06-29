@@ -25,15 +25,20 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 |---|---|---|
 | 1. Input / composer ergonomics | ~45% | ~45% |
 | 2. Transcript / message rendering | ~50% | ~54% |
-| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~40% |
+| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~54% |
 | 4. Modals / overlays | ~60% | ~60% |
 | 5. Slash commands | ~55% | ~55% |
-| 6. Polish (glyphs, colors, affordances) | ~40% | ~40% |
-| **Overall (impact-weighted)** | **~46%** | **~48%** |
+| 6. Polish (glyphs, colors, affordances) | ~40% | ~54% |
+| **Overall (impact-weighted)** | **~46%** | **~53%** |
 
-**Shipped:** **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude
-Code` box + cwd/model/mode snapshot + "Tips for getting started", seeded into the Static scrollback
-(scrolls away like CC; skipped when launching into a resume). Pure builder, 7 tests.
+**Shipped:**
+- **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
+  cwd/model/mode snapshot + "Tips for getting started", seeded into the Static scrollback (scrolls away
+  like CC; skipped when launching into a resume). Pure builder, 7 tests.
+- **U2 — Authentic CC spinner** (`spinner.ts` pure + `TurnSpinner.tsx`). The iconic `✻` asterisk-pulse
+  (`·✢✳✶✻✽` out-and-back, Claude accent) + a random verb from the **verbatim 187-verb** CC vocabulary
+  (fixed per turn) + the `(elapsed · esc to interrupt)` affordance. Shown for the **whole turn** (below
+  streamed content), not just the pre-first-frame gap; superseded `ThinkingIndicator`. 8 tests.
 
 ---
 
@@ -87,11 +92,11 @@ Code` box + cwd/model/mode snapshot + "Tips for getting started", seeded into th
 | Feature | Status | Priority | Notes / CC reference |
 |---|---|---|---|
 | Status bar (model · mode · ctx%) | ✅ | — | `ChatStatusBar.tsx` |
-| Spinner glyph (`✻` asterisk-pulse) | ❌ | **HIGH** | CC frames `['·','✢','✳','✶','✻','✽']` fwd+reverse; we use `✨✦✧` |
-| Spinner thinking verbs (187, random) | ❌ | **HIGH** | `spinnerVerbs.ts` — "Cogitating…", "Noodling…" — iconic |
-| "esc to interrupt" affordance on spinner | ❌ | **HIGH** | `SpinnerAnimationRow.tsx` `(elapsed · N tokens · esc to interrupt)` |
+| Spinner glyph (`✻` asterisk-pulse) | ✅ | — | **U2** `spinner.ts` `·✢✳✶✻✽` fwd+reverse, Claude accent |
+| Spinner thinking verbs (187, random) | ✅ | — | **U2** verbatim 187-verb vocabulary, fixed per turn |
+| "esc to interrupt" affordance on spinner | ✅ | — | **U2** `(elapsed · esc to interrupt)` |
 | Live token counter during turn | ❌ | MED | CC shows running output tokens in spinner status |
-| Elapsed timer during turn | 🟡 | — | we show secs pre-first-frame only |
+| Elapsed timer during turn | ✅ | — | **U2** whole-turn elapsed in the spinner |
 | Context-left % + threshold warning | 🟡 | MED | we show ctx%; no auto-compact warning color |
 | Permission-mode indicator (color) | ✅ | — | `ChatStatusBar.tsx` modeColor |
 | Cost in status / `/cost` | ❌ | MED | `cost-tracker.ts`; we have `usage()` unused |
@@ -128,10 +133,10 @@ Code` box + cwd/model/mode snapshot + "Tips for getting started", seeded into th
 
 | Detail | Status | Priority |
 |---|---|---|
-| Asterisk-pulse spinner animation | ❌ | **HIGH** (see §3) |
-| Random thinking verbs | ❌ | **HIGH** (see §3) |
+| Asterisk-pulse spinner animation | ✅ | **U2** |
+| Random thinking verbs | ✅ | **U2** |
 | `●`/`>` message prefix glyphs + accent colors | ❌ | **HIGH** |
-| "esc to interrupt" everywhere a turn runs | ❌ | **HIGH** |
+| "esc to interrupt" everywhere a turn runs | ✅ | **U2** |
 | Double-Esc to exit / rewind affordance | ❌ | MED |
 | Newline instructions hint | ❌ | LOW |
 | Focus borders / input box styling | 🟡 | LOW |

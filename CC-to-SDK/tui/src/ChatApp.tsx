@@ -14,7 +14,7 @@ import { ChatStatusBar } from "./ChatStatusBar.js";
 import { SessionPicker } from "./SessionPicker.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { TaskPanel } from "./TaskPanel.js";
-import { ThinkingIndicator } from "./ThinkingIndicator.js";
+import { TurnSpinner } from "./TurnSpinner.js";
 
 export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume, initialLines }: { makeSession: (resume?: string) => ChatSession; broker: UiBrokerHandle; hookOpts?: { initialMode?: string; initialThink?: string }; cwd: string; initialResume?: InitialResume; initialLines?: RenderLine[] }) {
   const { state, submit, resolvePermission, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel } = useChat(makeSession, broker, { ...(hookOpts ?? {}), cwd, initialResume, initialLines });
@@ -25,8 +25,8 @@ export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume, ini
   return (
     <Box flexDirection="column">
       <Transcript lines={state.lines} streaming={state.streaming} />
-      {state.busy && state.streaming.length === 0 ? <ThinkingIndicator startedAt={state.turnStartedAt} /> : null}
       <TaskPanel tasks={state.tasks} />
+      {state.busy ? <TurnSpinner startedAt={state.turnStartedAt} /> : null}
       {state.modelPicker.open
         ? <ModelPicker models={state.modelPicker.models} onPick={pickModel} onCancel={closeModelPicker} />
         : state.picker.open

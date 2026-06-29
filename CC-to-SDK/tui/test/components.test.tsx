@@ -11,7 +11,7 @@ import { ChatStatusBar, modeColor } from "../src/ChatStatusBar.js";
 import { SessionPicker } from "../src/SessionPicker.js";
 import { ModelPicker } from "../src/ModelPicker.js";
 import { TaskPanel } from "../src/TaskPanel.js";
-import { ThinkingIndicator } from "../src/ThinkingIndicator.js";
+import { TurnSpinner } from "../src/TurnSpinner.js";
 import { Detail } from "../src/Detail.js";
 import { Pool } from "../src/Pool.js";
 import type { PermissionDecision } from "cc-harness";
@@ -182,11 +182,15 @@ describe("modeColor", () => {
   });
 });
 
-describe("ThinkingIndicator", () => {
-  it("ThinkingIndicator shows a spinner frame and elapsed seconds", () => {
-    const { lastFrame } = render(<ThinkingIndicator startedAt={0} now={() => 3000} />);
-    expect(lastFrame()).toContain("Thinking…");
-    expect(lastFrame()).toContain("3s");
+describe("TurnSpinner", () => {
+  it("shows the asterisk glyph, the verb, and the esc-to-interrupt status", () => {
+    const { lastFrame } = render(<TurnSpinner startedAt={0} verb="Cogitating" now={() => 3000} />);
+    const f = lastFrame() ?? "";
+    expect(f).toContain("Cogitating…");
+    expect(f).toContain("3s");
+    expect(f).toContain("esc to interrupt");
+    // one of the asterisk-pulse frames must be present
+    expect(/[·✢✳✶✻✽]/.test(f)).toBe(true);
   });
 });
 
