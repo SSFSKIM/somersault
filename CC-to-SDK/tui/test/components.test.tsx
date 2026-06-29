@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Transcript } from "../src/Transcript.js";
 import { PermissionDialog } from "../src/PermissionDialog.js";
-import { ChatStatusBar, modeColor } from "../src/ChatStatusBar.js";
+import { ChatStatusBar, modeColor, ctxColor } from "../src/ChatStatusBar.js";
 import { SessionPicker } from "../src/SessionPicker.js";
 import { ModelPicker } from "../src/ModelPicker.js";
 import { TaskPanel } from "../src/TaskPanel.js";
@@ -96,6 +96,13 @@ describe("<ChatStatusBar>", () => {
   it("shows a subagent-running indicator", () => {
     const { lastFrame } = render(<ChatStatusBar mode="default" busy={true} ctxPct={10} hasPending={false} subagentActive={true} />);
     expect(lastFrame() ?? "").toContain("⚙ subagent running");
+  });
+  it("warns about auto-compact once context is near the window", () => {
+    const f = render(<ChatStatusBar mode="default" busy={false} ctxPct={85} hasPending={false} />).lastFrame() ?? "";
+    expect(f).toContain("85%");
+    expect(f).toContain("auto-compact soon");
+    const lo = render(<ChatStatusBar mode="default" busy={false} ctxPct={20} hasPending={false} />).lastFrame() ?? "";
+    expect(lo).not.toContain("auto-compact");
   });
   it("hides the subagent indicator when inactive", () => {
     const { lastFrame } = render(<ChatStatusBar mode="default" busy={true} ctxPct={10} hasPending={false} subagentActive={false} />);
@@ -203,6 +210,14 @@ describe("modeColor", () => {
     expect(modeColor("acceptEdits")).toBe("yellow");
     expect(modeColor("auto")).toBe("cyan");
     expect(modeColor("bypassPermissions")).toBe("red");
+  });
+});
+
+describe("ctxColor", () => {
+  it("escalates green → yellow → red as context fills", () => {
+    expect(ctxColor(20)).toBeUndefined();
+    expect(ctxColor(60)).toBe("yellow");
+    expect(ctxColor(85)).toBe("red");
   });
 });
 

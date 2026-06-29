@@ -25,11 +25,11 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 |---|---|---|
 | 1. Input / composer ergonomics | ~45% | ~88% |
 | 2. Transcript / message rendering | ~50% | ~74% |
-| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~62% |
+| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% |
 | 4. Modals / overlays | ~60% | ~78% |
 | 5. Slash commands | ~55% | ~70% |
 | 6. Polish (glyphs, colors, affordances) | ~40% | ~74% |
-| **Overall (impact-weighted)** | **~46%** | **~80%** |
+| **Overall (impact-weighted)** | **~46%** | **~82%** |
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -129,7 +129,7 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | "esc to interrupt" affordance on spinner | ✅ | — | **U2** `(elapsed · esc to interrupt)` |
 | Live token counter during turn | ✅ | — | **U10** real running output tokens from `message_delta` usage, in the spinner |
 | Elapsed timer during turn | ✅ | — | **U2** whole-turn elapsed in the spinner |
-| Context-left % + threshold warning | 🟡 | MED | we show ctx%; no auto-compact warning color |
+| Context-left % + threshold warning | ✅ | — | **U13** ctx% color-escalates green→yellow→red + "⚠ auto-compact soon" near the window |
 | Permission-mode indicator (color) | ✅ | — | `ChatStatusBar.tsx` modeColor |
 | Cost in status / `/cost` | ✅ | — | **U4** `/cost` via `session.usage()` |
 | `? for shortcuts` hint line | ❌ | MED | `PromptInputFooter.tsx` |
@@ -203,7 +203,11 @@ chat REPL + daemon console; 4 tests).
 renders segments; whole-line single styles still fold into the line; `withAssistantBullet` indents the
 first segment too; flows to live streaming + replay free; 5 markdown tests).
 
-### Next candidates
-- **U13 — context threshold warning** (§3): color the ctx% + auto-compact notice as it nears the window.
-- **U12 — Esc-Esc rewind / message edit** (§1, highest CC-fidelity, hard): revert to a prior message.
-- Lower still: plan-mode approval, tables, code-block syntax highlight, vim mode, `/copy`.
+✅ **U13 — context threshold warning** (`ChatStatusBar.ctxColor`: ctx% escalates green→yellow→red and
+shows "⚠ auto-compact soon" at ≥80%; status-bar hints updated for the new dialog + `? help`; 2 tests).
+
+### Next candidates (remaining gaps are lower-ROI or hard)
+- **U12 — Esc-Esc rewind / message edit** (§1, highest CC-fidelity, HARD): revert to a prior message
+  (needs `rewindFiles` + transcript truncation + re-prompt).
+- Plan-mode (ExitPlanMode) approval dialog (§4); code-block syntax highlight + tables (§2); vim mode;
+  `/copy` clipboard; word-wise cursor movement (Alt/Ctrl ←→). All lower-visibility.
