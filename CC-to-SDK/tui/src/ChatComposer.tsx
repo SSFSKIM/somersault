@@ -53,7 +53,7 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -65,6 +65,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit }: { onSubm
   useInput((input, key) => {
     const s = stateRef.current;
     if (key.ctrl && input === "d" && s.lines.length === 1 && s.lines[0] === "") { onExit?.(); return; }   // Ctrl-D on empty = EOF exit
+    // Tab/Esc are global ONLY when no autocomplete popup is open; with a popup, applyKey owns them
+    // (Tab completes / Esc closes). This single owner prevents the ChatApp+composer double-handling.
+    if (!s.command && !s.mention) {
+      if (key.tab) { onCycleMode?.(); return; }
+      if (key.escape) { onInterrupt?.(); return; }
+    }
     const r = applyKey(s, input, key); if (r.submit != null) onSubmit(r.submit); setState(r.state);
   });
 

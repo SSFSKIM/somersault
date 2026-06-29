@@ -293,6 +293,27 @@ describe("ChatComposer", () => {
     await waitFor(() => got.length === 1);
     expect(got[0]).toBe("a\nb");
   });
+  it("routes Tab→onCycleMode and Esc→onInterrupt when no popup is open", async () => {
+    let cycles = 0, interrupts = 0;
+    const { stdin } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onCycleMode={() => cycles++} onInterrupt={() => interrupts++} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\t");   await waitFor(() => cycles === 1);
+    stdin.write("\x1b"); await waitFor(() => interrupts === 1);
+    expect([cycles, interrupts]).toEqual([1, 1]);
+  });
+  it("with a / popup open, Tab/Esc are consumed by the popup (NO global cycle/interrupt — fixes the double-handler)", async () => {
+    let cycles = 0, interrupts = 0;
+    const a = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onCycleMode={() => cycles++} onInterrupt={() => interrupts++} />);
+    await new Promise((r) => setTimeout(r, 20));
+    a.stdin.write("/"); await waitFor(() => (a.lastFrame() ?? "").includes("/"));   // command popup open
+    a.stdin.write("\x1b"); await new Promise((r) => setTimeout(r, 30));             // Esc → closes popup, not interrupt
+    expect(interrupts).toBe(0);
+    const b = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onCycleMode={() => cycles++} onInterrupt={() => interrupts++} />);
+    await new Promise((r) => setTimeout(r, 20));
+    b.stdin.write("/"); await waitFor(() => (b.lastFrame() ?? "").includes("/"));
+    b.stdin.write("\t"); await new Promise((r) => setTimeout(r, 30));               // Tab → completes, not cycle
+    expect(cycles).toBe(0);
+  });
   it("Ctrl-D on an empty buffer calls onExit; with text it does not", async () => {
     let exits = 0;
     const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} />);

@@ -27,7 +27,10 @@ export class LiveTurn {
   private ended = false;               // set by finalize() — running tools then render as a settled marker
   private errorLine?: string;
   model?: string;                      // captured from the first assistant frame's message.model
-  outputTokens = 0;                    // running output-token count from message_delta usage (real, not estimated)
+  private committedTokens = 0;         // summed output tokens of completed messages this turn
+  private currentMsgTokens = 0;        // running output tokens of the in-flight message (message_delta usage, resets per message)
+  /** Real running output-token count for the WHOLE turn (committed messages + the in-flight one). */
+  get outputTokens(): number { return this.committedTokens + this.currentMsgTokens; }
 
   /** Feed one frame from Session.submit's onMessage. Ignores unknown/irrelevant frames. */
   ingest(m: unknown): void {
@@ -68,7 +71,7 @@ export class LiveTurn {
   private flush(): void { collapseThinking(this.current); this.committed.push(...this.current); this.current = []; }
 
   private onStreamEvent(e: any): void {
-    if (e.type === "message_start") { this.flush(); return; }   // a new message → seal the prior one
+    if (e.type === "message_start") { this.committedTokens += this.currentMsgTokens; this.currentMsgTokens = 0; this.flush(); return; }   // new message → seal prior one (+ its tokens)
     if (e.type === "content_block_start") {
       collapseThinking(this.current);                            // any new block collapses prior thinking
       const i = e.index, cb = e.content_block ?? {};
@@ -88,7 +91,7 @@ export class LiveTurn {
       // input_json_delta / signature_delta → ignored (target comes from the full message)
       return;
     }
-    if (e.type === "message_delta" && e.usage && typeof e.usage.output_tokens === "number") this.outputTokens = e.usage.output_tokens;
+    if (e.type === "message_delta" && e.usage && typeof e.usage.output_tokens === "number") this.currentMsgTokens = e.usage.output_tokens;
     // content_block_stop / message_stop → no-op
   }
 

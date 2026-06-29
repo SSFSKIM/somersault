@@ -23,16 +23,20 @@ export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume, ini
   const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disarm = () => { setExitArmed(false); if (disarmTimer.current) { clearTimeout(disarmTimer.current); disarmTimer.current = null; } };
   useEffect(() => () => { if (disarmTimer.current) clearTimeout(disarmTimer.current); }, []);
+  const onInterrupt = () => { interrupt(); disarm(); };
+  const onCycleMode = () => { cycleMode(); disarm(); };   // Tab cycles the permission ladder (default → acceptEdits → auto)
+  // Only Ctrl-C / Ctrl-L live here — they conflict with nothing (composer/dialog/pickers never act on them),
+  // so this stays active even during a pending dialog (so Ctrl-C can still quit). Tab/Esc are owned by whatever
+  // input is focused (the composer routes them to onCycleMode/onInterrupt only when no popup is open — no
+  // double-handling; dialogs/pickers own their own Esc).
   useInput((input, key) => {
-    if (key.ctrl && input === "l") { clear(); disarm(); return; }   // Ctrl-L clears the scrollback (context kept)
-    if (key.ctrl && input === "c") {                                // Ctrl-C: interrupt a turn, else arm/confirm exit (CC)
+    if (key.ctrl && input === "l") { clear(); disarm(); return; }
+    if (key.ctrl && input === "c") {                                // interrupt a turn, else arm/confirm exit (CC)
       if (state.busy) { interrupt(); disarm(); return; }
       if (exitArmed) { exit(); return; }
-      setExitArmed(true); if (disarmTimer.current) clearTimeout(disarmTimer.current); disarmTimer.current = setTimeout(() => setExitArmed(false), 2000); return;
+      setExitArmed(true); if (disarmTimer.current) clearTimeout(disarmTimer.current); disarmTimer.current = setTimeout(() => setExitArmed(false), 2000);
     }
-    if (key.escape) { interrupt(); disarm(); return; }
-    if (key.tab) { cycleMode(); disarm(); }   // Tab cycles the permission ladder (default → acceptEdits → auto; bypass via /yolo)
-  }, { isActive: !state.pending && !state.picker.open && !state.modelPicker.open });
+  });
   return (
     <Box flexDirection="column">
       <Transcript key={state.clearToken} lines={state.lines} streaming={state.streaming} />
@@ -49,7 +53,7 @@ export function ChatApp({ makeSession, broker, hookOpts, cwd, initialResume, ini
           ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
           : state.pending
             ? <PermissionDialog req={state.pending.req} onDecision={resolvePermission} />
-            : <ChatComposer onSubmit={submit} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} />}
+            : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} />}
       {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
       <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} subagentActive={state.subagentActive} thinkLevel={state.thinkLevel} />
     </Box>

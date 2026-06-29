@@ -206,6 +206,23 @@ first segment too; flows to live streaming + replay free; 5 markdown tests).
 ✅ **U13 — context threshold warning** (`ChatStatusBar.ctxColor`: ctx% escalates green→yellow→red and
 shows "⚠ auto-compact soon" at ≥80%; status-bar hints updated for the new dialog + `? help`; 2 tests).
 
+✅ **U14 — review-fix hardening** (two independent reviews — codex-companion fell back to Opus, plus a
+Claude reviewer — **converged on the same 5 bugs**; all fixed, +5 regression tests, 221 green):
+- **P1** queued unknown/typo `/cmd` stalled the drain — `dispatch` now returns whether it started a turn;
+  `drainNext` re-drains non-turn items so the chain never stalls.
+- **P2** mid-session `/resume` dropped the first N replay lines (the append-only `<Static>` wasn't
+  remounted) — `resumeInto` now bumps `clearToken`.
+- **P2** Tab/Esc were double-handled (accepting a `/`/`@` completion also cycled mode / interrupted the
+  turn) — Tab/Esc are now routed *through* the composer (global only when no popup is open); `ChatApp`
+  no longer owns them, and its Ctrl-C/Ctrl-L handler is now always-active (so Ctrl-C can quit during a
+  pending dialog).
+- **P2** replayed nested (subagent) lines with inline markdown lost their indent/dim (segments weren't
+  indented) — fixed.
+- **P3** `liveTurn.outputTokens` reset per-message on tool-using turns — now accumulates across messages.
+- Plus: `interrupt` bumps a `drainGen` so a scheduled drain can't fire post-interrupt; `#` memory note
+  collapses multi-line to one bullet. (Lesson: an interactive Ink app needs a TTY — smoke-test under a
+  PTY (`script`), not a pipe, or you hit a spurious "Raw mode is not supported" error.)
+
 ### Next candidates (remaining gaps are lower-ROI or hard)
 - **U12 — Esc-Esc rewind / message edit** (§1, highest CC-fidelity, HARD): revert to a prior message
   (needs `rewindFiles` + transcript truncation + re-prompt).

@@ -142,6 +142,16 @@ describe("LiveTurn", () => {
     expect(lt.outputTokens).toBe(87);
   });
 
+  it("accumulates output tokens ACROSS messages in a multi-message (tool-using) turn", () => {
+    const lt = new LiveTurn();
+    lt.ingest(se({ type: "message_start" }));
+    lt.ingest(se({ type: "message_delta", delta: {}, usage: { output_tokens: 50 } }));   // msg1 → 50
+    expect(lt.outputTokens).toBe(50);
+    lt.ingest(se({ type: "message_start" }));                                            // commit msg1 (50)
+    lt.ingest(se({ type: "message_delta", delta: {}, usage: { output_tokens: 30 } }));   // msg2 → total 80 (not a reset to 30)
+    expect(lt.outputTokens).toBe(80);
+  });
+
   it("renders live assistant text as markdown with the ● bullet", () => {
     const lt = new LiveTurn(() => 0);
     lt.ingest({ type: "assistant", message: { content: [{ type: "text", text: "# Heading" }] } });

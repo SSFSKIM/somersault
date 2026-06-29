@@ -201,6 +201,31 @@ describe("useChat", () => {
     release();           // release the drained turn so it settles cleanly
   });
 
+  it("drains PAST a queued unknown command (no stall) to a following turn", async () => {
+    let release = () => {}; let submits = 0;
+    const fake = fakeSession({ async submit(_p: string, onMessage: (m: unknown) => void) { submits++; onMessage({ type: "assistant", message: { content: [{ type: "text", text: "r" }] } }); await new Promise<void>((res) => { release = res; }); return { result: "done" }; } });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, createUiBroker(), {}); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("first");  await waitFor(() => frame(lastFrame).includes("BUSY"));            // turn A (submits=1)
+    api.run!("/zzz");   await waitFor(() => frame(lastFrame).includes("q:/zzz"));          // unknown command queued
+    api.run!("second"); await waitFor(() => frame(lastFrame).includes("q:/zzz,second"));   // a turn queued BEHIND it
+    release();          await waitFor(() => submits === 2);                                // A ends → drain /zzz (no turn) → re-drain → "second" runs
+    release();
+    expect(submits).toBe(2);
+  });
+
+  it("resuming bumps clearToken (so the append-only <Static> remounts and shows the full replay)", async () => {
+    const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    let token = -1;
+    // launch-time resume drives resumeInto; assert the replay landed AND clearToken was bumped
+    function H() { const c = useChat((r?: string) => fakeSession(), createUiBroker(), { initialResume: { kind: "id", id: "sess-9" } }, { getSessionMessages: async () => msgs, listSessions: async () => [] }); token = c.state.clearToken; return <Text>tok:{c.state.clearToken} {c.state.lines.map((l) => l.text).join("|")}</Text>; }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => frame(lastFrame).includes("prior"));   // replay landed
+    expect(token).toBeGreaterThanOrEqual(1);                   // clearToken bumped by resumeInto
+  });
+
   it("interrupt clears the queue; local commands run immediately even while busy", async () => {
     let release = () => {}; let submits = 0, modelSet = "";
     const fake = fakeSession({

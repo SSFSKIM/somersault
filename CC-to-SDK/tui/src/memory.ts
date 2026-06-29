@@ -6,10 +6,12 @@ import { join } from "node:path";
 
 const HEADER = "## Memories";
 
-/** Append `- <note>` to `<cwd>/CLAUDE.md` under a "## Memories" section (created if absent). Returns the path. */
+/** Append `- <note>` to `<cwd>/CLAUDE.md` under a "## Memories" section (created if absent). Returns the path.
+ *  A multi-line note is collapsed to one bullet (newlines → spaces) so it stays a single valid list item. */
 export function appendMemory(note: string, cwd: string): string {
   const path = join(cwd, "CLAUDE.md");
+  const oneLine = note.replace(/\s*\n\s*/g, " ").trim();
   const hasHeader = existsSync(path) && readFileSync(path, "utf8").includes(HEADER);
-  appendFileSync(path, (hasHeader ? "" : `\n${HEADER}\n`) + `- ${note}\n`);
+  appendFileSync(path, (hasHeader ? "" : `\n${HEADER}\n`) + `- ${oneLine}\n`);
   return path;
 }

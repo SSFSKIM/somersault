@@ -31,8 +31,13 @@ export function replayLines(messages: any[], opts: { cap?: number; id?: string }
   if (elided > 0) out.push({ text: `… ${elided} earlier message${elided === 1 ? "" : "s"} elided`, dim: true });
   for (const m of kept) {
     const lines = renderMessage(m);
-    // nested (subagent) messages: indent + dim, but DROP the gutter (the ● bullet belongs to the top-level turn).
-    if (m?.parent_tool_use_id) for (const l of lines) { const { gutter, ...rest } = l; void gutter; out.push({ ...rest, text: "  " + rest.text, dim: true }); }
+    // nested (subagent) messages: indent + dim, DROP the gutter (the ● bullet belongs to the top-level turn).
+    // For segment lines the <Line> renders `segments` (ignoring line-level dim/text), so dim+indent EACH segment.
+    if (m?.parent_tool_use_id) for (const l of lines) {
+      const { gutter, segments, ...rest } = l; void gutter;
+      if (segments && segments.length) out.push({ ...rest, text: "  " + rest.text, dim: true, segments: segments.map((s, i) => ({ ...s, dim: true, text: i === 0 ? "  " + s.text : s.text })) });
+      else out.push({ ...rest, text: "  " + rest.text, dim: true });
+    }
     else out.push(...lines);
   }
   out.push(divider("resumed here · live"));

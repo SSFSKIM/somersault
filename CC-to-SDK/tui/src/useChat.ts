@@ -67,6 +67,7 @@ export function useChat(
   const [turnTokens, setTurnTokens] = useState(0);    // live output-token count for the in-flight turn (spinner)
   const [queue, setQueue] = useState<string[]>([]);   // prompts/turns submitted while busy; drained FIFO on turn end
   const queueRef = useRef<string[]>([]); queueRef.current = queue;
+  const drainGen = useRef(0);                          // bumped by interrupt → invalidates any scheduled drain (no post-interrupt dispatch)
   const [clearToken, setClearToken] = useState(0);    // bumped on clear → remounts the append-only <Static> so it truly empties
   const disposed = useRef(false);
   const pendingRef = useRef<Pending | null>(null);
@@ -170,6 +171,7 @@ export function useChat(
     setSession(makeSession(id));                                   // [session] effect disposes the old
     setStreaming([]);
     setLines(replayLines(msgs, { id }));
+    setClearToken((t) => t + 1);                                   // remount the append-only <Static> so the full replay shows (not sliced)
     taskListRef.current.reset(); setTasks([]);
   }
   async function doContinue() {
@@ -211,12 +213,15 @@ export function useChat(
       .finally(() => { if (disposed.current) return; setLines((l) => [...l, ...lt.finalize()]); setStreaming([]); setBusy(false); setSubagentActive(false); if (lt.model) setModel(lt.model); void refreshCtx(); drainNext(); });
   }
   // After a turn ends, dispatch the next queued prompt (if any) on the next macrotask, so busy=false has
-  // committed before dispatch may set it true again. Each drained turn's finally re-drains → self-chaining.
+  // committed before dispatch may set it true again. A drained TURN re-drains via its finally (self-chaining);
+  // a drained non-turn (e.g. a queued unknown/typo `/cmd`) has no finally, so we re-drain here so the chain
+  // never stalls. `drainGen` lets interrupt() cancel an already-scheduled drain (no post-interrupt dispatch).
   function drainNext() {
     const q = queueRef.current;
     if (disposed.current || q.length === 0) return;
     const next = q[0]; setQueue(q.slice(1));
-    setTimeout(() => { if (!disposed.current) dispatch(next); }, 0);
+    const gen = drainGen.current;
+    setTimeout(() => { if (disposed.current || drainGen.current !== gen) return; if (!dispatch(next)) drainNext(); }, 0);
   }
   // ! bash mode — echo the command, run it locally in cwd, append its output (no model turn; CC's shell escape).
   async function runBashMode(command: string) {
@@ -231,17 +236,18 @@ export function useChat(
     try { const path = appendMemory(note, cwd); append([{ text: `✓ noted in ${shortCwd(path)}`, dim: true }]); }
     catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
   }
-  /** Route one prompt: ! bash · # memory · /local-command · /catalog-or-prompt turn. */
-  function dispatch(prompt: string) {
-    if (prompt.startsWith("!")) { void runBashMode(prompt.slice(1).trim()); return; }
-    if (prompt.startsWith("#")) { void memoryMode(prompt.slice(1).trim()); return; }
+  /** Route one prompt: ! bash · # memory · /local-command · /catalog-or-prompt turn. Returns true iff it
+   *  started a turn (whose finally re-drains the queue); false for non-turn ops (drainNext must re-drain). */
+  function dispatch(prompt: string): boolean {
+    if (prompt.startsWith("!")) { void runBashMode(prompt.slice(1).trim()); return false; }
+    if (prompt.startsWith("#")) { void memoryMode(prompt.slice(1).trim()); return false; }
     const cmd = parseCommand(prompt);
     if (cmd) {
-      if (LOCAL_NAMES.has(cmd.name)) { void handleCommand(cmd); return; }      // local → engine switch
-      if (catalogNames.current.has(cmd.name)) { runTurn(prompt); return; }     // catalog → run "/name …" as a turn (probe 31)
-      void handleCommand(cmd); return;                                          // unknown → formatUnknown (switch default)
+      if (LOCAL_NAMES.has(cmd.name)) { void handleCommand(cmd); return false; }   // local → engine switch
+      if (catalogNames.current.has(cmd.name)) { runTurn(prompt); return true; }   // catalog → run "/name …" as a turn (probe 31)
+      void handleCommand(cmd); return false;                                       // unknown → formatUnknown (switch default)
     }
-    runTurn(prompt);
+    runTurn(prompt); return true;
   }
   // While a turn runs, regular prompts + catalog commands QUEUE (drained FIFO on turn end); local commands and
   // !/# run immediately (control-channel / local — safe mid-turn). Type-ahead while Claude works (CC parity).
@@ -275,7 +281,7 @@ export function useChat(
     if (!disposed.current) setMode(next);
   }
   function cycleMode() { void applyMode(ladderNext(mode)); }
-  function interrupt() { setQueue([]); void session.interrupt().catch(() => {}); }   // Esc stops everything: queue too
+  function interrupt() { drainGen.current++; setQueue([]); void session.interrupt().catch(() => {}); }   // Esc stops everything: queue + any scheduled drain
   function clear() { if (!disposed.current) { clearScreen(); setLines([]); setStreaming([]); setClearToken((t) => t + 1); } }   // Ctrl-L / /clear: wipe screen + model (session context kept)
 
   return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens } as ChatState, submit, resolvePermission, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel };
