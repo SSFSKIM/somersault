@@ -23,13 +23,13 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 
 | Category | Parity (start) | Parity (now) |
 |---|---|---|
-| 1. Input / composer ergonomics | ~45% | ~45% |
-| 2. Transcript / message rendering | ~50% | ~62% |
+| 1. Input / composer ergonomics | ~45% | ~58% |
+| 2. Transcript / message rendering | ~50% | ~64% |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~54% |
 | 4. Modals / overlays | ~60% | ~60% |
 | 5. Slash commands | ~55% | ~68% |
-| 6. Polish (glyphs, colors, affordances) | ~40% | ~62% |
-| **Overall (impact-weighted)** | **~46%** | **~59%** |
+| 6. Polish (glyphs, colors, affordances) | ~40% | ~64% |
+| **Overall (impact-weighted)** | **~46%** | **~63%** |
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -50,6 +50,14 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
   subscription auth) + in/out tokens + duration + per-model breakdown; `/status` snapshots the live
   local state (model · mode · thinking · context% · cwd · session id). Added `usage()` to the
   `ChatSession` interface. 7 tests.
+- **U5 — `!` bash mode + `#` memory mode + input-mode indicator** (`bash.ts` + `memory.ts` +
+  `editor.inputMode` + `useChat` routing + `ChatComposer` chrome). A leading `!` runs the rest as a shell
+  command locally in cwd (echoed `! cmd`, dim output, capped, `exit N` on failure) — a quick shell escape
+  that never hits the model (intentional local-only divergence; `exec` is the right tool for an
+  interactive shell escape). A leading `#` appends the note to the project `CLAUDE.md` under a `## Memories`
+  section. The composer derives the mode purely from the buffer's first char and shows a magenta (bash) /
+  blue (memory) border + hint. Side effects injected as `deps` (unit-tested without spawning/writing).
+  13 tests.
 
 ---
 
@@ -61,9 +69,9 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | History up/down (draft stash/restore) | ✅ | — | `editor.ts` historyPrev/Next |
 | `@`-file mention fuzzy autocomplete | ✅ | — | `editor.ts` + `fileComplete.ts` |
 | `/`-slash command autocomplete | ✅ | — | `editor.ts` command state + `commandComplete.ts` |
-| `!` bash mode (run shell directly, no model) | ❌ | **HIGH** | CC `PromptInputHelpMenu`; local exec, echoed as bash message |
-| `#` memory mode (append to CLAUDE.md) | ❌ | MED | CC memory-mode input |
-| Input mode indicator (bash/memory/command) | ❌ | MED | CC `PromptInputModeIndicator.tsx` |
+| `!` bash mode (run shell directly, no model) | ✅ | — | **U5** `bash.ts` local exec in cwd, echoed `! cmd` + `⎿`-style output (local-only by design; no model context injection) |
+| `#` memory mode (append to CLAUDE.md) | ✅ | — | **U5** `memory.ts` appends under `## Memories` |
+| Input mode indicator (bash/memory/command) | ✅ | — | **U5** `inputMode()` → magenta bash / blue memory border + hint |
 | Placeholder / ghost text ("Ask Claude…") | ❌ | MED | CC `usePromptInputPlaceholder.ts` |
 | Ctrl-A / Ctrl-E (line start/end) | ❌ | **HIGH** | `useTextInput.ts` — terminal-native, expected |
 | Ctrl-K / Ctrl-U (kill to end/start) | ❌ | **HIGH** | `useTextInput.ts` |

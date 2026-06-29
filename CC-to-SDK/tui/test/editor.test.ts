@@ -1,7 +1,7 @@
 // tui/test/editor.test.ts — pure editor-reducer units. Probe 17d7116: a paste arrives as one `input` with
 // embedded \n; submit = a lone key.return; `\`+Enter = continuation.
 import { describe, it, expect } from "vitest";
-import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, type EditorState, type KeyFlags } from "../src/editor.js";
+import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, inputMode, type EditorState, type KeyFlags } from "../src/editor.js";
 import type { CommandEntry } from "../src/commandComplete.js";
 
 const type = (s: EditorState, text: string): EditorState => applyKey(s, text, {}).state;
@@ -194,5 +194,18 @@ describe("editor / command palette", () => {
     s = press(s, { backspace: true });          // "" — leading slash gone
     expect(s.command).toBeNull();
     expect(text(s)).toBe("");
+  });
+});
+
+describe("inputMode", () => {
+  it("a leading ! = bash, # = memory, else normal", () => {
+    expect(inputMode(type(initialEditorState(), "!ls -a"))).toBe("bash");
+    expect(inputMode(type(initialEditorState(), "#remember this"))).toBe("memory");
+    expect(inputMode(type(initialEditorState(), "hello"))).toBe("normal");
+    expect(inputMode(initialEditorState())).toBe("normal");
+  });
+  it("an open / or @ popup suppresses the prefix mode", () => {
+    const cmd = type(initialEditorState(), "/");   // command popup open
+    expect(inputMode(cmd)).toBe("normal");
   });
 });

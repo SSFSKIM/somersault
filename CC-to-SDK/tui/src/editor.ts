@@ -22,6 +22,17 @@ export function initialEditorState(history: string[] = []): EditorState {
   return { lines: [""], cursor: { row: 0, col: 0 }, history: [...history], histIndex: null, stash: null, mention: null, command: null };
 }
 
+export type InputMode = "bash" | "memory" | "normal";
+/** The composer's current input mode, derived purely from the buffer: a leading `!` = bash, `#` = memory
+ *  (CC's prefix modes). The `/` and `@` popups own their own state, so they suppress this. */
+export function inputMode(s: EditorState): InputMode {
+  if (s.command || s.mention) return "normal";
+  const first = s.lines[0] ?? "";
+  if (first.startsWith("!")) return "bash";
+  if (first.startsWith("#")) return "memory";
+  return "normal";
+}
+
 const PASTE_MARKERS = /\x1b?\[20[01]~/g;                    // \x1b[200~ / \x1b[201~ and ESC-stripped [200~/[201~
 export function stripPasteMarkers(s: string): string { return s.replace(PASTE_MARKERS, ""); }
 const splitLines = (t: string): string[] => t.split(/\r\n|\r|\n/);

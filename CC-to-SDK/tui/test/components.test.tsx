@@ -250,6 +250,19 @@ describe("ChatComposer", () => {
     await waitFor(() => got.length === 1);
     expect(got[0]).toBe("a\nb");
   });
+  it("shows the bash-mode indicator on a leading '!' and the memory-mode on '#'", async () => {
+    const bash = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
+    await new Promise((r) => setTimeout(r, 20));
+    bash.stdin.write("!");
+    await waitFor(() => (bash.lastFrame() ?? "").includes("bash mode"));
+    expect(bash.lastFrame() ?? "").toContain("runs locally");
+
+    const mem = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
+    await new Promise((r) => setTimeout(r, 20));
+    mem.stdin.write("#");
+    await waitFor(() => (mem.lastFrame() ?? "").includes("memory"));
+    expect(mem.lastFrame() ?? "").toContain("CLAUDE.md");
+  });
   it("opens the @-popup listing files from the fixture cwd", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-comp-"));
     writeFileSync(join(dir, "alpha.ts"), "x");

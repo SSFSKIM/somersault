@@ -11,6 +11,9 @@ import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandCompl
 import { parseThinkArg } from "./thinkLevels.js";
 import type { ModelInfo } from "./ModelPicker.js";
 import { replayLines } from "./replay.js";
+import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bash.js";
+import { appendMemory as realAppendMemory } from "./memory.js";
+import { shortCwd } from "./banner.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel } from "cc-harness";
 import type { CompactOutcome, RawContextUsage } from "cc-harness";
 
@@ -40,7 +43,7 @@ export function useChat(
   makeSession: (resume?: string) => ChatSession,
   ui: UiBrokerHandle,
   opts: { initialMode?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialLines?: RenderLine[] } = {},
-  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]> } = {},
+  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   // Seed the scrollback with the welcome banner — unless we're launching straight into a resume (the
@@ -66,6 +69,9 @@ export function useChat(
   pendingRef.current = pending;
   const listSessions = deps.listSessions ?? (() => realListSessions({ cwd: opts.cwd, limit: 30 }) as Promise<SessionInfo[]>);
   const getSessionMessages = deps.getSessionMessages ?? ((id: string) => realGetSessionMessages(id, { cwd: opts.cwd }) as Promise<any[]>);
+  const runBash = deps.runBash ?? realRunBash;
+  const appendMemory = deps.appendMemory ?? realAppendMemory;
+  const cwd = opts.cwd ?? process.cwd();
   const ranInitial = useRef(false);
 
   // Unmount-only sentinel: mark disposed + settle any parked permission promise (never on a session swap).
@@ -197,8 +203,23 @@ export function useChat(
       .then(() => {}, (e) => { lt.fail((e as Error).message); })
       .finally(() => { if (disposed.current) return; setLines((l) => [...l, ...lt.finalize()]); setStreaming([]); setBusy(false); setSubagentActive(false); if (lt.model) setModel(lt.model); void refreshCtx(); });
   }
+  // ! bash mode — echo the command, run it locally in cwd, append its output (no model turn; CC's shell escape).
+  async function runBashMode(command: string) {
+    if (disposed.current || !command) return;
+    setLines((l) => [...l, { text: `! ${command}`, color: "magenta" }]);     // immediate echo
+    try { const r = await runBash(command, cwd); if (!disposed.current) append(formatBashOutput(r)); }
+    catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+  }
+  // # memory mode — append the note to the project CLAUDE.md (CC's `#` adds to a memory file).
+  function memoryMode(note: string) {
+    if (disposed.current || !note) return;
+    try { const path = appendMemory(note, cwd); append([{ text: `✓ noted in ${shortCwd(path)}`, dim: true }]); }
+    catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+  }
   function submit(prompt: string) {
     if (disposed.current || busy || !prompt.trim()) return;
+    if (prompt.startsWith("!")) { void runBashMode(prompt.slice(1).trim()); return; }
+    if (prompt.startsWith("#")) { void memoryMode(prompt.slice(1).trim()); return; }
     const cmd = parseCommand(prompt);
     if (cmd) {
       if (LOCAL_NAMES.has(cmd.name)) { void handleCommand(cmd); return; }      // local → engine switch

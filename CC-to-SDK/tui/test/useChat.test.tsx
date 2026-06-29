@@ -171,6 +171,26 @@ describe("useChat", () => {
     expect(submitted).toBe(0);     // no slash command ever reached session.submit
   });
 
+  it("! runs bash locally (injected) and # appends to memory — neither reaches the model", async () => {
+    let submitted = 0, bashCmd = "", memNote = "", memCwd = "";
+    const fake = fakeSession({ async submit() { submitted++; return { result: "x" }; } });
+    const deps = {
+      runBash: async (cmd: string) => { bashCmd = cmd; return { code: 0, output: "file1\nfile2" }; },
+      appendMemory: (note: string, cwd: string) => { memNote = note; memCwd = cwd; return "/proj/CLAUDE.md"; },
+    };
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, createUiBroker(), { cwd: "/proj" }, deps); api.run = c.submit; return <Text>{c.state.lines.map((l) => l.text).join("|")}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("!ls -a");   await waitFor(() => frame(lastFrame).includes("file1"));
+    expect(bashCmd).toBe("ls -a");
+    expect(frame(lastFrame)).toContain("! ls -a");
+    api.run!("#the parser lives in cli.ts");   await waitFor(() => frame(lastFrame).includes("noted in"));
+    expect(memNote).toBe("the parser lives in cli.ts");
+    expect(memCwd).toBe("/proj");
+    expect(submitted).toBe(0);   // neither ! nor # ever reached the model
+  });
+
   it("dispatches /cost (session.usage) and /status (local state) locally", async () => {
     let submitted = 0;
     const fake = fakeSession({ async submit() { submitted++; return { result: "x" }; } });
