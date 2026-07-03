@@ -92,6 +92,18 @@ test("reconcileJobLiveness flips a running job with a dead pid to interrupted", 
   assert.ok(reconciled.interruptedAt);
 });
 
+test("reconcileJobLiveness stamps a diagnostic errorMessage on interrupted jobs", () => {
+  const job = { status: "running", pid: 4194303 };
+  const reconciled = reconcileJobLiveness(job);
+  assert.match(reconciled.errorMessage, /no longer running but never reported completion/);
+});
+
+test("reconcileJobLiveness never overwrites an existing errorMessage", () => {
+  const job = { status: "running", pid: 4194303, errorMessage: "custom prior error" };
+  const reconciled = reconcileJobLiveness(job);
+  assert.equal(reconciled.errorMessage, "custom prior error");
+});
+
 test("reconcileJobLiveness leaves a running job with the current (own) pid alone", () => {
   const job = { status: "running", pid: process.pid };
   const reconciled = reconcileJobLiveness(job);

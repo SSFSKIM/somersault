@@ -17,13 +17,15 @@ const {
   cancelHandler,
   formatAuthStatus,
   pollSingleJobUntilTerminal,
-  pollStatusUntilIdle
+  pollStatusUntilIdle,
+  runForegroundWait
 } = await import("../plugins/claude/scripts/lib/companion.mjs");
 const { listJobs, readJobFile, resolveJobFile, upsertJob, getConfig } = await import(
   "../plugins/claude/scripts/lib/state.mjs"
 );
 const { buildStatusSnapshot } = await import("../plugins/claude/scripts/lib/job-control.mjs");
 const { spawnAppServer } = await import("../plugins/claude/scripts/lib/appserver-client.mjs");
+const { createJobRecord } = await import("../plugins/claude/scripts/lib/tracked-jobs.mjs");
 
 function callTool(companion, name, args) {
   const tool = companion.tools.find((t) => t.name === name);
@@ -93,6 +95,46 @@ test("rescue wait:true returns fake final text and persists completed job", asyn
   await c.dispose();
 });
 
+// Live-testing feedback: logFile was never actually wired up (createJobLogFile existed but no
+// caller invoked it), so every job showed logFile: null and status never had anything to point
+// at while debugging a stuck job.
+test("rescue wait:true persists a real, populated logFile (not null)", async () => {
+  const tmpRepo = makeTempDir("companion-logfile-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+  await callTool(c, "rescue", { prompt: "do it", wait: true, fresh: true });
+
+  const job = listJobs(tmpRepo).find((j) => j.jobClass === "task");
+  assert.ok(job.logFile, "job.logFile must be set");
+  assert.ok(fs.existsSync(job.logFile));
+  const contents = fs.readFileSync(job.logFile, "utf8");
+  assert.match(contents, /Starting Claude rescue task\./);
+  assert.match(contents, /Final output/);
+  await c.dispose();
+});
+
+// Live-testing feedback: phase never advanced past "starting" for the whole life of a job, so a
+// stuck job gave no clue whether it was still spawning the worker, starting the thread, or
+// waiting on the model.
+test("rescue phase advances through starting-thread -> running-turn while a job is in flight", async () => {
+  const tmpRepo = makeTempDir("companion-phase-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+  await callTool(c, "rescue", { prompt: "please HANG", fresh: true });
+
+  const start = Date.now();
+  let job;
+  while (Date.now() - start < 3000) {
+    job = listJobs(tmpRepo).find((j) => j.jobClass === "task");
+    if (job?.phase === "running-turn") break;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.equal(job.phase, "running-turn");
+  assert.equal(job.status, "running");
+  assert.ok(job.threadId);
+
+  await callTool(c, "cancel", {});
+  await c.dispose();
+});
+
 test("rescue default backgrounds and status sees it complete", async () => {
   const tmpRepo = makeTempDir("companion-bg-");
   const c = createCompanion({ cwd: tmpRepo, env: ENV });
@@ -121,6 +163,11 @@ test("worker missing -> setup guidance", async () => {
   const c = createCompanion({ cwd: tmpRepo, env: { PATH: "/none", CLAUDE_COMPANION_DATA: process.env.CLAUDE_COMPANION_DATA } });
   const text = await callTool(c, "rescue", { prompt: "x", wait: true });
   assert.match(text, /not available/);
+  // Live-testing feedback: the in-tool guidance only mentioned the npm-global-install path, not a
+  // concrete example for pointing CLAUDE_COMPANION_APPSERVER at an already-built copy — leaving a
+  // user with neither npm nor a global install stuck, even though that override was always meant
+  // to work (see README's own worked example).
+  assert.match(text, /CLAUDE_COMPANION_APPSERVER="node \/path\/to\/app-server\/dist\/bin\.js"/);
   await c.dispose();
 });
 
@@ -535,6 +582,48 @@ test("setup: review gate toggle round-trips within the same tool call's response
   assert.equal(getConfig(tmpRepo).stopReviewGate, false);
 
   await c.dispose();
+});
+
+// Live-testing feedback: a foreground `wait:true` call had no internal bound at all — it relied
+// entirely on Codex's own host-side MCP tool_timeout_sec to eventually kill it, silently, with no
+// diagnostic left behind (the job just sat at "starting" forever, then later got reconciled as
+// "interrupted" with nothing explaining why). runForegroundWait gives the plugin its own, shorter,
+// diagnosable bail-out that fires well before that host-level cutoff.
+test("runForegroundWait times out and lets the runner keep going in the background", async () => {
+  const cwd = makeTempDir("companion-foreground-wait-");
+  const job = createJobRecord({ id: "task-fgwait", workspaceRoot: cwd });
+  let resolveRunner;
+  const runner = () =>
+    new Promise((resolve) => {
+      resolveRunner = () => resolve({ exitStatus: 0, payload: null, rendered: "done late", summary: "done late" });
+    });
+
+  const result = await runForegroundWait(cwd, job, runner, { timeoutMs: 30 });
+  assert.equal(result.timedOut, true);
+  assert.equal(result.execution, null);
+
+  // The timeout-branch note is a mid-flight patch (like the existing threadId/phase patches),
+  // so — matching that established convention — it lands in the aggregate state, not the
+  // per-job file (which only the terminal writeJobFile calls in runTrackedJob update).
+  const afterTimeout = listJobs(cwd).find((j) => j.id === "task-fgwait");
+  assert.equal(afterTimeout.status, "running", "the runner must not be cancelled by the timeout");
+  assert.match(afterTimeout.note, /foreground wait exceeded/);
+
+  // Let the runner actually finish — its own completion write must still land normally afterward.
+  resolveRunner();
+  await new Promise((r) => setTimeout(r, 50));
+  const afterCompletion = readJobFile(resolveJobFile(cwd, "task-fgwait"));
+  assert.equal(afterCompletion.status, "completed");
+});
+
+test("runForegroundWait returns the execution directly when the runner finishes in time", async () => {
+  const cwd = makeTempDir("companion-foreground-wait-fast-");
+  const job = createJobRecord({ id: "task-fgwait-fast", workspaceRoot: cwd });
+  const runner = async () => ({ exitStatus: 0, payload: null, rendered: "quick", summary: "quick" });
+
+  const result = await runForegroundWait(cwd, job, runner, { timeoutMs: 5000 });
+  assert.equal(result.timedOut, false);
+  assert.equal(result.execution.rendered, "quick");
 });
 
 test("formatAuthStatus maps accountRead()'s method/authenticated states to the right guidance text", () => {

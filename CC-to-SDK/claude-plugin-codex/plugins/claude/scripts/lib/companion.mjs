@@ -10,7 +10,7 @@ import { collectReviewContext, resolveReviewTarget } from "./git.mjs";
 import { interpolateTemplate, loadPromptTemplate } from "./prompts.mjs";
 import { parseStructuredOutput, renderReviewResult, renderStatusReport, renderStoredJobResult } from "./render.mjs";
 import { generateJobId, getConfig, listJobs, resolveJobLogFile, setConfig, upsertJob, writeJobFile } from "./state.mjs";
-import { appendLogLine, createJobRecord, nowIso, runTrackedJob } from "./tracked-jobs.mjs";
+import { appendLogLine, createJobLogFile, createJobRecord, nowIso, runTrackedJob } from "./tracked-jobs.mjs";
 import {
   buildSingleJobSnapshot,
   buildStatusSnapshot,
@@ -42,7 +42,39 @@ const MAX_CONCURRENT_BACKGROUND = 3;
 
 const WORKER_MISSING_TEXT = `Claude worker is not available. Install it with:
   npm install -g /path/to/CC-to-SDK/app-server
-or point CLAUDE_COMPANION_APPSERVER at a cc-codex-appserver binary, then call the setup tool.`;
+or point at an already-built copy without installing, e.g.:
+  CLAUDE_COMPANION_APPSERVER="node /path/to/app-server/dist/bin.js"
+then call the setup tool.`;
+
+// Foreground `wait:true` calls never hang forever: past this ceiling we return early and tell the
+// caller to poll instead, while the run itself keeps going in the background (runTrackedJob still
+// persists its own completion/failure — nothing is cancelled). Kept safely under .mcp.json's
+// tool_timeout_sec (1200s) so this always wins the race and reports something useful, instead of
+// Codex's host silently killing the call with no diagnostic left behind.
+const FOREGROUND_WAIT_TIMEOUT_MS = 15 * 60 * 1000;
+
+// Exported so tests can drive the bail-out path directly with a short timeoutMs instead of
+// waiting out FOREGROUND_WAIT_TIMEOUT_MS for real.
+export async function runForegroundWait(cwd, job, runner, { timeoutMs = FOREGROUND_WAIT_TIMEOUT_MS } = {}) {
+  const settle = runTrackedJob(job, runner);
+  const timedOut = Symbol("foreground-wait-timeout");
+  let timer;
+  // A bare setTimeout's handle keeps the event loop (and, in a test process, the whole run) alive
+  // for the full timeoutMs even after `settle` already won the race — clearTimeout below is not
+  // optional cleanup, it's what lets the process exit once the real work is done.
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(timedOut), timeoutMs);
+  });
+  const winner = await Promise.race([settle, timeout]);
+  clearTimeout(timer);
+  if (winner !== timedOut) {
+    return { timedOut: false, execution: winner };
+  }
+  // Not cancelling `settle` — it keeps running and will persist its own completion/failure.
+  settle.catch(() => {});
+  upsertJob(cwd, { id: job.id, note: `foreground wait exceeded ${Math.round(timeoutMs / 60000)}m; continuing in background` });
+  return { timedOut: true, execution: null };
+}
 
 export function normalizeModel(m) {
   if (Object.prototype.hasOwnProperty.call(MODEL_ALIASES, m)) return MODEL_ALIASES[m];
@@ -102,12 +134,13 @@ export async function ensureClient(companion) {
 }
 
 async function runRescueTurn({ client, cwd, jobId, model, effort, write, prompt, resumeThreadId }) {
+  upsertJob(cwd, { id: jobId, phase: "starting-thread" });
   const { threadId } = resumeThreadId
     ? await client.threadResume({ threadId: resumeThreadId, cwd, model, effort, write })
     : await client.threadStart({ cwd, model, effort, write });
   // Persisted as soon as it's known (not just at completion) so the cancel tool has a live
   // threadId to interrupt while the turn is still in flight.
-  upsertJob(cwd, { id: jobId, threadId });
+  upsertJob(cwd, { id: jobId, threadId, phase: "running-turn" });
   const turn = await client.runTurn({ threadId, prompt });
   const rendered = turn.finalText || (turn.commentary ?? []).join("\n");
   return {
@@ -138,6 +171,7 @@ function buildReviewPrompt(reviewKind, context, focusText) {
 }
 
 async function runReviewTurn({ client, cwd, jobId, target, reviewKind, focusText }) {
+  upsertJob(cwd, { id: jobId, phase: "starting-thread" });
   const context = collectReviewContext(cwd, target);
   const prompt = buildReviewPrompt(reviewKind, context, focusText);
   const { threadId } = await client.threadStart({
@@ -146,7 +180,7 @@ async function runReviewTurn({ client, cwd, jobId, target, reviewKind, focusText
     outputSchema: readJsonFile(REVIEW_SCHEMA_PATH)
   });
   // See runRescueTurn: persisted immediately so cancel can target this turn while it's in flight.
-  upsertJob(cwd, { id: jobId, threadId });
+  upsertJob(cwd, { id: jobId, threadId, phase: "running-turn" });
   const turn = await client.runTurn({ threadId, prompt });
   const parsed = parseStructuredOutput(turn.finalText, { failureMessage: "Claude did not return a final message." });
   const rendered = renderReviewResult(parsed, { reviewLabel: reviewKind.reviewLabel, targetLabel: context.target.label });
@@ -227,6 +261,7 @@ async function rescueHandler(companion, args = {}) {
   try {
     const client = await ensureClient(companion);
     const jobId = generateJobId("task");
+    const logFile = createJobLogFile(cwd, jobId, "Claude rescue task");
     const job = createJobRecord({
       id: jobId,
       workspaceRoot: cwd,
@@ -234,13 +269,17 @@ async function rescueHandler(companion, args = {}) {
       kind: "task",
       prompt,
       model: model ?? null,
-      effort: effort ?? null
+      effort: effort ?? null,
+      logFile
     });
     const resumeThreadId = resume ? candidate?.threadId ?? null : null;
     const runner = () => runRescueTurn({ client, cwd, jobId, model, effort, write, prompt, resumeThreadId });
 
     if (wait) {
-      const execution = await runTrackedJob(job, runner);
+      const { timedOut, execution } = await runForegroundWait(cwd, job, runner);
+      if (timedOut) {
+        return `Still running in the background as job ${jobId} after ${Math.round(FOREGROUND_WAIT_TIMEOUT_MS / 60000)}m — poll with the status tool or fetch output with the result tool once it finishes.`;
+      }
       return `${execution.rendered}\n\nContinue in this thread later with rescue {resume:true}. (job ${jobId})`;
     }
 
@@ -265,18 +304,23 @@ async function reviewToolHandler(companion, kindKey, args = {}) {
   try {
     const client = await ensureClient(companion);
     const jobId = generateJobId(reviewKind.jobPrefix);
+    const logFile = createJobLogFile(cwd, jobId, `Claude ${reviewKind.kind}`);
     const job = createJobRecord({
       id: jobId,
       workspaceRoot: cwd,
       jobClass: "review",
       kind: reviewKind.kind,
       kindLabel: reviewKind.kind,
-      prompt: focusText || target.label
+      prompt: focusText || target.label,
+      logFile
     });
     const runner = () => runReviewTurn({ client, cwd, jobId, target, reviewKind, focusText });
 
     if (wait) {
-      const execution = await runTrackedJob(job, runner);
+      const { timedOut, execution } = await runForegroundWait(cwd, job, runner);
+      if (timedOut) {
+        return `Still running in the background as job ${jobId} after ${Math.round(FOREGROUND_WAIT_TIMEOUT_MS / 60000)}m — poll with the status tool or fetch output with the result tool once it finishes.`;
+      }
       return execution.rendered;
     }
 
@@ -472,7 +516,12 @@ export async function cancelHandler(companion, args = {}) {
     // Matches startBackground/drainQueue's existing defensive pattern: attach a no-op catch so a
     // rejection that arrives after we've already raced past it never becomes an unhandled rejection.
     settle.catch(() => {});
-    await Promise.race([settle, sleep(CANCEL_SETTLE_TIMEOUT_MS)]);
+    // clearTimeout matters even for a short ceiling like this one: an uncleared handle keeps a
+    // short-lived process (e.g. a test run) alive for the rest of CANCEL_SETTLE_TIMEOUT_MS even
+    // after settle already won the race.
+    let timer;
+    await Promise.race([settle, new Promise((resolve) => { timer = setTimeout(resolve, CANCEL_SETTLE_TIMEOUT_MS); })]);
+    clearTimeout(timer);
   }
 
   markJobCancelled(workspaceRoot, job);
@@ -509,16 +558,19 @@ async function setupHandler(companion, args = {}) {
     lines.push(`Worker: found (${[resolved.command, ...resolved.args].join(" ")}).`);
 
     let client = null;
+    let handshakeTimer;
     try {
       client = await Promise.race([
         ensureClient(companion),
         new Promise((_, reject) => {
-          setTimeout(() => reject(new Error(`handshake timed out after ${WORKER_HANDSHAKE_TIMEOUT_MS}ms`)), WORKER_HANDSHAKE_TIMEOUT_MS);
+          handshakeTimer = setTimeout(() => reject(new Error(`handshake timed out after ${WORKER_HANDSHAKE_TIMEOUT_MS}ms`)), WORKER_HANDSHAKE_TIMEOUT_MS);
         })
       ]);
       lines.push("Handshake: ok.");
     } catch (error) {
       lines.push(`Handshake: failed (${error.message}).`);
+    } finally {
+      clearTimeout(handshakeTimer);
     }
 
     if (client) {

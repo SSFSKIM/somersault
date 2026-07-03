@@ -94,6 +94,24 @@ on `process.cwd()` once `"cwd": "."` (or any relative `cwd`) is set.
 - **Tool naming as seen by the model**: `mcp__claude_companionsetup` (hyphen in the server name
   becomes `_`; no separator renders between the server-name segment and the tool name in the
   collapsed display — cosmetic, not something this plugin controls).
+- **PATH is passed through verbatim, not guaranteed to contain `node`.** §1's env dump shows `PATH`
+  is in the base whitelist, so a bare `"command": "node"` resolves against whatever PATH the
+  *process that launched Codex* had — not necessarily an interactive dev shell's PATH. On this
+  dev machine (Codex launched from an interactive zsh with nvm/Homebrew set up) that PATH included
+  `node`, so the original `.mcp.json` worked here. **Confirmed failing live in a different launch
+  context** (2026-07-04, real user report): with Codex launched such that its PATH lacked `node`
+  entirely (e.g. `/usr/bin:/bin` only — the classic macOS GUI-launched-app PATH, missing
+  Homebrew/nvm dirs), the MCP server never spawned, `claude-companion`'s tools never appeared in
+  tool discovery, and there was **no diagnostic anywhere the model or user could see** — the only
+  way to notice was to dig through Codex's own debug logs. Codex's plugin/MCP host code
+  (`codex-rs/core-plugins`, `codex-rs/codex-mcp`) exposes **no bundled-Node path or env var** a
+  plugin could rely on instead (grepped for `bundled_node`/`node_path`/`NODE_PATH` — no matches).
+  **Fix applied**: `.mcp.json`'s `command` is now `sh ./scripts/launch-mcp.sh`, a small POSIX
+  wrapper that tries `PATH` first, then a short list of common absolute install locations
+  (`/opt/homebrew/bin/node`, `/usr/local/bin/node`, `/usr/bin/node`, `~/.nvm/versions/node/*/bin`),
+  and only then fails — loudly, on stderr — instead of silently. This does not fully solve the
+  underlying host limitation (there is still no first-class way for a plugin to discover a
+  guaranteed-present Node runtime), but it closes the specific gap a real user hit.
 
 ## 3. Hook process — cwd, env, plugin-root variable
 

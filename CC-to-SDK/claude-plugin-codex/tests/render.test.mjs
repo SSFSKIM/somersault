@@ -142,3 +142,34 @@ test("renderStatusReport renders a Claude-branded status page without crashing",
   assert.match(output, /Latest finished:/);
   assert.match(output, /fresh Claude adversarial review/);
 });
+
+test("renderStatusReport shows the log path for an interrupted job, not just failed", () => {
+  const output = renderStatusReport({
+    config: { stopReviewGate: false },
+    running: [],
+    latestFinished: {
+      id: "task-9",
+      status: "interrupted",
+      kindLabel: "rescue",
+      logFile: "/tmp/task-9.log",
+      errorMessage: "The worker process is no longer running but never reported completion."
+    },
+    recent: [],
+    needsReview: false
+  });
+
+  assert.match(output, /Log: \/tmp\/task-9\.log/);
+  assert.match(output, /no longer running but never reported completion/);
+});
+
+test("renderStatusReport does not show a log path for a plain completed job", () => {
+  const output = renderStatusReport({
+    config: { stopReviewGate: false },
+    running: [],
+    latestFinished: { id: "task-10", status: "completed", kindLabel: "rescue", logFile: "/tmp/task-10.log" },
+    recent: [],
+    needsReview: false
+  });
+
+  assert.doesNotMatch(output, /Log: \/tmp\/task-10\.log/);
+});

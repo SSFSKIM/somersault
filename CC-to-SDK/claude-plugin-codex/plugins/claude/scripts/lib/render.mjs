@@ -186,6 +186,9 @@ function pushJobDetails(lines, job, options = {}) {
   if (job.logFile && options.showLog) {
     lines.push(`  Log: ${job.logFile}`);
   }
+  if (job.errorMessage && (job.status === "failed" || job.status === "interrupted")) {
+    lines.push(`  Note: ${job.errorMessage}`);
+  }
   if ((job.status === "queued" || job.status === "running") && options.showCancelHint) {
     lines.push(`  Cancel: the cancel tool (job_id: ${job.id})`);
   }
@@ -375,7 +378,7 @@ export function renderStatusReport(report) {
     lines.push("Latest finished:");
     pushJobDetails(lines, report.latestFinished, {
       showDuration: true,
-      showLog: report.latestFinished.status === "failed"
+      showLog: ["failed", "interrupted"].includes(report.latestFinished.status)
     });
     lines.push("");
   }
@@ -385,7 +388,7 @@ export function renderStatusReport(report) {
     for (const job of report.recent) {
       pushJobDetails(lines, job, {
         showDuration: true,
-        showLog: job.status === "failed"
+        showLog: ["failed", "interrupted"].includes(job.status)
       });
     }
     lines.push("");

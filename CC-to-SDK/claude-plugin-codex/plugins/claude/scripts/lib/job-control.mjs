@@ -21,7 +21,14 @@ export function reconcileJobLiveness(job) {
     process.kill(job.pid, 0);
     return job;
   } catch {
-    return { ...job, status: "interrupted", interruptedAt: Date.now() };
+    return {
+      ...job,
+      status: "interrupted",
+      interruptedAt: Date.now(),
+      errorMessage:
+        job.errorMessage ??
+        "The worker process is no longer running but never reported completion — likely killed externally (e.g. a host tool-call timeout) or crashed. Check the job's log file if one was recorded."
+    };
   }
 }
 
