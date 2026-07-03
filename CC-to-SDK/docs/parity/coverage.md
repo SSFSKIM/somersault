@@ -285,6 +285,12 @@ loop. The required surface was derived from the consumer's own source (`app_serv
   `worker_policy.worker_env`. The stock Director already brokers `item/tool/call` (linear_graphql via
   `authority.py`, report_outcome via its sink) — no companion needed. Spec/plan
   `2026-06-21-claude-codex-appserver`.
+- **`claude-plugin-codex` — a second wire consumer (2026-07-03)**: `CC-to-SDK/claude-plugin-codex/` is a
+  Codex plugin (a Claude-flavored mirror of `codex-plugin-cc`) that drives `cc-codex-appserver` from
+  *inside Codex itself* — the Director is no longer the only client of the v0.2 protocol. It required
+  the v0.2 surface above (`thread/resume`, `turn/interrupt`, `account/read`, `thread/name/set`,
+  `config/read`) plus `effort`/`outputSchema` passthrough on `thread/start`. Spec/plan
+  `2026-07-03-claude-plugin-codex-design`.
 
 ---
 

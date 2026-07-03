@@ -220,7 +220,7 @@ killed the session's running jobs.
 | Method | Backing (all pre-verified live) | Notes |
 |---|---|---|
 | `turn/interrupt` | `Session.interrupt()` (`harness/src/session/session.ts:108`) | Reply `{}`; translator emits `turn/failed` `{reason:"interrupted"}` for the captured turn. |
-| `thread/resume` | SDK session-store resume (probe: session-store suite) | Registry maps threadId→resumed Session; same posture/sandbox params as `thread/start`. |
+| `thread/resume` | SDK session-store resume (probe: session-store suite) | Registry maps threadId→resumed Session; same posture/sandbox params as `thread/start`. Thread ids are globally-unique `thr_<8-hex>` (Task 3's `registry.ts` `allocId()`), persisted in a file-based **sidecar** (`app-server/src/threads.ts`: `recordThread`/`lookupThread`, atomic writes, pruned to the newest 200) mapping threadId → SDK `sessionId` + `cwd`. `thread/resume` looks the id up here, rebuilds thread config with `resume: sessionId`, and replies `-32602 INVALID_PARAMS` on an unknown id — this is what lets a resume survive an appserver process restart, not an in-memory-only registry. |
 | `account/read` | `accountInfo()` (probe 28) | Map to `{ account: { type: "chatgpt"-analog … } }` shape the client's classifier reads; exact field mapping written against the plugin client's `codex.mjs:817-958` expectations. |
 | `thread/name/set` | no-op | Accept + `{}` (the original tolerates "unknown method" here anyway). |
 | `config/read` | static stub | `{ config: { model: <harness default> } }`, enough for the client's provider probe not to error. |
@@ -229,6 +229,21 @@ killed the session's running jobs.
 **Stretch (not blocking ship):** translator emits `commandExecution`/`fileChange` item
 notifications derived from SDK `tool_use` blocks (Bash / Edit-Write), so `status` progress previews
 show real activity. Without it, previews show agentMessage text only — functional, sparser.
+
+**`outputSchema` rides `thread/start` directly** — it is a field on `ThreadStartParams` (not a
+separate call/method, and not on `turn/start`): `thread/start {..., outputSchema}` is consumed
+inside `buildCfg`, which sets the SDK's `outputFormat: {type:"json_schema", schema: outputSchema}`
+(Task 8). §6's `review`/`adversarial_review` flows already pass the review schema exactly this way.
+
+**Probe 36 verdict (structured output, response side):** `outputFormat` is genuinely wired into the
+SDK turn — `Session.submit()` resolves an additive `structuredOutput` field from the SDK's own
+`structured_output` result — but that value is **not yet surfaced on the appserver's JSON-RPC
+wire**: `runTurn` still returns only `{result}` to the client. This is a deliberate, already-flagged
+scope boundary (Task 8's own report, revisited and left open by Task 13), not a blocker here: this
+project's `review`/`adversarial_review` tools don't depend on it — they parse the model's raw final
+text as JSON themselves (`parseStructuredOutput`) and fall back to raw-output rendering on a parse
+failure, exactly as §6/§9 already describe. See Task 8's and Task 13's reports for the exact
+wire-shape gap if a future task wants to close it.
 
 Existing consumers are unaffected: the Director never calls the new methods, and no existing
 response shape changes. New unit tests per method; the contract fake (`CC_APPSERVER_FAKE=1`) learns
@@ -250,9 +265,14 @@ handshake (the binary tolerates Codex-style argv). Install guidance mirrors
 
 **Auth** is entirely delegated (the appserver has no auth code): the SDK-spawned `claude` CLI uses
 the user's stored Claude Code login; `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` in the
-environment also work (API key shadows the token). The MCP server passes its inherited env through
-to the child (V2 verifies Codex passes the user env to MCP servers). `setup` surfaces the state via
-`account/read`. FAQ story mirrors the original: *"uses your local Claude Code authentication."*
+environment also work (API key shadows the token). **This requires an explicit `env_vars`
+whitelist, not just env inheritance** (V2 corrects the original assumption of a passthrough): Codex
+only forwards a small fixed base set to an MCP child plus whatever keys the server's own
+`env_vars` array in `.mcp.json` names, so `plugins/claude/.mcp.json` whitelists exactly
+`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_COMPANION_APPSERVER`,
+`CLAUDE_COMPANION_DATA` — a var set on the host shell but missing from this list never reaches
+`claude-companion` at all. `setup` surfaces the state via `account/read`. FAQ story mirrors the
+original: *"uses your local Claude Code authentication."*
 
 ---
 
@@ -280,13 +300,48 @@ installed `codex` before the dependent piece is built:
   (decision JSON) like CC's? Source: `codex-rs/hooks/schema/generated/*.schema.json` + a live hook.
   If blocking is unsupported → gate degrades to a warning injection (`prompt`-type handler or
   logged note) and §6's gate section is amended.
+  **Answer (confirmed):** yes — a clean exit 0 with `{"decision":"block","reason":"..."}` works
+  exactly like CC's: the reason feeds back to the model and the turn continues rather than ending.
+  Confirmed at the source/contract level (`codex-rs/hooks/src/events/stop.rs`, e.g. the
+  `block_decision_with_reason_sets_continuation_prompt` test + the generated schema's `reason`
+  requirement) and by Task 15's shipped `stop-review-gate-hook.mjs`, whose `block(reason)` branch
+  implements exactly this shape; the live interactive session in `docs/host-facts.md` §8 exercised
+  the same hook end-to-end on real turns (both the compliant `ALLOW:` and the fail-open
+  "malformed gate output" paths fired for real) confirming the hook process/trust/parsing pipeline
+  works, though that particular run didn't happen to land a genuine `BLOCK:` verdict. No degrade
+  needed — §6's gate section stands as designed.
 - **V2 — MCP-server spawn environment:** unsandboxed network, env inheritance, spawn cwd.
+  **Answer (confirmed, `docs/host-facts.md` §1–2):** MCP servers run **unsandboxed** (outside
+  Codex's exec seatbelt, network open) and spawn with **cwd = the plugin's installed cache root**
+  (`~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/`), not the session workspace — but only
+  because `.mcp.json` declares `"cwd": "."` explicitly; without it Codex resolves relative `args`
+  paths against the session workspace instead (the crash this repo's `.mcp.json` had to route
+  around). Env is **not** a raw passthrough: the child gets a small fixed base set
+  (`HOME`/`LANG`/`LOGNAME`/`PATH`/`SHELL`/`TERM`/`TMPDIR`/`USER`/`__CF_USER_TEXT_ENCODING`) plus only
+  the keys the server's own `env_vars` array whitelists **and** that are actually set on the host
+  shell (absent-if-unset, never present-as-empty).
 - **V3 — Workspace cwd delivery:** does Codex pass workspace roots to MCP servers (initialize
   params / tool-call context)? Until proven, tools carry an explicit `cwd` param.
+  **Answer (confirmed, `docs/host-facts.md` §1, §3):** no — Codex does not pass workspace roots to
+  MCP servers (per V2 their cwd is the plugin cache root, not the workspace), so every tool keeping
+  an explicit `cwd` param (as designed) is load-bearing, not defensive. Task 16 flagged omitting it
+  as the #1 usage footgun (the "cwd footgun"): any tool that mutates/reads workspace-scoped state
+  silently targets the wrong directory if `cwd` isn't passed (see `setup`'s workspace-cwd footgun in
+  `docs/host-facts.md` §8).
 - **V4 — MCP tool timeout:** default + per-server config (`tool_timeout_sec`); informs the
   background-first defaults and README guidance.
+  **Answer (confirmed, `docs/host-facts.md` §2 + this project's shipped `.mcp.json`):** default is
+  300s; `plugins/claude/.mcp.json` raises it to `"tool_timeout_sec": 1200` (20 minutes) for the
+  `claude-companion` server. The background-first design (§5) keeps most long-running calls off this
+  ceiling entirely — 1200s is headroom for the `wait:true` foreground path, not the common case.
 - **V5 — Install loop:** local marketplace add → plugin add → skills visible + MCP tools callable
   + hook registered, on the user's installed codex.
+  **Answer (confirmed working, `docs/host-facts.md` §7):** `codex plugin marketplace add <path>` →
+  `codex plugin add claude@cc-claude` installs the plugin (skills, MCP tools, hook) as designed; the
+  dev loop after editing source is a plain re-run of `codex plugin add claude@cc-claude` — it
+  overwrites the cache copy in place, **no version bump required** (confirmed via
+  `diff -r plugins/claude ~/.codex/plugins/cache/cc-claude/claude/0.1.0` showing zero drift after a
+  re-add).
 
 ---
 
