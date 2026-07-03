@@ -115,7 +115,7 @@ async function handshake(companion) {
 }
 
 live("claude-plugin-codex live e2e (real cc-codex-appserver)", () => {
-  it("rescue(wait) round-trips a real Claude turn: exact pong reply", async () => {
+  it("rescue(wait) round-trips a real Claude turn: exact pong reply", { timeout: 120_000 }, async () => {
     const cwd = makeTempDir("ccd-live-rescue-");
     const companion = spawnCompanion(cwd);
     try {
@@ -132,9 +132,9 @@ live("claude-plugin-codex live e2e (real cc-codex-appserver)", () => {
     } finally {
       await companion.close();
     }
-  }, { timeout: 120_000 });
+  });
 
-  it("adversarial_review(wait) returns real output for a seeded buggy uncommitted file", async () => {
+  it("adversarial_review(wait) returns real output for a seeded buggy uncommitted file", { timeout: 180_000 }, async () => {
     const cwd = makeTempDir("ccd-live-advrev-");
     initGitRepo(cwd);
     // One seeded, obviously-buggy, uncommitted file (untracked -> working tree is dirty -> the
@@ -169,5 +169,5 @@ live("claude-plugin-codex live e2e (real cc-codex-appserver)", () => {
     } finally {
       await companion.close();
     }
-  }, { timeout: 180_000 });
+  });
 });
