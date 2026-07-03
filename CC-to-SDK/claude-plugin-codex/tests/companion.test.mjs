@@ -1,6 +1,7 @@
 import test from "node:test"; import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path"; import { fileURLToPath } from "node:url";
-import { makeTempDir } from "./helpers.mjs";
+import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
 
 process.env.CLAUDE_COMPANION_DATA = makeTempDir("ccd-companion-");
 
@@ -10,7 +11,7 @@ const ENV = { ...process.env, CC_APPSERVER_FAKE: "1", CLAUDE_COMPANION_APPSERVER
 const { createCompanion, ensureClient, normalizeModel, MODEL_ALIASES, VALID_EFFORTS } = await import(
   "../plugins/claude/scripts/lib/companion.mjs"
 );
-const { listJobs } = await import("../plugins/claude/scripts/lib/state.mjs");
+const { listJobs, readJobFile, resolveJobFile } = await import("../plugins/claude/scripts/lib/state.mjs");
 const { buildStatusSnapshot } = await import("../plugins/claude/scripts/lib/job-control.mjs");
 const { spawnAppServer } = await import("../plugins/claude/scripts/lib/appserver-client.mjs");
 
@@ -28,6 +29,18 @@ async function waitForCompleted(cwd, timeoutMs = 3000) {
     await new Promise((r) => setTimeout(r, 20));
   }
   throw new Error("timeout waiting for background job to complete");
+}
+
+// Fresh repo, one commit, then a dirty (uncommitted) tweak — resolveReviewTarget resolves this
+// to working-tree mode.
+function makeDirtyRepo(prefix) {
+  const cwd = makeTempDir(prefix);
+  initGitRepo(cwd);
+  fs.writeFileSync(path.join(cwd, "app.js"), "console.log('v1');\n");
+  run("git", ["add", "app.js"], { cwd });
+  run("git", ["commit", "-m", "init"], { cwd });
+  fs.writeFileSync(path.join(cwd, "app.js"), "console.log('v2');\n");
+  return cwd;
 }
 
 async function waitForAllTerminal(cwd, count, timeoutMs = 5000) {
@@ -133,5 +146,98 @@ test("drainQueue clears the stale queued 'note' before a job runs (review findin
       `job ${job.id} leaked the stale queue note: ${job.note}`
     );
   }
+  await c.dispose();
+});
+
+// Task 13: review + adversarial_review. The fake worker always returns the plain string "final
+// text" (see app-server/src/_fake.ts), never JSON — so end-to-end these always exercise the
+// raw-fallback branch of renderReviewResult, not the schema-valid branch (that's unit-tested
+// directly against render.mjs). This is the expected, documented behavior for this appserver: it
+// doesn't yet surface the SDK's structured_output field.
+test("review {wait:true} on a dirty temp repo returns rendered output and persists a review- job (raw-fallback path)", async () => {
+  const tmpRepo = makeDirtyRepo("companion-review-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+
+  const text = await callTool(c, "review", { wait: true });
+  assert.match(text, /^# Claude Review/);
+  assert.match(text, /Claude did not return valid structured JSON\./);
+  assert.match(text, /final text/);
+
+  const jobs = listJobs(tmpRepo);
+  assert.equal(jobs.length, 1);
+  assert.ok(jobs[0].id.startsWith("review-"), `expected review- prefix, got ${jobs[0].id}`);
+  assert.equal(jobs[0].status, "completed");
+  assert.equal(jobs[0].jobClass, "review");
+  await c.dispose();
+});
+
+test("review defaults to background (like rescue) and status sees it complete", async () => {
+  const tmpRepo = makeDirtyRepo("companion-review-bg-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+
+  const text = await callTool(c, "review", {});
+  assert.match(text, /background job/);
+  const done = await waitForCompleted(tmpRepo);
+  assert.equal(done.status, "completed");
+  assert.ok(done.id.startsWith("review-"));
+  await c.dispose();
+});
+
+// The fake worker always returns the unparseable string "final text" (never JSON), so this always
+// hits renderReviewResult's raw-fallback branch — which (matching the blueprint verbatim) omits
+// the "Target:" line entirely; that line only appears in the validation-error/success branches.
+// So the branch-mode target actually reaching collectReviewContext/runReviewTurn is asserted
+// against the persisted job payload instead of the rendered text.
+test("review honors an explicit base ref (branch-mode target reaches collectReviewContext)", async () => {
+  const tmpRepo = makeTempDir("companion-review-branch-");
+  initGitRepo(tmpRepo);
+  fs.writeFileSync(path.join(tmpRepo, "app.js"), "console.log('v1');\n");
+  run("git", ["add", "app.js"], { cwd: tmpRepo });
+  run("git", ["commit", "-m", "init"], { cwd: tmpRepo });
+  run("git", ["checkout", "-b", "feature/test"], { cwd: tmpRepo });
+  fs.writeFileSync(path.join(tmpRepo, "app.js"), "console.log('v2');\n");
+  run("git", ["add", "app.js"], { cwd: tmpRepo });
+  run("git", ["commit", "-m", "change"], { cwd: tmpRepo });
+
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+  const text = await callTool(c, "review", { wait: true, base: "main" });
+  assert.match(text, /^# Claude Review/);
+
+  const jobs = listJobs(tmpRepo);
+  assert.equal(jobs.length, 1);
+  const stored = readJobFile(resolveJobFile(tmpRepo, jobs[0].id));
+  assert.equal(stored.result.target.mode, "branch");
+  assert.equal(stored.result.target.baseRef, "main");
+  await c.dispose();
+});
+
+test("adversarial_review {wait:true, focus} on a dirty temp repo persists an advrev- job (raw-fallback path)", async () => {
+  const tmpRepo = makeDirtyRepo("companion-advrev-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+
+  const text = await callTool(c, "adversarial_review", { wait: true, focus: "auth bypass" });
+  assert.match(text, /^# Claude Adversarial Review/);
+  assert.match(text, /Claude did not return valid structured JSON\./);
+
+  const jobs = listJobs(tmpRepo);
+  assert.equal(jobs.length, 1);
+  assert.ok(jobs[0].id.startsWith("advrev-"), `expected advrev- prefix, got ${jobs[0].id}`);
+  assert.equal(jobs[0].kind, "adversarial-review");
+  assert.equal(jobs[0].jobClass, "review");
+  await c.dispose();
+});
+
+test("review on a non-git cwd surfaces the git error instead of crashing", async () => {
+  const tmpRepo = makeTempDir("companion-review-nogit-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+  await assert.rejects(() => callTool(c, "review", { wait: true }), /Git repository/);
+  await c.dispose();
+});
+
+test("review: worker missing -> setup guidance (shares rescue's error-handling path)", async () => {
+  const tmpRepo = makeDirtyRepo("companion-review-missing-");
+  const c = createCompanion({ cwd: tmpRepo, env: { PATH: "/none", CLAUDE_COMPANION_DATA: process.env.CLAUDE_COMPANION_DATA } });
+  const text = await callTool(c, "review", { wait: true });
+  assert.match(text, /not available/);
   await c.dispose();
 });

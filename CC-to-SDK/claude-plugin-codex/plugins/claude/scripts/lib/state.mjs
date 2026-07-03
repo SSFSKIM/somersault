@@ -3,6 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { resolveWorkspaceRoot } from "./workspace.mjs";
+
 const STATE_VERSION = 1;
 const COMPANION_DATA_ENV = "CLAUDE_COMPANION_DATA";
 const STATE_FILE_NAME = "state.json";
@@ -37,10 +39,11 @@ function defaultState() {
 }
 
 export function resolveStateDir(cwd) {
-  // NOTE (port delta): the blueprint resolves a git repo root here via workspace.mjs/git.mjs.
-  // Those are ported in a later task; until then `cwd` IS the workspace root (the MCP server's
-  // child cwd is always the workspace cwd, so no git-root detection is needed for this scoping).
-  const workspaceRoot = cwd;
+  // Resolve the git repo root (workspace.mjs/git.mjs, ported in Task 13) so all state for a repo
+  // is shared regardless of which subdirectory a `cwd` param points at. Falls back to the raw
+  // `cwd` when it isn't inside a git repo (e.g. plain temp dirs in tests) — ensureGitRepository
+  // throws there and resolveWorkspaceRoot's catch returns `cwd` unchanged.
+  const workspaceRoot = resolveWorkspaceRoot(cwd);
   let canonicalWorkspaceRoot = workspaceRoot;
   try {
     canonicalWorkspaceRoot = fs.realpathSync.native(workspaceRoot);
