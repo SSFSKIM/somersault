@@ -1,0 +1,7 @@
+{
+  "name": "claude-plugin-codex", "version": "0.1.0", "private": true, "type": "module",
+  "description": "Use Claude from Codex to review code or delegate tasks.",
+  "engines": { "node": ">=18.18.0" },
+  "scripts": { "test": "node --test tests/*.test.mjs" },
+  "devDependencies": { "@types/node": "^25.5.0", "typescript": "^6.0.2" }
+}

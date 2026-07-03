@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "claude-companion": {
+      "command": "node",
+      "args": ["./scripts/claude-companion-mcp.mjs"],
+      "cwd": ".",
+      "env_vars": ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_COMPANION_APPSERVER", "CLAUDE_COMPANION_DATA"],
+      "startup_timeout_sec": 30,
+      "tool_timeout_sec": 1200
+    }
+  }
+}
