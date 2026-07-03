@@ -225,4 +225,28 @@ describe("thread/resume", () => {
       delete process.env.CC_APPSERVER_STATE_DIR;
     }
   });
+
+  it("disposes a still-live registry entry before a second thread/resume overwrites it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ccas-"));
+    process.env.CC_APPSERVER_STATE_DIR = dir;
+    try {
+      recordThread("thr_deadbeef", "sdk_prev", "/w", dir);
+      let disposed = false;
+      let opens = 0;
+      // thread/resume reuses params.threadId verbatim (no allocId), so resuming the SAME threadId twice
+      // — e.g. a Director retry/reconnect — is the exact collision this fix guards against.
+      const { out, server } = wireDirect(() => {
+        opens += 1;
+        return opens === 1 ? { ...fakeSession(), dispose: async () => { disposed = true; } } : fakeSession();
+      });
+      server.handleRequest("thread/resume", { threadId: "thr_deadbeef", cwd: "/w" }, 7);
+      expect(out.find((o) => o.id === 7)?.result).toEqual({ thread: { id: "thr_deadbeef" } });
+      expect(disposed).toBe(false); // first session is still the live registry entry, untouched so far
+      server.handleRequest("thread/resume", { threadId: "thr_deadbeef", cwd: "/w" }, 8);
+      expect(out.find((o) => o.id === 8)?.result).toEqual({ thread: { id: "thr_deadbeef" } });
+      expect(disposed).toBe(true); // the stale first session was disposed before the second install
+    } finally {
+      delete process.env.CC_APPSERVER_STATE_DIR;
+    }
+  });
 });

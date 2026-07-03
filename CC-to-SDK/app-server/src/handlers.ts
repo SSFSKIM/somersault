@@ -69,6 +69,11 @@ export class AppServer {
     const threadId = params.threadId;
     const { cfg, specs, broker } = this.buildCfg({ ...params, cwd: params.cwd ?? rec.cwd }, threadId);
     const session = this.open({ ...cfg, resume: rec.sessionId }, { broker: specs.length ? broker : undefined, dynamicTools: specs });
+    // A live entry may already exist for this threadId (e.g. a retry/reconnect resuming a thread this
+    // process never closed) — dispose it before overwriting so its SDK session/subprocess isn't leaked.
+    // Fire-and-forget: teardown of the OLD session must never delay installing/replying with the NEW one.
+    const prior = this.reg.get(threadId);
+    if (prior) void (async () => { try { await prior.session.dispose(); } catch {} })();
     this.reg.register(threadId, session);
     const e = this.reg.get(threadId); if (e) e.cwd = params.cwd ?? rec.cwd;
     this.peer.reply(id, { thread: { id: threadId } });
