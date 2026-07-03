@@ -396,16 +396,54 @@ function markJobCancelled(workspaceRoot, job) {
   appendLogLine(job.logFile ?? resolveJobLogFile(workspaceRoot, job.id), "Cancelled by user.");
 }
 
+// Part A tuning: resolveCancelableJob's snapshot can predate runRescueTurn/runReviewTurn's
+// mid-flight upsertJob({threadId}) write (reachable mainly via job-id-less `cancel {}` piped
+// right after `rescue`/`review` with no await between them). Re-reading fresh usually finds it
+// immediately; this bounds a brief poll for the rest of the cases where it lands a beat later.
+const CANCEL_THREADID_POLL_INTERVAL_MS = 120;
+const CANCEL_THREADID_POLL_TIMEOUT_MS = 1500;
+// Part B: cancel must return promptly no matter what — this is the hard ceiling on the final
+// "wait for the job's own settle" step, regardless of whether an interrupt was sent.
+const CANCEL_SETTLE_TIMEOUT_MS = 5000;
+
+// Re-reads a job's current record straight from the job store (listJobs re-parses state.json on
+// every call, same source resolveCancelableJob/buildSingleJobSnapshot already read from) rather
+// than trusting a possibly-stale snapshot handed in from earlier in the call.
+function readFreshJob(workspaceRoot, jobId) {
+  return listJobs(workspaceRoot).find((candidate) => candidate.id === jobId) ?? null;
+}
+
+// Polls for a threadId to land on a still-active (queued/running) job before giving up on ever
+// sending an interrupt — closes the narrow race window in the Task 14 report ("Narrow
+// threadId-assignment race in cancel"): threadStart/threadResume hasn't resolved yet, so
+// runRescueTurn/runReviewTurn's own upsertJob({threadId}) hasn't landed.
+async function waitForFreshThreadId(workspaceRoot, jobId, initialJob) {
+  const start = Date.now();
+  let current = initialJob;
+  while (!current?.threadId && isActiveStatus(current?.status) && Date.now() - start < CANCEL_THREADID_POLL_TIMEOUT_MS) {
+    await sleep(CANCEL_THREADID_POLL_INTERVAL_MS);
+    current = readFreshJob(workspaceRoot, jobId) ?? current;
+  }
+  return current;
+}
+
 export async function cancelHandler(companion, args = {}) {
   const cwd = args.cwd ?? companion.cwd ?? process.cwd();
   const jobId = readJobIdArg(args);
-  const { workspaceRoot, job } = resolveCancelableJob(cwd, jobId);
+  const { workspaceRoot, job: snapshotJob } = resolveCancelableJob(cwd, jobId);
 
   // Queued (never started) job: drop it from the in-memory background queue too, so drainQueue
   // never resurrects it once a slot frees up.
   if (companion.queue) {
-    const queueIndex = companion.queue.findIndex((entry) => entry.job.id === job.id);
+    const queueIndex = companion.queue.findIndex((entry) => entry.job.id === snapshotJob.id);
     if (queueIndex !== -1) companion.queue.splice(queueIndex, 1);
+  }
+
+  // Part A: don't trust resolveCancelableJob's snapshot for the interrupt decision — re-read fresh,
+  // and if threadId is still missing on an otherwise-active job, give it a brief window to land.
+  let job = readFreshJob(workspaceRoot, snapshotJob.id) ?? snapshotJob;
+  if (!job.threadId && isActiveStatus(job.status)) {
+    job = await waitForFreshThreadId(workspaceRoot, snapshotJob.id, job);
   }
 
   if (job.threadId && companion.client) {
@@ -423,11 +461,19 @@ export async function cancelHandler(companion, args = {}) {
     }
   }
 
-  // If this job's own background run is still settling (e.g. the interrupted turn's rejection is
-  // mid-flight through runTrackedJob's completion write), wait for it so our "cancelled" write
-  // lands last and can't be clobbered back to "failed"/"completed" by that race.
+  // Part B: if this job's own background run is still settling (e.g. the interrupted turn's
+  // rejection is mid-flight through runTrackedJob's completion write), wait for it so our
+  // "cancelled" write lands last and can't be clobbered back to "failed"/"completed" by that race
+  // — but never past CANCEL_SETTLE_TIMEOUT_MS. cancel must always return promptly; if the turn is
+  // genuinely still running past the ceiling, its eventual natural completion is handled by
+  // runTrackedJob's own already-shipped completion path, not by this call waiting around for it.
   const settle = companion.activeRuns?.get(job.id);
-  if (settle) await settle;
+  if (settle) {
+    // Matches startBackground/drainQueue's existing defensive pattern: attach a no-op catch so a
+    // rejection that arrives after we've already raced past it never becomes an unhandled rejection.
+    settle.catch(() => {});
+    await Promise.race([settle, sleep(CANCEL_SETTLE_TIMEOUT_MS)]);
+  }
 
   markJobCancelled(workspaceRoot, job);
   return `Cancelled job ${job.id}.`;

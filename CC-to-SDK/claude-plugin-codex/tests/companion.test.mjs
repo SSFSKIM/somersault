@@ -452,6 +452,53 @@ test("cancel: a dead (non-alive) client is treated like an interrupt failure, no
   assert.equal(stored.status, "cancelled");
 });
 
+// Review finding: resolveCancelableJob's snapshot predates runRescueTurn's mid-flight
+// upsertJob({threadId}) write when cancel lands in the narrow window between a background job
+// starting and threadStart resolving — the old code skipped the interrupt/close branch entirely
+// (no threadId to target yet) and then hung awaiting the same settle promise a HANG-style turn
+// (one that only ever resolves via interrupt()) would never produce on its own. A stub client with
+// a deliberately delayed threadStart plus a runTurn that only settles via interrupt() reproduces
+// that race through the real rescue/cancel pipeline (createCompanion's spawnAppServer override is
+// the seam — no hand-built companion needed here), firing a job-id-less cancel {} immediately
+// after rescue starts, landing inside the window.
+test("cancel: fired inside the pre-threadId race window still returns promptly and marks cancelled (review finding)", async () => {
+  const tmpRepo = makeTempDir("companion-cancel-race-");
+  let interruptCalled = false;
+  let pendingReject = null;
+
+  const stubClient = {
+    alive: () => true,
+    threadStart: async () => {
+      await new Promise((r) => setTimeout(r, 300)); // delays the mid-flight upsertJob({threadId})
+      return { threadId: "thr_race" };
+    },
+    runTurn: () => new Promise((_resolve, reject) => { pendingReject = reject; }), // only settles via interrupt()
+    interrupt: async ({ threadId }) => {
+      interruptCalled = true;
+      assert.equal(threadId, "thr_race");
+      pendingReject?.(new Error("interrupted"));
+    },
+    close: async () => {}
+  };
+
+  const c = createCompanion({ cwd: tmpRepo, env: ENV, spawnAppServer: async () => stubClient });
+  const startText = await callTool(c, "rescue", { prompt: "please HANG", fresh: true });
+  assert.match(startText, /background job/);
+
+  const start = Date.now();
+  const cancelText = await callTool(c, "cancel", {}); // no job_id: back-to-back with rescue, inside the window
+  const elapsed = Date.now() - start;
+
+  assert.match(cancelText, /Cancelled/);
+  assert.ok(elapsed < 3000, `cancel took too long to return: ${elapsed}ms`);
+  assert.equal(interruptCalled, true, "the brief retry window must catch the threadId landing and attempt the interrupt");
+
+  const stored = listJobs(tmpRepo).find((job) => job.jobClass === "task");
+  assert.equal(stored.status, "cancelled");
+
+  await c.dispose();
+});
+
 test("setup: worker found + handshake ok + oauth-token auth (fake appserver)", async () => {
   const tmpRepo = makeTempDir("companion-setup-ok-");
   const c = createCompanion({ cwd: tmpRepo, env: ENV });
