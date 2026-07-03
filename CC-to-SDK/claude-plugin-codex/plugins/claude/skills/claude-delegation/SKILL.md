@@ -7,6 +7,12 @@ description: How to delegate tasks and reviews to Claude workers via the claude-
 
 ## Tool etiquette
 
+- **If these tools aren't directly listed, discover them with `tool_search`, then call them by name.**
+  Depending on the host's tool-exposure settings, the `claude-companion` tools may be *deferred* behind
+  `tool_search` rather than shown inline — `tool_search` will report finding them, and they become
+  callable by bare name (`rescue`, `review`, `adversarial_review`, `status`, `result`, `cancel`, `setup`)
+  on the next turn. A `tool_search` for "claude review" / "delegate to claude" surfaces them. Not seeing
+  the names in a static list does **not** mean the plugin is missing — search, then call.
 - **These tools send repository context to an external Claude worker process** — `rescue`'s prompt and
   working-tree state, and `review`/`adversarial_review`'s diffs and file contents, leave the sandbox to reach
   Claude. For a private or sensitive workspace, Codex's own approval/sandboxing policy may block the call

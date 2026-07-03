@@ -326,3 +326,38 @@ Net: the full contract is confirmed live end-to-end — real hook process spawn,
 appserver spawn (`CLAUDE_COMPANION_APPSERVER` pointed at the built `app-server/dist/bin.js`), a real
 Claude thread/turn per gate check, correct job bookkeeping (`gate-` prefix, "Claude Stop Gate Review"
 label), and fail-open behavior holding on a genuine (not manufactured) edge case.
+
+## 9. The 7 tools reach Codex but are DEFERRED behind `tool_search`, not shown as a static namespace
+
+Live-observed on Codex Desktop (macOS), commit `16455fab56`, after the bundled-node launcher fix:
+Codex's `tool_search` reported **"Found 7 tools"** for this plugin, but the
+`setup`/`rescue`/`review`/`adversarial_review`/`status`/`result`/`cancel` names did **not** appear in
+any inline/static tool list the user inspected. A manual `sh scripts/launch-mcp.sh` + `tools/list`
+returned all 7 correctly. This is **not** a plugin defect and **not** the earlier "0 tools" failure — it
+is Codex's deferred-tool exposure working as designed, and it is important context for anyone driving
+this plugin.
+
+- `tool_search` returning our 7 tools is *positive* proof the MCP server spawned, connected, and had all
+  7 tools enumerated by Codex via `tools/list`. It is the complete reversal of the pre-fix state (node
+  not found → server never spawned → 0 tools). The bundled-node fix (§launch-mcp.sh, `~/.cache/codex-runtimes/...`)
+  is confirmed working **end-to-end in a real session**, not just via manual launch.
+- Codex source (`codex-rs/core/src/mcp_tool_exposure.rs`) puts MCP tools into a **deferred** set behind
+  `tool_search` — rather than exposing them inline — whenever deferral is active. When deferred,
+  `direct_tools` is empty **by design**, so the tool names intentionally never show up as a browsable
+  namespace. `tool_search` "Searches over deferred tool metadata with BM25 and exposes matching tools
+  **for the next model call**" (its own tool description): the flow is discover-then-call — the model
+  runs `tool_search("claude review" / "delegate to claude")` on one turn, and the matched tools become
+  callable by bare name (`review`, `rescue`, …) on the *following* turn. There is no static list to look
+  at; inspecting a "tool list" view is the wrong place to check.
+- Deferral is gated by `DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD = 100` (deferred only when total model-visible
+  MCP tools across all servers ≥ 100) **OR** the `ToolSearchAlwaysDeferMcpTools` feature. In this fork's
+  source both default off/`< 100`, which would expose the 7 directly — so the fact that they were deferred
+  in the user's live session means their Codex Desktop build/config has one of those two conditions true
+  (feature enabled, or ≥ 100 total MCP tools from other connectors/servers). Either way the plugin cannot
+  and need not change this; deferral is a host decision.
+- **Consequence / how to test natively:** don't look for the tool names in a list — ask the model to
+  actually perform the action ("have Claude review my changes in this repo") and confirm it does
+  `tool_search` → then a real `review` call on the next turn. In the observed session the user fell back
+  to manual JSON-RPC, so the model's native search→call path was never actually completed; the remaining
+  open question is purely whether Codex materializes a deferred *plugin* MCP tool for the next call, which
+  is a host-side behavior best settled in a fresh session by watching an actual call, not a tool list.
