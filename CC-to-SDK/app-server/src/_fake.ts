@@ -21,6 +21,7 @@ export const fakeOpen: OpenFn = (_cfg: any, ctx: OpenCtx) => {
         return { result: `tool said: ${text}` };
       }
       // Stop-gate hook canned responses (claude-plugin-codex Task 15 key-free tests).
+      if (prompt.includes("STOP-GATE-BLOCK-EMPTY-REASON")) return { result: "BLOCK:" };
       if (prompt.includes("STOP-GATE-BLOCK")) return { result: "BLOCK: fix the tests first" };
       if (prompt.includes("STOP-GATE-ALLOW")) return { result: "ALLOW: fine" };
       return { result: "final text" };

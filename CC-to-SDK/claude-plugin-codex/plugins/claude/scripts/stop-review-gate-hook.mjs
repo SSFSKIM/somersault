@@ -25,10 +25,20 @@ const SELF_TIMEOUT_MS = 840_000;
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(SCRIPT_DIR, ".."); // plugins/claude (prompts/ lives here)
 
+// Set the instant spawnAppServer(...) resolves inside main() -- module-scoped so BOTH the normal
+// exitWith() funnel below AND the self-timeout/uncaughtException handlers (which run outside main()'s
+// closure) can reach the live client to close it. One mechanism, not two.
+let activeClient;
+
 // Single exit path for the whole script: every branch below (allow, block, or any failure) funnels
 // through this, so there is exactly one place that ever writes stdout and calls process.exit. Never
-// call process.stdout.write / process.exit directly anywhere else in this file.
-function exitWith(payload) {
+// call process.stdout.write / process.exit directly anywhere else in this file. A synchronous
+// process.exit() called from inside a try prevents any enclosing finally from ever running, so the
+// appserver client close has to happen HERE, before exit, rather than in a finally somewhere else.
+async function exitWith(payload) {
+  if (activeClient) {
+    await activeClient.close().catch(() => {});
+  }
   if (payload) {
     process.stdout.write(`${JSON.stringify(payload)}\n`);
   }
@@ -36,11 +46,11 @@ function exitWith(payload) {
 }
 
 function allow(systemMessage) {
-  exitWith(systemMessage ? { systemMessage } : null);
+  return exitWith(systemMessage ? { systemMessage } : null);
 }
 
 function block(reason) {
-  exitWith({ decision: "block", reason });
+  return exitWith({ decision: "block", reason });
 }
 
 // Belt-and-suspenders: ANY bug in this script (a thrown error or rejected promise this file's own
@@ -137,6 +147,7 @@ async function main() {
   let client;
   try {
     client = await spawnAppServer({ cwd });
+    activeClient = client; // reachable from here on by exitWith() and the self-timeout/uncaught handlers
   } catch (error) {
     return allow(`claude stop-gate skipped: worker unavailable (${error?.message ?? error})`);
   }
@@ -149,21 +160,22 @@ async function main() {
 
     const rawOutput = execution.payload?.finalText ?? "";
     const firstLine = rawOutput.split(/\r?\n/, 1)[0].trim();
-    if (firstLine.startsWith("BLOCK:")) {
-      const reason = firstLine.slice("BLOCK:".length).trim() || "Stop-gate review found issues that still need fixes before ending the session.";
-      return block(reason);
+    // A "BLOCK:" with no reason text is degenerate/untrustworthy output, not license to halt the
+    // session with a synthesized reason -- treat it the same as any other malformed first line and
+    // fall through to the shared malformed-output allow path below.
+    const blockReason = firstLine.startsWith("BLOCK:") ? firstLine.slice("BLOCK:".length).trim() : "";
+    if (blockReason) {
+      return block(blockReason);
     }
-    if (!firstLine.startsWith("ALLOW:")) {
-      return allow("claude stop-gate skipped: malformed gate output");
+    if (firstLine.startsWith("ALLOW:")) {
+      return allow();
     }
-    return allow();
+    return allow("claude stop-gate skipped: malformed gate output");
   } catch (error) {
     // Covers runTrackedJob's runner rejecting (e.g. the turn RPC itself failed) -- runTrackedJob
     // already persisted the job as "failed" before rethrowing; there is nothing further to do here
     // except allow.
     return allow(`claude stop-gate skipped: ${error?.message ?? error}`);
-  } finally {
-    await client.close().catch(() => {});
   }
 }
 

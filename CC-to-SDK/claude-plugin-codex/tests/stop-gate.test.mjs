@@ -53,6 +53,19 @@ test("gate enabled + fake BLOCK final text -> decision block with reason", () =>
   assert.match(payload.reason, /fix the tests first/);
 });
 
+test("gate enabled + BLOCK with empty reason -> fails open (allow), does not synthesize a reason", () => {
+  const cwd = makeRepo("gate-block-empty-reason-");
+  setConfig(cwd, "stopReviewGate", true);
+  const result = runHook(
+    { cwd, hook_event_name: "Stop", last_assistant_message: "STOP-GATE-BLOCK-EMPTY-REASON" },
+    FAKE_ENV
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /"decision":"block"/);
+  const payload = JSON.parse(result.stdout);
+  assert.match(payload.systemMessage, /malformed gate output/);
+});
+
 test("worker missing -> allow with systemMessage", () => {
   const cwd = makeRepo("gate-noworker-");
   setConfig(cwd, "stopReviewGate", true);
