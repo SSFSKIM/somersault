@@ -41,7 +41,7 @@ const REVIEW_KINDS = {
 const MAX_CONCURRENT_BACKGROUND = 3;
 
 const WORKER_MISSING_TEXT = `Claude worker is not available. Install it with:
-  npm install -g /Users/new/Documents/GitHub/codex_somersault/CC-to-SDK/app-server
+  npm install -g /path/to/CC-to-SDK/app-server
 or point CLAUDE_COMPANION_APPSERVER at a cc-codex-appserver binary, then call the setup tool.`;
 
 export function normalizeModel(m) {

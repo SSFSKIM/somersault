@@ -152,9 +152,9 @@ function appendActiveJobsTable(lines, jobs) {
   lines.push("| Job | Kind | Status | Phase | Elapsed | Claude Thread ID | Summary | Actions |");
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const job of jobs) {
-    const actions = [`/claude:status ${job.id}`];
+    const actions = [`status tool (job_id: ${job.id})`];
     if (job.status === "queued" || job.status === "running") {
-      actions.push(`/claude:cancel ${job.id}`);
+      actions.push(`cancel tool (job_id: ${job.id})`);
     }
     lines.push(
       `| ${escapeMarkdownCell(job.id)} | ${escapeMarkdownCell(job.kindLabel)} | ${escapeMarkdownCell(job.status)} | ${escapeMarkdownCell(job.phase ?? "")} | ${escapeMarkdownCell(job.elapsed ?? "")} | ${escapeMarkdownCell(job.threadId ?? "")} | ${escapeMarkdownCell(job.summary ?? "")} | ${actions.map((action) => `\`${action}\``).join("<br>")} |`
@@ -187,14 +187,14 @@ function pushJobDetails(lines, job, options = {}) {
     lines.push(`  Log: ${job.logFile}`);
   }
   if ((job.status === "queued" || job.status === "running") && options.showCancelHint) {
-    lines.push(`  Cancel: /claude:cancel ${job.id}`);
+    lines.push(`  Cancel: the cancel tool (job_id: ${job.id})`);
   }
   if (job.status !== "queued" && job.status !== "running" && options.showResultHint) {
-    lines.push(`  Result: /claude:result ${job.id}`);
+    lines.push(`  Result: the result tool (job_id: ${job.id})`);
   }
   if (job.status !== "queued" && job.status !== "running" && job.jobClass === "task" && job.write && options.showReviewHint) {
-    lines.push("  Review changes: /claude:review --wait");
-    lines.push("  Stricter review: /claude:adversarial-review --wait");
+    lines.push("  Review changes: the review tool with wait:true");
+    lines.push("  Stricter review: the adversarial_review tool with wait:true");
   }
   if (job.progressPreview?.length) {
     lines.push("  Progress:");

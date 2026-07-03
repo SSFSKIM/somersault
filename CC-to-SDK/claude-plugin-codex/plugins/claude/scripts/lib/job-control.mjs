@@ -216,7 +216,7 @@ export function matchJobReference(jobs, reference, predicate = () => true) {
     throw new Error(`Job reference "${reference}" is ambiguous. Use a longer job id.`);
   }
 
-  throw new Error(`No job found for "${reference}". Run /claude:status to list known jobs.`);
+  throw new Error(`No job found for "${reference}". Call the status tool to list known jobs.`);
 }
 
 export function buildStatusSnapshot(cwd, options = {}) {
@@ -253,7 +253,7 @@ export function buildSingleJobSnapshot(cwd, reference, options = {}) {
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const selected = matchJobReference(jobs, reference);
   if (!selected) {
-    throw new Error(`No job found for "${reference}". Run /claude:status to inspect known jobs.`);
+    throw new Error(`No job found for "${reference}". Call the status tool to inspect known jobs.`);
   }
 
   const reconciled = reconcileAndPersist(workspaceRoot, selected);
@@ -275,7 +275,7 @@ export function resolveResultJob(cwd, reference) {
   if (reference) {
     const job = matchJobReference(jobs, reference);
     if (job.status === "queued" || job.status === "running") {
-      throw new Error(`Job ${job.id} is still ${job.status}. Check /claude:status and try again once it finishes.`);
+      throw new Error(`Job ${job.id} is still ${job.status}. Call the status tool and try again once it finishes.`);
     }
     return { workspaceRoot, job };
   }
@@ -292,7 +292,7 @@ export function resolveResultJob(cwd, reference) {
   throw new Error("No finished Claude jobs found for this repository yet.");
 }
 
-export function resolveCancelableJob(cwd, reference, options = {}) {
+export function resolveCancelableJob(cwd, reference) {
   const workspaceRoot = cwd;
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const activeJobs = jobs.filter((job) => job.status === "queued" || job.status === "running");
@@ -309,7 +309,7 @@ export function resolveCancelableJob(cwd, reference, options = {}) {
     return { workspaceRoot, job: activeJobs[0] };
   }
   if (activeJobs.length > 1) {
-    throw new Error("Multiple Claude jobs are active. Pass a job id to /claude:cancel.");
+    throw new Error("Multiple Claude jobs are active. Pass a job_id to the cancel tool.");
   }
 
   throw new Error("No active Claude jobs to cancel.");

@@ -4,7 +4,7 @@ import { initGitRepo, makeTempDir } from "./helpers.mjs";
 
 process.env.CLAUDE_COMPANION_DATA = makeTempDir("ccd-state-");
 
-const { resolveStateDir, loadState, saveState, generateJobId, upsertJob } = await import(
+const { resolveStateDir, resolveStateFile, loadState, saveState, generateJobId, upsertJob } = await import(
   "../plugins/claude/scripts/lib/state.mjs"
 );
 
@@ -79,4 +79,35 @@ test("saveState prunes to at most 50 jobs, keeping the newest", () => {
   const ids = new Set(state.jobs.map((job) => job.id));
   assert.ok(ids.has("task-54"), "newest job should survive pruning");
   assert.ok(!ids.has("task-0"), "oldest job should be pruned");
+});
+
+// Finding 3 (final review): saveState now writes state.json via temp-file + renameSync (mirrors
+// app-server/src/threads.ts's recordThread), so a crash mid-commit can never truncate/corrupt the
+// job store. Proven the same way threads.test.ts proves it for threads.json: force renameSync to
+// throw on the second write and assert the first write's content survives untouched.
+test("saveState commits atomically: a crash during commit (rename) leaves the prior state.json intact", () => {
+  const cwd = makeTempDir("workspace-atomic-");
+  upsertJob(cwd, { id: "task-before", status: "completed" });
+  const stateFile = resolveStateFile(cwd);
+  const before = fs.readFileSync(stateFile, "utf8");
+
+  const originalRenameSync = fs.renameSync;
+  fs.renameSync = () => {
+    throw new Error("simulated crash mid-write");
+  };
+  try {
+    assert.throws(() => upsertJob(cwd, { id: "task-after", status: "completed" }), /simulated crash mid-write/);
+  } finally {
+    fs.renameSync = originalRenameSync;
+  }
+
+  // the failed commit never replaced state.json — it's byte-identical to before the crash
+  assert.equal(fs.readFileSync(stateFile, "utf8"), before);
+  const afterCrash = loadState(cwd);
+  assert.equal(afterCrash.jobs.length, 1);
+  assert.equal(afterCrash.jobs[0].id, "task-before");
+
+  // and a subsequent successful call still commits cleanly (mock reset correctly, no lingering state)
+  upsertJob(cwd, { id: "task-after", status: "completed" });
+  assert.equal(loadState(cwd).jobs.length, 2);
 });

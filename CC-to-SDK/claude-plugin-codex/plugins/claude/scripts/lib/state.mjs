@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -126,7 +126,12 @@ export function saveState(cwd, state) {
     removeFileIfExists(job.logFile);
   }
 
-  fs.writeFileSync(resolveStateFile(cwd), `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
+  // Write to a sibling temp file then rename over the real one — rename is atomic on POSIX, so a
+  // crash mid-write (or a concurrent second writer, e.g. the Stop hook process) leaves the previous
+  // state.json intact instead of truncated/corrupt. Mirrors app-server/src/threads.ts's recordThread.
+  const tmpFile = path.join(resolveStateDir(cwd), `${STATE_FILE_NAME}.tmp-${randomBytes(4).toString("hex")}`);
+  fs.writeFileSync(tmpFile, `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
+  fs.renameSync(tmpFile, resolveStateFile(cwd));
   return nextState;
 }
 
