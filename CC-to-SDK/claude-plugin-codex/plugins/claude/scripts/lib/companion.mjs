@@ -1,7 +1,7 @@
 // Companion core: wires the job store (state.mjs/tracked-jobs.mjs/job-control.mjs) + the
 // appserver client (appserver-client.mjs) into the tool defs mcp-stdio.mjs serves. Thin by
 // design — job mechanics stay in the Task 10 modules, appserver mechanics in Task 11.
-import { spawnAppServer } from "./appserver-client.mjs";
+import { spawnAppServer as defaultSpawnAppServer } from "./appserver-client.mjs";
 import { generateJobId, listJobs, upsertJob } from "./state.mjs";
 import { createJobRecord, runTrackedJob } from "./tracked-jobs.mjs";
 import { sortJobsNewestFirst } from "./job-control.mjs";
@@ -50,10 +50,28 @@ function formatResumeOffer(candidate) {
   return `A recent Claude rescue thread exists for this repo (job ${candidate.id}, ${age}). Call rescue again with resume:true to continue it, or fresh:true to start over. Ask the user if unsure.`;
 }
 
-async function ensureClient(companion) {
+// Single-flight guard: without it, two callers that both observe companion.client === null
+// before either await resolves (realistic — background rescue calls fire without waiting, and
+// an MCP host can pipeline concurrent tools/call on one stdio pipe) would each independently
+// spawnAppServer(), orphaning whichever child loses the race to set companion.client. In-flight
+// spawns are tracked on companion.spawning so concurrent callers await the SAME promise; it's
+// cleared on settle (success or failure) so a later call can retry after a failed spawn.
+export async function ensureClient(companion) {
   if (companion.client && companion.client.alive()) return companion.client;
-  companion.client = await spawnAppServer({ cwd: companion.cwd, env: companion.env });
-  return companion.client;
+  if (!companion.spawning) {
+    companion.spawning = companion
+      .spawnAppServer({ cwd: companion.cwd, env: companion.env })
+      .then((client) => {
+        companion.client = client;
+        companion.spawning = null;
+        return client;
+      })
+      .catch((error) => {
+        companion.spawning = null;
+        throw error;
+      });
+  }
+  return companion.spawning;
 }
 
 async function runRescueTurn({ client, cwd, model, effort, write, prompt, resumeThreadId }) {
@@ -90,6 +108,10 @@ function drainQueue(companion) {
   if (companion.runningBackground >= MAX_CONCURRENT_BACKGROUND) return;
   const next = companion.queue.shift();
   if (!next) return;
+  // upsertJob merges (doesn't replace), and runTrackedJob's running/completed/failed patches never
+  // carry a `note` key — so the "waiting for a free slot" note stamped by startBackground would
+  // otherwise survive merged-in forever. Clear it explicitly the instant this job leaves the queue.
+  upsertJob(next.job.workspaceRoot, { id: next.job.id, note: null });
   void runBackgroundNow(companion, next.job, next.runner);
 }
 
@@ -169,8 +191,8 @@ const SETUP_TOOL = {
     )
 };
 
-export function createCompanion({ cwd = process.cwd(), env = process.env } = {}) {
-  const companion = { cwd, env, client: null, runningBackground: 0, queue: [] };
+export function createCompanion({ cwd = process.cwd(), env = process.env, spawnAppServer = defaultSpawnAppServer } = {}) {
+  const companion = { cwd, env, client: null, spawning: null, spawnAppServer, runningBackground: 0, queue: [] };
 
   const rescueTool = {
     name: "rescue",
