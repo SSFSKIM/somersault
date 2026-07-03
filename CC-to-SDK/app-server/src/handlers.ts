@@ -47,6 +47,7 @@ export class AppServer {
       case "thread/start": return this.threadStart(params as ThreadStartParams, id);
       case "thread/resume": return this.threadResume(params as ThreadResumeParams, id);
       case "turn/start": return this.turnStart(params as TurnStartParams, id);
+      case "turn/interrupt": return void this.turnInterrupt(params as { threadId: string }, id);
       default: console.error("[appserver] unhandled method:", method); return this.peer.replyError(id, ERR.METHOD_NOT_FOUND, `method not found: ${method}`);
     }
   }
@@ -117,6 +118,15 @@ export class AppServer {
     const text = (params.input ?? []).map((p) => p.text ?? "").join("");
     const tr = new TurnTranslator(params.threadId, turnId);
     void this.runTurn(params.threadId, entry, text, tr);
+  }
+
+  // Aborts the in-flight turn; the pending session.submit() then rejects and runTurn's own catch
+  // block (below) emits turn/failed — no separate error path here.
+  private async turnInterrupt(params: { threadId: string }, id: number | string): Promise<void> {
+    const entry = this.reg.get(params.threadId);
+    if (!entry) return this.peer.replyError(id, ERR.INVALID_PARAMS, `unknown thread ${params.threadId}`);
+    try { await entry.session.interrupt(); this.peer.reply(id, {}); }
+    catch (e) { this.peer.replyError(id, ERR.INTERNAL, `interrupt failed: ${(e as Error).message}`); }
   }
 
   private async runTurn(threadId: string, entry: ThreadEntry, text: string, tr: TurnTranslator): Promise<void> {

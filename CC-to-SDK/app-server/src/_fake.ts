@@ -4,19 +4,26 @@ import type { OpenFn, OpenCtx } from "./handlers.js";
  *  says USE_TOOL and a dynamic-tool broker is present, it drives one item/tool/call round-trip (exercising the
  *  server→client broker path without the SDK), then folds the client's reply into the final text. */
 let fakeN = 0;
-export const fakeOpen: OpenFn = (_cfg: any, ctx: OpenCtx) => ({
-  sessionId: `sdk_fake_${++fakeN}`,
-  submit: async (prompt: string, onMessage: (m: any) => void) => {
-    // Resume path: echo cfg.resume as the first streamed text so contract tests can assert the
-    // server actually reopened with the sidecar's prior sessionId (no real SDK session to inspect).
-    onMessage({ type: "assistant", message: { content: [{ type: "text", text: _cfg?.resume ? `resumed:${_cfg.resume}` : "thinking" }] } });
-    if (prompt.includes("USE_TOOL") && ctx.broker) {
-      const r = await ctx.broker.call("linear_graphql", { query: "query { viewer { id } }" });
-      const text = (r.contentItems ?? []).map((c) => c?.text ?? "").join("") || r.output || "";
-      return { result: `tool said: ${text}` };
-    }
-    return { result: "final text" };
-  },
-  usage: async () => ({}),
-  dispose: async () => {},
-} as any);
+export const fakeOpen: OpenFn = (_cfg: any, ctx: OpenCtx) => {
+  // A prompt containing "HANG" parks submit() forever (until interrupt() rejects it) — lets tests
+  // exercise turn/interrupt against a controllable pending turn without a real SDK session.
+  let pendingReject: ((e: Error) => void) | undefined;
+  return {
+    sessionId: `sdk_fake_${++fakeN}`,
+    submit: async (prompt: string, onMessage: (m: any) => void) => {
+      // Resume path: echo cfg.resume as the first streamed text so contract tests can assert the
+      // server actually reopened with the sidecar's prior sessionId (no real SDK session to inspect).
+      onMessage({ type: "assistant", message: { content: [{ type: "text", text: _cfg?.resume ? `resumed:${_cfg.resume}` : "thinking" }] } });
+      if (prompt.includes("HANG")) return new Promise((_, rej) => { pendingReject = rej; });
+      if (prompt.includes("USE_TOOL") && ctx.broker) {
+        const r = await ctx.broker.call("linear_graphql", { query: "query { viewer { id } }" });
+        const text = (r.contentItems ?? []).map((c) => c?.text ?? "").join("") || r.output || "";
+        return { result: `tool said: ${text}` };
+      }
+      return { result: "final text" };
+    },
+    usage: async () => ({}),
+    dispose: async () => {},
+    interrupt: async () => { pendingReject?.(new Error("interrupted")); pendingReject = undefined; },
+  } as any;
+};

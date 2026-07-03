@@ -7,6 +7,7 @@ import { Peer } from "../../src/peer.js";
 import { AppServer, toUsageTotals } from "../../src/handlers.js";
 import type { OpenFn } from "../../src/handlers.js";
 import { recordThread } from "../../src/threads.js";
+import { fakeOpen } from "../../src/_fake.js";
 
 // A fake Session whose submit() streams one assistant message then resolves with a result string.
 function fakeSession() {
@@ -248,5 +249,45 @@ describe("thread/resume", () => {
     } finally {
       delete process.env.CC_APPSERVER_STATE_DIR;
     }
+  });
+});
+
+describe("turn/interrupt", () => {
+  function wireFake() {
+    const out: any[] = [];
+    let server!: AppServer;
+    const peer = new Peer((o) => out.push(o), (m, p, id) => server.handleRequest(m, p, id), () => {});
+    server = new AppServer(peer, { open: fakeOpen });
+    return { out, peer };
+  }
+
+  it("aborts a hanging turn -> {} reply then turn/failed", async () => {
+    const { out, peer } = wireFake();
+    peer.feed(JSON.stringify({ id: 1, method: "thread/start", params: { cwd: "/w", approvalPolicy: "never" } }) + "\n");
+    const threadId = out.find((o) => o.id === 1).result.thread.id;
+    peer.feed(JSON.stringify({ id: 2, method: "turn/start", params: { threadId, input: [{ type: "text", text: "please HANG" }] } }) + "\n");
+    peer.feed(JSON.stringify({ id: 3, method: "turn/interrupt", params: { threadId } }) + "\n");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(out.find((o) => o.id === 3)?.result).toEqual({});
+    expect(out.some((o) => o.method === "turn/failed")).toBe(true);
+  });
+
+  it("unknown threadId -> INVALID_PARAMS (-32602)", () => {
+    const { out, peer } = wireFake();
+    peer.feed(JSON.stringify({ id: 1, method: "turn/interrupt", params: { threadId: "thr_missing" } }) + "\n");
+    const err = out.find((o) => o.id === 1);
+    expect(err?.error?.code).toBe(-32602);
+  });
+
+  it("interrupting an idle (already-resolved) turn is a benign no-op -> {} reply, no turn/failed", async () => {
+    const { out, peer } = wireFake();
+    peer.feed(JSON.stringify({ id: 1, method: "thread/start", params: { cwd: "/w", approvalPolicy: "never" } }) + "\n");
+    const threadId = out.find((o) => o.id === 1).result.thread.id;
+    peer.feed(JSON.stringify({ id: 2, method: "turn/start", params: { threadId, input: [{ type: "text", text: "go" }] } }) + "\n");
+    await new Promise((r) => setTimeout(r, 20)); // let the turn complete normally first
+    peer.feed(JSON.stringify({ id: 3, method: "turn/interrupt", params: { threadId } }) + "\n");
+    await new Promise((r) => setTimeout(r, 5));
+    expect(out.find((o) => o.id === 3)?.result).toEqual({});
+    expect(out.some((o) => o.method === "turn/failed")).toBe(false);
   });
 });
