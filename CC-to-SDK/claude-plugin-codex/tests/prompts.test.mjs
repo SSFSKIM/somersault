@@ -1,5 +1,6 @@
 import test from "node:test"; import assert from "node:assert/strict";
 import fs from "node:fs"; import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadPromptTemplate, interpolateTemplate } from "../plugins/claude/scripts/lib/prompts.mjs";
 import { makeTempDir } from "./helpers.mjs";
 
@@ -31,4 +32,22 @@ test("loadPromptTemplate reads <rootDir>/prompts/<name>.md", () => {
   const template = loadPromptTemplate(rootDir, "greeting");
   assert.equal(template, "Hi {{NAME}}!");
   assert.equal(interpolateTemplate(template, { NAME: "World" }), "Hi World!");
+});
+
+// Live-testing feedback: adversarial-review.md only said "matching the provided schema" without
+// ever inlining it, unlike claude-review.md's explicit "no prose before or after" + literal shape
+// -- the model filled the gap with a plausible-looking but wrong shape (decision/no next_steps
+// instead of verdict/next_steps), which then failed structured-output parsing outright. Both
+// review prompts share one schema (schemas/review-output.schema.json); this pins them to the same
+// strict, fully-inlined contract so they can't silently drift apart again.
+test("claude-review.md and adversarial-review.md both inline the same strict JSON output contract", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../plugins/claude");
+  const claudeReview = fs.readFileSync(path.join(root, "prompts", "claude-review.md"), "utf8");
+  const adversarialReview = fs.readFileSync(path.join(root, "prompts", "adversarial-review.md"), "utf8");
+
+  for (const text of [claudeReview, adversarialReview]) {
+    assert.match(text, /Output STRICTLY a single JSON object.*no prose before or after/);
+    assert.match(text, /"verdict":"approve"\|"needs-attention"/);
+    assert.match(text, /"next_steps":\["\.\.\."\]/);
+  }
 });

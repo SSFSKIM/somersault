@@ -19,12 +19,18 @@ fi
 # CLAUDE_COMPANION_NODE_FALLBACKS overrides the candidate list below (space-separated) —
 # production never sets it; tests use it to exercise the not-found branch deterministically,
 # without depending on (or disturbing) whatever Node installs happen to exist on the test machine.
-CANDIDATES="${CLAUDE_COMPANION_NODE_FALLBACKS-/opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node $HOME/.nvm/versions/node/*/bin/node}"
+#
+# Codex Desktop's own bundled runtime node (~/.cache/codex-runtimes/*/dependencies/node/bin/node)
+# is checked first: it's the Node Codex itself already depends on to run, so on a machine running
+# Codex Desktop it's more reliably present than a guess at a generic dev-shell install location
+# (confirmed live: a real Codex Desktop session's PATH lacked node entirely, but this bundled copy
+# was there and worked once pointed at manually).
+CANDIDATES="${CLAUDE_COMPANION_NODE_FALLBACKS-$HOME/.cache/codex-runtimes/*/dependencies/node/bin/node /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node $HOME/.nvm/versions/node/*/bin/node}"
 for candidate in $CANDIDATES; do
   if [ -x "$candidate" ]; then
     exec "$candidate" "$ENTRY" "$@"
   fi
 done
 
-echo "claude-companion: no Node.js runtime found (checked PATH, /opt/homebrew/bin, /usr/local/bin, /usr/bin, ~/.nvm/versions/node/*/bin). Install Node.js 18.18+ where Codex can reach it, or launch Codex from a shell that has it on PATH." >&2
+echo "claude-companion: no Node.js runtime found (checked PATH, ~/.cache/codex-runtimes/*/dependencies/node/bin, /opt/homebrew/bin, /usr/local/bin, /usr/bin, ~/.nvm/versions/node/*/bin). Install Node.js 18.18+ where Codex can reach it, or launch Codex from a shell that has it on PATH." >&2
 exit 127

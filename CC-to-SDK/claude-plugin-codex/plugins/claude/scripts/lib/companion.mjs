@@ -44,6 +44,9 @@ const WORKER_MISSING_TEXT = `Claude worker is not available. Install it with:
   npm install -g /path/to/CC-to-SDK/app-server
 or point at an already-built copy without installing, e.g.:
   CLAUDE_COMPANION_APPSERVER="node /path/to/app-server/dist/bin.js"
+If "node" isn't found (Codex's own launch environment often has a minimal PATH), use an absolute
+node path instead — e.g. Codex Desktop's own bundled runtime:
+  CLAUDE_COMPANION_APPSERVER="~/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node /path/to/app-server/dist/bin.js"
 then call the setup tool.`;
 
 // Foreground `wait:true` calls never hang forever: past this ceiling we return early and tell the

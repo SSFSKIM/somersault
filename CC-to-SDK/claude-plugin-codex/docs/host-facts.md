@@ -112,6 +112,22 @@ on `process.cwd()` once `"cwd": "."` (or any relative `cwd`) is set.
   and only then fails — loudly, on stderr — instead of silently. This does not fully solve the
   underlying host limitation (there is still no first-class way for a plugin to discover a
   guaranteed-present Node runtime), but it closes the specific gap a real user hit.
+- **Codex Desktop *does* bundle its own Node — at a discoverable, fixed-name path** — even though
+  §2 above found no env var or plugin-host API exposing it. **Confirmed live (2026-07-04, same
+  user, second round)**: the first fix above (generic Homebrew/nvm fallback candidates) still
+  wasn't enough — a real Codex Desktop session's PATH had no `node` at all, and none of those
+  generic candidates matched either, so tool discovery still silently failed even with
+  `launch-mcp.sh` in place. The user found Codex Desktop's own bundled Node by hand at
+  `~/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node` (`v24.14.0` on their
+  machine) and used it to manually launch the appserver successfully. `codex-primary-runtime` is a
+  stable, non-version-suffixed directory name (confirmed via `ls ~/.cache/codex-runtimes/` —
+  Codex's own runtime manager owns it, it isn't a plugin concern), so it's now the **first**
+  candidate in `launch-mcp.sh`'s fallback list (globbed as `*/dependencies/node/bin/node` in case
+  the runtime name ever varies) — since it's the very Node Codex itself depends on to run, it's a
+  more reliable bet on a Codex Desktop machine than any generic dev-shell guess. Also added to
+  `WORKER_MISSING_TEXT`/README as the concrete override example for the separate
+  `cc-codex-appserver` worker-binary resolution (a different problem from the MCP server's own
+  Node-finding, but the same underlying fix).
 
 ## 3. Hook process — cwd, env, plugin-root variable
 

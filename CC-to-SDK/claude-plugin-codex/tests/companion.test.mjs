@@ -168,6 +168,10 @@ test("worker missing -> setup guidance", async () => {
   // user with neither npm nor a global install stuck, even though that override was always meant
   // to work (see README's own worked example).
   assert.match(text, /CLAUDE_COMPANION_APPSERVER="node \/path\/to\/app-server\/dist\/bin\.js"/);
+  // Second live-testing round: a real Codex Desktop session's PATH had no `node` at all, so even
+  // the bare "node ..." override above was a dead end until the user found Codex's own bundled
+  // runtime by hand. Guidance should point at it directly instead of leaving that to discovery.
+  assert.match(text, /codex-runtimes\/codex-primary-runtime\/dependencies\/node\/bin\/node/);
   await c.dispose();
 });
 

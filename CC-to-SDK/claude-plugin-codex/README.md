@@ -44,6 +44,12 @@ them well:
   Codex. If the worker can't be found, every tool reports the exact command above and tells you to re-run
   `setup`.
 
+  If `node` isn't on the PATH Codex launches with (common for Codex Desktop, which often runs with a
+  minimal PATH), use an absolute node path instead — Codex Desktop's own bundled runtime works:
+  `CLAUDE_COMPANION_APPSERVER="~/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node /path/to/app-server/dist/bin.js"`.
+  The plugin's own MCP server (`claude-companion`) resolves its Node runtime the same way automatically
+  (see `scripts/launch-mcp.sh`) — this override is only for the `cc-codex-appserver` worker binary.
+
 ## Install
 
 Register this repo as a local marketplace, then install the plugin from it:

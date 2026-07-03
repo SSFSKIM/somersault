@@ -7,6 +7,11 @@ description: How to delegate tasks and reviews to Claude workers via the claude-
 
 ## Tool etiquette
 
+- **These tools send repository context to an external Claude worker process** — `rescue`'s prompt and
+  working-tree state, and `review`/`adversarial_review`'s diffs and file contents, leave the sandbox to reach
+  Claude. For a private or sensitive workspace, Codex's own approval/sandboxing policy may block the call
+  before it runs. If that happens, tell the user plainly why (this action sends repo context to an external
+  Claude worker) rather than retrying silently or treating it as a plugin failure.
 - **Always pass `cwd` explicitly** on every `claude-companion` tool call (run `pwd` first if unsure). The
   server's own default `cwd` is wherever it happened to start (its plugin install directory), not your
   session's workspace. Omitting `cwd` silently targets the wrong repo for git diffing, job storage, resume
