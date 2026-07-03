@@ -1,1 +1,1 @@
-{ "name": "claude", "version": "0.1.0", "description": "Delegate tasks and reviews to Claude workers from Codex." }
+{ "name": "claude", "version": "0.1.0", "description": "Delegate tasks, second perspective opinions, and reviews to Claude workers from Codex." }
