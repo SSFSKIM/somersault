@@ -23,6 +23,7 @@ export const fakeOpen: OpenFn = (_cfg: any, ctx: OpenCtx) => {
       return { result: "final text" };
     },
     usage: async () => ({}),
+    accountInfo: async () => ({ tokenSource: "CLAUDE_CODE_OAUTH_TOKEN", apiProvider: "firstParty" }),
     dispose: async () => {},
     interrupt: async () => { pendingReject?.(new Error("interrupted")); pendingReject = undefined; },
   } as any;

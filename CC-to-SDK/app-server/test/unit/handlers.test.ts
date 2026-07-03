@@ -252,6 +252,57 @@ describe("thread/resume", () => {
   });
 });
 
+describe("account/read", () => {
+  function wireDirect(open: OpenFn) {
+    const out: any[] = [];
+    let server!: AppServer;
+    const peer = new Peer((o) => out.push(o), (m, p, id) => server.handleRequest(m, p, id), () => {});
+    server = new AppServer(peer, { open });
+    return { out, server };
+  }
+
+  it("maps accountInfo, caches across calls (single ephemeral session opened+disposed once)", async () => {
+    let opens = 0;
+    let disposed = false;
+    const open: OpenFn = () => {
+      opens++;
+      return { ...fakeSession(), accountInfo: async () => ({ tokenSource: "CLAUDE_CODE_OAUTH_TOKEN", apiProvider: "firstParty" }), dispose: async () => { disposed = true; } } as any;
+    };
+    const { out, server } = wireDirect(open);
+    server.handleRequest("account/read", {}, 4);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(out.find((o) => o.id === 4)?.result).toEqual({ account: { authenticated: true, method: "oauth-token", provider: "firstParty" } });
+    expect(disposed).toBe(true); // ephemeral session disposed right after the accountInfo() call
+    server.handleRequest("account/read", {}, 5);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(out.find((o) => o.id === 5)?.result).toEqual({ account: { authenticated: true, method: "oauth-token", provider: "firstParty" } });
+    expect(opens).toBe(1); // cached — second call did not reopen a session
+  });
+
+  it("open() throwing -> {authenticated:false}, no method/provider, and caches the failure (no reopen)", async () => {
+    let opens = 0;
+    const open: OpenFn = () => { opens++; throw new Error("boom"); };
+    const { out, server } = wireDirect(open);
+    server.handleRequest("account/read", {}, 4);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(out.find((o) => o.id === 4)?.result).toEqual({ account: { authenticated: false } });
+    server.handleRequest("account/read", {}, 5);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(out.find((o) => o.id === 5)?.result).toEqual({ account: { authenticated: false } });
+    expect(opens).toBe(1); // failure is cached too — second call never re-opened
+  });
+
+  it("session.accountInfo() rejecting still disposes the session -> {authenticated:false}", async () => {
+    let disposed = false;
+    const open: OpenFn = () => ({ ...fakeSession(), accountInfo: async () => { throw new Error("rpc down"); }, dispose: async () => { disposed = true; } } as any);
+    const { out, server } = wireDirect(open);
+    server.handleRequest("account/read", {}, 4);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(out.find((o) => o.id === 4)?.result).toEqual({ account: { authenticated: false } });
+    expect(disposed).toBe(true); // disposal runs on the failure path too (finally), not just on success
+  });
+});
+
 describe("turn/interrupt", () => {
   function wireFake() {
     const out: any[] = [];

@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import { openSession, type Session } from "cc-harness";
 import { Peer } from "./peer.js";
 import { Registry, type ThreadEntry } from "./registry.js";
@@ -33,6 +34,9 @@ export class AppServer {
   private open: OpenFn;
   private autoReview: boolean;
   private network: boolean;
+  // Cached for the process's lifetime once settled (success OR failure) — account/read never
+  // opens a second ephemeral session after the first call resolves either way.
+  private accountCache?: { authenticated: boolean; method?: string; provider?: string };
   constructor(private peer: Peer, deps: { open?: OpenFn; autoReview?: boolean; network?: boolean } = {}) {
     this.open = deps.open ?? ((cfg) => openSession(cfg));
     this.autoReview = deps.autoReview ?? false;
@@ -48,6 +52,7 @@ export class AppServer {
       case "thread/resume": return this.threadResume(params as ThreadResumeParams, id);
       case "turn/start": return this.turnStart(params as TurnStartParams, id);
       case "turn/interrupt": return void this.turnInterrupt(params as { threadId: string }, id);
+      case "account/read": return void this.accountRead(id);
       default: console.error("[appserver] unhandled method:", method); return this.peer.replyError(id, ERR.METHOD_NOT_FOUND, `method not found: ${method}`);
     }
   }
@@ -127,6 +132,31 @@ export class AppServer {
     if (!entry) return this.peer.replyError(id, ERR.INVALID_PARAMS, `unknown thread ${params.threadId}`);
     try { await entry.session.interrupt(); this.peer.reply(id, {}); }
     catch (e) { this.peer.replyError(id, ERR.INTERNAL, `interrupt failed: ${(e as Error).message}`); }
+  }
+
+  // Opens ONE ephemeral session (cwd = os tmpdir, no dynamic tools/broker) purely to read
+  // session.accountInfo() (probe 28 shape: {tokenSource?, apiProvider?}), races it against a 10s
+  // timeout, disposes the session in `finally` (every path — success, throw, or timeout), and
+  // caches whatever it settles to (including failure) for the process's lifetime so a second
+  // account/read never reopens a session.
+  private async accountRead(id: number | string): Promise<void> {
+    if (this.accountCache) return this.peer.reply(id, { account: this.accountCache });
+    let session: Session | undefined;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      session = this.open({ cwd: tmpdir() }, {});
+      const raw: any = await Promise.race([
+        session.accountInfo(),
+        new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("account/read timeout")), 10_000); }),
+      ]);
+      const method = raw?.tokenSource === "CLAUDE_CODE_OAUTH_TOKEN" ? "oauth-token" : raw?.tokenSource === "ANTHROPIC_API_KEY" ? "api-key" : raw ? "cli-login" : undefined;
+      this.accountCache = { authenticated: !!raw, ...(method ? { method } : {}), ...(raw?.apiProvider ? { provider: raw.apiProvider } : {}) };
+    } catch { this.accountCache = { authenticated: false }; }
+    finally {
+      if (timer) clearTimeout(timer); // cancel the race's loser timer so it doesn't dangle after accountInfo() wins
+      try { await session?.dispose(); } catch {}
+    }
+    this.peer.reply(id, { account: this.accountCache });
   }
 
   private async runTurn(threadId: string, entry: ThreadEntry, text: string, tr: TurnTranslator): Promise<void> {
