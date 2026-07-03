@@ -342,3 +342,25 @@ describe("turn/interrupt", () => {
     expect(out.some((o) => o.method === "turn/failed")).toBe(false);
   });
 });
+
+describe("thread/name/set and config/read", () => {
+  function wireDirect(open: OpenFn) {
+    const out: any[] = [];
+    let server!: AppServer;
+    const peer = new Peer((o) => out.push(o), (m, p, id) => server.handleRequest(m, p, id), () => {});
+    server = new AppServer(peer, { open });
+    return { out, server };
+  }
+
+  it("thread/name/set replies {}", () => {
+    const { out, server } = wireDirect(() => fakeSession());
+    server.handleRequest("thread/name/set", { threadId: "thr_123", name: "My Thread" }, 1);
+    expect(out.find((o) => o.id === 1)?.result).toEqual({});
+  });
+
+  it("config/read replies {config:{model: DEFAULTS.model}}", () => {
+    const { out, server } = wireDirect(() => fakeSession());
+    server.handleRequest("config/read", {}, 2);
+    expect(out.find((o) => o.id === 2)?.result).toEqual({ config: { model: "claude-opus-4-8" } });
+  });
+});

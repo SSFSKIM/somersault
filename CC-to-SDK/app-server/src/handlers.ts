@@ -1,5 +1,5 @@
 import { tmpdir } from "node:os";
-import { openSession, type Session } from "cc-harness";
+import { openSession, type Session, DEFAULTS } from "cc-harness";
 import { Peer } from "./peer.js";
 import { Registry, type ThreadEntry } from "./registry.js";
 import { AppServerBroker } from "./approvals.js";
@@ -50,9 +50,11 @@ export class AppServer {
       case "initialize": return this.peer.reply(id, { userAgent: "cc-codex-appserver", platformOs: process.platform });
       case "thread/start": return this.threadStart(params as ThreadStartParams, id);
       case "thread/resume": return this.threadResume(params as ThreadResumeParams, id);
+      case "thread/name/set": return this.peer.reply(id, {});
       case "turn/start": return this.turnStart(params as TurnStartParams, id);
       case "turn/interrupt": return void this.turnInterrupt(params as { threadId: string }, id);
       case "account/read": return void this.accountRead(id);
+      case "config/read": return this.peer.reply(id, { config: { model: DEFAULTS.model } });
       default: console.error("[appserver] unhandled method:", method); return this.peer.replyError(id, ERR.METHOD_NOT_FOUND, `method not found: ${method}`);
     }
   }
