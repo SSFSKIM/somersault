@@ -28,7 +28,7 @@ export async function spawnAppServer({ cwd = process.cwd(), env = process.env, o
 
 class AppServerClient {
   constructor(child, onStderr) {
-    this.child = child; this.nextId = 1; this.pending = new Map(); this.turns = new Map(); this.buf = ""; this.exited = false;
+    this.child = child; this.nextId = 1; this.pending = new Map(); this.turns = new Map(); this.pendingNotifications = new Map(); this.buf = ""; this.exited = false;
     child.stdout.on("data", (c) => this._feed(c.toString()));
     child.stderr.on("data", (c) => onStderr?.(c.toString()));
     child.on("exit", (code, signal) => {
@@ -64,8 +64,21 @@ class AppServerClient {
     // turnId lives at the top level for item/completed + thread/tokenUsage/updated, but only nested
     // under turn.id for turn/completed|failed (see translator.ts) — try both.
     const turnId = params?.turnId ?? params?.turn?.id;
-    const t = turnId && this.turns.get(turnId);
-    if (!t) return;
+    if (!turnId) return;
+    const t = this.turns.get(turnId);
+    if (!t) {
+      // Registration race: the turn/start reply's .then() (which does this.turns.set(turnId, t))
+      // hasn't run yet — e.g. the reply and this turn's own notifications arrived in one _feed()
+      // chunk, so they're dispatched synchronously before that .then() microtask gets a turn. Buffer
+      // instead of dropping; runTurn replays this the instant the collector registers.
+      let q = this.pendingNotifications.get(turnId);
+      if (!q) { q = []; this.pendingNotifications.set(turnId, q); }
+      q.push({ method, params });
+      return;
+    }
+    this._applyNotification(t, method, params);
+  }
+  _applyNotification(t, method, params) {
     if (method === "item/completed" && params.item?.type === "agentMessage") {
       if (params.item.phase === "final_answer") t.finalText = params.item.text;
       else { t.commentary.push(params.item.text); t.onProgress?.(params.item.text); }
@@ -85,11 +98,15 @@ class AppServerClient {
     const r = await this._request("thread/resume", { threadId, cwd, model, effort, approvalPolicy: "never", sandbox: write ? "workspace-write" : "read-only" });
     return { threadId: r.thread.id };
   }
-  // Registers the turn's collector only AFTER the turn/start reply resolves. This is safe because
-  // handlers.ts's turnStart() replies (peer.reply) BEFORE it kicks off the async turn (void
-  // this.runTurn(...)) — so no item/turn notification for this turnId can be written to the wire
-  // before the reply carrying that turnId is. Keep this comment: it documents a real, load-bearing
-  // wire-ordering assumption, not just a client-side implementation detail.
+  // Registers the turn's collector only AFTER the turn/start reply resolves. handlers.ts's
+  // turnStart() replies (peer.reply) BEFORE it kicks off the async turn (void this.runTurn(...)), so
+  // on the wire no notification for this turnId is ever written before the reply carrying that
+  // turnId is. But the CLIENT can still see them out of order relative to its own microtasks: if the
+  // reply and this turn's notifications land in the same _feed() chunk, _dispatch processes all of
+  // them synchronously before the reply's .then() (below) gets a microtask turn to run
+  // this.turns.set(turnId, t) — so _onNotification buffers into pendingNotifications instead of
+  // dropping, and this .then() drains that buffer right after registering. Belt-and-suspenders, not
+  // just documentation.
   runTurn({ threadId, prompt, onProgress }) {
     return new Promise((resolve, reject) => {
       this._request("turn/start", { threadId, input: [{ type: "text", text: prompt }] }).then((r) => {
@@ -99,6 +116,10 @@ class AppServerClient {
           resolveWith: (status) => { this.turns.delete(turnId); resolve({ status, finalText: t.finalText, commentary: t.commentary, usage: t.usage, turnId }); },
         };
         this.turns.set(turnId, t);
+        // Drain any notifications for this turnId that arrived (and got buffered by _onNotification)
+        // before this registration landed — see the registration-race comment above.
+        const buffered = this.pendingNotifications.get(turnId);
+        if (buffered) { this.pendingNotifications.delete(turnId); for (const { method, params } of buffered) this._applyNotification(t, method, params); }
         if (r.turn.status && r.turn.status !== "inProgress") t.resolveWith(r.turn.status);
       }, reject);
     });
@@ -106,6 +127,9 @@ class AppServerClient {
   async interrupt({ threadId }) { return this._request("turn/interrupt", { threadId }); }
   async accountRead() { const r = await this._request("account/read", {}); return r.account ?? { authenticated: false }; }
   async close() {
+    // Already dead (e.g. detected via alive() before calling close()): a future "exit" event will
+    // never fire, so waiting on one here would hang forever — nothing left to do.
+    if (this.exited) return;
     try { this.child.stdin.end(); } catch {}
     const done = new Promise((r) => this.child.once("exit", r));
     const timer = setTimeout(() => this.child.kill("SIGKILL"), 2000);
