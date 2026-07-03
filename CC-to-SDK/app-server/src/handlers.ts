@@ -7,6 +7,7 @@ import { ERR, type DynamicToolSpec, type ThreadStartParams, type TurnStartParams
 import { ToolBroker, withDynamicTools } from "./broker.js";
 import { resolvePosture } from "./posture.js";
 import { resolveSandbox } from "./sandbox.js";
+import { recordThread } from "./threads.js";
 
 /** Context handed to the session opener so a fake (test) session can drive the dynamic-tool broker
  *  directly; the real opener (openSession) ignores it — the SDK MCP server already closed over the broker. */
@@ -75,6 +76,7 @@ export class AppServer {
     if (posture.roundTripApprovals) cfg.permissionBroker = new AppServerBroker(this.peer, { threadId, turnId: turnIdOf });
     const session = this.open(cfg, { broker: specs.length ? broker : undefined, dynamicTools: specs });
     this.reg.register(threadId, session);
+    const e = this.reg.get(threadId); if (e) e.cwd = params.cwd;
     this.peer.reply(id, { thread: { id: threadId } });
     this.peer.notify("thread/started", { thread: { id: threadId } });
   }
@@ -88,12 +90,14 @@ export class AppServer {
     this.peer.notify("turn/started", { turn: { id: turnId } });
     const text = (params.input ?? []).map((p) => p.text ?? "").join("");
     const tr = new TurnTranslator(params.threadId, turnId);
-    void this.runTurn(entry, text, tr);
+    void this.runTurn(params.threadId, entry, text, tr);
   }
 
-  private async runTurn(entry: ThreadEntry, text: string, tr: TurnTranslator): Promise<void> {
+  private async runTurn(threadId: string, entry: ThreadEntry, text: string, tr: TurnTranslator): Promise<void> {
     try {
       const { result } = await entry.session.submit(text, (m) => { for (const o of tr.onMessage(m)) this.peer.notify((o as any).method, (o as any).params); });
+      const sid = (entry.session as any).sessionId as string | undefined;
+      if (sid) recordThread(threadId, sid, entry.cwd ?? "");
       let usage: UsageTotals | undefined;
       try { usage = toUsageTotals(await entry.session.usage()); } catch { /* telemetry only — usage() is cumulative per session */ }
       for (const o of tr.finalize({ text: String(result ?? ""), isError: false, usage })) this.peer.notify((o as any).method, (o as any).params);

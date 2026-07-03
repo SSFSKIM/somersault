@@ -1,12 +1,12 @@
 import type { Session } from "cc-harness";
+import { randomBytes } from "node:crypto";
 
-export interface ThreadEntry { session: Session; turnSeq: number; currentTurnId?: string }
+export interface ThreadEntry { session: Session; turnSeq: number; currentTurnId?: string; cwd?: string }
 
 export class Registry {
   private threads = new Map<string, ThreadEntry>();
-  private threadN = 0;
   /** Allocate a stable ID before the session is created (so the broker closure can reference it). */
-  allocId(): string { return `thr_${++this.threadN}`; }
+  allocId(): string { return `thr_${randomBytes(4).toString("hex")}`; }
   /** Register a pre-allocated ID with its session. */
   register(id: string, session: Session): void { this.threads.set(id, { session, turnSeq: 0 }); }
   /** Allocate + register in one step (legacy convenience). */
