@@ -169,7 +169,7 @@ export class AppServer {
   private async runTurn(threadId: string, entry: ThreadEntry, text: string, tr: TurnTranslator): Promise<void> {
     try {
       const { result } = await entry.session.submit(text, (m) => { for (const o of tr.onMessage(m)) this.peer.notify((o as any).method, (o as any).params); });
-      const sid = (entry.session as any).sessionId as string | undefined;
+      const sid = entry.session.sessionId;
       if (sid) recordThread(threadId, sid, entry.cwd ?? "");
       let usage: UsageTotals | undefined;
       try { usage = toUsageTotals(await entry.session.usage()); } catch { /* telemetry only — usage() is cumulative per session */ }
