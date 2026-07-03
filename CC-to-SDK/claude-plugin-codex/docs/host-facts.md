@@ -218,3 +218,77 @@ test matches the brief verbatim:
 1. `plugins/claude/.mcp.json` — added `"cwd": "."` to the `claude-companion` server entry (§1).
 2. `plugins/claude/hooks/hooks.json` — command changed from `node "./scripts/hook-probe.mjs"` to
    `node "${CLAUDE_PLUGIN_ROOT}/scripts/hook-probe.mjs"` (§3).
+
+## 8. Task 15 live confirm: Stop review gate hook, interactive TUI
+
+Settled live against the same `codex-cli 0.140.0`, driven via `tmux` (send-keys/capture-pane) since
+the Stop-hook trust prompt and the gate round both require the interactive TUI, not `codex exec` (per
+§5's caution). `plugins/claude/hooks/hooks.json`'s `SessionStart` probe entry was replaced with the
+real `Stop` hook (`node "${CLAUDE_PLUGIN_ROOT}/scripts/stop-review-gate-hook.mjs"`, `timeout: 900`) —
+same `${CLAUDE_PLUGIN_ROOT}` mechanism confirmed in §3, no new deviation needed. Re-ran
+`codex plugin add claude@cc-claude` after adding the hook script (no version bump — confirmed cache
+mirrors source via `diff -r`, same as §7).
+
+**Hook trust for a new event on an already-trusted plugin is a SEPARATE approval, not inherited.**
+Even though this plugin's `SessionStart` hook (Task 2) was already trusted from an earlier session,
+swapping it for a `Stop` hook triggered a fresh "Hooks need review" gate on the very next `codex`
+launch — confirmed via the hooks-review screen showing `Stop: 2 installed, 1 Active, 1 Review` (the
+"2" is this hook plus one from an unrelated already-trusted plugin). Approved with `t` (trust) from
+the per-hook detail screen, which showed the exact expected command/timeout:
+```
+Event     Stop
+Source    Plugin - claude@cc-claude
+Command   node "/Users/new/.codex/plugins/cache/cc-claude/claude/0.1.0/scripts/stop-review-gate-hook.mjs"
+Timeout   900s
+Trust     Trusted (after pressing t)
+```
+Trust persists across new `codex` sessions once set (no re-prompt on subsequent launches), same as §4.
+
+**`setup {enable_review_gate:true}` without an explicit `cwd` silently targets the wrong workspace.**
+First call (`Call the setup tool ... with enable_review_gate set to true`, no `cwd` mentioned) reported
+"Review gate: enabled" — but `getConfig`/`setConfig` resolved against `companion.cwd`, which defaults
+to the MCP server's OWN spawn cwd (`.mcp.json`'s `"cwd": "."` → the **plugin cache root**, per §1-2),
+not the session's workspace. Confirmed by inspecting `resolveStateDir("/private/tmp/claude-plugin-smoke-15")`'s
+`state.json` immediately after: `stopReviewGate: false`, unaffected. Re-running with the model
+explicitly told to pass `cwd` (`"cwd" set to the exact current working directory (run pwd if
+unsure)`) fixed it — the model ran `pwd`, got `/private/tmp/claude-plugin-smoke-15`, and called
+`claude-companion.setup({"cwd":"/private/tmp/claude-plugin-smoke-15","enable_review_gate":true})`;
+`state.json` then showed `stopReviewGate: true` for the right workspace. This is a pre-existing
+per-tool `cwd` default (every companion.mjs tool's schema already documents `cwd: "...defaults to the
+server cwd"`) rather than anything Task 15 touched, but it is an easy live footgun worth flagging for
+whoever next drives this plugin from a fresh workspace: **always pass `cwd` explicitly** in tool calls
+that mutate or read workspace-scoped state (`setup`, `status`, `result`, `cancel`, `review`).
+
+**Two real Stop-gate rounds observed, both correctly fail-open, no crash, no false block:**
+
+1. First round reviewed the *previous* (setup-only) turn. The real Claude reviewer complied with the
+   contract exactly — `finalText` was `"ALLOW: Previous turn was only a setup/status check ... no code
+   changes were made, so there is nothing to gate."` (first line, no preamble). Hook exited 0 with no
+   stdout at all (clean allow) and the TUI showed nothing — confirms a compliant ALLOW is fully silent
+   to the user, as designed. Job recorded: `id: gate-mr4x50bb-yo1qvm`, `jobClass: "gate"`, `kindLabel:
+   "Claude Stop Gate Review"`, `status: "completed"`.
+2. Second round reviewed a genuine code-editing turn (added and committed a real `multiply(a, b)`
+   function). The TUI showed `Running 2 Stop hooks` while it ran (confirms Codex actually invokes this
+   hook process, not a no-op), then after ~35s: `Stop hook (completed) / warning: claude stop-gate
+   skipped: malformed gate output` — the turn ended normally (not blocked), with our `systemMessage`
+   surfaced verbatim by Codex as a `warning:` line. Inspecting the job file
+   (`~/.codex/claude-companion/<repo-hash>/jobs/gate-mr4x756d-sh5tnb.json`) showed the reviewer's real
+   `finalText` was a full, *correct* review — it verified the actual commit/diff/exports, concluded
+   there were no issues — but wrote several paragraphs of investigation narrative **before** the
+   `ALLOW: ...` line, instead of putting `ALLOW:`/`BLOCK:` as the literal first line per the prompt's
+   `compact_output_contract`. The hook's parser (checks only `rawOutput.split(/\r?\n/,1)[0]`) correctly
+   classified this as non-compliant and took the fail-open "malformed gate output" branch rather than
+   guessing, misparsing, or blocking on a partial match — exactly the required behavior. **Finding for
+   future work (not fixed here, per the brief's "keep the exact output contract" instruction):** real
+   models asked to "verify against the repository state" before answering (the `grounding_rules`/
+   `dig_deeper_nudge` sections) tend to narrate that investigation in the same final message rather
+   than confining it to a strictly-first `ALLOW:`/`BLOCK:` line, so in practice a non-trivial fraction
+   of real code-change reviews may land on the fail-open "malformed" path (safe, but underuses the
+   gate's actual signal) rather than a clean `ALLOW:`/`BLOCK:`. A future revision could parse the
+   *last* `ALLOW:`/`BLOCK:`-prefixed line in the response instead of strictly the first, or add a
+   closing reminder to the prompt repeating the first-line rule right before the response point.
+
+Net: the full contract is confirmed live end-to-end — real hook process spawn, real short-lived
+appserver spawn (`CLAUDE_COMPANION_APPSERVER` pointed at the built `app-server/dist/bin.js`), a real
+Claude thread/turn per gate check, correct job bookkeeping (`gate-` prefix, "Claude Stop Gate Review"
+label), and fail-open behavior holding on a genuine (not manufactured) edge case.
