@@ -4,14 +4,21 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { spawnAppServer as defaultSpawnAppServer } from "./appserver-client.mjs";
+import { resolveAppserverCommand, spawnAppServer as defaultSpawnAppServer } from "./appserver-client.mjs";
 import { readJsonFile } from "./fs.mjs";
 import { collectReviewContext, resolveReviewTarget } from "./git.mjs";
 import { interpolateTemplate, loadPromptTemplate } from "./prompts.mjs";
-import { parseStructuredOutput, renderReviewResult } from "./render.mjs";
-import { generateJobId, listJobs, upsertJob } from "./state.mjs";
-import { createJobRecord, runTrackedJob } from "./tracked-jobs.mjs";
-import { sortJobsNewestFirst } from "./job-control.mjs";
+import { parseStructuredOutput, renderReviewResult, renderStatusReport, renderStoredJobResult } from "./render.mjs";
+import { generateJobId, getConfig, listJobs, resolveJobLogFile, setConfig, upsertJob, writeJobFile } from "./state.mjs";
+import { appendLogLine, createJobRecord, nowIso, runTrackedJob } from "./tracked-jobs.mjs";
+import {
+  buildSingleJobSnapshot,
+  buildStatusSnapshot,
+  readStoredJob,
+  resolveCancelableJob,
+  resolveResultJob,
+  sortJobsNewestFirst
+} from "./job-control.mjs";
 
 export const MODEL_ALIASES = { opus: "claude-opus-4-8", sonnet: "claude-sonnet-5", haiku: "claude-haiku-4-5-20251001", fable: "claude-fable-5" };
 export const VALID_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -94,10 +101,13 @@ export async function ensureClient(companion) {
   return companion.spawning;
 }
 
-async function runRescueTurn({ client, cwd, model, effort, write, prompt, resumeThreadId }) {
+async function runRescueTurn({ client, cwd, jobId, model, effort, write, prompt, resumeThreadId }) {
   const { threadId } = resumeThreadId
     ? await client.threadResume({ threadId: resumeThreadId, cwd, model, effort, write })
     : await client.threadStart({ cwd, model, effort, write });
+  // Persisted as soon as it's known (not just at completion) so the cancel tool has a live
+  // threadId to interrupt while the turn is still in flight.
+  upsertJob(cwd, { id: jobId, threadId });
   const turn = await client.runTurn({ threadId, prompt });
   const rendered = turn.finalText || (turn.commentary ?? []).join("\n");
   return {
@@ -127,7 +137,7 @@ function buildReviewPrompt(reviewKind, context, focusText) {
   });
 }
 
-async function runReviewTurn({ client, cwd, target, reviewKind, focusText }) {
+async function runReviewTurn({ client, cwd, jobId, target, reviewKind, focusText }) {
   const context = collectReviewContext(cwd, target);
   const prompt = buildReviewPrompt(reviewKind, context, focusText);
   const { threadId } = await client.threadStart({
@@ -135,6 +145,8 @@ async function runReviewTurn({ client, cwd, target, reviewKind, focusText }) {
     write: false,
     outputSchema: readJsonFile(REVIEW_SCHEMA_PATH)
   });
+  // See runRescueTurn: persisted immediately so cancel can target this turn while it's in flight.
+  upsertJob(cwd, { id: jobId, threadId });
   const turn = await client.runTurn({ threadId, prompt });
   const parsed = parseStructuredOutput(turn.finalText, { failureMessage: "Claude did not return a final message." });
   const rendered = renderReviewResult(parsed, { reviewLabel: reviewKind.reviewLabel, targetLabel: context.target.label });
@@ -159,14 +171,20 @@ async function runReviewTurn({ client, cwd, target, reviewKind, focusText }) {
 // awaiting the caller, and always resolves (never rejects — runTrackedJob already persisted any
 // failure to the job store, so there's nothing left for the caller to react to; swallowing here
 // keeps this an intentional fire-and-forget instead of an unhandled-rejection warning).
+// activeRuns lets cancel() await a specific job's in-flight runTrackedJob settle-and-persist before
+// stamping its own "cancelled" write — otherwise the turn's own natural completion write (racing
+// the interrupt) could land after cancel's and clobber "cancelled" back to "failed"/"completed".
 function runBackgroundNow(companion, job, runner) {
   companion.runningBackground += 1;
-  return runTrackedJob(job, runner)
+  const settle = runTrackedJob(job, runner)
     .catch(() => {})
     .finally(() => {
       companion.runningBackground -= 1;
+      companion.activeRuns.delete(job.id);
       drainQueue(companion);
     });
+  companion.activeRuns.set(job.id, settle);
+  return settle;
 }
 
 function drainQueue(companion) {
@@ -219,7 +237,7 @@ async function rescueHandler(companion, args = {}) {
       effort: effort ?? null
     });
     const resumeThreadId = resume ? candidate?.threadId ?? null : null;
-    const runner = () => runRescueTurn({ client, cwd, model, effort, write, prompt, resumeThreadId });
+    const runner = () => runRescueTurn({ client, cwd, jobId, model, effort, write, prompt, resumeThreadId });
 
     if (wait) {
       const execution = await runTrackedJob(job, runner);
@@ -255,7 +273,7 @@ async function reviewToolHandler(companion, kindKey, args = {}) {
       kindLabel: reviewKind.kind,
       prompt: focusText || target.label
     });
-    const runner = () => runReviewTurn({ client, cwd, target, reviewKind, focusText });
+    const runner = () => runReviewTurn({ client, cwd, jobId, target, reviewKind, focusText });
 
     if (wait) {
       const execution = await runTrackedJob(job, runner);
@@ -270,30 +288,215 @@ async function reviewToolHandler(companion, kindKey, args = {}) {
   }
 }
 
-const SETUP_TOOL = {
-  name: "setup",
-  description: "Report claude-companion runtime environment (scaffold stub).",
-  inputSchema: { type: "object", properties: {}, additionalProperties: false },
-  handler: async () =>
-    JSON.stringify(
-      {
-        cwd: process.cwd(),
-        node: process.version,
-        env: {
-          HOME: !!process.env.HOME,
-          PATH: !!process.env.PATH,
-          CLAUDE_CODE_OAUTH_TOKEN: !!process.env.CLAUDE_CODE_OAUTH_TOKEN,
-          ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
-          CLAUDE_COMPANION_APPSERVER: process.env.CLAUDE_COMPANION_APPSERVER ?? null
-        }
-      },
-      null,
-      2
-    )
-};
+function readJobIdArg(args) {
+  return typeof args.job_id === "string" && args.job_id.trim() ? args.job_id.trim() : null;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const STATUS_WAIT_INTERVAL_MS = 2000;
+const STATUS_WAIT_TIMEOUT_MS = 240000;
+
+function isActiveStatus(status) {
+  return status === "queued" || status === "running";
+}
+
+// Polls a single job (buildSingleJobSnapshot) until it leaves queued/running, or gives up once
+// timeoutMs has elapsed — never hangs forever on a job that's stuck.
+export async function pollSingleJobUntilTerminal(cwd, jobId, options = {}) {
+  const intervalMs = options.intervalMs ?? STATUS_WAIT_INTERVAL_MS;
+  const timeoutMs = options.timeoutMs ?? STATUS_WAIT_TIMEOUT_MS;
+  const start = Date.now();
+  let snap = buildSingleJobSnapshot(cwd, jobId);
+  while (isActiveStatus(snap.job.status) && Date.now() - start < timeoutMs) {
+    await sleep(intervalMs);
+    snap = buildSingleJobSnapshot(cwd, jobId);
+  }
+  return snap;
+}
+
+// Same idea for the no-job_id aggregate view: polls buildStatusSnapshot until nothing is
+// queued/running, or the timeout elapses.
+export async function pollStatusUntilIdle(cwd, options = {}) {
+  const intervalMs = options.intervalMs ?? STATUS_WAIT_INTERVAL_MS;
+  const timeoutMs = options.timeoutMs ?? STATUS_WAIT_TIMEOUT_MS;
+  const start = Date.now();
+  let report = buildStatusSnapshot(cwd);
+  while (report.running.length > 0 && Date.now() - start < timeoutMs) {
+    await sleep(intervalMs);
+    report = buildStatusSnapshot(cwd);
+  }
+  return report;
+}
+
+// Reuses renderStatusReport (Task 13) for the single-job view too, by placing the one job into
+// whichever bucket (running vs. latestFinished) renderStatusReport already knows how to render —
+// same tested markdown shape, no new render surface needed.
+function renderSingleJobStatus(cwd, snap) {
+  const config = getConfig(cwd);
+  const active = isActiveStatus(snap.job.status);
+  return renderStatusReport({
+    config,
+    running: active ? [snap.job] : [],
+    latestFinished: active ? null : snap.job,
+    recent: [],
+    needsReview: Boolean(config.stopReviewGate)
+  });
+}
+
+async function statusHandler(companion, args = {}) {
+  const cwd = args.cwd ?? companion.cwd ?? process.cwd();
+  const jobId = readJobIdArg(args);
+  const wait = args.wait === true;
+
+  if (jobId) {
+    const snap = wait ? await pollSingleJobUntilTerminal(cwd, jobId) : buildSingleJobSnapshot(cwd, jobId);
+    return renderSingleJobStatus(cwd, snap);
+  }
+
+  const report = wait ? await pollStatusUntilIdle(cwd) : buildStatusSnapshot(cwd);
+  return renderStatusReport(report);
+}
+
+async function resultHandler(companion, args = {}) {
+  const cwd = args.cwd ?? companion.cwd ?? process.cwd();
+  const jobId = readJobIdArg(args);
+  const { workspaceRoot, job } = resolveResultJob(cwd, jobId);
+  const storedJob = readStoredJob(workspaceRoot, job.id);
+  return renderStoredJobResult(job, storedJob);
+}
+
+// Drops a (possibly wedged) worker connection: nulls the shared reference first so a concurrent
+// ensureClient() call never hands out a client this function is about to close, then closes it.
+// ensureClient() respawns lazily the next time anything needs the worker.
+async function dropClient(companion) {
+  const client = companion.client;
+  companion.client = null;
+  if (client) {
+    await client.close().catch(() => {});
+  }
+}
+
+function markJobCancelled(workspaceRoot, job) {
+  const completedAt = nowIso();
+  const existing = readStoredJob(workspaceRoot, job.id) ?? job;
+  const errorMessage = existing.errorMessage ?? "Cancelled by user.";
+  writeJobFile(workspaceRoot, job.id, {
+    ...existing,
+    ...job,
+    status: "cancelled",
+    phase: "cancelled",
+    pid: null,
+    completedAt,
+    errorMessage
+  });
+  upsertJob(workspaceRoot, { id: job.id, status: "cancelled", phase: "cancelled", pid: null, completedAt, errorMessage });
+  appendLogLine(job.logFile ?? resolveJobLogFile(workspaceRoot, job.id), "Cancelled by user.");
+}
+
+export async function cancelHandler(companion, args = {}) {
+  const cwd = args.cwd ?? companion.cwd ?? process.cwd();
+  const jobId = readJobIdArg(args);
+  const { workspaceRoot, job } = resolveCancelableJob(cwd, jobId);
+
+  // Queued (never started) job: drop it from the in-memory background queue too, so drainQueue
+  // never resurrects it once a slot frees up.
+  if (companion.queue) {
+    const queueIndex = companion.queue.findIndex((entry) => entry.job.id === job.id);
+    if (queueIndex !== -1) companion.queue.splice(queueIndex, 1);
+  }
+
+  if (job.threadId && companion.client) {
+    if (companion.client.alive()) {
+      try {
+        await companion.client.interrupt({ threadId: job.threadId });
+      } catch {
+        // RPC failure (unknown thread, dead worker, etc.): fall back to closing the connection.
+        await dropClient(companion);
+      }
+    } else {
+      // Already dead: calling interrupt() would send a request nothing will ever reply to (the
+      // exit event that rejects pending requests already fired once) — that would hang forever.
+      await dropClient(companion);
+    }
+  }
+
+  // If this job's own background run is still settling (e.g. the interrupted turn's rejection is
+  // mid-flight through runTrackedJob's completion write), wait for it so our "cancelled" write
+  // lands last and can't be clobbered back to "failed"/"completed" by that race.
+  const settle = companion.activeRuns?.get(job.id);
+  if (settle) await settle;
+
+  markJobCancelled(workspaceRoot, job);
+  return `Cancelled job ${job.id}.`;
+}
+
+const WORKER_HANDSHAKE_TIMEOUT_MS = 5000;
+
+export function formatAuthStatus(account) {
+  if (!account?.authenticated) {
+    return "Not authenticated. Run `claude setup-token`, or set CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY and add it to this plugin's .mcp.json env_vars whitelist.";
+  }
+  switch (account.method) {
+    case "oauth-token":
+      return "Claude subscription (OAuth) ✓";
+    case "api-key":
+      return "API key ✓ (note: shadows OAuth)";
+    case "cli-login":
+      return "CLI stored login ✓";
+    default:
+      return "Authenticated (unknown method).";
+  }
+}
+
+async function setupHandler(companion, args = {}) {
+  const cwd = args.cwd ?? companion.cwd ?? process.cwd();
+  const lines = ["# Claude Companion Setup", ""];
+
+  const resolved = resolveAppserverCommand(companion.env);
+  if (!resolved) {
+    lines.push("Worker: not found.");
+    lines.push(WORKER_MISSING_TEXT);
+  } else {
+    lines.push(`Worker: found (${[resolved.command, ...resolved.args].join(" ")}).`);
+
+    let client = null;
+    try {
+      client = await Promise.race([
+        ensureClient(companion),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`handshake timed out after ${WORKER_HANDSHAKE_TIMEOUT_MS}ms`)), WORKER_HANDSHAKE_TIMEOUT_MS);
+        })
+      ]);
+      lines.push("Handshake: ok.");
+    } catch (error) {
+      lines.push(`Handshake: failed (${error.message}).`);
+    }
+
+    if (client) {
+      try {
+        const account = await client.accountRead();
+        lines.push(`Auth: ${formatAuthStatus(account)}`);
+      } catch (error) {
+        lines.push(`Auth: could not be checked (${error.message}).`);
+      }
+    } else {
+      lines.push("Auth: not checked (worker unavailable).");
+    }
+  }
+
+  if (args.enable_review_gate === true) setConfig(cwd, "stopReviewGate", true);
+  if (args.disable_review_gate === true) setConfig(cwd, "stopReviewGate", false);
+  const gateEnabled = Boolean(getConfig(cwd).stopReviewGate);
+  lines.push(`Review gate: ${gateEnabled ? "enabled" : "disabled"}.`);
+
+  return `${lines.join("\n").trimEnd()}\n`;
+}
 
 export function createCompanion({ cwd = process.cwd(), env = process.env, spawnAppServer = defaultSpawnAppServer } = {}) {
-  const companion = { cwd, env, client: null, spawning: null, spawnAppServer, runningBackground: 0, queue: [] };
+  const companion = { cwd, env, client: null, spawning: null, spawnAppServer, runningBackground: 0, queue: [], activeRuns: new Map() };
 
   const rescueTool = {
     name: "rescue",
@@ -344,8 +547,68 @@ export function createCompanion({ cwd = process.cwd(), env = process.env, spawnA
     handler: (args) => reviewToolHandler(companion, "adversarial-review", args ?? {})
   };
 
+  const cwdProperty = { cwd: { type: "string", description: "Workspace root override; defaults to the server cwd." } };
+
+  const setupTool = {
+    name: "setup",
+    description: "Report claude-companion readiness: worker resolution, handshake, auth, and the review-gate state.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        enable_review_gate: { type: "boolean", description: "Turn on the stop-time review gate for this workspace." },
+        disable_review_gate: { type: "boolean", description: "Turn off the stop-time review gate for this workspace." },
+        ...cwdProperty
+      }
+    },
+    handler: (args) => setupHandler(companion, args ?? {})
+  };
+
+  const statusTool = {
+    name: "status",
+    description: "Report background Claude job status (all jobs, or one job via job_id).",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        job_id: { type: "string", description: "Inspect one job by id (or unique id prefix)." },
+        wait: { type: "boolean", description: "Poll (every 2s, up to 240s) until the job(s) leave queued/running." },
+        ...cwdProperty
+      }
+    },
+    handler: (args) => statusHandler(companion, args ?? {})
+  };
+
+  const resultTool = {
+    name: "result",
+    description: "Fetch the stored output of a finished Claude job.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        job_id: { type: "string", description: "Which job's result to fetch; defaults to the latest finished job." },
+        ...cwdProperty
+      }
+    },
+    handler: (args) => resultHandler(companion, args ?? {})
+  };
+
+  const cancelTool = {
+    name: "cancel",
+    description: "Cancel an active (queued or running) Claude job.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        job_id: { type: "string", description: "Which job to cancel; required if more than one job is active." },
+        ...cwdProperty
+      }
+    },
+    handler: (args) => cancelHandler(companion, args ?? {})
+  };
+
   return {
-    tools: [SETUP_TOOL, rescueTool, reviewTool, adversarialReviewTool],
+    tools: [setupTool, rescueTool, reviewTool, adversarialReviewTool, statusTool, resultTool, cancelTool],
     dispose: async () => {
       if (!companion.client) return;
       const client = companion.client;

@@ -8,10 +8,20 @@ process.env.CLAUDE_COMPANION_DATA = makeTempDir("ccd-companion-");
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../app-server/dist/bin.js");
 const ENV = { ...process.env, CC_APPSERVER_FAKE: "1", CLAUDE_COMPANION_APPSERVER: `node ${BIN}` };
 
-const { createCompanion, ensureClient, normalizeModel, MODEL_ALIASES, VALID_EFFORTS } = await import(
-  "../plugins/claude/scripts/lib/companion.mjs"
+const {
+  createCompanion,
+  ensureClient,
+  normalizeModel,
+  MODEL_ALIASES,
+  VALID_EFFORTS,
+  cancelHandler,
+  formatAuthStatus,
+  pollSingleJobUntilTerminal,
+  pollStatusUntilIdle
+} = await import("../plugins/claude/scripts/lib/companion.mjs");
+const { listJobs, readJobFile, resolveJobFile, upsertJob, getConfig } = await import(
+  "../plugins/claude/scripts/lib/state.mjs"
 );
-const { listJobs, readJobFile, resolveJobFile } = await import("../plugins/claude/scripts/lib/state.mjs");
 const { buildStatusSnapshot } = await import("../plugins/claude/scripts/lib/job-control.mjs");
 const { spawnAppServer } = await import("../plugins/claude/scripts/lib/appserver-client.mjs");
 
@@ -41,6 +51,18 @@ function makeDirtyRepo(prefix) {
   run("git", ["commit", "-m", "init"], { cwd });
   fs.writeFileSync(path.join(cwd, "app.js"), "console.log('v2');\n");
   return cwd;
+}
+
+async function waitForJobWithThreadId(cwd, timeoutMs = 3000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const job = listJobs(cwd).find(
+      (candidate) => candidate.threadId && (candidate.status === "running" || candidate.status === "queued")
+    );
+    if (job) return job.id;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error("timeout waiting for a running job with a recorded threadId");
 }
 
 async function waitForAllTerminal(cwd, count, timeoutMs = 5000) {
@@ -240,4 +262,237 @@ test("review: worker missing -> setup guidance (shares rescue's error-handling p
   const text = await callTool(c, "review", { wait: true });
   assert.match(text, /not available/);
   await c.dispose();
+});
+
+// Task 14: status / result / cancel / full setup.
+
+test("status {} lists a completed job in the markdown report", async () => {
+  const tmpRepo = makeTempDir("companion-status-table-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+  await callTool(c, "rescue", { prompt: "do it", wait: true, fresh: true });
+
+  const text = await callTool(c, "status", {});
+  assert.match(text, /^# Claude Status/);
+  assert.match(text, /Latest finished:/);
+  assert.match(text, /rescue/);
+  await c.dispose();
+});
+
+test("status {job_id} renders a single-job view", async () => {
+  const tmpRepo = makeTempDir("companion-status-single-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+  await callTool(c, "rescue", { prompt: "do it", wait: true, fresh: true });
+  const jobId = listJobs(tmpRepo)[0].id;
+
+  const text = await callTool(c, "status", { job_id: jobId });
+  assert.match(text, new RegExp(jobId));
+  assert.match(text, /completed/);
+  await c.dispose();
+});
+
+test("status {wait:true} returns once the background job leaves running, instead of blocking on the full 240s budget", async () => {
+  const tmpRepo = makeTempDir("companion-status-wait-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+  await callTool(c, "rescue", { prompt: "do it in the background", fresh: true });
+
+  const start = Date.now();
+  const text = await callTool(c, "status", { wait: true });
+  const elapsed = Date.now() - start;
+
+  assert.match(text, /completed|Latest finished:/);
+  assert.ok(elapsed < 10000, `status {wait:true} took too long to return: ${elapsed}ms`);
+  await c.dispose();
+});
+
+// Review point: the wait-poll loop must give up after its timeout rather than hang forever when a
+// job never leaves queued/running. Exercised directly against the exported poll helper with a tiny
+// override so the test doesn't have to wait out the real 240s production budget.
+test("status wait-poll terminates (does not hang) for a job that never leaves running, respecting the timeout (review point)", async () => {
+  const tmpRepo = makeTempDir("companion-status-wait-hang-");
+  upsertJob(tmpRepo, { id: "task-neverending", status: "running", pid: process.pid });
+
+  const start = Date.now();
+  const snap = await pollSingleJobUntilTerminal(tmpRepo, "task-neverending", { intervalMs: 20, timeoutMs: 80 });
+  const elapsed = Date.now() - start;
+
+  assert.equal(snap.job.status, "running", "poll must give up, not fabricate a terminal status");
+  assert.ok(elapsed < 1000, `poll loop did not terminate promptly: ${elapsed}ms`);
+});
+
+test("status {wait:true} (no job_id) aggregate poll also terminates against its timeout (review point)", async () => {
+  const tmpRepo = makeTempDir("companion-status-wait-agg-hang-");
+  upsertJob(tmpRepo, { id: "task-neverending-2", status: "running", pid: process.pid });
+
+  const start = Date.now();
+  const report = await pollStatusUntilIdle(tmpRepo, { intervalMs: 20, timeoutMs: 80 });
+  const elapsed = Date.now() - start;
+
+  assert.equal(report.running.length, 1);
+  assert.ok(elapsed < 1000, `aggregate poll loop did not terminate promptly: ${elapsed}ms`);
+});
+
+test("result: returns stored output plus the rescue-tool resume affordance", async () => {
+  const tmpRepo = makeTempDir("companion-result-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+  await callTool(c, "rescue", { prompt: "do it", wait: true, fresh: true });
+  const jobId = listJobs(tmpRepo)[0].id;
+
+  const text = await callTool(c, "result", { job_id: jobId });
+  assert.match(text, /final text/);
+  assert.match(text, /Continue via the rescue tool with resume:true/);
+  await c.dispose();
+});
+
+test("result: defaults to the latest finished job when job_id is omitted", async () => {
+  const tmpRepo = makeTempDir("companion-result-latest-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+  await callTool(c, "rescue", { prompt: "do it", wait: true, fresh: true });
+
+  const text = await callTool(c, "result", {});
+  assert.match(text, /final text/);
+  await c.dispose();
+});
+
+test("result: an active (still-running) job reports a not-ready error instead of crashing", async () => {
+  const tmpRepo = makeTempDir("companion-result-active-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+  await callTool(c, "rescue", { prompt: "please HANG", fresh: true });
+  const jobId = await waitForJobWithThreadId(tmpRepo);
+
+  await assert.rejects(() => callTool(c, "result", { job_id: jobId }), /still (queued|running)/);
+  await callTool(c, "cancel", { job_id: jobId });
+  await c.dispose();
+});
+
+test("cancel: active HANG job -> interrupt call settles the job cancelled (not failed), and it sticks", async () => {
+  const tmpRepo = makeTempDir("companion-cancel-hang-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+  const startText = await callTool(c, "rescue", { prompt: "please HANG", fresh: true });
+  assert.match(startText, /background job/);
+
+  const jobId = await waitForJobWithThreadId(tmpRepo);
+
+  const cancelText = await callTool(c, "cancel", { job_id: jobId });
+  assert.match(cancelText, /Cancelled/);
+
+  const stored = listJobs(tmpRepo).find((job) => job.id === jobId);
+  assert.equal(stored.status, "cancelled");
+
+  // Guard against the turn's own natural "failed" completion write clobbering the cancellation
+  // after the fact (the review-flagged race).
+  await new Promise((r) => setTimeout(r, 300));
+  const storedAfter = listJobs(tmpRepo).find((job) => job.id === jobId);
+  assert.equal(storedAfter.status, "cancelled", "status must not be clobbered back to failed after settling");
+
+  await c.dispose();
+});
+
+test("cancel: a queued (not-yet-started) job is removed from the background queue, not resurrected", async () => {
+  const tmpRepo = makeTempDir("companion-cancel-queued-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+
+  // Push 5 jobs at once (cap is 3 concurrent) so at least one lands in companion.queue.
+  const starts = [0, 1, 2, 3, 4].map((i) => callTool(c, "rescue", { prompt: `job ${i}`, fresh: true }));
+  await Promise.all(starts);
+
+  const queued = listJobs(tmpRepo).find((job) => job.status === "queued");
+  assert.ok(queued, "expected at least one queued job under the concurrency cap");
+
+  const cancelText = await callTool(c, "cancel", { job_id: queued.id });
+  assert.match(cancelText, /Cancelled/);
+
+  const jobs = await waitForAllTerminal(tmpRepo, 4);
+  const cancelledJob = jobs.find((job) => job.id === queued.id);
+  assert.equal(cancelledJob.status, "cancelled", "a cancelled queued job must never be resurrected as completed");
+
+  await c.dispose();
+});
+
+// Review point: on interrupt RPC failure, cancel must fall back to client.close() (respawn happens
+// lazily on the next ensureClient call) and still mark the job cancelled. Hand-built companion +
+// stub client (same pattern as the ensureClient single-flight test) isolates this branch precisely,
+// without needing to force a real RPC failure through the fake appserver.
+test("cancel: interrupt RPC failure falls back to client.close(), still marks the job cancelled (review point)", async () => {
+  const cwd = makeTempDir("companion-cancel-fallback-");
+  upsertJob(cwd, { id: "task-fallback", status: "running", pid: process.pid, threadId: "thr_x", jobClass: "task", kind: "task" });
+
+  let closeCalled = false;
+  const fakeClient = {
+    alive: () => true,
+    interrupt: async () => { throw new Error("interrupt rpc failed"); },
+    close: async () => { closeCalled = true; }
+  };
+  const companion = { cwd, env: ENV, client: fakeClient, spawning: null, queue: [], activeRuns: new Map() };
+
+  const text = await cancelHandler(companion, {});
+  assert.match(text, /Cancelled/);
+  assert.equal(closeCalled, true, "interrupt failure must fall back to client.close()");
+  assert.equal(companion.client, null, "client reference must be cleared so ensureClient respawns lazily");
+
+  const stored = listJobs(cwd).find((job) => job.id === "task-fallback");
+  assert.equal(stored.status, "cancelled");
+});
+
+test("cancel: a dead (non-alive) client is treated like an interrupt failure, not awaited into a hang", async () => {
+  const cwd = makeTempDir("companion-cancel-dead-client-");
+  upsertJob(cwd, { id: "task-dead-client", status: "running", pid: process.pid, threadId: "thr_y", jobClass: "task", kind: "task" });
+
+  let closeCalled = false;
+  const fakeClient = {
+    alive: () => false,
+    interrupt: async () => { throw new Error("must not be called on a dead client"); },
+    close: async () => { closeCalled = true; }
+  };
+  const companion = { cwd, env: ENV, client: fakeClient, spawning: null, queue: [], activeRuns: new Map() };
+
+  const text = await cancelHandler(companion, { job_id: "task-dead-client" });
+  assert.match(text, /Cancelled/);
+  assert.equal(closeCalled, true);
+  const stored = listJobs(cwd).find((job) => job.id === "task-dead-client");
+  assert.equal(stored.status, "cancelled");
+});
+
+test("setup: worker found + handshake ok + oauth-token auth (fake appserver)", async () => {
+  const tmpRepo = makeTempDir("companion-setup-ok-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+
+  const text = await callTool(c, "setup", {});
+  assert.match(text, /Worker: found/);
+  assert.match(text, /Handshake: ok/);
+  assert.match(text, /Claude subscription \(OAuth\)/);
+  assert.match(text, /Review gate: disabled/);
+  await c.dispose();
+});
+
+test("setup: worker not found -> install guidance, no handshake/auth attempted", async () => {
+  const tmpRepo = makeTempDir("companion-setup-missing-");
+  const c = createCompanion({ cwd: tmpRepo, env: { PATH: "/none", CLAUDE_COMPANION_DATA: process.env.CLAUDE_COMPANION_DATA } });
+
+  const text = await callTool(c, "setup", {});
+  assert.match(text, /Worker: not found/);
+  assert.match(text, /not available/);
+  assert.doesNotMatch(text, /Handshake:/);
+  await c.dispose();
+});
+
+test("setup: review gate toggle round-trips within the same tool call's response", async () => {
+  const tmpRepo = makeTempDir("companion-setup-gate-");
+  const c = createCompanion({ cwd: tmpRepo, env: ENV });
+
+  const enabledText = await callTool(c, "setup", { enable_review_gate: true });
+  assert.match(enabledText, /Review gate: enabled/);
+  assert.equal(getConfig(tmpRepo).stopReviewGate, true);
+
+  const disabledText = await callTool(c, "setup", { disable_review_gate: true });
+  assert.match(disabledText, /Review gate: disabled/);
+  assert.equal(getConfig(tmpRepo).stopReviewGate, false);
+
+  await c.dispose();
+});
+
+test("formatAuthStatus maps accountRead()'s method/authenticated states to the right guidance text", () => {
+  assert.match(formatAuthStatus({ authenticated: true, method: "oauth-token" }), /OAuth/);
+  assert.match(formatAuthStatus({ authenticated: true, method: "api-key" }), /shadows OAuth/);
+  assert.match(formatAuthStatus({ authenticated: true, method: "cli-login" }), /CLI stored login/);
+  assert.match(formatAuthStatus({ authenticated: false }), /setup-token|CLAUDE_CODE_OAUTH_TOKEN/);
 });

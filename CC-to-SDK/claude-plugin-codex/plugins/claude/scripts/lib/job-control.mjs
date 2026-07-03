@@ -267,23 +267,26 @@ export function buildSingleJobSnapshot(cwd, reference, options = {}) {
 export function resolveResultJob(cwd, reference) {
   const workspaceRoot = cwd;
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot)).map((job) => reconcileAndPersist(workspaceRoot, job));
+
+  // With an explicit reference, resolve against ALL jobs (not just the terminal subset) so an
+  // active job can be reported with the friendlier "still running" message below, instead of
+  // matchJobReference's generic "no job found" — that predicate-filtered lookup would otherwise
+  // throw before this function ever got a chance to distinguish "unknown id" from "not done yet".
+  if (reference) {
+    const job = matchJobReference(jobs, reference);
+    if (job.status === "queued" || job.status === "running") {
+      throw new Error(`Job ${job.id} is still ${job.status}. Check /claude:status and try again once it finishes.`);
+    }
+    return { workspaceRoot, job };
+  }
+
   const selected = matchJobReference(
     jobs,
     reference,
     (job) => job.status === "completed" || job.status === "failed" || job.status === "cancelled"
   );
-
   if (selected) {
     return { workspaceRoot, job: selected };
-  }
-
-  const active = matchJobReference(jobs, reference, (job) => job.status === "queued" || job.status === "running");
-  if (active) {
-    throw new Error(`Job ${active.id} is still ${active.status}. Check /claude:status and try again once it finishes.`);
-  }
-
-  if (reference) {
-    throw new Error(`No finished job found for "${reference}". Run /claude:status to inspect active jobs.`);
   }
 
   throw new Error("No finished Claude jobs found for this repository yet.");
