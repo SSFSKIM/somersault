@@ -12,6 +12,7 @@ export interface HarnessConfig {
   // turn controls (verified live 2026-06-18; specs/2026-06-18-sdk-capability-closeout-design.md)
   effort?: EffortLevel;                    // 'low'|'medium'|'high'|'xhigh'|'max' — reasoning effort
   thinking?: ThinkingConfig;               // {type:'adaptive'|'disabled'} | {type:'enabled',budgetTokens}
+  outputFormat?: unknown;                  // SDK OutputFormat ({type:'json_schema',schema}) — passthrough (probe 36)
   maxBudgetUsd?: number;                   // hard USD ceiling; EXCEEDED → hard stop: throws OR empty result (timing-dependent)
   taskBudget?: { total: number };          // token-pacing hint; opus-4-8-only (sonnet/haiku return 400)
   includePartialMessages?: boolean;        // emit SDKPartialAssistantMessage stream_event frames

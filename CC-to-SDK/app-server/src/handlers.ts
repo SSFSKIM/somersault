@@ -15,6 +15,9 @@ import { recordThread, lookupThread } from "./threads.js";
 export interface OpenCtx { broker?: ToolBroker; dynamicTools?: DynamicToolSpec[] }
 export interface OpenFn { (cfg: any, ctx: OpenCtx): Session }
 
+// Director "effort" posture -> SDK thinking budget (tokens). Invalid/absent effort leaves cfg.thinking untouched.
+const EFFORT_BUDGETS: Record<string, number> = { low: 4000, medium: 10000, high: 16000, xhigh: 24000, max: 32000 };
+
 /** Sum the CUMULATIVE per-model token usage from session.usage() (probe 32 shape) into absolute UsageTotals.
  *  inputTokens folds in cached input (cacheRead+cacheCreation) for a meaningful total. Lenient: missing -> 0. */
 export function toUsageTotals(u: any): UsageTotals {
@@ -94,6 +97,8 @@ export class AppServer {
   private buildCfg(params: ThreadStartParams, threadId: string): { cfg: any; specs: DynamicToolSpec[]; broker: ToolBroker } {
     const posture = resolvePosture({ approvalPolicy: params.approvalPolicy, autoReview: this.autoReview });
     let cfg: any = { cwd: params.cwd, model: params.model, permissionMode: posture.permissionMode };
+    if (params.effort && EFFORT_BUDGETS[params.effort]) cfg.thinking = { type: "enabled", budgetTokens: EFFORT_BUDGETS[params.effort] };
+    if (params.outputSchema) cfg.outputFormat = { type: "json_schema", schema: params.outputSchema };
     // OS-level sandbox (Seatbelt/bubblewrap) for Bash + L3 credential-read deny rules,
     // translated from the Director's codex sandbox posture. Opt-out modes return {} (no change).
     const plan = resolveSandbox({

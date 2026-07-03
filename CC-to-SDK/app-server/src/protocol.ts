@@ -10,7 +10,7 @@ export function isNotification(m: any): m is RpcNotification { return !!m && typ
 export function isResponse(m: any): m is RpcResponse { return !!m && typeof m.method !== "string" && m.id !== undefined && m.id !== null; }
 
 export interface DynamicToolSpec { name: string; description?: string; inputSchema?: Record<string, unknown> }
-export interface ThreadStartParams { cwd: string; approvalPolicy?: string; sandbox?: string; model?: string; dynamicTools?: DynamicToolSpec[] }
+export interface ThreadStartParams { cwd: string; approvalPolicy?: string; sandbox?: string; model?: string; effort?: string; outputSchema?: Record<string, unknown>; dynamicTools?: DynamicToolSpec[] }
 export interface ThreadResumeParams extends ThreadStartParams { threadId: string }
 export interface TurnStartParams { threadId: string; input: Array<{ type: string; text?: string }>; cwd?: string; approvalPolicy?: string; sandboxPolicy?: unknown }
 export interface UsageTotals { totalTokens: number; inputTokens: number; outputTokens: number }

@@ -98,6 +98,23 @@ describe("Session", () => {
     await Promise.resolve();
     expect(ended).toBe(true);
   });
+  it("submit resolves with structuredOutput alongside result when the SDK result carries structured_output (probe 36, additive)", async () => {
+    const q = ({ prompt }: any) => (async function* () {
+      for await (const t of prompt) yield { type: "result", subtype: "success", result: "did:" + t.message.content, structured_output: { verdict: "approve" } };
+    })();
+    const s = new Session({ query: q }, {});
+    const r: any = await s.submit("hi");
+    expect(r.result).toBe("did:hi");
+    expect(r.structuredOutput).toEqual({ verdict: "approve" });
+    await s.dispose();
+  });
+  it("submit resolves with structuredOutput undefined when the SDK result carries none (existing callers destructuring {result} unaffected)", async () => {
+    const s = new Session({ query: fakeQuery }, {});
+    const r: any = await s.submit("hello");
+    expect(r.result).toBe("did:hello");
+    expect(r.structuredOutput).toBeUndefined();
+    await s.dispose();
+  });
   it("captures session_id from the first init frame; undefined before the first turn", async () => {
     const s = new Session({ query: initQuery(["sid-A"]) }, {});
     expect(s.sessionId).toBeUndefined();

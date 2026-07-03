@@ -114,6 +114,49 @@ describe("dynamic tool brokering", () => {
   });
 });
 
+describe("effort + outputSchema wiring (thread/start)", () => {
+  function captureOpen(capturedCfgs: any[]): OpenFn {
+    return (cfg) => { capturedCfgs.push(cfg); return fakeSession(); };
+  }
+
+  it("thread/start effort maps to thinking budget", () => {
+    const cfgs: any[] = [];
+    let server!: AppServer;
+    const peer = new Peer(() => {}, (m, p, id) => server.handleRequest(m, p, id), () => {});
+    server = new AppServer(peer, { open: captureOpen(cfgs) });
+    peer.feed(JSON.stringify({ id: 1, method: "thread/start", params: { cwd: "/w", approvalPolicy: "never", effort: "xhigh" } }) + "\n");
+    expect(cfgs[0].thinking).toEqual({ type: "enabled", budgetTokens: 24000 });
+  });
+
+  it("thread/start outputSchema maps to outputFormat json_schema", () => {
+    const cfgs: any[] = [];
+    let server!: AppServer;
+    const peer = new Peer(() => {}, (m, p, id) => server.handleRequest(m, p, id), () => {});
+    server = new AppServer(peer, { open: captureOpen(cfgs) });
+    peer.feed(JSON.stringify({ id: 1, method: "thread/start", params: { cwd: "/w", approvalPolicy: "never", outputSchema: { type: "object" } } }) + "\n");
+    expect(cfgs[0].outputFormat).toEqual({ type: "json_schema", schema: { type: "object" } });
+  });
+
+  it("invalid effort leaves cfg.thinking untouched", () => {
+    const cfgs: any[] = [];
+    let server!: AppServer;
+    const peer = new Peer(() => {}, (m, p, id) => server.handleRequest(m, p, id), () => {});
+    server = new AppServer(peer, { open: captureOpen(cfgs) });
+    peer.feed(JSON.stringify({ id: 1, method: "thread/start", params: { cwd: "/w", approvalPolicy: "never", effort: "bogus" } }) + "\n");
+    expect(cfgs[0].thinking).toBeUndefined();
+  });
+
+  it("absent effort/outputSchema leaves cfg.thinking/outputFormat untouched (no behavior change)", () => {
+    const cfgs: any[] = [];
+    let server!: AppServer;
+    const peer = new Peer(() => {}, (m, p, id) => server.handleRequest(m, p, id), () => {});
+    server = new AppServer(peer, { open: captureOpen(cfgs) });
+    peer.feed(JSON.stringify({ id: 1, method: "thread/start", params: { cwd: "/w", approvalPolicy: "never" } }) + "\n");
+    expect(cfgs[0].thinking).toBeUndefined();
+    expect(cfgs[0].outputFormat).toBeUndefined();
+  });
+});
+
 describe("posture wiring in handlers", () => {
   function captureOpen(capturedCfgs: any[]): OpenFn {
     return (cfg) => {

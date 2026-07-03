@@ -12,7 +12,7 @@ function userTurn(text: string): SDKUserMessage {
   return { type: "user", message: { role: "user", content: text }, parent_tool_use_id: null } as SDKUserMessage;
 }
 
-interface Waiter { onMessage: (m: unknown) => void; resolve: (r: { result: unknown }) => void; reject: (e: Error) => void; }
+interface Waiter { onMessage: (m: unknown) => void; resolve: (r: { result: unknown; structuredOutput?: unknown }) => void; reject: (e: Error) => void; }
 
 /** One long-lived query() session. A turn is submit(prompt,onMessage) → streamed messages → resolved result.
  *  Captures the SDK session_id from the first system/init frame (stable per probe) → .sessionId. */
@@ -49,13 +49,14 @@ export class Session implements ControllableSession {
 
   /** Push a turn + its waiter onto the FIFO. Shared by submit() and compact() so every injected turn
    *  gets its own waiter (its result resolves ITS waiter, never another turn's). */
-  private enqueueTurn(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown }> {
+  private enqueueTurn(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown; structuredOutput?: unknown }> {
     return new Promise((resolve, reject) => { this.waiters.push({ onMessage, resolve, reject }); this.input.push(userTurn(prompt)); });
   }
 
-  /** Run one turn; non-result messages stream to onMessage; resolves with the turn's result.
+  /** Run one turn; non-result messages stream to onMessage; resolves with the turn's result (and, when the
+   *  SDK's outputFormat produced one, `structuredOutput` — additive, so `{result}`-only callers are unaffected).
    *  Rejects immediately if the underlying query has already ended (else the waiter would never drain). */
-  submit(prompt: string, onMessage: (m: unknown) => void = () => {}): Promise<{ result: unknown }> {
+  submit(prompt: string, onMessage: (m: unknown) => void = () => {}): Promise<{ result: unknown; structuredOutput?: unknown }> {
     if (this.ended) return Promise.reject(new Error(`${this.label} is not running`));
     return this.enqueueTurn(prompt, onMessage);
   }
@@ -139,7 +140,7 @@ export class Session implements ControllableSession {
         const mm = m as any;
         if (mm.type === "system" && mm.subtype === "init" && !this._sessionId) this._sessionId = mm.session_id;
         if (mm.type === "result") {
-          this.waiters.shift()?.resolve({ result: mm.result });
+          this.waiters.shift()?.resolve({ result: mm.result, structuredOutput: mm.structured_output });
           if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.compact().catch(() => {}); }
         } else this.waiters[0]?.onMessage(m);
       }

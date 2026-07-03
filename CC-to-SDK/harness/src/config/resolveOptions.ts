@@ -43,6 +43,7 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   const effort = config.effort ?? DEFAULTS.effort;
   if (effort) options.effort = effort;
   if (config.thinking) options.thinking = config.thinking;
+  if (config.outputFormat) options.outputFormat = config.outputFormat;
   if (config.maxBudgetUsd !== undefined) options.maxBudgetUsd = config.maxBudgetUsd;
   if (config.taskBudget) options.taskBudget = config.taskBudget;
   if (config.includePartialMessages) options.includePartialMessages = config.includePartialMessages;
