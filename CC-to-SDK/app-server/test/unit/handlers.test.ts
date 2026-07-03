@@ -1,8 +1,12 @@
 // test/unit/handlers.test.ts
 import { describe, it, expect } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Peer } from "../../src/peer.js";
 import { AppServer, toUsageTotals } from "../../src/handlers.js";
 import type { OpenFn } from "../../src/handlers.js";
+import { recordThread } from "../../src/threads.js";
 
 // A fake Session whose submit() streams one assistant message then resolves with a result string.
 function fakeSession() {
@@ -181,5 +185,44 @@ describe("AppServer happy path", () => {
     const finalAnswer = out.find((o) => o.method === "item/completed" && o.params?.item?.phase === "final_answer");
     expect(finalAnswer.params.item.text).toBe("final text");
     expect(methods).toContain("turn/completed");
+  });
+});
+
+describe("thread/resume", () => {
+  function wireDirect(open: OpenFn) {
+    const out: any[] = [];
+    let server!: AppServer;
+    const peer = new Peer((o) => out.push(o), (m, p, id) => server.handleRequest(m, p, id), () => {});
+    server = new AppServer(peer, { open });
+    return { out, server };
+  }
+
+  it("reopens via cfg.resume and keeps the thread id", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ccas-"));
+    process.env.CC_APPSERVER_STATE_DIR = dir;
+    try {
+      recordThread("thr_deadbeef", "sdk_prev", "/w", dir);
+      const opened: any[] = [];
+      const { out, server } = wireDirect((cfg) => { opened.push(cfg); return fakeSession(); });
+      server.handleRequest("thread/resume", { threadId: "thr_deadbeef", cwd: "/w", approvalPolicy: "never" }, 7);
+      expect(out.find((o) => o.id === 7)?.result).toEqual({ thread: { id: "thr_deadbeef" } });
+      expect(opened[0].resume).toBe("sdk_prev");
+      expect(out.some((o) => o.method === "thread/started")).toBe(true);
+    } finally {
+      delete process.env.CC_APPSERVER_STATE_DIR;
+    }
+  });
+
+  it("unknown threadId -> INVALID_PARAMS (-32602)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ccas-"));
+    process.env.CC_APPSERVER_STATE_DIR = dir;
+    try {
+      const { out, server } = wireDirect(() => fakeSession());
+      server.handleRequest("thread/resume", { threadId: "thr_missing", cwd: "/w" }, 8);
+      const err = out.find((o) => o.id === 8);
+      expect(err?.error?.code).toBe(-32602);
+    } finally {
+      delete process.env.CC_APPSERVER_STATE_DIR;
+    }
   });
 });

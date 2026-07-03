@@ -3,11 +3,11 @@ import { Peer } from "./peer.js";
 import { Registry, type ThreadEntry } from "./registry.js";
 import { AppServerBroker } from "./approvals.js";
 import { TurnTranslator } from "./translator.js";
-import { ERR, type DynamicToolSpec, type ThreadStartParams, type TurnStartParams, type UsageTotals } from "./protocol.js";
+import { ERR, type DynamicToolSpec, type ThreadStartParams, type ThreadResumeParams, type TurnStartParams, type UsageTotals } from "./protocol.js";
 import { ToolBroker, withDynamicTools } from "./broker.js";
 import { resolvePosture } from "./posture.js";
 import { resolveSandbox } from "./sandbox.js";
-import { recordThread } from "./threads.js";
+import { recordThread, lookupThread } from "./threads.js";
 
 /** Context handed to the session opener so a fake (test) session can drive the dynamic-tool broker
  *  directly; the real opener (openSession) ignores it — the SDK MCP server already closed over the broker. */
@@ -45,6 +45,7 @@ export class AppServer {
     switch (method) {
       case "initialize": return this.peer.reply(id, { userAgent: "cc-codex-appserver", platformOs: process.platform });
       case "thread/start": return this.threadStart(params as ThreadStartParams, id);
+      case "thread/resume": return this.threadResume(params as ThreadResumeParams, id);
       case "turn/start": return this.turnStart(params as TurnStartParams, id);
       default: console.error("[appserver] unhandled method:", method); return this.peer.replyError(id, ERR.METHOD_NOT_FOUND, `method not found: ${method}`);
     }
@@ -52,6 +53,32 @@ export class AppServer {
   // initialized is a notification — handled by the bin's onNotification (noop). Kept here for clarity.
 
   private threadStart(params: ThreadStartParams, id: number | string): void {
+    // Allocate a stable threadId so the broker/permission closures can reference it before open() is called.
+    const threadId = this.reg.allocId();
+    const { cfg, specs, broker } = this.buildCfg(params, threadId);
+    const session = this.open(cfg, { broker: specs.length ? broker : undefined, dynamicTools: specs });
+    this.reg.register(threadId, session);
+    const e = this.reg.get(threadId); if (e) e.cwd = params.cwd;
+    this.peer.reply(id, { thread: { id: threadId } });
+    this.peer.notify("thread/started", { thread: { id: threadId } });
+  }
+
+  private threadResume(params: ThreadResumeParams, id: number | string): void {
+    const rec = lookupThread(params.threadId);
+    if (!rec) return this.peer.replyError(id, ERR.INVALID_PARAMS, `unknown thread ${params.threadId}`);
+    const threadId = params.threadId;
+    const { cfg, specs, broker } = this.buildCfg({ ...params, cwd: params.cwd ?? rec.cwd }, threadId);
+    const session = this.open({ ...cfg, resume: rec.sessionId }, { broker: specs.length ? broker : undefined, dynamicTools: specs });
+    this.reg.register(threadId, session);
+    const e = this.reg.get(threadId); if (e) e.cwd = params.cwd ?? rec.cwd;
+    this.peer.reply(id, { thread: { id: threadId } });
+    this.peer.notify("thread/started", { thread: { id: threadId } });
+  }
+
+  // Posture -> sandbox -> dynamic-tool broker -> permission broker wiring, shared by thread/start and
+  // thread/resume. `threadId` is passed in (not allocated here) because both callers need it settled
+  // before this runs — thread/start allocates a fresh one, thread/resume reuses the sidecar's.
+  private buildCfg(params: ThreadStartParams, threadId: string): { cfg: any; specs: DynamicToolSpec[]; broker: ToolBroker } {
     const posture = resolvePosture({ approvalPolicy: params.approvalPolicy, autoReview: this.autoReview });
     let cfg: any = { cwd: params.cwd, model: params.model, permissionMode: posture.permissionMode };
     // OS-level sandbox (Seatbelt/bubblewrap) for Bash + L3 credential-read deny rules,
@@ -67,18 +94,12 @@ export class AppServer {
     });
     if (plan.sandbox) cfg.sandbox = plan.sandbox;
     if (plan.settings) cfg.settings = plan.settings;
-    // Allocate a stable threadId so the broker/permission closures can reference it before open() is called.
-    const threadId = this.reg.allocId();
     const turnIdOf = () => this.reg.get(threadId)?.currentTurnId ?? "";
     const specs = params.dynamicTools ?? [];
     const broker = new ToolBroker(this.peer, threadId, turnIdOf);
     if (specs.length) cfg = withDynamicTools(cfg, specs, broker);
     if (posture.roundTripApprovals) cfg.permissionBroker = new AppServerBroker(this.peer, { threadId, turnId: turnIdOf });
-    const session = this.open(cfg, { broker: specs.length ? broker : undefined, dynamicTools: specs });
-    this.reg.register(threadId, session);
-    const e = this.reg.get(threadId); if (e) e.cwd = params.cwd;
-    this.peer.reply(id, { thread: { id: threadId } });
-    this.peer.notify("thread/started", { thread: { id: threadId } });
+    return { cfg, specs, broker };
   }
 
   private turnStart(params: TurnStartParams, id: number | string): void {
