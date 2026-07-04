@@ -369,6 +369,27 @@ this plugin.
 - **Consequence / how to test natively:** don't look for the tool names in a list — ask the model to
   actually perform the action ("have Claude review my changes in this repo") and confirm it does
   `tool_search` → then a real `review` call on the next turn. In the observed session the user fell back
-  to manual JSON-RPC, so the model's native search→call path was never actually completed; the remaining
-  open question is purely whether Codex materializes a deferred *plugin* MCP tool for the next call, which
-  is a host-side behavior best settled in a fresh session by watching an actual call, not a tool list.
+  to manual JSON-RPC, so the model's native search→call path was never actually completed.
+
+**Resolved at the source level (2026-07-04, retest @`f31dada003`):** a later retest confirmed the real
+`codex app-server` launches `claude-companion-mcp.mjs` in-session (observed live: `node …claude-companion-mcp.mjs`
+with PPID = `codex app-server`), `tool_search` returns all 7, but the bare callable schemas still weren't
+visible in the API transcript after the search. Reading the Codex tool_search **handler**
+(`codex-rs/core/src/tools/handlers/tool_search.rs`) settles whether this is a plugin gap: it is not.
+  - `tool_search` returns matches as `LoadableToolSpec::Namespace(mcp__<server>, [tools…])` — our plugin's
+    tools are built by the **same `McpHandler` → `search_info()` → `coalesce_loadable_tool_specs` path as
+    any connector/apps MCP tool** (see the handler's `mixed_search_results_coalesce_mcp_namespaces` test,
+    which coalesces MCP `calendar` tools identically). There is **no plugin-specific branch** anywhere in
+    that path, so a plugin MCP tool is materializable exactly where a connector MCP tool is — and connector
+    MCP tools demonstrably materialize. "Found in search" ⇒ has a `LoadableToolSpec` output ⇒ materializable
+    (the searchable set and the loadable set are the same `entry`).
+  - The materialized/callable schema lives in the **`tools` array of the *next request* to the model** (the
+    Responses-API `defer_loading` mechanism), and `tool_search`'s own *result* already carries the 7 tools
+    as the `mcp__claude-companion` namespace. Neither of those is the message/tool-call transcript — most
+    transcript/UI surfaces render messages, tool calls, and tool results, **not** the per-request `tools`
+    array. So "bare schema not visible in the transcript" is a property of the *view*, not evidence the
+    tool is uncallable.
+  - **Bottom line:** the search→bare-call path is not broken for plugin MCP tools at the Codex source
+    level; it just can't be *proven from a transcript that doesn't render the request tools array*. A direct
+    proof needs the model to actually issue the call (drive it end-to-end, don't hand-run MCP) plus a log
+    that shows either the emitted tool call or the request's tools array.
