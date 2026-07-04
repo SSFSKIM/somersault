@@ -64,7 +64,7 @@ const publishPkg = {
   bin: { "cc-codex-appserver": "cc-codex-appserver.mjs" },
   files: ["cc-codex-appserver.mjs", "LICENSE", "README.md"],
   engines: { node: ">=18.18.0" },
-  license: "Apache-2.0",
+  license: "MIT",
   repository: { type: "git", url: "git+https://github.com/SSFSKIM/claude-plugin-codex.git" },
   keywords: ["claude", "codex", "mcp", "agent", "plugin", "claude-companion"],
   dependencies: {
@@ -73,7 +73,7 @@ const publishPkg = {
   },
 };
 writeFileSync(resolve(out, "package.json"), JSON.stringify(publishPkg, null, 2) + "\n");
-copyFileSync(resolve(repoRoot, "LICENSE"), resolve(out, "LICENSE"));
+copyFileSync(resolve(root, "LICENSE"), resolve(out, "LICENSE"));
 copyFileSync(resolve(root, "README.npm.md"), resolve(out, "README.md"));
 
 console.log("\nStaged publishable package at:", out);
