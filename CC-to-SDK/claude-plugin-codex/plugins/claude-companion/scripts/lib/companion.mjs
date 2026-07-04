@@ -41,7 +41,7 @@ const REVIEW_KINDS = {
 const MAX_CONCURRENT_BACKGROUND = 3;
 
 const WORKER_MISSING_TEXT = `Claude worker is not available. Install it with:
-  npm install -g /path/to/CC-to-SDK/app-server
+  npm install -g cc-codex-appserver
 or point at an already-built copy without installing, e.g.:
   CLAUDE_COMPANION_APPSERVER="node /path/to/app-server/dist/bin.js"
 If "node" isn't found (Codex's own launch environment often has a minimal PATH), use an absolute

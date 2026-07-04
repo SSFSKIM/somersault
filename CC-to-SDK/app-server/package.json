@@ -1,11 +1,12 @@
 {
-  "name": "cc-harness-appserver",
+  "name": "cc-codex-appserver",
   "version": "0.1.0",
   "type": "module",
   "bin": { "cc-codex-appserver": "dist/bin.js" },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && chmod +x dist/bin.js",
+    "build:npm": "npm run build && node scripts/build-npm.mjs",
     "prepare": "npm run build",
     "test:unit": "vitest run test/unit",
     "test": "vitest run"

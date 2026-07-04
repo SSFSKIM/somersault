@@ -1,6 +1,6 @@
 import test from "node:test"; import assert from "node:assert/strict";
-import path from "node:path"; import { fileURLToPath } from "node:url";
-const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../app-server/dist/bin.js");
+import { workerBin } from "./_worker-bin.mjs";
+const BIN = workerBin();
 const ENV = { ...process.env, CC_APPSERVER_FAKE: "1", CLAUDE_COMPANION_APPSERVER: `node ${BIN}` };
 const { spawnAppServer, resolveAppserverCommand } = await import("../plugins/claude-companion/scripts/lib/appserver-client.mjs");
 

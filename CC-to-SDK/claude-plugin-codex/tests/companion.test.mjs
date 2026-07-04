@@ -1,11 +1,12 @@
 import test from "node:test"; import assert from "node:assert/strict";
 import fs from "node:fs";
-import path from "node:path"; import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
 
 process.env.CLAUDE_COMPANION_DATA = makeTempDir("ccd-companion-");
 
-const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../app-server/dist/bin.js");
+import { workerBin } from "./_worker-bin.mjs";
+const BIN = workerBin();
 const ENV = { ...process.env, CC_APPSERVER_FAKE: "1", CLAUDE_COMPANION_APPSERVER: `node ${BIN}` };
 
 const {

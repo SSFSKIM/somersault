@@ -13,7 +13,8 @@ const HOOK = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../plugins/claude-companion/scripts/stop-review-gate-hook.mjs"
 );
-const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../app-server/dist/bin.js");
+import { workerBin } from "./_worker-bin.mjs";
+const BIN = workerBin();
 const FAKE_ENV = { ...process.env, CC_APPSERVER_FAKE: "1", CLAUDE_COMPANION_APPSERVER: `node ${BIN}` };
 
 const { setConfig, listJobs } = await import("../plugins/claude-companion/scripts/lib/state.mjs");

@@ -35,34 +35,35 @@ them well:
 - **A local Claude Code login, or a `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY`.** If you've already run
   `claude login` or `claude setup-token` on this machine, that's picked up automatically — no extra config
   needed. See [FAQ](#faq) for the env-var alternative.
-- **The `cc-codex-appserver` binary** — the worker this plugin talks to. It ships from this monorepo's
-  `CC-to-SDK/app-server` package (name `cc-harness-appserver`, bin `cc-codex-appserver`). Install it globally:
+- **The [`cc-codex-appserver`](https://www.npmjs.com/package/cc-codex-appserver) worker** — the Claude-backed
+  process this plugin talks to. Install it globally:
 
   ```bash
-  npm install -g /path/to/CC-to-SDK/app-server
+  npm install -g cc-codex-appserver
   ```
 
-  or point the plugin at any built copy without a global install by setting
-  `CLAUDE_COMPANION_APPSERVER="node /path/to/app-server/dist/bin.js"` in your environment before launching
-  Codex. If the worker can't be found, every tool reports the exact command above and tells you to re-run
-  `setup`.
+  The plugin finds the `cc-codex-appserver` binary on your `PATH` automatically. To point at a specific build
+  instead (e.g. a local checkout), set `CLAUDE_COMPANION_APPSERVER="node /path/to/cc-codex-appserver.mjs"` in
+  your environment before launching Codex. If the worker can't be found, every tool reports the install
+  command and tells you to re-run `setup`.
 
   If `node` isn't on the PATH Codex launches with (common for Codex Desktop, which often runs with a
-  minimal PATH), use an absolute node path instead — Codex Desktop's own bundled runtime works:
-  `CLAUDE_COMPANION_APPSERVER="~/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node /path/to/app-server/dist/bin.js"`.
+  minimal PATH), use an absolute node path in that override — Codex Desktop's own bundled runtime works:
+  `CLAUDE_COMPANION_APPSERVER="~/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node /path/to/cc-codex-appserver.mjs"`.
   The plugin's own MCP server (`claude-companion`) resolves its Node runtime the same way automatically
-  (see `scripts/launch-mcp.sh`) — this override is only for the `cc-codex-appserver` worker binary.
+  (see `scripts/launch-mcp.sh`).
 
 ## Install
 
-Register this repo as a local marketplace, then install the plugin from it:
+Register this repo as a marketplace, then install the plugin from it:
 
 ```bash
-codex plugin marketplace add /path/to/CC-to-SDK/claude-plugin-codex
+codex plugin marketplace add https://github.com/SSFSKIM/claude-plugin-codex
 codex plugin add claude-companion@cc-claude
 ```
 
-After that, ask Codex to check readiness:
+Don't forget the worker (`npm install -g cc-codex-appserver`, see [Requirements](#requirements)). After
+that, ask Codex to check readiness:
 
 ```text
 Call the setup tool from the claude-companion MCP server.
@@ -70,14 +71,19 @@ Call the setup tool from the claude-companion MCP server.
 
 `setup` reports worker resolution, handshake, auth method, and the review-gate state.
 
-**Dev loop:** after editing plugin source, re-run `codex plugin add claude-companion@cc-claude` — it
-overwrites the installed cache copy in place; no version bump is needed for a local marketplace to pick up
-source edits.
-
 One simple first run, from inside a git repo:
 
 ```text
 Review my current changes with Claude in the background, then check status and show me the result.
+```
+
+### Developing locally
+
+To hack on the plugin from a local checkout, add the marketplace by path and re-add after each edit:
+
+```bash
+codex plugin marketplace add /path/to/claude-plugin-codex
+codex plugin add claude-companion@cc-claude   # re-run to reinstall; overwrites the cache in place
 ```
 
 ## Usage
