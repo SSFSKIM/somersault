@@ -15,7 +15,6 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");            // app-server/
-const repoRoot = resolve(root, "..", "..");  // codex_somersault/
 const out = resolve(root, ".npm-publish");
 const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 

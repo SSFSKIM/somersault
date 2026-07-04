@@ -1,6 +1,6 @@
 {
   "name": "cc-codex-appserver",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "bin": { "cc-codex-appserver": "dist/bin.js" },
   "scripts": {
