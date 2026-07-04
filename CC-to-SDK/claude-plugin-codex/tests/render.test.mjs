@@ -7,7 +7,7 @@ import {
   renderReviewResult,
   renderStatusReport,
   renderStoredJobResult
-} from "../plugins/claude/scripts/lib/render.mjs";
+} from "../plugins/claude-companion/scripts/lib/render.mjs";
 
 test("parseStructuredOutput parses valid JSON", () => {
   const result = parseStructuredOutput('{"verdict":"approve","summary":"ok","findings":[],"next_steps":[]}');

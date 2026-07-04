@@ -4,10 +4,10 @@ import { makeTempDir } from "./helpers.mjs";
 process.env.CLAUDE_COMPANION_DATA = makeTempDir("ccd-jobs-");
 
 const { resolveStateDir, resolveJobFile, readJobFile, loadState, upsertJob } = await import(
-  "../plugins/claude/scripts/lib/state.mjs"
+  "../plugins/claude-companion/scripts/lib/state.mjs"
 );
 const { createJobRecord, runTrackedJob, createJobProgressUpdater } = await import(
-  "../plugins/claude/scripts/lib/tracked-jobs.mjs"
+  "../plugins/claude-companion/scripts/lib/tracked-jobs.mjs"
 );
 const {
   reconcileJobLiveness,
@@ -16,7 +16,7 @@ const {
   buildSingleJobSnapshot,
   resolveResultJob,
   resolveCancelableJob
-} = await import("../plugins/claude/scripts/lib/job-control.mjs");
+} = await import("../plugins/claude-companion/scripts/lib/job-control.mjs");
 
 test("createJobRecord stamps createdAt/pid/heartbeatAt and never a sessionId", () => {
   const job = createJobRecord({ id: "task-1", workspaceRoot: "/tmp/x" });

@@ -1,5 +1,11 @@
 # Claude Plugin for Codex (`claude-plugin-codex`) Implementation Plan
 
+> **Rename note (2026-07-04):** the plugin identifier was renamed `claude` → `claude-companion` after
+> this plan was written. Steps below that reference `codex plugin add claude@cc-claude`, `"name":
+> "claude"`, or the `plugins/claude/` source dir describe the pre-rename names; the install is now
+> `claude-companion@cc-claude` and the source dir is `plugins/claude-companion/`. Marketplace (`cc-claude`)
+> and MCP server (`claude-companion`) names are unchanged.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build `claude-plugin-codex` — a Codex plugin that spawns Claude workers via `cc-codex-appserver`, mirroring `codex-plugin-cc` (rescue / review / adversarial_review / status / result / cancel / setup + a Stop review gate), plus the `cc-codex-appserver` v0.2 protocol extensions it needs.

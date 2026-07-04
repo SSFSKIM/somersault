@@ -19,13 +19,13 @@ const {
   pollSingleJobUntilTerminal,
   pollStatusUntilIdle,
   runForegroundWait
-} = await import("../plugins/claude/scripts/lib/companion.mjs");
+} = await import("../plugins/claude-companion/scripts/lib/companion.mjs");
 const { listJobs, readJobFile, resolveJobFile, upsertJob, getConfig } = await import(
-  "../plugins/claude/scripts/lib/state.mjs"
+  "../plugins/claude-companion/scripts/lib/state.mjs"
 );
-const { buildStatusSnapshot } = await import("../plugins/claude/scripts/lib/job-control.mjs");
-const { spawnAppServer } = await import("../plugins/claude/scripts/lib/appserver-client.mjs");
-const { createJobRecord } = await import("../plugins/claude/scripts/lib/tracked-jobs.mjs");
+const { buildStatusSnapshot } = await import("../plugins/claude-companion/scripts/lib/job-control.mjs");
+const { spawnAppServer } = await import("../plugins/claude-companion/scripts/lib/appserver-client.mjs");
+const { createJobRecord } = await import("../plugins/claude-companion/scripts/lib/tracked-jobs.mjs");
 
 function callTool(companion, name, args) {
   const tool = companion.tools.find((t) => t.name === name);

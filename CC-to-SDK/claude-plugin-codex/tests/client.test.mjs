@@ -2,7 +2,7 @@ import test from "node:test"; import assert from "node:assert/strict";
 import path from "node:path"; import { fileURLToPath } from "node:url";
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../app-server/dist/bin.js");
 const ENV = { ...process.env, CC_APPSERVER_FAKE: "1", CLAUDE_COMPANION_APPSERVER: `node ${BIN}` };
-const { spawnAppServer, resolveAppserverCommand } = await import("../plugins/claude/scripts/lib/appserver-client.mjs");
+const { spawnAppServer, resolveAppserverCommand } = await import("../plugins/claude-companion/scripts/lib/appserver-client.mjs");
 
 test("resolveAppserverCommand: env split; null when nothing", () => {
   assert.deepEqual(resolveAppserverCommand({ CLAUDE_COMPANION_APPSERVER: `node ${BIN}`, PATH: "" }), { command: "node", args: [BIN] });

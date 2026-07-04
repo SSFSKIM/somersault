@@ -1,7 +1,7 @@
 {
   "name": "cc-claude",
   "plugins": [
-    { "name": "claude", "source": { "source": "local", "path": "./plugins/claude" },
+    { "name": "claude-companion", "source": { "source": "local", "path": "./plugins/claude-companion" },
       "category": "Productivity",
       "policy": { "installation": "AVAILABLE", "authentication": "ON_USE" } }
   ]

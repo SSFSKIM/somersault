@@ -11,7 +11,7 @@ import { run } from "./helpers.mjs";
 // discovery with no diagnostic anywhere. launch-mcp.sh widens the search and fails loudly instead.
 const SCRIPT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "../plugins/claude/scripts/launch-mcp.sh"
+  "../plugins/claude-companion/scripts/launch-mcp.sh"
 );
 
 function launch(env, input) {

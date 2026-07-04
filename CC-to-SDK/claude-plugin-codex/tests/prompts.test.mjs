@@ -1,7 +1,7 @@
 import test from "node:test"; import assert from "node:assert/strict";
 import fs from "node:fs"; import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadPromptTemplate, interpolateTemplate } from "../plugins/claude/scripts/lib/prompts.mjs";
+import { loadPromptTemplate, interpolateTemplate } from "../plugins/claude-companion/scripts/lib/prompts.mjs";
 import { makeTempDir } from "./helpers.mjs";
 
 test("interpolateTemplate substitutes multiple known {{VARS}}", () => {
@@ -41,7 +41,7 @@ test("loadPromptTemplate reads <rootDir>/prompts/<name>.md", () => {
 // review prompts share one schema (schemas/review-output.schema.json); this pins them to the same
 // strict, fully-inlined contract so they can't silently drift apart again.
 test("claude-review.md and adversarial-review.md both inline the same strict JSON output contract", () => {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../plugins/claude");
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../plugins/claude-companion");
   const claudeReview = fs.readFileSync(path.join(root, "prompts", "claude-review.md"), "utf8");
   const adversarialReview = fs.readFileSync(path.join(root, "prompts", "adversarial-review.md"), "utf8");
 

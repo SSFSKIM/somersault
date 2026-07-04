@@ -11,7 +11,7 @@ import path from "node:path"; import { fileURLToPath } from "node:url";
 import { initGitRepo, makeTempDir } from "./helpers.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SERVER_ENTRY = path.resolve(HERE, "../plugins/claude/scripts/claude-companion-mcp.mjs");
+const SERVER_ENTRY = path.resolve(HERE, "../plugins/claude-companion/scripts/claude-companion-mcp.mjs");
 const APPSERVER_BIN = path.resolve(HERE, "../../app-server/dist/bin.js");
 
 // Shared data root for the whole file (mirrors companion.test.mjs); each test still gets its own

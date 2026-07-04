@@ -23,7 +23,7 @@ import {
 export const MODEL_ALIASES = { opus: "claude-opus-4-8", sonnet: "claude-sonnet-5", haiku: "claude-haiku-4-5-20251001", fable: "claude-fable-5" };
 export const VALID_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
-// plugins/claude/scripts/lib/companion.mjs -> plugins/claude (where prompts/ and schemas/ live).
+// plugins/claude-companion/scripts/lib/companion.mjs -> plugins/claude-companion (where prompts/ and schemas/ live).
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REVIEW_SCHEMA_PATH = path.join(ROOT_DIR, "schemas", "review-output.schema.json");
 const REVIEW_KINDS = {

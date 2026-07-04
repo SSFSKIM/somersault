@@ -1,5 +1,12 @@
 # Claude Plugin for Codex (`claude-plugin-codex`) — Design Spec
 
+> **Rename note (2026-07-04):** the plugin identifier was renamed `claude` → `claude-companion` after
+> this doc was written. References below to `codex plugin add claude@cc-claude`, `"name": "claude"`, and
+> the `plugins/claude/` source dir are the pre-rename names; the install is now
+> `claude-companion@cc-claude` and the source lives in `plugins/claude-companion/`. Only the plugin name
+> changed (marketplace `cc-claude` and MCP server `claude-companion` are unchanged). See
+> `claude-plugin-codex/docs/host-facts.md`'s rename note.
+
 **Date:** 2026-07-03
 **Status:** design (awaiting user review → implementation plan)
 **Feature:** the exact mirror of OpenAI's `codex-plugin-cc` (a Claude Code plugin that spawns Codex

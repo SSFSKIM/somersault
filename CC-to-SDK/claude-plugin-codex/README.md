@@ -1,7 +1,10 @@
-# Claude plugin for Codex
+# Claude Companion
 
 Use Claude from inside Codex — delegate tasks to a Claude worker, or get a Claude-authored code review —
 without leaving your Codex session.
+
+The plugin is named **`claude-companion`** — the same name as the single MCP server it ships, so the
+install target is `claude-companion@cc-claude` and its tools live under the `claude-companion` server.
 
 This is the mirror image of [`codex-plugin-cc`](../codex-plugin-cc) (the Codex plugin for Claude Code): where
 that plugin lets Claude Code call out to Codex, this plugin lets **Codex** call out to **Claude**.
@@ -56,7 +59,7 @@ Register this repo as a local marketplace, then install the plugin from it:
 
 ```bash
 codex plugin marketplace add /path/to/CC-to-SDK/claude-plugin-codex
-codex plugin add claude@cc-claude
+codex plugin add claude-companion@cc-claude
 ```
 
 After that, ask Codex to check readiness:
@@ -67,8 +70,9 @@ Call the setup tool from the claude-companion MCP server.
 
 `setup` reports worker resolution, handshake, auth method, and the review-gate state.
 
-**Dev loop:** after editing plugin source, re-run `codex plugin add claude@cc-claude` — it overwrites the
-installed cache copy in place; no version bump is needed for a local marketplace to pick up source edits.
+**Dev loop:** after editing plugin source, re-run `codex plugin add claude-companion@cc-claude` — it
+overwrites the installed cache copy in place; no version bump is needed for a local marketplace to pick up
+source edits.
 
 One simple first run, from inside a git repo:
 

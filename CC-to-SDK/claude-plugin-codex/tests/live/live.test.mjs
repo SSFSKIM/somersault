@@ -20,7 +20,7 @@ import { initGitRepo, makeTempDir } from "../helpers.mjs";
 const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SERVER_ENTRY = path.resolve(HERE, "../../plugins/claude/scripts/claude-companion-mcp.mjs");
+const SERVER_ENTRY = path.resolve(HERE, "../../plugins/claude-companion/scripts/claude-companion-mcp.mjs");
 const APPSERVER_BIN = path.resolve(HERE, "../../../app-server/dist/bin.js");
 
 // Shared data root for this file (mirrors contract.test.mjs/companion.test.mjs's convention): keeps

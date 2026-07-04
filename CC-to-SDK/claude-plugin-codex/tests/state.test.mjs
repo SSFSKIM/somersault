@@ -5,7 +5,7 @@ import { initGitRepo, makeTempDir } from "./helpers.mjs";
 process.env.CLAUDE_COMPANION_DATA = makeTempDir("ccd-state-");
 
 const { resolveStateDir, resolveStateFile, loadState, saveState, generateJobId, upsertJob } = await import(
-  "../plugins/claude/scripts/lib/state.mjs"
+  "../plugins/claude-companion/scripts/lib/state.mjs"
 );
 
 test("resolveStateDir nests under CLAUDE_COMPANION_DATA with a <slug>-<hash> scheme", () => {

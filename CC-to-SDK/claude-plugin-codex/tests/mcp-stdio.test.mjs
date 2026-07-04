@@ -1,5 +1,5 @@
 import test from "node:test"; import assert from "node:assert/strict";
-import { createMcpServer, handleLine } from "../plugins/claude/scripts/lib/mcp-stdio.mjs";
+import { createMcpServer, handleLine } from "../plugins/claude-companion/scripts/lib/mcp-stdio.mjs";
 
 function mkServer(out) {
   return createMcpServer({ name: "claude-companion", version: "0.1.0", sink: (o) => out.push(o),

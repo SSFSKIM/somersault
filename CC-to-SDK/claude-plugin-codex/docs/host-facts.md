@@ -1,5 +1,16 @@
 # Host facts — claude-plugin-codex walking skeleton
 
+> **Rename note (2026-07-04):** the plugin was renamed from `claude` to **`claude-companion`**. Entries
+> below were recorded before the rename and still show the old name, so wherever they read:
+> - install string `claude@cc-claude` → now `claude-companion@cc-claude`
+> - cache path `~/.codex/plugins/cache/cc-claude/claude/0.1.0/` → now `.../cc-claude/claude-companion/0.1.0/`
+> - source dir `plugins/claude/` → now `plugins/claude-companion/`
+> - hook trust/state key prefix `claude@cc-claude:...` → now `claude-companion@cc-claude:...`
+>
+> Only the name changed; every observed behavior/mechanism below is unchanged. The marketplace name
+> (`cc-claude`) and the MCP server name (`claude-companion`) were not touched — the plugin now simply
+> shares its name with its server.
+
 Settled live against `codex-cli 0.140.0` on this machine (macOS, zsh) by installing the plugin from
 this repo and driving it from a scratch git repo (`/tmp/claude-plugin-smoke`). This is the ledger
 Tasks 12/15 read before building the real `setup`/session-transfer tools and the real hook gate.
