@@ -44,10 +44,13 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | `interrupt()` | ✅ | Session/daemon control op |
 | `interrupt()` **receipt** (`still_queued`, 0.3.211) | ✅ | **Wave 1 (2026-07-17)**: `Session.interrupt()` returns it; bridge `interrupt` frame carries `receipt` (probe 38) |
 | `reinitialize()` (0.3.211) | ✅ | **Wave 1**: probe 38 (fresh full init payload; parked can_use_tool DEDUPED in-process, so it's a capability-refresh lever, not permission recovery); `Session.reinitialize()` + `reinitialize` control frame |
-| `startup()` / `WarmQuery` (pre-warmed CLI subprocess) | 🔬 | docs [hosting]; probe then Wave 3 warm pool for daemon spawn latency |
+| `startup()` / `WarmQuery` (pre-warmed CLI subprocess) | 🟢 | **Wave 2 probe 40: ALIVE headless** — warm handle init@51ms vs 602ms cold (kills spawn+handshake; end-to-end is API-latency-dominated); unused-handle `close()` clean. Consume in the Wave 3 warm pool |
 | `close()` | ✅ | teardown-liveness suite |
 | Built-in tool set (Read/Write/Edit/Bash/Glob/Grep/Web*/Agent/Skill/Task*) | 🟢 | claude_code preset |
-| `Monitor` tool (watch background script output) | 🔬 | never probed headlessly |
+| `Monitor` tool (watch background script output) | 🟢 | **Wave 2 probe 47: ALIVE** — registers as a bg task (changed-set entry); **each stdout line wakes a FULL model turn** (cost semantics!); command exit → `task_notification` completed + set empties |
+| `ReportFindings` tool (typed review findings) | 🟢 | **Wave 2 probe 44: ALIVE** — callable headlessly; consumers harvest findings from the `tool_use` input (the result is just "N findings reported") |
+| `ClaudeDesign` tool | 🚫 | **Wave 2 probe 45: absent headless** (not in the tool inventory; behaviorally confirmed). `DesignSync` exists deferred but is claude.ai-design-project-shaped — bridge-coupled |
+| `/goal` `active_goal` loop | 🚫 | **Wave 2 probes 46/46b/46c: UI-command only** — plain-text `/goal` not intercepted, Skill tool refuses ("goal is a UI command"), `<command-name>` wrapper ignored; `active_goal` msg type is declared but nothing headless can set a goal (replicate via our proactive latch instead). Contrast: `/compact` as plain streaming text DOES execute |
 | Third-party providers (Bedrock/Vertex/Foundry env-gating) | 🟡 | `provider.ts` models the envs; never live-tested against a real alt provider |
 | Result `stop_reason` / `error_during_execution` handling | ✅ | consumed in translator/app-server too |
 
@@ -71,10 +74,11 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | `ENABLE_TOOL_SEARCH` knob exposure (`auto:N` thresholds) | ⚪ | config passthrough + doc |
 | Runtime MCP control: `mcpServerStatus()` | ✅ | capability method |
 | Runtime MCP control: `reconnectMcpServer` / `toggleMcpServer` / `setMcpServers` | ⚪ | Wave 1/3: daemon ops for dynamic tool topology (note 0.3.211: `setMcpServers({})` keeps plugin servers) |
-| `RefreshMcpTools` tool + `setMcpPermissionModeOverride()` (0.3.211) | 🔬 | probe first |
+| `RefreshMcpTools` tool + `setMcpPermissionModeOverride()` (0.3.211) | 🟡 | **Wave 2 probe 49**: override resolves (`{}`) but does NOT silence a `canUseTool` broker (it acts at the rules/classifier layer — consistent with the permission-matrix lesson); `RefreshMcpTools` absent from the inventory even with an SDK server attached (caller-provided servers need no subprocess refresh; external-server case unprobed) |
 | MCP auth (HTTP headers / OAuth-token passthrough; `needs-auth` status) | 🟡 | passthrough works; no harness story for token refresh |
 | MCP limits (`MCP_TIMEOUT`, `MAX_MCP_OUTPUT_TOKENS`) | ⚪ | env knobs, expose in config docs |
-| `onElicitation` handler | 🔬 | never probed; pairs with daemon permission-style parking |
+| `onElicitation` handler | 🟢 | **Wave 2 probes 43/43b: ALIVE for stdio servers** — full round-trip (server `elicitInput` → `Elicitation` hook → `onElicitation` accept+content → `ElicitationResult` hook → content back to the tool). SDK-type in-process servers CANNOT elicit ("Client does not support form elicitation"). Unhandled → auto-decline. Harness wire = config passthrough (Wave 2 follow-up) |
+| `onUserDialog` + `supportedDialogKinds` | 🟡 | **Wave 2 probe 43**: intake validation confirmed (kinds without callback throws, fail-closed); wiring both breaks nothing; no deterministic headless trigger exists (`refusal_fallback_prompt` needs a real refusal) — wireable, untriggerable-on-demand |
 | `toolAliases` | ✅ | config passthrough |
 | `toolConfig` (e.g. `askUserQuestion.previewFormat`) | ⚪ | last unmodeled tool knob |
 | `tools` allowlist / `{preset:'claude_code'}` / `toolPreset:"none"` | ✅ | `tools.ts` |
@@ -121,7 +125,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | Subagent transcripts: `listSubagents` / `getSubagentMessages` / resume-by-agentId | ⚪ | observability gap (noted in coverage.md domain 4) |
 | `parent_tool_use_id` attribution | ✅ | TUI nesting (probe 22) |
 | `forwardSubagentText` / `agentProgressSummaries` | ✅/⚪ | text forwarded; progress summaries unmodeled |
-| Inter-agent `SendMessage` (v2.1.206+) | 🔬 | headless reachability unknown; would upgrade swarm bus |
+| Inter-agent `SendMessage` (v2.1.206+) | 🟢 | **Wave 2 probes 41/41b: ALIVE** — delivery is queued-at-next-tool-round to a RUNNING agent (agents run to completion, they don't idle); address by `name` (spawner must pass it explicitly — models omit it unforced) or by spawn-result agentId; replies travel via `task_notification` + a parent wake turn |
 | **`Workflow` tool** (script-driven fan-out) | ✅ | probe 36 (re-verified 0.3.211); **`config.workflow` opt-in SHIPPED 2026-07-17**, live e2e green |
 | `stopTask()` / `backgroundTasks()` + `background_tasks_changed` msg (0.3.211) | ✅ | **Wave 1**: probe 39 (level signal streams headlessly; Ctrl+B works mid-turn; no-arg returns true even when idle — use the targeted form to detect); `Session.backgroundTasks`/`stopTask`/`backgroundAll` + bridge frames; live e2e green |
 | Agent teams | 🚫 | CLI-only, not SDK-configurable [claude-code-features] |
@@ -149,9 +153,9 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 
 | Capability | Status | Evidence / what's left |
 |---|---|---|
-| Programmatic `hooks` (all 30 events reachable) | ✅ | probes 09/10; builders + `mergeHooks`; 8/30 verified-fired |
-| Hook `defer` decision + async side-effect mode | 🔬 | newer decision semantics unprobed |
-| Unverified hook events (PostToolUseFailure, UserPromptExpansion, PermissionRequest, Setup, Teammate/Task/Config/Worktree events) | 🔬 | Wave 2 probe sweep — which fire headlessly on 0.3.211? |
+| Programmatic `hooks` (all 30 events reachable) | ✅ | probes 09/10; builders + `mergeHooks`; **17/30 verified-fired post-Wave-2** |
+| Hook `defer` decision + async side-effect mode | ✅ | **Wave 2 probes 42/42b**: `PreToolUse` `permissionDecision:'defer'` PARKS the call — no execution, no `canUseTool`, no tool_result (the `deferred_tool_use` result shape); it is host-decides-later, not hand-to-broker. Also: safe read-only Bash auto-approves BEFORE `canUseTool`; order is PreToolUse → canUseTool → PermissionRequest (informational — fires on ALLOWED calls too, carries `permission_suggestions`); `PermissionDenied` never fires for callback/hook denials |
+| Hook-event sweep on 0.3.211 (which of the 30 fire headlessly) | ✅ | **Wave 2 probes 42/43b — 17/30 FIRE**: the prior 8 + PostToolUseFailure, PostToolBatch, PermissionRequest, TaskCreated, TaskCompleted, MessageDisplay, PostCompact, InstructionsLoaded, Elicitation, ElicitationResult; `SessionStart` fires at the **/compact boundary** (not initial startup; the compact summarizer emits `SubagentStop`). Silent under driven scenarios: Notification, UserPromptExpansion, SessionEnd, StopFailure, SubagentStart, PermissionDenied, Setup, TeammateIdle, ConfigChange, Worktree*, CwdChanged, FileChanged |
 | `includeHookEvents` (hook lifecycle messages) | ⚪ | unmodeled |
 | Skills (`.claude/skills`, model-invoked or `/name`) | ✅ | probes 30/31; command palette |
 | `skills` Options field (explicit allowlist form) | ⚪ | we inherit via settingSources instead |
@@ -170,9 +174,9 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 |---|---|---|
 | Subprocess model + 4 session-lifecycle hosting patterns | 🟡 | daemon IS the long-running pattern; no ops guide mapping ours to docs [hosting] |
 | Scaling formula / session pinning / resource sizing | ⚪ | docs-level; Wave 3 ops guide |
-| `spawnClaudeCodeProcess` (custom spawn — VMs/containers/remote) | 🔬 | probe; opens remote placement for daemon sessions |
+| `spawnClaudeCodeProcess` (custom spawn — VMs/containers/remote) | 🟢 | **Wave 2 probe 50: ALIVE** — callback receives full command/args/env, session runs end-to-end through the custom child, teardown propagates. Remote placement is now a transport exercise (Wave 3) |
 | `sandbox` settings (bubblewrap/sandbox-exec + egress proxy) | ✅ | modeled (`sandbox.ts`, object-shape lesson) |
-| **Sandbox credential redaction** (`SandboxSettings.credentials`, 0.3.211) | 🔬 | new security surface: deny/mask env+files, per-host injection |
+| **Sandbox credential redaction** (`SandboxSettings.credentials`, 0.3.211) | 🟢 | **Wave 2 probe 48: deny-mode VERIFIED** under engaged sandbox-exec — denied env var hidden (control var visible), credential-file read blocked ("Operation not permitted"). Already passes through our `resolveSandbox` spread. `mask` mode (sentinel + proxy `injectHosts`) needs egress-proxy infra — untested |
 | Secure-deployment patterns (credential proxy via `ANTHROPIC_BASE_URL`, TLS proxy, read-only mounts) | ⚪ | `baseUrl`/`customHeaders` exist; no recipe/test |
 | Multi-tenant isolation (settingSources:[] + memory-disable + per-tenant `CLAUDE_CONFIG_DIR`/cwd) | 🟡 | pieces exist; no composed recipe |
 | `additionalDirectories` / `executable*` / `extraArgs` / `betas` / `pathToClaudeCodeExecutable` | ⚪ | plumbing knobs (reachable via `extraOptions` today) |
@@ -191,16 +195,16 @@ the Ink console + chat REPL (~82% visual parity), and the two Codex-protocol con
 ## §2 — The math
 
 Counting §1's reachable rows (✅/🟢 realized; 🟡 half; ⚪/🔬 unrealized; 🚫 excluded):
-**~67% realized post-Wave-1** (was ~65% post-Workflow: Wave 1 flipped 5 rows — rewind, reinitialize, interrupt receipt, limits classification, background-task control) — consistent with `coverage.md`'s domain-weighted ~63–65%. The
-unrealized ~35% clusters in exactly three shapes:
+**~71% realized post-Wave-2** (was ~67% post-Wave-1: Wave 2 settled all 12 🔬 rows — 8 alive
+(startup/WarmQuery, SendMessage, hook sweep + defer, onElicitation, ReportFindings, Monitor, sandbox
+credentials deny, spawnClaudeCodeProcess), 2 partial (MCP mode override layer semantics, onUserDialog
+wireable-untriggerable), 2 dead → 🚫 denominator-shrink (ClaudeDesign, /goal)) — consistent with
+`coverage.md`'s domain-weighted score. The unrealized ~29% clusters in two shapes now:
 
-1. **Operational/service maturity** (OTel, hosting/warm-spawn, secure deployment, external
-   session-store adapter, billing classification) — the "run it in production" half the docs
-   emphasize hardest. Roughly half the gap.
-2. **Newly declared 0.3.211 + unprobed surface** (reinitialize, credentials redaction, ReportFindings,
-   ClaudeDesign, `/goal` loop, SendMessage, hook events beyond the 8, Monitor, startup()) — cheap to
-   settle with probes, then mostly small wires. Roughly a third of the gap.
-3. **Knob completion** (~20 unmodeled Options fields + Query methods like reload*/readFile/
+1. **Operational/service maturity** (OTel, hosting/warm-spawn pool, secure deployment, external
+   session-store adapter) — the "run it in production" half the docs emphasize hardest. Wave 3.
+   Roughly two-thirds of the gap.
+2. **Knob completion** (~20 unmodeled Options fields + Query methods like reload*/readFile/
    seedReadState) — long tail, each trivial; `extraOptions` already makes them reachable. The rest.
 
 ## §3 — The roadmap
@@ -222,14 +226,19 @@ a wave are independent (parallelizable).
 4. **Background-task visibility** — consume `background_tasks_changed`, expose `backgroundTasks()`/`stopTask()`
    as Session methods + daemon ops + console panel (pairs naturally with the Workflow knob just shipped).
 
-### Wave 2 — the probe wave (settle every 🔬, then wire the live ones)
+### Wave 2 — the probe wave — ✅ PROBED 2026-07-17 (probes 40–50 + b/c variants; all 12 🔬 settled live)
 
-One probe file each, cheapest-first: `startup()`/WarmQuery · `SendMessage` inter-agent · hook-event
-sweep on 0.3.211 (which of the 22 unverified events fire now; `defer` semantics) · `onUserDialog`/
-`onElicitation` · `ReportFindings` · `ClaudeDesign` (`operation:"list"`) · `/goal` `active_goal` loop ·
-`Monitor` · sandbox `credentials` · `setMcpPermissionModeOverride`/`RefreshMcpTools` ·
-`spawnClaudeCodeProcess`. Expected split, by priors: ~half alive-headless (wire in Wave 1/3 style),
-~half bridge/CLI-coupled (document as 🚫, shrinking the denominator honestly).
+Outcome (details in the §1 rows): **8 alive** — startup()/WarmQuery (probe 40), SendMessage (41/41b),
+hook sweep 17/30 + defer-parks-the-call (42/42b), onElicitation stdio round-trip (43/43b),
+ReportFindings (44), Monitor (47, each-line-wakes-a-turn), sandbox credentials deny-mode (48),
+spawnClaudeCodeProcess (50). **2 partial** — setMcpPermissionModeOverride resolves but is
+rules-layer-only + RefreshMcpTools absent for SDK servers (49); onUserDialog wireable but has no
+deterministic headless trigger (43). **2 dead 🚫** — ClaudeDesign (45), `/goal` (46/46b/46c).
+The prior's "~half bridge-coupled" was wrong — the split landed 8/2/2. No harness wire was needed:
+the alive tools are default-on in every session, sandbox credentials already flow through
+`resolveSandbox`, and the callback surfaces (onElicitation/onUserDialog/spawnClaudeCodeProcess) are
+reachable today via `extraOptions` (merged last into SDK Options). First-class config fields land
+with their consumers in Wave 3 (warm pool ← startup(); tenant recipe ← credentials/spawn).
 
 ### Wave 3 — production-service maturity (the OTel wave)
 
