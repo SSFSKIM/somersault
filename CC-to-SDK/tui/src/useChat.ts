@@ -6,7 +6,7 @@ import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
 import { TaskList, type TaskItem } from "./taskList.js";
-import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
 import type { ModelInfo } from "./ModelPicker.js";
@@ -25,9 +25,13 @@ export interface ChatSession {
   setMaxThinkingTokens(maxTokens: number | null): Promise<void>;
   capabilities(): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] }>;
   compact(): Promise<CompactOutcome>;
-  interrupt(): Promise<void>;
+  interrupt(): Promise<unknown>; // Wave-1 receipt ({still_queued}) — callers ignore it
   getContextUsage(): Promise<unknown>;
   usage(): Promise<unknown>;
+  // runtime MCP topology (W3.5)
+  mcpServerStatus(): Promise<unknown[]>;
+  reconnectMcpServer(name: string): Promise<void>;
+  toggleMcpServer(name: string, enabled: boolean): Promise<void>;
   dispose(): Promise<void>;
   readonly sessionId?: string;
 }
@@ -151,6 +155,14 @@ export function useChat(
             append(formatThink(parsed.level));
           } else append(formatThink(undefined, thinkLevel));
           break;
+        case "mcp": {
+          const action = parseMcpArgs(cmd.args);
+          if (!action) { append(formatMcpUsage()); break; }
+          if (action.kind === "status") append(formatMcpStatus(await session.mcpServerStatus()));
+          else if (action.kind === "reconnect") { await session.reconnectMcpServer(action.name); append([{ text: `mcp: reconnected ${action.name}` }]); }
+          else { await session.toggleMcpServer(action.name, action.enabled); append([{ text: `mcp: ${action.name} → ${action.enabled ? "enabled" : "disabled (advisory — a tool call can revive it)"}` }]); }
+          break;
+        }
         default: append(formatUnknown(cmd.name));
       }
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }

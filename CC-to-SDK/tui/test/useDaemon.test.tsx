@@ -30,6 +30,15 @@ function fakeClient(over: Partial<DaemonClient> = {}): DaemonClient & { calls: a
     async stopProactive() {},
     async pendingPermissions() { return []; },
     async respondPermission() {},
+    async rewind() { return { id: "rw" }; },
+    async reinitialize() { return {}; },
+    async backgroundTasks() { return []; },
+    async stopTask() {},
+    async mcpStatus() { return []; },
+    async mcpSetServers() { return { added: [], removed: [], errors: {} }; },
+    async mcpToggle() {},
+    async mcpReconnect() {},
+    async mcpModeOverride() { return {}; },
   };
   return Object.assign({ ...base, ...over }, { calls });
 }

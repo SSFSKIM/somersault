@@ -35,6 +35,14 @@ export interface DaemonClient extends MonitorClient {
   stopProactive(id: string): Promise<void>;
   pendingPermissions(): Promise<PendingEntry[]>;
   respondPermission(toolUseID: string, decision: PermissionDecision): Promise<void>;
+  // runtime MCP topology (W3.5) — JSON-safe configs only (stdio/sse/http; SDK-type rejected daemon-side)
+  mcpStatus(id: string): Promise<unknown[]>;
+  mcpSetServers(id: string, servers: Record<string, Record<string, unknown>>): Promise<{ added: string[]; removed: string[]; errors: Record<string, string> }>;
+  /** ADVISORY (probe 52b): a disabled server is resurrected by the next model tool call — gate with permissions, not toggle. */
+  mcpToggle(id: string, name: string, enabled: boolean): Promise<void>;
+  mcpReconnect(id: string, name: string): Promise<void>;
+  /** Per-server permission-mode pin — rules-layer only (probe 49); does not silence a canUseTool broker. */
+  mcpModeOverride(id: string, name: string, mode: string | null): Promise<unknown>;
 }
 
 export type RequestFn = (socketPath: string, op: unknown, onLine?: (o: unknown) => void) => Promise<any[]>;
@@ -69,5 +77,10 @@ export function connectDaemon(socketPath: string, request: RequestFn = daemonReq
     async stopProactive(id) { await one({ op: "stop_proactive", id }); },
     async pendingPermissions() { return (await one({ op: "pending_permissions" })).pending as PendingEntry[]; },
     async respondPermission(toolUseID, decision) { await one({ op: "permission_response", toolUseID, decision }); },
+    async mcpStatus(id) { return (await one({ op: "mcp_status", id })).servers as unknown[]; },
+    async mcpSetServers(id, servers) { return (await one({ op: "mcp_set_servers", id, servers })).result; },
+    async mcpToggle(id, name, enabled) { await one({ op: "mcp_toggle", id, name, enabled }); },
+    async mcpReconnect(id, name) { await one({ op: "mcp_reconnect", id, name }); },
+    async mcpModeOverride(id, name, mode) { return (await one({ op: "mcp_mode_override", id, name, mode })).result; },
   };
 }

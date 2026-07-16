@@ -76,6 +76,12 @@ const permissionDecision = z.discriminatedUnion("kind", [
 ]);
 const pendingPermissionsOp = z.object({ op: z.literal("pending_permissions") });
 const permissionResponseOp = z.object({ op: z.literal("permission_response"), toolUseID: z.string(), decision: permissionDecision });
+// runtime MCP topology (W3.5) — JSON-safe configs only; SDK-type (in-process) servers cannot cross the UDS wire
+const mcpStatusOp = z.object({ op: z.literal("mcp_status"), id: z.string() });
+const mcpSetServersOp = z.object({ op: z.literal("mcp_set_servers"), id: z.string(), servers: z.record(z.string(), z.record(z.string(), z.unknown())) });
+const mcpToggleOp = z.object({ op: z.literal("mcp_toggle"), id: z.string(), name: z.string(), enabled: z.boolean() });
+const mcpReconnectOp = z.object({ op: z.literal("mcp_reconnect"), id: z.string(), name: z.string() });
+const mcpModeOverrideOp = z.object({ op: z.literal("mcp_mode_override"), id: z.string(), name: z.string(), mode: z.string().nullable() });
 
-export const daemonOp = z.discriminatedUnion("op", [spawnOp, submitOp, listOp, stopOp, shutdownOp, controlOp, startProactiveOp, stopProactiveOp, sessionsOp, messagesOp, compactOp, forkOp, rewindOp, usageOp, initOp, applyFlagSettingsOp, renameSessionOp, tagSessionOp, deleteSessionOp, pendingPermissionsOp, permissionResponseOp]);
+export const daemonOp = z.discriminatedUnion("op", [spawnOp, submitOp, listOp, stopOp, shutdownOp, controlOp, startProactiveOp, stopProactiveOp, sessionsOp, messagesOp, compactOp, forkOp, rewindOp, usageOp, initOp, applyFlagSettingsOp, renameSessionOp, tagSessionOp, deleteSessionOp, pendingPermissionsOp, permissionResponseOp, mcpStatusOp, mcpSetServersOp, mcpToggleOp, mcpReconnectOp, mcpModeOverrideOp]);
 export type DaemonOp = z.infer<typeof daemonOp>;

@@ -204,6 +204,24 @@ export class DaemonSupervisor {
     if (!session || session.isEnded()) { const rec = this.registry.get(id); throw new DaemonError(rec ? `session ${id} is ${rec.status}` : `unknown session ${id}`); }
     return session.initializationResult();
   }
+  // ---- runtime MCP topology (W3.5) ----
+  private liveOrThrow(id: string): DaemonSession {
+    const session = this.ensureLive(id);
+    if (!session || session.isEnded()) { const rec = this.registry.get(id); throw new DaemonError(rec ? `session ${id} is ${rec.status}` : `unknown session ${id}`); }
+    return session;
+  }
+  async mcpServerStatus(id: string): Promise<unknown[]> { return this.liveOrThrow(id).mcpServerStatus(); }
+  async setMcpServers(id: string, servers: Record<string, Record<string, unknown>>): Promise<unknown> {
+    // SDK-type servers are in-process instances — they cannot cross the UDS wire; fail loudly rather
+    // than let the SDK choke on a config with no instance.
+    for (const [name, cfg] of Object.entries(servers))
+      if (cfg.type === "sdk") throw new DaemonError(`server ${name}: SDK-type (in-process) servers cannot be set over the daemon wire — use stdio/sse/http`);
+    return this.liveOrThrow(id).setMcpServers(servers);
+  }
+  async toggleMcpServer(id: string, name: string, enabled: boolean): Promise<void> { await this.liveOrThrow(id).toggleMcpServer(name, enabled); }
+  async reconnectMcpServer(id: string, name: string): Promise<void> { await this.liveOrThrow(id).reconnectMcpServer(name); }
+  async setMcpPermissionModeOverride(id: string, name: string, mode: string | null): Promise<unknown> { return this.liveOrThrow(id).setMcpPermissionModeOverride(name, mode); }
+
   async applyFlagSettings(id: string, settings: Record<string, unknown>): Promise<void> {
     const session = this.ensureLive(id);
     if (!session || session.isEnded()) { const rec = this.registry.get(id); throw new DaemonError(rec ? `session ${id} is ${rec.status}` : `unknown session ${id}`); }

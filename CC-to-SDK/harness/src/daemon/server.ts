@@ -85,6 +85,11 @@ export class DaemonServer {
         case "start_proactive": send({ ok: true, status: this.supervisor.startProactive(op.id, op.config) }); sock.end(); break;
         case "stop_proactive": send(await this.supervisor.stopProactive(op.id)); sock.end(); break;
         case "stop": await this.supervisor.stop(op.id); send({ ok: true }); sock.end(); break;
+        case "mcp_status": send({ ok: true, servers: await this.supervisor.mcpServerStatus(op.id) }); sock.end(); break;
+        case "mcp_set_servers": send({ ok: true, result: await this.supervisor.setMcpServers(op.id, op.servers) }); sock.end(); break;
+        case "mcp_toggle": await this.supervisor.toggleMcpServer(op.id, op.name, op.enabled); send({ ok: true }); sock.end(); break;
+        case "mcp_reconnect": await this.supervisor.reconnectMcpServer(op.id, op.name); send({ ok: true }); sock.end(); break;
+        case "mcp_mode_override": send({ ok: true, result: await this.supervisor.setMcpPermissionModeOverride(op.id, op.name, op.mode) }); sock.end(); break;
         case "pending_permissions": send({ ok: true, pending: this.supervisor.pendingPermissions() }); sock.end(); break;
         case "permission_response": { const ok = this.supervisor.respondPermission(op.toolUseID, op.decision); send(ok ? { ok: true } : { ok: false, error: "no pending request" }); sock.end(); break; }
         case "submit": {

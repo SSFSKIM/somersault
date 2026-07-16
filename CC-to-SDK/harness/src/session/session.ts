@@ -148,6 +148,30 @@ export class Session implements ControllableSession {
   async initializationResult(): Promise<unknown> { this.assertRunning(); return this.callQValue("initializationResult"); }
   async applyFlagSettings(settings: Record<string, unknown>): Promise<void> { this.assertRunning(); await this.callQ("applyFlagSettings", settings); }
 
+  // ---- runtime MCP topology (W3.5; probes 52/52b) ----
+  /** Replace the session's DYNAMIC MCP server set mid-session (stdio/sse/http and SDK-type both work).
+   *  Returns {added, removed, errors}. `{}` removes all dynamics (plugin-owned servers are exempt —
+   *  sdk.d.ts). New servers' tools are ToolSearch-reachable on the next turn (probe 52). */
+  async setMcpServers(servers: Record<string, unknown>): Promise<{ added: string[]; removed: string[]; errors: Record<string, string> }> {
+    this.assertRunning();
+    return (await this.callQ("setMcpServers", servers)) as { added: string[]; removed: string[]; errors: Record<string, string> };
+  }
+  /** Kill + respawn a PROCESS-BASED server (probe 52b: pid change proven). THROWS for SDK-type servers
+   *  ("SDK servers should be handled in print.ts") — they are caller-owned and need no subprocess restart. */
+  async reconnectMcpServer(serverName: string): Promise<void> { this.assertRunning(); await this.callQ("reconnectMcpServer", serverName); }
+  /** ADVISORY enable/disable (probe 52b): disabling flips status + kills the child, but a model tool
+   *  call RESURRECTS the server via on-demand bring-up — this is NOT a security boundary; gate with
+   *  permissions (canUseTool/disallowedTools) instead. toggle(true) throws for SDK-type servers. */
+  async toggleMcpServer(serverName: string, enabled: boolean): Promise<void> { this.assertRunning(); await this.callQ("toggleMcpServer", serverName, enabled); }
+  /** Live connection status for all servers ([{name, status}, …]). */
+  async mcpServerStatus(): Promise<unknown[]> { this.assertRunning(); return (await this.callQValue("mcpServerStatus")) as unknown[]; }
+  /** Per-server permission-mode pin (probe 49: RULES-LAYER only — a canUseTool broker is still
+   *  consulted; use for rule/classifier posture, not to silence a broker). null clears the pin. */
+  async setMcpPermissionModeOverride(serverName: string, mode: string | null): Promise<unknown> {
+    this.assertRunning();
+    return this.callQ("setMcpPermissionModeOverride", serverName, mode);
+  }
+
   /** Rewind the file checkpoint to a prior user-prompt message. The anchor must be a real user-prompt UUID
    *  from the transcript (getSessionMessages), NOT a live-stream type:"user" frame. */
   async rewind(userMessageId: string, opts?: { dryRun?: boolean }): Promise<unknown> {

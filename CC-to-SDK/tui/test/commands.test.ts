@@ -1,6 +1,6 @@
 // tui/test/commands.test.ts — pure parser + formatters.
 import { describe, it, expect } from "vitest";
-import { parseCommand, COMMANDS, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, pickMostRecent, parseResumeIntent, parseLaunchMode, parseLaunchThink } from "../src/commands.js";
+import { parseCommand, COMMANDS, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, parseResumeIntent, parseLaunchMode, parseLaunchThink } from "../src/commands.js";
 
 describe("parseCommand", () => {
   it("splits a slash command into name + args", () => {
@@ -100,5 +100,27 @@ describe("parseLaunchThink", () => {
     expect(parseLaunchThink(["--think", "off"])).toBe("off");
     expect(parseLaunchThink(["--think", "bogus"])).toBeUndefined();
     expect(parseLaunchThink(["--model", "x"])).toBeUndefined();
+  });
+});
+
+describe("/mcp (W3.5)", () => {
+  it("parses status / reconnect / toggle forms", () => {
+    expect(parseMcpArgs("")).toEqual({ kind: "status" });
+    expect(parseMcpArgs("reconnect linear")).toEqual({ kind: "reconnect", name: "linear" });
+    expect(parseMcpArgs("toggle linear off")).toEqual({ kind: "toggle", name: "linear", enabled: false });
+    expect(parseMcpArgs("toggle linear on")).toEqual({ kind: "toggle", name: "linear", enabled: true });
+    expect(parseMcpArgs("toggle linear")).toBeNull();       // missing on|off
+    expect(parseMcpArgs("bogus")).toBeNull();
+  });
+  it("formats status rows and the empty case", () => {
+    expect(formatMcpStatus([]).map((l) => l.text)).toEqual(["mcp: no servers"]);
+    const lines = formatMcpStatus([{ name: "linear", status: "connected" }]).map((l) => l.text);
+    expect(lines[0]).toBe("MCP servers");
+    expect(lines[1]).toContain("linear");
+    expect(lines[1]).toContain("connected");
+    expect(formatMcpUsage()[0].text).toContain("advisory");
+  });
+  it("is a registered command", () => {
+    expect(COMMANDS.some((c) => c.name === "mcp")).toBe(true);
   });
 });

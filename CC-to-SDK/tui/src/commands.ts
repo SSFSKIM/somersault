@@ -28,6 +28,7 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "continue", summary: "resume the most-recent session" },
   { name: "yolo", summary: "enable bypassPermissions (ungated tool access)" },
   { name: "think", summary: "<off|low|medium|high|xhigh|max|N> — set thinking budget (no arg shows current)" },
+  { name: "mcp", summary: "[reconnect <name> | toggle <name> on|off] — MCP server status / controls" },
   { name: "help", summary: "list commands" },
 ];
 
@@ -94,6 +95,30 @@ export function formatStatus(s: { model?: string; mode: string; thinkLevel?: str
 }
 export function formatUnknown(name: string): RenderLine[] {
   return [{ text: `Unknown command: /${name} · try /help`, color: "red" }];
+}
+
+// ---- /mcp (W3.5) ----
+export type McpAction = { kind: "status" } | { kind: "reconnect"; name: string } | { kind: "toggle"; name: string; enabled: boolean };
+
+/** `/mcp` args → an action, or null for malformed input (caller prints usage). */
+export function parseMcpArgs(args: string): McpAction | null {
+  const parts = args.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { kind: "status" };
+  if (parts[0] === "reconnect" && parts[1]) return { kind: "reconnect", name: parts[1] };
+  if (parts[0] === "toggle" && parts[1] && (parts[2] === "on" || parts[2] === "off")) return { kind: "toggle", name: parts[1], enabled: parts[2] === "on" };
+  return null;
+}
+
+/** Status rows from Session.mcpServerStatus() ([{name, status}, …] — shape tolerated loosely). */
+export function formatMcpStatus(servers: unknown[]): RenderLine[] {
+  if (!servers.length) return [{ text: "mcp: no servers", dim: true }];
+  return [{ text: "MCP servers", bold: true }, ...servers.map((s) => {
+    const r = s as { name?: string; status?: string; state?: string };
+    return { text: `  ${r.name ?? "?"}  ${r.status ?? r.state ?? "?"}`, dim: true };
+  })];
+}
+export function formatMcpUsage(): RenderLine[] {
+  return [{ text: "usage: /mcp · /mcp reconnect <name> · /mcp toggle <name> on|off (advisory — a tool call can revive a disabled server)", dim: true }];
 }
 
 export type InitialResume = { kind: "id"; id: string } | { kind: "continue" };
