@@ -19,7 +19,10 @@ live("daemon-attached interactive permissions (live)", () => {
     const cwd = workdir();
     const sup = new DaemonSupervisor({ query }, { dir: join(cwd, "reg"), idleTimeoutMs: 0, sessionOptions: () => ({ cwd, settingSources: [] }) });
     try {
-      const id = sup.spawn({ model: "claude-sonnet-4-6" });          // default mode → gated tools route to the broker
+      // Explicit "default": since Increment A a BARE spawn is born permissionMode:auto (harness-wide
+      // default), and auto bypasses the broker entirely — the parking path under test here needs the
+      // broker-live mode requested explicitly.
+      const id = sup.spawn({ model: "claude-sonnet-4-6", permissionMode: "default" });
       let done = false;
       const submitP = sup.submit(id, "Edit note.txt, replacing ORIGINAL with CHANGED. Do nothing else.", () => {}).finally(() => { done = true; });
       let sawEdit = false;

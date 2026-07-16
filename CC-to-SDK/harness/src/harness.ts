@@ -56,6 +56,11 @@ export function createHarness(config: HarnessConfig = {}, deps: HarnessDeps = {}
     tasks = tasks ?? new TaskStore({ cwd: config.cwd, dir: opts.dir, listId: opts.listId, agentName: opts.agentName });
     const existing = (options.mcpServers as Record<string, unknown>) ?? {};
     options.mcpServers = { ...existing, "cc-tasks": createTaskMcpServer(tasks) };
+    // Same-named NATIVE tools shadow MCP tools (the D3 lesson) — on CLI 2.1.211 the model demonstrably
+    // picks native TaskCreate over the deferred mcp__cc-tasks__TaskCreate, writing to the WRONG store.
+    // Disallow the native set so the durable store is authoritative (matches swarm/daemon paths).
+    const dis = (options.disallowedTools as string[] | undefined) ?? [];
+    options.disallowedTools = [...new Set([...dis, ...NATIVE_TASK_TOOLS])];
   }
   if (config.contextTool) {
     ctxHolder = {};
