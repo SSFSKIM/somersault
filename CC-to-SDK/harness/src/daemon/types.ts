@@ -23,6 +23,7 @@ export interface SessionRecord {
   restarts?: number;       // count of automatic restarts (D2)
   limit?: LimitState;      // billing/limit state as of the session's last turn (Wave 1; undefined = healthy)
   mirrorErrors?: number;   // dropped sessionStore mirror batches so far (W3.3; undefined/0 = loss-free)
+  warm?: boolean;          // session was born from a pre-warmed subprocess slot (W3.2)
 }
 
 /** A live-pool entry on the wire: a SessionRecord enriched with the session's proactive status (if any). */
@@ -43,6 +44,7 @@ export interface DaemonOptions {
   sharedTasks?: boolean | { dir?: string; listId?: string };       // wire a shared cc-tasks store into every session (D3)
   contextTool?: boolean;   // daemon-wide: expose the cc-context GetContextUsage tool to every session's agent (D6)
   telemetry?: TelemetryConfig; // daemon-wide OTel env gates — every session's subprocess exports (W3.1)
+  warmPool?: { size?: number }; // pre-warm default-config subprocesses; spawns matching the default cfg skip startup latency (W3.2). Warm path requires NO sessionOptions/sharedTasks/contextTool/compactTool (those mutate per-session Options, which a warm handle ignores).
   compactTool?: boolean;   // daemon-wide: expose the cc-compact RequestCompaction tool to every session's agent (Spec B)
   permissionTimeoutMs?: number; // parked permission-request lifetime before auto-deny (default 30_000)
   rehydrate?: boolean;     // adopt orphaned sessions on boot (resume on first access) instead of reaping them; default false

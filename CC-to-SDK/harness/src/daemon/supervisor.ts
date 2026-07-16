@@ -3,6 +3,8 @@ import { DaemonSession } from "./session.js";
 import { DaemonError } from "./types.js";
 import type { DaemonOptions, RestartPolicy, SessionRecord } from "./types.js";
 import type { TelemetryConfig } from "../config/telemetry.js";
+import { createWarmPool } from "../warm/pool.js";
+import type { WarmPool } from "../warm/pool.js";
 import { PendingPermissions } from "./permissions.js";
 import type { PendingEntry } from "./permissions.js";
 import { createPermissionGate } from "../permissions/gate.js";
@@ -29,6 +31,7 @@ import type { CompactOutcome } from "../compaction/server.js";
 
 export interface DaemonDeps {
   query: QueryFn;
+  startup?: (params: { options: Record<string, unknown> }) => Promise<{ query(prompt: unknown): unknown; close(): void }>; // warm-pool DI (W3.2)
   listSessions?: (opts?: Parameters<typeof listSessions>[0]) => Promise<unknown[]>;
   getSessionMessages?: (id: string, opts?: Parameters<typeof getSessionMessages>[1]) => Promise<unknown[]>;
   forkSession?: (id: string, opts?: Parameters<typeof forkSession>[1]) => Promise<{ sessionId: string }>;
@@ -67,6 +70,8 @@ export class DaemonSupervisor {
   private contextTool: boolean;
   private compactTool: boolean;
   private telemetry?: TelemetryConfig;                    // daemon-wide OTel env gates (W3.1)
+  private warmPool?: WarmPool;                            // pre-warmed default-config subprocesses (W3.2)
+  private warmIds = new Set<string>();                    // sessions born from a warm slot (registry flag)
   private pending: PendingPermissions;
 
   constructor(private deps: DaemonDeps, opts: DaemonOptions = {}) {
@@ -83,6 +88,10 @@ export class DaemonSupervisor {
     this.contextTool = opts.contextTool ?? false;
     this.compactTool = opts.compactTool ?? false;
     this.telemetry = opts.telemetry;
+    if (opts.warmPool) this.warmPool = createWarmPool(
+      { ...(opts.telemetry ? { telemetry: opts.telemetry } : {}) },       // = a default spawn's resolveOptions input
+      { size: opts.warmPool.size, ...(deps.startup ? { deps: { startup: deps.startup } } : {}) },
+    );
     this.pending = new PendingPermissions({ timeoutMs: opts.permissionTimeoutMs, now: this.now });
     if (opts.rehydrate) {                              // adopt the prior process's sessions (lazy: no subprocess here)
       for (const rec of this.registry.rehydrate(process.pid)) {
@@ -120,7 +129,7 @@ export class DaemonSupervisor {
     this.configs.set(id, cfg);
     this.pool.set(id, this.makeSession(id, cfg, opts.resume));
     const t = this.now();
-    this.registry.register({ id, daemonPid: process.pid, status: "idle", model, permissionMode: cfg.permissionMode, restart: cfg.restart, createdAt: t, lastActiveAt: t });
+    this.registry.register({ id, daemonPid: process.pid, status: "idle", model, permissionMode: cfg.permissionMode, restart: cfg.restart, createdAt: t, lastActiveAt: t, ...(this.warmIds.has(id) ? { warm: true } : {}) });
     return id;
   }
 
@@ -330,6 +339,7 @@ export class DaemonSupervisor {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;                    // end hooks early-return from here on
+    this.warmPool?.close();                      // discard pre-warmed subprocesses (W3.2)
     if (this.reaper) clearInterval(this.reaper);
     for (const cancel of this.restartCancels.values()) cancel();
     this.restartCancels.clear();
@@ -385,6 +395,21 @@ export class DaemonSupervisor {
     const extra = this.sessionOptions?.(id);                 // fresh servers + tool posture for THIS session
     const options = extra ? { ...base, ...extra } : base;    // factory keys win (unchanged contract)
     options.canUseTool = createPermissionGate(this.pending.brokerFor(id)); // daemon broker wins — set LAST
+    // W3.2 warm path — ONLY when the pool's frozen options are exactly what this session would run
+    // with: default model/mode, no resume/rewind (baked into Options), and nothing that mutates
+    // Options per-session (sessionOptions factory, contextTool/compactTool MCP wrapping). Anything
+    // else cold-spawns unchanged; the per-session broker rides the slot's delegating canUseTool.
+    const warmable = this.warmPool && !resume && !cfg.rewind && !extra && !this.contextTool && !this.compactTool
+      && cfg.model === DEFAULTS.model && !cfg.permissionMode;
+    if (warmable) {
+      const lease = this.warmPool!.take({ canUseTool: options.canUseTool as (name: string, input: unknown, o?: unknown) => Promise<unknown> });
+      if (lease) {
+        this.warmIds.add(id);
+        const session = new DaemonSession(id, { query: lease.queryFn as QueryFn }, options, this.now, {});
+        session.done.then(() => this.handleSessionEnd(id)).catch(() => {}); // end hook
+        return session;
+      }
+    }
     const session = new DaemonSession(id, { query: this.deps.query }, options, this.now, { contextTool: this.contextTool, compactTool: this.compactTool });
     session.done.then(() => this.handleSessionEnd(id)).catch(() => {}); // end hook
     return session;

@@ -31,6 +31,8 @@ export type { CompactOutcome } from "./compaction/index.js";
 export { openSession, resumeSession, rewindSession, Session } from "./session/index.js";
 export type { OpenSessionConfig, SessionDepsInput, SessionDeps, SessionOpts } from "./session/index.js";
 export type { BackgroundTaskInfo } from "./session/session.js";
+export { createWarmPool } from "./warm/pool.js";
+export type { WarmPool, WarmPoolOpts, WarmPoolStats, WarmLease, WarmHandle, StartupFn } from "./warm/pool.js";
 export { createRedisSessionStore } from "./store/redisSessionStore.js";
 export type { RedisLike, RedisSessionStoreOptions } from "./store/redisSessionStore.js";
 export { sessionStoreConformance } from "./store/conformance.js";

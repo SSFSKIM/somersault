@@ -91,6 +91,7 @@ describe("public API", () => {
       "createRedisSessionStore",
       "createSwarmMcpServer",
       "createTaskMcpServer",
+      "createWarmPool",
       "daemonRequest",
       "daemonSocketPath",
       "deleteSession",
