@@ -3,7 +3,9 @@
 > Companion to `parity.json` / `roadmap.md`. Those score **Claude Code feature parity** (551 CC
 > features → SDK). This scores the inverse: **of the Agent SDK's own capability envelope, how much
 > have we actually realized?** Measured 2026-06-17 against `@anthropic-ai/claude-agent-sdk@0.3.178`
-> from the installed `.d.ts` and live probes — not the Feb snapshot.
+> from the installed `.d.ts` and live probes — not the Feb snapshot. **Remeasured 2026-07-17** against
+> installed 0.3.178 + npm HEAD 0.3.211 + the live web docs (30 pages) — see §7 for the drift + the
+> refreshed frontier list.
 >
 > **Shipped since first draft:**
 > - **Session persistence spine** (domain 5) — `resume` / `persistSession` / `sessionStore` config
@@ -114,7 +116,12 @@
    working harness capability (§2). This is the number that answers "considering the SDK's full
    potential, how much have we made?"
 
-**Headline:** we have realized roughly **~64% of the SDK's reachable capability envelope** — strong
+**Headline (2026-07-17 remeasure):** roughly **~63% of the SDK's reachable capability envelope** — the
+numerator grew since 2026-06-17 (structured `outputFormat` now consumed by the app-server; probes 35/36
+flipped two priors — MCP tools are ToolSearch-deferred i.e. token-cheap, and the native `Workflow`
+orchestrator RUNS headlessly), but the *denominator grew faster*: the live docs + 0.3.211 expose whole
+sub-surfaces we haven't touched (OpenTelemetry, hosting/warm-spawn, sandbox credential redaction, runtime
+MCP control, `resumeSessionAt`). Same story as before at finer grain — strong
 (60–90%) on the *execution & orchestration* half (turn loop, tools, permissions, multi-agent,
 settings, autonomy). The *state & observability* half has now largely closed, and the **SDK capability
 closeout** (2026-06-18) pushed the last ready-made frontiers in: **turn controls** (`effort`/`thinking`/
@@ -174,12 +181,12 @@ passthrough). The remaining ready-made levers are incremental — turn-level sur
 
 | SDK surface | Size | We use | Note |
 |---|---|---|---|
-| `Options` fields | 63 | ~35 modeled in `resolveOptions` (now incl. `resume`/`persistSession`/`sessionStore` + turn controls `effort`/`thinking`/`maxBudgetUsd`/`taskBudget`/`includePartialMessages`/`forwardSubagentText`) + `extraOptions` escape hatch | passthrough makes all 63 *reachable* |
-| `Query` control methods | ~25 | 12 (`interrupt`, `setModel`, `setPermissionMode`, `setMaxThinkingTokens`, `rewindFiles`, `getContextUsage`, `accountInfo`, **`usage`**, **`initializationResult`**, **`applyFlagSettings`**, `supportedModels`/`Commands`/`Agents`) | ~13 unused; `usage().rate_limits` is `null` on API-key auth (bridge-coupled) |
+| `Options` fields | 63 (unchanged in 0.3.211) | **32** modeled in `resolveOptions` (audited 2026-07-17; incl. `outputFormat`) + `extraOptions` escape hatch | passthrough makes all 63 *reachable*; capability-meaningful unused: `resumeSessionAt`, `continue`, `toolConfig`, `onUserDialog`/`onElicitation`, `promptSuggestions`, `agentProgressSummaries`, `planModeInstructions`, `spawnClaudeCodeProcess`, `skills`, `abortController`, `betas` |
+| `Query` control methods | 25 (27 in 0.3.211) | **15** (audited 2026-07-17: `interrupt`, `setModel`, `setPermissionMode`, `setMaxThinkingTokens`, `rewindFiles`, `getContextUsage`, `accountInfo`, `usage`, `initializationResult`, `applyFlagSettings`, `supportedModels`/`Commands`/`Agents`, `mcpServerStatus`, `close`) | 10 unused (`readFile`, `reloadPlugins`/`reloadSkills`, `seedReadState`, `reconnectMcpServer`/`toggleMcpServer`/`setMcpServers`, `streamInput` (internal), `stopTask`, `backgroundTasks`) + 2 new in 0.3.211 (`reinitialize`, `setMcpPermissionModeOverride`); `usage().rate_limits` is `null` on API-key auth (bridge-coupled) |
 | Core builders (`query`, `createSdkMcpServer`, `tool`) | 3 | 3 | 100% |
 | In-process MCP servers built | — | 5 (`cc-tasks`, `cc-swarm`, `cc-brief`, `cc-context`, `cc-compact`) | `cc-context` = self-introspection (`GetContextUsage`); `cc-compact` = self-compaction (`RequestCompaction`) |
-| Native model tools | 37 | 0 reimplemented; 2 deliberately shadowed by our MCP (Task→swarm, Tasks); `CronCreate` probed dead | rely-on, not consume |
-| Subpath exports | 7 | 1 used (`.`), 2 probed-and-rejected (`/assistant`, `/bridge`), 1 types-only (`/sdk-tools`) | — |
+| Native model tools | 37 (+4 in 0.3.211: `ReportFindings`, `ClaudeDesign`, `RefreshMcpTools`, `ReadMcpResourceDir`) | 0 reimplemented; 2 deliberately shadowed by our MCP (Task→swarm, Tasks); `CronCreate` probed dead; **`Workflow` probed ALIVE headlessly** (probe 36) but not yet surfaced | rely-on, not consume; probes 35/35b/35c: MCP tools are **ToolSearch-deferred** (~11 tok/turn), not inline |
+| Subpath exports | 7 | 1 used (`.`), 2 probed-and-rejected (`/assistant`, `/bridge`), 1 types-only (`/sdk-tools`) | 0.3.211 **deletes `/assistant`** (`runAssistantWorker` gone) + removes the `connectRemoteControl` exports — two 🚫 rows now nonexistent |
 | Hook events (`HOOK_EVENTS`) | 30 | first-class `config.hooks` + 4 builders + `mergeHooks` | 8 verified-fired headlessly; all 30 reachable via passthrough; SessionStart/End dormant (documented) |
 | `permissionMode` values | 6 | **6 characterized** | default/plan/auto/bypass(gated) + `acceptEdits`/`dontAsk` (closeout) |
 | Session-store top-level fns | 10 | **7 used** (`listSessions`/`getSessionMessages`/`getSessionInfo` via `sessions/reader.ts`, `forkSession` via `sessions/fork.ts`, **`renameSession`/`tagSession`/`deleteSession` via `sessions/mutate.ts`**); `resume`/`persistSession`/`sessionStore` (Options) wired | all documented store fns now wrapped |
@@ -301,3 +308,69 @@ loop. The required surface was derived from the consumer's own source (`app_serv
 `PushNotification` transport), build-internal feature-flag/DCE gating, and the interactive Ink TUI
 (deferred under the "harden & ship over Phase 3" decision). These are excluded from every "realized"
 fraction above — measuring against them would understate true coverage of the reachable envelope.
+**2026-07-17 update:** SDK 0.3.211 *deletes* `runAssistantWorker` (the whole `/assistant` subpath) and
+the `connectRemoteControl` exports — both moved from 🚫 to nonexistent, validating the probed-and-rejected
+calls and shrinking the 🚫 floor.
+
+---
+
+## §7 — 2026-07-17 remeasure: SDK drift + refreshed frontiers
+
+Inputs: installed 0.3.178 `.d.ts` vs npm HEAD **0.3.211** (structured diff), the **live web docs**
+(all 30 `code.claude.com/docs/en/agent-sdk/*` pages), and a full consumption audit of
+`harness/`+`tui/`+`app-server/`. Headline moves ~64% → **~63%** — not because we regressed, but because
+the denominator grew (new documented/declared surface) faster than the numerator (shipped since 6/17:
+structured outputs consumed by the app-server, probes 35/36, forkSubagent, TUI rounds).
+
+### 0.3.178 → 0.3.211 drift (declared; each item needs a probe before building on it)
+
+**Flat:** `Options` (63 fields byte-identical), `HOOK_EVENTS` (30), `PermissionMode` (6), `EffortLevel` (5).
+
+**Added:** `Query.reinitialize()` (recover a gapped control channel — directly relevant to daemon
+boot-rehydration/reattach) · `Query.setMcpPermissionModeOverride()` (per-server tighten-only mode pin) ·
+`interrupt()` now returns a receipt (`still_queued` semantics) · 4 native tools (`ReportFindings`
+structured code-review findings, `ClaudeDesign` opaque action dispatcher, `RefreshMcpTools`,
+`ReadMcpResourceDir`) · new `SDKMessage` members (`background_tasks_changed` REPLACE-snapshot,
+`conversation_reset`, `model_refusal_no_fallback`, `control_request_progress` retry telemetry) ·
+`active_goal` StdoutMessage (a `/goal` Stop-hook autonomy loop — unprobed) · **sandbox credential
+redaction** (`SandboxSettings.credentials` + `SandboxCredentialsConfig`: deny/mask env vars + files,
+per-host injection allow-lists) · `USAGE_*`/`ORG_POLICY_LIMIT_PREFIXES` classification constants ·
+a `manifest.json` `sdkCompat` wrapper-compatibility contract.
+
+**Removed (breaking, but not for us):** `/assistant` subpath + `runAssistantWorker`;
+`ConnectRemoteControl*` exports; `setMcpServers({})` no longer clears plugin-owned servers.
+
+### Docs-envelope check (30 pages) — status of the 10 capabilities the docs emphasize
+
+| Docs-emphasized capability | Our status |
+|---|---|
+| Structured outputs (`outputFormat` json_schema + retries) | ✅ built (resolveOptions + app-server consumer; probe 36-output-format) |
+| External `sessionStore` (S3/Redis/Postgres seam) | ✅ passthrough shipped + InMemory probed; no real external adapter exercised |
+| Hosting guide (`startup()`/`WarmQuery` pre-warm, `spawnClaudeCodeProcess`, scaling/session-pinning) | ⚪ untouched — a whole documented deployment surface |
+| Secure deployment + `sandbox` (isolation tiers, credential proxy; 0.3.211 credentials redaction) | 🟡 `sandbox` modeled in config; credential redaction + proxy patterns ⚪ |
+| Tool search (defer-and-discover, on by default) | 🟡 verified (probes 35/35b/35c) — rely-on; informs "default-on MCP is cheap" |
+| File checkpointing (`enableFileCheckpointing` + `rewindFiles`) | ✅ built |
+| `Workflow` tool + agent teams | 🟡 Workflow verified headless (probe 36) but NOT surfaced in harness config/TUI; agent teams CLI-only (out of SDK scope) |
+| OpenTelemetry (metrics/logs/traces, trace-context, per-user attribution) | ⚪ untouched — the biggest observability gap for a headless *service* |
+| Budget controls (`maxBudgetUsd`/`taskBudget`) + effort/thinking | ✅ built |
+| Expanded hooks (incl. `defer`, async side-effect mode) + `auto` mode | ✅ built (8/30 verified-fired; `defer` decision + `PostToolUseFailure`/`UserPromptExpansion` builders unexplored) |
+
+### Refreshed frontier list (ranked)
+
+1. **Upgrade 0.3.178 → 0.3.211** — prerequisite for everything below; breaking removals don't touch us
+   (audit: nothing imports `/assistant` or `ConnectRemoteControl*`); `interrupt()` return-type change is
+   absorb-and-ignore. Re-run the probe suite after bumping.
+2. **Surface `Workflow`** — probe 36 proved it runs headlessly; wire an allowlist/config knob + docs row
+   (domain 7's reachable denominator grew; realizing it is cheap).
+3. **OpenTelemetry** — env-var-gated, no bridge coupling; the natural "harden & ship" observability story.
+4. **`resumeSessionAt`** — the SDK lever behind conversation rewind (the audit-#2 Esc-Esc candidate);
+   pairs with existing `rewindFiles` for full time-travel.
+5. **Daemon resilience via `reinitialize()`** + interrupt receipts + `control_request_progress` —
+   upgrades boot-rehydration from resume-only to live-reattach.
+6. **Runtime MCP control** — `setMcpServers`/`reconnectMcpServer`/`toggleMcpServer` (+ 0.3.211
+   `RefreshMcpTools`, `setMcpPermissionModeOverride`): dynamic tool topology for the daemon.
+7. **Warm-spawn** (`startup()`/`WarmQuery`) — kills daemon first-turn latency; `spawnClaudeCodeProcess`
+   opens remote/container placement.
+8. **Sandbox credential redaction** — new security surface, on-mission for a hosted service.
+9. **Probe candidates** (declared-only, unknown reachability): `ClaudeDesign`, `ReportFindings`,
+   the `/goal` `active_goal` loop, `backgroundTasks()`/`stopTask()`, `onUserDialog`/`onElicitation`.
