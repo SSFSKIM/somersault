@@ -58,8 +58,10 @@ test (controller runs keyed) → commit. Wave ends: refresh `docs/parity/{covera
 4. Docs `docs/guides/secure-deployment.md`.
 5. Export from `index.ts`.
 
-## Close-out
+## Close-out — ✅ ALL INCREMENTS SHIPPED 2026-07-17
 
-- [ ] coverage.md domains (observability, sessions, daemon, MCP) + full-potential.md Wave-3 rows/§2 math
-- [ ] memory: wave3 file + MEMORY.md line + roadmap memory W3 line
-- [ ] commits per increment on main (no push without request)
+- [x] W3.1 OTel (59a5b2e3d8; live 4.9s) · W3.3 store (4197c78e87; live 13.3s) · W3.5 topology
+      (1f13851d20; live 25.1s) · W3.2 warm pool (9ae1f3cd40; live green) · W3.4 tenant (5921b3e09b; live 18.6s)
+- [x] coverage.md domains (2/3/5/6 + §3 counts + docs-envelope + frontier) + full-potential.md rows/§2 (~78%)/§3
+- [x] memory: wave3 file + MEMORY.md line + roadmap memory W3 line
+- [x] commits per increment on main (not pushed — no push without request)
