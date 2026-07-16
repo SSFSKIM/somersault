@@ -63,6 +63,13 @@ export interface HarnessConfig {
   // required: 33d proved the env var alone is inert — the model never picks fork unless told it exists.
   // Cost when the model chooses fork: the child inherits the FULL parent transcript (more tokens).
   forkSubagent?: boolean;                  // default true
+  // Workflow orchestration (probe 36, re-verified on 0.3.211): the native Workflow tool runs script-driven
+  // multi-agent fan-outs headlessly (async_launched background task; children do NOT stream into the parent;
+  // the return value re-enters the turn via TaskOutput/task-notification). OPT-IN (unlike forkSubagent):
+  // a workflow is a cost MULTIPLIER (dozens of child agents), so the operator must enable it deliberately.
+  // true → allowlists Workflow+Task* retrieval tools AND advertises the pattern in the system prompt
+  // (33d lesson: an unadvertised capability is inert — the model won't reach for it on its own).
+  workflow?: boolean;                      // default false
   // checkpointing / mcp / plugins
   enableFileCheckpointing?: boolean;       // default true
   // session persistence — the SDK persists transcripts to ~/.claude/projects by default
@@ -93,6 +100,7 @@ export const DEFAULTS = {
   settingSources: ["user", "project", "local"] as SettingSource[],
   includeBuiltinAgents: true,
   forkSubagent: true,                       // model can autonomously spawn a transcript-inheriting fork subagent
+  workflow: false,                          // Workflow fan-outs are a cost multiplier — deliberate opt-in
   enableFileCheckpointing: true,
   toolPreset: "claude_code" as const,
   provider: "anthropic" as const,

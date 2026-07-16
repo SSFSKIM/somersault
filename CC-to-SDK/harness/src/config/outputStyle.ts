@@ -16,6 +16,16 @@ export const FORK_SUBAGENT_NOTE =
   'starts blank. Prefer subagent_type:"fork" whenever the delegated sub-task depends on what has already ' +
   "been discussed in this session.";
 
+// Advertises the native Workflow orchestrator (probe 36, re-verified on 0.3.211). Same 33d lesson as fork:
+// the tool being allowlisted is not enough — the model needs to know when to reach for it and how the
+// async launch + TaskOutput retrieval round-trips. Children do NOT stream into the parent turn.
+export const WORKFLOW_NOTE =
+  "A Workflow tool is available for script-driven multi-agent orchestration: pass a JS script using " +
+  "agent()/parallel()/pipeline()/phase() to fan work out across many child agents deterministically. " +
+  "Use it for large parallelizable jobs (sweeps, migrations, multi-perspective review), not single-agent tasks. " +
+  "The launch is asynchronous (it returns a taskId immediately); retrieve the result with TaskOutput(taskId). " +
+  "Child agents do not stream into this conversation — only the workflow's return value comes back.";
+
 export function resolveSystemPrompt(config: HarnessConfig, excludeDynamic = false) {
   const parts: string[] = [];
   if (config.outputStyle && BUILTIN_OUTPUT_STYLES[config.outputStyle]) {
@@ -25,6 +35,7 @@ export function resolveSystemPrompt(config: HarnessConfig, excludeDynamic = fals
   }
   if (config.appendSystemPrompt) parts.push(config.appendSystemPrompt);
   if (config.forkSubagent ?? DEFAULTS.forkSubagent) parts.push(FORK_SUBAGENT_NOTE);
+  if (config.workflow ?? DEFAULTS.workflow) parts.push(WORKFLOW_NOTE);
   const append = parts.filter(Boolean).join("\n\n");
 
   const sp: {

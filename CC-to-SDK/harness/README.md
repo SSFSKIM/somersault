@@ -258,6 +258,8 @@ pass straight through.
 | `baseUrl`, `customHeaders` | gateway base URL + headers via env (`customHeaders` **un-validated**) | — |
 | `agents` | extra `AgentDefinition`s (override built-ins by key) | — |
 | `includeBuiltinAgents` | register `general-purpose`/`Explore`/`Plan` | `true` |
+| `forkSubagent` | model may spawn a transcript-inheriting `subagent_type:"fork"` (env unlock + prompt advertisement) | `true` |
+| `workflow` | unlock the native `Workflow` orchestrator: allowlists `Workflow`+`TaskOutput`/`TaskGet`/`TaskList` and advertises the async launch→retrieve pattern. Opt-in — workflows fan out many child agents (cost multiplier) | `false` |
 | `enableFileCheckpointing` | enable file checkpoints (for `rewind`) | `true` |
 | `resume` | SDK `session_id` to reload prior context | — |
 | `persistSession` | persist transcript to disk; `false` = ephemeral | SDK-true |

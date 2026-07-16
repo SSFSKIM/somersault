@@ -76,6 +76,22 @@ describe("resolveOptions", () => {
     expect(o.env).toBeUndefined();
     expect(o.systemPrompt).toEqual({ type: "preset", preset: "claude_code" });
   });
+  it("workflow is OFF by default: no Workflow allowlist entry, no advertisement", () => {
+    const o: any = resolveOptions({});
+    expect(o.allowedTools ?? []).not.toContain("Workflow");
+    expect(String(o.systemPrompt.append ?? "")).not.toContain("Workflow tool");
+  });
+  it("workflow:true allowlists Workflow + Task retrieval tools AND advertises the async pattern", () => {
+    const o: any = resolveOptions({ workflow: true });
+    for (const t of ["Workflow", "TaskOutput", "TaskGet", "TaskList"]) expect(o.allowedTools).toContain(t);
+    expect(o.systemPrompt.append).toContain("Workflow tool");
+    expect(o.systemPrompt.append).toContain("TaskOutput");             // the retrieval half of the loop
+  });
+  it("workflow:true dedupes against caller-provided allowedTools", () => {
+    const o: any = resolveOptions({ workflow: true, allowedTools: ["Workflow", "Read"] });
+    expect(o.allowedTools.filter((t: string) => t === "Workflow")).toHaveLength(1);
+    expect(o.allowedTools).toContain("Read");
+  });
   it("threads resume and sessionStore when set, omits them otherwise", () => {
     const store = { append: async () => {}, load: async () => null } as any;
     const o: any = resolveOptions({ resume: "sess-abc", sessionStore: store });
