@@ -1,0 +1,11 @@
+# One-command OTLP demo for cc-harness telemetry (W3.1).
+#   docker compose up   → collector listens on http://localhost:4318 and prints everything it receives.
+# Then run any harness session with: telemetry: { endpoint: "http://localhost:4318" }
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4318:4318" # OTLP HTTP

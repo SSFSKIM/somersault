@@ -3,6 +3,7 @@ import { resolveSettings } from "./settings.js";
 import { resolveSystemPrompt } from "./outputStyle.js";
 import { resolveSandbox } from "./sandbox.js";
 import { resolveProviderEnv } from "./provider.js";
+import { resolveTelemetryEnv } from "./telemetry.js";
 import { resolveTools } from "./tools.js";
 import { resolveAgents } from "./agents.js";
 import { resolveAutoModel } from "./autoModel.js";
@@ -14,7 +15,9 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   const systemPrompt = resolveSystemPrompt(config, settings.systemPromptExcludeDynamic);
   const tools = resolveTools(config);
   const sandbox = resolveSandbox(config);
-  const env = resolveProviderEnv(config);
+  // Telemetry lowest precedence: provider flags can't collide with OTEL_* keys, but a user env
+  // override (config.env, merged last inside resolveProviderEnv) should win over the typed config.
+  const env = { ...resolveTelemetryEnv(config.telemetry), ...resolveProviderEnv(config) };
   // Unlock the native fork subagent (paired with the FORK_SUBAGENT_NOTE in systemPrompt — both required, 33d).
   if (config.forkSubagent ?? DEFAULTS.forkSubagent) env.CLAUDE_CODE_FORK_SUBAGENT = "1";
   const agents = resolveAgents(config);

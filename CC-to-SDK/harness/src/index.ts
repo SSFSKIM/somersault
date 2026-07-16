@@ -3,6 +3,8 @@ export type { Harness, HarnessDeps, RunResult } from "./harness.js";
 export { resolveOptions } from "./config/resolveOptions.js";
 export type { HarnessConfig, SettingSource } from "./config/types.js";
 export { DEFAULTS } from "./config/types.js";
+export { resolveTelemetryEnv } from "./config/telemetry.js";
+export type { TelemetryConfig } from "./config/telemetry.js";
 export { resolveAutoModel, isAutoSupportedModel } from "./config/autoModel.js";
 export { BUILTIN_AGENTS } from "./config/agents.js";
 export { BUILTIN_OUTPUT_STYLES } from "./config/outputStyle.js";

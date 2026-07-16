@@ -3,6 +3,7 @@ import { controlFrame } from "../bridge/types.js";
 import { proactiveConfig } from "../proactive/types.js";
 import type { ProactiveStatus } from "../proactive/types.js";
 import type { LimitState } from "../limits/classify.js";
+import type { TelemetryConfig } from "../config/telemetry.js";
 
 export class DaemonError extends Error {}
 
@@ -40,6 +41,7 @@ export interface DaemonOptions {
   sessionOptions?: (sessionId: string) => Record<string, unknown>; // per-session options merged over { model } (D3)
   sharedTasks?: boolean | { dir?: string; listId?: string };       // wire a shared cc-tasks store into every session (D3)
   contextTool?: boolean;   // daemon-wide: expose the cc-context GetContextUsage tool to every session's agent (D6)
+  telemetry?: TelemetryConfig; // daemon-wide OTel env gates — every session's subprocess exports (W3.1)
   compactTool?: boolean;   // daemon-wide: expose the cc-compact RequestCompaction tool to every session's agent (Spec B)
   permissionTimeoutMs?: number; // parked permission-request lifetime before auto-deny (default 30_000)
   rehydrate?: boolean;     // adopt orphaned sessions on boot (resume on first access) instead of reaping them; default false

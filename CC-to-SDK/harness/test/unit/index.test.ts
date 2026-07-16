@@ -107,6 +107,7 @@ describe("public API", () => {
       "resolveAssistantPosture",
       "resolveAutoModel",
       "resolveOptions",
+      "resolveTelemetryEnv",
       "resumeHarness",
       "resumeSession",
       "rewindSession",

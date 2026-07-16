@@ -2,6 +2,7 @@ import { SessionRegistry } from "./registry.js";
 import { DaemonSession } from "./session.js";
 import { DaemonError } from "./types.js";
 import type { DaemonOptions, RestartPolicy, SessionRecord } from "./types.js";
+import type { TelemetryConfig } from "../config/telemetry.js";
 import { PendingPermissions } from "./permissions.js";
 import type { PendingEntry } from "./permissions.js";
 import { createPermissionGate } from "../permissions/gate.js";
@@ -65,6 +66,7 @@ export class DaemonSupervisor {
   private sessionOptions?: (sessionId: string) => Record<string, unknown>; // per-session options factory (D3)
   private contextTool: boolean;
   private compactTool: boolean;
+  private telemetry?: TelemetryConfig;                    // daemon-wide OTel env gates (W3.1)
   private pending: PendingPermissions;
 
   constructor(private deps: DaemonDeps, opts: DaemonOptions = {}) {
@@ -80,6 +82,7 @@ export class DaemonSupervisor {
     this.scheduleRestart = opts.scheduleRestart ?? ((fn, ms) => { const t = setTimeout(fn, ms); (t as any).unref?.(); return () => clearTimeout(t); });
     this.contextTool = opts.contextTool ?? false;
     this.compactTool = opts.compactTool ?? false;
+    this.telemetry = opts.telemetry;
     this.pending = new PendingPermissions({ timeoutMs: opts.permissionTimeoutMs, now: this.now });
     if (opts.rehydrate) {                              // adopt the prior process's sessions (lazy: no subprocess here)
       for (const rec of this.registry.rehydrate(process.pid)) {
@@ -355,6 +358,7 @@ export class DaemonSupervisor {
     const base = resolveOptions({
       model: cfg.model,                                      // already opus-4-8-defaulted by spawn(); resolveOptions is idempotent
       permissionMode: cfg.permissionMode as PermissionMode | undefined,
+      ...(this.telemetry ? { telemetry: this.telemetry } : {}),  // daemon-wide OTel export (W3.1)
       ...(resume ? { resume } : {}),
       // Rewind anchor (cleared after the branch's first submit). Idempotent if re-applied before then:
       // truncating at an anchor that is already the transcript tail is a no-op (probes 37/37b).

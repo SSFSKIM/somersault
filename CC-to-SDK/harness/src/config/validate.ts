@@ -22,6 +22,7 @@ export const harnessConfigSchema = z.looseObject({
   settingSources: z.array(z.enum(["user", "project", "local"])).optional(),
   autoCompactWindow: z.number().int().positive().optional(),
   sandbox: z.union([z.boolean(), z.record(z.string(), z.unknown())]).optional(),
+  telemetry: z.looseObject({ endpoint: z.string().min(1) }).optional(),
 });
 
 export const daemonOptionsSchema = z.looseObject({

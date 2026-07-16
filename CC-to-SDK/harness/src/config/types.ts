@@ -1,6 +1,7 @@
 import type { AgentDefinition, McpServerConfig, PermissionMode, SdkPluginConfig, SessionStore, EffortLevel, ThinkingConfig } from "@anthropic-ai/claude-agent-sdk";
 import type { HooksMap } from "../hooks/types.js";
 import type { PermissionBroker } from "../permissions/types.js";
+import type { TelemetryConfig } from "./telemetry.js";
 
 export type SettingSource = "user" | "project" | "local";
 
@@ -55,6 +56,8 @@ export interface HarnessConfig {
   provider?: "anthropic" | "bedrock" | "vertex" | "foundry";
   baseUrl?: string;
   customHeaders?: Record<string, string>;
+  // observability (W3.1, probe 51): env-gated OTLP metrics + log events from the CLI subprocess
+  telemetry?: TelemetryConfig;
   // agents
   agents?: Record<string, AgentDefinition>;
   includeBuiltinAgents?: boolean;          // default true
