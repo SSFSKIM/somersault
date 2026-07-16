@@ -45,6 +45,9 @@ export interface HarnessConfig {
     enabled?: boolean;
     network?: Record<string, unknown>;          // SDK SandboxNetworkSettings
     filesystem?: Record<string, unknown>;        // SDK SandboxFilesystemSettings (allowWrite/denyRead/…)
+    // credential protection (probe 48: deny-mode live-verified — env var unset + file read kernel-blocked
+    // under engaged sandbox-exec; "mask" additionally needs the egress proxy, untested)
+    credentials?: { files?: { path: string; mode: "deny" }[]; envVars?: { name: string; mode: "deny" | "mask" }[] };
     autoAllowBashIfSandboxed?: boolean;
     allowUnsandboxedCommands?: boolean;
     failIfUnavailable?: boolean;

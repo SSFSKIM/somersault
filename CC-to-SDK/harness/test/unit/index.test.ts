@@ -117,6 +117,7 @@ describe("public API", () => {
       "stdoutBriefSink",
       "summarizeUsage",
       "tagSession",
+      "tenantHarnessConfig",
       "validateHarnessConfig",
     ];
     expect(Object.keys(api).sort()).toEqual(EXPECTED);
