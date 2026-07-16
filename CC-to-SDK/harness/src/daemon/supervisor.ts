@@ -137,10 +137,10 @@ export class DaemonSupervisor {
       const r = await session.submit(prompt, onMessage);
       const cfg = this.configs.get(id);
       if (cfg?.rewind) delete cfg.rewind;                    // branch established — restarts must not re-anchor
-      this.registry.update(id, { status: "idle", lastActiveAt: session.lastActiveAt, ...(session.sessionId ? { sessionId: session.sessionId } : {}), limit: session.limitState });
+      this.registry.update(id, { status: "idle", lastActiveAt: session.lastActiveAt, ...(session.sessionId ? { sessionId: session.sessionId } : {}), limit: session.limitState, ...(session.mirrorErrors.length ? { mirrorErrors: session.mirrorErrors.length } : {}) });
       return r;
     } catch (e) {
-      this.registry.update(id, { status: "errored", limit: session.limitState });
+      this.registry.update(id, { status: "errored", limit: session.limitState, ...(session.mirrorErrors.length ? { mirrorErrors: session.mirrorErrors.length } : {}) });
       throw e;
     } finally {
       if (loop && loop.status().state !== "stopped") loop.resume();

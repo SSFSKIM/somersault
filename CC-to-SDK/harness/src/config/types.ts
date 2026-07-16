@@ -85,6 +85,8 @@ export interface HarnessConfig {
   forkSession?: boolean;                   // branch into a NEW session id instead of resuming in place
   persistSession?: boolean;                // default SDK-true; false = ephemeral (no disk persistence)
   sessionStore?: SessionStore;             // BYO transcript-mirror backend (advanced; pure passthrough)
+  sessionStoreFlush?: "batched" | "eager"; // mirror flush cadence (SDK default batched; ignored w/o sessionStore)
+  sessionStoreLoadTimeoutMs?: number;      // resume-materialization timeout per store load()/listSubkeys() call (SDK default 60s)
   // compaction (Spec B): tune/disable the SDK's native auto-compaction (these are SDK Settings fields)
   autoCompactEnabled?: boolean;            // false disables the native ~167k safety net
   autoCompactWindow?: number;              // tokens of headroom before auto-compaction

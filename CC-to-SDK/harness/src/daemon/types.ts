@@ -22,6 +22,7 @@ export interface SessionRecord {
   lastActiveAt: number;
   restarts?: number;       // count of automatic restarts (D2)
   limit?: LimitState;      // billing/limit state as of the session's last turn (Wave 1; undefined = healthy)
+  mirrorErrors?: number;   // dropped sessionStore mirror batches so far (W3.3; undefined/0 = loss-free)
 }
 
 /** A live-pool entry on the wire: a SessionRecord enriched with the session's proactive status (if any). */

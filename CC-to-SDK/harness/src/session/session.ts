@@ -9,6 +9,11 @@ import { classifyLimitMessage, type LimitState } from "../limits/classify.js";
 /** One live background task, as carried by system/background_tasks_changed frames. */
 export interface BackgroundTaskInfo { task_id: string; task_type: string; description: string; }
 
+/** One dropped transcript-mirror batch, as carried by system/mirror_error frames (W3.3): the SDK
+ *  retried sessionStore.append() 3x and gave up — the local transcript is intact, the mirror lost
+ *  a batch. Surfaced so operators are not silent on external-store data loss. */
+export interface MirrorErrorInfo { error: string; key: { projectKey: string; sessionId: string; subpath?: string }; at: number; }
+
 export interface SessionDeps { query: QueryFn; }
 export interface SessionOpts { contextTool?: boolean; compactTool?: boolean; label?: string; now?: () => number; }
 
@@ -33,6 +38,7 @@ export class Session implements ControllableSession {
   private _sessionId?: string;             // captured from the first system/init frame
   private _limit?: LimitState;             // state-of-last-signal (result / rate_limit_event); cleared by a clean one
   private _bgTasks: BackgroundTaskInfo[] = []; // LEVEL signal: REPLACED wholesale on each background_tasks_changed
+  private _mirrorErrors: MirrorErrorInfo[] = []; // EVENT log: appended per mirror_error frame (bounded, last 50)
 
   constructor(deps: SessionDeps, options: Record<string, unknown>, sessionOpts: SessionOpts = {}) {
     this.now = sessionOpts.now ?? Date.now;
@@ -56,6 +62,8 @@ export class Session implements ControllableSession {
   get limitState(): LimitState | undefined { return this._limit; }
   /** Live background tasks (probe 39): the full set from the last background_tasks_changed frame. */
   get backgroundTasks(): BackgroundTaskInfo[] { return this._bgTasks; }
+  /** Dropped sessionStore mirror batches (W3.3) — empty means the external mirror is loss-free so far. */
+  get mirrorErrors(): MirrorErrorInfo[] { return this._mirrorErrors; }
 
   /** Push a turn + its waiter onto the FIFO. Shared by submit() and compact() so every injected turn
    *  gets its own waiter (its result resolves ITS waiter, never another turn's). */
@@ -164,6 +172,7 @@ export class Session implements ControllableSession {
         const mm = m as any;
         if (mm.type === "system" && mm.subtype === "init" && !this._sessionId) this._sessionId = mm.session_id;
         if (mm.type === "system" && mm.subtype === "background_tasks_changed") this._bgTasks = mm.tasks ?? []; // REPLACE, never merge
+        if (mm.type === "system" && mm.subtype === "mirror_error") { this._mirrorErrors.push({ error: mm.error, key: mm.key, at: this.now() }); if (this._mirrorErrors.length > 50) this._mirrorErrors.shift(); }
         if (mm.type === "result") this._limit = classifyLimitMessage(mm); // clean result CLEARS
         else if (mm.type === "rate_limit_event") {                        // allowed only clears a rate-limit state
           const rl = classifyLimitMessage(mm);

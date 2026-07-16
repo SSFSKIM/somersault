@@ -27,7 +27,10 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
     systemPrompt,
     tools: tools.tools,
     agents,
-    enableFileCheckpointing: config.enableFileCheckpointing ?? DEFAULTS.enableFileCheckpointing,
+    // SDK contract (live-verified W3.3): enableFileCheckpointing is REJECTED alongside sessionStore
+    // ("backup blobs are not mirrored"). With a store, default it off; an explicit true still passes
+    // through so the caller gets the SDK's own error rather than a silent override.
+    enableFileCheckpointing: config.enableFileCheckpointing ?? (config.sessionStore ? false : DEFAULTS.enableFileCheckpointing),
   };
   if (settings.settings) options.settings = settings.settings;
   if (settings.managedSettings) options.managedSettings = settings.managedSettings;
@@ -68,6 +71,8 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   if (config.forkSession !== undefined) options.forkSession = config.forkSession;
   if (config.persistSession !== undefined) options.persistSession = config.persistSession;
   if (config.sessionStore) options.sessionStore = config.sessionStore;
+  if (config.sessionStoreFlush) options.sessionStoreFlush = config.sessionStoreFlush;
+  if (config.sessionStoreLoadTimeoutMs !== undefined) options.loadTimeoutMs = config.sessionStoreLoadTimeoutMs;
   if (config.hooks) options.hooks = config.hooks;
   return { ...options, ...(config.extraOptions ?? {}) };
 }
