@@ -198,8 +198,8 @@ passthrough). The remaining ready-made levers are incremental — turn-level sur
 
 | SDK surface | Size | We use | Note |
 |---|---|---|---|
-| `Options` fields | 63 (unchanged in 0.3.211) | **32** modeled in `resolveOptions` (audited 2026-07-17; incl. `outputFormat`) + `extraOptions` escape hatch | passthrough makes all 63 *reachable*; capability-meaningful unused: `resumeSessionAt`, `continue`, `toolConfig`, `onUserDialog`/`onElicitation`, `promptSuggestions`, `agentProgressSummaries`, `planModeInstructions`, `spawnClaudeCodeProcess`, `skills`, `abortController`, `betas` |
-| `Query` control methods | 25 (27 in 0.3.211) | **15** (audited 2026-07-17: `interrupt`, `setModel`, `setPermissionMode`, `setMaxThinkingTokens`, `rewindFiles`, `getContextUsage`, `accountInfo`, `usage`, `initializationResult`, `applyFlagSettings`, `supportedModels`/`Commands`/`Agents`, `mcpServerStatus`, `close`) | 10 unused (`readFile`, `reloadPlugins`/`reloadSkills`, `seedReadState`, `reconnectMcpServer`/`toggleMcpServer`/`setMcpServers`, `streamInput` (internal), `stopTask`, `backgroundTasks`) + 2 new in 0.3.211 (`reinitialize`, `setMcpPermissionModeOverride`); `usage().rate_limits` is `null` on API-key auth (bridge-coupled) |
+| `Options` fields | 63 (unchanged in 0.3.211) | **34** modeled in `resolveOptions` (Wave 1 added `resumeSessionAt`+`forkSession`; incl. `outputFormat`) + `extraOptions` escape hatch | passthrough makes all 63 *reachable*; capability-meaningful unused: `continue`, `toolConfig`, `onUserDialog`/`onElicitation`, `promptSuggestions`, `agentProgressSummaries`, `planModeInstructions`, `spawnClaudeCodeProcess`, `skills`, `abortController`, `betas` |
+| `Query` control methods | 27 in 0.3.211 | **18** (Wave 1 added `reinitialize`, `stopTask`, `backgroundTasks`; prior 15: `interrupt` (now with receipt), `setModel`, `setPermissionMode`, `setMaxThinkingTokens`, `rewindFiles`, `getContextUsage`, `accountInfo`, `usage`, `initializationResult`, `applyFlagSettings`, `supportedModels`/`Commands`/`Agents`, `mcpServerStatus`, `close`) | 9 unused (`readFile`, `reloadPlugins`/`reloadSkills`, `seedReadState`, `reconnectMcpServer`/`toggleMcpServer`/`setMcpServers`, `streamInput` (internal), `setMcpPermissionModeOverride`); `usage().rate_limits` is `null` on API-key auth (bridge-coupled) |
 | Core builders (`query`, `createSdkMcpServer`, `tool`) | 3 | 3 | 100% |
 | In-process MCP servers built | — | 5 (`cc-tasks`, `cc-swarm`, `cc-brief`, `cc-context`, `cc-compact`) | `cc-context` = self-introspection (`GetContextUsage`); `cc-compact` = self-compaction (`RequestCompaction`) |
 | Native model tools | 37 (+4 in 0.3.211: `ReportFindings`, `ClaudeDesign`, `RefreshMcpTools`, `ReadMcpResourceDir`) | 0 reimplemented; 2 deliberately shadowed by our MCP (Task→swarm, Tasks); `CronCreate` probed dead; **`Workflow` SURFACED opt-in** (`config.workflow`, probe 36 re-verified on 0.3.211) | rely-on, not consume; probes 35/35b/35c: MCP tools are **ToolSearch-deferred** (~11 tok/turn), not inline |
@@ -380,14 +380,24 @@ a `manifest.json` `sdkCompat` wrapper-compatibility contract.
 2. ~~**Surface `Workflow`**~~ — **SHIPPED 2026-07-17**: `config.workflow` opt-in knob (allowlist +
    `WORKFLOW_NOTE`); gated live e2e pending working auth.
 3. **OpenTelemetry** — env-var-gated, no bridge coupling; the natural "harden & ship" observability story.
-4. **`resumeSessionAt`** — the SDK lever behind conversation rewind (the audit-#2 Esc-Esc candidate);
-   pairs with existing `rewindFiles` for full time-travel.
-5. **Daemon resilience via `reinitialize()`** + interrupt receipts + `control_request_progress` —
-   upgrades boot-rehydration from resume-only to live-reattach.
+4. ~~**`resumeSessionAt`**~~ — **SHIPPED 2026-07-17 (Wave 1)**: probes 37/37b settled the semantics
+   (in-place = destructive truncation, same sid; `forkSession` = safe branch; user-uuid anchors valid →
+   one anchor drives conversation AND `rewindFiles`); shipped as `resumeAt`/`forkSession` config,
+   `rewindSession()`, and the daemon `rewind` op (in-place pool swap / anchored fork). Live e2e green.
+5. ~~**Daemon resilience via `reinitialize()`** + interrupt receipts~~ — **SHIPPED 2026-07-17 (Wave 1)**:
+   probe 38 (fresh full init payload; parked `can_use_tool` DEDUPED in-process → a capability-refresh
+   lever, not permission recovery; interrupt receipt `{still_queued}`; interrupted turn ends
+   `error_during_execution` and the stream can die at teardown). `Session.reinitialize()`/`interrupt()`
+   receipt + `reinitialize` control frame. Wave 1 also shipped the OTHER two items: **billing/limit
+   classification** (`limits/classify` over `USAGE_*`/`ORG_POLICY` prefixes + the observed incident
+   families; `Session.limitState` + registry `limit`) and **background-task visibility** (probe 39:
+   `background_tasks_changed` streams headlessly; `Session.backgroundTasks`/`stopTask`/`backgroundAll`
+   + bridge frames; live e2e green). `control_request_progress` telemetry remains open.
 6. **Runtime MCP control** — `setMcpServers`/`reconnectMcpServer`/`toggleMcpServer` (+ 0.3.211
    `RefreshMcpTools`, `setMcpPermissionModeOverride`): dynamic tool topology for the daemon.
 7. **Warm-spawn** (`startup()`/`WarmQuery`) — kills daemon first-turn latency; `spawnClaudeCodeProcess`
    opens remote/container placement.
 8. **Sandbox credential redaction** — new security surface, on-mission for a hosted service.
 9. **Probe candidates** (declared-only, unknown reachability): `ClaudeDesign`, `ReportFindings`,
-   the `/goal` `active_goal` loop, `backgroundTasks()`/`stopTask()`, `onUserDialog`/`onElicitation`.
+   the `/goal` `active_goal` loop, `onUserDialog`/`onElicitation` (~~`backgroundTasks()`/`stopTask()`~~
+   probed + shipped in Wave 1).

@@ -42,8 +42,8 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | `thinking` (adaptive/enabled/disabled) | ✅ | probe 25; runtime `setMaxThinkingTokens` lever |
 | Automatic compaction + `compact_boundary` + manual `/compact` | ✅ | `compaction/` (`cc-compact` tool, daemon+lib `compact()`) |
 | `interrupt()` | ✅ | Session/daemon control op |
-| `interrupt()` **receipt** (`still_queued`, 0.3.211) | ⚪ | absorb: surface survivor-queue semantics in Session |
-| `reinitialize()` (0.3.211 — recover gapped control channel) | 🔬→⚪ | Wave 1: daemon live-reattach (upgrade boot-rehydration) |
+| `interrupt()` **receipt** (`still_queued`, 0.3.211) | ✅ | **Wave 1 (2026-07-17)**: `Session.interrupt()` returns it; bridge `interrupt` frame carries `receipt` (probe 38) |
+| `reinitialize()` (0.3.211) | ✅ | **Wave 1**: probe 38 (fresh full init payload; parked can_use_tool DEDUPED in-process, so it's a capability-refresh lever, not permission recovery); `Session.reinitialize()` + `reinitialize` control frame |
 | `startup()` / `WarmQuery` (pre-warmed CLI subprocess) | 🔬 | docs [hosting]; probe then Wave 3 warm pool for daemon spawn latency |
 | `close()` | ✅ | teardown-liveness suite |
 | Built-in tool set (Read/Write/Edit/Bash/Glob/Grep/Web*/Agent/Skill/Task*) | 🟢 | claude_code preset |
@@ -100,7 +100,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 |---|---|---|
 | `resume` / `persistSession` / `forkSession()` / store CRUD (`list`/`messages`/`info`/`rename`/`tag`/`delete`) | ✅ | the complete 3-spec session cluster + closeout |
 | `continue` (most-recent) Options field | 🟡 | capability delivered via `listSessions`+resume in TUI; the native field itself unused |
-| **`resumeSessionAt`** (branch at message UUID) | ⚪ | **Wave 1 keystone**: conversation rewind (Esc-Esc), pairs with `rewindFiles` for full time-travel |
+| **`resumeSessionAt`** (branch at message UUID) | ✅ | **Wave 1 keystone SHIPPED**: probes 37/37b (in-place = destructive truncation, same sid; fork = safe branch; user-uuid anchors accepted → one anchor drives conversation + `rewindFiles`); `resumeAt`/`forkSession` config + `rewindSession()` + daemon `rewind` op; live e2e green |
 | `sessionId` (explicit UUID) / `title` | ⚪ | minor knobs (`renameSession` covers title) |
 | External `sessionStore` (S3/Redis/Postgres mirror; cross-host resume) | 🟡 | seam + `InMemorySessionStore` probed; **no real external adapter shipped** — Wave 3: reference adapter + conformance suite + `mirror_error` handling |
 | `sessionStoreFlush` / `loadTimeoutMs` (alpha) | ⚪ | knobs, pass through when adapter ships |
@@ -123,7 +123,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | `forwardSubagentText` / `agentProgressSummaries` | ✅/⚪ | text forwarded; progress summaries unmodeled |
 | Inter-agent `SendMessage` (v2.1.206+) | 🔬 | headless reachability unknown; would upgrade swarm bus |
 | **`Workflow` tool** (script-driven fan-out) | ✅ | probe 36 (re-verified 0.3.211); **`config.workflow` opt-in SHIPPED 2026-07-17**, live e2e green |
-| `stopTask()` / `backgroundTasks()` + `background_tasks_changed` msg (0.3.211) | ⚪ | Wave 1: daemon background-task visibility/control |
+| `stopTask()` / `backgroundTasks()` + `background_tasks_changed` msg (0.3.211) | ✅ | **Wave 1**: probe 39 (level signal streams headlessly; Ctrl+B works mid-turn; no-arg returns true even when idle — use the targeted form to detect); `Session.backgroundTasks`/`stopTask`/`backgroundAll` + bridge frames; live e2e green |
 | Agent teams | 🚫 | CLI-only, not SDK-configurable [claude-code-features] |
 | Swarm coordinator/bus/teammates | ✅ | beyond-SDK value-add over `agents` |
 
@@ -137,7 +137,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | `accountInfo()` / `initializationResult()` / `applyFlagSettings()` | ✅ | closeout |
 | `supportedModels/Commands/Agents` + `mcpServerStatus` | ✅ | capability methods (probes 27/29/30) |
 | **OpenTelemetry** (metrics/logs/traces, trace-context propagation, per-user attribution) | ⚪ | **the biggest untouched reachable surface** — env-gated, no bridge coupling [observability]; Wave 3 flagship |
-| Billing/limit classification (`USAGE_*`/`ORG_POLICY_LIMIT_PREFIXES`, 0.3.211) | ⚪ | Wave 1: classify auth/credit failures in daemon + surface actionably (today's org-policy incident is the motivating case) |
+| Billing/limit classification (`USAGE_*`/`ORG_POLICY_LIMIT_PREFIXES`, 0.3.211) | ✅ | **Wave 1**: `limits/classify` (SDK prefixes + observed org-policy/credit families + rejected `rate_limit_event`); `Session.limitState` + daemon registry `limit` field |
 | New lifecycle msgs (0.3.211): `control_request_progress`, `model_refusal_no_fallback`, `conversation_reset` | ⚪ | absorb into daemon event stream |
 | `promptSuggestions` | ⚪ | TUI could render them |
 | Prompt caching (auto; `ENABLE_PROMPT_CACHING_1H`) | 🟢/⚪ | rely-on; 1h-TTL knob unexposed |
@@ -191,7 +191,7 @@ the Ink console + chat REPL (~82% visual parity), and the two Codex-protocol con
 ## §2 — The math
 
 Counting §1's reachable rows (✅/🟢 realized; 🟡 half; ⚪/🔬 unrealized; 🚫 excluded):
-**~65% realized post-Workflow** — consistent with `coverage.md`'s domain-weighted ~63–65%. The
+**~67% realized post-Wave-1** (was ~65% post-Workflow: Wave 1 flipped 5 rows — rewind, reinitialize, interrupt receipt, limits classification, background-task control) — consistent with `coverage.md`'s domain-weighted ~63–65%. The
 unrealized ~35% clusters in exactly three shapes:
 
 1. **Operational/service maturity** (OTel, hosting/warm-spawn, secure deployment, external
@@ -209,7 +209,7 @@ Each wave follows the house discipline: **probe → spec → plan → subagent-d
 live → refresh `coverage.md` + tick this map**. Waves are ordered by product value ÷ cost; items within
 a wave are independent (parallelizable).
 
-### Wave 1 — session time-travel + daemon resilience (highest fidelity-per-token)
+### Wave 1 — session time-travel + daemon resilience — ✅ SHIPPED 2026-07-17 (probes 37/37b/38/39; spec/plan `2026-07-17-wave1-time-travel-and-resilience`; all 4 items live-verified)
 
 1. **`resumeSessionAt` rewind** — the Esc-Esc conversation rewind, composed with `rewindFiles` into one
    time-travel surface (`Session.rewindTo(messageId, {files?: boolean})` + TUI Esc-Esc + daemon op).

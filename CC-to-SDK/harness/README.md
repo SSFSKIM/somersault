@@ -79,6 +79,16 @@ await session.dispose();
 `Session` also exposes `compact()`, `rewind(userMessageId)`, `setModel()`, `setPermissionMode()`, and the
 introspection methods below.
 
+`rewindSession(id, messageId, config?)` is **conversation time-travel**: it reopens the session resumed
+only up to (and including) the anchor message uuid. The default in-place form is **destructive** (same
+`session_id`; the persisted transcript is truncated at the anchor); pass `{ fork: true }` for a
+non-destructive branch under a new id. Anchor uuids come from `getSessionMessages` — assistant *and*
+user-message uuids both work, and a user-prompt uuid also anchors file-checkpoint `rewind()`, so one
+anchor can drive both. A live `Session` additionally tracks operational state: `limitState` (typed
+billing/limit classification — see `classifyLimitText`/`classifyLimitMessage`), `backgroundTasks` (the
+live background-task set), with `stopTask(id)`, `backgroundAll()` (Ctrl+B), `reinitialize()` (fresh
+init payload from the running CLI), and `interrupt()` (returns the `{ still_queued }` receipt).
+
 ### Multi-session daemon — `DaemonSupervisor` / `DaemonServer`
 
 `DaemonSupervisor` owns an in-process pool of long-lived sessions with idle-reaping and crash-restart;
@@ -262,6 +272,8 @@ pass straight through.
 | `workflow` | unlock the native `Workflow` orchestrator: allowlists `Workflow`+`TaskOutput`/`TaskGet`/`TaskList` and advertises the async launch→retrieve pattern. Opt-in — workflows fan out many child agents (cost multiplier) | `false` |
 | `enableFileCheckpointing` | enable file checkpoints (for `rewind`) | `true` |
 | `resume` | SDK `session_id` to reload prior context | — |
+| `resumeAt` | rewind anchor: resume only up to this message uuid (use with `resume`; destructive in place — see `rewindSession`) | — |
+| `forkSession` | branch into a NEW session id instead of resuming in place | — |
 | `persistSession` | persist transcript to disk; `false` = ephemeral | SDK-true |
 | `sessionStore` | BYO transcript-mirror backend (advanced passthrough) | — |
 | `autoCompactEnabled` | the SDK's native ~167k auto-compaction safety net | SDK-on |

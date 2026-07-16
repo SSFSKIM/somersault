@@ -147,4 +147,13 @@ describe("resolveOptions", () => {
   it("does not touch the model for non-auto modes", () => {
     expect((resolveOptions({ permissionMode: "default", model: "claude-haiku-4-5" }) as any).model).toBe("claude-haiku-4-5");
   });
+  it("wires the time-travel knobs: resumeAt → resumeSessionAt, forkSession passthrough (probes 37/37b)", () => {
+    const o: any = resolveOptions({ resume: "sid", resumeAt: "uuid-1", forkSession: true });
+    expect(o.resume).toBe("sid");
+    expect(o.resumeSessionAt).toBe("uuid-1");
+    expect(o.forkSession).toBe(true);
+    const bare: any = resolveOptions({});
+    expect(bare).not.toHaveProperty("resumeSessionAt");
+    expect(bare).not.toHaveProperty("forkSession");
+  });
 });

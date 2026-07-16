@@ -59,4 +59,31 @@ describe("ControlBridge", () => {
   it("reports unsupported when context_usage method is absent", async () => {
     expect(await ControlBridge.apply(fakeSession([]), { type: "context_usage" })).toEqual({ ok: false, error: "unsupported: getContextUsage" });
   });
+  // Wave 1 frames
+  it("interrupt surfaces the 0.3.211 receipt", async () => {
+    const s = fakeSession([], { interrupt: async () => ({ still_queued: ["u1"] }) });
+    expect(await ControlBridge.apply(s, { type: "interrupt" })).toEqual({ ok: true, receipt: { still_queued: ["u1"] } });
+  });
+  it("reinitialize / background_tasks return their payloads; stop_task routes the taskId", async () => {
+    const calls: any[] = [];
+    const s = fakeSession(calls, {
+      reinitialize: async () => ({ pid: 42 }),
+      listBackgroundTasks: async () => [{ task_id: "a" }],
+      stopTask: async (id) => { calls.push(["stopTask", id]); },
+      backgroundAll: async (toolUseId) => { calls.push(["backgroundAll", toolUseId]); return true; },
+    });
+    expect(await ControlBridge.apply(s, { type: "reinitialize" })).toEqual({ ok: true, init: { pid: 42 } });
+    expect(await ControlBridge.apply(s, { type: "background_tasks" })).toEqual({ ok: true, tasks: [{ task_id: "a" }] });
+    expect(await ControlBridge.apply(s, { type: "stop_task", taskId: "t-1" })).toEqual({ ok: true });
+    expect(await ControlBridge.apply(s, { type: "background_all", toolUseId: "toolu_1" })).toEqual({ ok: true, backgrounded: true });
+    expect(calls).toEqual([["stopTask", "t-1"], ["backgroundAll", "toolu_1"]]);
+  });
+  it("wave-1 frames parse; unsupported on sessions lacking the methods", async () => {
+    expect(controlFrame.safeParse({ type: "reinitialize" }).success).toBe(true);
+    expect(controlFrame.safeParse({ type: "background_tasks" }).success).toBe(true);
+    expect(controlFrame.safeParse({ type: "stop_task", taskId: "t" }).success).toBe(true);
+    expect(controlFrame.safeParse({ type: "stop_task" }).success).toBe(false);
+    expect(controlFrame.safeParse({ type: "background_all" }).success).toBe(true);
+    expect(await ControlBridge.apply(fakeSession([]), { type: "reinitialize" })).toEqual({ ok: false, error: "unsupported: reinitialize" });
+  });
 });

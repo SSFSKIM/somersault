@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import { controlFrame } from "../bridge/types.js";
 import { proactiveConfig } from "../proactive/types.js";
 import type { ProactiveStatus } from "../proactive/types.js";
+import type { LimitState } from "../limits/classify.js";
 
 export class DaemonError extends Error {}
 
@@ -19,6 +20,7 @@ export interface SessionRecord {
   createdAt: number;
   lastActiveAt: number;
   restarts?: number;       // count of automatic restarts (D2)
+  limit?: LimitState;      // billing/limit state as of the session's last turn (Wave 1; undefined = healthy)
 }
 
 /** A live-pool entry on the wire: a SessionRecord enriched with the session's proactive status (if any). */
@@ -57,6 +59,7 @@ const sessionsOp = z.object({ op: z.literal("sessions"), cwd: z.string().optiona
 const messagesOp = z.object({ op: z.literal("messages"), id: z.string(), cwd: z.string().optional(), limit: z.number().optional(), offset: z.number().optional() });
 const compactOp = z.object({ op: z.literal("compact"), id: z.string() });
 const forkOp = z.object({ op: z.literal("fork"), id: z.string() });
+const rewindOp = z.object({ op: z.literal("rewind"), id: z.string(), messageId: z.string(), fork: z.boolean().optional() });
 const usageOp = z.object({ op: z.literal("usage"), id: z.string() });
 const initOp = z.object({ op: z.literal("init"), id: z.string() });
 const applyFlagSettingsOp = z.object({ op: z.literal("apply_flag_settings"), id: z.string(), settings: z.record(z.string(), z.unknown()) });
@@ -71,5 +74,5 @@ const permissionDecision = z.discriminatedUnion("kind", [
 const pendingPermissionsOp = z.object({ op: z.literal("pending_permissions") });
 const permissionResponseOp = z.object({ op: z.literal("permission_response"), toolUseID: z.string(), decision: permissionDecision });
 
-export const daemonOp = z.discriminatedUnion("op", [spawnOp, submitOp, listOp, stopOp, shutdownOp, controlOp, startProactiveOp, stopProactiveOp, sessionsOp, messagesOp, compactOp, forkOp, usageOp, initOp, applyFlagSettingsOp, renameSessionOp, tagSessionOp, deleteSessionOp, pendingPermissionsOp, permissionResponseOp]);
+export const daemonOp = z.discriminatedUnion("op", [spawnOp, submitOp, listOp, stopOp, shutdownOp, controlOp, startProactiveOp, stopProactiveOp, sessionsOp, messagesOp, compactOp, forkOp, rewindOp, usageOp, initOp, applyFlagSettingsOp, renameSessionOp, tagSessionOp, deleteSessionOp, pendingPermissionsOp, permissionResponseOp]);
 export type DaemonOp = z.infer<typeof daemonOp>;

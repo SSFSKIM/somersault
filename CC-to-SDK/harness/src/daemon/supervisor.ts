@@ -36,7 +36,9 @@ export interface DaemonDeps {
   deleteSession?: (id: string, opts?: { cwd?: string }) => Promise<void>;
 }
 
-interface SpawnConfig { model?: string; restart: RestartPolicy; permissionMode?: string; }
+// `rewind` anchors the NEXT session open (resume + resumeSessionAt); it is cleared after the first
+// successful submit — once the branch is established, a crash-restart must NOT re-truncate new turns.
+interface SpawnConfig { model?: string; restart: RestartPolicy; permissionMode?: string; rewind?: { resumeAt: string; forkSession?: boolean }; }
 
 /** Owns the in-process session pool + the registry + an idle reaper + crash-recovery restarts. */
 export class DaemonSupervisor {
@@ -107,11 +109,11 @@ export class DaemonSupervisor {
     }
   }
 
-  spawn(opts: { model?: string; restart?: RestartPolicy; resume?: string; permissionMode?: string } = {}): string {
+  spawn(opts: { model?: string; restart?: RestartPolicy; resume?: string; permissionMode?: string; rewind?: { resumeAt: string; forkSession?: boolean } } = {}): string {
     if (this.pool.size >= this.maxSessions) throw new DaemonError(`max sessions (${this.maxSessions}) reached`);
     const id = `sess-${++this.seq}`;
     const model = opts.permissionMode === "auto" ? resolveAutoModel(opts.model ?? DEFAULTS.model) : (opts.model ?? DEFAULTS.model); // explicit-auto gate; opus-4-8 default keeps the registry consistent with resolveOptions
-    const cfg: SpawnConfig = { model, restart: opts.restart ?? this.restartPolicy, permissionMode: opts.permissionMode };
+    const cfg: SpawnConfig = { model, restart: opts.restart ?? this.restartPolicy, permissionMode: opts.permissionMode, ...(opts.rewind ? { rewind: opts.rewind } : {}) };
     this.configs.set(id, cfg);
     this.pool.set(id, this.makeSession(id, cfg, opts.resume));
     const t = this.now();
@@ -130,10 +132,12 @@ export class DaemonSupervisor {
     this.registry.update(id, { status: "busy" });
     try {
       const r = await session.submit(prompt, onMessage);
-      this.registry.update(id, { status: "idle", lastActiveAt: session.lastActiveAt, ...(session.sessionId ? { sessionId: session.sessionId } : {}) });
+      const cfg = this.configs.get(id);
+      if (cfg?.rewind) delete cfg.rewind;                    // branch established — restarts must not re-anchor
+      this.registry.update(id, { status: "idle", lastActiveAt: session.lastActiveAt, ...(session.sessionId ? { sessionId: session.sessionId } : {}), limit: session.limitState });
       return r;
     } catch (e) {
-      this.registry.update(id, { status: "errored" });
+      this.registry.update(id, { status: "errored", limit: session.limitState });
       throw e;
     } finally {
       if (loop && loop.status().state !== "stopped") loop.resume();
@@ -216,6 +220,35 @@ export class DaemonSupervisor {
     return { id: handle, sessionId };
   }
 
+  /** Time-travel (probes 37/37b): rewind a session's conversation to the message uuid `messageId`.
+   *  Default = IN-PLACE: the live query is swapped for one resumed at the anchor — same daemon id,
+   *  same sdk session id, and the persisted transcript is DESTRUCTIVELY truncated at the anchor.
+   *  `fork: true` = non-destructive: a NEW daemon session opens on an anchored BRANCH (new sdk id
+   *  once its first turn runs); the original session and its transcript stay untouched. */
+  async rewind(id: string, messageId: string, opts: { fork?: boolean } = {}): Promise<{ id: string }> {
+    const session = this.ensureLive(id);
+    if (!session || session.isEnded()) {
+      const rec = this.registry.get(id);
+      throw new DaemonError(rec ? `session ${id} is ${rec.status}` : `unknown session ${id}`);
+    }
+    const sdkId = session.sessionId ?? this.registry.get(id)?.sessionId;
+    if (!sdkId) throw new DaemonError(`session ${id} has no session_id yet (take a turn first)`);
+    const cfg = this.configs.get(id)!;
+    if (opts.fork) {
+      return { id: this.spawn({ model: cfg.model, restart: cfg.restart, permissionMode: cfg.permissionMode, resume: sdkId, rewind: { resumeAt: messageId, forkSession: true } }) };
+    }
+    // in-place: swap the pool entry onto the rewound branch (stop() semantics minus the registry removal)
+    this.stopping.add(id);                       // dispose must not trigger a restart
+    this.cancelRestart(id);
+    this.pending.denyAllForSession(id);
+    await session.dispose();
+    this.stopping.delete(id);
+    cfg.rewind = { resumeAt: messageId };
+    this.pool.set(id, this.makeSession(id, cfg, sdkId));
+    this.registry.update(id, { status: "idle", lastActiveAt: this.now() });
+    return { id };
+  }
+
   startProactive(id: string, config?: ProactiveConfigInput): ProactiveStatus {
     const session = this.ensureLive(id);
     if (!session || session.isEnded()) {
@@ -227,7 +260,7 @@ export class DaemonSupervisor {
       runTurn: (p) => this.runProactiveTurn(id, p),
       schedule: this.scheduleRestart,                 // reuse the injected scheduler
       idleDetector: defaultIdleDetector,
-      interrupt: () => session.interrupt(),           // bridge.interrupt pauses an in-flight tick
+      interrupt: async () => { await session.interrupt(); }, // bridge.interrupt pauses an in-flight tick (receipt discarded)
     });
     this.proactive.set(id, loop);
     loop.start();
@@ -323,6 +356,9 @@ export class DaemonSupervisor {
       model: cfg.model,                                      // already opus-4-8-defaulted by spawn(); resolveOptions is idempotent
       permissionMode: cfg.permissionMode as PermissionMode | undefined,
       ...(resume ? { resume } : {}),
+      // Rewind anchor (cleared after the branch's first submit). Idempotent if re-applied before then:
+      // truncating at an anchor that is already the transcript tail is a no-op (probes 37/37b).
+      ...(resume && cfg.rewind ? { resumeAt: cfg.rewind.resumeAt, ...(cfg.rewind.forkSession ? { forkSession: true } : {}) } : {}),
     });   // no cwd: the daemon runs from the project dir, so settingSources resolves against process.cwd()
     const extra = this.sessionOptions?.(id);                 // fresh servers + tool posture for THIS session
     const options = extra ? { ...base, ...extra } : base;    // factory keys win (unchanged contract)

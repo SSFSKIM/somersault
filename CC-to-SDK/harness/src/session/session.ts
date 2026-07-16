@@ -4,6 +4,10 @@ import type { QueryFn } from "../swarm/types.js";
 import type { ControllableSession } from "../bridge/types.js";
 import { withContextTool, type QueryHolder, type RawContextUsage } from "../context/server.js";
 import { withCompactTool, parseCompactOutcome, type CompactHolder, type CompactOutcome } from "../compaction/server.js";
+import { classifyLimitMessage, type LimitState } from "../limits/classify.js";
+
+/** One live background task, as carried by system/background_tasks_changed frames. */
+export interface BackgroundTaskInfo { task_id: string; task_type: string; description: string; }
 
 export interface SessionDeps { query: QueryFn; }
 export interface SessionOpts { contextTool?: boolean; compactTool?: boolean; label?: string; now?: () => number; }
@@ -27,6 +31,8 @@ export class Session implements ControllableSession {
   private now: () => number;
   private label: string;                   // used only in error messages
   private _sessionId?: string;             // captured from the first system/init frame
+  private _limit?: LimitState;             // state-of-last-signal (result / rate_limit_event); cleared by a clean one
+  private _bgTasks: BackgroundTaskInfo[] = []; // LEVEL signal: REPLACED wholesale on each background_tasks_changed
 
   constructor(deps: SessionDeps, options: Record<string, unknown>, sessionOpts: SessionOpts = {}) {
     this.now = sessionOpts.now ?? Date.now;
@@ -46,6 +52,10 @@ export class Session implements ControllableSession {
   /** The SDK session_id, available after the first turn's init frame; undefined before then. */
   get sessionId(): string | undefined { return this._sessionId; }
   isEnded(): boolean { return this.ended; }
+  /** Billing/limit state as of the last result / rate_limit_event (undefined = healthy). */
+  get limitState(): LimitState | undefined { return this._limit; }
+  /** Live background tasks (probe 39): the full set from the last background_tasks_changed frame. */
+  get backgroundTasks(): BackgroundTaskInfo[] { return this._bgTasks; }
 
   /** Push a turn + its waiter onto the FIFO. Shared by submit() and compact() so every injected turn
    *  gets its own waiter (its result resolves ITS waiter, never another turn's). */
@@ -92,7 +102,7 @@ export class Session implements ControllableSession {
 
   protected assertRunning(): void { if (this.ended) throw new Error(`${this.label} is not running`); }
 
-  private callQ(name: string, ...args: unknown[]): Promise<void> {
+  private callQ(name: string, ...args: unknown[]): Promise<unknown> {
     const fn = (this.q as any)[name];
     if (typeof fn !== "function") return Promise.reject(new Error(`unsupported: ${name}`));
     return fn.apply(this.q, args);
@@ -106,7 +116,21 @@ export class Session implements ControllableSession {
   async setModel(model?: string): Promise<void> { this.assertRunning(); await this.callQ("setModel", model); }
   async setPermissionMode(mode: string): Promise<void> { this.assertRunning(); await this.callQ("setPermissionMode", mode); }
   async setMaxThinkingTokens(maxTokens: number | null): Promise<void> { this.assertRunning(); await this.callQ("setMaxThinkingTokens", maxTokens); }
-  async interrupt(): Promise<void> { await this.callQ("interrupt"); } // benign no-op when idle; unsupported if absent
+  // 0.3.211 returns a receipt ({ still_queued: [...] }) — surfaced to callers; still a benign no-op when idle.
+  // Probe 38 caution: interrupting an in-flight turn resolves it error_during_execution and the query
+  // stream may then die at teardown — daemon restart policy covers revival.
+  async interrupt(): Promise<unknown> { return this.callQ("interrupt"); }
+  /** Re-send `initialize` to the running CLI → a FRESH init payload (commands/agents/models/account…),
+   *  unlike the cached initializationResult(). Probe 38: safe mid-session, even with a permission parked
+   *  (the parked request is deduped, NOT redelivered to this process). */
+  async reinitialize(): Promise<unknown> { this.assertRunning(); return this.callQValue("reinitialize"); }
+  /** Stop a running background task; the CLI emits task_notification{stopped} + a changed frame. */
+  async stopTask(taskId: string): Promise<void> { this.assertRunning(); await this.callQ("stopTask", taskId); }
+  /** Ctrl+B: background in-flight FOREGROUND tasks (all, or the one started by `toolUseId`). The blocked
+   *  tool call returns "backgrounded" immediately and the turn continues (probe 39 Q3). */
+  async backgroundAll(toolUseId?: string): Promise<boolean> { this.assertRunning(); return (await this.callQ("backgroundTasks", toolUseId)) as boolean; }
+  /** Async accessor for the live background-task set (bridge/daemon payload shape). */
+  async listBackgroundTasks(): Promise<BackgroundTaskInfo[]> { return this._bgTasks; }
 
   async getContextUsage(): Promise<unknown> { this.assertRunning(); return this.callQValue("getContextUsage"); }
   async accountInfo(): Promise<unknown> { this.assertRunning(); return this.callQValue("accountInfo"); }
@@ -139,6 +163,12 @@ export class Session implements ControllableSession {
         this.lastActiveAt = this.now();
         const mm = m as any;
         if (mm.type === "system" && mm.subtype === "init" && !this._sessionId) this._sessionId = mm.session_id;
+        if (mm.type === "system" && mm.subtype === "background_tasks_changed") this._bgTasks = mm.tasks ?? []; // REPLACE, never merge
+        if (mm.type === "result") this._limit = classifyLimitMessage(mm); // clean result CLEARS
+        else if (mm.type === "rate_limit_event") {                        // allowed only clears a rate-limit state
+          const rl = classifyLimitMessage(mm);
+          if (rl) this._limit = rl; else if (this._limit?.kind === "rate-limit") this._limit = undefined;
+        }
         if (mm.type === "result") {
           this.waiters.shift()?.resolve({ result: mm.result, structuredOutput: mm.structured_output });
           if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.compact().catch(() => {}); }

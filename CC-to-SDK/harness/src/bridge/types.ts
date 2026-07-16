@@ -6,9 +6,13 @@ export interface ControllableSession {
   setModel?(model?: string): Promise<void>;
   setPermissionMode?(mode: string): Promise<void>;
   setMaxThinkingTokens?(maxTokens: number | null): Promise<void>;
-  interrupt?(): Promise<void>;
+  interrupt?(): Promise<unknown>;                 // 0.3.211: resolves with a receipt ({ still_queued })
   getContextUsage?(): Promise<unknown>;
   accountInfo?(): Promise<unknown>;
+  reinitialize?(): Promise<unknown>;              // fresh init payload from the running CLI (probe 38)
+  listBackgroundTasks?(): Promise<unknown>;       // live background-task set (probe 39)
+  stopTask?(taskId: string): Promise<void>;
+  backgroundAll?(toolUseId?: string): Promise<boolean>; // Ctrl+B
   capabilities(): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] }>;
 }
 
@@ -23,6 +27,10 @@ export const controlFrame = z.discriminatedUnion("type", [
   z.object({ type: z.literal("interrupt") }),
   z.object({ type: z.literal("context_usage") }),
   z.object({ type: z.literal("account_info") }),
+  z.object({ type: z.literal("reinitialize") }),
+  z.object({ type: z.literal("background_tasks") }),
+  z.object({ type: z.literal("stop_task"), taskId: z.string() }),
+  z.object({ type: z.literal("background_all"), toolUseId: z.string().optional() }),
 ]);
 export type ControlFrame = z.infer<typeof controlFrame>;
 

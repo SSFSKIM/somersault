@@ -18,11 +18,19 @@ export class ControlBridge {
       case "set_thinking":
         return ControlBridge.call(session.setMaxThinkingTokens, "setMaxThinkingTokens", session, frame.maxTokens);
       case "interrupt":
-        return ControlBridge.call(session.interrupt, "interrupt", session);
+        return ControlBridge.payload(session.interrupt, "interrupt", session, "receipt"); // 0.3.211 receipt (additive)
       case "context_usage":
         return ControlBridge.payload(session.getContextUsage, "getContextUsage", session, "usage");
       case "account_info":
         return ControlBridge.payload(session.accountInfo, "accountInfo", session, "account");
+      case "reinitialize":
+        return ControlBridge.payload(session.reinitialize, "reinitialize", session, "init");
+      case "background_tasks":
+        return ControlBridge.payload(session.listBackgroundTasks, "listBackgroundTasks", session, "tasks");
+      case "stop_task":
+        return ControlBridge.call(session.stopTask, "stopTask", session, frame.taskId);
+      case "background_all":
+        return ControlBridge.payload(session.backgroundAll, "backgroundAll", session, "backgrounded", frame.toolUseId);
     }
   }
 
@@ -42,13 +50,14 @@ export class ControlBridge {
 
   // Like call(), but the method returns a value surfaced under `key` (mirrors the initialize payload).
   private static async payload(
-    method: (() => Promise<unknown>) | undefined,
+    method: ((...args: any[]) => Promise<unknown>) | undefined,
     name: string,
     self: ControllableSession,
     key: string,
+    ...args: unknown[]
   ): Promise<ControlResponse> {
     if (typeof method !== "function") return { ok: false, error: `unsupported: ${name}` };
-    try { return { ok: true, [key]: await method.apply(self) }; }
+    try { return { ok: true, [key]: await method.apply(self, args) }; }
     catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return { ok: false, error: message };

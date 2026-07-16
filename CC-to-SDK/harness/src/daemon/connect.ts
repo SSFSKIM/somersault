@@ -23,6 +23,14 @@ export interface DaemonClient extends MonitorClient {
   spawn(opts?: { model?: string; restart?: RestartPolicy; resume?: string }): Promise<string>;
   stop(id: string): Promise<void>;
   fork(id: string): Promise<{ id: string; sessionId?: string }>;
+  /** Conversation rewind (time-travel). Default in-place = DESTRUCTIVE (transcript truncated at the
+   *  anchor, same ids); { fork: true } opens a new anchored daemon session, original untouched. */
+  rewind(id: string, messageId: string, opts?: { fork?: boolean }): Promise<{ id: string }>;
+  /** Fresh init payload (commands/agents/models/account…) re-fetched from the running CLI. */
+  reinitialize(id: string): Promise<unknown>;
+  /** The session's live background-task set (task_id/task_type/description). */
+  backgroundTasks(id: string): Promise<unknown[]>;
+  stopTask(id: string, taskId: string): Promise<void>;
   startProactive(id: string, config?: ProactiveConfigInput): Promise<ProactiveStatus>;
   stopProactive(id: string): Promise<void>;
   pendingPermissions(): Promise<PendingEntry[]>;
@@ -53,6 +61,10 @@ export function connectDaemon(socketPath: string, request: RequestFn = daemonReq
     async spawn(opts) { return (await one({ op: "spawn", ...(opts ?? {}) })).id as string; },
     async stop(id) { await one({ op: "stop", id }); },
     async fork(id) { const r = await one({ op: "fork", id }); return { id: r.id, sessionId: r.sessionId }; },
+    async rewind(id, messageId, opts) { return { id: (await one({ op: "rewind", id, messageId, ...(opts?.fork ? { fork: true } : {}) })).id as string }; },
+    async reinitialize(id) { return (await one({ op: "control", id, frame: { type: "reinitialize" } })).init; },
+    async backgroundTasks(id) { return (await one({ op: "control", id, frame: { type: "background_tasks" } })).tasks as unknown[]; },
+    async stopTask(id, taskId) { await one({ op: "control", id, frame: { type: "stop_task", taskId } }); },
     async startProactive(id, config) { return (await one({ op: "start_proactive", id, ...(config ? { config } : {}) })).status as ProactiveStatus; },
     async stopProactive(id) { await one({ op: "stop_proactive", id }); },
     async pendingPermissions() { return (await one({ op: "pending_permissions" })).pending as PendingEntry[]; },

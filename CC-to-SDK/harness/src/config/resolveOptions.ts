@@ -61,6 +61,8 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   if (config.plugins) options.plugins = config.plugins;
   if (config.cwd) options.cwd = config.cwd;
   if (config.resume) options.resume = config.resume;
+  if (config.resumeAt) options.resumeSessionAt = config.resumeAt;
+  if (config.forkSession !== undefined) options.forkSession = config.forkSession;
   if (config.persistSession !== undefined) options.persistSession = config.persistSession;
   if (config.sessionStore) options.sessionStore = config.sessionStore;
   if (config.hooks) options.hooks = config.hooks;

@@ -42,6 +42,24 @@ describe("connectDaemon (DI transport)", () => {
     expect(await c.control("id1", { type: "interrupt" })).toEqual({ ok: false, error: "boom" });
   });
 
+  it("wave-1 ops: rewind sends the op; reinitialize/backgroundTasks/stopTask ride control frames", async () => {
+    const req = fakeRequest({
+      rewind: () => [{ ok: true, id: "sess-2" }],
+      control: (op) => op.frame.type === "reinitialize" ? [{ ok: true, init: { pid: 7 } }]
+        : op.frame.type === "background_tasks" ? [{ ok: true, tasks: [{ task_id: "t1" }] }]
+        : [{ ok: true }],
+    });
+    const c = connectDaemon("sock", req);
+    expect(await c.rewind("id1", "uuid-1", { fork: true })).toEqual({ id: "sess-2" });
+    expect(req.calls[0]).toEqual({ op: "rewind", id: "id1", messageId: "uuid-1", fork: true });
+    expect(await c.rewind("id1", "uuid-1")).toEqual({ id: "sess-2" });
+    expect(req.calls[1]).toEqual({ op: "rewind", id: "id1", messageId: "uuid-1" });
+    expect(await c.reinitialize("id1")).toEqual({ pid: 7 });
+    expect(await c.backgroundTasks("id1")).toEqual([{ task_id: "t1" }]);
+    await c.stopTask("id1", "t1");
+    expect(req.calls.at(-1)).toEqual({ op: "control", id: "id1", frame: { type: "stop_task", taskId: "t1" } });
+  });
+
   it("contextUsage() unwraps usage and throws on ok:false", async () => {
     const ok = connectDaemon("sock", fakeRequest({ control: () => [{ ok: true, usage: { totalTokens: 5 } }] }));
     expect(await ok.contextUsage("id1")).toEqual({ totalTokens: 5 });

@@ -74,6 +74,12 @@ export interface HarnessConfig {
   enableFileCheckpointing?: boolean;       // default true
   // session persistence — the SDK persists transcripts to ~/.claude/projects by default
   resume?: string;                         // SDK session_id to reload prior context
+  // time-travel (probes 37/37b): resume only up to (and including) this message uuid — conversation
+  // rewind. Anchor may be an assistant OR user message uuid (user-prompt uuids also drive rewindFiles,
+  // so one anchor serves both). WITHOUT forkSession this is DESTRUCTIVE: same session_id, and the
+  // persisted transcript is truncated at the anchor. With forkSession: non-destructive branch (new id).
+  resumeAt?: string;                       // SDK resumeSessionAt; use with `resume`
+  forkSession?: boolean;                   // branch into a NEW session id instead of resuming in place
   persistSession?: boolean;                // default SDK-true; false = ephemeral (no disk persistence)
   sessionStore?: SessionStore;             // BYO transcript-mirror backend (advanced; pure passthrough)
   // compaction (Spec B): tune/disable the SDK's native auto-compaction (these are SDK Settings fields)

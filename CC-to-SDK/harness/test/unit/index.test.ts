@@ -19,6 +19,11 @@ describe("public API", () => {
     expect(typeof api.Session).toBe("function");
     expect(typeof api.forkSession).toBe("function");
   });
+  it("exports the time-travel + limits surface (Wave 1)", () => {
+    expect(typeof api.rewindSession).toBe("function");
+    expect(typeof api.classifyLimitText).toBe("function");
+    expect(typeof api.classifyLimitMessage).toBe("function");
+  });
   it("exports the session-store mutation wrappers", () => {
     expect(typeof api.renameSession).toBe("function");
     expect(typeof api.tagSession).toBe("function");
@@ -74,6 +79,8 @@ describe("public API", () => {
       "TaskStore",
       "applyAssistantPersona",
       "blockTool",
+      "classifyLimitMessage",
+      "classifyLimitText",
       "collect",
       "connectDaemon",
       "createBriefMcpServer",
@@ -102,6 +109,7 @@ describe("public API", () => {
       "resolveOptions",
       "resumeHarness",
       "resumeSession",
+      "rewindSession",
       "stdoutBriefSink",
       "summarizeUsage",
       "tagSession",

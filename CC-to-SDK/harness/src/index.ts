@@ -26,8 +26,11 @@ export { createContextMcpServer, summarizeUsage, CONTEXT_TOOL } from "./context/
 export type { RawContextUsage, ContextUsageSummary } from "./context/index.js";
 export { createCompactMcpServer, COMPACT_TOOL } from "./compaction/index.js";
 export type { CompactOutcome } from "./compaction/index.js";
-export { openSession, resumeSession, Session } from "./session/index.js";
+export { openSession, resumeSession, rewindSession, Session } from "./session/index.js";
 export type { OpenSessionConfig, SessionDepsInput, SessionDeps, SessionOpts } from "./session/index.js";
+export type { BackgroundTaskInfo } from "./session/session.js";
+export { classifyLimitText, classifyLimitMessage } from "./limits/classify.js";
+export type { LimitState, LimitKind } from "./limits/classify.js";
 export { validateHarnessConfig, HarnessConfigError } from "./config/validate.js";
 export { injectContext, guardTool, blockTool, observe, mergeHooks } from "./hooks/index.js";
 export type {
