@@ -5,7 +5,8 @@
 > have we actually realized?** Measured 2026-06-17 against `@anthropic-ai/claude-agent-sdk@0.3.178`
 > from the installed `.d.ts` and live probes — not the Feb snapshot. **Remeasured 2026-07-17** against
 > installed 0.3.178 + npm HEAD 0.3.211 + the live web docs (30 pages) — see §7 for the drift + the
-> refreshed frontier list.
+> refreshed frontier list. **The forward plan now lives in [`full-potential.md`](full-potential.md)** —
+> the exhaustive capability map (~150 rows) + the waved roadmap to 100% of the reachable envelope.
 >
 > **Shipped since first draft:**
 > - **Session persistence spine** (domain 5) — `resume` / `persistSession` / `sessionStore` config
@@ -107,9 +108,15 @@
 
 > - **SDK 0.3.211 bump + Workflow surfacing** (2026-07-17) — all four packages bumped ^0.3.178→^0.3.211
 >   (typecheck/build/unit green everywhere; the 0.3.211 removals touch nothing we import). Re-probe: probe 36
->   re-verified REACHABLE on 0.3.211; live suite 35/39 with the 4 failures = billing, not regressions (the
->   subscription OAuth token was rejected account-side — "organization has disabled Claude subscription
->   access" — and the fallback API key ran out of credits mid-suite). **Workflow SHIPPED opt-in**:
+>   re-verified REACHABLE on 0.3.211; after an auth interruption (the old subscription OAuth token was
+>   rejected account-side; user re-minted) the **full live suite is GREEN — 40/40** across all 22 files.
+>   Two failures were root-caused and fixed along the way: (1) a REAL 2.1.211-surfaced bug — the standalone
+>   `taskTools` path never disallowed the native Task tools (unlike the swarm/daemon paths), so on 2.1.211
+>   the model picked native `TaskCreate` over the deferred `mcp__cc-tasks__*` and wrote to the WRONG store
+>   (the D3-shadowing lesson); now disallowed + unit-locked; live re-verified. (2) a stale test premise —
+>   `daemon-permissions.e2e` spawned bare expecting default-mode parking, but Increment A made bare spawns
+>   auto-mode (which bypasses the broker); the test now requests `permissionMode:"default"` explicitly.
+>   **Workflow SHIPPED opt-in**:
 >   `HarnessConfig.workflow` (default false — a workflow is a cost multiplier) allowlists
 >   `Workflow`+`TaskOutput`/`TaskGet`/`TaskList` AND advertises the async launch→`TaskOutput` retrieval
 >   pattern via `WORKFLOW_NOTE` (the 33d lesson: unadvertised capability is inert). Unit 438/438; gated
