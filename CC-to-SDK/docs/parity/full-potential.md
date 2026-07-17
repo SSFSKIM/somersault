@@ -59,7 +59,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | Capability | Status | Evidence / what's left |
 |---|---|---|
 | `outputFormat: json_schema` (validated, auto-retry) | ✅ | probe 36-output-format; `resolveOptions` + app-server `outputSchema` passthrough |
-| Zod→JSON-schema round-trip ergonomics | ⚪ | small: a typed `runStructured<T>(schema)` convenience on `Harness`/`Session` |
+| Zod→JSON-schema round-trip ergonomics | ✅ W4.2 | `runStructured<T>(schema, prompt, config)` — zod→draft-7 json_schema→validated `structured_output` (probe 53 ✅; ajv rejects zod's default 2020-12 target — caught live) |
 | `error_max_structured_output_retries` surfacing | 🟡 | flows through as result subtype; no dedicated handling/docs |
 
 ### C. Tools / MCP / custom tools
@@ -67,7 +67,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | Capability | Status | Evidence / what's left |
 |---|---|---|
 | `tool()` + `createSdkMcpServer()` in-process servers | ✅ | 5 shipped: cc-tasks, cc-swarm, cc-brief, cc-context, cc-compact |
-| Tool annotations (`readOnlyHint` → parallel exec, etc.) | ⚪ | our 5 servers don't declare them; cheap quality win |
+| Tool annotations (`readOnlyHint` → parallel exec, etc.) | ✅ W4.2 | title on all 15 tools + readOnly/destructive hints + searchHints (probe 54: extras accepted, annotated tool callable) |
 | `mcpServers` passthrough (stdio/http/sse/in-process) | ✅ | + the D3 shadowing/permission lesson (memory) |
 | Tool naming (`mcp__server__tool`) + allow/deny globs | ✅ | permissions module |
 | **ToolSearch deferral** (10k-tool scaling; `ENABLE_TOOL_SEARCH`) | 🟢 | probes 35/35b/35c: our MCP tools are deferred (~11 tok/turn) |
@@ -80,7 +80,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | `onElicitation` handler | 🟢 | **Wave 2 probes 43/43b: ALIVE for stdio servers** — full round-trip (server `elicitInput` → `Elicitation` hook → `onElicitation` accept+content → `ElicitationResult` hook → content back to the tool). SDK-type in-process servers CANNOT elicit ("Client does not support form elicitation"). Unhandled → auto-decline. Harness wire = config passthrough (Wave 2 follow-up) |
 | `onUserDialog` + `supportedDialogKinds` | 🟡 | **Wave 2 probe 43**: intake validation confirmed (kinds without callback throws, fail-closed); wiring both breaks nothing; no deterministic headless trigger exists (`refusal_fallback_prompt` needs a real refusal) — wireable, untriggerable-on-demand |
 | `toolAliases` | ✅ | config passthrough |
-| `toolConfig` (e.g. `askUserQuestion.previewFormat`) | ⚪ | last unmodeled tool knob |
+| `toolConfig` (e.g. `askUserQuestion.previewFormat`) | ✅ W4.1 | first-class `HarnessConfig.toolConfig` |
 | `tools` allowlist / `{preset:'claude_code'}` / `toolPreset:"none"` | ✅ | `tools.ts` |
 
 ### D. Permissions / approvals / user input
@@ -95,7 +95,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | `AskUserQuestion` end-user routing | 🟡 | flows through the broker; no dedicated multi-choice UX in TUI/daemon |
 | `setPermissionMode()` runtime | ✅ | Tab ladder, console op |
 | `allowDangerouslySkipPermissions` coupling | ✅ | centralized in `resolveOptions` |
-| `planModeInstructions` | ⚪ | unmodeled Options field |
+| `planModeInstructions` | ✅ W4.1 | first-class field |
 | Subagent mode inheritance rules | 🟢 | docs [permissions]; relied on |
 
 ### E. Sessions / persistence / checkpointing
@@ -105,7 +105,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | `resume` / `persistSession` / `forkSession()` / store CRUD (`list`/`messages`/`info`/`rename`/`tag`/`delete`) | ✅ | the complete 3-spec session cluster + closeout |
 | `continue` (most-recent) Options field | 🟡 | capability delivered via `listSessions`+resume in TUI; the native field itself unused |
 | **`resumeSessionAt`** (branch at message UUID) | ✅ | **Wave 1 keystone SHIPPED**: probes 37/37b (in-place = destructive truncation, same sid; fork = safe branch; user-uuid anchors accepted → one anchor drives conversation + `rewindFiles`); `resumeAt`/`forkSession` config + `rewindSession()` + daemon `rewind` op; live e2e green |
-| `sessionId` (explicit UUID) / `title` | ⚪ | minor knobs (`renameSession` covers title) |
+| `sessionId` (explicit UUID) / `title` | ✅ W4.1 | probe 53: both ALIVE — init honors the UUID; `getSessionInfo().customTitle` round-trips |
 | External `sessionStore` (S3/Redis/Postgres mirror; cross-host resume) | ✅ | **W3.3 SHIPPED**: `createRedisSessionStore` (dependency-free `RedisLike` DI; uuid-idempotent, retry-safe mark-AFTER-write; fold-serialized summaries) + `sessionStoreConformance` suite (SDK InMemory passes core; adapter passes +dedup) + `Session.mirrorErrors` ring + daemon count. **Cross-host resume live-proven** (fresh CLAUDE_CONFIG_DIR + store → recall). Gotcha: SDK REJECTS `enableFileCheckpointing`+`sessionStore` — resolveOptions auto-defaults checkpointing off with a store |
 | `sessionStoreFlush` / `loadTimeoutMs` (alpha) | ✅ | W3.3: `sessionStoreFlush` / `sessionStoreLoadTimeoutMs` HarnessConfig knobs wired |
 | File checkpointing (`enableFileCheckpointing` + `rewindFiles` + dryRun) | ✅ | default-on; `Harness.rewind` (user-prompt-UUID anchor lesson) |
@@ -124,7 +124,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | Nested subagents (5 levels) | 🟢 | rely-on |
 | Subagent transcripts: `listSubagents` / `getSubagentMessages` / resume-by-agentId | ⚪ | observability gap (noted in coverage.md domain 4) |
 | `parent_tool_use_id` attribution | ✅ | TUI nesting (probe 22) |
-| `forwardSubagentText` / `agentProgressSummaries` | ✅/⚪ | text forwarded; progress summaries unmodeled |
+| `forwardSubagentText` / `agentProgressSummaries` | ✅/🟡 W4.1 | text forwarded; progress summaries wired but PARTIAL (probe 54: `task_progress` fires, `summary` never populated in a 45s subagent) |
 | Inter-agent `SendMessage` (v2.1.206+) | 🟢 | **Wave 2 probes 41/41b: ALIVE** — delivery is queued-at-next-tool-round to a RUNNING agent (agents run to completion, they don't idle); address by `name` (spawner must pass it explicitly — models omit it unforced) or by spawn-result agentId; replies travel via `task_notification` + a parent wake turn |
 | **`Workflow` tool** (script-driven fan-out) | ✅ | probe 36 (re-verified 0.3.211); **`config.workflow` opt-in SHIPPED 2026-07-17**, live e2e green |
 | `stopTask()` / `backgroundTasks()` + `background_tasks_changed` msg (0.3.211) | ✅ | **Wave 1**: probe 39 (level signal streams headlessly; Ctrl+B works mid-turn; no-arg returns true even when idle — use the targeted form to detect); `Session.backgroundTasks`/`stopTask`/`backgroundAll` + bridge frames; live e2e green |
@@ -143,7 +143,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | **OpenTelemetry** (metrics/logs, per-user attribution) | ✅ | **W3.1 SHIPPED** (probe 51: ALIVE headless): typed `telemetry` config → env gates in resolveOptions + daemon-wide `DaemonOptions.telemetry`; guide + docker-compose OTLP demo. Live catalog: metrics `claude_code.{session.count,cost.usage,token.usage,active_time.total}`; events `user_prompt/api_request/assistant_response/tool_decision/tool_result/hook_registered`; attrs `session.id`+`prompt.id`(joins hooks)+user.*. **NO traces** (metrics+events only); `logUserPrompts` privacy-defaulted off |
 | Billing/limit classification (`USAGE_*`/`ORG_POLICY_LIMIT_PREFIXES`, 0.3.211) | ✅ | **Wave 1**: `limits/classify` (SDK prefixes + observed org-policy/credit families + rejected `rate_limit_event`); `Session.limitState` + daemon registry `limit` field |
 | New lifecycle msgs (0.3.211): `control_request_progress`, `model_refusal_no_fallback`, `conversation_reset` | ⚪ | absorb into daemon event stream |
-| `promptSuggestions` | ⚪ | TUI could render them |
+| `promptSuggestions` | 🚫 W4 | DEAD headless (probes 53/53b: no `prompt_suggestion` frame after result — haiku+sonnet, trivial+real task); knob wired for completeness |
 | Prompt caching (auto; `ENABLE_PROMPT_CACHING_1H`) | 🟢/⚪ | rely-on; 1h-TTL knob unexposed |
 | Todo/Task tools (native `TaskCreate`/`TaskUpdate`…) | ✅ | deliberately shadowed by durable `cc-tasks` (A1 lesson) |
 | `debug` / `debugFile` / `stderr` capture | ⚪ | ops lever — today's crash triage needed raw stderr; wire into daemon diagnostics |
@@ -156,7 +156,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | Programmatic `hooks` (all 30 events reachable) | ✅ | probes 09/10; builders + `mergeHooks`; **17/30 verified-fired post-Wave-2** |
 | Hook `defer` decision + async side-effect mode | ✅ | **Wave 2 probes 42/42b**: `PreToolUse` `permissionDecision:'defer'` PARKS the call — no execution, no `canUseTool`, no tool_result (the `deferred_tool_use` result shape); it is host-decides-later, not hand-to-broker. Also: safe read-only Bash auto-approves BEFORE `canUseTool`; order is PreToolUse → canUseTool → PermissionRequest (informational — fires on ALLOWED calls too, carries `permission_suggestions`); `PermissionDenied` never fires for callback/hook denials |
 | Hook-event sweep on 0.3.211 (which of the 30 fire headlessly) | ✅ | **Wave 2 probes 42/43b — 17/30 FIRE**: the prior 8 + PostToolUseFailure, PostToolBatch, PermissionRequest, TaskCreated, TaskCompleted, MessageDisplay, PostCompact, InstructionsLoaded, Elicitation, ElicitationResult; `SessionStart` fires at the **/compact boundary** (not initial startup; the compact summarizer emits `SubagentStop`). Silent under driven scenarios: Notification, UserPromptExpansion, SessionEnd, StopFailure, SubagentStart, PermissionDenied, Setup, TeammateIdle, ConfigChange, Worktree*, CwdChanged, FileChanged |
-| `includeHookEvents` (hook lifecycle messages) | ⚪ | unmodeled |
+| `includeHookEvents` (hook lifecycle messages) | 🚫 W4 | DEAD headless (probes 53/53b: no hook frames with programmatic hooks); knob wired for completeness |
 | Skills (`.claude/skills`, model-invoked or `/name`) | ✅ | probes 30/31; command palette |
 | `skills` Options field (explicit allowlist form) | ⚪ | we inherit via settingSources instead |
 | Plugins (`{type:'local',path}` bundles) | ✅ | passthrough + palette surfacing |
@@ -179,7 +179,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | **Sandbox credential redaction** (`SandboxSettings.credentials`, 0.3.211) | ✅ | **Wave 2 probe 48: deny-mode VERIFIED** under engaged sandbox-exec — denied env var hidden (control var visible), credential-file read blocked ("Operation not permitted"). Already passes through our `resolveSandbox` spread. `mask` mode (sentinel + proxy `injectHosts`) needs egress-proxy infra — untested. **W3.4**: now a typed `sandbox.credentials` field, composed by `tenantHarnessConfig` (live: deny held; the model itself refused the exfiltration-shaped prompt) |
 | Secure-deployment patterns (credential proxy via `ANTHROPIC_BASE_URL`, TLS proxy, read-only mounts) | ⚪ | `baseUrl`/`customHeaders` exist; no recipe/test |
 | Multi-tenant isolation (settingSources:[] + memory-disable + per-tenant `CLAUDE_CONFIG_DIR`/cwd) | 🟡 | pieces exist; no composed recipe |
-| `additionalDirectories` / `executable*` / `extraArgs` / `betas` / `pathToClaudeCodeExecutable` | ⚪ | plumbing knobs (reachable via `extraOptions` today) |
+| `additionalDirectories` / `executable*` / `extraArgs` / `betas` / `pathToClaudeCodeExecutable` | ✅ W4.1 | all first-class (probe 53: `betas: ['context-1m-2025-08-07']` accepted on sonnet-4-6); `strictMcpConfig`/`skills`/`agent`/`continueSession`/`abortController`/`debug*`/`stderr`/`onElicitation`/`onUserDialog`+kinds/`spawnClaudeCodeProcess`/`permissionPromptToolName`/`maxThinkingTokens` too — **all 63 Options fields modeled** |
 | `env` replace-not-merge contract | ✅ | the spread-process.env lesson, locked by tests |
 | CLI/wrapper `sdkCompat` contract (manifest, 0.3.211) | ⚪ | version-skew guard for the npm-published worker |
 
@@ -195,7 +195,10 @@ the Ink console + chat REPL (~82% visual parity), and the two Codex-protocol con
 ## §2 — The math
 
 Counting §1's reachable rows (✅/🟢 realized; 🟡 half; ⚪/🔬 unrealized; 🚫 excluded):
-**~78% realized post-Wave-3** (was ~71% post-Wave-2, ~67% post-Wave-1: Wave 3 shipped the entire
+**~83% realized post-Wave-4** (was ~78% post-Wave-3: Wave 4 closed the Options long tail — all 63
+fields modeled — plus runStructured, tool annotations, and the standing drift ritual; the probed-dead
+knobs (`includeHookEvents`/`promptSuggestions`) moved to the 🚫 floor, shrinking the denominator too.)
+Prior recount: **~78% post-Wave-3** (was ~71% post-Wave-2, ~67% post-Wave-1: Wave 3 shipped the entire
 operational-maturity cluster — OTel ✅ (probe 51 alive; typed config + daemon-wide + guide/demo),
 warm-spawn pool ✅ (delegating-broker slots + daemon warm path), external session-store ✅ (Redis
 reference adapter + conformance suite + mirror_error + cross-host-resume live proof), secure
@@ -262,20 +265,29 @@ Shipped as five increments (each unit + gated-live tested; commits 59a5b2e3d8/41
 5. **Runtime MCP topology (W3.5)** — probes 52/52b settled the trio's semantics (toggle ADVISORY —
    on-demand bring-up resurrects disabled servers); Session methods + daemon ops + `/mcp` console cmd.
 
-### Wave 4 — knob completion + drift watch (continuous)
+### Wave 4 — knob completion + drift watch — ✅ SHIPPED 2026-07-17 (probes 53/53b/54; spec/plan `2026-07-17-wave4-knob-completion`; drift ritual standing)
 
-- Model the remaining Options long tail (`strictMcpConfig`, `additionalDirectories`, `betas`,
-  `toolConfig`, `planModeInstructions`, `promptSuggestions`, `agentProgressSummaries`, `includeHookEvents`,
-  `debug`/`debugFile`/`stderr`, AgentDefinition's newer per-agent fields) — each a one-line
-  `resolveOptions` wire + test; batch as one "knob sweep" increment.
-- Tool annotations on our 5 MCP servers; `Zod→runStructured<T>()` convenience.
-- **Drift ritual** (monthly or on-demand): re-run the §7 remeasure of `coverage.md` — diff installed vs
-  npm HEAD `.d.ts`, sweep the docs list, re-run the probe suite, update this map. The SDK moved 33
-  releases in one month; the map rots in weeks, not quarters.
+Shipped as three increments (details in the §1 rows):
+
+1. **Knob sweep (W4.1)** — 27 new first-class `HarnessConfig` fields → **all 63 declared Options
+   fields modeled**. Probe 53 proved `sessionId`/`title`/`agent`/`structured_output`/`betas` alive;
+   53/53b settled `includeHookEvents` + `promptSuggestions` DEAD headless and 54 settled
+   `agentProgressSummaries` PARTIAL — the three are wired for completeness with jsdoc caveats.
+   `AgentDefinition`'s newer per-agent fields already flowed through (`resolveAgents` spreads
+   verbatim; doc note only). Live: sessionId+title+agent through `openSession`.
+2. **Annotations + runStructured (W4.2)** — title/readOnly/destructive/searchHint annotations on all
+   15 tools across the 5 MCP servers (probe 54); `runStructured<T>()` — Zod → **draft-7** json_schema
+   (the CLI's ajv rejects zod's default 2020-12 meta-schema; caught by the live test) → validated
+   typed `structured_output`.
+3. **Drift ritual (W4.3, standing)** — `scripts/drift-check.mjs` (name-level installed-vs-npm-HEAD
+   diff over Options/Query/SDKMessage/exports, false-clean parse guard) + `docs/parity/drift-ritual.md`
+   (scan → classify → bump+re-verify → update maps, with run log). First run: 0.3.211→0.3.212, zero
+   name-level drift (63/32/39/236 names).
 
 ### Standing exclusions (the 🚫 floor)
 
 Agent teams (CLI-only) · `usage().rate_limits` on API-key auth · native `CronCreate` firing /
-`PushNotification` transport (headless-dead, probed) · anything claude.ai-bridge-coupled. 0.3.211
-*deleted* `runAssistantWorker` and `connectRemoteControl` — the floor shrinks on its own; re-check each
-drift pass.
+`PushNotification` transport (headless-dead, probed) · `includeHookEvents` + `promptSuggestions`
+(headless-dead, probes 53/53b) · anything claude.ai-bridge-coupled. 0.3.211 *deleted*
+`runAssistantWorker` and `connectRemoteControl` — the floor shrinks on its own; re-check each
+drift pass (`scripts/drift-check.mjs`).

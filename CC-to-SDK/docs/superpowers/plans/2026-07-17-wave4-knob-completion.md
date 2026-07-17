@@ -28,10 +28,13 @@ commit. Wave ends: parity docs + memory + checkboxes.
 2. `docs/parity/drift-ritual.md` — procedure + first-run findings.
 3. Run once; record.
 
-## Close-out
+## Close-out — ✅ ALL INCREMENTS SHIPPED 2026-07-17
 
-- [ ] probes 53/53b/54 committed with spec+plan
-- [ ] W4.1 knob sweep (commit + live timing)
-- [ ] W4.2 annotations + runStructured (commit + live timing)
-- [ ] W4.3 drift script + doc + first run (commit + findings)
-- [ ] parity docs refresh + memory
+- [x] probes 53/53b/54 committed with spec+plan (abc307930a)
+- [x] W4.1 knob sweep (722fe278d0; 31 unit, live knobs.live.test.ts PASS 12.2s)
+- [x] W4.2 annotations + runStructured (d625129496; live structured.live.test.ts PASS 6.9s after the
+      draft-7 fix — the CLI's ajv rejects zod's default 2020-12 meta-schema)
+- [x] W4.3 drift script + doc + first run (f78145fa40; 0.3.211→0.3.212 zero name-level drift,
+      63/32/39/236 names extracted; false-clean guard exits 2 on empty parse)
+- [x] parity docs refresh (coverage.md domains 1/2/9 + §3 Options row 63/63 + header changelog;
+      full-potential.md §1 row flips + §2 ~83% + §3 shipped + floor additions) + memory
