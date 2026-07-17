@@ -2,7 +2,6 @@
   "skillListingBudgetFraction": 0.02,
   "enabledPlugins": {
     "context7@claude-plugins-official": true,
-    "code-review@claude-plugins-official": true,
     "code-simplifier@claude-plugins-official": true,
     "feature-dev@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true,
@@ -17,8 +16,7 @@
     "playground@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
     "codex@openai-codex": true,
-    "rust-analyzer-lsp@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": true
+    "rust-analyzer-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "ui-ux-pro-max-skill": {
@@ -41,6 +39,6 @@
     }
   },
   "effortLevel": "xhigh",
-  "showTurnDuration": true,
-  "skipWorkflowUsageWarning": true
+  "skipWorkflowUsageWarning": true,
+  "showTurnDuration": true
 }
