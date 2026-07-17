@@ -40,6 +40,7 @@ export type { RedisLike, RedisSessionStoreOptions } from "./store/redisSessionSt
 export { sessionStoreConformance } from "./store/conformance.js";
 export type { ConformanceOpts } from "./store/conformance.js";
 export type { MirrorErrorInfo } from "./session/session.js";
+export { runStructured, StructuredRunError } from "./structured/run.js";
 export { classifyLimitText, classifyLimitMessage } from "./limits/classify.js";
 export type { LimitState, LimitKind } from "./limits/classify.js";
 export { validateHarnessConfig, HarnessConfigError } from "./config/validate.js";

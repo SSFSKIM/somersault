@@ -18,7 +18,8 @@ export function buildBriefTools(sink: BriefSink) {
     tool("SendUserMessage",
       "Send a user-visible message through the Brief channel. Use status 'proactive' for messages worth a push notification; 'normal' otherwise.",
       sendUserMessageShape,
-      async (args) => { await sink.write({ text: args.message, status: args.status ?? "normal" }); return { content: [{ type: "text" as const, text: "delivered" }] }; }),
+      async (args) => { await sink.write({ text: args.message, status: args.status ?? "normal" }); return { content: [{ type: "text" as const, text: "delivered" }] }; },
+      { annotations: { title: "Message the user" }, searchHint: "notify user brief proactive push" }),
   ];
 }
 

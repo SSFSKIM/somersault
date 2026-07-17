@@ -23,7 +23,8 @@ export function buildCompactTools(holder: CompactHolder) {
     tool("RequestCompaction",
       "Schedule a context compaction to run at the end of THIS turn (after you finish responding). Call this when your context window is getting full and you want to free space before continuing.",
       {},
-      async () => { holder.request?.(); return { content: [{ type: "text" as const, text: "compaction scheduled for the end of this turn" }] }; }),
+      async () => { holder.request?.(); return { content: [{ type: "text" as const, text: "compaction scheduled for the end of this turn" }] }; },
+      { annotations: { title: "Request compaction" }, searchHint: "compact context free space summarize" }),
   ];
 }
 

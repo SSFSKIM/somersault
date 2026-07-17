@@ -33,7 +33,7 @@ export function buildContextTools(holder: QueryHolder) {
           if (!q) return { content: [{ type: "text" as const, text: "context usage unavailable" }] };
           return { content: [{ type: "text" as const, text: JSON.stringify(summarizeUsage(await q.getContextUsage())) }] };
         } catch { return { content: [{ type: "text" as const, text: "context usage unavailable" }] }; }
-      }),
+      }, { annotations: { title: "Context usage", readOnlyHint: true }, searchHint: "context window tokens full remaining" }),
   ];
 }
 

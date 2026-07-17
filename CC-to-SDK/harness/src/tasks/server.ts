@@ -10,18 +10,18 @@ export function buildTaskTools(store: TaskStore) {
   return [
     tool("TaskCreate", "Create a durable task (starts pending). Optionally blockedBy other task ids.", taskCreateShape, async (args) => {
       try { return ok(await store.create(args)); } catch (e) { return fail((e as Error).message); }
-    }),
+    }, { annotations: { title: "Create task" }, searchHint: "todo durable persistent" }),
     tool("TaskUpdate", "Update a task's fields, status, owner, or dependencies by id.", taskUpdateShape, async (args) => {
       const { id, ...patch } = args;
       try { return ok(await store.update(id, patch)); } catch (e) { return fail((e as Error).message); }
-    }),
+    }, { annotations: { title: "Update task" } }),
     tool("TaskGet", "Get a single task by id.", taskGetShape, async (args) => {
       const t = await store.get(args.id);
       return t ? ok(t) : fail(`unknown task id ${args.id}`);
-    }),
+    }, { annotations: { title: "Get task", readOnlyHint: true } }),
     tool("TaskList", "List non-deleted tasks (showing only unresolved blockers). Filter by status/owner.", taskListShape, async (args) => {
       return ok(await store.list(args));
-    }),
+    }, { annotations: { title: "List tasks", readOnlyHint: true } }),
   ];
 }
 
