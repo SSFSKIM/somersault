@@ -74,5 +74,33 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   if (config.sessionStoreFlush) options.sessionStoreFlush = config.sessionStoreFlush;
   if (config.sessionStoreLoadTimeoutMs !== undefined) options.loadTimeoutMs = config.sessionStoreLoadTimeoutMs;
   if (config.hooks) options.hooks = config.hooks;
+  // Wave-4 knob sweep — one-line passthroughs (probe verdicts in types.ts jsdoc).
+  if (config.sessionId) options.sessionId = config.sessionId;
+  if (config.title) options.title = config.title;
+  if (config.continueSession !== undefined) options.continue = config.continueSession;
+  if (config.abortController) options.abortController = config.abortController;
+  if (config.agent) options.agent = config.agent;
+  if (config.additionalDirectories) options.additionalDirectories = config.additionalDirectories;
+  if (config.skills !== undefined) options.skills = config.skills;
+  if (config.toolConfig) options.toolConfig = config.toolConfig;
+  if (config.strictMcpConfig !== undefined) options.strictMcpConfig = config.strictMcpConfig;
+  if (config.betas) options.betas = config.betas;
+  if (config.maxThinkingTokens !== undefined) options.maxThinkingTokens = config.maxThinkingTokens;
+  if (config.planModeInstructions) options.planModeInstructions = config.planModeInstructions;
+  if (config.permissionPromptToolName) options.permissionPromptToolName = config.permissionPromptToolName;
+  if (config.onElicitation) options.onElicitation = config.onElicitation;
+  if (config.onUserDialog) options.onUserDialog = config.onUserDialog;
+  if (config.supportedDialogKinds) options.supportedDialogKinds = config.supportedDialogKinds;
+  if (config.spawnClaudeCodeProcess) options.spawnClaudeCodeProcess = config.spawnClaudeCodeProcess;
+  if (config.pathToClaudeCodeExecutable) options.pathToClaudeCodeExecutable = config.pathToClaudeCodeExecutable;
+  if (config.executable) options.executable = config.executable;
+  if (config.executableArgs) options.executableArgs = config.executableArgs;
+  if (config.extraArgs) options.extraArgs = config.extraArgs;
+  if (config.stderr) options.stderr = config.stderr;
+  if (config.debug !== undefined) options.debug = config.debug;
+  if (config.debugFile) options.debugFile = config.debugFile;
+  if (config.includeHookEvents !== undefined) options.includeHookEvents = config.includeHookEvents;
+  if (config.promptSuggestions !== undefined) options.promptSuggestions = config.promptSuggestions;
+  if (config.agentProgressSummaries !== undefined) options.agentProgressSummaries = config.agentProgressSummaries;
   return { ...options, ...(config.extraOptions ?? {}) };
 }

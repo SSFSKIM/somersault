@@ -1,4 +1,7 @@
-import type { AgentDefinition, McpServerConfig, PermissionMode, SdkPluginConfig, SessionStore, EffortLevel, ThinkingConfig } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  AgentDefinition, McpServerConfig, PermissionMode, SdkPluginConfig, SessionStore, EffortLevel, ThinkingConfig,
+  SdkBeta, ToolConfig, OnElicitation, OnUserDialog, SpawnOptions, SpawnedProcess,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { HooksMap } from "../hooks/types.js";
 import type { PermissionBroker } from "../permissions/types.js";
 import type { TelemetryConfig } from "./telemetry.js";
@@ -105,6 +108,40 @@ export interface HarnessConfig {
   hooks?: HooksMap;
   mcpServers?: Record<string, McpServerConfig>;
   plugins?: SdkPluginConfig[];
+  // ── Wave-4 knob sweep (probes 53/53b/54; spec 2026-07-17-wave4-knob-completion-design) ──
+  // session identity/plumbing
+  sessionId?: string;                      // caller-chosen session UUID (probe 53 ✅ — init.session_id honors it)
+  title?: string;                          // initial session title (probe 53 ✅ — getSessionInfo().customTitle round-trips)
+  continueSession?: boolean;               // SDK `continue`: resume the most recent conversation in cwd (excl. with resume)
+  abortController?: AbortController;       // cancel the underlying query; Session/harness callers usually manage their own
+  // main-thread agent
+  agent?: string;                          // apply this agents[] entry's prompt/tools/model to the MAIN thread (probe 53 ✅)
+  // context / tools
+  additionalDirectories?: string[];        // extra absolute paths Claude may access beyond cwd
+  skills?: string[] | "all";               // filter which discovered skills load into the main session
+  toolConfig?: ToolConfig;                 // per-builtin-tool config (e.g. askUserQuestion.previewFormat)
+  strictMcpConfig?: boolean;               // fail hard on invalid MCP config instead of skipping
+  betas?: SdkBeta[];                       // API beta headers (probe 53: context-1m accepted on sonnet-4-6, no error)
+  maxThinkingTokens?: number;              // initial thinking budget (runtime lever: setMaxThinkingTokens — probe 25)
+  planModeInstructions?: string;           // replaces the default plan-mode system-prompt section
+  permissionPromptToolName?: string;       // MCP tool consulted for permission prompts (declared-only wire, unprobed)
+  // callbacks (probe-grounded)
+  onElicitation?: OnElicitation;           // MCP elicitation handler (probe 43b ✅ stdio round-trip)
+  onUserDialog?: OnUserDialog;             // request_user_dialog handler (probe 43: wireable, NO deterministic headless trigger)
+  supportedDialogKinds?: string[];         // dialog kinds onUserDialog actually renders — CLI fails closed on absence
+  spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess; // custom CLI child placement (probe 50 ✅ end-to-end)
+  // process plumbing
+  pathToClaudeCodeExecutable?: string;
+  executable?: "bun" | "deno" | "node";
+  executableArgs?: string[];
+  extraArgs?: Record<string, string | null>; // extra CLI args (null = boolean flag) — escape hatch like extraOptions
+  stderr?: (data: string) => void;         // subprocess stderr tap
+  debug?: boolean;                         // CLI debug logging (pairs with stderr/debugFile)
+  debugFile?: string;
+  // dead/partial knobs — wired for completeness, DO NOT rely on them headless:
+  includeHookEvents?: boolean;             // 🚫 DEAD headless (probes 53/53b: no hook frames, programmatic hooks, haiku+sonnet)
+  promptSuggestions?: boolean;             // 🚫 DEAD headless (probes 53/53b: no prompt_suggestion frame after result)
+  agentProgressSummaries?: boolean;        // 🟡 PARTIAL (probe 54: task_progress fires; summary never populated in a 45s subagent)
   // escape hatches
   env?: Record<string, string | undefined>;
   extraOptions?: Record<string, unknown>;  // merged last into SDK Options
