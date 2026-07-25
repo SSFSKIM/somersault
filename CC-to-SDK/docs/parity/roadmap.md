@@ -1,5 +1,11 @@
 # CC → Agent SDK — Build Roadmap
 
+> **⚠️ Superseded in framing (2026-07-25) by [`clone-roadmap.md`](clone-roadmap.md).** Phases 1–3
+> below are substantially delivered, and their goal — a *headless library* with the TUI as Phase 3 —
+> is no longer the product goal. The goal is now Claude Code **cloned as a product**: interactive by
+> default, with headless and background as modes of one binary. This file stays for the 551-row
+> phase mapping and the non-goals inventory; read `clone-roadmap.md` for current sequencing.
+
 Derived from the parity map (`INDEX.md`, 551 rows). This sequences the work of replicating the Claude
 Code harness on the TypeScript Agent SDK into three phases, each its own spec→plan→build cycle.
 

@@ -147,7 +147,7 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | Prompt caching (auto; `ENABLE_PROMPT_CACHING_1H`) | 🟢/⚪ | rely-on; 1h-TTL knob unexposed |
 | Todo/Task tools (native `TaskCreate`/`TaskUpdate`…) | ✅ | deliberately shadowed by durable `cc-tasks` (A1 lesson) |
 | `debug` / `debugFile` / `stderr` capture | ⚪ | ops lever — today's crash triage needed raw stderr; wire into daemon diagnostics |
-| `usage().rate_limits` | 🚫 | `null` on API-key auth (bridge-coupled) |
+| `usage().rate_limits` | ⚪ | **NOT bridge-coupled — auth-mode-coupled** (probe 55, 2026-07-25). `null` under `CLAUDE_CODE_OAUTH_TOKEN` (`setup-token` lacks the `user:profile` scope) but **fully populated** under the interactive `~/.claude/.credentials.json` credential: `subscription_type:"max"`, `rate_limits_available:true`, `five_hour`/`seven_day`/`*_opus`/`*_sonnet` windows + `extra_usage` + `limits[]`. Reachable — build the surface |
 
 ### H. Extensibility — hooks / skills / plugins / commands / prompts
 
@@ -286,7 +286,7 @@ Shipped as three increments (details in the §1 rows):
 
 ### Standing exclusions (the 🚫 floor)
 
-Agent teams (CLI-only) · `usage().rate_limits` on API-key auth · native `CronCreate` firing /
+Agent teams (CLI-only) · native `CronCreate` firing /
 `PushNotification` transport (headless-dead, probed) · `includeHookEvents` + `promptSuggestions`
 (headless-dead, probes 53/53b) · anything claude.ai-bridge-coupled. 0.3.211 *deleted*
 `runAssistantWorker` and `connectRemoteControl` — the floor shrinks on its own; re-check each

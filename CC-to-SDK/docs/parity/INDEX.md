@@ -2,7 +2,7 @@
 
 Total rows: **551**. Verified (live SDK): **37**. Generated from `docs/parity/data/*.json` via `scripts/render-parity.mjs` — do not hand-edit the tables; edit the JSON and re-render.
 
-**Navigation:** [methodology](./methodology.md) · [roadmap](./roadmap.md) · [since-February delta](./since-february.md) · [SDK surface](./_sdk-surface.md) · [current-harness surface](./_current-surface.md)
+**Navigation:** [**clone roadmap** (current)](./clone-roadmap.md) · [methodology](./methodology.md) · [roadmap (superseded framing)](./roadmap.md) · [since-February delta](./since-february.md) · [SDK surface](./_sdk-surface.md) · [current-harness surface](./_current-surface.md)
 
 ## Verdict tallies
 | verdict | count |
