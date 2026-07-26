@@ -740,7 +740,7 @@ In `runTask`, reset the buffer, wrap the existing `stamp` callback, and bracket 
 ```ts
   async runTask(prompt: string): Promise<void> {
     this.busy = true; this.state = "working";
-    this.turnBuffer.reset(); this.settledBy.clear();     // Task 5 adds settledBy; clear it here
+    this.turnBuffer.reset();
     this.emit({ kind: "turn", phase: "start" });
     let stamped = false;
     const onMessage = (m: unknown) => {
@@ -910,9 +910,8 @@ import type { PermissionDecision, PermissionBroker, PermissionRequest } from "..
   // outlives the terminal that spawned it. The interactive case is handled by the follower rule in
   // broker(), not by a timer — a timer is how "the human is thinking" becomes "the human said no".
   private parked = new PendingPermissions({ expireAfterMs: "never" });
-  // Who answered what, so a second answerer can be told. Cleared at each turn boundary (in runTask's
-  // `this.turnBuffer.reset()` line) — a host that runs for days would otherwise accumulate one entry
-  // per permission for its whole life.
+  // Who answered what, so a second answerer can be told. A host that runs for days would otherwise
+  // accumulate one entry per permission for its whole life.
   private settledBy = new Map<string, string>();
 ```
 
@@ -954,6 +953,16 @@ import type { PermissionDecision, PermissionBroker, PermissionRequest } from "..
     return { ok: true };
   }
 ```
+
+**Clear `settledBy` at the turn boundary.** Task 4 left `runTask` opening with
+`this.turnBuffer.reset();` — add the clear beside it, now that the field exists:
+
+```ts
+    this.turnBuffer.reset(); this.settledBy.clear();
+```
+
+(Task 4's brief mandated this line before the field existed; its implementer correctly refused to
+write code that would not compile and reported it. This is where it belongs.)
 
 `status()` reports the park without mutating `this.state` — the roster's state and the live state stay
 separate, and `blocked` must never be written down as if it were terminal:
