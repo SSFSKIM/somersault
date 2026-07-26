@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { mintShortId, isShortId, fleetRoot, rosterDir, rosterPath, runDir, hostSocketPath } from "../../src/fleet/paths.js";
 
 describe("short ids", () => {
@@ -33,6 +34,10 @@ describe("paths", () => {
     // The session id does not exist when --bg must already listen, and it rotates on /resume.
     expect(hostSocketPath(4242, env)).toBe("/home/u/.claude/ccx/run/4242.sock");
     expect(runDir(env)).toBe("/home/u/.claude/ccx/run");
+  });
+  it("falls back to homedir on an EMPTY HOME, not just an unset one", () => {
+    // HOME="" with ?? composes ".claude/ccx" — a relative path resolved against the reader's cwd.
+    expect(fleetRoot({ HOME: "" })).toBe(join(homedir(), ".claude", "ccx"));
   });
   it("honours CCX_FLEET_ROOT for test isolation", () => {
     expect(fleetRoot({ HOME: "/home/u", CCX_FLEET_ROOT: "/tmp/t1" })).toBe("/tmp/t1");

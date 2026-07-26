@@ -18,7 +18,7 @@ export function isShortId(s: string): boolean { return SHORT_RE.test(s); }
  *  resolve()d so a relative override doesn't depend on the reading process's cwd. */
 export function fleetRoot(env: NodeJS.ProcessEnv = process.env): string {
   if (env.CCX_FLEET_ROOT) return resolve(env.CCX_FLEET_ROOT);
-  return join(env.HOME ?? homedir(), ".claude", "ccx");
+  return join(env.HOME || homedir(), ".claude", "ccx");
 }
 /** The `roster` segment lives here only — a second copy in roster.ts would fail silently, since a
  *  readdir of the wrong directory just yields an empty fleet. */
