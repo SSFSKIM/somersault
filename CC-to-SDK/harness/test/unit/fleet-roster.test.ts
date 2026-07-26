@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeRoster, readRoster, listRoster, finalizeRoster } from "../../src/fleet/roster.js";
@@ -10,6 +10,7 @@ const row = (over: Partial<RosterRow> = {}): RosterRow => ({
   short: "a1b2c3d4", pid: 100, cwd: "/w", kind: "bg", name: "worker-1", state: "working", startedAt: 1, ...over,
 });
 beforeEach(() => { env = { CCX_FLEET_ROOT: mkdtempSync(join(tmpdir(), "ccx-roster-")) }; });
+afterEach(() => { rmSync(env.CCX_FLEET_ROOT!, { recursive: true, force: true }); });
 
 describe("roster", () => {
   it("round-trips a row", () => {
@@ -30,6 +31,34 @@ describe("roster", () => {
   });
   it("finalize on an unknown short is a no-op, not a throw — it must be idempotent for rm/stop", () => {
     expect(() => finalizeRoster("ffffffff", "stopped", env)).not.toThrow();
+  });
+  it("first terminal state wins — a losing `stop` must not overwrite a truthful `done`", () => {
+    writeRoster(row(), env);
+    finalizeRoster("a1b2c3d4", "done", env, () => 100);
+    finalizeRoster("a1b2c3d4", "stopped", env, () => 200);
+    const r = readRoster("a1b2c3d4", env)!;
+    expect(r.state).toBe("done"); expect(r.endedAt).toBe(100);
+  });
+  it("leaves no partial row behind — a reader never sees a truncated file", () => {
+    // writeFileSync truncates before writing; a host killed in that window strands the session
+    // permanently, because finalizeRoster early-returns on an unreadable row.
+    writeRoster(row(), env);
+    expect(readdirSync(join(env.CCX_FLEET_ROOT!, "roster")).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+  it("refuses to write a row whose short is not 8 hex — it would be written but never listed", () => {
+    expect(() => writeRoster(row({ short: "nope" }), env)).toThrow(/nope/);
+  });
+  it("skips well-formed JSON that is not a row", () => {
+    writeRoster(row(), env);
+    writeFileSync(join(env.CCX_FLEET_ROOT!, "roster", "dddddddd.json"), "[]");
+    expect(listRoster(env).map((r) => r.short)).toEqual(["a1b2c3d4"]);
+  });
+  it("returns [] when the roster directory does not exist at all", () => {
+    expect(listRoster({ CCX_FLEET_ROOT: join(tmpdir(), "ccx-does-not-exist-" + Date.now()) })).toEqual([]);
+  });
+  it("round-trips procStart — our own copy of the host stamp, which outlives the engine's row", () => {
+    writeRoster(row({ procStart: "Sat Jul 25 02:55:52 2026" }), env);
+    expect(readRoster("a1b2c3d4", env)!.procStart).toBe("Sat Jul 25 02:55:52 2026");
   });
   it("round-trips the noHumanSeam flag, which agents surfaces", () => {
     writeRoster(row({ noHumanSeam: true }), env);
