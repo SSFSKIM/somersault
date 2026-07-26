@@ -5,20 +5,10 @@ import { hostSocketPath } from "./paths.js";
 import { projectRow } from "./project.js";
 import type { AgentsRow } from "./project.js";
 import type { HostStatus } from "../host/ops.js";
-import { connect } from "node:net";
+import { askStatus as realAskStatus } from "./status.js";
 
 export * from "./paths.js"; export * from "./roster.js"; export * from "./registry.js";
-export * from "./liveness.js"; export * from "./project.js";
-
-async function realAskStatus(path: string): Promise<HostStatus | undefined> {
-  return await new Promise((resolve) => {
-    const s = connect({ path }, () => s.write(JSON.stringify({ op: "status" }) + "\n"));
-    let buf = ""; const done = (v?: HostStatus) => { s.destroy(); resolve(v); };
-    s.on("data", (d) => { buf += d; const i = buf.indexOf("\n"); if (i >= 0) { try { const j = JSON.parse(buf.slice(0, i)); done(j?.ok ? j : undefined); } catch { done(undefined); } } });
-    s.on("error", () => done(undefined));
-    s.setTimeout(250, () => done(undefined));
-  });
-}
+export * from "./liveness.js"; export * from "./project.js"; export * from "./status.js";
 
 export interface FleetDeps {
   readRegistry: typeof realReadRegistry;
@@ -31,14 +21,22 @@ export interface FleetDeps {
 export async function collectFleet(env: NodeJS.ProcessEnv = process.env,
   deps: FleetDeps = { readRegistry: realReadRegistry, isPidLive: realIsPidLive, socketAnswers: realSocketAnswers, askStatus: realAskStatus }): Promise<AgentsRow[]> {
   const registry = deps.readRegistry(env);
-  return await Promise.all(listRoster(env).map(async (roster) => {
+  const rows = listRoster(env);
+  const settled = await Promise.allSettled(rows.map(async (roster) => {
+    // Registry rows are keyed by pid and pids are RECYCLED, while a roster row outlives the registry
+    // row it was paired with — so `find(r => r.pid === ...)` can hand us a stranger's row. Prefer OUR
+    // stamp: it is the one immune to recycling, and a corpse's stored stamp cannot match the stranger's
+    // (which `ps` would happily confirm), so liveness answers "dead" and we never touch the socket.
     const reg = registry.find((r) => r.pid === roster.pid);
     const sock = hostSocketPath(roster.pid, env);
-    // Prefer the engine's stamp, fall back to ours. Ours is the one that survives the engine
-    // unlinking its row on exit — without it, a crashed host reads live forever.
-    const pidLive = await deps.isPidLive(roster.pid, reg?.procStart ?? roster.procStart);
+    const pidLive = await deps.isPidLive(roster.pid, roster.procStart ?? reg?.procStart);
     const answers = pidLive ? await deps.socketAnswers(sock) : false;
     const liveStatus = answers ? await deps.askStatus(sock) : undefined;
     return projectRow({ roster, ...(reg ? { registry: reg } : {}), pidLive, socketAnswers: answers, ...(liveStatus ? { liveStatus } : {}) });
   }));
+  // Per row, not per listing: one host that throws mid-probe must cost its own row and nothing else.
+  // Under Promise.all it took down the whole command — including the rows that already said `done`,
+  // which is the terminal blindness this listing exists to prevent.
+  return settled.map((s, i) => s.status === "fulfilled" ? s.value
+    : projectRow({ roster: rows[i], pidLive: false, socketAnswers: false }));
 }

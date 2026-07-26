@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { collectFleet } from "../../src/fleet/index.js";
+import type { FleetDeps } from "../../src/fleet/index.js";
 import { writeRoster } from "../../src/fleet/roster.js";
 import type { RosterRow } from "../../src/fleet/roster.js";
 import { renderAgents } from "../../src/cli/agents.js";
@@ -12,7 +13,9 @@ let env: NodeJS.ProcessEnv;
 beforeEach(() => { env = { CCX_FLEET_ROOT: mkdtempSync(join(tmpdir(), "ccx-fleet-")), HOME: "/nope" }; });
 const row = (o: Partial<RosterRow> = {}): RosterRow => ({ short: "a1b2c3d4", pid: 100, cwd: "/w", kind: "bg", name: "w1", state: "working", startedAt: 1, ...o });
 
-const deps = (over: any = {}) => ({
+// Partial<FleetDeps>, not `any`: an untyped override is checked against nothing, so a change to the
+// dependency's signature would leave every fake here silently stale and the suite still green.
+const deps = (over: Partial<FleetDeps> = {}): FleetDeps => ({
   readRegistry: () => [], isPidLive: async () => false, socketAnswers: async () => false,
   askStatus: async () => undefined, ...over,
 });
@@ -43,6 +46,32 @@ describe("collectFleet", () => {
     const rows = await collectFleet(env, deps({ isPidLive: async (_p: number, ps?: string) => { seen.push(ps); return false; } }));
     expect(seen[0]).toBe("Sat Jul 25 02:55:52 2026");
     expect(rows[0].state).toBe("error");
+  });
+  it("prefers its OWN procStart over a registry row that merely shares a recycled pid", async () => {
+    // Registry rows are pid-keyed and pids are recycled, so a stranger's row can pair with a corpse's
+    // roster row. Trusting the stranger's stamp makes `ps` agree, and the dead row then reports the
+    // stranger's state, status AND sessionId over a pid-keyed socket a consumer might attach to.
+    writeRoster(row({ state: "working", sessionId: "sid-1", procStart: "Sat Jul 25 02:55:52 2026" }), env);
+    const seen: (string | undefined)[] = []; let probed = false;
+    const rows = await collectFleet(env, deps({
+      readRegistry: () => [{ pid: 100, cwd: "/other", sessionId: "sid-stranger", procStart: "Sun Jul 26 09:00:00 2026" }],
+      isPidLive: async (_p, ps) => { seen.push(ps); return ps === "Sun Jul 26 09:00:00 2026"; },   // ps agrees with the STRANGER
+      socketAnswers: async () => { probed = true; return true; },
+      askStatus: async () => ({ state: "working", status: "busy" }),
+    }));
+    expect(seen[0]).toBe("Sat Jul 25 02:55:52 2026");
+    expect(rows[0]).toMatchObject({ state: "error", status: "idle" });
+    expect(probed).toBe(false);                    // dead by our own stamp — the socket is never touched
+  });
+  it("one unreachable host costs one row, not the whole listing", async () => {
+    // Under Promise.all a single throwing probe rejected the command, so the rows that already said
+    // `done` never printed either — the poller learns nothing and waits forever.
+    writeRoster(row({ short: "aaaaaaaa", pid: 100, state: "working", sessionId: "sid-1" }), env);
+    writeRoster(row({ short: "bbbbbbbb", pid: 101, state: "done", sessionId: "sid-2", endedAt: 5 }), env);
+    const rows = await collectFleet(env, deps({
+      isPidLive: async (pid) => { if (pid === 100) throw new Error("ps exploded"); return false; },
+    }));
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.state]))).toEqual({ aaaaaaaa: "error", bbbbbbbb: "done" });
   });
   it("prefers a live registry sessionId over the roster's", async () => {
     writeRoster(row({ sessionId: undefined }), env);
@@ -92,6 +121,16 @@ describe("renderAgents", () => {
       arow({ id: "cccccccc", cwd: "/workspace" }), arow({ id: "dddddddd", cwd: "/other" })];
     expect(JSON.parse(renderAgents(rows, { json: true, all: true, cwdFilter: "/w" })).map((r: AgentsRow) => r.id))
       .toEqual(["aaaaaaaa", "bbbbbbbb"]);
+  });
+  it("normalizes both sides of the cwd filter — `--cwd /w/` and a relative path still match", () => {
+    // The flag is stored exactly as typed, so a raw string compare against an absolute row cwd
+    // silently matches zero rows and the caller reads that as "no such agents".
+    const rows = [arow({ id: "aaaaaaaa", cwd: "/w" }), arow({ id: "bbbbbbbb", cwd: "/w/sub" }), arow({ id: "cccccccc", cwd: "/workspace" })];
+    expect(JSON.parse(renderAgents(rows, { json: true, all: true, cwdFilter: "/w/" })).map((r: AgentsRow) => r.id))
+      .toEqual(["aaaaaaaa", "bbbbbbbb"]);
+    const here = [arow({ id: "dddddddd", cwd: join(process.cwd(), "sub") }), arow({ id: "eeeeeeee", cwd: "/elsewhere" })];
+    expect(JSON.parse(renderAgents(here, { json: true, all: true, cwdFilter: "sub" })).map((r: AgentsRow) => r.id))
+      .toEqual(["dddddddd"]);
   });
   it("emits the full row shape as JSON — the poller reads it with .get()", () => {
     expect(JSON.parse(renderAgents([arow()], { json: true, all: true })))
