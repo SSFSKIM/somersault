@@ -4,6 +4,8 @@ import { mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { hostOp } from "./ops.js";
 import type { HostStatus } from "./ops.js";
+import { decodeFrame, encodeReply } from "./wire.js";
+import type { HostFrame } from "./wire.js";
 
 export interface HostHandlers { status(): HostStatus; stop(): Promise<void> }
 
@@ -58,19 +60,22 @@ export class HostServer {
         const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
         if (!line.trim()) continue;
         // a throwing handler (or an unserializable snapshot) must answer an error frame, not reject
-        // unowned and take the host process down with it
-        try { sock.write(JSON.stringify(await this.dispatch(line)) + "\n"); }
-        catch (e) { sock.write(JSON.stringify({ ok: false, error: (e as Error).message }) + "\n"); }
+        // unowned and take the host process down with it. The id is parsed off the frame BEFORE the op
+        // is validated, so a malformed op still gets a correlated error reply rather than an orphan the
+        // client cannot match.
+        const frame = decodeFrame(line);
+        const id = typeof frame?.["id"] === "number" ? (frame["id"] as number) : undefined;
+        try { sock.write(encodeReply(id, await this.dispatch(frame))); }
+        catch (e) { sock.write(encodeReply(id, { ok: false, error: (e as Error).message })); }
       }
       if (buf.length > MAX_FRAME) { buf = ""; sock.destroy(); }
     });
     sock.on("error", () => { /* a client that vanished mid-write is not our failure */ });
   }
 
-  private async dispatch(line: string): Promise<Record<string, unknown>> {
-    let parsed: unknown;
-    try { parsed = JSON.parse(line); } catch { return { ok: false, error: "bad json" }; }
-    const op = hostOp.safeParse(parsed);
+  private async dispatch(frame: HostFrame | undefined): Promise<Record<string, unknown>> {
+    if (!frame) return { ok: false, error: "bad json" };
+    const op = hostOp.safeParse(frame);
     if (!op.success) return { ok: false, error: "unknown op" };
     switch (op.data.op) {
       case "status": return { ok: true, ...this.handlers.status() };
