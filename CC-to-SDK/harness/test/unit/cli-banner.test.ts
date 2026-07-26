@@ -11,6 +11,8 @@ describe("formatBanner", () => {
     expect(m?.[1]).toBe("a1b2c3d4");
   });
   it("refuses a short id that is not exactly 8 hex — that would silently disable the purge", () => {
-    expect(() => formatBanner("a1b2c3d")).toThrow(/8/);
+    expect(() => formatBanner("a1b2c3d")).toThrow(/8/);       // 7 chars
+    expect(() => formatBanner("a1b2c3d4e")).toThrow(/8/);     // 9 chars
+    expect(() => formatBanner("A1B2C3D4")).toThrow(/8/);      // uppercase: the sed class is [0-9a-f]
   });
 });
