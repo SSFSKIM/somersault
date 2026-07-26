@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveTarget, stopSession, rmSession, fleetGc } from "../../src/cli/lifecycle.js";
+import { resolveTarget, stopSession, rmSession, fleetGc, sendStop, gitRemoveWorktree } from "../../src/cli/lifecycle.js";
 import { writeRoster, readRoster, listRoster } from "../../src/fleet/roster.js";
 import type { RosterRow } from "../../src/fleet/roster.js";
 
@@ -36,6 +36,15 @@ describe("stopSession", () => {
     writeRoster(row({ state: "done", endedAt: 5 }), env);
     await stopSession("a1b2c3d4", env, { sendStop: async () => false });
     expect(readRoster("a1b2c3d4", env)).toMatchObject({ state: "done", endedAt: 5 });
+  });
+  it("tolerates a row a concurrent rm already unlinked — like rm, stop may race a session's exit", async () => {
+    let stopped = false;
+    await expect(stopSession("a1b2c3d4", env, { sendStop: async () => { stopped = true; return false; } })).resolves.toBeUndefined();
+    expect(stopped).toBe(false);             // no row ⇒ no pid to address
+  });
+  it("still throws on an ambiguous target — the silence is for a row that is GONE, not for a guess", async () => {
+    writeRoster(row(), env); writeRoster(row({ short: "b2c3d4e5", pid: 101, sessionId: "sid-2" }), env);
+    await expect(stopSession("w1", env, { sendStop: async () => false })).rejects.toThrow(/ambiguous[\s\S]*a1b2c3d4[\s\S]*b2c3d4e5/);
   });
 });
 
@@ -84,6 +93,37 @@ describe("rmSession", () => {
     expect(readRoster("a1b2c3d4", env)).toBeUndefined();
     expect(removed).toBe(true);                // and the removal is still delegated, never assumed done
   });
+  it("REFUSES when the worktree removal fails — keeping the row AND the directory", async () => {
+    // `git worktree remove` also fails when the path is a MAIN working tree, and the old code answered
+    // every failure with `rm -rf`: a session started as `--worktree .` on a clean checkout passed the
+    // cleanliness gate and `ccx rm` then deleted the repository. Nothing about a failed probe licenses a
+    // delete — least of all of files git never listed (an ignored `.env`, build output).
+    const wt = join(env.CCX_FLEET_ROOT!, "repo"); mkdirSync(wt, { recursive: true });
+    writeFileSync(join(wt, ".env"), "secret");
+    writeRoster(row({ state: "done", worktree: wt }), env);
+    const err = await rmSession("a1b2c3d4", env, {
+      sendStop: async () => false, worktreeClean: async () => true,
+      removeWorktree: (p) => gitRemoveWorktree(p, async () => { throw new Error("fatal: 'repo' is a main working tree"); }),
+    }).then(() => undefined, (e: Error) => e);
+    expect(existsSync(join(wt, ".env"))).toBe(true);             // the directory, ignored files and all, survives
+    expect(readRoster("a1b2c3d4", env)).toBeDefined();           // and so does the row — refusing loudly is the correct outcome
+    expect(err).toBeInstanceOf(Error);
+    expect(err!.message).toContain(wt);                          // naming the path
+    expect(err!.message).toMatch(/main working tree/);           // and git's own words
+  });
+  it("refuses a worktree path that is not absolute, before stopping or deleting anything", async () => {
+    // Stored verbatim from `--worktree wt`, and every use of it here (existsSync, `git -C`, the removal)
+    // resolves against THIS process's cwd — not the session's. A miss then reads as "clean" and the
+    // removal runs somewhere else entirely.
+    writeRoster(row({ state: "done", worktree: "wt" }), env);
+    let stopped = false, removed = false;
+    await expect(rmSession("a1b2c3d4", env, {
+      sendStop: async () => { stopped = true; return false; }, worktreeClean: async () => true,
+      removeWorktree: async () => { removed = true; },
+    })).rejects.toThrow(/absolute/);
+    expect([stopped, removed]).toEqual([false, false]);
+    expect(readRoster("a1b2c3d4", env)).toBeDefined();
+  });
   it("tells the host to stop BEFORE touching its worktree — never pull one out from under a live session", async () => {
     writeRoster(row({ worktree: "/repo/.claude/worktrees/wt" }), env);
     const seen: string[] = [];
@@ -93,6 +133,85 @@ describe("rmSession", () => {
       removeWorktree: async () => { seen.push("remove"); },
     });
     expect(seen).toEqual(["stop", "clean", "remove"]);
+  });
+});
+
+describe("gitRemoveWorktree", () => {
+  it("delegates the deletion to git and deletes nothing itself", async () => {
+    const wt = join(env.CCX_FLEET_ROOT!, "wt"); mkdirSync(wt, { recursive: true }); writeFileSync(join(wt, "f"), "x");
+    let args: string[] = [];
+    await gitRemoveWorktree(wt, async (a) => { args = a; return {}; });
+    expect(args).toEqual(["-C", wt, "worktree", "remove", "--force", wt]);
+    expect(existsSync(join(wt, "f"))).toBe(true);   // this fake git removed nothing, and neither may we
+  });
+  it("asks git nothing about a worktree that is already gone", async () => {
+    // Otherwise the now-fatal `git -C <gone>` failure would refuse the row forever, undoing the
+    // vanished-worktree case worktreeClean's own short-circuit exists for.
+    let asked = false;
+    await expect(gitRemoveWorktree(join(env.CCX_FLEET_ROOT!, "vanished"), async () => { asked = true; return {}; })).resolves.toBeUndefined();
+    expect(asked).toBe(false);
+  });
+});
+
+/** node calls a connect listener ASYNCHRONOUSLY, and sendStop's `s.write` closes over the `const s` still
+ *  being initialised — a fake invoking it synchronously would hit the temporal dead zone. Defer, as the
+ *  real one does, and let each test flush with `tick()` before emitting. */
+function fakeSocket() {
+  const handlers: Record<string, Array<() => void>> = {};
+  return {
+    written: [] as string[], destroyed: false,
+    write(d: string) { this.written.push(d); return true; },
+    on(e: string, fn: () => void) { (handlers[e] ??= []).push(fn); return this; },
+    destroy() { this.destroyed = true; return this; },
+    emit(e: string) { for (const fn of handlers[e] ?? []) fn(); },
+  };
+}
+const connectTo = (s: ReturnType<typeof fakeSocket>) => (_p: string, onConnect: () => void) => { queueMicrotask(onConnect); return s; };
+const tick = () => new Promise<void>((r) => setImmediate(r));
+
+/** These cases must settle on the EVENT, so bound the wait: the suite's own timeout is 120s and the
+ *  deadline under test is deliberately unreachable, which would let a hang pass as a slow success. */
+async function settles<T>(p: Promise<T>, ms = 200): Promise<T> {
+  let t: ReturnType<typeof setTimeout>;
+  return await Promise.race([p.finally(() => clearTimeout(t)),
+    new Promise<T>((_, rej) => { t = setTimeout(() => rej(new Error(`still pending after ${ms}ms`)), ms); })]);
+}
+
+describe("sendStop", () => {
+  it("never connects when nothing answers the socket", async () => {
+    let connected = false;
+    expect(await sendStop("/nope.sock", { socketAnswers: async () => false, connect: () => { connected = true; return fakeSocket(); } })).toBe(false);
+    expect(connected).toBe(false);
+  });
+  it("sends the stop op and resolves on the host's ack", async () => {
+    const s = fakeSocket();
+    const p = sendStop("/s.sock", { socketAnswers: async () => true, connect: connectTo(s), deadlineMs: 30_000 });
+    await tick(); s.emit("data");
+    expect(await settles(p)).toBe(true);
+    expect(s.written).toEqual([JSON.stringify({ op: "stop" }) + "\n"]);
+    expect(s.destroyed).toBe(true);
+  });
+  it("SETTLES when the host closes the connection instead of replying", async () => {
+    // The measured host behaviour: a closing host destroys the open connection carrying the ack, and one
+    // that FINs auto-destroys the socket — which node answers by CLEARING socket.setTimeout. With
+    // handlers for data/error/setTimeout only, this promise stayed pending forever, so `rm`'s caller
+    // never recorded `stopped` and the process exited 0 with the row still `working`. The 30s deadline
+    // here is deliberately unreachable: only the `close` handler can settle this.
+    const s = fakeSocket();
+    const p = sendStop("/s.sock", { socketAnswers: async () => true, connect: connectTo(s), deadlineMs: 30_000 });
+    await tick(); s.emit("close");
+    expect(await settles(p)).toBe(false);
+    expect(s.destroyed).toBe(true);
+  });
+  it("gives up on an absolute deadline when the host holds the connection open in silence", async () => {
+    const s = fakeSocket();
+    expect(await sendStop("/s.sock", { socketAnswers: async () => true, connect: connectTo(s), deadlineMs: 5 })).toBe(false);
+  });
+  it("settles once — our own destroy() re-enters through close after a reply", async () => {
+    const s = fakeSocket();
+    const p = sendStop("/s.sock", { socketAnswers: async () => true, connect: connectTo(s), deadlineMs: 30_000 });
+    await tick(); s.emit("data"); s.emit("close");
+    expect(await settles(p)).toBe(true);
   });
 });
 
