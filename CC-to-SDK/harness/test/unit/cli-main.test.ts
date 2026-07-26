@@ -4,7 +4,7 @@ import type { MainDeps } from "../../src/cli/main.js";
 import { parseCcx } from "../../src/cli/args.js";
 import type { CcxInvocation } from "../../src/cli/args.js";
 import { spawnDetached } from "../../src/cli/spawn.js";
-import { parseHostArgv } from "../../src/cli/hostMain.js";
+import { parseHostArgv, hostOptsFrom } from "../../src/cli/hostMain.js";
 import type { AgentsRow } from "../../src/fleet/project.js";
 
 /** Every dispatch target throws by default, so a test that reaches the WRONG arm fails by name instead
@@ -57,6 +57,27 @@ describe("main — the internal host route", () => {
     expect(value).toBe(0);
     expect(seen[0]!.config.model).toBe("--__host");
     expect(seen[0]!.prompt).toBe("task");
+  });
+});
+
+describe("hostOptsFrom — what the detached child derives from its own argv", () => {
+  it("FORKS a bg resume instead of resuming the parent session in place", () => {
+    // In place the resumed turn keeps the PARENT's uuid, so two roster rows carry one session id:
+    // `ccx rm <uuid>` refuses as ambiguous from then on, and the consumer's purge — which only runs when
+    // the new uuid differs from the old — silently never fires, so superseded turns accumulate forever.
+    const { opts } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "bg", "--resume", "u-parent", "task"]);
+    expect(opts.config).toMatchObject({ resume: "u-parent", forkSession: true });
+    expect(opts.kind).toBe("bg");
+  });
+  it("does not fork a bg run that has nothing to resume", () => {
+    const { opts, prompt } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "bg", "task"]);
+    expect(opts.config.forkSession).toBeUndefined();
+    expect(prompt).toBe("task");
+  });
+  it("leaves an interactive resume in place — branching is the bg contract, not a global rule", () => {
+    const { opts } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "interactive", "--resume", "u-parent"]);
+    expect(opts.config).toMatchObject({ resume: "u-parent" });
+    expect(opts.config.forkSession).toBeUndefined();
   });
 });
 

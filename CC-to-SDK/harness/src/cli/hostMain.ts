@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 import { SessionHost } from "../host/host.js";
+import type { SessionHostOpts } from "../host/host.js";
 import { isShortId } from "../fleet/paths.js";
 import { parseCcx } from "./args.js";
 import type { CcxInvocation } from "./args.js";
@@ -30,20 +31,39 @@ export function parseHostArgv(argv: string[]): { short: string; kind: "bg" | "in
   return { short, kind, ...(worktree ? { worktree } : {}), inv: parseCcx(argv.slice(rest)) };
 }
 
-/** The detached child's entry point. Never called by a user directly; `--__host` is internal. */
-export async function runHostMain(argv: string[]): Promise<void> {
+/** Everything the child derives from its own argv before anything is opened. Split out from
+ *  runHostMain so the derivations below — the fork decision and noHumanSeam — are testable without
+ *  spawning a process or opening an SDK session. */
+export function hostOptsFrom(argv: string[]): { opts: SessionHostOpts; prompt?: string } {
   const { short, kind, worktree, inv } = parseHostArgv(argv);
   // The child re-parses the forwarded config flags, so hasExplicitPermissionConfig is recomputed here
   // rather than smuggled across in yet another flag. A bare --bg has nothing that can route to `ask`.
   const noHumanSeam = kind === "bg" && !inv.hasExplicitPermissionConfig;
-  const host = new SessionHost({
-    // The MARKER's value only, never inv.worktree: that one is a name (`wt`), and recording a name
-    // gives rm a row it refuses to touch forever. The parent never forwards --worktree anyway.
-    short, name: process.env.CLAUDE_CODE_SESSION_NAME ?? short, cwd: process.cwd(), kind,
-    ...(worktree ? { worktree } : {}), ...(noHumanSeam ? { noHumanSeam } : {}),
-    config: inv.config,
-  });
+  // A bg resume must BRANCH, never resume in place — the plan pins `--bg --resume` to SDK
+  // `resume: <uuid>` + `forkSession: true`, the exact lever probe 59 verified. In place the fork keeps
+  // the PARENT's uuid, so two roster rows share one session id: `ccx rm <uuid>` then refuses as
+  // ambiguous and uuid addressing is broken for good, while the consumer's purge — which only runs when
+  // the new uuid differs from the old — silently never fires, so superseded turns accumulate forever.
+  // Forking is also what makes that purge safe: the child's transcript physically carries the parent's
+  // conversation, so deleting the parent costs no history.
+  const config = kind === "bg" && inv.config.resume ? { ...inv.config, forkSession: true } : inv.config;
+  return {
+    opts: {
+      // The MARKER's value only, never inv.worktree: that one is a name (`wt`), and recording a name
+      // gives rm a row it refuses to touch forever. The parent never forwards --worktree anyway.
+      short, name: process.env.CLAUDE_CODE_SESSION_NAME ?? short, cwd: process.cwd(), kind,
+      ...(worktree ? { worktree } : {}), ...(noHumanSeam ? { noHumanSeam } : {}),
+      config,
+    },
+    ...(inv.prompt ? { prompt: inv.prompt } : {}),
+  };
+}
+
+/** The detached child's entry point. Never called by a user directly; `--__host` is internal. */
+export async function runHostMain(argv: string[]): Promise<void> {
+  const { opts, prompt } = hostOptsFrom(argv);
+  const host = new SessionHost(opts);
   await host.start();
-  try { if (inv.prompt) await host.runTask(inv.prompt); }
+  try { if (prompt) await host.runTask(prompt); }
   finally { await host.stop(); }
 }
