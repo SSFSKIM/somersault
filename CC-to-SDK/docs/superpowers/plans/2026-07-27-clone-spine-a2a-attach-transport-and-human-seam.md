@@ -431,19 +431,26 @@ carry t:\"event\", and only to a connection that asked to follow."
 - Produces: `class TurnBuffer` — `push(m: unknown)`, `snapshot(): { messages: unknown[]; truncated: boolean }`,
   `reset()`. Constructed as `new TurnBuffer({ maxMessages, maxBytes })`.
 
-**Context.** A client attaching mid-turn needs to see the turn *from its beginning*, not from the
-moment it connected. Probe 62 was written to settle whether the engine's on-disk transcript can supply
-that — and it is **INCONCLUSIVE**, because the account's weekly limit makes every turn end in about
-three seconds, which cannot be sampled twice. Its one readable sample is suggestive but not evidence:
-at +3.0 s the transcript held **one** message (the user prompt) and held two only after the turn
-ended, which is what per-message flush looks like — the in-flight assistant text is not there.
+**Context — measured, not assumed.** A client attaching mid-turn needs to see the turn *from its
+beginning*, not from the moment it connected. Probe 62 settled where that content can come from, on a
+real 21.6-second turn sampled fourteen times:
 
-So this buffer is built on the assumption that **disk carries the conversation up to the current
-turn, and the current turn's live text comes from the host**. It is bounded rather than complete,
-because a long turn on a fast model is unbounded text and this is a detached process's heap. Re-run
-probe 62 once the limit resets; if the engine turns out to flush incrementally, this buffer becomes
-redundant and can be deleted, and that is a cheap outcome compared with an attach that shows a blank
-screen.
+```
+  [poll +1506ms]  getSessionMessages -> 1 messages (tail: user)
+  …                                     (unchanged, every sample)
+  [poll +21167ms] getSessionMessages -> 1 messages (tail: user)
+  transcript after turn: 3 messages
+```
+
+The engine writes the user's prompt at once and then **nothing until the turn ends**. So the on-disk
+transcript carries the conversation *up to and including the current prompt*, and the in-flight
+assistant text exists only in the live stream. Without a host-side record, a client attaching ten
+seconds into a turn sees a prompt and a blank space where the answer is being written.
+
+The same probe measured the fan-out cost the spec asked us not to assume: **61 messages / 30.2 KiB
+over 21.6 s — 2.8 messages/s, 1.4 KiB/s**, of which 47 were partial `stream_event` frames. Writing
+that to a handful of unix sockets is free. No coalescing, no backpressure machinery: bound the buffer
+for memory, and write events straight through.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -959,15 +966,22 @@ during A1 verification. Write it as shown here; do not try to pre-empt Task 10:
 ```ts
   async stop(final?: FleetState): Promise<void> {
     if (final) this.state = final;
-    // Settle first, and do it explicitly. Probe 63 could not establish whether the SDK aborts a parked
-    // canUseTool when the turn is interrupted, so relying on that would make `ccx stop` on a blocked
-    // session a coin flip; denying here is correct under either answer and leaves nothing awaited.
+    // Settle first, and do it explicitly. Probe 63 shows interrupt() DOES abort a parked canUseTool,
+    // so this is belt-and-braces rather than the mechanism — but it settles synchronously instead of
+    // awaiting an abort round-trip, and it covers a session with no interrupt() at all.
     this.parked.denyAll();
     this.syncRoster();
     await this.session?.dispose().catch(() => {});
     await this.server?.close();
   }
 ```
+
+Probe 63 has since measured what happens on the SDK side: `interrupt()` **does** abort a parked
+`canUseTool` — the request's signal fired 4.7 s into the park, exactly when `interrupt()` was called —
+so `createPermissionGate`'s abort race would resolve it as a deny on its own. Keep the explicit
+`denyAll()` anyway: it settles synchronously instead of waiting on an async abort round-trip, and it
+covers a `HostSession` that has no `interrupt` at all (the fakes in these tests, and any future
+session type). It is one line and it removes a dependency on someone else's behaviour.
 
 Finally, wire the broker into the session's config in `start()`, replacing the bare
 `this.deps.openSession(this.opts.config)`:
@@ -1288,8 +1302,15 @@ Add `interrupt()` to `SessionHost`. The lib `Session` exposes the SDK query hand
 `interrupt`, this is where you discover it — report rather than inventing one:
 
 ```ts
-  /** Ends the in-flight turn. Parked decisions are settled first for the same reason stop() does it:
-   *  the SDK's behaviour toward a parked canUseTool under interrupt is unverified (probe 63). */
+  /** Ends the in-flight turn, settling parked decisions first (see stop()).
+   *
+   *  Probe 63 recorded a second fact worth knowing here: interrupting a turn that is parked at a
+   *  `tool_use` makes the message stream **throw** rather than return a result —
+   *  `Claude Code returned an error result: … stop_reason=tool_use`. So `runTask`'s catch arm runs,
+   *  sets `state = "error"`, and rethrows. That is harmless *provided* the terminal state was written
+   *  first: `finalizeRoster` is first-terminal-wins, so a `stop("stopped")` that already recorded
+   *  `stopped` is not overwritten by the error that its own interrupt caused. Task 10 depends on this
+   *  ordering — do not move `syncRoster()` after the interrupt. */
   async interrupt(): Promise<void> {
     this.parked.denyAll();
     await this.session?.interrupt?.();
@@ -1551,88 +1572,113 @@ separate from stopping the host."
 
 ---
 
-## Task 8: The ask floor is blocked — probe it, record the drift, build nothing
+## Task 8: Delete the no-human-seam flag
 
 **Files:**
-- Create: `probes/probes/64-auto-mode-vs-canusetool.ts`
-- Modify: `docs/superpowers/specs/2026-07-26-clone-process-surface-spine-design.md` (Revision Notes)
+- Modify: `harness/src/fleet/roster.ts`, `harness/src/fleet/project.ts`, `harness/src/cli/agents.ts`,
+  `harness/src/cli/hostMain.ts`, `harness/src/cli/args.ts`, `harness/src/host/host.ts`,
+  `harness/src/config/types.ts` (one comment)
+- Modify (tests): `harness/test/unit/cli-agents.test.ts`, `fleet-project.test.ts`,
+  `fleet-roster.test.ts`, `host-session.test.ts`, `cli-args.test.ts`
 
-**Interfaces:** none. This task deliberately ships **no production code**.
+**Interfaces:**
+- Removes: `RosterRow.noHumanSeam`, `AgentsRow.noHumanSeam`, `SessionHostOpts.noHumanSeam`,
+  `CcxInvocation.hasExplicitPermissionConfig`.
 
-**Context — the spec's rule rests on a premise that does not hold here.** The spec says a bare `--bg`
-must get a default ask-policy floor, reasoning that "a bg worker with no rules auto-approves
-everything and never parks". Planning found that premise is about a configuration we do not run:
+**Context — an owner decision, and the measurement that vindicates it.** A1 shipped a `noHumanSeam`
+flag: a bare `--bg` with no permission configuration got its `agents` row marked `⚠ no human seam`, on
+the reasoning that such a worker "auto-approves everything and never parks". The owner's decision is
+to **keep the SDK's `auto` classifier as the permission posture and drop the flag entirely**.
 
-- `config/types.ts` sets `DEFAULTS.permissionMode = "auto"`, and `resolveOptions.ts` applies it
-  whenever the caller gave none — so a bare `--bg` runs under **`auto`**, not `default`.
-- This repo's own verified note (`config/types.ts`, the `permissionMode` comment) records `auto` as
-  **broker-replacing**: "dontAsk replaces canUseTool entirely (joins auto/bypass as broker-replacing)
-  — verified", and the `permissionBroker` comment says it is "only consulted in broker-live modes
-  (default/acceptEdits/plan)".
-- Probe 58, the evidence the whole park mechanism rests on, pinned `permissionMode: "default"`.
+Probe 64 (run 2026-07-27, on `claude-sonnet-4-6`, which is auto-capable) shows the flag's premise was
+wrong at the mechanism level too:
 
-So an ask floor added under our real defaults would be **inert**: `canUseTool` is never consulted, so
-nothing ever parks, and both of the tests originally planned for it would have passed anyway — one
-asserting the config shape, one driving the broker directly. A feature that cannot fire, verified
-green.
-
-Making it fire requires forcing `permissionMode: "default"` for the bare case, and that is a policy
-change, not a wiring fix: it replaces the SDK's AI classifier with a blunt ask-on-`Bash`/`Write`/`Edit`
-rule. Under A2a that is strictly worse than doing nothing, because **there is no way to answer a
-park yet** — `ccx attach` ships in A2b. A bare `ccx --bg "task"` would stop at its first tool and wait
-for a client that does not exist.
-
-Therefore: the floor moves to A2b, where attach exists to answer it, and the decision it requires gets
-made with a probe behind it rather than a code comment. `noHumanSeam` keeps its current meaning and
-keeps being reported — a bare `--bg` genuinely has no human seam today, which is exactly what the flag
-says.
-
-- [ ] **Step 1: Write the probe**
-
-Create `probes/probes/64-auto-mode-vs-canusetool.ts`. It must answer one question: **with
-`permissionMode: "auto"` and an explicit `ask` rule, is `canUseTool` consulted at all?** Model it
-directly on `probes/probes/58-canusetool-park.ts` — same prompt, same `settingSources: []`, same
-`settings: { permissions: { ask: ["Bash(*)"] } }` — changing only `permissionMode` from `"default"` to
-`"auto"`, and on a model that supports auto (`claude-sonnet-4-5-20250929` or the opus default; **not**
-haiku, which is not auto-capable and would silently fall back, reproducing probe 18's artifact).
-
-Record: whether `canUseTool` fired, whether the tool ran anyway, and the result subtype. Run the same
-file twice, once per mode, so the comparison is within one probe rather than across two runs.
-
-**Gate the verdict on evidence, exactly as probes 62/63 now do**: if no `tool_use` was emitted at all,
-print INCONCLUSIVE and say why. A rate-limited account emits none, and a probe that reports "auto does
-not consult canUseTool" from a turn that called no tools would manufacture the very false premise this
-task exists to correct.
-
-- [ ] **Step 2: Try to run it**
-
-```bash
-cd CC-to-SDK/probes && set -a; . ../.env; set +a; npx tsx probes/64-auto-mode-vs-canusetool.ts
+```
+  [default] canUseTool FIRED for Bash -> allow
+  [auto]    canUseTool FIRED for Bash -> allow
 ```
 
-Expected **as of 2026-07-27**: INCONCLUSIVE, because the account's weekly limit is live until Jul 29
-and every turn answers with the limit notice without calling a tool. Record the verbatim output either
-way. If it does produce a real verdict, say so loudly — that changes what A2b builds.
+With an explicit `ask` rule present, **`auto` consults `canUseTool` exactly as `default` does**. What
+summons the broker is the `ask` rule, not the permission mode. So the flag was marking a condition
+that is neither a defect nor unrecoverable: a bare `--bg` runs under an AI classifier that adjudicates
+each tool, and any operator who wants a human in the loop adds an `ask` rule and gets one — under
+`auto`, including in doperpowers' `--bg --permission-mode auto` workers.
 
-- [ ] **Step 3: Record the spec drift**
+A warning that fires on a supported configuration, that the reader cannot act on, and whose stated
+reason is untrue, is noise in a listing that a poller also reads. Remove it.
 
-Add to the spec's `## Revision Notes` a dated entry stating: the "default ask-policy floor" rule
-assumed `permissionMode: "default"`; our own default is `auto`, which this repo records as
-broker-replacing; the floor is therefore deferred to A2b together with the mode decision it forces;
-and probe 64 is the evidence that must settle it. Keep the spec's normative rule about *precedence*
-("any explicit permission configuration wins") exactly as it is — that part is unaffected and still
-governs.
+- [ ] **Step 1: Correct the comment that started this**
 
-- [ ] **Step 4: Commit**
+`harness/src/config/types.ts`, the `permissionMode` comment, currently reads *"dontAsk replaces
+canUseTool entirely (joins auto/bypass as broker-replacing) — verified"*, and the `permissionBroker`
+comment says the broker is *"Only consulted in broker-live modes (default/acceptEdits/plan)"*. Probe 64
+refutes both for `auto`. Replace with:
+
+```ts
+  // permissionMode: 6 SDK modes. acceptEdits auto-accepts edits but still routes non-edit tools to
+  // canUseTool; dontAsk and bypassPermissions replace canUseTool entirely. `auto` does NOT — probe 64
+  // shows it consults the broker whenever a rule routes a tool to `ask`, exactly as `default` does.
+  // What summons the broker is the ask rule, not the mode.
+  permissionMode?: PermissionMode;
+  // interactive permission broker (incr3): when set, resolveOptions wires it as the SDK canUseTool.
+  // Consulted in default/acceptEdits/plan/auto; bypassPermissions and dontAsk bypass it.
+  permissionBroker?: PermissionBroker;
+```
+
+- [ ] **Step 2: Delete the flag, its derivation, and its only input**
+
+Remove, in this order, and let the compiler find the rest:
+
+1. `fleet/roster.ts` — the `noHumanSeam?: boolean` field and its doc comment.
+2. `fleet/project.ts` — the `AgentsRow.noHumanSeam` field and the `...(roster.noHumanSeam ? … )` spread.
+3. `cli/agents.ts:15` — the `⚠ no human seam` suffix. Keep the `(unresponsive)` suffix exactly as it is.
+4. `host/host.ts` — `SessionHostOpts.noHumanSeam` and the row spread that writes it.
+5. `cli/hostMain.ts` — the `const noHumanSeam = …` line and the opts spread that carries it. **Keep the
+   `forkSession` derivation above it untouched** — that one is load-bearing for `--bg --resume`.
+6. `cli/args.ts` — `CcxInvocation.hasExplicitPermissionConfig`, its initialiser, and the two
+   `a.hasExplicitPermissionConfig = true` assignments. **Keep the parsing itself**: `--permission-mode`
+   must still set `config.permissionMode` and `--settings` must still set `config.settings`. Only the
+   boolean and its comment go. Confirm with `grep -rn hasExplicitPermissionConfig src/` that nothing
+   else reads it before deleting.
+
+- [ ] **Step 3: Delete the tests that only existed for the flag**
+
+- `fleet-roster.test.ts` — *"round-trips the noHumanSeam flag, which agents surfaces"*: delete.
+- `fleet-project.test.ts` — *"carries noHumanSeam through from the roster…"*: delete.
+- `host-session.test.ts` — *"records noHumanSeam on the roster row…"*: delete.
+- `cli-agents.test.ts:145` — the render test passes `{ unresponsive: true, noHumanSeam: true }`; keep
+  the test, drop `noHumanSeam` from the input and drop the marker from the expected string. Do **not**
+  delete it: it is the `(unresponsive)` suffix's only coverage.
+- `cli-args.test.ts` — the three `hasExplicitPermissionConfig` assertions go. The dangling-flag test at
+  line 45 asserts something else as well; keep whatever remains meaningful and say in your report what
+  you kept.
+
+- [ ] **Step 4: Run**
+
+Run: `npx vitest run test/unit && npm run typecheck && npm run build`
+Expected: PASS. A leftover reference is a compile error, which is the point of deleting the type first.
+
+- [ ] **Step 5: Check the consumer contract is untouched**
+
+Run: `npx vitest run test/contract`
+Expected: PASS. `noHumanSeam` was never one of the five keys doperpowers reads (`id`, `sessionId`,
+`state`, `status`, `cwd`), so removing it must not move the contract. If a contract test fails, stop —
+that means it was load-bearing after all.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add probes/probes/64-auto-mode-vs-canusetool.ts docs/superpowers/specs/2026-07-26-clone-process-surface-spine-design.md
-git commit -m "probe(a2a): 64 — does permissionMode auto consult canUseTool at all?
+git add harness/src harness/test/unit
+git commit -m "refactor(a2a): delete the no-human-seam flag
 
-The spec's bare--bg ask floor assumes permissionMode default; our DEFAULTS say
-auto, which this repo records as broker-replacing. An ask floor under our real
-defaults would be inert and would test green. Floor deferred to A2b, where
-attach exists to answer a park and the mode decision can be made on evidence."
+Owner decision: keep the SDK's auto classifier as the background permission
+posture, and drop the warning. Probe 64 also refutes the premise the flag was
+built on — with an explicit ask rule present, auto consults canUseTool exactly
+as default does, so what summons the human seam is the rule, not the mode. The
+flag marked a supported configuration with a reason that was not true.
+
+Also corrects the config/types.ts comment that recorded auto as
+broker-replacing."
 ```
 
 ---
@@ -1933,9 +1979,9 @@ one.
 ```ts
   async stop(final?: FleetState): Promise<void> {
     if (final) this.state = final;
-    // Settle first, and do it explicitly. Probe 63 could not establish whether the SDK aborts a parked
-    // canUseTool when the turn is interrupted, so relying on that would make `ccx stop` on a blocked
-    // session a coin flip; denying here is correct under either answer and leaves nothing awaited.
+    // Settle first, and do it explicitly. Probe 63 shows interrupt() DOES abort a parked canUseTool,
+    // so this is belt-and-braces rather than the mechanism — but it settles synchronously instead of
+    // awaiting an abort round-trip, and it covers a session with no interrupt() at all.
     this.parked.denyAll();
     this.syncRoster();                     // terminal state on disk BEFORE anything that can block
     // Ending the turn is the repair, not the timeout below: dispose() is `input.close(); await done`,
@@ -2042,19 +2088,29 @@ Expected: one row with `"state": "blocked"`. Paste the verbatim output into your
 plainly that the park was driven through the host's broker rather than by a model calling a tool,
 because the account's weekly limit ends every real turn in about three seconds without a tool call.
 
-- [ ] **Step 4b: The unresolved premises, recorded not hidden**
+- [ ] **Step 4b: Confirm the premises this plan was built on still read as recorded**
 
-State in your report, as a list, that these remain unverified against a live account and must be
-re-run when the weekly limit resets on 2026-07-29:
+All four A2 probes were run live on 2026-07-27 and are **resolved**; the plan's design follows their
+results rather than hedging against them. Re-run them and paste the verdict lines into your report, so
+a regression in the SDK shows up here rather than in production:
 
-1. `probes/probes/62-*.ts` — whether an attaching client can replay an in-flight turn from the
-   engine's on-disk transcript (Task 3's `TurnBuffer` exists because this is unknown).
-2. `probes/probes/63-*.ts` — whether `interrupt()` releases a parked `canUseTool` (Tasks 5 and 6 deny
-   explicitly rather than depend on it).
-3. `probes/probes/63b-*.ts` — whether a park survives ten minutes, which is what "parks indefinitely"
-   claims.
-4. `probes/probes/64-*.ts` — whether `permissionMode: "auto"` consults `canUseTool` at all. A2b's ask
-   floor, and with it spec acceptance 9's whole premise, waits on this one.
+```bash
+cd CC-to-SDK/probes && set -a; . ../.env; set +a
+for p in 62-midturn-transcript-and-stream-volume 63-interrupt-vs-parked-permission 64-auto-mode-vs-canusetool; do
+  echo "--- $p"; npx tsx "probes/$p.ts" 2>&1 | tail -6
+done
+```
+
+Expected, matching what the plan cites:
+
+1. **62** — the transcript does **not** grow mid-turn (Task 3's `TurnBuffer` is required, not
+   speculative), and the stream runs at roughly 3 messages/s and 1.4 KiB/s.
+2. **63** — `interrupt()` **does** abort a parked `canUseTool`, and the stream then throws rather than
+   returning a result.
+3. **64** — `auto` **does** consult `canUseTool` when a rule routes a tool to `ask` (Task 8's premise).
+4. **63b** (`npx tsx probes/63b-park-soak-ten-minutes.ts`, ~11 min) — a park survives ten minutes and
+   answers normally. Run it once; if it now fails, acceptance 8's word "indefinitely" needs revisiting
+   and that is a finding, not a flake.
 
 - [ ] **Step 5: Commit anything the verification changed**
 
