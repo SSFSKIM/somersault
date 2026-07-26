@@ -14,7 +14,7 @@ export interface CcxInvocation {
    *  row. Distinct from `worktree` (the name as typed) on purpose: the two live in different domains,
    *  and rmSession acts only on an absolute path. */
   worktreePath?: string;
-  json: boolean; all: boolean; cwdFilter?: string; idleTimeoutMs?: number;
+  json: boolean; all: boolean; cwdFilter?: string;
   /** ARGV-SCOPED despite the name: true iff THIS command line carried --permission-mode or --settings.
    *  It cannot observe a project settings file, a managed policy, or any other source. hostMain derives
    *  noHumanSeam from it by re-parsing argv, so a rename ripples — read it as "the operator said so here". */
@@ -88,9 +88,10 @@ export function parseCcx(argv: string[]): CcxInvocation {
       case "-n": case "--name": a.name = val(t); break;
       case "--worktree": a.worktree = val(t); break;
       case "--cwd": { const v = val(t); if (a.command === "agents") a.cwdFilter = v; else a.config.cwd = v; break; }
-      // NaN would sail through: setTimeout coerces it to ~0, so `--idle-timeout 30s` becomes a watchdog
-      // that fires immediately instead of an error.
-      case "--idle-timeout": { const v = val(t); const n = Number(v); if (!v.trim() || !Number.isFinite(n)) throw new Error(`--idle-timeout must be a number of seconds, got ${JSON.stringify(v)}`); a.idleTimeoutMs = n * 1000; break; }
+      // Parsed into a field nothing forwarded to the child and nothing consumed: an operator who asked
+      // for a watchdog on an unattended worker got none, silently — the exact failure KNOWN_UNSUPPORTED
+      // exists to prevent. Rejected by name until the reaper it configures actually exists.
+      case "--idle-timeout": throw new Error("--idle-timeout is recognized but not wired yet (the idle reaper ships in plan A2) — omit it");
       case "--model": a.config.model = val(t); break;
       case "--effort": a.config.effort = oneOf("--effort", val(t), EFFORT_LEVELS); break;
       case "-r": case "--resume": a.config.resume = val(t); break;

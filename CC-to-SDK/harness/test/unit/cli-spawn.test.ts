@@ -48,7 +48,9 @@ describe("spawnDetached", () => {
     // kind is what gates the host's turn-finalize: an interactive host must NOT be frozen at `done` by
     // its first turn, so a kind that arrives wrong is a session that lies about its state for its whole life.
     const s = fakeSpawner();
-    spawnDetached(parseCcx(["--detachable", "-n", "w1", "task"]), { spawn: s.spawn, rand: () => 0 });
+    // Not via --detachable: main refuses that outright in A1, so this is the plain no-flag invocation
+    // the A2 foreground path will arrive as.
+    spawnDetached(parseCcx(["-n", "w1", "task"]), { spawn: s.spawn, rand: () => 0 });
     expect(s.calls[0].opts.env.CLAUDE_CODE_SESSION_KIND).toBe("interactive");
     const args: string[] = s.calls[0].args;
     expect(args[args.indexOf("--__kind") + 1]).toBe("interactive");

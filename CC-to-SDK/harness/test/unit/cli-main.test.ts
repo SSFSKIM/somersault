@@ -158,17 +158,15 @@ describe("main — run", () => {
     expect(out).toEqual([]);                         // nothing spawned, and no banner claiming it was
     expect(err.join("\n")).toContain("--worktree requires a name");
   });
-  it("dispatches --detachable to the spawn path, exactly like --bg", async () => {
-    // The other half of the `!bg && !detachable` refusal below: with only --bg exercised anywhere, dropping
-    // --detachable from that condition left every test green while `ccx --detachable <task>` started
-    // refusing a run it is supposed to background.
-    const got: CcxInvocation[] = [];
-    const { out, value } = await captureLog(() => main(["--detachable", "task"],
-      deps({ spawnDetached: (inv) => { got.push(inv); return banner; } })));
-    expect(value).toBe(0);
-    expect(out[0]).toBe("backgrounded · 00000000");
-    expect([got[0]!.detachable, got[0]!.bg]).toEqual([true, false]);
-    expect(got[0]!.prompt).toBe("task");
+  it("refuses --detachable instead of printing a banner over a host that dies at once", async () => {
+    // Routed to the detached spawn it looked like it worked: banner on stdout, exit 0 — but nothing in
+    // A1 keeps a host alive with no turn to run, so the child stopped immediately and left a `working`
+    // roster row over a dead pid. deps() throws from spawnDetached, so the value of 2 also proves
+    // nothing was spawned.
+    const { out, err, value } = await captureLog(() => main(["--detachable", "task"], deps()));
+    expect(value).toBe(2);
+    expect(out).toEqual([]);
+    expect(err.join("\n")).toMatch(/--detachable/);
   });
   it("reports a worktree that could not be prepared and spawns NOTHING", async () => {
     const { err, value } = await captureLog(() => main(["--bg", "--worktree", "wt", "task"],

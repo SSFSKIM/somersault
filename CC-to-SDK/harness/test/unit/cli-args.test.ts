@@ -61,10 +61,11 @@ describe("parseCcx", () => {
     expect(a.config.effort).toBe("xhigh");
     expect(() => parseCcx(["--bg", "--effort", "extreme", "x"])).toThrow(/extreme/);
   });
-  it("rejects a non-numeric --idle-timeout instead of arming a 0ms watchdog", () => {
-    expect(parseCcx(["--bg", "--idle-timeout", "30", "x"]).idleTimeoutMs).toBe(30_000);
-    expect(() => parseCcx(["--bg", "--idle-timeout", "30s", "x"])).toThrow(/idle-timeout/);
-    expect(() => parseCcx(["--bg", "--idle-timeout"])).toThrow(/idle-timeout/);
+  it("rejects --idle-timeout by name rather than parsing a watchdog nothing arms", () => {
+    // It used to parse into a field the spawn path never forwarded and no host ever read: an operator
+    // who asked an unattended worker for an idle reaper got none, in silence.
+    expect(() => parseCcx(["--bg", "--idle-timeout", "30", "x"])).toThrow(/--idle-timeout/);
+    expect(() => parseCcx(["--bg", "--idle-timeout"])).toThrow(/--idle-timeout/);
   });
   it("throws on a second positional rather than running an agent on the first word", () => {
     expect(() => parseCcx(["fix", "the", "bug"])).toThrow(/the/);

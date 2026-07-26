@@ -62,7 +62,12 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
       // Refused BEFORE the worktree is created: a checkout and a branch made for a command we then
       // decline are an orphan no roster row names, so `ccx rm` can never reach them. A2 moves this
       // below once the foreground path can actually use what was created.
-      if (!inv.bg && !inv.detachable) return fail("foreground run ships in plan A2 (it needs the client)", 2);
+      // --detachable is an ATTACHED session that survives its terminal, and nothing in A1 keeps a host
+      // alive with no turn to run: routed to the detached spawn it printed a success banner and the child
+      // stopped immediately, leaving a `working` row over a dead pid for a poller to wait out. Refuse it
+      // like attach until A2 brings the client that holds a session up.
+      if (inv.detachable) return fail("--detachable ships in plan A2 (it needs the client)", 2);
+      if (!inv.bg) return fail("foreground run ships in plan A2 (it needs the client)", 2);
       if (inv.worktree !== undefined) {
         // PRESENT and empty is not the same as absent: `--worktree "$WT"` with WT unset arrives here as "",
         // which the old truthiness guard read as "no worktree asked for" — the run landed in the shared
