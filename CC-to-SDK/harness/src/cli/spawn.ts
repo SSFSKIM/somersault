@@ -11,8 +11,9 @@ export interface SpawnDeps { spawn: typeof realSpawn | ((c: string, a: string[],
  *  pid, sessionId or name. doperpowers' daemon-spawn.sh runs inside an agent, so this is the real path. */
 const INHERITED_SESSION_VARS = ["CLAUDE_JOB_DIR", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION"];
 
-/** Reconstructed, not forwarded raw: the parent has already resolved --worktree into config.cwd, and
- *  --bg itself must not repeat or the child would fork again. */
+/** Reconstructed, not forwarded raw: --worktree is a NAME the parent has already resolved (it travels
+ *  as the --__worktree marker below, a path), and --bg itself must not repeat or the child would fork
+ *  again. */
 function configFlags(inv: CcxInvocation): string[] {
   const out: string[] = [];
   const c = inv.config as Record<string, string | undefined>;
@@ -38,7 +39,12 @@ export function spawnDetached(inv: CcxInvocation, deps: SpawnDeps = { spawn: rea
   // parent's execArgv, and bare node does not remap this repo's mandated `./x.js` specifiers back to .ts —
   // the child dies at its first relative import (ERR_MODULE_NOT_FOUND) before it can write a roster row.
   // For a packaged `node dist/…` invocation execArgv is empty, so this is a no-op in production.
-  const args = [...process.execArgv, process.argv[1], "--__host", short, "--__kind", kind, ...configFlags(inv), ...(inv.prompt ? [inv.prompt] : [])];
+  // The resolved worktree rides with the markers, not as a --worktree flag: only the CHILD writes the
+  // roster row, and `worktree` is the single field `ccx rm` acts on — a path that stops here leaves rm
+  // with nothing to clean up. A flag would also re-enter the parser's NAME domain in the child.
+  const args = [...process.execArgv, process.argv[1], "--__host", short, "--__kind", kind,
+    ...(inv.worktreePath ? ["--__worktree", inv.worktreePath] : []),
+    ...configFlags(inv), ...(inv.prompt ? [inv.prompt] : [])];
   const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_CODE_SESSION_NAME: name, CLAUDE_CODE_SESSION_KIND: kind };
   for (const v of INHERITED_SESSION_VARS) delete env[v];
   const child = deps.spawn(process.execPath, args, {

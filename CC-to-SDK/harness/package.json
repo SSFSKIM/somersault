@@ -16,7 +16,7 @@
       "import": "./dist/index.js"
     }
   },
-  "bin": { "cc-harness": "./dist/cli.js" },
+  "bin": { "cc-harness": "./dist/cli.js", "ccx": "./dist/cli/bin.js" },
   "files": ["dist"],
   "engines": { "node": ">=18" },
   "scripts": {

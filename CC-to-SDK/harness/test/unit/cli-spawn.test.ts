@@ -161,6 +161,30 @@ describe("parseHostArgv", () => {
   it("rejects a kind outside bg|interactive", () => {
     expect(() => parseHostArgv(["--__host", "0a1b2c3d", "--__kind", "--model", "m1"])).toThrow(/bg\|interactive/);
   });
+  it("reads an optional --__worktree marker positionally, after the kind", () => {
+    const { worktree, inv } = parseHostArgv(["--__host", "0a1b2c3d", "--__kind", "bg", "--__worktree", "/repo/.claude/worktrees/wt", "--model", "m1", "task"]);
+    expect(worktree).toBe("/repo/.claude/worktrees/wt");
+    expect(inv.config.model).toBe("m1"); expect(inv.prompt).toBe("task");
+  });
+  it("leaves the worktree unset when the marker is absent, without eating the next flag", () => {
+    const { worktree, inv } = parseHostArgv(["--__host", "0a1b2c3d", "--__kind", "bg", "--model", "m1", "task"]);
+    expect(worktree).toBeUndefined();
+    expect(inv.config.model).toBe("m1"); expect(inv.prompt).toBe("task");
+  });
+  it("rejects a relative --__worktree, because rm refuses to act on one", () => {
+    // rmSession throws on a non-absolute worktree, so a row written from a relative marker could never
+    // be removed. Refuse it here, where the failure is still visible, not on the row three days later.
+    expect(() => parseHostArgv(["--__host", "0a1b2c3d", "--__kind", "bg", "--__worktree", "wt", "task"])).toThrow(/absolute path/);
+    expect(() => parseHostArgv(["--__host", "0a1b2c3d", "--__kind", "bg", "--__worktree"])).toThrow(/absolute path/);
+  });
+  it("forwards the resolved worktree path from the invocation into the markers", () => {
+    const s = fakeSpawner();
+    const inv = parseCcx(["--bg", "-n", "w1", "task"]);
+    inv.worktreePath = "/repo/.claude/worktrees/wt";
+    spawnDetached(inv, { spawn: s.spawn, rand: () => 0 });
+    const args: string[] = s.calls[0].args;
+    expect(args[args.indexOf("--__worktree") + 1]).toBe("/repo/.claude/worktrees/wt");
+  });
   it("round-trips the argv spawnDetached builds, markers first", () => {
     const s = fakeSpawner();
     spawnDetached(parseCcx(["--bg", "--permission-mode", "auto", "-n", "w1", "do it"]), { spawn: s.spawn, rand: () => 0 });

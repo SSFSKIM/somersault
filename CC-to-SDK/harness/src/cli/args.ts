@@ -9,6 +9,11 @@ export interface CcxInvocation {
   prompt?: string; target?: string;
   bg: boolean; detachable: boolean; print: boolean;
   name?: string; worktree?: string;
+  /** The ABSOLUTE path `--worktree` resolved to. The parser never sets it — main fills it in after
+   *  ensureWorktree, and spawnDetached carries it to the child, which is what writes it on the roster
+   *  row. Distinct from `worktree` (the name as typed) on purpose: the two live in different domains,
+   *  and rmSession acts only on an absolute path. */
+  worktreePath?: string;
   json: boolean; all: boolean; cwdFilter?: string; idleTimeoutMs?: number;
   /** ARGV-SCOPED despite the name: true iff THIS command line carried --permission-mode or --settings.
    *  It cannot observe a project settings file, a managed policy, or any other source. hostMain derives

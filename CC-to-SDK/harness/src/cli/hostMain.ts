@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { SessionHost } from "../host/host.js";
 import { isShortId } from "../fleet/paths.js";
 import { parseCcx } from "./args.js";
@@ -11,24 +12,35 @@ import type { CcxInvocation } from "./args.js";
  *  word, so `--__host <id> --__kind bg --model --__host task` reduces to just ["--model"], eating the
  *  flag value and the prompt. Nothing upstream saves us: the dispatcher routes on
  *  `argv.includes("--__host")` before parseCcx ever runs, so a hand-typed `ccx --__host` reaches here. */
-export function parseHostArgv(argv: string[]): { short: string; kind: "bg" | "interactive"; inv: CcxInvocation } {
+export function parseHostArgv(argv: string[]): { short: string; kind: "bg" | "interactive"; worktree?: string; inv: CcxInvocation } {
   if (argv[0] !== "--__host" || argv[2] !== "--__kind") throw new Error("--__host is internal: expected `--__host <short> --__kind <bg|interactive>` first");
   const short = argv[1];
   if (!isShortId(short)) throw new Error(`--__host requires an 8-hex short id, got ${JSON.stringify(short)}`);
   const kind = argv[3];
   if (kind !== "bg" && kind !== "interactive") throw new Error(`--__kind must be bg|interactive, got ${JSON.stringify(kind)}`);
-  return { short, kind, inv: parseCcx(argv.slice(4)) };
+  // Optional, positional, and the LAST marker — the parent emits it only when --worktree was resolved.
+  // Absolute or nothing: this value becomes the roster row's `worktree`, and rmSession refuses a
+  // relative one outright, so a row written from one would be permanently unremovable.
+  let rest = 4, worktree: string | undefined;
+  if (argv[4] === "--__worktree") {
+    worktree = argv[5];
+    if (worktree === undefined || !isAbsolute(worktree)) throw new Error(`--__worktree requires an absolute path, got ${JSON.stringify(worktree)}`);
+    rest = 6;
+  }
+  return { short, kind, ...(worktree ? { worktree } : {}), inv: parseCcx(argv.slice(rest)) };
 }
 
 /** The detached child's entry point. Never called by a user directly; `--__host` is internal. */
 export async function runHostMain(argv: string[]): Promise<void> {
-  const { short, kind, inv } = parseHostArgv(argv);
+  const { short, kind, worktree, inv } = parseHostArgv(argv);
   // The child re-parses the forwarded config flags, so hasExplicitPermissionConfig is recomputed here
   // rather than smuggled across in yet another flag. A bare --bg has nothing that can route to `ask`.
   const noHumanSeam = kind === "bg" && !inv.hasExplicitPermissionConfig;
   const host = new SessionHost({
+    // The MARKER's value only, never inv.worktree: that one is a name (`wt`), and recording a name
+    // gives rm a row it refuses to touch forever. The parent never forwards --worktree anyway.
     short, name: process.env.CLAUDE_CODE_SESSION_NAME ?? short, cwd: process.cwd(), kind,
-    ...(inv.worktree ? { worktree: inv.worktree } : {}), ...(noHumanSeam ? { noHumanSeam } : {}),
+    ...(worktree ? { worktree } : {}), ...(noHumanSeam ? { noHumanSeam } : {}),
     config: inv.config,
   });
   await host.start();
