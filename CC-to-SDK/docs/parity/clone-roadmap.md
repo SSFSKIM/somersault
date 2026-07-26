@@ -4,6 +4,15 @@
 > as the primary metric.** Waves 1–4 (`full-potential.md`) are not undone — they are the *engine* this
 > track surfaces. Read `coverage.md` for capability state and `tui-ux.md` for visual state; this file
 > is the **sequencing** doc.
+>
+> **⚠️ Partly superseded 2026-07-26 by
+> [`../superpowers/specs/2026-07-26-clone-process-surface-spine-design.md`](../superpowers/specs/2026-07-26-clone-process-surface-spine-design.md).**
+> A brainstorming session reframed C1–C4 (this file treated interactive / headless / fleet as three
+> faces; the spec treats them as **four arrangements of one host+client process model**) and **reversed
+> §3 F2** — co-registration is not "guarded and fragile," it is the *existing state*, because our engine
+> is the `claude` CLI and its sessions self-register (probes 56/56b/57). Stages **C5 (TUI)** and the
+> §5 floor and §6 thesis below still stand; **C1–C4 are replaced by that spec's Goal A**, and the
+> control-plane gaps it found became Goal B.
 
 ## 0. The goal, restated
 
@@ -114,6 +123,14 @@ which changes the strategy space (see F2).
 
 PIDs in that directory do appear in `claude agents --json`, and the listing carries **both**
 `kind:"background"` and `kind:"interactive"` rows.
+
+> **REVERSED 2026-07-26 — read the spec, not this section.** The negative result below was an artifact
+> of the experiment. Liveness compares `procStart` against **`LC_ALL=C TZ=UTC ps -o lstart=`** and this
+> test supplied locale-formatted output; worse, fabricating a row is not the production path. Exercising
+> the real path instead (probe 56/56b) shows SDK-driven sessions **already self-register and already
+> appear in `claude agents`**, and probe 57 shows `CLAUDE_CODE_SESSION_NAME`/`_KIND` control the row.
+> Co-registration was never a decision to make. The conclusion drawn from this section — "run our own
+> registry" — is replaced by the spec's **zero-state fleet**.
 
 **The attractive hypothesis was co-registration** — write our own well-formed row and become visible
 to the real `claude agents`, making `daemon-list.sh` work with zero script changes. **It was tested
