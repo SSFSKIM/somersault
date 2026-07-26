@@ -1,9 +1,13 @@
 # Clone spine — process & surface architecture (Goal A) — design
 
-> **Revision 2 (2026-07-26).** A critical review found four load-bearing premises that were false or
-> unverified, two of which broke the north-star scenario outright. All four were reproduced against the
-> code and are fixed below; see **Revision Notes** for the diff and **Decision Log** for what changed
-> and why. Revision 1 should not be implemented.
+> **Revision 3 (2026-07-26).** Two review rounds. Rev 2 fixed four false or unverified premises from
+> rev 1; rev 3 fixes four more that rev 2 introduced or left open — most importantly a default
+> ask-policy that would have parked every doperpowers worker. Every load-bearing premise is now backed
+> by a probe or a source read (see **Grounding**); the four remaining unknowns are isolated in **Open
+> Questions**. Revisions 1 and 2 should not be implemented.
+>
+> **Revise this spec by targeted edit, never by rewrite.** Rev 2 was a wholesale rewrite and silently
+> dropped two contracts it was not trying to change.
 
 ## Purpose
 
@@ -46,6 +50,7 @@ Every load-bearing premise was verified against the live SDK, the doperpowers sc
 | **probe 57** | `CLAUDE_CODE_SESSION_NAME` / `_KIND` via SDK `env` are both honored on the **disk row** | direct; *not* verified end-to-end into the agents view — see Open Questions |
 | **probe 58** | A `canUseTool` decision **can be parked 25 s and answered late**; `options.signal` did not abort; the turn resumed and completed cleanly | direct |
 | **probe 58 (secondary)** | `canUseTool` fires **only for tools a rule routes to `ask`** — with no rules everything is auto-approved and there is no human seam | direct, and safety-relevant |
+| **probe 59** | A forked session's transcript **physically contains** the parent conversation (marker present, 18 lines), and the child still recalls it **after the parent transcript is deleted** | direct — this is what makes doperpowers' purge-after-resume safe |
 | doperpowers `_lib.sh` / `daemon-*.sh` | The real CLI contract (below) | direct source read |
 | binary: registry write | `<pid>.json` written at start, `unlink` on `process.exit` | source read |
 | binary: `gB(pid, procStart)` | Liveness compares `procStart` against `LC_ALL=C TZ=UTC ps -o lstart= -p <pid>`; absent `procStart` ⇒ alive | source read |
@@ -72,22 +77,48 @@ does not recurse.
 sed -n 's/.*backgrounded · \([0-9a-f][0-9a-f]*\).*/\1/p'
 ```
 
-so `--bg` **must** print `backgrounded · <lowercase-hex>` on stdout, with U+00B7 (`·`). We emit 8 hex
-digits to match CC. The banner must survive `</dev/null` and `2>&1 |` piping.
+so `--bg` **must** print `backgrounded · <lowercase-hex>` on stdout, with U+00B7 (`·`). The banner must
+survive `</dev/null` and `2>&1 |` piping.
+
+**Exactly 8 hex digits is normative, not cosmetic.** The `sed` above accepts one or more, but the purge
+path gates on the length: `_lib.sh` runs `[ "${#short}" -eq 8 ]` before `claude rm` and before
+`rm -rf ~/.claude/jobs/<short>`. A short id of any other length makes **the entire purge silently
+no-op** — superseded turns would accumulate forever with no error anywhere.
 
 **Fleet contract (`_poll_until_done`).** Polls `claude agents --json --all` every 2 s and reads, per row:
 `id` (the short id), `sessionId`, `state`, `status`, `cwd`. It finishes when `state ∈ {done, blocked,
 error}`, and coerces `state=="working" && status=="idle"` to `done`. A row whose `sessionId` is empty is
-treated as not-yet-ready and polling continues. State vocabulary observed in the scripts:
-`working | blocked | done | error`; status: `busy | idle`.
+treated as not-yet-ready and polling continues. State vocabulary consumed by the scripts:
+`working | blocked | done | error | stopped`; status: `busy | idle`. `daemon-finalize.sh` handles
+`error|stopped` on one arm (both finalize down the error path), and coerces `done-blocked` to an idle
+record — so `stopped` is a state we may emit, not merely one we must tolerate.
 
 **Reply channel.** Replies are read from the **transcript** (`~/.claude/projects/**/<uuid>.jsonl`), not
 from stdout. `~/.claude/jobs/<short>` is removed by the purge path.
 
 **Resume model.** `--bg --resume <uuid>` **forks a new turn under a new short id**, carrying the whole
-conversation forward; the superseded turn is then purged via `rm`. Our transcript handling must copy the
-conversation forward rather than chaining by reference, because the purge deletes the parent's
-transcript.
+conversation forward; the superseded turn is then purged via `rm`. The conversation must be copied
+forward rather than chained by reference, because the purge deletes the parent's transcript —
+**verified by probe 59**: the forked child's jsonl physically contains the parent's messages and the
+child still recalls them after the parent file is deleted. This is a property of the engine we inherit,
+not something Goal A implements; the acceptance test guards against regressing it.
+
+**Required grammar** (restored — rev 2 dropped this list while rewriting):
+
+| | |
+|---|---|
+| session shape | `-p/--print` · `-r/--resume <uuid>` · `--bg` · `--detachable` · `--idle-timeout` |
+| identity/placement | `-n/--name` · `--worktree <name>` |
+| engine config | `--model` · `--permission-mode` · `--effort` · `--settings` |
+| subcommands | `agents [--json] [--all] [--cwd]` · `attach <id>` · `stop <id>` · `rm <id>` · `fleet gc` |
+
+**`stop` semantics** (restored — this was in rev 1 and lost in rev 2; `daemon-resume.sh` depends on all
+four): it ends the current turn; the session **remains resumable by uuid**; it is removed from the
+active fleet view; and it is **idempotent on an already-dead session**. `stop` records roster
+`state: "stopped"`, which `daemon-finalize.sh` handles on its `error|stopped` arm.
+
+**`rm` semantics:** deletes the session and its worktree **when clean**, works on already-exited
+sessions (resolved from the roster), and is idempotent.
 
 **Not used by the scripts** and therefore out of Goal A's required grammar: `-c/--continue`,
 `--add-dir`, `--mcp-config`, `--agents`. `attach` appears only in human-facing guidance, not in script
@@ -144,6 +175,21 @@ TERMINAL  — recorded, because the past cannot be interrogated
 The roster row is written **at spawn** (so `short` exists before the session id does) and updated on
 exit with its terminal `state`. It is the resolution source for `rm` on an already-exited session, the
 short↔uuid↔worktree mapping, and `agents --all`.
+
+**Crash projection (normative).** A host that is `SIGKILL`ed never writes its terminal state, so its
+roster row is stuck at a non-terminal value. Projecting that verbatim would report `working` forever and
+hang `_poll_until_done` to its timeout. The rule follows the live/terminal split rather than adding
+another stored field — **state is derived at read time**:
+
+```
+roster state is terminal            → project it as-is
+roster state non-terminal + pid live (procStart matches, socket answers) → project the live status
+roster state non-terminal + pid dead                                     → project state = "error"
+```
+
+`error` is the honest projection — the session did not finish — and `daemon-finalize.sh` already routes
+`error` correctly. The roster row is *not* rewritten during this projection; `agents` stays read-only
+and `ccx fleet gc` owns any cleanup.
 
 **Socket keyed by pid, not session id.** Revision 1 derived the socket path from the session id; that is
 broken at both ends. `Session._sessionId` is captured from the first `system/init` frame
@@ -216,8 +262,22 @@ Resolution:
   keymap) means detach in an attached client; it must not be routed to the existing quit path.
 - **Park requires an `ask` policy to exist at all.** Probe 58's secondary finding: `canUseTool` fires
   only for tools a rule routes to `ask`. A bg worker with no rules auto-approves everything and never
-  parks — which is a *safety* outcome, not just a UX one. Goal A must therefore ship a default
-  ask-policy for `--bg`, and `ccx agents` must show when a worker is running with no human seam.
+  parks — a *safety* outcome, not just a UX one.
+
+  **Priority rule (normative — rev 2 omitted this and it broke the north star).** `daemon-spawn.sh`
+  spawns every worker as `--bg --permission-mode auto -n <name>`: unattended auto-approval is the
+  intended posture. An unconditional default ask-policy would park each worker at its first tool,
+  report `state: "blocked"`, and make `_poll_until_done` return early — reproducing rev 1's failure by a
+  different route. Therefore:
+
+  - **Any explicit permission configuration wins.** If `--permission-mode` is given, or settings supply
+    permission rules, the default ask-policy is **not applied at all**.
+  - **The default applies only to a bare `--bg`** with no permission configuration from any source —
+    the case where the alternative is silently approving everything.
+  - **Acceptance 9's "no human seam" flag is for that bare case only.** A worker running under an
+    explicit `auto` has a policy and must not be flagged.
+
+  In short: we supply a floor for the unconfigured case, never a ceiling over an expressed intent.
 
 ## Data flow — spawn → park → attach → answer
 
@@ -257,7 +317,11 @@ not locked to one client because a dead lock-holder would park the session forev
 7. Two attached clients both see the turn; the first answer wins; the second is told who answered.
 8. A `--bg` host parks indefinitely on an `ask`-routed tool with no client attached, and `agents` shows
    `state: "blocked"`.
-9. A `--bg` invocation with no `ask` policy is reported by `agents` as having no human seam.
+9. A **bare** `--bg` with no permission configuration is reported by `agents` as having no human seam;
+   a `--bg --permission-mode auto` worker (doperpowers' actual spawn) is **not** flagged, is **not**
+   given a default ask-policy, and runs its tools to completion without parking.
+9b. A host killed with `SIGKILL` mid-turn projects `state: "error"` in `agents --json --all` — not
+    `working` — so `_poll_until_done` terminates instead of running to its timeout.
 10. A default `ccx` session is attachable; closing its original terminal ends it.
 11. `SIGKILL`ing a host leaves a stale socket that `agents` reports as dead **without unlinking**;
     `ccx fleet gc` removes it.
@@ -267,10 +331,16 @@ not locked to one client because a dead lock-holder would park the session forev
     registry `cwd` is the worktree path, and a `--resume` turn inherits the worktree without repeating
     the flag. `rm` deletes it when clean and refuses, reporting why, when dirty.
 14. `ccx --bg --resume <uuid>` forks a new short id whose transcript contains the prior conversation,
-    and the parent remains removable without destroying that history.
+    and the parent remains removable without destroying that history (probe 59 property; this test
+    guards against regression).
 15. A recognized-but-unsupported flag exits non-zero naming the flag.
-16. doperpowers' `daemon-spawn.sh`, `daemon-resume.sh`, `daemon-list.sh`, `daemon-reply.sh` and the
-    `_lib.sh` purge path succeed against `ccx` under PATH shadowing, with no change to those scripts.
+16. `ccx stop <id>` ends the turn, leaves the session resumable by uuid, drops it from the active view,
+    records roster `state: "stopped"`, and is idempotent when re-run on the now-dead session.
+17. The short id is **exactly 8 lowercase hex** — asserted directly, because `_lib.sh` gates the whole
+    purge on `[ "${#short}" -eq 8 ]` and any other length disables it silently.
+18. doperpowers' `daemon-spawn.sh`, `daemon-resume.sh`, `daemon-list.sh`, `daemon-reply.sh`,
+    `daemon-finalize.sh`, and the `_lib.sh` purge path succeed against `ccx` under PATH shadowing, with
+    no change to those scripts.
 
 ## Testing
 
@@ -297,8 +367,14 @@ not locked to one client because a dead lock-holder would park the session forev
    no `-n`, `name` is `undefined` with no derived fallback. doperpowers always passes `-n`, so this is
    currently harmless — confirm and record.
 3. Whether `options.signal` aborts a park on `interrupt()` (probe 58 only proved it does not abort
-   spontaneously). Desired behavior is that it does; verify.
+   spontaneously). Desired behavior is that it does; verify. **Fold in the soak**: "park indefinitely"
+   is extrapolated from a 25 s hold, so run one 10 min+ park in the same gated live test to close both
+   questions at once.
 4. Whether the real `claude stop` / `rm` can act on our rows, which would matter if a user mixes CLIs.
+5. A parked permission and an in-flight `AskUserQuestion` both surface as `state: "blocked"`, and
+   doperpowers' reply reader parses the question out of the transcript — which a permission park does
+   not put there, so it falls back to the last assistant text. Behaviour is acceptable; recorded so it
+   is not mistaken for a bug. Goal B may distinguish them once `AskUserQuestion` has a handler.
 
 ## Non-goals
 
@@ -323,6 +399,8 @@ not locked to one client because a dead lock-holder would park the session forev
 | **PATH shadowing as the integration mechanism** | *A `CLAUDE_BIN` override "with no other change" (Revision 1).* | **False premise.** No such variable exists; the scripts call `claude` bare and doperpowers' own tests substitute via `PATH`. Contributing an override upstream is now explicit scope, not an assumption. |
 | **`agents` is read-only; a separate `gc` deletes** | *`agents` unlinks stale entries.* | Unlinking races a restarting host, and a read command should not mutate. |
 | **First answer wins across clients** | *Lock answering to one client.* | A dead lock-holder would park the session permanently. |
+| **Default ask-policy is a floor for bare `--bg` only; any explicit permission config wins** | *An unconditional default ask-policy for `--bg` (rev 2).* | **Reversed by review.** doperpowers spawns every worker `--permission-mode auto`; an unconditional default would park each at its first tool and make the poller return `blocked` early — rev 1's failure by another route. Supply a floor for the unconfigured case, never a ceiling over expressed intent. |
+| **Crashed-host state derived at read time** | *Store a heartbeat / rewrite the roster from `agents`.* | A heartbeat adds the stale-state class back; rewriting from a read command races a restarting host. Deriving from `procStart` + socket keeps `agents` read-only. |
 
 ## Surprises & Discoveries
 
@@ -348,6 +426,18 @@ not locked to one client because a dead lock-holder would park the session forev
 - **The TUI parity score hid a functional gap.** `AskUserQuestion` has no handler at all, so the model
   can call it and the turn proceeds with the human unable to answer — a *silent* capability loss. This
   produced the A/B split.
+- **A fix can delete the semantics it was standing on.** Rev 2 was a wholesale rewrite, and three of
+  its four new defects were *omissions* rather than errors: the `stop` contract present in rev 1
+  vanished, the required-grammar list vanished, and the new ask-policy sentence silently dropped the
+  precedence question. The way they were caught was reading the **deletion side** of the rev1→rev2 diff
+  rather than re-reading the new text. Rev 3 was therefore applied as **targeted edits, never a
+  rewrite** — and that rule now applies to every future revision of this spec.
+- **Two of my own "corrections" to the review were wrong, in the same way.** I claimed the 8-hex short
+  id was cosmetic because the `sed` accepts one-or-more — but the load is at `_lib.sh`'s
+  `[ "${#short}" -eq 8 ]` purge gate, a different line than the one I checked. And I claimed `stopped`
+  was absent from the scripts because I grepped for the quoted string; the real occurrence is an
+  unquoted `case` arm, `error|stopped)`. **Checking the site you thought of is not the same as checking
+  the claim.**
 - **Three of the review's four critical findings share one root:** Revision 1 adopted "store no state"
   as a slogan and then implicitly denied it in three separate sentences that each needed state
   (completion polling, `rm` on a dead session, socket discovery). A principle stated as an absolute
@@ -360,6 +450,21 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- **2026-07-26 rev 3** — second review round; four new issues, all introduced or left open by rev 2.
+  (1) **The rev-2 default ask-policy broke the north star**: doperpowers spawns every worker
+  `--bg --permission-mode auto`, so an unconditional default would park each at its first tool and
+  return `blocked` to the poller. Added the precedence rule — explicit permission config always wins,
+  the default is a floor for bare `--bg` only — and narrowed acceptance 9. (2) **Fork-copy was still an
+  assertion**; probe 59 added and it PASSES — the child transcript physically contains the parent
+  conversation and survives the parent's deletion, so the purge is safe. (3) **Restored the required-
+  grammar list and the `stop` semantics**, both silently lost in rev 2's rewrite; `stop` now records
+  roster `stopped`, which `daemon-finalize.sh` already routes. (4) **Defined crash projection**: a
+  roster row that is non-terminal with a dead pid projects `state: "error"` at read time, so a
+  `SIGKILL`ed host cannot hang the poller. Also: 8-hex is now normative with its real reason
+  (`_lib.sh`'s `[ "${#short}" -eq 8 ]` purge gate); `stopped` restored to the state vocabulary;
+  `daemon-finalize.sh` added to the acceptance script list; the park soak folded into open question 3;
+  the `blocked` ambiguity between a permission park and `AskUserQuestion` recorded as open question 5.
+  **Applied as targeted edits, not a rewrite** — see Surprises.
 - **2026-07-26 rev 2** — critical review; four load-bearing premises reproduced as broken and fixed.
   (a) `CLAUDE_BIN` override does not exist → PATH shadowing, and the real script contract (banner
   format, `agents` row keys and state vocabulary, transcript reply channel, fork-on-resume) is now

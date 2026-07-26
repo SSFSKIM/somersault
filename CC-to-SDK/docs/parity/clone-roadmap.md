@@ -376,9 +376,9 @@ also why continuing to push the envelope metric would have been the wrong invest
 2. **Integrate via PATH shadowing** in a scoped environment — this is what doperpowers' own test suite
    already does to substitute a stub `claude`, so it needs no upstream change at all. Contributing a
    `CLAUDE_BIN`-style override to the owner's fork is a nicer long-term seam but is now optional scope,
-   not a prerequisite. *(Superseded reasoning below: it claimed the override was the only viable seam
-   because co-registration was blocked — but co-registration was never blocked.)* (F2 established this is the *only* viable seam — the
-   file-registry alternative is guarded and fragile.)
+   not a prerequisite. *(The rev-1 reasoning that once stood here — "F2 established this is the only
+   viable seam, the file-registry alternative is guarded and fragile" — is deleted, not merely
+   annotated: co-registration was never blocked.)*
 3. **Flip the live-test auth default** to no-token (interactive credential) per F4 — strictly more
    capability at identical billing, and it unblocks the plan-utilization surface in C5.
 
