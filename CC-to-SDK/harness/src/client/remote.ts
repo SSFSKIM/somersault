@@ -3,6 +3,7 @@ import type { Socket } from "node:net";
 import { decodeFrame } from "../host/wire.js";
 import type { HostEvent } from "../host/wire.js";
 import type { HostStatus } from "../host/ops.js";
+import { MAX_FRAME } from "../host/server.js";
 import type { PendingEntry } from "../permissions/pending.js";
 import type { PermissionDecision } from "../permissions/types.js";
 
@@ -54,6 +55,11 @@ export class RemoteChatSession {
       this.inflight.delete(id);
       waiter.resolve(frame);
     }
+    // Mirrors the server's own MAX_FRAME cap (server.ts): a host in a bad state that writes data with no
+    // terminating newline must not grow this buffer without bound for the life of a long-lived attached
+    // UI. The server destroys such a peer; we destroy such a host — `close`'s `fail()` handler then
+    // rejects every in-flight request rather than leaving them parked on a connection that is gone.
+    if (this.buf.length > MAX_FRAME) { this.buf = ""; this.sock.destroy(); }
   }
 
   private send<T>(op: Record<string, unknown>): Promise<T> {

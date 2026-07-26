@@ -104,6 +104,23 @@ describe("RemoteChatSession", () => {
     c.detach(); host.close();
   });
 
+  it("tears down the connection on an over-cap unterminated frame rather than growing the buffer forever", async () => {
+    const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
+    // A host in a bad state: writes far more than MAX_FRAME (256 KiB) with no newline anywhere in it.
+    const srv = createServer((sock) => {
+      sock.on("error", () => {});    // the client destroys its end mid-write; that EPIPE is not this test's concern
+      sock.write("x".repeat(300 * 1024));
+    });
+    await new Promise<void>((r) => srv.listen(p, () => r()));
+    const c = await RemoteChatSession.connect(p);
+    const closed = new Promise<void>((r) => (c as any).sock.once("close", r));
+    const inflight = c.status();               // parked before the flood lands — must reject, not hang
+    await closed;                              // the client destroyed its own end of the socket
+    expect((c as any).buf.length).toBe(0);     // the buffer was discarded, not left to keep growing
+    await expect(inflight).rejects.toThrow();
+    srv.close();
+  });
+
   it("follow(): calling the same unsubscribe function twice sends `unfollow` only once", async () => {
     const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
     const host = opCounter(p);
