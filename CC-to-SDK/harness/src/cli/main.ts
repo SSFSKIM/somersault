@@ -25,6 +25,9 @@ const defaults: MainDeps = {
 };
 
 const msg = (e: unknown): string => (e as Error)?.message ?? String(e);
+/** ONE stderr shape for the whole program — `ccx: <what went wrong>` — so a parse error, a refusal and a
+ *  throw caught at the top level in bin.ts all read the same way to an operator tailing a daemon's log. */
+const fail = (text: string, code: number): number => { console.error(`ccx: ${text}`); return code; };
 
 /** Returns the exit code; never throws for an operator error. Everything a consumer script reads —
  *  the banner on stdout, the refusal on stderr, the code — is decided here. */
@@ -34,7 +37,7 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
   // word — was routed to the child entry point, where it throws because the marker is not first.
   if (argv[0] === "--__host") { await deps.runHostMain(argv); return 0; }
   let inv: CcxInvocation;
-  try { inv = parseCcx(argv); } catch (e) { console.error(msg(e)); return 2; }
+  try { inv = parseCcx(argv); } catch (e) { return fail(msg(e), 2); }
 
   switch (inv.command) {
     case "agents":
@@ -46,31 +49,39 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
     case "stop": case "rm": {
       // rm is deliberately silent on a session it cannot find, so a MISSING target would exit 0 having
       // removed nothing — success, over a session still on disk. Refuse before we get there.
-      if (!inv.target) { console.error(`${inv.command} requires a session: a short id, a session uuid or a name`); return 2; }
+      if (!inv.target) return fail(`${inv.command} requires a session: a short id, a session uuid or a name`, 2);
       try { await (inv.command === "stop" ? deps.stopSession : deps.rmSession)(inv.target); return 0; }
-      catch (e) { console.error(msg(e)); return 1; }
+      catch (e) { return fail(msg(e), 1); }
     }
     case "gc":
       for (const p of await deps.fleetGc()) console.log(`removed ${p}`);
       return 0;
     case "attach":
-      console.error("attach ships in plan A2");
-      return 2;
+      return fail("attach ships in plan A2", 2);
     case "run": {
       // Refused BEFORE the worktree is created: a checkout and a branch made for a command we then
       // decline are an orphan no roster row names, so `ccx rm` can never reach them. A2 moves this
       // below once the foreground path can actually use what was created.
-      if (!inv.bg && !inv.detachable) { console.error("foreground run ships in plan A2 (it needs the client)"); return 2; }
-      if (inv.worktree) {
+      if (!inv.bg && !inv.detachable) return fail("foreground run ships in plan A2 (it needs the client)", 2);
+      if (inv.worktree !== undefined) {
+        // PRESENT and empty is not the same as absent: `--worktree "$WT"` with WT unset arrives here as "",
+        // which the old truthiness guard read as "no worktree asked for" — the run landed in the shared
+        // checkout and exited 0 with a banner, isolation requested and silently not delivered.
+        if (!inv.worktree.trim()) return fail("--worktree requires a name", 2);
         // Two consumers of the resolved path, both required: config.cwd is what the child process runs
         // in (and what the agents row reports back as its cwd), worktreePath is what the child records
         // on its roster row for `ccx rm`.
         try { inv.worktreePath = await deps.ensureWorktree(inv.config.cwd ?? process.cwd(), inv.worktree); }
-        catch (e) { console.error(`ccx: could not prepare worktree ${inv.worktree}: ${msg(e)}`); return 1; }
+        catch (e) { return fail(`could not prepare worktree ${inv.worktree}: ${msg(e)}`, 1); }
         inv.config.cwd = inv.worktreePath;
       }
       console.log(deps.spawnDetached(inv).banner);
       return 0;
     }
+    default:
+      // Exhaustive TODAY, and `inv.command` is `never` here to keep it that way. A member added to the
+      // union without an arm used to fall out of the switch as `undefined`, which bin.ts hands to
+      // exitAfterFlush as exit 0 — a command that did nothing, reported as success.
+      return fail(`unhandled command ${String(inv.command)}`, 2);
   }
 }

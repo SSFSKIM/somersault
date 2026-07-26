@@ -128,6 +128,27 @@ describe("main — run", () => {
     const { out } = await captureLog(() => main(["--bg", "-n", "w1", "task"], deps({ spawnDetached: () => banner })));
     expect(out[0]).toBe("backgrounded · 00000000");
   });
+  it("refuses a PRESENT but empty --worktree instead of quietly skipping the isolation", async () => {
+    // `--worktree "$WT"` with WT unset is what produces this, and the guard used to be truthiness: the
+    // worktree was skipped ENTIRELY — exit 0, banner printed, session running in the shared checkout that
+    // every downstream claim (the banner, the roster row's cwd) says it was isolated from.
+    const { out, err, value } = await captureLog(() => main(["--bg", "--worktree", "", "task"], deps({ spawnDetached: () => banner })));
+    expect(value).toBe(2);
+    expect(out).toEqual([]);                         // nothing spawned, and no banner claiming it was
+    expect(err.join("\n")).toContain("--worktree requires a name");
+  });
+  it("dispatches --detachable to the spawn path, exactly like --bg", async () => {
+    // The other half of the `!bg && !detachable` refusal below: with only --bg exercised anywhere, dropping
+    // --detachable from that condition left every test green while `ccx --detachable <task>` started
+    // refusing a run it is supposed to background.
+    const got: CcxInvocation[] = [];
+    const { out, value } = await captureLog(() => main(["--detachable", "task"],
+      deps({ spawnDetached: (inv) => { got.push(inv); return banner; } })));
+    expect(value).toBe(0);
+    expect(out[0]).toBe("backgrounded · 00000000");
+    expect([got[0]!.detachable, got[0]!.bg]).toEqual([true, false]);
+    expect(got[0]!.prompt).toBe("task");
+  });
   it("reports a worktree that could not be prepared and spawns NOTHING", async () => {
     const { err, value } = await captureLog(() => main(["--bg", "--worktree", "wt", "task"],
       deps({ ensureWorktree: async () => { throw new Error("fatal: not a git repository"); } })));
