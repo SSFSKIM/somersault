@@ -23,10 +23,11 @@ export interface HostHandlers {
 
 /** A frame with no newline in sight past this is a runaway peer, not an op. Same-user only (the socket
  *  sits under a 0o700 dir), but a detached host outlives its parent, so an unbounded buffer is not free.
- *  Exported so `RemoteChatSession` (the client side of this same socket) enforces the identical cap —
- *  a host in a bad state that writes without a terminating newline must not grow the client's buffer
- *  without bound either. */
-export const MAX_FRAME = 256 * 1024;
+ *  Bounds client→host traffic ONLY — small fixed-shape ops (`status`/`answer`/`prompt`). The OTHER
+ *  direction (host→client event frames, which carry SDK messages including large tool results) has its
+ *  own, much larger cap in `RemoteChatSession` — the two are not the same traffic and must not share a
+ *  constant (see client/remote.ts's `MAX_FRAME` for why reusing this one broke a legitimate stream). */
+const MAX_FRAME = 256 * 1024;
 
 /** One UDS listener per SESSION (not per fleet). NDJSON frames, one op per line; the connection stays
  *  open so A2 can add a long-lived `follow` stream over the same socket. */

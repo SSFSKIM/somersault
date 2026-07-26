@@ -106,19 +106,57 @@ describe("RemoteChatSession", () => {
 
   it("tears down the connection on an over-cap unterminated frame rather than growing the buffer forever", async () => {
     const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
-    // A host in a bad state: writes far more than MAX_FRAME (256 KiB) with no newline anywhere in it.
+    // A host in a bad state: writes far more than the CLIENT's own MAX_FRAME (32 MiB — see
+    // src/client/remote.ts) with no newline anywhere in it. (This is deliberately well above the
+    // server's separate, smaller 256 KiB cap: the two directions no longer share one constant.)
     const srv = createServer((sock) => {
       sock.on("error", () => {});    // the client destroys its end mid-write; that EPIPE is not this test's concern
-      sock.write("x".repeat(300 * 1024));
+      sock.write("x".repeat(33 * 1024 * 1024));
     });
     await new Promise<void>((r) => srv.listen(p, () => r()));
     const c = await RemoteChatSession.connect(p);
     const closed = new Promise<void>((r) => (c as any).sock.once("close", r));
     const inflight = c.status();               // parked before the flood lands — must reject, not hang
+    // 33 MiB takes a while to land and cross the cap — long enough that this request's OWN 10s
+    // deadline (REQUEST_TIMEOUT_MS) can fire before the `await closed` below resumes and the real
+    // `.rejects` assertion attaches. Attach a throwaway handler now so that legitimate-but-early
+    // rejection is never "unhandled" in the interim; the real assertion below still runs against the
+    // same promise regardless of which of the two ways it settles.
+    inflight.catch(() => {});
     await closed;                              // the client destroyed its own end of the socket
     expect((c as any).buf.length).toBe(0);     // the buffer was discarded, not left to keep growing
     await expect(inflight).rejects.toThrow();
     srv.close();
+  });
+
+  it("keeps a legitimate large frame delivered in several chunks intact, rather than tearing down the connection", async () => {
+    const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
+    // A real turn's event frame, not a runaway peer: comfortably over the SERVER's 256 KiB MAX_FRAME (a
+    // single tool result can be far bigger — follow.ts's own TurnBuffer is sized around a 2 MiB one),
+    // delivered in several chunks with a properly-terminating newline only at the very end.
+    const big = "y".repeat(500 * 1024);
+    const line = JSON.stringify({ t: "event", kind: "message", data: { big } }) + "\n";
+    const srv = createServer((sock) => {
+      sock.on("error", () => {});
+      let i = 0;
+      const chunk = 32 * 1024;
+      const pump = () => {
+        if (i >= line.length) return;
+        sock.write(line.slice(i, i + chunk));
+        i += chunk;
+        setTimeout(pump, 1);
+      };
+      pump();
+    });
+    await new Promise<void>((r) => srv.listen(p, () => r()));
+    const c = await RemoteChatSession.connect(p);
+    const seen: any[] = [];
+    c.follow((e) => seen.push(e));
+    await new Promise((r) => setTimeout(r, 500));   // give every chunk time to land
+    expect((c as any).sock.destroyed).toBe(false);   // must NOT have torn down the connection
+    expect(seen).toHaveLength(1);
+    expect(seen[0].data.big.length).toBe(big.length);   // and the frame must have arrived intact
+    c.detach(); srv.close();
   });
 
   it("follow(): calling the same unsubscribe function twice sends `unfollow` only once", async () => {

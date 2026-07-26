@@ -3,13 +3,21 @@ import type { Socket } from "node:net";
 import { decodeFrame } from "../host/wire.js";
 import type { HostEvent } from "../host/wire.js";
 import type { HostStatus } from "../host/ops.js";
-import { MAX_FRAME } from "../host/server.js";
 import type { PendingEntry } from "../permissions/pending.js";
 import type { PermissionDecision } from "../permissions/types.js";
 
 /** Long enough that a busy host answering a `status` while streaming a turn is never mistaken for a
  *  dead one; short enough that a client does not sit on a promise that will never settle. */
 const REQUEST_TIMEOUT_MS = 10_000;
+
+/** THIS direction's own cap — NOT the server's `MAX_FRAME`. The two directions carry different traffic:
+ *  the server bounds small fixed-shape client→host ops (`status`/`answer`/`prompt`), while this buffers
+ *  host→client **event** frames, which carry SDK messages including tool results — and follow.ts's own
+ *  TurnBuffer is explicitly sized around a single 2 MiB one. Reusing the server's 256 KiB cap here once
+ *  destroyed the connection on a legitimate ~500 KiB event before its terminating newline ever arrived —
+ *  worse than the runaway-peer case the cap exists to guard. 32 MiB is comfortably above any real single
+ *  SDK message while still bounding a peer that never sends a newline at all. */
+const MAX_FRAME = 32 * 1024 * 1024;
 
 /** A `ChatSession`-shaped handle on a host running in another process. Held by an attached client in
  *  place of a local Session. `detach()` is NOT `dispose()`: it drops this connection and leaves the
@@ -55,10 +63,11 @@ export class RemoteChatSession {
       this.inflight.delete(id);
       waiter.resolve(frame);
     }
-    // Mirrors the server's own MAX_FRAME cap (server.ts): a host in a bad state that writes data with no
+    // This direction's own cap (see MAX_FRAME above): a host in a bad state that writes data with no
     // terminating newline must not grow this buffer without bound for the life of a long-lived attached
-    // UI. The server destroys such a peer; we destroy such a host — `close`'s `fail()` handler then
-    // rejects every in-flight request rather than leaving them parked on a connection that is gone.
+    // UI. The server destroys such a peer on ITS cap; we destroy such a host on OURS — `close`'s
+    // `fail()` handler then rejects every in-flight request rather than leaving them parked on a
+    // connection that is gone.
     if (this.buf.length > MAX_FRAME) { this.buf = ""; this.sock.destroy(); }
   }
 
