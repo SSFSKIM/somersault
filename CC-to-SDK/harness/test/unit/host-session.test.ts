@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionHost } from "../../src/host/host.js";
 import { readRoster } from "../../src/fleet/roster.js";
+import { rosterPath } from "../../src/fleet/paths.js";
 
 let env: NodeJS.ProcessEnv;
 beforeEach(() => { env = { CCX_FLEET_ROOT: mkdtempSync(join(tmpdir(), "ccx-host-")), HOME: "/home/u" }; });
@@ -11,11 +12,19 @@ beforeEach(() => { env = { CCX_FLEET_ROOT: mkdtempSync(join(tmpdir(), "ccx-host-
 const opts = () => ({ short: "a1b2c3d4", name: "w1", cwd: "/w", kind: "bg" as const, config: {}, env });
 /** Always inject procStartOf: a unit test must not spawn `ps`. */
 const deps = (openSession: any) => ({ openSession, procStartOf: async () => "Sat Jul 25 02:55:52 2026" });
-/** A fake session: resolves the turn only when we let it, so we can observe `working` mid-flight. */
+/** A fake session: resolves the turn only when we let it, so we can observe `working` mid-flight.
+ *  `emitInit()` delivers a frame to the turn's onMessage the way the real Session does — it sets
+ *  .sessionId from the engine's init frame BEFORE dispatching it — so the mid-turn stamp is observable. */
 function fakeSession() {
   let finish!: () => void;
+  let onMessage: ((m: unknown) => void) | undefined;
   const turn = new Promise<void>((r) => (finish = r));
-  return { finish, session: { submit: async () => { await turn; return { result: {} }; }, sessionId: "sid-1", dispose: async () => {} } };
+  return {
+    finish,
+    emitInit: () => onMessage?.({ type: "system", subtype: "init", session_id: "sid-1" }),
+    session: { submit: async (_p: string, om: (m: unknown) => void) => { onMessage = om; await turn; return { result: {} }; },
+      sessionId: "sid-1", dispose: async () => {} },
+  };
 }
 /** A session whose turns resolve on their own — for the multi-turn edges, where a latch would deadlock. */
 const instantSession = () => ({ submit: async () => ({ result: {} }), sessionId: "sid-1", dispose: async () => {} });
@@ -83,6 +92,33 @@ describe("SessionHost", () => {
     const h = new SessionHost(opts(), deps(() => f.session as any));
     await h.start(); const running = h.runTask("x"); f.finish(); await running; await h.stop();
     expect(readRoster("a1b2c3d4", env)!.sessionId).toBe("sid-1");
+  });
+  it("stamps the sessionId MID-TURN, while the session is still running", async () => {
+    // The engine reports its id in the init frame, near the START of the turn. Stamping only at the end
+    // left `agents` printing sessionId "" for the session's whole life, and the consumer's uuid poller
+    // gives up after 30 × 2s — so every turn longer than a minute was unresumable while running fine.
+    const f = fakeSession();
+    const h = new SessionHost(opts(), deps(() => f.session as any));
+    await h.start();
+    const running = h.runTask("x");
+    expect(readRoster("a1b2c3d4", env)!.sessionId).toBeUndefined();   // nothing to stamp before the frame
+    f.emitInit();
+    expect(readRoster("a1b2c3d4", env)!.sessionId).toBe("sid-1");     // …and the turn has NOT finished
+    f.finish(); await running; await h.stop();
+  });
+  it("stamps ONCE — a later frame must not resurrect the row a concurrent `rm` unlinked", async () => {
+    // The stamp is read-then-write, so repeating it per message keeps re-opening the window in which an
+    // `rm` that unlinked the row between our read and our write has its deletion undone.
+    const f = fakeSession();
+    const h = new SessionHost(opts(), deps(() => f.session as any));
+    await h.start();
+    const running = h.runTask("x");
+    f.emitInit();
+    rmSync(rosterPath("a1b2c3d4", env));                              // `ccx rm` races the running turn
+    f.emitInit(); f.emitInit();
+    expect(readRoster("a1b2c3d4", env)).toBeUndefined();
+    f.finish(); await running; await h.stop();
+    expect(readRoster("a1b2c3d4", env)).toBeUndefined();              // and the end-of-turn sync is gated too
   });
   it("stop() with no final state writes nothing down — a working row stamped endedAt strands the poller", async () => {
     const h = new SessionHost(opts(), deps(() => fakeSession().session as any));

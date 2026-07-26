@@ -23,11 +23,12 @@ describe("projectRow — the four arms", () => {
     const r = projectRow({ roster: roster({ state: "done" }), pidLive: true, socketAnswers: true, liveStatus: { state: "working", status: "busy" } });
     expect(r.state).toBe("done"); expect(r.status).toBe("idle"); expect(r.unresponsive).toBeUndefined();
   });
-  it("arm 1 keeps its OWN sessionId even when a registry row claims that pid", () => {
-    // Registry rows are keyed by pid and unlinked on exit, so one matching a FINISHED session's pid is
-    // a different process. Handing the consumer a stranger's sessionId is worse than handing it none.
-    const r = projectRow({ roster: roster({ state: "done", sessionId: "sid-mine" }),
-      registry: { pid: 100, cwd: "/w", sessionId: "sid-stranger" }, pidLive: true, socketAnswers: true });
+  it("arm 1 reports its OWN sessionId — there is no second source to override it", () => {
+    // The engine's registry is filed by the pid of the CLI subprocess the SDK spawns, not ours, so a row
+    // that did match our pid is a different process. Handing the consumer a stranger's sessionId — to
+    // resume, reply to or delete — is worse than handing it none, which is why ProjectInput has no
+    // registry input at all any more.
+    const r = projectRow({ roster: roster({ state: "done", sessionId: "sid-mine" }), pidLive: true, socketAnswers: true });
     expect(r.sessionId).toBe("sid-mine");
   });
   it("an answering socket suppresses `unresponsive` even with no live status to report", () => {
@@ -49,10 +50,12 @@ describe("projectRow — the four arms", () => {
     const r = projectRow({ roster: roster({ state: "working" }), pidLive: false, socketAnswers: false });
     expect(r.state).toBe("error"); expect(r.status).toBe("idle");
   });
-  it("prefers the registry sessionId once the engine has one, and emits '' before that", () => {
-    // The poller treats an empty sessionId as not-yet-ready and keeps waiting — that is the startup window.
+  it("emits '' until the host has stamped a sessionId, and the stamped one once it has", () => {
+    // The poller treats an empty sessionId as not-yet-ready and keeps waiting — that is the startup
+    // window, and it must CLOSE while the turn is still running (the host stamps its row from the
+    // engine's init frame), not at exit: the consumer gives up after ~60s.
     expect(projectRow({ roster: roster({ sessionId: undefined }), pidLive: true, socketAnswers: true }).sessionId).toBe("");
-    expect(projectRow({ roster: roster({ sessionId: undefined }), registry: { pid: 100, cwd: "/w", sessionId: "sid-live" }, pidLive: true, socketAnswers: true }).sessionId).toBe("sid-live");
+    expect(projectRow({ roster: roster({ sessionId: "sid-live" }), pidLive: true, socketAnswers: true }).sessionId).toBe("sid-live");
   });
   it("emits the short id as `id` and carries cwd and name", () => {
     const r = projectRow({ roster: roster({ cwd: "/repo/.claude/worktrees/wt" }), pidLive: false, socketAnswers: false });

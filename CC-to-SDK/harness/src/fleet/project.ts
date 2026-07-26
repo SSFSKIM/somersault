@@ -1,6 +1,5 @@
 import { TERMINAL } from "./roster.js";
 import type { FleetState, RosterRow } from "./roster.js";
-import type { RegistryRow } from "./registry.js";
 
 /** The row shape doperpowers' _poll_until_done parses: id (short), sessionId, state, status, cwd. */
 export interface AgentsRow {
@@ -12,7 +11,6 @@ export interface AgentsRow {
 
 export interface ProjectInput {
   roster: RosterRow;
-  registry?: RegistryRow;
   pidLive: boolean;
   socketAnswers: boolean;
   liveStatus?: { state: FleetState; status: "busy" | "idle" };
@@ -24,15 +22,16 @@ export interface ProjectInput {
  *   live pid + socket silent      → roster state, flagged unresponsive (a live process is not a failure)
  *   dead pid                      → error (or the poller waits forever on a SIGKILLed host) */
 export function projectRow(input: ProjectInput): AgentsRow {
-  const { roster, registry, pidLive, socketAnswers, liveStatus } = input;
+  const { roster, pidLive, socketAnswers, liveStatus } = input;
   const base = { id: roster.short, cwd: roster.cwd, name: roster.name,
     ...(roster.noHumanSeam ? { noHumanSeam: true } : {}) };
 
-  // A finished session's identity comes from its OWN row. The engine unlinks its registry row on exit
-  // and files those rows by pid, so a registry row still matching a dead session's pid belongs to a
-  // DIFFERENT process — taking its sessionId would hand the consumer a stranger's session to act on.
+  // Identity comes from the session's OWN row, live or finished, and there is deliberately no second
+  // source. The engine's registry files its rows by the pid of the CLI subprocess it spawns — not the
+  // host's — so any row that did match our pid would belong to a DIFFERENT process, and taking its
+  // sessionId would hand the consumer a stranger's session to resume, reply to, or delete.
   if (TERMINAL.has(roster.state)) return { ...base, sessionId: roster.sessionId ?? "", state: roster.state, status: "idle" };
-  const sessionId = registry?.sessionId ?? roster.sessionId ?? "";
+  const sessionId = roster.sessionId ?? "";
   if (pidLive && socketAnswers && liveStatus) return { ...base, sessionId, state: liveStatus.state, status: liveStatus.status };
   if (pidLive && socketAnswers) return { ...base, sessionId, state: roster.state, status: "busy" };
   if (pidLive) return { ...base, sessionId, state: roster.state, status: "busy", unresponsive: true };

@@ -16,8 +16,7 @@ const row = (o: Partial<RosterRow> = {}): RosterRow => ({ short: "a1b2c3d4", pid
 // Partial<FleetDeps>, not `any`: an untyped override is checked against nothing, so a change to the
 // dependency's signature would leave every fake here silently stale and the suite still green.
 const deps = (over: Partial<FleetDeps> = {}): FleetDeps => ({
-  readRegistry: () => [], isPidLive: async () => false, socketAnswers: async () => false,
-  askStatus: async () => undefined, ...over,
+  isPidLive: async () => false, socketAnswers: async () => false, askStatus: async () => undefined, ...over,
 });
 
 describe("collectFleet", () => {
@@ -47,19 +46,19 @@ describe("collectFleet", () => {
     expect(seen[0]).toBe("Sat Jul 25 02:55:52 2026");
     expect(rows[0].state).toBe("error");
   });
-  it("prefers its OWN procStart over a registry row that merely shares a recycled pid", async () => {
-    // Registry rows are pid-keyed and pids are recycled, so a stranger's row can pair with a corpse's
-    // roster row. Trusting the stranger's stamp makes `ps` agree, and the dead row then reports the
-    // stranger's state, status AND sessionId over a pid-keyed socket a consumer might attach to.
+  it("probes liveness with our OWN stamp and nothing else — a stranger's must never stand in", async () => {
+    // The engine's registry is pid-keyed and its pids are the CLI subprocess's, not ours, so any row
+    // that did match a corpse's pid belongs to a stranger. Falling back to its stamp makes `ps` agree,
+    // and the dead row then reports the stranger's state, status AND sessionId over a pid-keyed socket a
+    // consumer might attach to. Our stamp is the only input, so a corpse stays a corpse.
     writeRoster(row({ state: "working", sessionId: "sid-1", procStart: "Sat Jul 25 02:55:52 2026" }), env);
     const seen: (string | undefined)[] = []; let probed = false;
     const rows = await collectFleet(env, deps({
-      readRegistry: () => [{ pid: 100, cwd: "/other", sessionId: "sid-stranger", procStart: "Sun Jul 26 09:00:00 2026" }],
-      isPidLive: async (_p, ps) => { seen.push(ps); return ps === "Sun Jul 26 09:00:00 2026"; },   // ps agrees with the STRANGER
+      isPidLive: async (_p, ps) => { seen.push(ps); return ps === "Sun Jul 26 09:00:00 2026"; },   // ps agrees with a STRANGER
       socketAnswers: async () => { probed = true; return true; },
       askStatus: async () => ({ state: "working", status: "busy" }),
     }));
-    expect(seen[0]).toBe("Sat Jul 25 02:55:52 2026");
+    expect(seen).toEqual(["Sat Jul 25 02:55:52 2026"]);
     expect(rows[0]).toMatchObject({ state: "error", status: "idle" });
     expect(probed).toBe(false);                    // dead by our own stamp — the socket is never touched
   });
@@ -73,13 +72,15 @@ describe("collectFleet", () => {
     }));
     expect(Object.fromEntries(rows.map((r) => [r.id, r.state]))).toEqual({ aaaaaaaa: "error", bbbbbbbb: "done" });
   });
-  it("prefers a live registry sessionId over the roster's", async () => {
-    writeRoster(row({ sessionId: undefined }), env);
+  it("reports a RUNNING session's sessionId from its own row, the moment the host stamps one", async () => {
+    // The whole resume half of the consumer contract: `_poll_uuid` gives up after ~60s, so the uuid has
+    // to appear while the turn is still running. The only writer is the host's mid-turn stamp — a row
+    // that has one must project it live, not just once the session reaches a terminal state.
+    writeRoster(row({ state: "working", sessionId: "sid-live" }), env);
     const rows = await collectFleet(env, deps({
-      readRegistry: () => [{ pid: 100, cwd: "/w", sessionId: "sid-live" }],
       isPidLive: async () => true, socketAnswers: async () => true, askStatus: async () => ({ state: "working", status: "busy" }),
     }));
-    expect(rows[0].sessionId).toBe("sid-live");
+    expect(rows[0]).toMatchObject({ sessionId: "sid-live", state: "working", status: "busy" });
   });
   it("never unlinks anything — agents is read-only", async () => {
     // Not "one file survived": the whole fleet root must come back byte-identical. Every row here

@@ -71,7 +71,16 @@ export class SessionHost {
 
   async runTask(prompt: string): Promise<void> {
     this.busy = true; this.state = "working";
-    try { await this.session!.submit(prompt, () => {}); this.state = "done"; }
+    // Stamp the roster the MOMENT the engine's session id materializes — it arrives in the init frame
+    // near the start of the turn, and Session sets .sessionId before dispatching that frame here. Waiting
+    // for the turn to end (all syncRoster ever did) left `agents` printing sessionId "" for the session's
+    // whole life, and the consumer's uuid poller gives up after ~60s: every turn longer than that made
+    // `--resume` impossible while the run itself looked fine. Once, not per message: the write is
+    // read-then-write, so repeating it costs a syscall pair per frame and keeps re-opening the window in
+    // which a concurrent `ccx rm` has its unlink undone.
+    let stamped = false;
+    const stamp = () => { if (stamped || !this.session?.sessionId) return; stamped = true; this.writeSessionId(); };
+    try { await this.session!.submit(prompt, stamp); this.state = "done"; }
     catch (e) { this.state = "error"; throw e; }
     // For a BG worker the turn's completion IS the terminal event, so record it here: a host that dies
     // after the turn but before stop() then still reports `done` rather than waiting to be reaped by
@@ -91,6 +100,17 @@ export class SessionHost {
     await this.server?.close();
   }
 
+  /** Copy the engine's session id onto our row, if it has reported one yet. Read-then-write, and gated
+   *  on the row still existing: a `ccx rm` that unlinked it under us must not have it put back. This is
+   *  the ONLY writer of `sessionId` — nothing derives it at read time, because the engine files its own
+   *  registry rows by the pid of the CLI subprocess it spawns, never by ours. */
+  private writeSessionId(): void {
+    const sid = this.session?.sessionId;
+    if (!sid) return;
+    const r = readRoster(this.opts.short, this.env);
+    if (r) writeRoster({ ...r, sessionId: sid }, this.env);
+  }
+
   /** The session id lands here, not at start(): the engine only reports one once its first turn's
    *  init frame arrives, and a listing must be able to find this host before that — so that write is
    *  unconditional. Finalizing is not: only a TERMINAL state may be written down. Stamping a `working`
@@ -98,11 +118,7 @@ export class SessionHost {
    *  on it forever; skipping it loses nothing, because projectRow already turns a dead pid with a
    *  non-terminal row into `error` — exactly what a host that exited without finishing deserves. */
   private syncRoster(): void {
-    const sid = this.session?.sessionId;
-    if (sid) {
-      const r = readRoster(this.opts.short, this.env);
-      if (r) writeRoster({ ...r, sessionId: sid }, this.env);
-    }
-    if (TERMINAL.has(this.state)) finalizeRoster(this.opts.short, this.state, this.env);
+    this.writeSessionId();                              // runTask already did this mid-turn; re-run for
+    if (TERMINAL.has(this.state)) finalizeRoster(this.opts.short, this.state, this.env);  // the stop() path
   }
 }
