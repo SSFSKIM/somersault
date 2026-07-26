@@ -47,10 +47,11 @@ Every load-bearing premise was verified against the live SDK, the doperpowers sc
 |---|---|---|
 | **probe 56** | An SDK-spawned session self-registers `~/.claude/sessions/<pid>.json`, `entrypoint:"sdk-cli"` | row observed live; **unlink-on-exit is from binary read, not observed** |
 | **probe 56b** | That row **is listed by the real `claude agents --json --all`** (our pid among 38 rows) | direct |
-| **probe 57** | `CLAUDE_CODE_SESSION_NAME` / `_KIND` via SDK `env` are both honored on the **disk row** | direct; *not* verified end-to-end into the agents view — see Open Questions |
+| **probe 57** | `CLAUDE_CODE_SESSION_NAME` / `_KIND` via SDK `env` are both honored on the **disk row** | direct; composed end to end into the agents view by **probe 60** |
 | **probe 58** | A `canUseTool` decision **can be parked 25 s and answered late**; `options.signal` did not abort; the turn resumed and completed cleanly | direct |
 | **probe 58 (secondary)** | `canUseTool` fires **only for tools a rule routes to `ask`** — with no rules everything is auto-approved and there is no human seam | direct, and safety-relevant |
 | **probe 59** | A forked session's transcript **physically contains** the parent conversation (marker present, 18 lines), and the child still recalls it **after the parent transcript is deleted** | direct — this is what makes doperpowers' purge-after-resume safe |
+| **probe 60** | Env-set identity reaches the **real** `claude agents --json --all`: `name` verbatim, on-disk `kind:"bg"` rendered there as `"background"`. An inherited `CLAUDE_JOB_DIR` absorbs the session into the parent's job row and hides it | direct; closes Open Question 1 |
 | doperpowers `_lib.sh` / `daemon-*.sh` | The real CLI contract (below) | direct source read |
 | binary: registry write | `<pid>.json` written at start, `unlink` on `process.exit` | source read |
 | binary: `gB(pid, procStart)` | Liveness compares `procStart` against `LC_ALL=C TZ=UTC ps -o lstart= -p <pid>`; absent `procStart` ⇒ alive | source read |
@@ -327,8 +328,12 @@ not locked to one client because a dead lock-holder would park the session forev
    `state ∈ {working, blocked, done, error, stopped}` and `status ∈ {busy, idle}`.
 3. **A session that has finished still appears** in `--all` with `state: "done"` — verified by polling
    after exit, which is the exact failure Revision 1 would have shipped.
-4. While running, the **real** `claude agents --json --all` also lists the session with the name and
-   kind we requested.
+4. While running, the **real** `claude agents --json --all` also lists the session with the name we
+   requested and `kind: "background"` — the view's rendering of the on-disk `kind: "bg"` we set, so the
+   test asserts `"background"` there and `"bg"` only on the registry row (probe 60). The spawn path
+   must **scrub `CLAUDE_JOB_DIR`** from the child environment: inherited from a parent Claude Code
+   agent — which is exactly how doperpowers spawns — it absorbs our session into that parent's job row,
+   after which it is findable by neither name, pid, nor session id.
 5. `ccx attach <id>` replays the conversation, follows the in-flight turn, and renders a parked
    permission dialog if there is one.
 6. Answering resumes the session; `Ctrl+Z` detaches **without denying** the pending permission, and the
@@ -380,8 +385,6 @@ not locked to one client because a dead lock-holder would park the session forev
 
 ## Open questions (resolve during planning)
 
-1. **Probe 57 verified env → disk row, and probe 56b verified row → agents view, but no single probe
-   traced env → agents view end to end.** Close it with a one-run probe before relying on acceptance 4.
 2. The binary whitelists `kind` to `{bg, daemon, daemon-worker}` and ignores others; with `kind=bg` and
    no `-n`, `name` is `undefined` with no derived fallback. doperpowers always passes `-n`, so this is
    currently harmless — confirm and record.
@@ -457,6 +460,25 @@ not locked to one client because a dead lock-holder would park the session forev
   was absent from the scripts because I grepped for the quoted string; the real occurrence is an
   unquoted `case` arm, `error|stopped)`. **Checking the site you thought of is not the same as checking
   the claim.**
+- **Env identity does reach the real agents view — and the probe that proved it failed twice first,
+  both times for reasons worth keeping.** Probe 60 composes probes 57 and 56b: a session started with
+  `CLAUDE_CODE_SESSION_NAME` / `_KIND=bg` is listed by the real `claude agents --json --all` under the
+  name we set, so acceptance 4 is achievable. The two false failures: (1) the view **renders `kind:"bg"`
+  as `"background"`** — the on-disk row is `"bg"`, so an end-to-end test must expect a different string
+  at each end, and asserting the literal `"bg"` in the view reads as "the whitelist dropped it" when the
+  kind was in fact honored (without the variable the same row reads `"interactive"`); (2) an inherited
+  **`CLAUDE_JOB_DIR` silently absorbs the session into the parent's job**. A child that declares
+  `kind=bg` while that variable is in its environment adopts the parent's `jobId`, the view then renders
+  the row from the **job** record — the job's name and state, not ours — and our session is findable by
+  neither name, pid, nor session id. This one is not a lab artifact: doperpowers' `daemon-spawn.sh` is
+  itself run by a Claude Code agent, so a real `ccx --bg` inherits it. **The spawn path must scrub it.**
+- **The real view's live rows carry neither `id` nor `state`.** For our live sdk-cli row the key set is
+  exactly `pid, cwd, kind, startedAt, sessionId, name`; the historical rows in the same `--all` output
+  carry `id, cwd, kind, startedAt, sessionId, name, state` and no `pid`. So the real binary's own view
+  does not satisfy the row contract `_poll_until_done` needs (`id`, `sessionId`, `state`, `status`,
+  `cwd`) — `id` and `state` arrive only once a session is job-backed or terminal, and `status` appears
+  in neither shape. That contract is ours to satisfy in `ccx agents`; the real view is interop evidence,
+  not a template to copy.
 - **Three of the review's four critical findings share one root:** Revision 1 adopted "store no state"
   as a slogan and then implicitly denied it in three separate sentences that each needed state
   (completion polling, `rm` on a dead session, socket discovery). A principle stated as an absolute
@@ -474,6 +496,14 @@ Pending — written at finish.
   `noHumanSeam?: boolean`, set when a bare `--bg` ran with no permission configuration from any source.
   This does not touch the doperpowers contract: its poller reads named keys with `.get()`, so extra
   keys are inert.
+- **2026-07-26 rev 3.3 — Open Question 1 closed by probe 60: PASS.** Env-set identity does reach the
+  real `claude agents --json --all` — our `name` verbatim, and `kind:"bg"` surfaced there as
+  `"background"` — so acceptance 4 stands, with its assertion pinned to the rendered value. Two
+  corrections came out of the run and are recorded in Grounding, acceptance 4, and Surprises: the
+  `bg`→`background` rendering, and the requirement that the spawn path **scrub `CLAUDE_JOB_DIR`**, since
+  inheriting it from a parent Claude Code agent absorbs our session into that agent's job row and hides
+  it from the view entirely. Also recorded: the real view's live-row key set is
+  `pid, cwd, kind, startedAt, sessionId, name` — no `id`, no `state`, no `status`.
 - **2026-07-26 rev 3.2 (planning)** — Goal A is implemented as **two plans**, split where the state
   owner changes: **A1 (fleet substrate)** owns process/registry/roster state and is verified by the
   doperpowers scripts; **A2 (attach & the human seam)** owns interaction state and is verified by TUI
