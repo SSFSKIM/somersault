@@ -16,7 +16,8 @@
 - **Banner is exactly `backgrounded · <short>` on stdout**, with U+00B7 (`·`), and must survive `</dev/null` and `2>&1 |` piping.
 - **`agents --json` row keys:** `id`, `sessionId`, `state`, `status`, `cwd`. `state ∈ {working, blocked, done, error, stopped}`; `status ∈ {busy, idle}`.
 - **`--bg --resume` uses SDK `resume: <uuid>` + `forkSession: true`** — the exact lever probe 59 verified. Never in-place resume.
-- **Session identity is set by env, never by writing a registry row:** `CLAUDE_CODE_SESSION_NAME`, `CLAUDE_CODE_SESSION_KIND` (probe 57).
+- **Session identity is set by env, never by writing a registry row:** `CLAUDE_CODE_SESSION_NAME`, `CLAUDE_CODE_SESSION_KIND` (probe 57). On disk the kind reads `"bg"`; the real `claude agents` view renders that same row as `"background"` (probe 60) — assert the right string at each end.
+- **The spawn path scrubs the parent agent's session variables** — `CLAUDE_JOB_DIR`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`. A `kind=bg` child that inherits `CLAUDE_JOB_DIR` adopts the parent's job and disappears from the agents view behind the parent's identity (probe 60).
 - **`agents` is read-only.** It never unlinks anything; `ccx fleet gc` owns deletion.
 - **Any explicit permission configuration wins.** The default ask-policy floor applies only to a bare `--bg` with no permission config from any source.
 - **Code style:** dense hand-style, no Prettier reformatting; ESM imports end in `.js`; inject dependencies via a `deps = {...}` default parameter so unit tests run without network or real processes.
@@ -318,7 +319,7 @@ git commit -m "feat(fleet): procStart PID-reuse guard and 250ms socket probe"
 **Interfaces:**
 - Consumes: `rosterPath`, `fleetRoot` (Task 1).
 - Produces: `RosterRow` (type) · `writeRoster(row, env?)` · `readRoster(short, env?)` · `listRoster(env?)` · `finalizeRoster(short, state, env?)`
-- `RosterRow = { short: string; sessionId?: string; pid: number; cwd: string; worktree?: string; kind: "bg" | "interactive"; name: string; state: FleetState; startedAt: number; endedAt?: number }`
+- `RosterRow = { short: string; sessionId?: string; pid: number; cwd: string; worktree?: string; kind: "bg" | "interactive"; name: string; state: FleetState; startedAt: number; endedAt?: number; noHumanSeam?: boolean }`
 - `FleetState = "working" | "blocked" | "done" | "error" | "stopped"`
 
 - [ ] **Step 1: Write the failing test**
@@ -326,7 +327,7 @@ git commit -m "feat(fleet): procStart PID-reuse guard and 250ms socket probe"
 ```ts
 // harness/test/unit/fleet-roster.test.ts
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeRoster, readRoster, listRoster, finalizeRoster } from "../../src/fleet/roster.js";
@@ -358,9 +359,12 @@ describe("roster", () => {
   it("finalize on an unknown short is a no-op, not a throw — it must be idempotent for rm/stop", () => {
     expect(() => finalizeRoster("ffffffff", "stopped", env)).not.toThrow();
   });
+  it("round-trips the noHumanSeam flag, which agents surfaces", () => {
+    writeRoster(row({ noHumanSeam: true }), env);
+    expect(readRoster("a1b2c3d4", env)!.noHumanSeam).toBe(true);
+  });
   it("skips unparseable rows rather than failing the whole listing", () => {
     writeRoster(row(), env);
-    const { writeFileSync, mkdirSync } = require("node:fs");
     mkdirSync(join(env.CCX_FLEET_ROOT!, "roster"), { recursive: true });
     writeFileSync(join(env.CCX_FLEET_ROOT!, "roster", "cccccccc.json"), "{ not json");
     expect(listRoster(env).map((r) => r.short)).toEqual(["a1b2c3d4"]);
@@ -387,6 +391,9 @@ export const TERMINAL: ReadonlySet<FleetState> = new Set<FleetState>(["done", "e
 export interface RosterRow {
   short: string; sessionId?: string; pid: number; cwd: string; worktree?: string;
   kind: "bg" | "interactive"; name: string; state: FleetState; startedAt: number; endedAt?: number;
+  /** A bare `--bg` with no permission config from any source: nothing can ever route a decision to a
+   *  human, so `agents` must say so. Set once at start by the host; never derived at read time. */
+  noHumanSeam?: boolean;
 }
 
 export function writeRoster(row: RosterRow, env: NodeJS.ProcessEnv = process.env): void {
@@ -424,7 +431,7 @@ export function finalizeRoster(short: string, state: FleetState, env: NodeJS.Pro
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/unit/fleet-roster.test.ts && npm run typecheck`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -597,6 +604,11 @@ describe("projectRow — the four arms", () => {
     const r = projectRow({ roster: roster({ cwd: "/repo/.claude/worktrees/wt" }), pidLive: false, socketAnswers: false });
     expect(r.id).toBe("a1b2c3d4"); expect(r.cwd).toBe("/repo/.claude/worktrees/wt"); expect(r.name).toBe("w1");
   });
+  it("carries noHumanSeam through from the roster, and omits the key when it is not set", () => {
+    // Acceptance 9's reporting half: `agents` must be able to say a worker has nothing to ask.
+    expect(projectRow({ roster: roster({ noHumanSeam: true }), pidLive: false, socketAnswers: false }).noHumanSeam).toBe(true);
+    expect("noHumanSeam" in projectRow({ roster: roster(), pidLive: false, socketAnswers: false })).toBe(false);
+  });
 });
 ```
 
@@ -636,7 +648,8 @@ export interface ProjectInput {
  *   dead pid                      → error (or the poller waits forever on a SIGKILLed host) */
 export function projectRow(input: ProjectInput): AgentsRow {
   const { roster, registry, pidLive, socketAnswers, liveStatus } = input;
-  const base = { id: roster.short, sessionId: registry?.sessionId ?? roster.sessionId ?? "", cwd: roster.cwd, name: roster.name };
+  const base = { id: roster.short, sessionId: registry?.sessionId ?? roster.sessionId ?? "", cwd: roster.cwd, name: roster.name,
+    ...(roster.noHumanSeam ? { noHumanSeam: true } : {}) };
 
   if (TERMINAL.has(roster.state)) return { ...base, state: roster.state, status: "idle" };
   if (pidLive && socketAnswers && liveStatus) return { ...base, state: liveStatus.state, status: liveStatus.status };
@@ -649,7 +662,7 @@ export function projectRow(input: ProjectInput): AgentsRow {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/unit/fleet-project.test.ts && npm run typecheck`
-Expected: PASS, 7 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -718,6 +731,20 @@ describe("HostServer", () => {
     expect(await ask(sock, { op: "stop" })).toMatchObject({ ok: true });
     expect(stopped).toBe(true);
   });
+  it("close() does not block on an open client connection", async () => {
+    // node's server.close() waits for every open connection to end. Without destroying them, the
+    // `stop` op deadlocks: the handler calls close(), which waits for the very connection that is
+    // waiting for the stop ack. It self-heals only when the client's 1s timeout fires.
+    const sock = join(mkdtempSync(join(tmpdir(), "ccx-host-")), "h.sock");
+    srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    await srv.listen();
+    const held = connect({ path: sock });
+    await new Promise((r) => held.once("connect", r));
+    await Promise.race([srv.close(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("close() hung on an open connection")), 2000))]);
+    held.destroy();
+    srv = undefined;
+  });
   it("close() is idempotent and removes the socket file", async () => {
     const sock = join(mkdtempSync(join(tmpdir(), "ccx-host-")), "h.sock");
     srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
@@ -764,6 +791,7 @@ export interface HostHandlers { status(): HostStatus; stop(): Promise<void> }
 export class HostServer {
   private server: Server;
   private closing = false;
+  private open = new Set<Socket>();
   private closeResolve!: () => void;
   readonly closed: Promise<void> = new Promise((r) => { this.closeResolve = r; });
 
@@ -784,12 +812,17 @@ export class HostServer {
   async close(): Promise<void> {
     if (this.closing) return;
     this.closing = true;
-    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+    const done = new Promise<void>((resolve) => this.server.close(() => resolve()));
+    for (const s of this.open) s.destroy();   // close() waits for every open connection; the `stop` op
+    this.open.clear();                        // is answered over one, so waiting on it would deadlock
+    await done;
     rmSync(this.socketPath, { force: true });
     this.closeResolve();
   }
 
   private onConnection(sock: Socket): void {
+    this.open.add(sock);
+    sock.once("close", () => this.open.delete(sock));
     let buf = "";
     sock.on("data", async (chunk) => {
       buf += chunk.toString("utf8");
@@ -818,7 +851,12 @@ export class HostServer {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/unit/host-server.test.ts && npm run typecheck`
-Expected: PASS, 4 tests.
+Expected: PASS, 5 tests.
+
+> **Note on the `stop` op:** `dispatch` awaits `handlers.stop()` before replying, and the real handler
+> (Task 7) closes this very server. That is safe only because `close()` destroys open connections —
+> the ack is therefore best-effort, and the caller in Task 11 treats a missing ack as "already gone"
+> rather than as a failure. Do not "fix" this by making `close()` wait politely.
 
 - [ ] **Step 5: Commit**
 
@@ -838,7 +876,7 @@ git commit -m "feat(host): per-session UDS server with status and stop ops"
 **Interfaces:**
 - Consumes: `HostServer`/`HostStatus` (Task 6), roster fns (Task 3), `hostSocketPath` (Task 1), `openSession` from `../session/index.js`.
 - Produces: `class SessionHost { constructor(opts: SessionHostOpts, deps?); start(): Promise<void>; runTask(prompt: string): Promise<void>; status(): HostStatus; stop(): Promise<void>; readonly short: string }`
-- `SessionHostOpts = { short: string; name: string; cwd: string; kind: "bg" | "interactive"; worktree?: string; config: HarnessConfig; env?: NodeJS.ProcessEnv }`
+- `SessionHostOpts = { short: string; name: string; cwd: string; kind: "bg" | "interactive"; worktree?: string; noHumanSeam?: boolean; config: HarnessConfig; env?: NodeJS.ProcessEnv }`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -867,6 +905,12 @@ describe("SessionHost", () => {
     const h = new SessionHost(opts(), { openSession: () => fakeSession().session as any });
     await h.start();
     expect(readRoster("a1b2c3d4", env)).toMatchObject({ short: "a1b2c3d4", name: "w1", state: "working", kind: "bg" });
+    await h.stop();
+  });
+  it("records noHumanSeam on the roster row when the caller reports one", async () => {
+    const h = new SessionHost({ ...opts(), noHumanSeam: true }, { openSession: () => fakeSession().session as any });
+    await h.start();
+    expect(readRoster("a1b2c3d4", env)!.noHumanSeam).toBe(true);
     await h.stop();
   });
   it("reports busy while a turn runs and idle/done after it finishes", async () => {
@@ -917,14 +961,14 @@ Expected: FAIL — module not found.
 import { HostServer } from "./server.js";
 import type { HostStatus } from "./ops.js";
 import { hostSocketPath } from "../fleet/paths.js";
-import { finalizeRoster, writeRoster } from "../fleet/roster.js";
+import { finalizeRoster, readRoster, writeRoster } from "../fleet/roster.js";
 import type { FleetState, RosterRow } from "../fleet/roster.js";
 import { openSession as realOpenSession } from "../session/index.js";
 import type { HarnessConfig } from "../config/types.js";
 
 export interface SessionHostOpts {
   short: string; name: string; cwd: string; kind: "bg" | "interactive";
-  worktree?: string; config: HarnessConfig; env?: NodeJS.ProcessEnv;
+  worktree?: string; noHumanSeam?: boolean; config: HarnessConfig; env?: NodeJS.ProcessEnv;
 }
 
 /** Owns one SDK session, its UDS socket, and its roster row. Live truth is answered over the socket;
@@ -948,6 +992,7 @@ export class SessionHost {
       short: this.opts.short, pid: process.pid, cwd: this.opts.cwd, kind: this.opts.kind,
       name: this.opts.name, state: "working", startedAt: Date.now(),
       ...(this.opts.worktree ? { worktree: this.opts.worktree } : {}),
+      ...(this.opts.noHumanSeam ? { noHumanSeam: true } : {}),
     };
     writeRoster(row, this.env);                        // written BEFORE any session id exists
     this.session = this.deps.openSession(this.opts.config);
@@ -975,7 +1020,10 @@ export class SessionHost {
 
   private syncRoster(): void {
     const sid = this.session?.sessionId;
-    if (sid) { const { readRoster, writeRoster: w } = require("../fleet/roster.js"); const r = readRoster(this.opts.short, this.env); if (r) w({ ...r, sessionId: sid }, this.env); }
+    if (sid) {
+      const r = readRoster(this.opts.short, this.env);
+      if (r) writeRoster({ ...r, sessionId: sid }, this.env);
+    }
     finalizeRoster(this.opts.short, this.state, this.env);
   }
 }
@@ -1214,6 +1262,32 @@ describe("spawnDetached", () => {
     expect(s.calls[0].args).toContain("00000000");
     expect(s.calls[0].args).toContain("do the thing");
   });
+  it("forwards the config flags, so the child re-parses the same permission mode", () => {
+    // Without this, doperpowers' `--bg --permission-mode auto` worker silently runs on the DEFAULT
+    // mode and parks at its first tool. Acceptance 18 dies here.
+    const s = fakeSpawner();
+    spawnDetached(parseCcx(["--bg", "--permission-mode", "auto", "--model", "m1", "-n", "w1", "task"]), { spawn: s.spawn, rand: () => 0 });
+    const args: string[] = s.calls[0].args;
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("auto");
+    expect(args[args.indexOf("--model") + 1]).toBe("m1");
+  });
+  it("scrubs the parent agent's session variables from the child env", () => {
+    // Probe 60: a kind=bg child that inherits CLAUDE_JOB_DIR adopts the PARENT's job. The agents view
+    // then renders the parent job's id, name and state, and our session is unfindable by pid,
+    // sessionId or name. daemon-spawn.sh runs inside an agent, so this is the production path.
+    const s = fakeSpawner();
+    Object.assign(process.env, { CLAUDE_JOB_DIR: "/x/jobs/475ad71d", CLAUDE_CODE_SESSION_ID: "sid-parent", CLAUDE_CODE_CHILD_SESSION: "1" });
+    try {
+      spawnDetached(parseCcx(["--bg", "-n", "w1", "task"]), { spawn: s.spawn, rand: () => 0 });
+      const env = s.calls[0].opts.env;
+      expect(env.CLAUDE_JOB_DIR).toBeUndefined();
+      expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+      expect(env.CLAUDE_CODE_CHILD_SESSION).toBeUndefined();
+      expect(env.CLAUDE_CODE_SESSION_NAME).toBe("w1");   // our own identity still gets through
+    } finally {
+      delete process.env.CLAUDE_JOB_DIR; delete process.env.CLAUDE_CODE_SESSION_ID; delete process.env.CLAUDE_CODE_CHILD_SESSION;
+    }
+  });
 });
 ```
 
@@ -1233,17 +1307,38 @@ import type { CcxInvocation } from "./args.js";
 
 export interface SpawnDeps { spawn: typeof realSpawn | ((c: string, a: string[], o: any) => any); rand?: () => number }
 
+/** A Claude Code agent's OWN session variables must not reach a detached child. Probe 60: a child that
+ *  declares kind=bg while inheriting CLAUDE_JOB_DIR adopts the parent's job, and the agents view then
+ *  renders the parent job's id, name and state instead of ours — the session becomes unfindable by
+ *  pid, sessionId or name. doperpowers' daemon-spawn.sh runs inside an agent, so this is the real path. */
+const INHERITED_SESSION_VARS = ["CLAUDE_JOB_DIR", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION"];
+
+/** Reconstructed, not forwarded raw: the parent has already resolved --worktree into config.cwd, and
+ *  --bg itself must not repeat or the child would fork again. */
+function configFlags(inv: CcxInvocation): string[] {
+  const out: string[] = [];
+  const c = inv.config as Record<string, string | undefined>;
+  for (const [flag, key] of [["--model", "model"], ["--effort", "effort"], ["--resume", "resume"],
+    ["--permission-mode", "permissionMode"], ["--settings", "settings"]] as const) {
+    if (c[key]) out.push(flag, c[key]!);
+  }
+  return out;
+}
+
 /** Forks a fully detached host and returns immediately. The child re-enters this binary via --__host,
  *  which keeps one code path for the session regardless of how it was started. */
 export function spawnDetached(inv: CcxInvocation, deps: SpawnDeps = { spawn: realSpawn }): { short: string; banner: string } {
   const short = mintShortId(deps.rand ?? Math.random);
   const name = inv.name ?? short;
-  const args = [process.argv[1], "--__host", short, "--__kind", inv.bg ? "bg" : "interactive", ...(inv.prompt ? [inv.prompt] : [])];
+  const kind = inv.bg ? "bg" : "interactive";
+  const args = [process.argv[1], "--__host", short, "--__kind", kind, ...configFlags(inv), ...(inv.prompt ? [inv.prompt] : [])];
+  const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_CODE_SESSION_NAME: name, CLAUDE_CODE_SESSION_KIND: kind };
+  for (const v of INHERITED_SESSION_VARS) delete env[v];
   const child = deps.spawn(process.execPath, args, {
     detached: true,
     stdio: ["ignore", "ignore", "ignore"],   // nothing may hold the parent shell open
     cwd: inv.config.cwd ?? process.cwd(),
-    env: { ...process.env, CLAUDE_CODE_SESSION_NAME: name, CLAUDE_CODE_SESSION_KIND: inv.bg ? "bg" : "interactive" },
+    env,
   });
   child.unref?.();
   return { short, banner: formatBanner(short) };
@@ -1260,9 +1355,13 @@ export async function runHostMain(argv: string[]): Promise<void> {
   const short = argv[argv.indexOf("--__host") + 1];
   const kind = (argv[argv.indexOf("--__kind") + 1] ?? "bg") as "bg" | "interactive";
   const inv = parseCcx(argv.filter((a, i) => !["--__host", "--__kind"].includes(a) && !["--__host", "--__kind"].includes(argv[i - 1])));
+  // The child re-parses the forwarded config flags, so hasExplicitPermissionConfig is recomputed here
+  // rather than smuggled across in yet another flag. A bare --bg has nothing that can route to `ask`.
+  const noHumanSeam = kind === "bg" && !inv.hasExplicitPermissionConfig;
   const host = new SessionHost({
     short, name: process.env.CLAUDE_CODE_SESSION_NAME ?? short, cwd: process.cwd(), kind,
-    ...(inv.worktree ? { worktree: inv.worktree } : {}), config: inv.config,
+    ...(inv.worktree ? { worktree: inv.worktree } : {}), ...(noHumanSeam ? { noHumanSeam } : {}),
+    config: inv.config,
   });
   await host.start();
   try { if (inv.prompt) await host.runTask(inv.prompt); }
@@ -1273,7 +1372,7 @@ export async function runHostMain(argv: string[]): Promise<void> {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/unit/cli-spawn.test.ts && npm run typecheck`
-Expected: PASS, 5 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1753,11 +1852,9 @@ The consumer verifies the shape, not our reading of it.
 ```ts
 // harness/test/contract/poll-until-done.test.ts
 import { describe, it, expect } from "vitest";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execFileSync } from "node:child_process";
 import { renderAgents } from "../../src/cli/agents.js";
 import type { AgentsRow } from "../../src/fleet/project.js";
-const execFileP = promisify(execFile);
 
 /** The exact python filter from doperpowers _lib.sh:_poll_until_done. If our JSON does not satisfy
  *  THIS, spawn/resume hang until the watcher times out — verified against the consumer, not our reading. */
@@ -1773,10 +1870,13 @@ for a in d:
         print(a.get("sessionId"), st, a.get("cwd", "")); break
 `;
 
-async function poll(rows: AgentsRow[], short: string): Promise<string> {
+/** execFileSync, not execFile: only the *Sync/spawn family accepts `input`. `execFile` would leave the
+ *  child's stdin open and unwritten, and the filter's `json.load(sys.stdin)` would block forever. */
+function poll(rows: AgentsRow[], short: string): string {
   const json = renderAgents(rows, { json: true, all: true });
-  const { stdout } = await execFileP("python3", ["-c", FILTER], { env: { ...process.env, DAEMON_SHORT: short }, input: json } as any);
-  return stdout.trim();
+  return execFileSync("python3", ["-c", FILTER], {
+    env: { ...process.env, DAEMON_SHORT: short }, input: json, encoding: "utf8", timeout: 10_000,
+  }).trim();
 }
 
 const row = (o: Partial<AgentsRow> = {}): AgentsRow => ({ id: "a1b2c3d4", sessionId: "sid-1", state: "working", status: "busy", cwd: "/w", name: "w1", ...o });
@@ -1853,9 +1953,9 @@ test ${#SHORT} -eq 8 && echo "ACCEPT-17 exactly 8 hex OK"
 
 # 2 + 3 — row keys while running, and STILL listed after it finishes
 node dist/cli/bin.js agents --json --all | tee /tmp/ccx-agents.json
-node -e 'const r=require("/tmp/ccx-agents.json").find(x=>x.id===process.env.S);if(!r)throw new Error("row missing");for(const k of ["id","sessionId","state","status","cwd"])if(!(k in r))throw new Error("missing key "+k);console.log("ACCEPT-2 keys OK",r.state)' S=$SHORT
+S=$SHORT node -e 'const r=require("/tmp/ccx-agents.json").find(x=>x.id===process.env.S);if(!r)throw new Error("row missing");for(const k of ["id","sessionId","state","status","cwd"])if(!(k in r))throw new Error("missing key "+k);console.log("ACCEPT-2 keys OK",r.state)'
 sleep 20
-node dist/cli/bin.js agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s).find(x=>x.id===process.env.S);if(!r)throw new Error("ACCEPT-3 FAILED: finished session vanished");console.log("ACCEPT-3 finished session still listed:",r.state)})' S=$SHORT
+node dist/cli/bin.js agents --json --all | S=$SHORT node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s).find(x=>x.id===process.env.S);if(!r)throw new Error("ACCEPT-3 FAILED: finished session vanished");console.log("ACCEPT-3 finished session still listed:",r.state)})'
 
 # 12 — rm works on an already-exited session
 node dist/cli/bin.js rm $SHORT && echo "ACCEPT-12 rm on exited session OK"
@@ -1864,13 +1964,19 @@ node dist/cli/bin.js rm $SHORT && echo "ACCEPT-12 rm on exited session OK"
 - [ ] **Step 3: Execute acceptance 4 (the real `claude agents` sees us) and 9b (crash projection)**
 
 ```bash
-# 4 — while a --bg session runs, the REAL claude binary lists it with our name and kind
+# 4 — while a --bg session runs, the REAL claude binary lists it with our name and kind.
+# Probe 60 pinned both ends of this assertion: the registry row on disk reads kind:"bg", but the
+# agents VIEW renders that same row as kind:"background". Asserting "bg" here misreads as a drop.
 node dist/cli/bin.js --bg -n ccx-accept4 "Sleep by counting slowly to 40, one number per line."
 sleep 5
-claude agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s).find(x=>x.name==="ccx-accept4");console.log(r?"ACCEPT-4 real claude agents lists us: "+JSON.stringify(r):"ACCEPT-4 NOT LISTED")})'
+claude agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s).find(x=>x.name==="ccx-accept4");if(!r)return console.log("ACCEPT-4 NOT LISTED");console.log("ACCEPT-4 real claude agents lists us:",JSON.stringify(r));console.log("ACCEPT-4 kind:",r.kind,r.kind==="background"?"OK":"UNEXPECTED")})'
+
+# If ACCEPT-4 says NOT LISTED, check the CLAUDE_JOB_DIR scrub from Task 9 FIRST — an inherited
+# CLAUDE_JOB_DIR makes a kind=bg child adopt the parent's job and vanish from the view (probe 60).
+grep -q '"jobId"' ~/.claude/sessions/*.json 2>/dev/null && echo "  ^ a session row carries jobId — the scrub is not working"
 
 # 9b — SIGKILL the host, then confirm the projection is `error`, not `working`
-PID=$(node -e 'const {listRoster}=require("./dist/fleet/roster.js");const r=listRoster().find(x=>x.name==="ccx-accept4");console.log(r.pid)')
+PID=$(node -e 'const {readdirSync,readFileSync}=require("node:fs");const d=(process.env.CCX_FLEET_ROOT||process.env.HOME+"/.claude/ccx")+"/roster";const r=readdirSync(d).map(f=>JSON.parse(readFileSync(d+"/"+f,"utf8"))).find(x=>x.name==="ccx-accept4");console.log(r.pid)')
 kill -9 $PID
 node dist/cli/bin.js agents --json --all | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s).find(x=>x.name==="ccx-accept4");console.log("ACCEPT-9b state after SIGKILL:",r.state, r.state==="error"?"OK":"FAILED")})'
 ```
@@ -1893,6 +1999,21 @@ Fill the spec's `## Outcomes & Retrospective` with what shipped, which acceptanc
 git add -A CC-to-SDK/harness CC-to-SDK/docs
 git commit -m "feat(a1): fleet substrate complete — doperpowers scripts run on ccx"
 ```
+
+---
+
+## Amendments during execution
+
+Recorded here rather than by rewriting the tasks above, so a reader can see what changed and why.
+
+- **2026-07-26, pre-flight (controller).** Five defects found scanning the plan before Task 1:
+  1. `noHumanSeam` was rendered by Task 10 but had no producer anywhere. `RosterRow` now carries it, `SessionHost` writes it at start, `projectRow` passes it through, and `runHostMain` derives it as `kind === "bg" && !hasExplicitPermissionConfig`. Without this, acceptance 9's *reporting* half was unimplementable.
+  2. `spawnDetached` dropped every config flag, so doperpowers' `--bg --permission-mode auto` worker would have run on the default mode and parked at its first tool — acceptance 18 would have failed with no obvious cause. It now reconstructs the flags into the child argv.
+  3. `HostServer.close()` deadlocked the `stop` op: node's `server.close()` waits for open connections, and the handler was invoked from a connection awaiting its own ack. `close()` now destroys tracked sockets; the ack is best-effort by design.
+  4. Task 3's test used `require("node:fs")` inside an ESM test file.
+  5. Task 13 used `execFile` with an `input` option that only the `*Sync`/spawn family accepts; the python filter would have blocked on stdin until the timeout.
+- **2026-07-26, from Task 0's spike.** `spawnDetached` must scrub `CLAUDE_JOB_DIR`, `CLAUDE_CODE_SESSION_ID` and `CLAUDE_CODE_CHILD_SESSION`. Probe 60 found that a `kind=bg` child inheriting `CLAUDE_JOB_DIR` adopts the parent's *job*: the agents view then renders the parent job's id, name and state, and our session is unfindable by pid, session id or name. `daemon-spawn.sh` runs inside a Claude Code agent, so this is the production path. Task 9 gained a test; Task 14's acceptance 4 gained a diagnostic pointing here first.
+- **2026-07-26, from Task 0's spike.** Acceptance 4 asserts `kind: "background"` in the agents view against `"bg"` on the registry row.
 
 ---
 
