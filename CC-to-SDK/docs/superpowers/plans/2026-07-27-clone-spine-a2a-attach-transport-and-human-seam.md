@@ -792,8 +792,10 @@ throws is skipped for that event rather than unwinding into the turn."
 
 **Interfaces:**
 - Produces: `SessionHost.pending(): PendingEntry[]`,
-  `SessionHost.answer(toolUseID, decision, by): { ok: true } | { ok: true; alreadyAnsweredBy: string }`,
-  and a `status()` that reports `blocked` while anything is parked.
+  `SessionHost.answer(toolUseID, decision, by): { ok: true; alreadyAnsweredBy?: string } | { ok: false; error: string }`
+  — the `ok:false` arm is for a `toolUseID` that was never parked, which must not be reported as
+  success; see Step 3's code, which is authoritative — and a `status()` that reports `blocked` while
+  anything is parked.
 - Consumes: `PendingPermissions` (Task 1), `HostEvent` (Task 2), `follow`/`emit` (Task 4).
 
 **Context — read this twice, it is the subtlest rule in the plan.** The spec keeps two opposite
