@@ -93,6 +93,11 @@ treated as not-yet-ready and polling continues. State vocabulary consumed by the
 `error|stopped` on one arm (both finalize down the error path), and coerces `done-blocked` to an idle
 record — so `stopped` is a state we may emit, not merely one we must tolerate.
 
+**`stopped` is deliberately absent from `_poll_until_done`'s terminal set** (`done|blocked|error`).
+That is harmless in the current flow because nothing polls a stopped session — `daemon-resume.sh` stops
+the old turn and then polls the *new* short id. Recorded so a future reader does not misfile "the
+poller doesn't finish on `stopped`" as a bug in our projection.
+
 **Reply channel.** Replies are read from the **transcript** (`~/.claude/projects/**/<uuid>.jsonl`), not
 from stdout. `~/.claude/jobs/<short>` is removed by the purge path.
 
@@ -102,6 +107,11 @@ forward rather than chained by reference, because the purge deletes the parent's
 **verified by probe 59**: the forked child's jsonl physically contains the parent's messages and the
 child still recalls them after the parent file is deleted. This is a property of the engine we inherit,
 not something Goal A implements; the acceptance test guards against regressing it.
+
+**Pinned to a specific lever:** `ccx --bg --resume <uuid>` **must** use the SDK's
+`resume: <uuid>` + `forkSession: true`, which is exactly the path probe 59 exercised. An in-place
+resume (same session id, no fork) is outside the verified property and would put the parent's
+transcript — which the purge then deletes — back on the critical path.
 
 **Required grammar** (restored — rev 2 dropped this list while rewriting):
 
@@ -182,10 +192,19 @@ hang `_poll_until_done` to its timeout. The rule follows the live/terminal split
 another stored field — **state is derived at read time**:
 
 ```
-roster state is terminal            → project it as-is
-roster state non-terminal + pid live (procStart matches, socket answers) → project the live status
-roster state non-terminal + pid dead                                     → project state = "error"
+roster state is terminal                                                 → project it as-is
+roster state non-terminal + pid live (procStart matches) + socket answers → project the live status
+roster state non-terminal + pid live (procStart matches) + socket silent  → project the roster state
+                                                                            (non-terminal ⇒ "working"),
+                                                                            flagged unresponsive
+roster state non-terminal + pid dead                                      → project state = "error"
 ```
+
+The third arm is the hung-host case, and it deliberately does **not** report failure: the process
+exists, so we have no evidence it failed, and adjudicating that is the spawner's timeout to make — not
+a read command's. (The startup window, before the host has begun listening, is absorbed earlier by the
+empty-`sessionId` rule, which the poller already treats as not-yet-ready.) `agents` surfaces the
+unresponsive flag so a human can see the difference.
 
 `error` is the honest projection — the session did not finish — and `daemon-finalize.sh` already routes
 `error` correctly. The roster row is *not* rewritten during this projection; `agents` stays read-only
@@ -305,7 +324,7 @@ not locked to one client because a dead lock-holder would park the session forev
 1. `ccx --bg -n w "<task>"` prints `backgrounded · <8-hex>` on stdout and returns immediately; the
    banner survives `</dev/null 2>&1 |` piping; killing the spawning shell leaves the session running.
 2. `ccx agents --json --all` emits rows carrying `id`, `sessionId`, `state`, `status`, `cwd`, with
-   `state ∈ {working, blocked, done, error}` and `status ∈ {busy, idle}`.
+   `state ∈ {working, blocked, done, error, stopped}` and `status ∈ {busy, idle}`.
 3. **A session that has finished still appears** in `--all` with `state: "done"` — verified by polling
    after exit, which is the exact failure Revision 1 would have shipped.
 4. While running, the **real** `claude agents --json --all` also lists the session with the name and
@@ -450,6 +469,13 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- **2026-07-26 rev 3.1** — four one-line closures from the rev-3 review, all internal-consistency:
+  acceptance 2's state set widened to include `stopped` (rev 3 widened the contract vocabulary and the
+  acceptance list but missed this one — the same adjacent-semantics drift, caught a third time);
+  recorded that `stopped` is intentionally outside `_poll_until_done`'s terminal set and why that is
+  harmless; defined the hung-host arm of crash projection (pid live + socket silent ⇒ project the
+  roster state, flagged unresponsive, because a live process is not evidence of failure); and pinned
+  `--bg --resume` to SDK `resume` + `forkSession: true`, the exact lever probe 59 verified.
 - **2026-07-26 rev 3** — second review round; four new issues, all introduced or left open by rev 2.
   (1) **The rev-2 default ask-policy broke the north star**: doperpowers spawns every worker
   `--bg --permission-mode auto`, so an unconditional default would park each at its first tool and
