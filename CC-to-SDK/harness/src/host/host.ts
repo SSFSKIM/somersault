@@ -6,6 +6,8 @@ import { procStartOf as realProcStartOf } from "../fleet/liveness.js";
 import type { FleetState, RosterRow } from "../fleet/roster.js";
 import { openSession as realOpenSession } from "../session/index.js";
 import type { HarnessConfig } from "../config/types.js";
+import { TurnBuffer } from "./follow.js";
+import type { HostEvent } from "./wire.js";
 
 export interface SessionHostOpts {
   short: string; name: string; cwd: string; kind: "bg" | "interactive";
@@ -29,6 +31,8 @@ export class SessionHost {
   private state: FleetState = "working";
   private busy = false;
   private env: NodeJS.ProcessEnv;
+  private followers = new Set<(ev: HostEvent) => void>();
+  private turnBuffer = new TurnBuffer({ maxMessages: 500, maxBytes: 1024 * 1024 });
 
   constructor(private opts: SessionHostOpts,
     private deps: { openSession: (c: HarnessConfig) => HostSession; procStartOf?: (p: number) => Promise<string | undefined> }
@@ -71,6 +75,8 @@ export class SessionHost {
 
   async runTask(prompt: string): Promise<void> {
     this.busy = true; this.state = "working";
+    this.turnBuffer.reset();
+    this.emit({ kind: "turn", phase: "start" });
     // Stamp the roster the MOMENT the engine's session id materializes — it arrives in the init frame
     // near the start of the turn, and Session sets .sessionId before dispatching that frame here. Waiting
     // for the turn to end (all syncRoster ever did) left `agents` printing sessionId "" for the session's
@@ -79,15 +85,42 @@ export class SessionHost {
     // read-then-write, so repeating it costs a syscall pair per frame and keeps re-opening the window in
     // which a concurrent `ccx rm` has its unlink undone.
     let stamped = false;
-    const stamp = () => { if (stamped || !this.session?.sessionId) return; stamped = true; this.writeSessionId(); };
-    try { await this.session!.submit(prompt, stamp); this.state = "done"; }
-    catch (e) { this.state = "error"; throw e; }
+    const onMessage = (m: unknown) => {
+      if (!stamped && this.session?.sessionId) { stamped = true; this.writeSessionId(); }
+      this.turnBuffer.push(m);
+      this.emit({ kind: "message", data: m });
+    };
+    try { await this.session!.submit(prompt, onMessage); this.state = "done"; }
+    catch (e) { this.state = "error"; this.emit({ kind: "turn", phase: "end", error: (e as Error)?.message }); throw e; }
     // For a BG worker the turn's completion IS the terminal event, so record it here: a host that dies
     // after the turn but before stop() then still reports `done` rather than waiting to be reaped by
     // liveness. An interactive host stays live across turns — finalize is first-terminal-wins, so
     // finalizing on turn one would freeze it at `done` while it works on turn two — it waits for stop().
     finally { this.busy = false; if (this.opts.kind === "bg") this.syncRoster(); }
+    this.emit({ kind: "turn", phase: "end" });
   }
+
+  /** Subscribe to the live turn. The new follower is replayed the turn so far FIRST, synchronously, so
+   *  it never sees message 3 before messages 1 and 2. Returns its own unsubscribe. */
+  follow(cb: (ev: HostEvent) => void): () => void {
+    const snap = this.turnBuffer.snapshot();
+    // The truncation flag has to reach the client or it is a promise we do not keep: TurnBuffer
+    // records that the replay is partial, and a follower shown a partial turn with no marker reads it
+    // as the whole turn. Sent only when true, so an untruncated replay costs no frame.
+    if (snap.truncated) this.deliver(cb, { kind: "turn", phase: "start", truncated: true });
+    for (const m of snap.messages) this.deliver(cb, { kind: "message", data: m });
+    this.followers.add(cb);
+    return () => { this.followers.delete(cb); };
+  }
+
+  /** One follower's failure is that follower's problem. Without this guard a client whose callback
+   *  throws — a socket write to a peer that vanished, most likely — unwinds through the SDK's message
+   *  dispatch and rejects the turn, taking a detached host down over a client that already left. */
+  private deliver(cb: (ev: HostEvent) => void, ev: HostEvent): void {
+    try { cb(ev); } catch { /* a follower that throws is dropped from this event, not from the set */ }
+  }
+
+  private emit(ev: HostEvent): void { for (const cb of [...this.followers]) this.deliver(cb, ev); }
 
   status(): HostStatus { return { state: this.state, status: this.busy ? "busy" : "idle" }; }
 
