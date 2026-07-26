@@ -224,34 +224,57 @@ export class SessionHost {
     await this.session?.interrupt?.();
   }
 
+  // Memoized so a second stop() — e.g. runHostMain's `finally` racing a `stop` op that already arrived
+  // over the socket — returns the FIRST call's promise instead of re-running interrupt()/dispose() on a
+  // session that is already torn down. `this.session` is never cleared, and the SDK's Query.request()
+  // does not check whether the query was already cleaned up before issuing a fresh control request and
+  // awaiting a response — a second interrupt() risks parking forever, exactly like an unbounded first one.
+  private stopping?: Promise<void>;
+
   /** `final` lets stop() record `stopped` while a completed run records `done`/`error`. With no argument
-   *  and no finished turn the state is still `working`, and syncRoster then writes nothing down.
-   *
-   *  Order matters and each position is load-bearing:
+   *  and no finished turn the state is still `working`, and syncRoster then writes nothing down. */
+  async stop(final?: FleetState): Promise<void> {
+    if (this.stopping) return this.stopping;
+    this.stopping = this.teardown(final);
+    return this.stopping;
+  }
+
+  /** Order matters and each position is load-bearing:
    *  1. Settle parked decisions — nothing awaited may survive us.
    *  2. Write the terminal roster state — a reader must never wait on a host that is going away, and it
    *     must land BEFORE the interrupt below: interrupting a turn parked at a tool call makes the
    *     message stream throw, and runTask's catch arm then records `error` — harmless only because
    *     finalizeRoster is first-terminal-wins and `stopped` was already written.
-   *  3. Interrupt the in-flight turn. This is the actual repair, not the timeout in step 4: dispose()
-   *     is `input.close(); await done`, and `done` cannot resolve while a request is in flight —
-   *     interrupting is what ends the turn and lets it.
-   *  4. Dispose, bounded by DISPOSE_GRACE_MS. If a turn will not end even after being interrupted, we
-   *     still leave rather than hang forever.
-   *  5. Close the server unconditionally, OUTSIDE the race in step 4. A server left listening is a host
-   *     that never exits — this used to sit behind the same await a wedged turn never satisfied, so
-   *     `ccx stop` reported success over a process that lived on with its socket still answering. */
-  async stop(final?: FleetState): Promise<void> {
-    if (final) this.state = final;
-    this.parked.denyAll();
-    this.syncRoster();                     // terminal state on disk BEFORE anything that can block
-    await this.session?.interrupt?.().catch(() => {});
-    const graceMs = this.deps.disposeGraceMs ?? DISPOSE_GRACE_MS;
-    await Promise.race([
-      this.session?.dispose().catch(() => {}) ?? Promise.resolve(),
-      new Promise<void>((r) => { const t = setTimeout(r, graceMs); (t as { unref?: () => void }).unref?.(); }),
-    ]);
-    await this.server?.close();
+   *  3. Interrupt the in-flight turn, THEN dispose. This is the actual repair, not the timeout below:
+   *     dispose() is `input.close(); await done`, and `done` cannot resolve while a request is in
+   *     flight — interrupting is what ends the turn and lets it.
+   *  4. The two together, bounded by ONE deadline (DISPOSE_GRACE_MS). Interrupt itself has no timeout of
+   *     its own — the SDK's `Query.request({subtype:"interrupt"})` writes a control request and waits
+   *     for a matching response — so racing dispose alone (as this used to) left a wedged interrupt
+   *     unbounded: dispose was never even reached, and stop() never returned. One deadline covering
+   *     both is what "bounded" has to mean: after it expires we leave regardless of which SDK call
+   *     stalled.
+   *  5. Close the server unconditionally, in a `finally` — not just after the race. A server left
+   *     listening is a host that never exits, and a `finally` guarantees it runs even if a synchronous
+   *     throw earlier in this method (denyAll/syncRoster) would otherwise skip it — guaranteed by
+   *     structure, not by convention. */
+  private async teardown(final?: FleetState): Promise<void> {
+    try {
+      if (final) this.state = final;
+      this.parked.denyAll();
+      this.syncRoster();                     // terminal state on disk BEFORE anything that can block
+      const graceMs = this.deps.disposeGraceMs ?? DISPOSE_GRACE_MS;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<void>((r) => { timer = setTimeout(r, graceMs); (timer as { unref?: () => void }).unref?.(); });
+      const interruptThenDispose = (async () => {
+        await this.session?.interrupt?.().catch(() => {});
+        await this.session?.dispose().catch(() => {});
+      })();
+      await Promise.race([interruptThenDispose, deadline]);
+      clearTimeout(timer);                   // whichever arm won, the other's handle must not dangle
+    } finally {
+      await this.server?.close();
+    }
   }
 
   /** Copy the engine's session id onto our row, if it has reported one yet. Read-then-write, and gated
