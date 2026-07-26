@@ -429,6 +429,16 @@ not locked to one client because a dead lock-holder would park the session forev
 - **Our sessions were already in CC's fleet.** Probes 56/56b: because our engine *is* the `claude` CLI,
   SDK-driven sessions self-register and appear in the real `claude agents`. Interop was never a decision
   — a structural dividend of wrapping the engine rather than reimplementing it.
+- **…but the registry follows `CLAUDE_CONFIG_DIR`, so our own tenant isolation would have hidden those
+  sessions.** Probe 61: a session spawned with `CLAUDE_CONFIG_DIR` set to a fresh directory writes its
+  row to `<CLAUDE_CONFIG_DIR>/sessions/<pid>.json` and writes **nothing** under `<HOME>/.claude`
+  (observed: `{"pid":77810,…,"entrypoint":"sdk-cli","name":"ccx-probe61-1hjl30"}` in the config dir, no
+  row in HOME). Probes 56 and 57 both hard-coded the HOME path and never varied the config dir, so the
+  question went unasked — and `tenantHarnessConfig` sets a per-tenant `CLAUDE_CONFIG_DIR` on every
+  tenant session. A HOME-only reader would have reported every one of them as *no sessions running*,
+  because a missing directory is swallowed into `[]`. `sessionsDir()` now derives from
+  `CLAUDE_CONFIG_DIR` first. **Lesson: "the engine self-registers" was verified only at the default
+  path; a location premise has to be re-probed under each environment we ourselves create.**
 - **`clone-roadmap.md` F2 was wrong, and this spec supersedes it.** It concluded co-registration was
   "guarded and fragile" after a fabricated registry row failed to appear. **Lesson: an experiment that
   mimics the production path is not evidence about the production path.** The *cause* of that failure
