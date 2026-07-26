@@ -28,8 +28,15 @@ describe("procStartOf", () => {
   it("is undefined when ps prints nothing — no such pid", async () => {
     expect(await procStartOf(77, spy("\n").deps)).toBeUndefined();
   });
-  it("is undefined when ps fails rather than throwing at the caller", async () => {
-    expect(await procStartOf(77, spy(new Error("exit 1")).deps)).toBeUndefined();
+  it("is undefined when ps exits non-zero — a numeric exit code IS 'no such pid'", async () => {
+    expect(await procStartOf(77, spy(Object.assign(new Error("exit 1"), { code: 1 })).deps)).toBeUndefined();
+  });
+  it("RETHROWS when the probe itself broke — a ps we could not run, or one the timeout killed", async () => {
+    // Neither says anything about the pid; swallowing them as "gone" reports live sessions as dead.
+    await expect(procStartOf(77, spy(Object.assign(new Error("spawn ps ENOENT"), { code: "ENOENT" })).deps))
+      .rejects.toThrow(/ENOENT/);
+    await expect(procStartOf(77, spy(Object.assign(new Error("timed out"), { code: 1, killed: true })).deps))
+      .rejects.toThrow(/timed out/);
   });
 });
 
@@ -45,6 +52,12 @@ describe("isPidLive", () => {
   });
   it("treats a missing stored procStart as live, matching the binary's gB()", async () => {
     expect(await isPidLive(10, undefined, ps("anything"))).toBe(true);
+  });
+  it("is LIVE when the probe itself breaks — a broken `ps` must not condemn a running session", async () => {
+    // `ps` missing from PATH, or killed by the 1s timeout, tells us nothing about the pid. Answering
+    // "dead" there projects `error` over a healthy worker and terminates a doperpowers poller early.
+    const boom = { procStartOf: async () => { throw Object.assign(new Error("spawn ps ENOENT"), { code: "ENOENT" }); } };
+    expect(await isPidLive(10, "Sat Jul 25 02:55:52 2026", boom)).toBe(true);
   });
 });
 

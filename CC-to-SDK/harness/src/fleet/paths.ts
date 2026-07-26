@@ -20,8 +20,11 @@ export function fleetRoot(env: NodeJS.ProcessEnv = process.env): string {
   if (env.CCX_FLEET_ROOT) return resolve(env.CCX_FLEET_ROOT);
   return join(env.HOME ?? homedir(), ".claude", "ccx");
 }
+/** The `roster` segment lives here only — a second copy in roster.ts would fail silently, since a
+ *  readdir of the wrong directory just yields an empty fleet. */
+export function rosterDir(env: NodeJS.ProcessEnv = process.env): string { return join(fleetRoot(env), "roster"); }
 export function rosterPath(short: string, env: NodeJS.ProcessEnv = process.env): string {
-  return join(fleetRoot(env), "roster", `${short}.json`);
+  return join(rosterDir(env), `${short}.json`);
 }
 export function runDir(env: NodeJS.ProcessEnv = process.env): string { return join(fleetRoot(env), "run"); }
 /** Keyed by pid — immutable for the host's life. Not /tmp: macOS sweeps unaccessed /tmp files. */

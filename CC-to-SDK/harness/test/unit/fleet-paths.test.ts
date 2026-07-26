@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolve } from "node:path";
-import { mintShortId, isShortId, fleetRoot, rosterPath, runDir, hostSocketPath } from "../../src/fleet/paths.js";
+import { mintShortId, isShortId, fleetRoot, rosterDir, rosterPath, runDir, hostSocketPath } from "../../src/fleet/paths.js";
 
 describe("short ids", () => {
   it("mints exactly 8 lowercase hex chars", () => {
@@ -23,7 +23,12 @@ describe("short ids", () => {
 describe("paths", () => {
   const env = { HOME: "/home/u" } as NodeJS.ProcessEnv;
   it("roots the fleet under ~/.claude/ccx", () => { expect(fleetRoot(env)).toBe("/home/u/.claude/ccx"); });
-  it("keys the roster by short id", () => { expect(rosterPath("a1b2c3d4", env)).toBe("/home/u/.claude/ccx/roster/a1b2c3d4.json"); });
+  it("keys the roster by short id, off the one place the `roster` segment lives", () => {
+    // roster.ts must compose on rosterDir: a second copy of the segment diverges silently, because a
+    // readdir of the wrong directory just yields an empty fleet.
+    expect(rosterDir(env)).toBe("/home/u/.claude/ccx/roster");
+    expect(rosterPath("a1b2c3d4", env)).toBe("/home/u/.claude/ccx/roster/a1b2c3d4.json");
+  });
   it("keys the socket by pid, not session id", () => {
     // The session id does not exist when --bg must already listen, and it rotates on /resume.
     expect(hostSocketPath(4242, env)).toBe("/home/u/.claude/ccx/run/4242.sock");
