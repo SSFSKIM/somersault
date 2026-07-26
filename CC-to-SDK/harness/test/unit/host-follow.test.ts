@@ -119,6 +119,22 @@ describe("SessionHost.follow", () => {
     await host.stop();
   });
 
+  it("tells a late follower the current status as part of the replay, not just through the next event", async () => {
+    const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();
+    const turn = host.runTask("hi");
+    s.emit({ type: "assistant", n: 1 });
+    const late: HostEvent[] = [];
+    host.follow((e) => late.push(e));                          // attaches while the turn is still running
+    const stateFrames = late.filter((e) => e.kind === "state");
+    expect(stateFrames).toHaveLength(1);
+    expect((stateFrames[0] as any).status).toMatchObject({ state: "working", status: "busy" });
+    // Last in the replay batch, immediately before live events start — everything before it describes
+    // history so far, this one describes right now.
+    expect(late[late.length - 1]).toBe(stateFrames[0]);
+    s.finish(); await turn; await host.stop();
+  });
+
   it("the buffer resets between turns, so turn two does not replay turn one", async () => {
     const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
     await host.start();

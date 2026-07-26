@@ -145,6 +145,12 @@ export class SessionHost {
     // permission — or one that simply reconnects — would see it only through the separate `pending()`
     // poll, never through the live stream it otherwise relies on.
     for (const entry of this.parked.list()) this.deliver(cb, { kind: "permission", entry });
+    // LAST in the replay, not first: every frame above describes history so far; this one describes
+    // "right now", so it belongs immediately before we start relaying genuinely live events. Without
+    // it, a follower attaching mid-turn has no way to tell a live turn from the tail of a finished one
+    // until the next event happens to arrive — which, for a turn parked on a slow tool call or one that
+    // already ended, may be a long wait or may never come.
+    this.deliver(cb, { kind: "state", status: this.status() });
     this.followers.add(cb);
     return () => { this.followers.delete(cb); };
   }
