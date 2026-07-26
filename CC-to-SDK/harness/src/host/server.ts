@@ -7,6 +7,10 @@ import type { HostStatus } from "./ops.js";
 
 export interface HostHandlers { status(): HostStatus; stop(): Promise<void> }
 
+/** A frame with no newline in sight past this is a runaway peer, not an op. Same-user only (the socket
+ *  sits under a 0o700 dir), but a detached host outlives its parent, so an unbounded buffer is not free. */
+const MAX_FRAME = 256 * 1024;
+
 /** One UDS listener per SESSION (not per fleet). NDJSON frames, one op per line; the connection stays
  *  open so A2 can add a long-lived `follow` stream over the same socket. */
 export class HostServer {
@@ -28,10 +32,13 @@ export class HostServer {
       this.server.once("error", onErr);
       this.server.listen(this.socketPath, () => { this.server.off("error", onErr); resolve(); });
     });
+    // the startup listener is gone now; an unhandled post-listen 'error' (an accept-time EMFILE, say)
+    // throws out of the event loop and kills the whole detached host
+    this.server.on("error", () => {});
   }
 
   async close(): Promise<void> {
-    if (this.closing) return;
+    if (this.closing) return this.closed;   // a racing caller waits for the real close, not a bare return
     this.closing = true;
     const done = new Promise<void>((resolve) => this.server.close(() => resolve()));
     for (const s of this.open) s.destroy();   // close() waits for every open connection; the `stop` op
@@ -50,8 +57,12 @@ export class HostServer {
       for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
         const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
         if (!line.trim()) continue;
-        sock.write(JSON.stringify(await this.dispatch(line)) + "\n");
+        // a throwing handler (or an unserializable snapshot) must answer an error frame, not reject
+        // unowned and take the host process down with it
+        try { sock.write(JSON.stringify(await this.dispatch(line)) + "\n"); }
+        catch (e) { sock.write(JSON.stringify({ ok: false, error: (e as Error).message }) + "\n"); }
       }
+      if (buf.length > MAX_FRAME) { buf = ""; sock.destroy(); }
     });
     sock.on("error", () => { /* a client that vanished mid-write is not our failure */ });
   }
