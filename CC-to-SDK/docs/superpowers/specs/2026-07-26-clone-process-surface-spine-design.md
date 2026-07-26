@@ -612,6 +612,60 @@ reaching `stopped`. The brief's note therefore stands on inspection only — `da
 `stopped` to `error`, while `_poll_until_done` terminates on `done|blocked|error` alone, so a session
 reaching `stopped` would spin that watcher to its iteration cap.
 
+**The three unreached `daemon-finalize.sh` arms closed 2026-07-27** (verbatim output in
+`.doperpowers/sdd/acceptance-finalize-arms-report.md`). The limit had *not* reset — every turn still
+ends in about three seconds — but the limit turned out to be the wrong thing to wait for. None of the
+three arms tests the model; they test what `daemon-finalize.sh` reads out of the fleet **while a turn
+is in flight**. So the turn was held open at the transport layer instead: `ANTHROPIC_BASE_URL` pointed
+at a local endpoint that accepts `POST /v1/messages` and never answers. The engine issued a real
+109 KB request that never got a reply, so the host was genuinely inside `submit()`, `agents` genuinely
+read `state=working status=busy`, and `ccx stop` genuinely landed on a running turn. All eight script
+md5s unchanged.
+
+| arm | verdict | evidence |
+|---|---|---|
+| `live` | **PASS** | probed mid-turn; printed `live` by short id and by stable uuid; meta untouched, `updated` unchanged |
+| `absent` | **PASS** | `ccx rm` deregistered a running session; finalize printed `absent` both ways, wrote no reply file |
+| `error`/`stopped` | **PASS** | `ccx stop` on a running turn drove the row to `stopped`; finalize printed `error`, finalized the meta with a fresh timestamp, and returned `noop` on the next call |
+
+**This technique generalizes and should be reached for before waiting on quota**: any question about
+what the fleet *reports* during a turn — as opposed to what the model *says* — can be answered by
+stalling the transport. It cannot manufacture model output, so it does not help the three A2 probes
+(62, 63, 63b), which need real assistant text and a real `tool_use`.
+
+Three findings came out of that run.
+
+1. **Ours, Medium — `stop` and `rm` report success over a host that never dies.** When the in-flight
+   turn cannot return, `Session.dispose()` (`input.close(); await this.done`) never resolves, so
+   `SessionHost.stop()` never reaches `server.close()`, `runHostMain`'s `finally` never returns, and
+   the process, its engine subprocess and its listening socket all survive indefinitely. No poller is
+   deceived — the terminal roster state is written first — which is exactly what hides it: `agents`
+   says `stopped` and `ccx fleet gc` sweeps only sockets that do **not** answer, and this one answers.
+   For a session removed with `ccx rm` the roster row is gone too, so nothing names the process any
+   more. Fixed in plan A2a, Task 10.
+2. **The consumer's, Medium — the two halves of doperpowers disagree about `stopped`.**
+   `daemon-finalize.sh` maps `stopped` into its `error` arm, while `_lib.sh`'s `_poll_until_done`
+   terminates only on `done|blocked|error`. Now observed, not merely inferred: with a 40 s cap, a
+   session stopped 10.7 s in kept the watcher polling a further 40.8 s before giving up — at the
+   default `DAEMON_TIMEOUT` of 18000 that is roughly five hours spent polling a dead session. A
+   secondary effect: `daemon-spawn.sh` then registers the daemon as `working` on the line right after
+   its own banner printed `state=stopped`. Not ours; recorded for an upstream report.
+3. **Ours, Low — `blocked` is declared but never assigned.** The projection accepts it and
+   `daemon-finalize.sh` has arms for it, but `SessionHost` only ever sets `working`, `done`, `error`
+   and `stopped`, so the consumer's whole blocked-reply renderer is dead code against `ccx`. Plan A2a
+   Task 5 makes `status()` report it.
+
+**A2's three probes are written and blocked.** `probes/probes/62-midturn-transcript-and-stream-volume.ts`,
+`63-interrupt-vs-parked-permission.ts` and `63b-park-soak-ten-minutes.ts` exist and run, but every
+verdict is INCONCLUSIVE on this account: a rate-limited turn emits no `tool_use`, so `canUseTool` never
+fires, and it ends too fast to sample a transcript twice. Each probe now refuses to state a mechanism
+it did not observe — the first run of 63 printed a confident *"interrupt() RELEASES a parked
+permission"* off a turn that never parked, which is precisely the false premise this project's
+live-probe-first discipline exists to prevent. Re-run all three when the weekly limit resets on
+2026-07-29. Until then, A2a is built on the safe superset of both outcomes: it keeps its own bounded
+record of the current turn rather than trusting the on-disk transcript, and it settles parked
+decisions explicitly on `stop`/`interrupt` rather than trusting the SDK to abort them.
+
 ## Revision Notes
 
 - **2026-07-26 rev 3.5 (final review) — acceptance 13's dirty-worktree clause was normatively wrong and
