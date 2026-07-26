@@ -64,4 +64,14 @@ describe("PendingPermissions", () => {
     ac.abort();
     await expect(decision).resolves.toEqual({ kind: "deny" });
   });
+
+  it("a signal that is ALREADY aborted settles as a deny without ever parking", async () => {
+    // Adding an `abort` listener to an already-aborted signal never fires it — without the pre-check
+    // in `park()` this request would sit in `list()` forever, awaited by nobody.
+    const ac = new AbortController(); ac.abort();
+    const p = new PendingPermissions({ expireAfterMs: "never" });
+    const decision = p.brokerFor("s1").request(req("t1", ac.signal));
+    expect(p.list()).toHaveLength(0);   // settled synchronously; it never entered the pending map
+    await expect(decision).resolves.toEqual({ kind: "deny" });
+  });
 });

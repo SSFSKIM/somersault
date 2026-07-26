@@ -70,4 +70,10 @@ describe("host park policy", () => {
     await host.stop();
     await expect(decision).resolves.toEqual({ kind: "deny" });
   });
+
+  it("answer() on a toolUseID that was never parked reports the specific error, not a generic failure", async () => {
+    const host = hostFor("bg"); await host.start();
+    expect(host.answer("never-parked", { kind: "deny" }, "x")).toEqual({ ok: false, error: "no parked request never-parked" });
+    await host.stop();
+  });
 });

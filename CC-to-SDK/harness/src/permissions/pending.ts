@@ -46,6 +46,11 @@ export class PendingPermissions {
   }
 
   private park(sessionId: string, req: PermissionRequest): Promise<PermissionDecision> {
+    // Adding an `abort` listener to a signal that is ALREADY aborted never fires it — `gate.ts`'s
+    // canUseTool path pre-checks this before ever reaching a broker, but our own tests (and any other
+    // direct `broker().request()` caller) go straight to `park`, and without this a pre-aborted request
+    // would sit in `list()` forever, awaited by nobody.
+    if (req.signal?.aborted) return Promise.resolve({ kind: "deny" });
     return new Promise((resolve) => {
       const entry: PendingEntry = {
         sessionId, toolUseID: req.toolUseID, toolName: req.toolName, input: req.input,
