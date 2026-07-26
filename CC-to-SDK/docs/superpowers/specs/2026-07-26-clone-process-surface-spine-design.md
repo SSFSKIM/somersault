@@ -469,6 +469,21 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- **2026-07-26 rev 3.4 (planning drift)** — acceptance 9 requires `agents` to *report* the
+  no-human-seam condition, but no wire carrier was ever named. The projected row gains an optional
+  `noHumanSeam?: boolean`, set when a bare `--bg` ran with no permission configuration from any source.
+  This does not touch the doperpowers contract: its poller reads named keys with `.get()`, so extra
+  keys are inert.
+- **2026-07-26 rev 3.2 (planning)** — Goal A is implemented as **two plans**, split where the state
+  owner changes: **A1 (fleet substrate)** owns process/registry/roster state and is verified by the
+  doperpowers scripts; **A2 (attach & the human seam)** owns interaction state and is verified by TUI
+  tests. A1 delivers acceptance 1–4, 9, 9b, 11–18; A2 delivers 5–8 and 10. A2 is written after A1
+  lands, because `follow()`'s framing depends on A1's transport.
+  **One staged divergence, recorded so it is not read as a spec violation:** the default ask-policy
+  floor for a bare `--bg` (see *Permissions*) ships in A1 as **deny-and-record**, and A2 upgrades it to
+  **park-and-wait** once there is a client that can answer. Parking in A1 would strand a worker with no
+  recourse; denying is the safe interim and never silently approves. Workers with an explicit
+  `--permission-mode` — which is every doperpowers worker — are unaffected in both stages.
 - **2026-07-26 rev 3.1** — four one-line closures from the rev-3 review, all internal-consistency:
   acceptance 2's state set widened to include `stopped` (rev 3 widened the contract vocabulary and the
   acceptance list but missed this one — the same adjacent-semantics drift, caught a third time);
