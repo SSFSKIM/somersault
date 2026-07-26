@@ -16,6 +16,25 @@ describe("projectRow — the four arms", () => {
     expect(projectRow({ roster: roster({ state: "stopped" }), pidLive: false, socketAnswers: false }).state).toBe("stopped");
     expect(projectRow({ roster: roster({ state: "error" }), pidLive: false, socketAnswers: false }).state).toBe("error");
   });
+  it("arm 1 BEATS a live host — reordering the terminal guard is the regression this catches", () => {
+    // Every other arm-1 test passes pidLive:false, so moving the terminal guard below the live arms
+    // keeps the suite green. This is the one that notices: a `done` session whose pid was recycled and
+    // whose socket answers must still report done, not the stranger's live status.
+    const r = projectRow({ roster: roster({ state: "done" }), pidLive: true, socketAnswers: true, liveStatus: { state: "working", status: "busy" } });
+    expect(r.state).toBe("done"); expect(r.status).toBe("idle"); expect(r.unresponsive).toBeUndefined();
+  });
+  it("arm 1 keeps its OWN sessionId even when a registry row claims that pid", () => {
+    // Registry rows are keyed by pid and unlinked on exit, so one matching a FINISHED session's pid is
+    // a different process. Handing the consumer a stranger's sessionId is worse than handing it none.
+    const r = projectRow({ roster: roster({ state: "done", sessionId: "sid-mine" }),
+      registry: { pid: 100, cwd: "/w", sessionId: "sid-stranger" }, pidLive: true, socketAnswers: true });
+    expect(r.sessionId).toBe("sid-mine");
+  });
+  it("an answering socket suppresses `unresponsive` even with no live status to report", () => {
+    // Deleting this branch leaves the suite green while every healthy host reads as hung.
+    const r = projectRow({ roster: roster(), pidLive: true, socketAnswers: true });
+    expect(r.unresponsive).toBeUndefined(); expect(r.status).toBe("busy");
+  });
   it("arm 2: live pid + answering socket projects the LIVE status from the host", () => {
     const r = projectRow({ roster: roster(), pidLive: true, socketAnswers: true, liveStatus: { state: "blocked", status: "idle" } });
     expect(r.state).toBe("blocked"); expect(r.status).toBe("idle"); expect(r.unresponsive).toBeUndefined();

@@ -25,12 +25,16 @@ export interface ProjectInput {
  *   dead pid                      → error (or the poller waits forever on a SIGKILLed host) */
 export function projectRow(input: ProjectInput): AgentsRow {
   const { roster, registry, pidLive, socketAnswers, liveStatus } = input;
-  const base = { id: roster.short, sessionId: registry?.sessionId ?? roster.sessionId ?? "", cwd: roster.cwd, name: roster.name,
+  const base = { id: roster.short, cwd: roster.cwd, name: roster.name,
     ...(roster.noHumanSeam ? { noHumanSeam: true } : {}) };
 
-  if (TERMINAL.has(roster.state)) return { ...base, state: roster.state, status: "idle" };
-  if (pidLive && socketAnswers && liveStatus) return { ...base, state: liveStatus.state, status: liveStatus.status };
-  if (pidLive && socketAnswers) return { ...base, state: roster.state, status: "busy" };
-  if (pidLive) return { ...base, state: roster.state, status: "busy", unresponsive: true };
-  return { ...base, state: "error" as FleetState, status: "idle" };
+  // A finished session's identity comes from its OWN row. The engine unlinks its registry row on exit
+  // and files those rows by pid, so a registry row still matching a dead session's pid belongs to a
+  // DIFFERENT process — taking its sessionId would hand the consumer a stranger's session to act on.
+  if (TERMINAL.has(roster.state)) return { ...base, sessionId: roster.sessionId ?? "", state: roster.state, status: "idle" };
+  const sessionId = registry?.sessionId ?? roster.sessionId ?? "";
+  if (pidLive && socketAnswers && liveStatus) return { ...base, sessionId, state: liveStatus.state, status: liveStatus.status };
+  if (pidLive && socketAnswers) return { ...base, sessionId, state: roster.state, status: "busy" };
+  if (pidLive) return { ...base, sessionId, state: roster.state, status: "busy", unresponsive: true };
+  return { ...base, sessionId, state: "error", status: "idle" };
 }
