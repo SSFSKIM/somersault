@@ -56,8 +56,23 @@ describe("doperpowers _poll_until_done contract", () => {
     expect(state(poll([agentsRow({ state: "blocked", status: "idle" })], "a1b2c3d4"))).toBe("blocked");
     expect(state(poll([agentsRow({ state: "error", status: "idle" })], "a1b2c3d4"))).toBe("error");
   });
+  it("does NOT terminate this poller on stopped — a real hazard, pinned rather than fixed", () => {
+    // `stopped` is one of OUR fleet states (fleet/roster.ts TERMINAL), and our JSON here is correct —
+    // but this filter's shell only matches `case "$state" in done | blocked | error)`, so a session
+    // that finalizes as `stopped` prints a well-formed line that loop just ignores until DAEMON_TIMEOUT.
+    // We can't fix this from our side (a different doperpowers script handles `stopped` correctly);
+    // this test only makes sure the next reader trips over the fact instead of rediscovering it live.
+    expect(poll([agentsRow({ state: "stopped", status: "idle" })], "a1b2c3d4")).toBe("sid-1 stopped /w");
+  });
   it("yields nothing while sessionId is empty — the startup window keeps the poller waiting", () => {
-    expect(poll([agentsRow({ sessionId: "" })], "a1b2c3d4")).toBe("");
+    const rows = [agentsRow({ sessionId: "" })];
+    expect(poll(rows, "a1b2c3d4")).toBe("");
+    // Empty output alone can't prove THIS is why: it's also what the filter prints for a dropped row,
+    // a renamed key, malformed JSON, or a wrong id — a mutation run confirmed it (renaming sessionId
+    // throughout broke five tests and left this one standing). Assert the row genuinely made it into
+    // our own JSON mid-startup, so "silently dropped" would fail here instead of surviving unnoticed.
+    const rendered = JSON.parse(renderAgents(rows, { json: true, all: true }));
+    expect(rendered).toContainEqual(expect.objectContaining({ id: "a1b2c3d4", sessionId: "" }));
   });
   it("reports a worktree cwd verbatim, since the script uses it to locate the worktree", () => {
     expect(poll([agentsRow({ state: "done", status: "idle", cwd: "/repo/.claude/worktrees/wt" })], "a1b2c3d4"))

@@ -16,6 +16,7 @@ npm run cli                             # tsx src/cli.ts
 
 - **Live tests are gated** on `ANTHROPIC_API_KEY` **or** `CLAUDE_CODE_OAUTH_TOKEN` (`const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip`) — there is **no dotenv autoload**, so they skip cleanly without either. Run them keyed from here: `set -a; . ../.env; set +a; npx vitest run test/live/<file>`. The OAuth token (from `claude setup-token`) bills your **Pro/Max subscription** instead of metered API credits — but `ANTHROPIC_API_KEY` shadows it if both are set, so keep the API-key line commented in `.env` (probe 28 verified `accountInfo()` reports `{tokenSource:"CLAUDE_CODE_OAUTH_TOKEN", apiProvider:"firstParty"}` with no key present). Live tests cost tokens/quota and take ~10–90 s each; the controller runs them, implementers stop at the clean keyless skip.
 - After a subagent edit you may see phantom **"Cannot find module" / "property does not exist"** LSP diagnostics — they are stale; trust a clean `npm run typecheck` + green vitest over them.
+- `test/contract/` shells out to a real **`python3`** (it pipes our output through doperpowers' actual filter) — the default `npm test` picks it up, so a machine without `python3` on PATH fails there rather than skipping.
 
 ## `src/` module map
 
