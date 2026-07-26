@@ -83,7 +83,7 @@ Two semantics in that table are load-bearing and easy to under-build:
 |---|---|---|
 | Interactive | `cc-harness-chat` (Ink REPL, `tui/`) | **~82%** visual parity (`tui-ux.md`); the strongest asset |
 | Headless | `cc-harness "<prompt>"` (`harness/src/cli.ts`) | works; arg surface is a **stub** — `--model`/`--output-style` only, vs. 63 config fields underneath |
-| Fleet | `cc-harness daemon` + `ps`/`submit`/`top` + `cc-harness-console` | **wrong shape** — see §3 F3 |
+| Fleet | **`ccx --bg` / `agents` / `stop` / `rm` / `fleet gc`** (A1, shipped 2026-07-26) | **right shape, half built** — process-per-session with a two-layer live/terminal view; doperpowers' unmodified `daemon-spawn.sh` + `daemon-list.sh` run on it. `attach` (A2) is not built, so the resume/reply/finalize half of the contract is untested. The old `cc-harness daemon` supervisor (F3's "wrong shape") is superseded for fleet purposes and remains only as a library surface |
 
 Three binaries (`cc-harness`, `cc-harness-console`, `cc-harness-chat`), three argument grammars, none
 of them Claude Code's. The engine is strong; the *shell* around it is the gap.

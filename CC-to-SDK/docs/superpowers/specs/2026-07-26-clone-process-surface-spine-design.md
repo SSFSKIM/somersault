@@ -494,10 +494,75 @@ not locked to one client because a dead lock-holder would park the session forev
   (completion polling, `rm` on a dead session, socket discovery). A principle stated as an absolute
   invites exactly this failure; the narrowed form — *live is asked, terminal is recorded* — keeps the
   benefit without the contradiction.
+- **A rate-limited account is a *complete* test bed for the process surface, and that is worth knowing
+  rather than working around.** The whole acceptance run of 2026-07-26 was made on an OAuth subscription
+  whose weekly limit was exhausted: every turn's reply was
+  `You've hit your weekly limit · resets Jul 29 at 1pm (Asia/Seoul)`. The model did no work at all — and
+  every acceptance item still passed, including the doperpowers scripts end to end, because the SDK
+  returns that message as a **normal successful result**: `submit()` resolves, the host records `done`,
+  the session id materializes, the transcript is written, and `_poll_until_done` terminates. The
+  contract under test is the process surface, and the process surface never touches the reply.
+  **Lesson: separate what an experiment needs a live model FOR. Here the credential was needed only to
+  make a real session exist, not to make it produce anything** — so the limit cost nothing but the
+  ability to hold a session open, which is a *second* fact worth writing down: at the limit every turn
+  finishes in six to eleven seconds, so any "while it is running" assertion needs a poll loop rather than
+  a `sleep`. The task brief's `sleep 5`-then-look shape missed the window on the first attempt.
+- **The brief's `CLAUDE_JOB_DIR` diagnostic is a false positive by construction.**
+  `grep -q '"jobId"' ~/.claude/sessions/*.json` matches **any** row on the machine, and on a developer
+  box every ordinary Claude Code session carries a `jobId` — ten rows matched here while our own spawn
+  was demonstrably clean. The scrub can only be checked against *our* row (by name, while the host is
+  alive) or, better, functionally: acceptance 4 listing our session under our own name **is** the proof,
+  because a session that had adopted the parent's job would render under the parent's identity instead.
+- **The `cwd` a caller passes is not the `cwd` it gets back.** `daemon-spawn.sh` was given
+  `/tmp/ccx-accept-repo` and its registry meta recorded `/private/tmp/ccx-accept-repo`: the row reports
+  the host's `process.cwd()`, which on macOS has resolved the `/tmp` symlink. Correct — that *is* the
+  real path, and `renderAgents` already `resolve()`s both sides of `--cwd` — but a consumer that
+  string-compares the path it passed against the path it reads back will not match on macOS.
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**A1 (fleet substrate) shipped 2026-07-26.** Fourteen tasks: the short-id/socket/banner primitives, the
+roster and registry readers with `procStart` liveness, `projectRow`, the UDS host and its framed ops, the
+`ccx` grammar, detached spawn, `agents`, `stop`/`rm`/`fleet gc`, worktree layout, and the doperpowers
+contract tests. **A2 (attach & the human seam) is not built** — `ccx attach` exits 2 with
+`attach ships in plan A2`, so acceptance 5–8 and 10 are untouched by this run.
+
+**Pre-flight.** Unit 768/768 green (94 files); contract 7/7 green; `tsc --noEmit` clean; `tsc -p
+tsconfig.build.json` clean. One flake, recorded rather than fixed: on the first full-suite run
+`fleet-status.test.ts > "gives up on a reply larger than the frame cap"` failed `expected 203 to be less
+than 200` — a wall-clock budget asserted under a loaded 94-file parallel run. The same file passed 3/3 in
+isolation and the full suite passed on re-run. The assertion is measuring scheduler latency, not the
+frame cap; it wants a wider budget or an event-based assertion.
+
+**Acceptance executed by hand against real detached processes** (verbatim output in
+`.doperpowers/sdd/task-14-report.md`):
+
+| # | Verdict | Evidence |
+|---|---|---|
+| 1 | **PASS** | `backgrounded · 2724ec15`, parent returned exit 0 immediately; `od -c` confirms the separator is `302 267` (U+00B7) and nothing else changed. |
+| 2 | **PASS** | Observed *while working*: `{"id":"769dd293",…,"sessionId":"","state":"working","status":"busy"}` — all five poller keys present, `sessionId` legitimately empty during the startup window. |
+| 3 | **PASS** | After exit the row is still there under `--all` (`state:"done"`, `status:"idle"`, uuid filled in) and correctly absent without `--all`. |
+| 4 | **PASS** | The real `claude` 2.1.220 listed it: `{"pid":65337,…,"kind":"background",…,"name":"ccx-accept4"}`. `kind` renders as `background`, as rev 3.3 predicted. |
+| 9 (positive half) | **PASS** | The doperpowers worker, spawned by the real script with `--permission-mode auto`, carries **no** `noHumanSeam` on its roster row and ran to `done` without parking. |
+| 9b | **PASS** | `SIGKILL` on a live host → `agents` projects `state:"error"`, while the row on disk still reads `working`. State is derived, never rewritten by a read. |
+| 11 | **PASS** | The killed host left `run/79554.sock`; `agents` reported the dead row without unlinking it; `ccx fleet gc` printed `removed …/79554.sock`. |
+| 12 | **PASS** | `ccx rm 2724ec15` on an already-exited session: exit 0, roster file gone, row gone from the listing. |
+| 15 | **PASS** | `ccx --bg --gateway foo "x"` → `ccx: --gateway is not supported by ccx (recognized, deliberately unimplemented)`, exit 2. |
+| 17 | **PASS** | The consumer's own `sed` extraction yields `2724ec15`, length 8. |
+| 18 (spawn + list) | **PASS** | Unmodified scripts, MD5-identical before and after, `claude` shadowed on PATH: `daemon spawned: ccx-accept  [ff99d9e8 / d69a9632-673d-4168-adb9-79c2b09c2277]  state=done`, then `daemon-list.sh` rendered the row. |
+
+Acceptance 13, 14, 16 and the rest of 18 (`daemon-resume.sh`, `daemon-reply.sh`, `daemon-finalize.sh`,
+the `_lib.sh` purge path) were **not exercised** in this run — they were outside its brief, and the
+resume-shaped ones are the load-bearing gap, since forking is how doperpowers continues a daemon.
+
+The hand run is now repeatable as `harness/test/live/ccx-fleet.e2e.test.ts` (credential-gated, 2/2 green
+in 11.9s): acceptance 1, 2, 3, 12, 17 in one detached lifecycle, and 9b in a second.
+
+**Retrospective.** The design's one genuinely load-bearing decision — *live is asked, terminal is
+recorded* — is also the only one that could not have been validated by unit tests, and both of its edges
+held under real processes: a finished session stays listed (acceptance 3) and a killed one is not
+believed (9b). The two things this run could not settle are the resume/fork half of the doperpowers
+contract, and anything that needs a human seam, because A2 does not exist yet.
 
 ## Revision Notes
 
