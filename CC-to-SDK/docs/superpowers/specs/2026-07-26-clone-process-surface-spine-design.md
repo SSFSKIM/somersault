@@ -680,6 +680,50 @@ background posture, it also retires the "default ask-policy floor" and the `noHu
 altogether — the flag marked a supported configuration, and its stated reason ("auto-approves
 everything") was untrue.
 
+**A2a (attach transport & the human seam) shipped 2026-07-27.** Eleven tasks, 24 commits: the park
+registry promoted out of the retiring daemon with a required `expireAfterMs: number | "never"`,
+correlation ids and pushed event frames on the host socket, `TurnBuffer`, `SessionHost.follow()` with
+late-joiner replay, the kind-scoped park, the six socket ops, `RemoteChatSession`, deletion of the
+`noHumanSeam` flag, an integration suite, and a bounded-teardown fix. 839 tests green; typecheck,
+build and the keyless-skip guarantee all clean; the consumer contract unmoved.
+
+**Acceptance 8, executed live against a real model** (not simulated through our own broker):
+
+```
+$ ccx --bg --permission-mode default --settings '{"permissions":{"ask":["Bash(*)"]}}' -n acc8live \
+      "Run the bash command: echo PARKED-OK. Use the Bash tool."
+backgrounded · 628c26dd
+{"id":"628c26dd","sessionId":"1f5673b1-…","state":"blocked","status":"idle"}   ← 60s, no client
+```
+
+Then a `RemoteChatSession` attached *after* the park and was replayed `["message"×10,
+"permission:Bash", "state"]` — the late-joiner sequence Tasks 4, 9 and 10 built; `pending()` returned
+the real input `{command:"echo PARKED-OK"}`; answering `allow_once` resumed the turn, which finished
+`done`. **Spawn → park → attach → answer → done, end to end.** Acceptance 7 is covered by the
+integration suite. Acceptance 5, 6 and 10's client halves stay deferred: `attach`, foreground `ccx`
+and `--detachable` all still exit 2 naming the missing client.
+
+**What the process caught, and where.** Per-task reviews found the usual crop, but the two that
+mattered most were found by the two mechanisms that read *across* tasks:
+
+- The **integration suite**, the first thing to route `follow()` through a real socket, found that a
+  late joiner was replayed the buffered turn but **not the parked permissions** — so a client
+  attaching after a park never learned of it through the live stream. No task owned that seam: the
+  task that built `follow()` predated the registry, and the task that built the registry never
+  mentioned replay.
+- The **final whole-branch review** found a Critical the eleven per-task reviews could not: the socket
+  `prompt` gate asked `status().status`, which is `idle` while parked, so the gate was open for the
+  whole duration of a park. A prompt arriving then re-entered `runTask`, wiped the in-flight turn, and
+  let turn one's completion finalize the roster `done` while turn two ran. **The plan authored it** —
+  its comment said "the busy check is the host's" while the code two lines below asked the consumer
+  projection.
+
+**Carried into A2b, deliberately unbuilt:** `runHostMain` still stops an interactive host after its
+initial turn, so no idle host can yet take a second turn over the socket; event fan-out has no write
+backpressure; the interactive deny rule counts *followers*, so a client that connects without
+following is invisible to it; and a live interactive host will report `state:"done"` between turns
+once such hosts stay alive.
+
 ## Revision Notes
 
 - **2026-07-26 rev 3.5 (final review) — acceptance 13's dirty-worktree clause was normatively wrong and
