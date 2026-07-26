@@ -52,3 +52,6 @@ export type {
 export { createPermissionGate } from "./permissions/gate.js";
 export type { PermissionBroker, PermissionDecision, PermissionRequest } from "./permissions/types.js";
 export type { PendingEntry } from "./permissions/pending.js";
+export { RemoteChatSession } from "./client/remote.js";
+export type { HostEvent } from "./host/wire.js";
+export type { HostStatus } from "./host/ops.js";

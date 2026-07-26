@@ -60,6 +60,10 @@ describe("public API", () => {
     expect(typeof api.validateHarnessConfig).toBe("function");
     expect(typeof api.HarnessConfigError).toBe("function");
   });
+  it("exports the RemoteChatSession socket client (a2a, task 7)", () => {
+    expect(typeof api.RemoteChatSession).toBe("function");
+    expect(typeof api.RemoteChatSession.connect).toBe("function");
+  });
   it("freezes the full public value-export surface (deliberate-update gate)", () => {
     const EXPECTED: string[] = [
       "BUILTIN_AGENTS",
@@ -72,6 +76,7 @@ describe("public API", () => {
       "DaemonSupervisor",
       "HarnessConfigError",
       "KairosAssistant",
+      "RemoteChatSession",
       "Session",
       "StructuredRunError",
       "SwarmError",
