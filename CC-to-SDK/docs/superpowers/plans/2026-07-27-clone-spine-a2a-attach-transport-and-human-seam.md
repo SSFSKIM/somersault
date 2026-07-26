@@ -1056,7 +1056,19 @@ A2b.
 - [ ] **Step 1: Write the failing test**
 
 Create `harness/test/unit/host-ops.test.ts`. Drive `HostServer` directly through a socket pair so the
-test exercises real framing:
+test exercises real framing.
+
+**Two defects in the test code below, found during execution and recorded here so the record matches
+what shipped.** Both were fixed in the tests, not by weakening the implementation:
+
+1. The shared `handlers()` fixture defaults to `status: "busy"`, which the new busy-gate on `prompt`
+   then rejects — so the *"prompt reaches the handler"* test could never have called its handler. It
+   failed with `expected [] to deeply equal [ 'do the thing' ]`. Fix: override `status` to an idle
+   reading in the two tests that send a `prompt`. The gate itself is deliberate; keep it.
+2. The fixture's `follow: (_deliver: (ev: unknown) => void)` does not satisfy
+   `HostHandlers.follow`'s `(ev: HostEvent) => void` — TypeScript reports
+   `TS2322: Type 'unknown' is not assignable to type 'HostEvent'`. Fix: type the fixture parameter as
+   `HostEvent`.
 
 ```ts
 import { describe, expect, it, vi } from "vitest";
