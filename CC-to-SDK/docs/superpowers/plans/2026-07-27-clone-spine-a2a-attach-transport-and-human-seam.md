@@ -37,8 +37,8 @@ package.
   watch the test fail, revert. A guard that passes under its own regression is worse than no guard.
 - **`agents` stays read-only.** Nothing in this plan may make a read command write to the roster.
 - **Deny-on-lost-UI stays the default for interactive sessions; park is opt-in and `kind`-scoped.**
-- **Any explicit permission configuration wins.** The default ask-policy floor applies only to a bare
-  `--bg` with no permission configuration from any source.
+- **Any explicit permission configuration wins.** (The spec's default ask-policy *floor* is **not**
+  built in A2a — see Task 8 — but this precedence rule still governs everything that is.)
 - **First answer wins across clients**; a second answerer is told who answered, and is not an error.
 - **`detach()` ≠ `dispose()`.** A client going away must never deny a request that is already parked.
 - **The wire stays backward-compatible with an already-running A1 host.** Replies keep their A1 shape
@@ -65,8 +65,8 @@ package.
 | `harness/test/unit/host-follow.test.ts` | `TurnBuffer` bounds, truncation flag, replay order |
 | `harness/test/unit/host-park.test.ts` | Kind-scoped park policy, `status()` → `blocked`, detach-does-not-deny |
 | `harness/test/unit/host-ops.test.ts` | `pending`/`answer`/`prompt`/`interrupt`/`stop` op behaviour |
-| `harness/test/unit/cli-ask-floor.test.ts` | The bare-`--bg` ask floor and its interaction with `noHumanSeam` |
 | `harness/test/unit/host-teardown.test.ts` | `stop()` returns, and closes the socket, even when dispose never settles |
+| `probes/probes/64-auto-mode-vs-canusetool.ts` | Whether `permissionMode: "auto"` consults `canUseTool` at all (Task 8) |
 | `harness/test/integration/host-client.test.ts` | Real UDS + fake `QueryFn`: attach, follow, park, multi-client, detach-vs-dispose, roster on exit |
 
 **Modify**
@@ -79,8 +79,7 @@ package.
 | `harness/src/host/ops.ts` | Op union grows; `HostStatus` unchanged (it already carries `waitingFor`) |
 | `harness/src/host/server.ts` | Correlation ids, event frames, per-connection subscriptions |
 | `harness/src/host/host.ts` | `follow()`, the park registry, `status()` → `blocked`, `stop()` settles parks |
-| `harness/src/cli/hostMain.ts` | The bare-`--bg` ask floor |
-| `harness/src/fleet/status.ts` | Send an `id`; keep accepting an A1 reply (no code change expected — verify) |
+| `harness/src/fleet/status.ts` | **No change expected.** It sends no `id` and reads a bare `{ok:…}` reply — which is exactly what keeps it able to read a pre-A2a host. Verify, do not "improve". |
 
 ---
 
@@ -225,9 +224,16 @@ listener — is already correct and must be carried over **unchanged**.
 
 - [ ] **Step 4: Repoint the importers**
 
-`harness/src/daemon/supervisor.ts`: change the import to `../permissions/pending.js` and pass the
-expiry it has always had, now stated: `new PendingPermissions({ expireAfterMs: 30_000 })`. Search for
-any other importer (`grep -rn "daemon/permissions" src/ test/`) and repoint it too.
+`harness/src/daemon/supervisor.ts`: change the import to `../permissions/pending.js`. The real line is
+`new PendingPermissions({ timeoutMs: opts.permissionTimeoutMs, now: this.now })` — keep **both**
+arguments; the daemon's documented `DaemonOptions.permissionTimeoutMs` knob and its injected clock are
+not yours to drop:
+
+```ts
+    this.pending = new PendingPermissions({ expireAfterMs: opts.permissionTimeoutMs ?? 30_000, now: this.now });
+```
+
+Search for any other importer (`grep -rn "daemon/permissions" src/ test/`) and repoint it too.
 
 `harness/src/index.ts:54`: `export type { PendingEntry } from "./permissions/pending.js";` — the
 exported **name** does not change, so `test/unit/index.test.ts` (which pins the public surface) must
@@ -237,9 +243,12 @@ still pass untouched. If it fails, you have changed the surface; fix the export,
 
 Run: `npx vitest run test/unit/permissions-pending.test.ts test/unit/index.test.ts`
 Then: `npx vitest run test/unit` and `npm run typecheck`
-Expected: all PASS. The daemon's existing permission tests must pass **without edits beyond the import
-path** — if one needs a behaviour change, stop and report it, because that means the move changed
-semantics.
+
+`test/unit/daemon-permissions.test.ts` constructs `new PendingPermissions()` bare in three places and
+with only `{now}`/`{schedule}` in three more; a required `expireAfterMs` fails all six on typecheck.
+**The only edits permitted in that file are the import path and adding `expireAfterMs: 30_000` to those
+constructor calls.** Any other change — softening the required field, altering an assertion — means the
+move changed semantics: stop and report it instead.
 
 - [ ] **Step 6: Commit**
 
@@ -263,8 +272,8 @@ silent auto-deny again."
 
 **Interfaces:**
 - Produces: `type HostEvent`, `encodeReply(id, body)`, `encodeEvent(ev)`, `type HostFrame`,
-  `decodeFrame(line): HostFrame | undefined`. `HostServer` gains
-  `broadcast(ev: HostEvent): void` and a `HostHandlers.follow` hook (Task 7 fills it in).
+  `decodeFrame(line): HostFrame | undefined`. `HostServer` learns to echo correlation ids. Fan-out is
+  **not** part of this task — Task 6 adds it, per connection.
 - Consumes: nothing new.
 
 **Context.** A1's socket answers one reply per request line. A client that is *following* needs frames
@@ -338,7 +347,7 @@ export type HostEvent =
   | { kind: "permission"; entry: PendingEntry }                             // a decision just parked
   | { kind: "permission_settled"; toolUseID: string; by: string; decision: string }
   | { kind: "state"; status: HostStatus }
-  | { kind: "turn"; phase: "start" | "end"; error?: string };
+  | { kind: "turn"; phase: "start" | "end"; error?: string; truncated?: boolean };
 
 export type HostFrame = { t: "event" } & HostEvent | ({ t?: undefined } & Record<string, unknown>);
 
@@ -370,23 +379,15 @@ export const hostOp = z.discriminatedUnion("op", [
 ]);
 ```
 
-- [ ] **Step 5: Teach the server to echo ids and to broadcast**
+- [ ] **Step 5: Teach the server to echo ids**
 
-In `harness/src/host/server.ts`: track subscribers, and route replies through `encodeReply`.
+In `harness/src/host/server.ts`, route replies through `encodeReply`.
 
-```ts
-  private subscribers = new Set<Socket>();
-
-  /** Push an event to every connection that asked to follow. Deliberately fire-and-forget: a slow or
-   *  vanished follower must never delay the turn that is producing the events. `write` returning false
-   *  (the kernel buffer is full) is handled in Task 3 by the buffer's own bound, not by blocking here. */
-  broadcast(ev: HostEvent): void {
-    const line = encodeEvent(ev);
-    for (const s of this.subscribers) { try { s.write(line); } catch { this.subscribers.delete(s); } }
-  }
-```
-
-Register/unregister in `onConnection`: `sock.once("close", () => { this.open.delete(sock); this.subscribers.delete(sock); })`.
+**Do not add a `broadcast` method or a subscriber set.** Task 6 delivers events **per connection**,
+writing straight to the socket that asked for them. A shared broadcast looks natural here and is
+wrong: each following connection registers its own host-side follower, so a broadcast-from-each-
+follower delivers every event N times to each of N clients (N² writes), and a late joiner's replay
+goes to everyone rather than to the joiner. Keep the server dumb about fan-out.
 
 In the data handler, replace the two `sock.write(JSON.stringify(...) + "\n")` calls so the reply is
 built by `encodeReply` with the id parsed off the request. Parse the id **before** validating the op,
@@ -701,6 +702,10 @@ import type { HostEvent } from "./wire.js";
    *  it never sees message 3 before messages 1 and 2. Returns its own unsubscribe. */
   follow(cb: (ev: HostEvent) => void): () => void {
     const snap = this.turnBuffer.snapshot();
+    // The truncation flag has to reach the client or it is a promise we do not keep: TurnBuffer
+    // records that the replay is partial, and a follower shown a partial turn with no marker reads it
+    // as the whole turn. Sent only when true, so an untruncated replay costs no frame.
+    if (snap.truncated) this.deliver(cb, { kind: "turn", phase: "start", truncated: true });
     for (const m of snap.messages) this.deliver(cb, { kind: "message", data: m });
     this.followers.add(cb);
     return () => { this.followers.delete(cb); };
@@ -721,7 +726,7 @@ In `runTask`, reset the buffer, wrap the existing `stamp` callback, and bracket 
 ```ts
   async runTask(prompt: string): Promise<void> {
     this.busy = true; this.state = "working";
-    this.turnBuffer.reset();
+    this.turnBuffer.reset(); this.settledBy.clear();     // Task 5 adds settledBy; clear it here
     this.emit({ kind: "turn", phase: "start" });
     let stamped = false;
     const onMessage = (m: unknown) => {
@@ -891,6 +896,9 @@ import type { PermissionDecision, PermissionBroker, PermissionRequest } from "..
   // outlives the terminal that spawned it. The interactive case is handled by the follower rule in
   // broker(), not by a timer — a timer is how "the human is thinking" becomes "the human said no".
   private parked = new PendingPermissions({ expireAfterMs: "never" });
+  // Who answered what, so a second answerer can be told. Cleared at each turn boundary (in runTask's
+  // `this.turnBuffer.reset()` line) — a host that runs for days would otherwise accumulate one entry
+  // per permission for its whole life.
   private settledBy = new Map<string, string>();
 ```
 
@@ -918,10 +926,13 @@ import type { PermissionDecision, PermissionBroker, PermissionRequest } from "..
 
   /** First answer wins. A second answerer is TOLD who got there first rather than erroring: two humans
    *  racing on the same prompt is normal, and an error frame would read as "your answer failed". */
-  answer(toolUseID: string, decision: PermissionDecision, by: string): { ok: true; alreadyAnsweredBy?: string } {
+  answer(toolUseID: string, decision: PermissionDecision, by: string): { ok: true; alreadyAnsweredBy?: string } | { ok: false; error: string } {
     if (!this.parked.respond(toolUseID, decision)) {
       const who = this.settledBy.get(toolUseID);
-      return who ? { ok: true, alreadyAnsweredBy: who } : { ok: true };
+      // Answered-by-someone-else and never-parked-at-all are different outcomes and must not share a
+      // reply: a client whose toolUseID is stale or wrong would otherwise read `{ok:true}` and believe
+      // its answer landed.
+      return who ? { ok: true, alreadyAnsweredBy: who } : { ok: false, error: `no parked request ${toolUseID}` };
     }
     this.settledBy.set(toolUseID, by);
     this.emit({ kind: "permission_settled", toolUseID, by, decision: decision.kind });
@@ -1016,7 +1027,7 @@ Create `harness/test/unit/host-ops.test.ts`. Drive `HostServer` directly through
 test exercises real framing:
 
 ```ts
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { connect } from "node:net";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1062,7 +1073,7 @@ const handlers = (over: Partial<HostHandlers> = {}): HostHandlers => ({
   answer: () => ({ ok: true }),
   prompt: async () => {},
   interrupt: async () => {},
-  follow: () => () => {},
+  follow: (_deliver: (ev: unknown) => void) => () => {},
   ...over,
 });
 
@@ -1104,30 +1115,52 @@ describe("host ops", () => {
     c.end(); await s.close();
   });
 
-  it("follow subscribes the connection, and only that connection", async () => {
+  it("each following connection gets its OWN sink, and events reach only it", async () => {
+    const sinks: ((ev: any) => void)[] = [];
     const p = sockPath();
-    let broadcast: (ev: any) => void = () => {};
-    const s = new HostServer(handlers({ follow: () => () => {} }), p);
+    const s = new HostServer(handlers({ follow: (deliver) => { sinks.push(deliver); return () => {}; } }), p);
     await s.listen();
-    broadcast = (ev) => s.broadcast(ev);
     const watcher = client(p), quiet = client(p);
     await watcher.ready; await quiet.ready;
     watcher.send({ id: 1, op: "follow" });
     await watcher.waitFor((f) => f.id === 1);
-    broadcast({ kind: "state", status: { state: "blocked", status: "idle" } });
+    expect(sinks).toHaveLength(1);                       // only the follower registered
+    sinks[0]!({ kind: "state", status: { state: "blocked", status: "idle" } });
     await watcher.waitFor((f) => f.t === "event" && f.kind === "state");
     await new Promise((r) => setTimeout(r, 50));
     expect(quiet.frames.some((f) => f.t === "event")).toBe(false);
     watcher.end(); quiet.end(); await s.close();
   });
 
-  it("a follower that disconnects is dropped, and a later broadcast does not throw", async () => {
-    const p = sockPath(); const s = new HostServer(handlers(), p); await s.listen();
+  it("delivers each event EXACTLY ONCE per following connection", async () => {
+    const sinks: ((ev: any) => void)[] = [];
+    const p = sockPath();
+    const s = new HostServer(handlers({ follow: (deliver) => { sinks.push(deliver); return () => {}; } }), p);
+    await s.listen();
+    const a = client(p), b = client(p);
+    await a.ready; await b.ready;
+    a.send({ id: 1, op: "follow" }); await a.waitFor((f) => f.id === 1);
+    b.send({ id: 1, op: "follow" }); await b.waitFor((f) => f.id === 1);
+    // The host emits ONE event; with per-connection sinks that is one write to each socket. A shared
+    // broadcast called from each of the two registered followers would write it twice to both.
+    for (const sink of sinks) sink({ kind: "turn", phase: "end" });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(a.frames.filter((f) => f.t === "event")).toHaveLength(1);
+    expect(b.frames.filter((f) => f.t === "event")).toHaveLength(1);
+    a.end(); b.end(); await s.close();
+  });
+
+  it("a follower that disconnects releases its host-side subscription", async () => {
+    const offs: number[] = [];
+    const p = sockPath();
+    const s = new HostServer(handlers({ follow: () => () => { offs.push(1); } }), p);
+    await s.listen();
     const c = client(p); await c.ready;
     c.send({ id: 1, op: "follow" }); await c.waitFor((f) => f.id === 1);
     c.end();
-    await new Promise((r) => setTimeout(r, 50));
-    expect(() => s.broadcast({ kind: "turn", phase: "end" })).not.toThrow();
+    // Observable, unlike "broadcast does not throw": socket.write() after destroy never throws
+    // synchronously in Node, so that assertion passes even with the cleanup deleted.
+    await vi.waitFor(() => expect(offs).toHaveLength(1), { timeout: 1000 });
     await s.close();
   });
 
@@ -1173,15 +1206,20 @@ export interface HostHandlers {
   status(): HostStatus;
   stop(): Promise<void>;
   pending(): PendingEntry[];
-  answer(toolUseID: string, decision: PermissionDecision, by: string): { ok: true; alreadyAnsweredBy?: string };
+  answer(toolUseID: string, decision: PermissionDecision, by: string): { ok: boolean; alreadyAnsweredBy?: string; error?: string };
   prompt(text: string): Promise<void>;
   interrupt(): Promise<void>;
-  follow(): () => void;
+  /** Register ONE sink for ONE connection; the returned function unregisters it. The sink is what the
+   *  server writes to that socket — fan-out lives in the host's follower set, never here. */
+  follow(deliver: (ev: HostEvent) => void): () => void;
 }
 ```
 
 `dispatch` needs the socket to serve `follow`, so give it the socket as a second parameter and keep
-the per-connection unsubscribe with the connection:
+the per-connection unsubscribe with the connection. **Update the call site in the data handler that
+Task 2 wrote** (`this.dispatch(frame)` → `this.dispatch(frame, sock)`) — it is in a part of the file
+this task otherwise does not touch, and leaving it is a compile error the implementer will blame on
+something else:
 
 ```ts
   private async dispatch(frame: HostFrame | undefined, sock: Socket): Promise<Record<string, unknown>> {
@@ -1195,11 +1233,23 @@ the per-connection unsubscribe with the connection:
       case "answer": return { ...this.handlers.answer(op.data.toolUseID, { kind: op.data.decision }, op.data.by) };
       // A prompt is NOT awaited before replying: a turn runs for minutes, and holding the reply would
       // stall this connection's every other op — including the `interrupt` that ends the very turn it
-      // is waiting on. The turn's progress travels as events instead.
-      case "prompt": void this.handlers.prompt(op.data.text).catch(() => {}); return { ok: true, accepted: true };
+      // is waiting on. The turn's progress travels as events instead. The busy check is the host's
+      // (Task 5 tracks `busy`); a second prompt landing mid-turn would reset the TurnBuffer under the
+      // running turn and let turn one's completion finalize the roster while turn two is still going.
+      case "prompt": {
+        if (this.handlers.status().status === "busy") return { ok: false, error: "busy" };
+        void this.handlers.prompt(op.data.text).catch(() => {});
+        return { ok: true, accepted: true };
+      }
       case "interrupt": await this.handlers.interrupt(); return { ok: true };
       case "follow": {
-        if (!this.subscribers.has(sock)) { this.subscribers.add(sock); this.unfollows.set(sock, this.handlers.follow()); }
+        // Idempotent per connection: a client that sends `follow` twice must not end up with two
+        // sinks writing every event to it twice.
+        if (!this.unfollows.has(sock)) {
+          this.unfollows.set(sock, this.handlers.follow((ev) => {
+            try { sock.write(encodeEvent(ev)); } catch { /* the peer went away mid-write; close handles it */ }
+          }));
+        }
         return { ok: true, following: true };
       }
       case "unfollow": { this.unfollow(sock); return { ok: true, following: false }; }
@@ -1208,13 +1258,13 @@ the per-connection unsubscribe with the connection:
 
   private unfollows = new Map<Socket, () => void>();
   private unfollow(sock: Socket): void {
-    this.subscribers.delete(sock);
     const off = this.unfollows.get(sock); this.unfollows.delete(sock); off?.();
   }
 ```
 
 and call `this.unfollow(sock)` from the connection's `close` handler, so a vanished client releases
-its host-side subscription too.
+its host-side subscription too. This is what the *"a follower that disconnects releases its host-side
+subscription"* test observes; deleting the call must make that test fail.
 
 - [ ] **Step 5: Wire the real handlers in `harness/src/host/host.ts`**
 
@@ -1228,10 +1278,9 @@ In `start()`, replace the two-handler literal:
         answer: (id, d, by) => this.answer(id, d, by),
         prompt: (text) => this.runTask(text),
         interrupt: () => this.interrupt(),
-        // Every event the host emits goes to every subscribed socket. The server owns which sockets
-        // those are; the host only knows "there is at least one follower", which is what the
-        // interactive deny rule reads.
-        follow: () => this.follow((ev) => this.server?.broadcast(ev)),
+        // One follower per connection, delivering to that connection's sink. The host counts
+        // followers (the interactive deny rule reads that count); the server owns the sockets.
+        follow: (deliver) => this.follow(deliver),
       }, hostSocketPath(process.pid, this.env));
 ```
 
@@ -1247,19 +1296,34 @@ Add `interrupt()` to `SessionHost`. The lib `Session` exposes the SDK query hand
   }
 ```
 
-and widen `HostSession` by one optional member: `interrupt?(): Promise<void>;`.
+and widen `HostSession` by one optional member: `interrupt?(): Promise<unknown>;`. **`unknown`, not
+`void`** — the real `Session.interrupt()` returns `Promise<unknown>`, and a `Promise<void>` declaration
+makes the default `openSession: realOpenSession` stop type-checking.
 
 - [ ] **Step 6: Run everything**
 
 Run: `npx vitest run test/unit && npm run typecheck && npm run build`
 Expected: PASS.
 
-- [ ] **Step 7: Prove the prompt-does-not-block guard**
+- [ ] **Step 7: Prove the prompt-does-not-block guard — and mind how you send it**
 
-Change `case "prompt"` to `await this.handlers.prompt(...)`, point the handler at a promise that never
-resolves, and confirm a following `status` op on the same connection no longer gets a reply. Revert.
-Report it. (If the existing tests do not cover this, add the case — a serialized dispatch that
-deadlocks the connection is precisely the A1 bug class this plan is trying not to repeat.)
+Add a test: point `prompt` at a promise that never resolves, then send the `prompt` and a `status`
+**in a single `sock.write`**, with both frames in one string:
+
+```ts
+    c.sendRaw(JSON.stringify({ id: 1, op: "prompt", text: "x" }) + "\n"
+            + JSON.stringify({ id: 2, op: "status" }) + "\n");
+    expect(await c.waitFor((f) => f.id === 2)).toMatchObject({ ok: true });
+```
+
+(Add a `sendRaw` to the test client that writes a string unchanged.) The single write matters: the
+server's loop runs per `'data'` event over a shared buffer, so two frames sent as two writes usually
+arrive as two chunks and are handled by two independent async invocations — under which a hung
+`await` in the first does **not** stall the second. Sent as one chunk they serialize, which is the
+condition the guard is about.
+
+Now prove it: change `case "prompt"` to `await this.handlers.prompt(...)`, re-run, confirm the
+`status` reply never arrives, revert, and report what you saw.
 
 - [ ] **Step 8: Commit**
 
@@ -1378,6 +1442,10 @@ import type { HostStatus } from "../host/ops.js";
 import type { PendingEntry } from "../permissions/pending.js";
 import type { PermissionDecision } from "../permissions/types.js";
 
+/** Long enough that a busy host answering a `status` while streaming a turn is never mistaken for a
+ *  dead one; short enough that a client does not sit on a promise that will never settle. */
+const REQUEST_TIMEOUT_MS = 10_000;
+
 /** A `ChatSession`-shaped handle on a host running in another process. Held by an attached client in
  *  place of a local Session. `detach()` is NOT `dispose()`: it drops this connection and leaves the
  *  host, its turn and its parked decisions exactly as they were. */
@@ -1423,7 +1491,16 @@ export class RemoteChatSession {
   private send<T>(op: Record<string, unknown>): Promise<T> {
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
-      this.inflight.set(id, { resolve, reject });
+      // A deadline, because a silent peer is a real case, not a hypothetical: a host started before
+      // A2a answers without the `id` we echo on (its zod schema strips the unknown key), so its reply
+      // is dropped here and this promise would never settle. An attached client hanging forever on a
+      // pre-upgrade host is the same parked-promise class this transport exists to make visible.
+      const timer = setTimeout(() => {
+        if (!this.inflight.delete(id)) return;
+        reject(new Error(`host did not answer ${String(op["op"])} within ${REQUEST_TIMEOUT_MS}ms (a pre-A2a host, or a wedged one)`));
+      }, REQUEST_TIMEOUT_MS);
+      (timer as { unref?: () => void }).unref?.();
+      this.inflight.set(id, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
       this.sock.write(JSON.stringify({ ...op, id }) + "\n");
     });
   }
@@ -1474,125 +1551,88 @@ separate from stopping the host."
 
 ---
 
-## Task 8: The ask-policy floor for a bare `--bg`
+## Task 8: The ask floor is blocked — probe it, record the drift, build nothing
 
 **Files:**
-- Modify: `harness/src/cli/hostMain.ts`
-- Test: `harness/test/unit/cli-ask-floor.test.ts` (new)
+- Create: `probes/probes/64-auto-mode-vs-canusetool.ts`
+- Modify: `docs/superpowers/specs/2026-07-26-clone-process-surface-spine-design.md` (Revision Notes)
 
-**Interfaces:**
-- Consumes: `inv.hasExplicitPermissionConfig` (already computed in `args.ts`), `SessionHostOpts`.
+**Interfaces:** none. This task deliberately ships **no production code**.
 
-**Context — the rule, verbatim from the spec, because getting it wrong broke the north star once
-already:**
+**Context — the spec's rule rests on a premise that does not hold here.** The spec says a bare `--bg`
+must get a default ask-policy floor, reasoning that "a bg worker with no rules auto-approves
+everything and never parks". Planning found that premise is about a configuration we do not run:
 
-> - **Any explicit permission configuration wins.** If `--permission-mode` is given, or settings
->   supply permission rules, the default ask-policy is **not applied at all**.
-> - **The default applies only to a bare `--bg`** with no permission configuration from any source —
->   the case where the alternative is silently approving everything.
-> - Acceptance 9's "no human seam" flag is for that bare case only.
+- `config/types.ts` sets `DEFAULTS.permissionMode = "auto"`, and `resolveOptions.ts` applies it
+  whenever the caller gave none — so a bare `--bg` runs under **`auto`**, not `default`.
+- This repo's own verified note (`config/types.ts`, the `permissionMode` comment) records `auto` as
+  **broker-replacing**: "dontAsk replaces canUseTool entirely (joins auto/bypass as broker-replacing)
+  — verified", and the `permissionBroker` comment says it is "only consulted in broker-live modes
+  (default/acceptEdits/plan)".
+- Probe 58, the evidence the whole park mechanism rests on, pinned `permissionMode: "default"`.
 
-Why this exists: `canUseTool` fires only for tools a rule routes to `ask` (probe 58's secondary
-finding). A bare `--bg` with no rules auto-approves everything and never parks — a safety outcome, not
-just a UX one. Why it must be *only* the bare case: doperpowers spawns every worker as `--bg
---permission-mode auto -n <name>`. An unconditional floor would park each worker at its first tool,
-report `state: "blocked"`, and make `_poll_until_done` return early — the exact failure of an earlier
-revision, reached by a different route.
+So an ask floor added under our real defaults would be **inert**: `canUseTool` is never consulted, so
+nothing ever parks, and both of the tests originally planned for it would have passed anyway — one
+asserting the config shape, one driving the broker directly. A feature that cannot fire, verified
+green.
 
-`hostMain.ts` already computes `noHumanSeam = kind === "bg" && !inv.hasExplicitPermissionConfig`. The
-floor attaches to that same condition — and the flag keeps its current meaning: it marks the row that
-*received* the floor, so an operator can see that this worker will stop and wait for someone.
+Making it fire requires forcing `permissionMode: "default"` for the bare case, and that is a policy
+change, not a wiring fix: it replaces the SDK's AI classifier with a blunt ask-on-`Bash`/`Write`/`Edit`
+rule. Under A2a that is strictly worse than doing nothing, because **there is no way to answer a
+park yet** — `ccx attach` ships in A2b. A bare `ccx --bg "task"` would stop at its first tool and wait
+for a client that does not exist.
 
-- [ ] **Step 1: Write the failing test**
+Therefore: the floor moves to A2b, where attach exists to answer it, and the decision it requires gets
+made with a probe behind it rather than a code comment. `noHumanSeam` keeps its current meaning and
+keeps being reported — a bare `--bg` genuinely has no human seam today, which is exactly what the flag
+says.
 
-Create `harness/test/unit/cli-ask-floor.test.ts`:
+- [ ] **Step 1: Write the probe**
 
-```ts
-import { describe, expect, it } from "vitest";
-import { hostOptsFrom } from "../../src/cli/hostMain.js";
+Create `probes/probes/64-auto-mode-vs-canusetool.ts`. It must answer one question: **with
+`permissionMode: "auto"` and an explicit `ask` rule, is `canUseTool` consulted at all?** Model it
+directly on `probes/probes/58-canusetool-park.ts` — same prompt, same `settingSources: []`, same
+`settings: { permissions: { ask: ["Bash(*)"] } }` — changing only `permissionMode` from `"default"` to
+`"auto"`, and on a model that supports auto (`claude-sonnet-4-5-20250929` or the opus default; **not**
+haiku, which is not auto-capable and would silently fall back, reproducing probe 18's artifact).
 
-const argvFor = (...rest: string[]) => ["--__host", "cccccccc", "--__kind", "bg", ...rest];
+Record: whether `canUseTool` fired, whether the tool ran anyway, and the result subtype. Run the same
+file twice, once per mode, so the comparison is within one probe rather than across two runs.
 
-describe("bare --bg ask floor", () => {
-  it("gives a bare --bg an ask rule so canUseTool can fire at all", () => {
-    const { opts } = hostOptsFrom(argvFor("--bg", "do it"));
-    expect((opts.config as any).settings?.permissions?.ask).toEqual(["Bash(*)", "Write(*)", "Edit(*)"]);
-    expect(opts.noHumanSeam).toBe(true);
-  });
+**Gate the verdict on evidence, exactly as probes 62/63 now do**: if no `tool_use` was emitted at all,
+print INCONCLUSIVE and say why. A rate-limited account emits none, and a probe that reports "auto does
+not consult canUseTool" from a turn that called no tools would manufacture the very false premise this
+task exists to correct.
 
-  it("applies NOTHING when --permission-mode is given — doperpowers' actual spawn", () => {
-    const { opts } = hostOptsFrom(argvFor("--bg", "--permission-mode", "auto", "do it"));
-    expect((opts.config as any).settings?.permissions?.ask).toBeUndefined();
-    expect(opts.noHumanSeam).toBeUndefined();
-  });
-
-  it("never applies to an interactive host", () => {
-    const argv = ["--__host", "cccccccc", "--__kind", "interactive"];
-    const { opts } = hostOptsFrom(argv);
-    expect((opts.config as any).settings?.permissions?.ask).toBeUndefined();
-  });
-
-  it("does not clobber other settings the operator supplied", () => {
-    const { opts } = hostOptsFrom(argvFor("--bg", "--settings", JSON.stringify({ env: { FOO: "1" } }), "go"));
-    // --settings IS explicit permission config territory: the floor stays off, and env survives.
-    expect((opts.config as any).settings?.env).toEqual({ FOO: "1" });
-    expect((opts.config as any).settings?.permissions?.ask).toBeUndefined();
-  });
-});
-```
-
-**Before implementing, verify the fourth test's premise**: read `args.ts` and confirm whether
-`--settings` sets `hasExplicitPermissionConfig`. If it does not, that is a finding — report it and
-state which behaviour you implemented rather than silently adjusting the test.
-
-- [ ] **Step 2: Run and watch it fail**
-
-Run: `npx vitest run test/unit/cli-ask-floor.test.ts`
-Expected: FAIL — no `settings.permissions.ask` on the config.
-
-- [ ] **Step 3: Implement in `harness/src/cli/hostMain.ts`**
-
-Directly after the existing `noHumanSeam` line in `hostOptsFrom`:
-
-```ts
-  // A FLOOR for the unconfigured case, never a ceiling over an expressed intent. canUseTool is
-  // consulted only for tools a rule routes to `ask` (probe 58), so a bare --bg with no rules approves
-  // everything silently and can never park — the flag alone would report a seam that does not exist.
-  // Anything explicit (a --permission-mode, settings that carry rules) suppresses this entirely:
-  // doperpowers spawns every worker `--bg --permission-mode auto`, and an unconditional floor would
-  // park each one at its first tool and make the consumer's poller return `blocked` immediately.
-  const ASK_FLOOR = ["Bash(*)", "Write(*)", "Edit(*)"];
-  const withFloor = noHumanSeam
-    ? { ...config, settings: { ...(config as Record<string, unknown>)["settings"] as object,
-        permissions: { ask: ASK_FLOOR } } }
-    : config;
-```
-
-and use `withFloor` in the returned `opts.config`. Keep the existing `config` derivation (the
-`forkSession` branch) exactly as it is and layer the floor on top of its result.
-
-- [ ] **Step 4: Run**
-
-Run: `npx vitest run test/unit/cli-ask-floor.test.ts && npx vitest run test/unit && npm run typecheck`
-Expected: PASS.
-
-- [ ] **Step 5: Prove the suppression guard against its regression**
-
-Make the floor unconditional (drop the `noHumanSeam ?` test), re-run, and confirm *"applies NOTHING
-when --permission-mode is given"* FAILS. Revert. This is the guard that protects the north star;
-report explicitly that you proved it.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 2: Try to run it**
 
 ```bash
-git add harness/src/cli/hostMain.ts harness/test/unit/cli-ask-floor.test.ts
-git commit -m "feat(a2a): an ask-policy floor for a bare --bg, and only for that
+cd CC-to-SDK/probes && set -a; . ../.env; set +a; npx tsx probes/64-auto-mode-vs-canusetool.ts
+```
 
-canUseTool fires only for tools a rule routes to ask, so a bare --bg with no
-rules approves everything and can never park. Any explicit permission
-configuration suppresses the floor entirely — doperpowers spawns every worker
---permission-mode auto, and an unconditional floor would park each at its
-first tool."
+Expected **as of 2026-07-27**: INCONCLUSIVE, because the account's weekly limit is live until Jul 29
+and every turn answers with the limit notice without calling a tool. Record the verbatim output either
+way. If it does produce a real verdict, say so loudly — that changes what A2b builds.
+
+- [ ] **Step 3: Record the spec drift**
+
+Add to the spec's `## Revision Notes` a dated entry stating: the "default ask-policy floor" rule
+assumed `permissionMode: "default"`; our own default is `auto`, which this repo records as
+broker-replacing; the floor is therefore deferred to A2b together with the mode decision it forces;
+and probe 64 is the evidence that must settle it. Keep the spec's normative rule about *precedence*
+("any explicit permission configuration wins") exactly as it is — that part is unaffected and still
+governs.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add probes/probes/64-auto-mode-vs-canusetool.ts docs/superpowers/specs/2026-07-26-clone-process-surface-spine-design.md
+git commit -m "probe(a2a): 64 — does permissionMode auto consult canUseTool at all?
+
+The spec's bare--bg ask floor assumes permissionMode default; our DEFAULTS say
+auto, which this repo records as broker-replacing. An ask floor under our real
+defaults would be inert and would test green. Floor deferred to A2b, where
+attach exists to answer a park and the mode decision can be made on evidence."
 ```
 
 ---
@@ -1680,8 +1720,11 @@ describe("host + client over a real socket", () => {
     a.follow((e) => seenA.push(e)); b.follow((e) => seenB.push(e));
     const decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t9", signal: new AbortController().signal });
     await new Promise((r) => setTimeout(r, 80));
-    expect(seenA.some((e) => e.kind === "permission")).toBe(true);
-    expect(seenB.some((e) => e.kind === "permission")).toBe(true);
+    // EXACT counts, not `.some`. One park must produce one permission event per client; a fan-out that
+    // broadcasts once per registered follower delivers it N times to each of N clients, and `.some`
+    // passes cheerfully on 2, 4 or 16 copies.
+    expect(seenA.filter((e) => e.kind === "permission")).toHaveLength(1);
+    expect(seenB.filter((e) => e.kind === "permission")).toHaveLength(1);
     expect((await a.status()).state).toBe("blocked");
     const first = await a.answer("t9", { kind: "allow_once" });
     expect(first.alreadyAnsweredBy).toBeUndefined();
@@ -1882,6 +1925,11 @@ out. That timeout **is** the defect; confirm you saw it before fixing.
 const DISPOSE_GRACE_MS = 5_000;
 ```
 
+Make it injectable through the existing `deps` object — `deps.disposeGraceMs ?? DISPOSE_GRACE_MS` —
+and have the two wedged-dispose tests pass a small value. Otherwise each of them burns five seconds of
+real time in a suite that runs on every commit, which is how a fast unit suite quietly becomes a slow
+one.
+
 ```ts
   async stop(final?: FleetState): Promise<void> {
     if (final) this.state = final;
@@ -1970,20 +2018,23 @@ the host's own seam and record it as such:
 
 ```bash
 cd CC-to-SDK/harness && npm run build
-node -e '
-const { SessionHost } = require("./dist/host/host.js");
-const { collectFleet } = require("./dist/fleet/index.js");
-process.env.CCX_FLEET_ROOT = require("node:fs").mkdtempSync("/tmp/ccx-acc8-");
+node --input-type=module -e '
+import { mkdtempSync } from "node:fs";
+const { SessionHost } = await import("./dist/host/host.js");
+const { collectFleet } = await import("./dist/fleet/index.js");
+process.env.CCX_FLEET_ROOT = mkdtempSync("/tmp/ccx-acc8-");
+// NOTE: no procStartOf override. The real one records this process`s true `ps -o lstart=`, which is
+// what collectFleet`s isPidLive then compares against. A fake value fails that comparison, the pid
+// reads dead, and projectRow returns state "error" — the acceptance check would fail on its own
+// scaffolding rather than on the behaviour under test.
 const host = new SessionHost(
   { short: "eeeeeeee", name: "acc8", cwd: process.cwd(), kind: "bg", config: {}, env: process.env },
-  { openSession: () => ({ sessionId: "s", submit: async () => {}, dispose: async () => {} }), procStartOf: async () => "x" });
-(async () => {
-  await host.start();
-  host.broker().request({ toolName: "Bash", input: {}, toolUseID: "acc8", signal: new AbortController().signal });
-  await new Promise(r => setTimeout(r, 200));
-  console.log(JSON.stringify(await collectFleet(), null, 1));
-  await host.stop();
-})();
+  { openSession: () => ({ sessionId: "s", submit: async () => {}, dispose: async () => {} }) });
+await host.start();
+host.broker().request({ toolName: "Bash", input: {}, toolUseID: "acc8", signal: new AbortController().signal });
+await new Promise(r => setTimeout(r, 200));
+console.log(JSON.stringify(await collectFleet(), null, 1));
+await host.stop();
 '
 ```
 
@@ -2002,6 +2053,8 @@ re-run when the weekly limit resets on 2026-07-29:
    explicitly rather than depend on it).
 3. `probes/probes/63b-*.ts` — whether a park survives ten minutes, which is what "parks indefinitely"
    claims.
+4. `probes/probes/64-*.ts` — whether `permissionMode: "auto"` consults `canUseTool` at all. A2b's ask
+   floor, and with it spec acceptance 9's whole premise, waits on this one.
 
 - [ ] **Step 5: Commit anything the verification changed**
 
