@@ -205,11 +205,11 @@ describe("main — lifecycle and failures", () => {
     expect((await captureLog(() => main(["rm", "0a1b2c3d"], deps({ rmSession: async (t) => { removed.push(t); } })))).value).toBe(0);
     expect(stopped).toEqual(["w1"]); expect(removed).toEqual(["0a1b2c3d"]);
   });
-  it("returns 1 with the refusal's own words when rm declines a dirty worktree", async () => {
+  it("returns 1 with the refusal's own words when rm declines to remove a worktree", async () => {
     const { err, value } = await captureLog(() => main(["rm", "w1"],
-      deps({ rmSession: async () => { throw new Error("refusing to remove w1: worktree /repo/.claude/worktrees/wt is dirty"); } })));
+      deps({ rmSession: async () => { throw new Error("refusing to remove worktree /repo: git worktree remove failed (main working tree)"); } })));
     expect(value).toBe(1);
-    expect(err.join("\n")).toContain("is dirty");
+    expect(err.join("\n")).toContain("git worktree remove failed");
   });
   it("lists what fleet gc removed", async () => {
     const { out, value } = await captureLog(() => main(["fleet", "gc"], deps({ fleetGc: async () => ["/run/1.sock"] })));

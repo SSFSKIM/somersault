@@ -353,7 +353,9 @@ not locked to one client because a dead lock-holder would park the session forev
     matches. `rm` succeeds on an already-exited session, resolving it from the roster.
 13. `ccx --bg --worktree wt` runs in `<repo>/.claude/worktrees/wt` on branch `worktree-wt`, its
     registry `cwd` is the worktree path, and a `--resume` turn inherits the worktree without repeating
-    the flag. `rm` deletes it when clean and refuses, reporting why, when dirty.
+    the flag. `rm` deletes the worktree when clean and **keeps it, saying so, when dirty — while still
+    deregistering the session**, because the consumer dirties it on purpose to protect the shared
+    checkout (see Revision Notes, rev 3.5).
 14. `ccx --bg --resume <uuid>` forks a new short id whose transcript contains the prior conversation,
     and the parent remains removable without destroying that history (probe 59 property; this test
     guards against regression).
@@ -566,6 +568,16 @@ contract, and anything that needs a human seam, because A2 does not exist yet.
 
 ## Revision Notes
 
+- **2026-07-26 rev 3.5 (final review) — acceptance 13's dirty-worktree clause was normatively wrong and
+  is inverted.** It said `rm` must *refuse* when the worktree is dirty. The consumer requires the
+  opposite: `_session_purge` in doperpowers' `_lib.sh` deliberately writes a `.daemon-turn-live` sentinel
+  into the worktree *before* calling `rm`, precisely because the real CLI's `rm` keeps a dirty worktree
+  while still deregistering the session — that is how a worktree'd daemon retires a superseded turn
+  without deleting the checkout every later turn still runs in. Against a refusing `rm` the whole command
+  fails, so every worktree'd daemon leaks its first-turn roster row permanently, which then also makes
+  the daemon's name ambiguous and breaks `stop`/`rm` by name. `rm` now unlinks the roster row and keeps
+  the worktree, reporting on stderr what was kept and why. Unchanged: `rm` still never deletes a worktree
+  `git worktree remove` refused, which is what protects a main checkout.
 - **2026-07-26 rev 3.4 (planning drift)** — acceptance 9 requires `agents` to *report* the
   no-human-seam condition, but no wire carrier was ever named. The projected row gains an optional
   `noHumanSeam?: boolean`, set when a bare `--bg` ran with no permission configuration from any source.

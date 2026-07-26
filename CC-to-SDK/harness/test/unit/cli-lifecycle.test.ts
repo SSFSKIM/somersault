@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -60,13 +60,20 @@ describe("rmSession", () => {
     await rmSession("a1b2c3d4", env, { sendStop: async () => false, worktreeClean: async () => true, removeWorktree: async () => { removed = true; } });
     expect(removed).toBe(true);
   });
-  it("refuses a DIRTY worktree, reporting why, and keeps the roster row", async () => {
+  it("KEEPS a dirty worktree but still deregisters the session, saying so", async () => {
+    // The consumer dirties the worktree deliberately — its purge drops a `.daemon-turn-live` sentinel in
+    // so that `rm` retires the superseded turn without deleting the checkout every later turn runs in.
+    // Failing the command instead leaked that turn's roster row forever, which then also made the
+    // daemon's name ambiguous and broke `stop`/`rm` by name.
     writeRoster(row({ state: "done", worktree: "/repo/.claude/worktrees/wt" }), env);
     let removed = false;
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(rmSession("a1b2c3d4", env, { sendStop: async () => false, worktreeClean: async () => false, removeWorktree: async () => { removed = true; } }))
-      .rejects.toThrow(/dirty/i);
-    expect(readRoster("a1b2c3d4", env)).toBeDefined();
-    expect(removed).toBe(false);               // refusing must not still delete the uncommitted work
+      .resolves.toBeUndefined();
+    expect(readRoster("a1b2c3d4", env)).toBeUndefined();   // deregistered
+    expect(removed).toBe(false);                           // and the uncommitted work is untouched
+    expect(err.mock.calls.map(String).join("\n")).toMatch(/kept worktree \/repo\/\.claude\/worktrees\/wt/);
+    err.mockRestore();
   });
   it("is idempotent — a second rm does not throw", async () => {
     writeRoster(row({ state: "done" }), env);

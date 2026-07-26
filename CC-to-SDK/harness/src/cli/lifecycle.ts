@@ -117,7 +117,8 @@ export async function stopSession(target: string, env: NodeJS.ProcessEnv = proce
   finalizeRoster(row.short, "stopped", env);
 }
 
-/** Deletes the session and its worktree WHEN CLEAN; works on already-exited sessions; idempotent.
+/** Deregisters the session ALWAYS and deletes its worktree only when clean; works on already-exited
+ *  sessions; idempotent.
  *  Order matters twice over. Stop precedes the worktree so nothing is pulled out from under a live
  *  session — the host's stop awaits its turn finishing naturally, so `clean` is read on quiesced files.
  *  The row is unlinked LAST, after the host has had its chance to finalize: the host's roster sync is
@@ -135,9 +136,15 @@ export async function rmSession(target: string, env: NodeJS.ProcessEnv = process
   if (row.worktree && !isAbsolute(row.worktree)) throw new Error(`refusing to remove ${row.short}: worktree ${JSON.stringify(row.worktree)} is not an absolute path — rm cannot know which directory it was relative to`);
   await deps.sendStop(hostSocketPath(row.pid, env));
   if (row.worktree) {
+    // A dirty worktree costs the DIRECTORY, never the deregistration. The consumer dirties it on
+    // purpose — its purge routine drops a `.daemon-turn-live` sentinel into the worktree precisely so
+    // that `rm` keeps the checkout every later turn still runs in while it retires the superseded turn.
+    // Failing the whole command there leaked that turn's roster row forever, and a leaked row also makes
+    // the daemon's NAME ambiguous, which breaks `stop`/`rm` by name for good. Say what was kept and why:
+    // silence would read as a worktree that was deleted.
     const clean = await (deps.worktreeClean ?? defaults.worktreeClean)(row.worktree);
-    if (!clean) throw new Error(`refusing to remove ${row.short}: worktree ${row.worktree} is dirty — commit or discard first`);
-    await (deps.removeWorktree ?? defaults.removeWorktree)(row.worktree);
+    if (clean) await (deps.removeWorktree ?? defaults.removeWorktree)(row.worktree);
+    else console.error(`ccx: kept worktree ${row.worktree} — it has uncommitted changes; ${row.short} is deregistered, the files are untouched`);
   }
   // Residual race, not closable from this side: the stop ack is best-effort (the host destroys the
   // connection carrying it while closing its server), so rm can return from sendStop while the host is
