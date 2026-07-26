@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { resolve } from "node:path";
 import { mintShortId, isShortId, fleetRoot, rosterPath, runDir, hostSocketPath } from "../../src/fleet/paths.js";
 
 describe("short ids", () => {
@@ -7,6 +8,7 @@ describe("short ids", () => {
   });
   it("is deterministic under an injected rng", () => {
     expect(mintShortId(() => 0)).toBe("00000000");
+    expect(mintShortId(() => 0.9999)).toBe("ffffffff");
   });
   it("validates length strictly — 7 and 9 are rejected", () => {
     // _lib.sh gates the entire purge on [ ${#short} -eq 8 ]; a 7- or 9-char id disables it silently.
@@ -29,5 +31,8 @@ describe("paths", () => {
   });
   it("honours CCX_FLEET_ROOT for test isolation", () => {
     expect(fleetRoot({ HOME: "/home/u", CCX_FLEET_ROOT: "/tmp/t1" })).toBe("/tmp/t1");
+  });
+  it("resolves a relative CCX_FLEET_ROOT to an absolute path", () => {
+    expect(fleetRoot({ HOME: "/home/u", CCX_FLEET_ROOT: "rel/ccx" })).toBe(resolve("rel/ccx"));
   });
 });
