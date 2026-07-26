@@ -130,6 +130,13 @@ export class SessionHost {
     // as the whole turn. Sent only when true, so an untruncated replay costs no frame.
     if (snap.truncated) this.deliver(cb, { kind: "turn", phase: "start", truncated: true });
     for (const m of snap.messages) this.deliver(cb, { kind: "message", data: m });
+    // A request parked before this follower attached is otherwise invisible to it forever: the
+    // `permission` event fires exactly once, at park time, over the followers registered at that
+    // instant. A socket-borne follower's registration is not synchronous with its client's `follow()`
+    // call (it lands after an async round trip), so without this replay a client that raced a parked
+    // permission — or one that simply reconnects — would see it only through the separate `pending()`
+    // poll, never through the live stream it otherwise relies on.
+    for (const entry of this.parked.list()) this.deliver(cb, { kind: "permission", entry });
     this.followers.add(cb);
     return () => { this.followers.delete(cb); };
   }
