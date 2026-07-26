@@ -32,11 +32,15 @@ describe("PendingPermissions", () => {
     await expect(decision).resolves.toEqual({ kind: "allow_once" });
   });
 
-  it("denies everything on teardown so nothing is left awaited", async () => {
+  it("denies everything on teardown so nothing is left awaited, and reports what it settled", async () => {
     const p = new PendingPermissions({ expireAfterMs: "never" });
     const a = p.brokerFor("s1").request(req("t1"));
     const b = p.brokerFor("s2").request(req("t2"));
-    p.denyAll();
+    // The return value is what lets a caller (SessionHost) emit `permission_settled` for each one —
+    // denyAll() bypasses respond()/answer() entirely, so without this the caller has no way to know
+    // WHICH requests it just denied.
+    const settled = p.denyAll();
+    expect(settled.map((e) => e.toolUseID).sort()).toEqual(["t1", "t2"]);
     await expect(a).resolves.toEqual({ kind: "deny" });
     await expect(b).resolves.toEqual({ kind: "deny" });
   });

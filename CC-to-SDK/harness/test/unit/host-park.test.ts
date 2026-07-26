@@ -76,4 +76,35 @@ describe("host park policy", () => {
     expect(host.answer("never-parked", { kind: "deny" }, "x")).toEqual({ ok: false, error: "no parked request never-parked" });
     await host.stop();
   });
+
+  // Minor whole-branch finding: denyAll() (interrupt()/teardown()'s settling path) bypasses answer()'s
+  // `permission_settled` emit entirely, so a follower watching a parked request is never told the
+  // decision is gone — it can only infer that later from a `turn end` frame, and a client's dialog is
+  // stuck showing a request nobody will ever answer.
+  it("stop() settling a park via denyAll tells a follower the decision is gone", async () => {
+    const host = hostFor("bg"); await host.start();
+    const seen: any[] = [];
+    host.follow((e) => seen.push(e));
+    const decision = ask(host);
+    await host.stop();
+    await decision;
+    const settled = seen.filter((e) => e.kind === "permission_settled");
+    expect(settled).toEqual([{ kind: "permission_settled", toolUseID: "t1", by: "system", decision: "deny" }]);
+  });
+
+  it("interrupt() settling a park via denyAll ALSO tells a follower, and a late answer is told 'system' got there first", async () => {
+    const host = hostFor("bg"); await host.start();
+    const seen: any[] = [];
+    host.follow((e) => seen.push(e));
+    const decision = ask(host);
+    await host.interrupt();
+    await decision;
+    expect(seen.filter((e) => e.kind === "permission_settled"))
+      .toEqual([{ kind: "permission_settled", toolUseID: "t1", by: "system", decision: "deny" }]);
+    // Consistent with answer()'s own "who got there first" contract (see the settledBy map above) — a
+    // human answering the same request after the system already denied it is told so, not given the
+    // generic "never parked" error a request the system silently dropped would produce.
+    expect(host.answer("t1", { kind: "allow_once" }, "late-human")).toEqual({ ok: true, alreadyAnsweredBy: "system" });
+    await host.stop();
+  });
 });

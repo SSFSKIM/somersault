@@ -86,6 +86,13 @@ export class PendingPermissions {
     for (const [id, p] of [...this.pending]) if (p.entry.sessionId === sessionId) this.settle(id, { kind: "deny" });
   }
 
-  /** Deny + settle every parked request (daemon shutdown). */
-  denyAll(): void { for (const id of [...this.pending.keys()]) this.settle(id, { kind: "deny" }); }
+  /** Deny + settle every parked request (daemon shutdown). Returns the entries that were settled: this
+   *  bypasses `respond()`'s caller (SessionHost.answer()) entirely, going straight at the map, so it
+   *  carries none of answer()'s `permission_settled`/`state` emits — a caller that needs followers told
+   *  the decision is gone (SessionHost.interrupt()/teardown() do) must emit for each entry itself. */
+  denyAll(): PendingEntry[] {
+    const entries = [...this.pending.values()].map((p) => p.entry);
+    for (const id of [...this.pending.keys()]) this.settle(id, { kind: "deny" });
+    return entries;
+  }
 }

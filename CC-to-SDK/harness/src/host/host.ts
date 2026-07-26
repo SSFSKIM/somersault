@@ -215,6 +215,19 @@ export class SessionHost {
     return { ok: true };
   }
 
+  /** `PendingPermissions.denyAll()` settles straight into its own map, bypassing `answer()`'s
+   *  `permission_settled`/`state` emits entirely — so, unfixed, a follower watching a parked request is
+   *  never told the decision is gone; it can only infer that later from a `turn end` frame, and until
+   *  then a client's permission dialog is stuck showing a request nobody will ever answer. Both
+   *  interrupt() and teardown() settle this way (the host, not a human, is ending the request), so the
+   *  emit is centralized here instead of duplicated at each call site. */
+  private settleParkedForSystem(): void {
+    for (const e of this.parked.denyAll()) {
+      this.settledBy.set(e.toolUseID, "system");
+      this.emit({ kind: "permission_settled", toolUseID: e.toolUseID, by: "system", decision: "deny" });
+    }
+  }
+
   /** `blocked` is live-reported, never written to `this.state`: the roster's recorded state and this
    *  live status are deliberately separate, because `blocked` is not terminal and syncRoster's
    *  first-terminal-wins finalize must never freeze on it. */
@@ -232,15 +245,25 @@ export class SessionHost {
 
   /** Ends the in-flight turn, settling parked decisions first (see stop()).
    *
-   *  Probe 63 recorded a second fact worth knowing here: interrupting a turn that is parked at a
-   *  `tool_use` makes the message stream **throw** rather than return a result —
+   *  Probe 63 recorded a fact worth knowing here: interrupting a turn that is parked at a `tool_use`
+   *  makes the message stream **throw** rather than return a result —
    *  `Claude Code returned an error result: … stop_reason=tool_use`. So `runTask`'s catch arm runs,
-   *  sets `state = "error"`, and rethrows. That is harmless *provided* the terminal state was written
-   *  first: `finalizeRoster` is first-terminal-wins, so a `stop("stopped")` that already recorded
-   *  `stopped` is not overwritten by the error that its own interrupt caused. Task 10 depends on this
-   *  ordering — do not move `syncRoster()` after the interrupt. */
+   *  sets `state = "error"`, and its `finally` re-syncs the roster. Left unguarded, that turns a
+   *  deliberate `interrupt` op into a roster row indistinguishable from a crash — exactly what routes a
+   *  downstream consumer down the failure arm for a session the operator ended on purpose.
+   *
+   *  On a BACKGROUND host we write the terminal state `stopped` down FIRST, before interrupting — the
+   *  same ordering stop()/teardown() uses, and for the same reason: `finalizeRoster` is first-terminal-
+   *  wins, so once `stopped` is on disk the later `error` write that runTask's own catch produces is a
+   *  no-op. `stopped`, not e.g. `done`, because the spec defines it for exactly this case: an
+   *  operator-ended session that stays resumable by uuid. Interactive hosts are unaffected — runTask's
+   *  bg-gate on finalize (see runTask's `finally`) means their roster is never written from here either
+   *  way. Do not move `syncRoster()` below the interrupt call. */
   async interrupt(): Promise<void> {
-    this.parked.denyAll();
+    const bg = this.opts.kind === "bg";
+    if (bg) this.state = "stopped";
+    this.settleParkedForSystem();
+    if (bg) this.syncRoster();
     await this.session?.interrupt?.();
   }
 
@@ -276,12 +299,12 @@ export class SessionHost {
    *     stalled.
    *  5. Close the server unconditionally, in a `finally` — not just after the race. A server left
    *     listening is a host that never exits, and a `finally` guarantees it runs even if a synchronous
-   *     throw earlier in this method (denyAll/syncRoster) would otherwise skip it — guaranteed by
-   *     structure, not by convention. */
+   *     throw earlier in this method (settleParkedForSystem/syncRoster) would otherwise skip it —
+   *     guaranteed by structure, not by convention. */
   private async teardown(final?: FleetState): Promise<void> {
     try {
       if (final) this.state = final;
-      this.parked.denyAll();
+      this.settleParkedForSystem();
       this.syncRoster();                     // terminal state on disk BEFORE anything that can block
       const graceMs = this.deps.disposeGraceMs ?? DISPOSE_GRACE_MS;
       let timer: ReturnType<typeof setTimeout> | undefined;
