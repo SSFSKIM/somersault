@@ -39,76 +39,115 @@ async function startHost(kind: "bg" | "interactive" = "bg") {
   return { host, session, env, path: hostSocketPath(process.pid, env) };
 }
 
+// `host.stop()` is called from every test's cleanup, including on a test that already stopped the host
+// itself (test 4, over the socket) — HostServer.close() is idempotent and PendingPermissions.denyAll()
+// is a no-op on an empty map, so a second stop is safe. It is wrapped in `.catch` regardless: a cleanup
+// failure must never mask the real assertion failure that triggered the `finally`.
+const stopQuietly = (host: SessionHost) => host.stop().catch(() => {});
+
 describe("host + client over a real socket", () => {
   it("a client follows a live turn it joined late, from the turn's start", async () => {
     const { host, session, path } = await startHost();
-    const turn = host.runTask("go");
-    session.emit({ type: "assistant", n: 1 });
-    session.emit({ type: "assistant", n: 2 });
-    const c = await RemoteChatSession.connect(path);
-    const seen: any[] = [];
-    c.follow((e) => seen.push(e));
-    await new Promise((r) => setTimeout(r, 100));
-    expect(seen.filter((e) => e.kind === "message").map((e) => e.data.n)).toEqual([1, 2]);
-    session.emit({ type: "assistant", n: 3 });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(seen.filter((e) => e.kind === "message").map((e) => e.data.n)).toEqual([1, 2, 3]);
-    c.detach(); session.finish(); await turn; await host.stop();
+    let turn: Promise<void> | undefined;
+    let c: RemoteChatSession | undefined;
+    try {
+      turn = host.runTask("go");
+      session.emit({ type: "assistant", n: 1 });
+      session.emit({ type: "assistant", n: 2 });
+      c = await RemoteChatSession.connect(path);
+      const seen: any[] = [];
+      c.follow((e) => seen.push(e));
+      await new Promise((r) => setTimeout(r, 100));
+      expect(seen.filter((e) => e.kind === "message").map((e) => e.data.n)).toEqual([1, 2]);
+      session.emit({ type: "assistant", n: 3 });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(seen.filter((e) => e.kind === "message").map((e) => e.data.n)).toEqual([1, 2, 3]);
+    } finally {
+      // Unconditional, in this order: detach first (nothing left to deliver to), then resolve the fake
+      // session's `submit()` — the one promise nothing else here ever settles — THEN await it so it
+      // can't outlive the test as a dangling handle, and only then stop the host.
+      c?.detach();
+      session.finish();
+      await turn?.catch(() => {});
+      await stopQuietly(host);
+    }
   });
 
   it("two clients see the same park; the first answer wins and the second is told who answered", async () => {
     const { host, path } = await startHost();
-    const a = await RemoteChatSession.connect(path, { label: "tty-a" });
-    const b = await RemoteChatSession.connect(path, { label: "tty-b" });
-    const seenA: any[] = [], seenB: any[] = [];
-    a.follow((e) => seenA.push(e)); b.follow((e) => seenB.push(e));
-    const decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t9", signal: new AbortController().signal });
-    await new Promise((r) => setTimeout(r, 80));
-    // EXACT counts, not `.some`. One park must produce one permission event per client; a fan-out that
-    // broadcasts once per registered follower delivers it N times to each of N clients, and `.some`
-    // passes cheerfully on 2, 4 or 16 copies.
-    expect(seenA.filter((e) => e.kind === "permission")).toHaveLength(1);
-    expect(seenB.filter((e) => e.kind === "permission")).toHaveLength(1);
-    expect((await a.status()).state).toBe("blocked");
-    const first = await a.answer("t9", { kind: "allow_once" });
-    expect(first.alreadyAnsweredBy).toBeUndefined();
-    const second = await b.answer("t9", { kind: "deny" });
-    expect(second.ok).toBe(true);
-    expect(second.alreadyAnsweredBy).toBe("tty-a");
-    await expect(decision).resolves.toEqual({ kind: "allow_once" });   // the FIRST answer, not the last
-    a.detach(); b.detach(); await host.stop();
+    let a: RemoteChatSession | undefined, b: RemoteChatSession | undefined;
+    try {
+      a = await RemoteChatSession.connect(path, { label: "tty-a" });
+      b = await RemoteChatSession.connect(path, { label: "tty-b" });
+      const seenA: any[] = [], seenB: any[] = [];
+      a.follow((e) => seenA.push(e)); b.follow((e) => seenB.push(e));
+      const decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t9", signal: new AbortController().signal });
+      await new Promise((r) => setTimeout(r, 80));
+      // EXACT counts, not `.some`. One park must produce one permission event per client; a fan-out that
+      // broadcasts once per registered follower delivers it N times to each of N clients, and `.some`
+      // passes cheerfully on 2, 4 or 16 copies.
+      expect(seenA.filter((e) => e.kind === "permission")).toHaveLength(1);
+      expect(seenB.filter((e) => e.kind === "permission")).toHaveLength(1);
+      expect((await a.status()).state).toBe("blocked");
+      const first = await a.answer("t9", { kind: "allow_once" });
+      expect(first.alreadyAnsweredBy).toBeUndefined();
+      const second = await b.answer("t9", { kind: "deny" });
+      expect(second.ok).toBe(true);
+      expect(second.alreadyAnsweredBy).toBe("tty-a");
+      await expect(decision).resolves.toEqual({ kind: "allow_once" });   // the FIRST answer, not the last
+    } finally {
+      // If an assertion above throws, `decision` is still parked — stopQuietly's denyAll() settles it,
+      // same as it does for every other park in this file. detach() is safe on an unconnected/undefined ref.
+      a?.detach(); b?.detach();
+      await stopQuietly(host);
+    }
   });
 
   it("detach leaves the host and its park untouched; a re-attached client still sees the park", async () => {
     const { host, path } = await startHost();
-    const a = await RemoteChatSession.connect(path);
-    a.follow(() => {});
-    const decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t10", signal: new AbortController().signal });
-    await new Promise((r) => setTimeout(r, 50));
-    a.detach();
-    await new Promise((r) => setTimeout(r, 50));
-    const b = await RemoteChatSession.connect(path);
-    expect((await b.pending()).pending.map((p: any) => p.toolUseID)).toEqual(["t10"]);
-    expect((await b.status()).state).toBe("blocked");
-    await b.answer("t10", { kind: "deny" });
-    await expect(decision).resolves.toEqual({ kind: "deny" });
-    b.detach(); await host.stop();
+    let a: RemoteChatSession | undefined, b: RemoteChatSession | undefined;
+    try {
+      a = await RemoteChatSession.connect(path);
+      a.follow(() => {});
+      const decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t10", signal: new AbortController().signal });
+      await new Promise((r) => setTimeout(r, 50));
+      a.detach();
+      await new Promise((r) => setTimeout(r, 50));
+      b = await RemoteChatSession.connect(path);
+      expect((await b.pending()).pending.map((p: any) => p.toolUseID)).toEqual(["t10"]);
+      expect((await b.status()).state).toBe("blocked");
+      await b.answer("t10", { kind: "deny" });
+      await expect(decision).resolves.toEqual({ kind: "deny" });
+    } finally {
+      a?.detach(); b?.detach();   // a's detach() above is idempotent; a second call here is a no-op
+      await stopQuietly(host);
+    }
   });
 
   it("stop over the socket records a terminal roster state and settles the park", async () => {
     const { host, env, path } = await startHost();
-    const c = await RemoteChatSession.connect(path);
-    const decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t11", signal: new AbortController().signal });
-    await c.stopHost().catch(() => {});          // the host closes the socket as it stops
-    await expect(decision).resolves.toEqual({ kind: "deny" });
-    expect(readRoster("dddddddd", env)?.state).toBe("stopped");
-    c.detach();
+    let c: RemoteChatSession | undefined;
+    try {
+      c = await RemoteChatSession.connect(path);
+      const decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t11", signal: new AbortController().signal });
+      await c.stopHost().catch(() => {});          // the host closes the socket as it stops
+      await expect(decision).resolves.toEqual({ kind: "deny" });
+      expect(readRoster("dddddddd", env)?.state).toBe("stopped");
+    } finally {
+      // The host already stopped itself over the socket on the happy path; stopQuietly is still called
+      // (idempotent) to cover the case where an earlier expect() threw before stopHost() ran.
+      c?.detach();
+      await stopQuietly(host);
+    }
   });
 
   it("an interactive host with no client attached denies rather than parking", async () => {
     const { host } = await startHost("interactive");
-    await expect(host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t12", signal: new AbortController().signal }))
-      .resolves.toEqual({ kind: "deny" });
-    await host.stop();
+    try {
+      await expect(host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t12", signal: new AbortController().signal }))
+        .resolves.toEqual({ kind: "deny" });
+    } finally {
+      await stopQuietly(host);
+    }
   });
 });
