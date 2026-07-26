@@ -5,8 +5,8 @@ import type { DaemonOptions, RestartPolicy, SessionRecord } from "./types.js";
 import type { TelemetryConfig } from "../config/telemetry.js";
 import { createWarmPool } from "../warm/pool.js";
 import type { WarmPool } from "../warm/pool.js";
-import { PendingPermissions } from "./permissions.js";
-import type { PendingEntry } from "./permissions.js";
+import { PendingPermissions } from "../permissions/pending.js";
+import type { PendingEntry } from "../permissions/pending.js";
 import { createPermissionGate } from "../permissions/gate.js";
 import type { PermissionDecision } from "../permissions/types.js";
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
@@ -92,7 +92,7 @@ export class DaemonSupervisor {
       { ...(opts.telemetry ? { telemetry: opts.telemetry } : {}) },       // = a default spawn's resolveOptions input
       { size: opts.warmPool.size, ...(deps.startup ? { deps: { startup: deps.startup } } : {}) },
     );
-    this.pending = new PendingPermissions({ timeoutMs: opts.permissionTimeoutMs, now: this.now });
+    this.pending = new PendingPermissions({ expireAfterMs: opts.permissionTimeoutMs ?? 30_000, now: this.now });
     if (opts.rehydrate) {                              // adopt the prior process's sessions (lazy: no subprocess here)
       for (const rec of this.registry.rehydrate(process.pid)) {
         this.configs.set(rec.id, { model: rec.model, restart: rec.restart ?? this.restartPolicy });

@@ -1,5 +1,5 @@
-// harness/src/daemon/permissions.ts
-import type { PermissionBroker, PermissionDecision, PermissionRequest } from "../permissions/types.js";
+// harness/src/permissions/pending.ts
+import type { PermissionBroker, PermissionDecision, PermissionRequest } from "./types.js";
 
 /** A parked permission request on the wire — the serializable view of a PermissionRequest (no AbortSignal). */
 export interface PendingEntry {
@@ -13,8 +13,14 @@ export interface PendingEntry {
   createdAt: number;
 }
 
+/** How long a parked request may sit before we answer FOR the human, with a deny. `"never"` is the
+ *  background case and is spelled out rather than defaulted: a host that parks forever is the entire
+ *  point of a worker that outlives its terminal, and a numeric default is how that silently becomes a
+ *  30-second auto-deny again. */
+export type ExpiryPolicy = number | "never";
+
 export interface PendingPermissionsOpts {
-  timeoutMs?: number;                                    // park lifetime before auto-deny (default 30_000)
+  expireAfterMs: ExpiryPolicy;                           // REQUIRED — no default, deliberately
   now?: () => number;                                    // injectable clock (createdAt + tests)
   schedule?: (fn: () => void, ms: number) => () => void; // timeout scheduler → canceller (testing seam)
 }
@@ -24,12 +30,12 @@ export interface PendingPermissionsOpts {
  *  or the session/daemon tears down (denyAllForSession / denyAll) — every path settles the awaited promise. */
 export class PendingPermissions {
   private pending = new Map<string, { entry: PendingEntry; resolve: (d: PermissionDecision) => void; cancel: () => void }>();
-  private timeoutMs: number;
+  private expireAfterMs: ExpiryPolicy;
   private now: () => number;
   private schedule: (fn: () => void, ms: number) => () => void;
 
-  constructor(opts: PendingPermissionsOpts = {}) {
-    this.timeoutMs = opts.timeoutMs ?? 30_000;
+  constructor(opts: PendingPermissionsOpts) {
+    this.expireAfterMs = opts.expireAfterMs;
     this.now = opts.now ?? Date.now;
     this.schedule = opts.schedule ?? ((fn, ms) => { const t = setTimeout(fn, ms); (t as any).unref?.(); return () => clearTimeout(t); });
   }
@@ -45,7 +51,9 @@ export class PendingPermissions {
         sessionId, toolUseID: req.toolUseID, toolName: req.toolName, input: req.input,
         title: req.title, displayName: req.displayName, description: req.description, createdAt: this.now(),
       };
-      const cancelTimer = this.schedule(() => this.settle(req.toolUseID, { kind: "deny" }), this.timeoutMs);
+      const cancelTimer = this.expireAfterMs === "never"
+        ? () => {}
+        : this.schedule(() => this.settle(req.toolUseID, { kind: "deny" }), this.expireAfterMs);
       const onAbort = () => this.settle(req.toolUseID, { kind: "deny" });
       req.signal?.addEventListener("abort", onAbort, { once: true });
       const cancel = () => { cancelTimer(); req.signal?.removeEventListener("abort", onAbort); };

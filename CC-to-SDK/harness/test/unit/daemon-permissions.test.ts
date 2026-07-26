@@ -1,6 +1,6 @@
 // harness/test/unit/daemon-permissions.test.ts
 import { describe, it, expect } from "vitest";
-import { PendingPermissions } from "../../src/daemon/permissions.js";
+import { PendingPermissions } from "../../src/permissions/pending.js";
 import type { PermissionRequest } from "../../src/permissions/types.js";
 
 const req = (toolUseID: string, over: Partial<PermissionRequest> = {}): PermissionRequest =>
@@ -8,7 +8,7 @@ const req = (toolUseID: string, over: Partial<PermissionRequest> = {}): Permissi
 
 describe("PendingPermissions", () => {
   it("park → respond resolves the awaited promise with the decision", async () => {
-    const reg = new PendingPermissions({ now: () => 7 });
+    const reg = new PendingPermissions({ expireAfterMs: 30_000, now: () => 7 });
     const p = reg.brokerFor("sess-1").request(req("t1"));
     expect(reg.list()).toEqual([{ sessionId: "sess-1", toolUseID: "t1", toolName: "Edit", input: { file_path: "f.ts" }, createdAt: 7 }]);
     expect(reg.respond("t1", { kind: "allow_once" })).toBe(true);
@@ -18,7 +18,7 @@ describe("PendingPermissions", () => {
 
   it("park → timeout settles deny (no client / no answer)", async () => {
     let fire: () => void = () => {};
-    const reg = new PendingPermissions({ schedule: (fn) => { fire = fn; return () => {}; } });
+    const reg = new PendingPermissions({ expireAfterMs: 30_000, schedule: (fn) => { fire = fn; return () => {}; } });
     const p = reg.brokerFor("s").request(req("t2"));
     fire();                                   // simulate the 30 s timeout elapsing
     await expect(p).resolves.toEqual({ kind: "deny" });
@@ -26,7 +26,7 @@ describe("PendingPermissions", () => {
   });
 
   it("park → session teardown denies all of that session's pending; denyAll denies the rest", async () => {
-    const reg = new PendingPermissions();
+    const reg = new PendingPermissions({ expireAfterMs: 30_000 });
     const a = reg.brokerFor("s1").request(req("t3"));
     const b = reg.brokerFor("s2").request(req("t4"));
     reg.denyAllForSession("s1");
@@ -38,7 +38,7 @@ describe("PendingPermissions", () => {
   });
 
   it("multi-answer is idempotent — the second respond is a no-op", async () => {
-    const reg = new PendingPermissions();
+    const reg = new PendingPermissions({ expireAfterMs: 30_000 });
     const p = reg.brokerFor("s").request(req("t5"));
     expect(reg.respond("t5", { kind: "allow_once" })).toBe(true);
     expect(reg.respond("t5", { kind: "deny" })).toBe(false);   // already settled
@@ -46,7 +46,7 @@ describe("PendingPermissions", () => {
   });
 
   it("aborting the request signal settles deny and drops the entry (turn interrupted)", async () => {
-    const reg = new PendingPermissions();
+    const reg = new PendingPermissions({ expireAfterMs: 30_000 });
     const ac = new AbortController();
     const p = reg.brokerFor("s").request(req("t6", { signal: ac.signal }));
     ac.abort();
@@ -55,7 +55,7 @@ describe("PendingPermissions", () => {
   });
 
   it("PendingEntry is serializable — no AbortSignal, round-trips through JSON", () => {
-    const reg = new PendingPermissions({ now: () => 0 });
+    const reg = new PendingPermissions({ expireAfterMs: 30_000, now: () => 0 });
     reg.brokerFor("s").request(req("t7"));
     const entry = reg.list()[0];
     expect("signal" in entry).toBe(false);

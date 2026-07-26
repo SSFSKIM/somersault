@@ -1,11 +1,11 @@
 import type { ListEntry } from "../daemon/types.js";
 import type { ProactiveState } from "../proactive/types.js";
 import type { MonitorClient } from "../daemon/connect.js";
-import type { PendingEntry } from "../daemon/permissions.js";
+import type { PendingEntry } from "../permissions/pending.js";
 
 /** Re-exported so existing importers (app.ts, client.ts, tests) keep their `./snapshot.js` import. */
 export type { MonitorClient } from "../daemon/connect.js";
-export type { PendingEntry } from "../daemon/permissions.js";
+export type { PendingEntry } from "../permissions/pending.js";
 
 export interface SessionRow {
   id: string;

@@ -3,7 +3,7 @@ import type { ListEntry, RestartPolicy } from "./types.js";
 import type { ControlFrame, ControlResponse } from "../bridge/types.js";
 import type { CompactOutcome } from "../compaction/index.js";
 import type { ProactiveStatus, ProactiveConfigInput } from "../proactive/types.js";
-import type { PendingEntry } from "./permissions.js";
+import type { PendingEntry } from "../permissions/pending.js";
 import type { PermissionDecision } from "../permissions/types.js";
 
 /** The minimal daemon-read surface collect() needs (injected → unit-testable without a socket). */
