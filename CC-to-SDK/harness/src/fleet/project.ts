@@ -6,7 +6,6 @@ export interface AgentsRow {
   id: string; sessionId: string; state: FleetState; status: "busy" | "idle";
   cwd: string; name: string;
   unresponsive?: boolean;   // live pid, silent socket — a hung host, not a failed one
-  noHumanSeam?: boolean;    // a bare --bg with no permission config: nothing can ever route to `ask`
 }
 
 export interface ProjectInput {
@@ -23,8 +22,7 @@ export interface ProjectInput {
  *   dead pid                      → error (or the poller waits forever on a SIGKILLed host) */
 export function projectRow(input: ProjectInput): AgentsRow {
   const { roster, pidLive, socketAnswers, liveStatus } = input;
-  const base = { id: roster.short, cwd: roster.cwd, name: roster.name,
-    ...(roster.noHumanSeam ? { noHumanSeam: true } : {}) };
+  const base = { id: roster.short, cwd: roster.cwd, name: roster.name };
 
   // Identity comes from the session's OWN row, live or finished, and there is deliberately no second
   // source. The engine's registry files its rows by the pid of the CLI subprocess it spawns — not the

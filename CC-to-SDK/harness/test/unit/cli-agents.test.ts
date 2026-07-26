@@ -141,10 +141,10 @@ describe("renderAgents", () => {
     expect(renderAgents([arow(), arow({ id: "bbbbbbbb", state: "blocked", status: "idle" })], { json: false, all: true }))
       .toBe("a1b2c3d4  working  busy  w1  /w\nbbbbbbbb  blocked  idle  w1  /w");
   });
-  it("flags unresponsive and no-human-seam rows in text output", () => {
-    expect(renderAgents([arow({ unresponsive: true, noHumanSeam: true })], { json: false, all: true }))
-      .toBe("a1b2c3d4  working  busy  w1  /w  (unresponsive)  ⚠ no human seam");
-    expect(renderAgents([arow()], { json: false, all: true })).not.toMatch(/unresponsive|human seam/);
+  it("flags unresponsive rows in text output", () => {
+    expect(renderAgents([arow({ unresponsive: true })], { json: false, all: true }))
+      .toBe("a1b2c3d4  working  busy  w1  /w  (unresponsive)");
+    expect(renderAgents([arow()], { json: false, all: true })).not.toMatch(/unresponsive/);
   });
   it("renders an empty fleet as an empty string, not a stray newline", () => {
     expect(renderAgents([], { json: false, all: true })).toBe("");

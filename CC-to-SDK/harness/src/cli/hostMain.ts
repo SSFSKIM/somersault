@@ -32,13 +32,10 @@ export function parseHostArgv(argv: string[]): { short: string; kind: "bg" | "in
 }
 
 /** Everything the child derives from its own argv before anything is opened. Split out from
- *  runHostMain so the derivations below — the fork decision and noHumanSeam — are testable without
- *  spawning a process or opening an SDK session. */
+ *  runHostMain so the derivation below — the fork decision — is testable without spawning a process
+ *  or opening an SDK session. */
 export function hostOptsFrom(argv: string[]): { opts: SessionHostOpts; prompt?: string } {
   const { short, kind, worktree, inv } = parseHostArgv(argv);
-  // The child re-parses the forwarded config flags, so hasExplicitPermissionConfig is recomputed here
-  // rather than smuggled across in yet another flag. A bare --bg has nothing that can route to `ask`.
-  const noHumanSeam = kind === "bg" && !inv.hasExplicitPermissionConfig;
   // A bg resume must BRANCH, never resume in place — the plan pins `--bg --resume` to SDK
   // `resume: <uuid>` + `forkSession: true`, the exact lever probe 59 verified. In place the fork keeps
   // the PARENT's uuid, so two roster rows share one session id: `ccx rm <uuid>` then refuses as
@@ -52,7 +49,7 @@ export function hostOptsFrom(argv: string[]): { opts: SessionHostOpts; prompt?: 
       // The MARKER's value only, never inv.worktree: that one is a name (`wt`), and recording a name
       // gives rm a row it refuses to touch forever. The parent never forwards --worktree anyway.
       short, name: process.env.CLAUDE_CODE_SESSION_NAME ?? short, cwd: process.cwd(), kind,
-      ...(worktree ? { worktree } : {}), ...(noHumanSeam ? { noHumanSeam } : {}),
+      ...(worktree ? { worktree } : {}),
       config,
     },
     ...(inv.prompt ? { prompt: inv.prompt } : {}),

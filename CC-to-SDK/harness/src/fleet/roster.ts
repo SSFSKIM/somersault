@@ -13,9 +13,6 @@ export interface RosterRow {
    *  `isPidLive(pid, undefined)` answers "live" for every dead-but-unfinalized session, so a crashed
    *  host would read `working`/unresponsive forever instead of `error`. */
   procStart?: string;
-  /** A bare `--bg` with no permission config from any source: nothing can ever route a decision to a
-   *  human, so `agents` must say so. Set once at start by the host; never derived at read time. */
-  noHumanSeam?: boolean;
 }
 
 /** Write-then-rename, not a bare write. `writeFileSync` truncates first, so a host killed mid-write

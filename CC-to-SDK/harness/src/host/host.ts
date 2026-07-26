@@ -14,7 +14,7 @@ import type { PermissionDecision, PermissionBroker, PermissionRequest } from "..
 
 export interface SessionHostOpts {
   short: string; name: string; cwd: string; kind: "bg" | "interactive";
-  worktree?: string; noHumanSeam?: boolean; config: HarnessConfig; env?: NodeJS.ProcessEnv;
+  worktree?: string; config: HarnessConfig; env?: NodeJS.ProcessEnv;
 }
 
 /** Exactly the three members a host drives on its session — structural, not `any`, so a signature drift
@@ -68,7 +68,6 @@ export class SessionHost {
       name: this.opts.name, state: "working", startedAt: Date.now(),
       ...(procStart ? { procStart } : {}),
       ...(this.opts.worktree ? { worktree: this.opts.worktree } : {}),
-      ...(this.opts.noHumanSeam ? { noHumanSeam: true } : {}),
     };
     writeRoster(row, this.env);                        // written BEFORE any session id exists
     try {

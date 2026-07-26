@@ -60,10 +60,6 @@ describe("roster", () => {
     writeRoster(row({ procStart: "Sat Jul 25 02:55:52 2026" }), env);
     expect(readRoster("a1b2c3d4", env)!.procStart).toBe("Sat Jul 25 02:55:52 2026");
   });
-  it("round-trips the noHumanSeam flag, which agents surfaces", () => {
-    writeRoster(row({ noHumanSeam: true }), env);
-    expect(readRoster("a1b2c3d4", env)!.noHumanSeam).toBe(true);
-  });
   it("skips unparseable rows rather than failing the whole listing", () => {
     writeRoster(row(), env);
     mkdirSync(join(env.CCX_FLEET_ROOT!, "roster"), { recursive: true });

@@ -15,10 +15,6 @@ export interface CcxInvocation {
    *  and rmSession acts only on an absolute path. */
   worktreePath?: string;
   json: boolean; all: boolean; cwdFilter?: string;
-  /** ARGV-SCOPED despite the name: true iff THIS command line carried --permission-mode or --settings.
-   *  It cannot observe a project settings file, a managed policy, or any other source. hostMain derives
-   *  noHumanSeam from it by re-parsing argv, so a rename ripples — read it as "the operator said so here". */
-  hasExplicitPermissionConfig: boolean;
   config: HarnessConfig;
 }
 
@@ -61,15 +57,15 @@ function parseSettings(v: string): Record<string, unknown> {
 }
 
 export function parseCcx(argv: string[]): CcxInvocation {
-  const a: CcxInvocation = { command: "run", bg: false, detachable: false, print: false, json: false, all: false, hasExplicitPermissionConfig: false, config: {} };
+  const a: CcxInvocation = { command: "run", bg: false, detachable: false, print: false, json: false, all: false, config: {} };
   let i = 0;
   const sub = argv[0];
   if (sub === "agents" || sub === "attach" || sub === "stop" || sub === "rm") { a.command = sub; i = 1; }
   else if (sub === "fleet" && argv[1] === "gc") { a.command = "gc"; i = 2; }
 
   /** Consume this flag's value. A dangling flag in final position used to yield `undefined`, which for
-   *  --permission-mode/--settings still flipped hasExplicitPermissionConfig — turning off the ask-policy
-   *  floor for an unattended worker on the strength of a value nobody supplied. */
+   *  --permission-mode/--settings silently configured the field with no value at all instead of
+   *  failing loudly on an unattended worker. */
   const val = (flag: string): string => {
     const v = argv[++i];
     if (v === undefined) throw new Error(`${flag} requires a value`);
@@ -95,8 +91,8 @@ export function parseCcx(argv: string[]): CcxInvocation {
       case "--model": a.config.model = val(t); break;
       case "--effort": a.config.effort = oneOf("--effort", val(t), EFFORT_LEVELS); break;
       case "-r": case "--resume": a.config.resume = val(t); break;
-      case "--permission-mode": a.config.permissionMode = oneOf("--permission-mode", val(t), PERMISSION_MODES); a.hasExplicitPermissionConfig = true; break;
-      case "--settings": a.config.settings = parseSettings(val(t)); a.hasExplicitPermissionConfig = true; break;
+      case "--permission-mode": a.config.permissionMode = oneOf("--permission-mode", val(t), PERMISSION_MODES); break;
+      case "--settings": a.config.settings = parseSettings(val(t)); break;
       default:
         if (t.startsWith("-")) throw new Error(`unknown flag ${t}`);
         if (a.command === "run" && a.prompt === undefined) a.prompt = t;

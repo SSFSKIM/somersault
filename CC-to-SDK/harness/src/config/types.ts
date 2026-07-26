@@ -32,10 +32,12 @@ export interface HarnessConfig {
   appendSystemPrompt?: string;             // extra append text
   // permissions / tools
   // permissionMode: 6 SDK modes. acceptEdits auto-accepts edits but still routes non-edit tools to
-  // canUseTool; dontAsk replaces canUseTool entirely (joins auto/bypass as broker-replacing) — verified.
+  // canUseTool; dontAsk and bypassPermissions replace canUseTool entirely. `auto` does NOT — probe 64
+  // shows it consults the broker whenever a rule routes a tool to `ask`, exactly as `default` does.
+  // What summons the broker is the ask rule, not the mode.
   permissionMode?: PermissionMode;
   // interactive permission broker (incr3): when set, resolveOptions wires it as the SDK canUseTool.
-  // Only consulted in broker-live modes (default/acceptEdits/plan); bypassPermissions/dontAsk bypass it.
+  // Consulted in default/acceptEdits/plan/auto; bypassPermissions and dontAsk bypass it.
   permissionBroker?: PermissionBroker;
   allowedTools?: string[];
   disallowedTools?: string[];

@@ -10,12 +10,6 @@ describe("parseCcx", () => {
     expect(a).toMatchObject({ command: "run", bg: true, name: "worker-3", worktree: "wt", prompt: "do the thing" });
     expect(a.config.permissionMode).toBe("auto");
   });
-  it("flags explicit permission config so the default ask-policy floor stays off", () => {
-    // A blanket default would park every doperpowers worker at its first tool.
-    expect(parseCcx(["--bg", "--permission-mode", "auto", "-n", "w", "x"]).hasExplicitPermissionConfig).toBe(true);
-    expect(parseCcx(["--bg", "-n", "w", "x"]).hasExplicitPermissionConfig).toBe(false);
-    expect(parseCcx(["--bg", "--settings", "{}", "-n", "w", "x"]).hasExplicitPermissionConfig).toBe(true);
-  });
   it("parses --settings inline JSON into an object, not the raw string", () => {
     // config/settings.ts spreads this field: a raw string becomes {0:"{",1:'"',…} with no error anywhere.
     const a = parseCcx(["--bg", "--settings", '{"env":{"ANTHROPIC_BASE_URL":"http://localhost:8317"}}', "-n", "w", "x"]);
@@ -42,15 +36,15 @@ describe("parseCcx", () => {
     finally { rmSync(dir, { recursive: true, force: true }); }
   });
   it("throws on a value-taking flag with no value instead of configuring nothing", () => {
-    // A dangling --permission-mode used to set hasExplicitPermissionConfig with nothing configured,
-    // disabling the ask-policy floor for an unattended worker on a value nobody supplied.
+    // A dangling --permission-mode/--settings used to silently configure the field with no value at
+    // all rather than fail loudly on an unattended worker.
     expect(() => parseCcx(["--bg", "-n", "w", "--permission-mode"])).toThrow(/--permission-mode/);
     expect(() => parseCcx(["--bg", "-n", "w", "--settings"])).toThrow(/--settings/);
     expect(() => parseCcx(["--bg", "--name"])).toThrow(/--name/);
   });
   it("rejects a permission mode outside the union", () => {
     // resolveOptions forwards the value as-is and gates the auto-model repair on `=== "auto"`, so a
-    // near-miss ships an invalid mode to the SDK, skips the repair, AND drops the ask-policy floor.
+    // near-miss ships an invalid mode straight to the SDK and skips the repair.
     expect(() => parseCcx(["--bg", "--permission-mode", "Auto", "x"])).toThrow(/Auto/);
     expect(() => parseCcx(["--bg", "--permission-mode", "yolo", "x"])).toThrow(/permission-mode/);
     expect(() => parseCcx(["--bg", "--permission-mode", "constructor", "x"])).toThrow(/constructor/);

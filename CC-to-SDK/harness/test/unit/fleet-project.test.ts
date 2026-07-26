@@ -61,9 +61,4 @@ describe("projectRow — the four arms", () => {
     const r = projectRow({ roster: roster({ cwd: "/repo/.claude/worktrees/wt" }), pidLive: false, socketAnswers: false });
     expect(r.id).toBe("a1b2c3d4"); expect(r.cwd).toBe("/repo/.claude/worktrees/wt"); expect(r.name).toBe("w1");
   });
-  it("carries noHumanSeam through from the roster, and omits the key when it is not set", () => {
-    // Acceptance 9's reporting half: `agents` must be able to say a worker has nothing to ask.
-    expect(projectRow({ roster: roster({ noHumanSeam: true }), pidLive: false, socketAnswers: false }).noHumanSeam).toBe(true);
-    expect("noHumanSeam" in projectRow({ roster: roster(), pidLive: false, socketAnswers: false })).toBe(false);
-  });
 });

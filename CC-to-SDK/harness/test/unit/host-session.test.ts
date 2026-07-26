@@ -54,12 +54,6 @@ describe("SessionHost", () => {
     warn.mockRestore();
     await h.stop();
   });
-  it("records noHumanSeam on the roster row when the caller reports one", async () => {
-    const h = new SessionHost({ ...opts(), noHumanSeam: true }, deps(() => fakeSession().session as any));
-    await h.start();
-    expect(readRoster("a1b2c3d4", env)!.noHumanSeam).toBe(true);
-    await h.stop();
-  });
   it("reports busy while a turn runs and idle/done after it finishes", async () => {
     const f = fakeSession();
     const h = new SessionHost(opts(), deps(() => f.session as any));
