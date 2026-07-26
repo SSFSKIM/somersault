@@ -341,9 +341,12 @@ not locked to one client because a dead lock-holder would park the session forev
 7. Two attached clients both see the turn; the first answer wins; the second is told who answered.
 8. A `--bg` host parks indefinitely on an `ask`-routed tool with no client attached, and `agents` shows
    `state: "blocked"`.
-9. A **bare** `--bg` with no permission configuration is reported by `agents` as having no human seam;
-   a `--bg --permission-mode auto` worker (doperpowers' actual spawn) is **not** flagged, is **not**
-   given a default ask-policy, and runs its tools to completion without parking.
+9. ~~A **bare** `--bg` with no permission configuration is reported by `agents` as having no human
+   seam.~~ **Retired 2026-07-27** (owner decision, plus probe 64). The background permission posture is
+   the SDK's `auto` classifier, and the human seam is summoned by an `ask` rule — which `auto` honours
+   just as `default` does. There is no unconfigured-and-therefore-unsafe case left to flag, so both the
+   `noHumanSeam` marker and the default ask-policy floor are removed (plan A2a, Task 8). What survives
+   is the precedence rule: **any explicit permission configuration wins.**
 9b. A host killed with `SIGKILL` mid-turn projects `state: "error"` in `agents --json --all` — not
     `working` — so `_poll_until_done` terminates instead of running to its timeout.
 10. A default `ccx` session is attachable; closing its original terminal ends it.
@@ -655,16 +658,27 @@ Three findings came out of that run.
    and `stopped`, so the consumer's whole blocked-reply renderer is dead code against `ccx`. Plan A2a
    Task 5 makes `status()` report it.
 
-**A2's three probes are written and blocked.** `probes/probes/62-midturn-transcript-and-stream-volume.ts`,
-`63-interrupt-vs-parked-permission.ts` and `63b-park-soak-ten-minutes.ts` exist and run, but every
-verdict is INCONCLUSIVE on this account: a rate-limited turn emits no `tool_use`, so `canUseTool` never
-fires, and it ends too fast to sample a transcript twice. Each probe now refuses to state a mechanism
-it did not observe — the first run of 63 printed a confident *"interrupt() RELEASES a parked
-permission"* off a turn that never parked, which is precisely the false premise this project's
-live-probe-first discipline exists to prevent. Re-run all three when the weekly limit resets on
-2026-07-29. Until then, A2a is built on the safe superset of both outcomes: it keeps its own bounded
-record of the current turn rather than trusting the on-disk transcript, and it settles parked
-decisions explicitly on `stop`/`interrupt` rather than trusting the SDK to abort them.
+**A2's four probes, resolved 2026-07-27** (on a fresh account, after the owner replaced the token).
+They were written a day earlier and every verdict came back INCONCLUSIVE under the exhausted limit;
+each now gates its verdict on having actually measured something, because the first run of 63 printed
+a confident *"interrupt() RELEASES a parked permission"* off a turn that never parked — the exact
+false premise this project's live-probe-first discipline exists to prevent. Re-run, they settle four
+design questions:
+
+| probe | question | result |
+|---|---|---|
+| 62 | can an attaching client replay an **in-flight** turn from the engine's on-disk transcript? | **No.** Fourteen samples across a 21.6 s turn all read one message (the user's prompt); it reached three only after the turn ended. The host must keep its own record of the live turn. |
+| 62 | how expensive is per-client fan-out with `includePartialMessages`? | **Free.** 61 messages / 30.2 KiB over 21.6 s — 2.8 msg/s, 1.4 KiB/s, 47 of them partial `stream_event`. No coalescing needed. |
+| 63 | does `interrupt()` release a parked `canUseTool`? | **Yes.** The request's signal aborted 4.7 s into the park, exactly when `interrupt()` was called. Note the stream then **throws** (`stop_reason=tool_use`) instead of returning a result — so a terminal state must be recorded *before* interrupting. |
+| 63b | does a park survive long enough for "indefinitely" to be honest? | **Yes.** Held the full 600 s across ten heartbeats, signal never fired, the tool then ran and the turn completed with `is_error: false`. |
+| 64 | does `permissionMode: "auto"` consult `canUseTool` at all? | **Yes — and this corrects our own record.** With an explicit `ask` rule present, `auto` fired the broker exactly as `default` did. `config/types.ts` had `auto` filed as "broker-replacing — verified"; that is wrong for this combination. **What summons the broker is the ask rule, not the mode.** |
+
+Probe 64's result matters beyond the comment it corrects: it means the human seam is reachable in the
+posture we actually ship, including doperpowers' `--bg --permission-mode auto` workers, whenever a rule
+routes a tool to `ask`. Combined with the owner's decision to keep the `auto` classifier as the
+background posture, it also retires the "default ask-policy floor" and the `noHumanSeam` flag
+altogether — the flag marked a supported configuration, and its stated reason ("auto-approves
+everything") was untrue.
 
 ## Revision Notes
 
