@@ -644,6 +644,25 @@ describe("projectRow — the four arms", () => {
     expect(projectRow({ roster: roster({ state: "stopped" }), pidLive: false, socketAnswers: false }).state).toBe("stopped");
     expect(projectRow({ roster: roster({ state: "error" }), pidLive: false, socketAnswers: false }).state).toBe("error");
   });
+  it("arm 1 BEATS a live host — reordering the terminal guard is the regression this catches", () => {
+    // Every other arm-1 test passes pidLive:false, so moving the terminal guard below the live arms
+    // keeps the suite green. This is the one that notices: a `done` session whose pid was recycled and
+    // whose socket answers must still report done, not the stranger's live status.
+    const r = projectRow({ roster: roster({ state: "done" }), pidLive: true, socketAnswers: true, liveStatus: { state: "working", status: "busy" } });
+    expect(r.state).toBe("done"); expect(r.status).toBe("idle"); expect(r.unresponsive).toBeUndefined();
+  });
+  it("arm 1 keeps its OWN sessionId even when a registry row claims that pid", () => {
+    // Registry rows are keyed by pid and unlinked on exit, so one matching a FINISHED session's pid is
+    // a different process. Handing the consumer a stranger's sessionId is worse than handing it none.
+    const r = projectRow({ roster: roster({ state: "done", sessionId: "sid-mine" }),
+      registry: { pid: 100, cwd: "/w", sessionId: "sid-stranger" }, pidLive: true, socketAnswers: true });
+    expect(r.sessionId).toBe("sid-mine");
+  });
+  it("an answering socket suppresses `unresponsive` even with no live status to report", () => {
+    // Deleting this branch leaves the suite green while every healthy host reads as hung.
+    const r = projectRow({ roster: roster(), pidLive: true, socketAnswers: true });
+    expect(r.unresponsive).toBeUndefined(); expect(r.status).toBe("busy");
+  });
   it("arm 2: live pid + answering socket projects the LIVE status from the host", () => {
     const r = projectRow({ roster: roster(), pidLive: true, socketAnswers: true, liveStatus: { state: "blocked", status: "idle" } });
     expect(r.state).toBe("blocked"); expect(r.status).toBe("idle"); expect(r.unresponsive).toBeUndefined();
@@ -711,21 +730,25 @@ export interface ProjectInput {
  *   dead pid                      → error (or the poller waits forever on a SIGKILLed host) */
 export function projectRow(input: ProjectInput): AgentsRow {
   const { roster, registry, pidLive, socketAnswers, liveStatus } = input;
-  const base = { id: roster.short, sessionId: registry?.sessionId ?? roster.sessionId ?? "", cwd: roster.cwd, name: roster.name,
+  const base = { id: roster.short, cwd: roster.cwd, name: roster.name,
     ...(roster.noHumanSeam ? { noHumanSeam: true } : {}) };
 
-  if (TERMINAL.has(roster.state)) return { ...base, state: roster.state, status: "idle" };
-  if (pidLive && socketAnswers && liveStatus) return { ...base, state: liveStatus.state, status: liveStatus.status };
-  if (pidLive && socketAnswers) return { ...base, state: roster.state, status: "busy" };
-  if (pidLive) return { ...base, state: roster.state, status: "busy", unresponsive: true };
-  return { ...base, state: "error" as FleetState, status: "idle" };
+  // A finished session's identity comes from its OWN row. The engine unlinks its registry row on exit
+  // and files those rows by pid, so a registry row still matching a dead session's pid belongs to a
+  // DIFFERENT process — taking its sessionId would hand the consumer a stranger's session to act on.
+  if (TERMINAL.has(roster.state)) return { ...base, sessionId: roster.sessionId ?? "", state: roster.state, status: "idle" };
+  const sessionId = registry?.sessionId ?? roster.sessionId ?? "";
+  if (pidLive && socketAnswers && liveStatus) return { ...base, sessionId, state: liveStatus.state, status: liveStatus.status };
+  if (pidLive && socketAnswers) return { ...base, sessionId, state: roster.state, status: "busy" };
+  if (pidLive) return { ...base, sessionId, state: roster.state, status: "busy", unresponsive: true };
+  return { ...base, sessionId, state: "error", status: "idle" };
 }
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/unit/fleet-project.test.ts && npm run typecheck`
-Expected: PASS, 8 tests.
+Expected: PASS, 11 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2102,6 +2125,8 @@ Recorded here rather than by rewriting the tasks above, so a reader can see what
   5. Task 13 used `execFile` with an `input` option that only the `*Sync`/spawn family accepts; the python filter would have blocked on stdin until the timeout.
 - **2026-07-26, from Task 0's spike.** `spawnDetached` must scrub `CLAUDE_JOB_DIR`, `CLAUDE_CODE_SESSION_ID` and `CLAUDE_CODE_CHILD_SESSION`. Probe 60 found that a `kind=bg` child inheriting `CLAUDE_JOB_DIR` adopts the parent's *job*: the agents view then renders the parent job's id, name and state, and our session is unfindable by pid, session id or name. `daemon-spawn.sh` runs inside a Claude Code agent, so this is the production path. Task 9 gained a test; Task 14's acceptance 4 gained a diagnostic pointing here first.
 - **2026-07-26, from Task 0's spike.** Acceptance 4 asserts `kind: "background"` in the agents view against `"bg"` on the registry row.
+- **2026-07-26, from the Task 4 review — a premise flipped by probe 61.** `sessionsDir` hard-coded `<HOME>/.claude/sessions`, but this repo's own tenant isolation spawns sessions with `CLAUDE_CONFIG_DIR` set. Nobody had checked where the engine then writes the row. Probe 61 settled it: **the engine honors `CLAUDE_CONFIG_DIR`**, and the row lands *only* under it — so every tenant-isolated session was invisible to us, and invisibly so, because a missing directory returns an empty list that reads exactly like "no sessions running." `sessionsDir` now derives from `CLAUDE_CONFIG_DIR` first. The registry row guard was also tightened to an integer pid > 0 with a string `cwd`, since the old `typeof pid === "number"` check was weaker than the type it returned at what is explicitly an untrusted-input boundary.
+- **2026-07-26, from the Task 5 review (three defects, all plan-mandated).** The projection's two central guarantees had no test that could fail: moving the terminal guard below the live arms kept all 8 tests green, and deleting the answering-socket-without-live-status branch also kept them green while every healthy host started reading as hung. Both now have a test that notices. Third and more than coverage: `sessionId` was resolved before arm dispatch, so a *terminal* row would take a registry row's session id — and since registry rows are keyed by pid and unlinked on exit, one matching a finished session's pid belongs to a different process. A finished session now takes its identity only from its own roster row.
 - **2026-07-26, from the Task 2 and Task 3 reviews (three defects, all plan-mandated).**
   1. *`procStartOf` conflated "pid gone" with "the probe broke."* `ps -p <gone pid>` exiting non-zero is the answer; a `ps` missing from `PATH` or killed by the timeout is not. It now rethrows the latter and `isPidLive` fails safe to *live* — answering "dead" there would project `error` over a healthy worker and terminate a doperpowers poller early.
   2. *The roster had no `procStart` of its own, which made the crashed-host arm unreachable in its most common form.* The engine unlinks `~/.claude/sessions/<pid>.json` on exit, but our roster row outlives it — so `isPidLive(pid, undefined)` answered "live" for every dead-but-unfinalized session, and a crashed host would read `working`/unresponsive forever instead of `error`. `RosterRow` now carries `procStart`, `SessionHost` records it at start, and `collectFleet` prefers the engine's stamp and falls back to ours. This was found by following the review's finding rather than in the review itself.
