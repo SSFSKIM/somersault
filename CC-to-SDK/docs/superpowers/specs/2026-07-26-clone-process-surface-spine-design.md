@@ -520,6 +520,19 @@ not locked to one client because a dead lock-holder would park the session forev
   the host's `process.cwd()`, which on macOS has resolved the `/tmp` symlink. Correct — that *is* the
   real path, and `renderAgents` already `resolve()`s both sides of `--cwd` — but a consumer that
   string-compares the path it passed against the path it reads back will not match on macOS.
+- **macOS `kern.boottime` drifts, and doperpowers' host-identity gate silently disables the purge when it
+  does.** In the resume-half acceptance run of 2026-07-26 the first `daemon-resume.sh` forked correctly but
+  purged nothing. `_lib.sh` derives `DAEMON_BOOT_ID` from `sysctl -n kern.boottime` and treats a mismatch
+  against the meta's recorded value as "this daemon belongs to another host boot", which makes
+  `daemon-resume.sh` set `cur_is_local=0` and skip **both** `claude stop "$curshort"` and `_session_purge`.
+  The field reported second `1784385968` at 12:25:12 and `1784385966` at 12:26:04 on a machine that never
+  rebooted — a two-second correction inside one minute, enough to fail the gate. Our binary was never
+  invoked, so this is not a `ccx` defect; but a macOS fleet will intermittently accumulate superseded turns,
+  roster rows and transcripts with no error anywhere (`_session_purge`'s `claude rm` is `>/dev/null 2>&1 ||
+  true`, and the skip is silent by construction). Re-running with `DAEMON_BOOT_ID` pinned — an override
+  `_lib.sh` documents for tests — exercised the purge path immediately and cleanly. **Lesson: an identity
+  gate is a liveness dependency; when a consumer's gate can fail on the same host, a passing fork tells you
+  nothing about whether the cleanup half ran. Check the effect, not the exit code.**
 
 ## Outcomes & Retrospective
 
@@ -565,6 +578,39 @@ recorded* — is also the only one that could not have been validated by unit te
 held under real processes: a finished session stays listed (acceptance 3) and a killed one is not
 believed (9b). The two things this run could not settle are the resume/fork half of the doperpowers
 contract, and anything that needs a human seam, because A2 does not exist yet.
+
+**Resume half of the doperpowers contract closed 2026-07-26** (verbatim output in
+`.doperpowers/sdd/acceptance-resume-half-report.md`). The gap named just above — `daemon-resume.sh`,
+`daemon-reply.sh`, `daemon-finalize.sh` and the `_lib.sh` purge path — has now been run by the unmodified
+scripts against `ccx` on PATH (all eight script MD5s identical before and after; marketplace checkout
+clean). Four daemons, ten turns, four sequential forks of one worktree'd daemon.
+
+| script | verdict | evidence |
+|---|---|---|
+| `daemon-spawn.sh` | **PASS** | `daemon spawned: ccx-acc  [5403606b / fa9c1a57-…]  state=done  worktree=…/accres (branch worktree-accres)`; `--no-wait` form also passed, once registering `status=working`. |
+| `daemon-resume.sh` | **PASS** | Four turns, four distinct shorts and uuids, one stable daemon id; `turns` reached 4. |
+| `daemon-reply.sh` | **PASS** | Resolved by post-fork short *and* by stable uuid to the same daemon. |
+| `daemon-finalize.sh` | **PASS on `noop` and `done`→`idle`** | `live`, `absent` and `error`/`stopped` were unreachable — see the limitation below. |
+| purge (`_session_purge`) | **PASS** | 10 ms watcher: sentinel appears `21:30:39.949`, superseded roster row disappears `21:30:40.025` **while the sentinel is still present and the worktree still `PRESENT`**, sentinel removed `21:30:40.064`. Superseded transcripts deleted too. |
+
+Both fixes under test are confirmed by observation, not inference. **Mid-turn uuid:** a 0.5 s sampler
+caught `{"id":"5403606b",…,"sessionId":"fa9c1a57-…","state":"working","status":"busy"}` one second before
+the row flipped to `done` — the uuid is reported during the turn, which is what the consumer's 30×2 s
+`_poll_uuid` needs. Its second-order effect showed up too: `daemon-spawn.sh --no-wait` registered
+`status=working`, which is only possible if the uuid materializes before the turn ends. **Forking:** the
+daemon's stable id `fa9c1a57-…` never moved while the current session went `fa9c1a57 → 3a63bf12 →
+574c23be → 3ebe9aa0`; since `daemon-resume.sh` guards its purge with `[ "$cur" != "$newuuid" ]`, a
+non-forking resume would have made the purge unreachable forever, and the purge did fire.
+
+Two limits bound what this proves. The account's weekly limit was exhausted, so every reply was
+`You've hit your weekly limit …` and every turn ended in about eight seconds. Nothing in the process
+surface reads replies, so the state machine is genuinely exercised; but no turn was ever still running
+when a probe landed, which is why `daemon-finalize.sh`'s `live`, `absent` and `error`/`stopped` arms went
+untested. Attempts to force them failed benignly: `DAEMON_TIMEOUT=2` still found the turn already `done`,
+and `ccx stop` on an already-`done` row correctly preserved `done` (first-terminal-wins) rather than
+reaching `stopped`. The brief's note therefore stands on inspection only — `daemon-finalize.sh` maps
+`stopped` to `error`, while `_poll_until_done` terminates on `done|blocked|error` alone, so a session
+reaching `stopped` would spin that watcher to its iteration cap.
 
 ## Revision Notes
 
