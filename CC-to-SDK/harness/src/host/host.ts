@@ -17,6 +17,11 @@ export interface SessionHostOpts {
   worktree?: string; config: HarnessConfig; env?: NodeJS.ProcessEnv;
 }
 
+/** How long stop() will wait for a well-behaved dispose after the turn has been interrupted. Generous
+ *  enough that the normal path always completes inside it, short enough that a wedged turn does not
+ *  keep a detached process alive for the rest of the day. */
+const DISPOSE_GRACE_MS = 5_000;
+
 /** Exactly the three members a host drives on its session — structural, not `any`, so a signature drift
  *  in `Session` fails THIS build instead of failing at runtime inside a detached process nobody watches. */
 export interface HostSession {
@@ -48,7 +53,10 @@ export class SessionHost {
   private settledBy = new Map<string, string>();
 
   constructor(private opts: SessionHostOpts,
-    private deps: { openSession: (c: HarnessConfig) => HostSession; procStartOf?: (p: number) => Promise<string | undefined> }
+    private deps: { openSession: (c: HarnessConfig) => HostSession; procStartOf?: (p: number) => Promise<string | undefined>;
+      /** Test-only override for DISPOSE_GRACE_MS — otherwise every wedged-dispose test burns the real
+       *  grace period in a suite that runs on every commit. */
+      disposeGraceMs?: number }
       = { openSession: realOpenSession }) {
     this.short = opts.short;
     this.env = opts.env ?? process.env;
@@ -211,15 +219,32 @@ export class SessionHost {
   }
 
   /** `final` lets stop() record `stopped` while a completed run records `done`/`error`. With no argument
-   *  and no finished turn the state is still `working`, and syncRoster then writes nothing down. */
+   *  and no finished turn the state is still `working`, and syncRoster then writes nothing down.
+   *
+   *  Order matters and each position is load-bearing:
+   *  1. Settle parked decisions — nothing awaited may survive us.
+   *  2. Write the terminal roster state — a reader must never wait on a host that is going away, and it
+   *     must land BEFORE the interrupt below: interrupting a turn parked at a tool call makes the
+   *     message stream throw, and runTask's catch arm then records `error` — harmless only because
+   *     finalizeRoster is first-terminal-wins and `stopped` was already written.
+   *  3. Interrupt the in-flight turn. This is the actual repair, not the timeout in step 4: dispose()
+   *     is `input.close(); await done`, and `done` cannot resolve while a request is in flight —
+   *     interrupting is what ends the turn and lets it.
+   *  4. Dispose, bounded by DISPOSE_GRACE_MS. If a turn will not end even after being interrupted, we
+   *     still leave rather than hang forever.
+   *  5. Close the server unconditionally, OUTSIDE the race in step 4. A server left listening is a host
+   *     that never exits — this used to sit behind the same await a wedged turn never satisfied, so
+   *     `ccx stop` reported success over a process that lived on with its socket still answering. */
   async stop(final?: FleetState): Promise<void> {
     if (final) this.state = final;
-    // Settle first, and do it explicitly. Probe 63 shows interrupt() DOES abort a parked canUseTool,
-    // so this is belt-and-braces rather than the mechanism — but it settles synchronously instead of
-    // awaiting an abort round-trip, and it covers a session with no interrupt() at all.
     this.parked.denyAll();
-    this.syncRoster();
-    await this.session?.dispose().catch(() => {});
+    this.syncRoster();                     // terminal state on disk BEFORE anything that can block
+    await this.session?.interrupt?.().catch(() => {});
+    const graceMs = this.deps.disposeGraceMs ?? DISPOSE_GRACE_MS;
+    await Promise.race([
+      this.session?.dispose().catch(() => {}) ?? Promise.resolve(),
+      new Promise<void>((r) => { const t = setTimeout(r, graceMs); (t as { unref?: () => void }).unref?.(); }),
+    ]);
     await this.server?.close();
   }
 
