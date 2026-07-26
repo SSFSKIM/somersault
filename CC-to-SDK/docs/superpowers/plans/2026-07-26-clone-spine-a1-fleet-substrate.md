@@ -174,8 +174,11 @@ export function fleetRoot(env: NodeJS.ProcessEnv = process.env): string {
   if (env.CCX_FLEET_ROOT) return env.CCX_FLEET_ROOT;
   return join(env.HOME ?? homedir(), ".claude", "ccx");
 }
+/** The `roster` segment lives here only — a second copy in roster.ts would fail silently, since a
+ *  readdir of the wrong directory just yields an empty fleet. */
+export function rosterDir(env: NodeJS.ProcessEnv = process.env): string { return join(fleetRoot(env), "roster"); }
 export function rosterPath(short: string, env: NodeJS.ProcessEnv = process.env): string {
-  return join(fleetRoot(env), "roster", `${short}.json`);
+  return join(rosterDir(env), `${short}.json`);
 }
 export function runDir(env: NodeJS.ProcessEnv = process.env): string { return join(fleetRoot(env), "run"); }
 /** Keyed by pid — immutable for the host's life. Not /tmp: macOS sweeps unaccessed /tmp files. */
@@ -230,6 +233,12 @@ describe("isPidLive", () => {
   it("treats a missing stored procStart as live, matching the binary's gB()", async () => {
     expect(await isPidLive(10, undefined, ps("anything"))).toBe(true);
   });
+  it("is LIVE when the probe itself breaks — a broken `ps` must not condemn a running session", async () => {
+    // `ps` missing from PATH, or killed by the 1s timeout, tells us nothing about the pid. Answering
+    // "dead" there projects `error` over a healthy worker and terminates a doperpowers poller early.
+    const boom = { procStartOf: async () => { throw Object.assign(new Error("spawn ps ENOENT"), { code: "ENOENT" }); } };
+    expect(await isPidLive(10, "Sat Jul 25 02:55:52 2026", boom)).toBe(true);
+  });
 });
 
 describe("socketAnswers", () => {
@@ -262,20 +271,29 @@ const execFileP = promisify(execFile);
 /** MUST be C locale + UTC: the binary compares against `LC_ALL=C TZ=UTC ps -o lstart=`, and a
  *  locale-formatted value silently fails the comparison (this cost us a wrong roadmap finding). */
 export async function procStartOf(pid: number): Promise<string | undefined> {
+  let stdout: string;
   try {
-    const { stdout } = await execFileP("ps", ["-o", "lstart=", "-p", String(pid)], {
+    ({ stdout } = await execFileP("ps", ["-o", "lstart=", "-p", String(pid)], {
       env: { ...process.env, LC_ALL: "C", TZ: "UTC" }, timeout: 1000,
-    });
-    const s = stdout.trim();
-    return s.length ? s : undefined;
-  } catch { return undefined; }
+    }));
+  } catch (e: any) {
+    // `ps -p <gone pid>` exits non-zero with no output — that IS the answer. But a `ps` we could not
+    // run at all (ENOENT) or one the timeout killed tells us nothing, and answering "gone" there would
+    // report every live session as dead. Distinguish, and let the caller fail safe.
+    if (typeof e?.code === "number" && !e?.killed) return undefined;
+    throw e;
+  }
+  const s = stdout.trim();
+  return s.length ? s : undefined;
 }
 
 export async function isPidLive(pid: number, procStart: string | undefined,
   deps: { procStartOf: (p: number) => Promise<string | undefined> } = { procStartOf }): Promise<boolean> {
   if (procStart === undefined) return true;          // matches the binary's gB(): unknown start ⇒ assume live
-  const actual = await deps.procStartOf(pid);
-  return actual !== undefined && actual === procStart;
+  try {
+    const actual = await deps.procStartOf(pid);
+    return actual !== undefined && actual === procStart;
+  } catch { return true; }                           // a broken probe must not declare a live session dead
 }
 
 const CONNECT_TIMEOUT_MS = 250;                       // the binary uses 250ms
@@ -299,7 +317,7 @@ export async function socketAnswers(path: string,
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/unit/fleet-liveness.test.ts && npm run typecheck`
-Expected: PASS, 7 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -319,15 +337,15 @@ git commit -m "feat(fleet): procStart PID-reuse guard and 250ms socket probe"
 **Interfaces:**
 - Consumes: `rosterPath`, `fleetRoot` (Task 1).
 - Produces: `RosterRow` (type) · `writeRoster(row, env?)` · `readRoster(short, env?)` · `listRoster(env?)` · `finalizeRoster(short, state, env?)`
-- `RosterRow = { short: string; sessionId?: string; pid: number; cwd: string; worktree?: string; kind: "bg" | "interactive"; name: string; state: FleetState; startedAt: number; endedAt?: number; noHumanSeam?: boolean }`
+- `RosterRow = { short: string; sessionId?: string; pid: number; cwd: string; worktree?: string; kind: "bg" | "interactive"; name: string; state: FleetState; startedAt: number; endedAt?: number; noHumanSeam?: boolean; procStart?: string }`
 - `FleetState = "working" | "blocked" | "done" | "error" | "stopped"`
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 // harness/test/unit/fleet-roster.test.ts
-import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeRoster, readRoster, listRoster, finalizeRoster } from "../../src/fleet/roster.js";
@@ -338,6 +356,7 @@ const row = (over: Partial<RosterRow> = {}): RosterRow => ({
   short: "a1b2c3d4", pid: 100, cwd: "/w", kind: "bg", name: "worker-1", state: "working", startedAt: 1, ...over,
 });
 beforeEach(() => { env = { CCX_FLEET_ROOT: mkdtempSync(join(tmpdir(), "ccx-roster-")) }; });
+afterEach(() => { rmSync(env.CCX_FLEET_ROOT!, { recursive: true, force: true }); });
 
 describe("roster", () => {
   it("round-trips a row", () => {
@@ -358,6 +377,30 @@ describe("roster", () => {
   });
   it("finalize on an unknown short is a no-op, not a throw — it must be idempotent for rm/stop", () => {
     expect(() => finalizeRoster("ffffffff", "stopped", env)).not.toThrow();
+  });
+  it("first terminal state wins — a losing `stop` must not overwrite a truthful `done`", () => {
+    writeRoster(row(), env);
+    finalizeRoster("a1b2c3d4", "done", env, () => 100);
+    finalizeRoster("a1b2c3d4", "stopped", env, () => 200);
+    const r = readRoster("a1b2c3d4", env)!;
+    expect(r.state).toBe("done"); expect(r.endedAt).toBe(100);
+  });
+  it("leaves no partial row behind — a reader never sees a truncated file", () => {
+    // writeFileSync truncates before writing; a host killed in that window strands the session
+    // permanently, because finalizeRoster early-returns on an unreadable row.
+    writeRoster(row(), env);
+    expect(readdirSync(join(env.CCX_FLEET_ROOT!, "roster")).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+  it("refuses to write a row whose short is not 8 hex — it would be written but never listed", () => {
+    expect(() => writeRoster(row({ short: "nope" }), env)).toThrow(/nope/);
+  });
+  it("skips well-formed JSON that is not a row", () => {
+    writeRoster(row(), env);
+    writeFileSync(join(env.CCX_FLEET_ROOT!, "roster", "dddddddd.json"), "[]");
+    expect(listRoster(env).map((r) => r.short)).toEqual(["a1b2c3d4"]);
+  });
+  it("returns [] when the roster directory does not exist at all", () => {
+    expect(listRoster({ CCX_FLEET_ROOT: join(tmpdir(), "ccx-does-not-exist-" + Date.now()) })).toEqual([]);
   });
   it("round-trips the noHumanSeam flag, which agents surfaces", () => {
     writeRoster(row({ noHumanSeam: true }), env);
@@ -381,9 +424,9 @@ Expected: FAIL — module not found.
 
 ```ts
 // harness/src/fleet/roster.ts
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fleetRoot, rosterPath, isShortId } from "./paths.js";
+import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { rosterDir, rosterPath, isShortId } from "./paths.js";
 
 export type FleetState = "working" | "blocked" | "done" | "error" | "stopped";
 export const TERMINAL: ReadonlySet<FleetState> = new Set<FleetState>(["done", "error", "stopped"]);
@@ -391,24 +434,42 @@ export const TERMINAL: ReadonlySet<FleetState> = new Set<FleetState>(["done", "e
 export interface RosterRow {
   short: string; sessionId?: string; pid: number; cwd: string; worktree?: string;
   kind: "bg" | "interactive"; name: string; state: FleetState; startedAt: number; endedAt?: number;
+  /** Our own copy of the host's `ps -o lstart=` stamp. The ENGINE's registry row carries one too, but
+   *  it is unlinked when the session exits — and a roster row outlives it. Without our own copy,
+   *  `isPidLive(pid, undefined)` answers "live" for every dead-but-unfinalized session, so a crashed
+   *  host would read `working`/unresponsive forever instead of `error`. */
+  procStart?: string;
   /** A bare `--bg` with no permission config from any source: nothing can ever route a decision to a
    *  human, so `agents` must say so. Set once at start by the host; never derived at read time. */
   noHumanSeam?: boolean;
 }
 
+/** Write-then-rename, not a bare write. `writeFileSync` truncates first, so a host killed mid-write
+ *  leaves a permanently unparseable row — and since finalizeRoster early-returns on an unreadable row,
+ *  that session could never be marked terminal and a poller would wait on it forever. The temp name
+ *  carries the pid so two writers cannot clobber each other's staging file; `listRoster`'s isShortId
+ *  filter already ignores anything ending in `.tmp`. */
 export function writeRoster(row: RosterRow, env: NodeJS.ProcessEnv = process.env): void {
+  if (!isShortId(row.short)) throw new Error(`refusing to write a roster row with short ${JSON.stringify(row.short)}`);
   const p = rosterPath(row.short, env);
   mkdirSync(dirname(p), { recursive: true, mode: 0o700 });
-  writeFileSync(p, JSON.stringify(row), { mode: 0o600 });
+  const tmp = `${p}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(row), { mode: 0o600 });
+  renameSync(tmp, p);                          // same-directory rename is atomic on POSIX
 }
 
 export function readRoster(short: string, env: NodeJS.ProcessEnv = process.env): RosterRow | undefined {
-  try { return JSON.parse(readFileSync(rosterPath(short, env), "utf8")) as RosterRow; } catch { return undefined; }
+  let parsed: unknown;
+  try { parsed = JSON.parse(readFileSync(rosterPath(short, env), "utf8")); } catch { return undefined; }
+  // "skip unparseable rows" has to cover "parsed, but not a row" — a stray `[]` or `123` would
+  // otherwise enter the listing as a row whose every field is undefined.
+  const r = parsed as RosterRow;
+  return r && typeof r === "object" && isShortId(r.short) ? r : undefined;
 }
 
 export function listRoster(env: NodeJS.ProcessEnv = process.env): RosterRow[] {
   let files: string[];
-  try { files = readdirSync(join(fleetRoot(env), "roster")); } catch { return []; }
+  try { files = readdirSync(rosterDir(env)); } catch { return []; }
   const out: RosterRow[] = [];
   for (const f of files) {
     const short = f.replace(/\.json$/, "");
@@ -419,11 +480,13 @@ export function listRoster(env: NodeJS.ProcessEnv = process.env): RosterRow[] {
   return out;
 }
 
-/** Stamp the terminal state. Idempotent and silent on an unknown short: stop/rm may race an exit. */
+/** Stamp the terminal state. Silent on an unknown short, and FIRST TERMINAL WINS: `stop` legitimately
+ *  races a session's own exit, and the loser must not overwrite a truthful `done` with `stopped` or
+ *  re-stamp endedAt. That guard is what makes this genuinely idempotent. */
 export function finalizeRoster(short: string, state: FleetState, env: NodeJS.ProcessEnv = process.env,
   now: () => number = Date.now): void {
   const r = readRoster(short, env);
-  if (!r) return;
+  if (!r || TERMINAL.has(r.state)) return;
   writeRoster({ ...r, state, endedAt: now() }, env);
 }
 ```
@@ -431,7 +494,7 @@ export function finalizeRoster(short: string, state: FleetState, env: NodeJS.Pro
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/unit/fleet-roster.test.ts && npm run typecheck`
-Expected: PASS, 7 tests.
+Expected: PASS, 12 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -893,6 +956,8 @@ let env: NodeJS.ProcessEnv;
 beforeEach(() => { env = { CCX_FLEET_ROOT: mkdtempSync(join(tmpdir(), "ccx-host-")), HOME: "/home/u" }; });
 
 const opts = () => ({ short: "a1b2c3d4", name: "w1", cwd: "/w", kind: "bg" as const, config: {}, env });
+/** Always inject procStartOf: a unit test must not spawn `ps`. */
+const deps = (openSession: any) => ({ openSession, procStartOf: async () => "Sat Jul 25 02:55:52 2026" });
 /** A fake session: resolves the turn only when we let it, so we can observe `working` mid-flight. */
 function fakeSession() {
   let finish!: () => void;
@@ -902,20 +967,26 @@ function fakeSession() {
 
 describe("SessionHost", () => {
   it("writes a working roster row at start, before any session id exists", async () => {
-    const h = new SessionHost(opts(), { openSession: () => fakeSession().session as any });
+    const h = new SessionHost(opts(), deps(() => fakeSession().session as any));
     await h.start();
     expect(readRoster("a1b2c3d4", env)).toMatchObject({ short: "a1b2c3d4", name: "w1", state: "working", kind: "bg" });
     await h.stop();
   });
+  it("records its own procStart, so a crashed host can later be told apart from a live one", async () => {
+    const h = new SessionHost(opts(), deps(() => fakeSession().session as any));
+    await h.start();
+    expect(readRoster("a1b2c3d4", env)!.procStart).toBe("Sat Jul 25 02:55:52 2026");
+    await h.stop();
+  });
   it("records noHumanSeam on the roster row when the caller reports one", async () => {
-    const h = new SessionHost({ ...opts(), noHumanSeam: true }, { openSession: () => fakeSession().session as any });
+    const h = new SessionHost({ ...opts(), noHumanSeam: true }, deps(() => fakeSession().session as any));
     await h.start();
     expect(readRoster("a1b2c3d4", env)!.noHumanSeam).toBe(true);
     await h.stop();
   });
   it("reports busy while a turn runs and idle/done after it finishes", async () => {
     const f = fakeSession();
-    const h = new SessionHost(opts(), { openSession: () => f.session as any });
+    const h = new SessionHost(opts(), deps(() => f.session as any));
     await h.start();
     const running = h.runTask("do it");
     expect(h.status()).toMatchObject({ state: "working", status: "busy" });
@@ -925,24 +996,24 @@ describe("SessionHost", () => {
   });
   it("finalizes the roster to done when the task completes", async () => {
     const f = fakeSession();
-    const h = new SessionHost(opts(), { openSession: () => f.session as any });
+    const h = new SessionHost(opts(), deps(() => f.session as any));
     await h.start(); const running = h.runTask("x"); f.finish(); await running; await h.stop();
     const r = readRoster("a1b2c3d4", env)!;
     expect(r.state).toBe("done"); expect(typeof r.endedAt).toBe("number");
   });
   it("finalizes to error when the turn throws", async () => {
-    const h = new SessionHost(opts(), { openSession: () => ({ submit: async () => { throw new Error("boom"); }, sessionId: "s", dispose: async () => {} }) as any });
+    const h = new SessionHost(opts(), deps(() => ({ submit: async () => { throw new Error("boom"); }, sessionId: "s", dispose: async () => {} }) as any));
     await h.start(); await h.runTask("x").catch(() => {}); await h.stop();
     expect(readRoster("a1b2c3d4", env)!.state).toBe("error");
   });
   it("stop() finalizes to stopped, not done — daemon-finalize.sh routes it down the error arm", async () => {
-    const h = new SessionHost(opts(), { openSession: () => fakeSession().session as any });
+    const h = new SessionHost(opts(), deps(() => fakeSession().session as any));
     await h.start(); await h.stop("stopped");
     expect(readRoster("a1b2c3d4", env)!.state).toBe("stopped");
   });
   it("records the sessionId into the roster once the engine reports one", async () => {
     const f = fakeSession();
-    const h = new SessionHost(opts(), { openSession: () => f.session as any });
+    const h = new SessionHost(opts(), deps(() => f.session as any));
     await h.start(); const running = h.runTask("x"); f.finish(); await running; await h.stop();
     expect(readRoster("a1b2c3d4", env)!.sessionId).toBe("sid-1");
   });
@@ -962,6 +1033,7 @@ import { HostServer } from "./server.js";
 import type { HostStatus } from "./ops.js";
 import { hostSocketPath } from "../fleet/paths.js";
 import { finalizeRoster, readRoster, writeRoster } from "../fleet/roster.js";
+import { procStartOf as realProcStartOf } from "../fleet/liveness.js";
 import type { FleetState, RosterRow } from "../fleet/roster.js";
 import { openSession as realOpenSession } from "../session/index.js";
 import type { HarnessConfig } from "../config/types.js";
@@ -982,15 +1054,20 @@ export class SessionHost {
   private env: NodeJS.ProcessEnv;
 
   constructor(private opts: SessionHostOpts,
-    private deps: { openSession: (c: HarnessConfig) => any } = { openSession: realOpenSession as any }) {
+    private deps: { openSession: (c: HarnessConfig) => any; procStartOf?: (p: number) => Promise<string | undefined> }
+      = { openSession: realOpenSession as any }) {
     this.short = opts.short;
     this.env = opts.env ?? process.env;
   }
 
   async start(): Promise<void> {
+    // Our OWN copy of the start stamp. The engine writes one too, but unlinks it on exit — and a
+    // roster row outlives that, so without this a crashed host reads live forever (see RosterRow).
+    const procStart = await (this.deps.procStartOf ?? realProcStartOf)(process.pid).catch(() => undefined);
     const row: RosterRow = {
       short: this.opts.short, pid: process.pid, cwd: this.opts.cwd, kind: this.opts.kind,
       name: this.opts.name, state: "working", startedAt: Date.now(),
+      ...(procStart ? { procStart } : {}),
       ...(this.opts.worktree ? { worktree: this.opts.worktree } : {}),
       ...(this.opts.noHumanSeam ? { noHumanSeam: true } : {}),
     };
@@ -1034,7 +1111,7 @@ export class SessionHost {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/unit/host-session.test.ts && npm run typecheck`
-Expected: PASS, 6 tests. Typecheck will flag the `require` — fix it to use the top-level import before committing.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1432,6 +1509,15 @@ describe("collectFleet", () => {
     writeRoster(row({ state: "working", sessionId: "sid-1" }), env);
     expect((await collectFleet(env, deps()))[0].state).toBe("error");
   });
+  it("falls back to the roster's own procStart once the engine has unlinked its row", async () => {
+    // The engine unlinks ~/.claude/sessions/<pid>.json on exit, but our roster row outlives it. With
+    // no stamp at all, isPidLive(pid, undefined) answers "live" and the poller waits on a corpse.
+    writeRoster(row({ state: "working", sessionId: "sid-1", procStart: "Sat Jul 25 02:55:52 2026" }), env);
+    const seen: (string | undefined)[] = [];
+    const rows = await collectFleet(env, deps({ isPidLive: async (_p: number, ps?: string) => { seen.push(ps); return false; } }));
+    expect(seen[0]).toBe("Sat Jul 25 02:55:52 2026");
+    expect(rows[0].state).toBe("error");
+  });
   it("prefers a live registry sessionId over the roster's", async () => {
     writeRoster(row({ sessionId: undefined }), env);
     const rows = await collectFleet(env, deps({
@@ -1494,7 +1580,9 @@ export async function collectFleet(env: NodeJS.ProcessEnv = process.env,
   return await Promise.all(listRoster(env).map(async (roster) => {
     const reg = registry.find((r) => r.pid === roster.pid);
     const sock = hostSocketPath(roster.pid, env);
-    const pidLive = await deps.isPidLive(roster.pid, reg?.procStart);
+    // Prefer the engine's stamp, fall back to ours. Ours is the one that survives the engine
+    // unlinking its row on exit — without it, a crashed host reads live forever.
+    const pidLive = await deps.isPidLive(roster.pid, reg?.procStart ?? roster.procStart);
     const answers = pidLive ? await deps.socketAnswers(sock) : false;
     const liveStatus = answers ? await deps.askStatus(sock) : undefined;
     return projectRow({ roster, ...(reg ? { registry: reg } : {}), pidLive, socketAnswers: answers, ...(liveStatus ? { liveStatus } : {}) });
@@ -1519,7 +1607,7 @@ export function renderAgents(rows: AgentsRow[], opts: { json: boolean; all: bool
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/unit/cli-agents.test.ts && npm run typecheck`
-Expected: PASS, 5 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2014,6 +2102,10 @@ Recorded here rather than by rewriting the tasks above, so a reader can see what
   5. Task 13 used `execFile` with an `input` option that only the `*Sync`/spawn family accepts; the python filter would have blocked on stdin until the timeout.
 - **2026-07-26, from Task 0's spike.** `spawnDetached` must scrub `CLAUDE_JOB_DIR`, `CLAUDE_CODE_SESSION_ID` and `CLAUDE_CODE_CHILD_SESSION`. Probe 60 found that a `kind=bg` child inheriting `CLAUDE_JOB_DIR` adopts the parent's *job*: the agents view then renders the parent job's id, name and state, and our session is unfindable by pid, session id or name. `daemon-spawn.sh` runs inside a Claude Code agent, so this is the production path. Task 9 gained a test; Task 14's acceptance 4 gained a diagnostic pointing here first.
 - **2026-07-26, from Task 0's spike.** Acceptance 4 asserts `kind: "background"` in the agents view against `"bg"` on the registry row.
+- **2026-07-26, from the Task 2 and Task 3 reviews (three defects, all plan-mandated).**
+  1. *`procStartOf` conflated "pid gone" with "the probe broke."* `ps -p <gone pid>` exiting non-zero is the answer; a `ps` missing from `PATH` or killed by the timeout is not. It now rethrows the latter and `isPidLive` fails safe to *live* — answering "dead" there would project `error` over a healthy worker and terminate a doperpowers poller early.
+  2. *The roster had no `procStart` of its own, which made the crashed-host arm unreachable in its most common form.* The engine unlinks `~/.claude/sessions/<pid>.json` on exit, but our roster row outlives it — so `isPidLive(pid, undefined)` answered "live" for every dead-but-unfinalized session, and a crashed host would read `working`/unresponsive forever instead of `error`. `RosterRow` now carries `procStart`, `SessionHost` records it at start, and `collectFleet` prefers the engine's stamp and falls back to ours. This was found by following the review's finding rather than in the review itself.
+  3. *`finalizeRoster` was documented idempotent but was not, and `writeRoster` was not atomic.* First-terminal-wins now guards the former (a `stop` losing the race must not overwrite a truthful `done`), and write-then-rename guards the latter (a host killed mid-write left a permanently unparseable row, which `finalizeRoster` then refused to touch — stranding the session and hanging the poller forever). `readRoster` also rejects well-formed JSON that is not a row, and `rosterDir` now lives only in `paths.ts`.
 
 ---
 
