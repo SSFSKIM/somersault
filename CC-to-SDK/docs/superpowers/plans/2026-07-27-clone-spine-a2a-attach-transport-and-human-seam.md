@@ -560,10 +560,17 @@ the failure said.
 git add harness/src/host/follow.ts harness/test/unit/host-follow.test.ts
 git commit -m "feat(a2a): TurnBuffer — the bounded record of the current turn
 
-A client attaching mid-turn must see the turn from its start. Probe 62 could
-not settle whether the engine's on-disk transcript carries an in-flight turn
-(the weekly limit ends every turn in ~3s), so the host keeps its own bounded
-record and replays it to a late follower."
+A client attaching mid-turn must see the turn from its start. Probe 62 measured
+that the engine does NOT put it on disk: across a 21.6s turn, fourteen samples
+of getSessionMessages all read one message (the user's prompt), reaching three
+only after the turn ended. So the in-flight assistant text exists only in the
+live stream, and the host keeps its own bounded record to replay to a late
+follower.
+
+Bounded on both counts because a detached host may run for hours: a message cap
+alone loses to one enormous tool result, a byte cap alone to a flood of tiny
+stream deltas. A single message over the byte cap is kept rather than evicted,
+because an empty replay is worse than an oversized one."
 ```
 
 ---
