@@ -1281,7 +1281,14 @@ something else:
       // (Task 5 tracks `busy`); a second prompt landing mid-turn would reset the TurnBuffer under the
       // running turn and let turn one's completion finalize the roster while turn two is still going.
       case "prompt": {
-        if (this.handlers.status().status === "busy") return { ok: false, error: "busy" };
+        // CORRECTED AFTER EXECUTION — this line as first written was a Critical defect, caught only
+        // by the final whole-branch review. `status()` deliberately reports a parked turn as
+        // {state:"blocked", status:"idle"}, so this gate was OPEN for the entire duration of a park —
+        // the one state a background host spends real time in. A prompt arriving then re-entered
+        // runTask, wiped the in-flight turn's buffer, and let turn one's completion finalize the
+        // roster `done` while turn two ran. The comment above already said "the busy check is the
+        // host's"; the code asked the consumer projection instead. Ask the host for its own truth.
+        if (this.handlers.busy()) return { ok: false, error: "busy" };
         void this.handlers.prompt(op.data.text).catch(() => {});
         return { ok: true, accepted: true };
       }
