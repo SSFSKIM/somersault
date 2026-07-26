@@ -30,7 +30,7 @@ export class RemoteChatSession {
   private nextFollowerId = 1;
   private buf = "";
 
-  private constructor(private sock: Socket, private label: string) {
+  private constructor(private sock: Socket, private label: string, private maxFrame: number) {
     sock.on("data", (c) => this.onData(c.toString("utf8")));
     // Every awaited request must settle when the peer goes, or an attached client hangs on a host that
     // already exited — the same parked-promise class this project keeps rediscovering.
@@ -39,11 +39,14 @@ export class RemoteChatSession {
     sock.on("error", (e) => fail(e as Error));
   }
 
-  static connect(socketPath: string, opts: { label?: string } = {}): Promise<RemoteChatSession> {
+  /** `maxFrame` overrides MAX_FRAME — test-only, so the over-cap-flood guard test can trip the cap with
+   *  a few hundred KiB instead of flooding the real 32 MiB, the same DI escape hatch as SessionHost's
+   *  `disposeGraceMs`. Production callers get the real cap by omitting it. */
+  static connect(socketPath: string, opts: { label?: string; maxFrame?: number } = {}): Promise<RemoteChatSession> {
     return new Promise((resolve, reject) => {
       const sock = connect(socketPath);
       sock.once("error", reject);
-      sock.once("connect", () => { sock.off("error", reject); resolve(new RemoteChatSession(sock, opts.label ?? `client-${process.pid}`)); });
+      sock.once("connect", () => { sock.off("error", reject); resolve(new RemoteChatSession(sock, opts.label ?? `client-${process.pid}`, opts.maxFrame ?? MAX_FRAME)); });
     });
   }
 
@@ -68,7 +71,7 @@ export class RemoteChatSession {
     // UI. The server destroys such a peer on ITS cap; we destroy such a host on OURS — `close`'s
     // `fail()` handler then rejects every in-flight request rather than leaving them parked on a
     // connection that is gone.
-    if (this.buf.length > MAX_FRAME) { this.buf = ""; this.sock.destroy(); }
+    if (this.buf.length > this.maxFrame) { this.buf = ""; this.sock.destroy(); }
   }
 
   private send<T>(op: Record<string, unknown>): Promise<T> {

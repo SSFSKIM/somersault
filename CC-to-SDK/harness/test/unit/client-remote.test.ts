@@ -106,23 +106,20 @@ describe("RemoteChatSession", () => {
 
   it("tears down the connection on an over-cap unterminated frame rather than growing the buffer forever", async () => {
     const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
-    // A host in a bad state: writes far more than the CLIENT's own MAX_FRAME (32 MiB — see
-    // src/client/remote.ts) with no newline anywhere in it. (This is deliberately well above the
-    // server's separate, smaller 256 KiB cap: the two directions no longer share one constant.)
+    // A host in a bad state: writes more than the cap with no newline anywhere in it. The real cap
+    // (MAX_FRAME, 32 MiB — see src/client/remote.ts) is production-sized so a legitimate ~500 KiB event
+    // never trips it; flooding past THAT here would make this test pay ~14s on every commit for no
+    // more coverage. Inject a tiny cap instead (the same DI escape hatch as SessionHost's
+    // `disposeGraceMs`) so the guard fires on ~100 KiB — same code path, same assertions, in ms not s.
+    const cap = 64 * 1024;
     const srv = createServer((sock) => {
       sock.on("error", () => {});    // the client destroys its end mid-write; that EPIPE is not this test's concern
-      sock.write("x".repeat(33 * 1024 * 1024));
+      sock.write("x".repeat(cap + 36 * 1024));
     });
     await new Promise<void>((r) => srv.listen(p, () => r()));
-    const c = await RemoteChatSession.connect(p);
+    const c = await RemoteChatSession.connect(p, { maxFrame: cap });
     const closed = new Promise<void>((r) => (c as any).sock.once("close", r));
     const inflight = c.status();               // parked before the flood lands — must reject, not hang
-    // 33 MiB takes a while to land and cross the cap — long enough that this request's OWN 10s
-    // deadline (REQUEST_TIMEOUT_MS) can fire before the `await closed` below resumes and the real
-    // `.rejects` assertion attaches. Attach a throwaway handler now so that legitimate-but-early
-    // rejection is never "unhandled" in the interim; the real assertion below still runs against the
-    // same promise regardless of which of the two ways it settles.
-    inflight.catch(() => {});
     await closed;                              // the client destroyed its own end of the socket
     expect((c as any).buf.length).toBe(0);     // the buffer was discarded, not left to keep growing
     await expect(inflight).rejects.toThrow();
