@@ -143,7 +143,9 @@ and it failed**, twice: a schema-valid row naming a live non-`claude` process (f
   a *separate* store of completed background sessions. The PID directory is one input, not the source
   of truth.
 
-Candidate discriminants (untested, and deliberately not chased further): a process-identity check on
+Candidate discriminants — the `procStart` locale mismatch is the leading hypothesis and matches the
+binary's `gB()`, but the confirming re-run (same row, C-locale `procStart`) was never done, so it
+remains a hypothesis, not the established cause: a process-identity check on
 the PID, or a `procStart` mismatch — note that `ps -o lstart=` renders in the user's locale
 (`2026년 7월 25일 토요일 …`) while the real rows carry C-locale (`Sat Jul 25 02:55:52 2026`).
 
