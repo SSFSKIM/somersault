@@ -230,6 +230,12 @@ the 63 fields is either reachable from the CLI or explicitly listed as library-o
 
 ### C2 — Process model: process-per-session + co-registration
 
+> **SUPERSEDED — implement the spec, not this stage.** C1–C4 are replaced by
+> `../superpowers/specs/2026-07-26-clone-process-surface-spine-design.md` (rev 2). In particular this
+> stage's "our own registry" is wrong twice over: our sessions already self-register, and a live-only
+> view loses finished sessions, which breaks doperpowers' completion polling. The spec's two-layer
+> live/terminal model replaces it.
+
 **Goal.** `ccx --bg` produces a detached process that outlives its parent and is visible to the fleet.
 
 **Delivers.**
@@ -330,7 +336,8 @@ only calling one.
 **No longer on the floor:**
 
 - `usage().rate_limits` — reachable under interactive credentials (F4).
-- `--bg` / `agents` / fleet lifecycle — reimplementable against the observed registry (F2).
+- `--bg` / `agents` / fleet lifecycle — reachable, but **not** from the live registry alone: it drops
+  finished sessions, so a terminal-state roster is required alongside it (spec rev 2).
 - `attach` — our own transport, our own protocol (C4).
 
 **Deliberate non-goals:** cloning Anthropic-internal analytics; the OpenAI provider path; voice.
@@ -366,10 +373,11 @@ also why continuing to push the envelope metric would have been the wrong invest
 
 1. **C1**, because nothing else has a place to attach until it exists, and it converts Wave 4 from
    wired-but-unusable into usable.
-2. **Open a `CLAUDE_BIN`-style override PR against the user's doperpowers fork**, early rather than at
-   C6. It is a one-line change, it is the integration seam the whole clone track depends on, and
-   landing it first means C2 can be tested against the real scripts the day it works instead of
-   waiting for a big-bang integration. (F2 established this is the *only* viable seam — the
+2. **Integrate via PATH shadowing** in a scoped environment — this is what doperpowers' own test suite
+   already does to substitute a stub `claude`, so it needs no upstream change at all. Contributing a
+   `CLAUDE_BIN`-style override to the owner's fork is a nicer long-term seam but is now optional scope,
+   not a prerequisite. *(Superseded reasoning below: it claimed the override was the only viable seam
+   because co-registration was blocked — but co-registration was never blocked.)* (F2 established this is the *only* viable seam — the
    file-registry alternative is guarded and fragile.)
 3. **Flip the live-test auth default** to no-token (interactive credential) per F4 — strictly more
    capability at identical billing, and it unblocks the plan-utilization surface in C5.
