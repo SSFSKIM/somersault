@@ -23,6 +23,9 @@ export interface HostSession {
   submit(prompt: string, onMessage: (m: unknown) => void): Promise<unknown>;
   readonly sessionId: string | undefined;
   dispose(): Promise<void>;
+  // `unknown`, not `void` — the real Session.interrupt() returns Promise<unknown>, and a Promise<void>
+  // declaration here makes the default `openSession: realOpenSession` stop type-checking.
+  interrupt?(): Promise<unknown>;
 }
 
 /** Owns one SDK session, its UDS socket, and its roster row. Live truth is answered over the socket;
@@ -70,8 +73,17 @@ export class SessionHost {
     writeRoster(row, this.env);                        // written BEFORE any session id exists
     try {
       this.session = this.deps.openSession({ ...this.opts.config, permissionBroker: this.broker() });
-      this.server = new HostServer({ status: () => this.status(), stop: () => this.stop("stopped") },
-        hostSocketPath(process.pid, this.env));
+      this.server = new HostServer({
+        status: () => this.status(),
+        stop: () => this.stop("stopped"),
+        pending: () => this.pending(),
+        answer: (id, d, by) => this.answer(id, d, by),
+        prompt: (text) => this.runTask(text),
+        interrupt: () => this.interrupt(),
+        // One follower per connection, delivering to that connection's sink. The host counts
+        // followers (the interactive deny rule reads that count); the server owns the sockets.
+        follow: (deliver) => this.follow(deliver),
+      }, hostSocketPath(process.pid, this.env));
       await this.server.listen();
     } catch (e) {
       // The row is already on disk and nothing reaps a row whose host never came up, so a failure here
@@ -176,6 +188,20 @@ export class SessionHost {
     const first = this.parked.list()[0];
     if (first) return { state: "blocked", status: "idle", waitingFor: `permission:${first.toolName}` };
     return { state: this.state, status: this.busy ? "busy" : "idle" };
+  }
+
+  /** Ends the in-flight turn, settling parked decisions first (see stop()).
+   *
+   *  Probe 63 recorded a second fact worth knowing here: interrupting a turn that is parked at a
+   *  `tool_use` makes the message stream **throw** rather than return a result —
+   *  `Claude Code returned an error result: … stop_reason=tool_use`. So `runTask`'s catch arm runs,
+   *  sets `state = "error"`, and rethrows. That is harmless *provided* the terminal state was written
+   *  first: `finalizeRoster` is first-terminal-wins, so a `stop("stopped")` that already recorded
+   *  `stopped` is not overwritten by the error that its own interrupt caused. Task 10 depends on this
+   *  ordering — do not move `syncRoster()` after the interrupt. */
+  async interrupt(): Promise<void> {
+    this.parked.denyAll();
+    await this.session?.interrupt?.();
   }
 
   /** `final` lets stop() record `stopped` while a completed run records `done`/`error`. With no argument

@@ -8,6 +8,10 @@ import { HostServer } from "../../src/host/server.js";
 let srv: HostServer | undefined;
 afterEach(async () => { await srv?.close(); srv = undefined; });
 
+// This file predates the op union Task 6 adds; it only exercises status/stop framing, so the rest of
+// HostHandlers is stubbed once here rather than repeated at every one of its ~dozen call sites.
+const stub = { pending: () => [], answer: () => ({ ok: true }), prompt: async () => {}, interrupt: async () => {}, follow: () => () => {} };
+
 const root = mkdtempSync(join(tmpdir(), "ccx-host-"));   // one temp root for the file, not one per test
 let nth = 0;
 const sockPath = () => join(root, `h${nth++}.sock`);
@@ -52,13 +56,13 @@ function session(path: string) {
 describe("HostServer", () => {
   it("answers a status op with the handler's snapshot", async () => {
     const sock = sockPath();
-    srv = new HostServer({ status: () => ({ state: "blocked", status: "idle", waitingFor: "Bash(rm -rf build/)" }), stop: async () => {} }, sock);
+    srv = new HostServer({ ...stub, status: () => ({ state: "blocked", status: "idle", waitingFor: "Bash(rm -rf build/)" }), stop: async () => {} }, sock);
     await srv.listen();
     expect(await ask(sock, { op: "status" })).toEqual({ ok: true, state: "blocked", status: "idle", waitingFor: "Bash(rm -rf build/)" });
   });
   it("rejects an unknown op without killing the connection handler", async () => {
     const sock = sockPath();
-    srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
     await srv.listen();
     const bad = await ask(sock, { op: "nonsense" });
     expect(bad.ok).toBe(false);
@@ -66,7 +70,7 @@ describe("HostServer", () => {
   });
   it("serves further ops on the SAME connection after rejecting one", async () => {
     const sock = sockPath();
-    srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
     await srv.listen();
     const c = session(sock); await c.ready;
     expect(await c.ask({ op: "nonsense" })).toMatchObject({ ok: false });
@@ -78,7 +82,7 @@ describe("HostServer", () => {
     // and a dead host is the exact condition this listener exists to report on
     const sock = sockPath();
     let boom = true;
-    srv = new HostServer({ status: () => { if (boom) { boom = false; throw new Error("handler exploded"); } return { state: "working", status: "busy" }; }, stop: async () => {} }, sock);
+    srv = new HostServer({ ...stub, status: () => { if (boom) { boom = false; throw new Error("handler exploded"); } return { state: "working", status: "busy" }; }, stop: async () => {} }, sock);
     await srv.listen();
     const c = session(sock); await c.ready;
     expect(await within(c.ask({ op: "status" }), "error frame")).toMatchObject({ ok: false, error: "handler exploded" });
@@ -87,7 +91,7 @@ describe("HostServer", () => {
   });
   it("drains two ops arriving in one packet", async () => {
     const sock = sockPath();
-    srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
     await srv.listen();
     const c = session(sock); await c.ready;
     const first = c.next(), second = c.next();
@@ -98,7 +102,7 @@ describe("HostServer", () => {
   });
   it("reassembles one op split across two packets", async () => {
     const sock = sockPath();
-    srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
     await srv.listen();
     const c = session(sock); await c.ready;
     const reply = c.next();
@@ -110,7 +114,7 @@ describe("HostServer", () => {
   });
   it("skips a blank line instead of answering it", async () => {
     const sock = sockPath();
-    srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
     await srv.listen();
     const c = session(sock); await c.ready;
     const reply = c.next();
@@ -120,7 +124,7 @@ describe("HostServer", () => {
   });
   it("answers unparseable bytes with an error and keeps serving", async () => {
     const sock = sockPath();
-    srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
     await srv.listen();
     const c = session(sock); await c.ready;
     const reply = c.next();
@@ -131,7 +135,7 @@ describe("HostServer", () => {
   });
   it("destroys a peer that streams a frame with no newline in it", async () => {
     const sock = sockPath();
-    srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
     await srv.listen();
     const hog = connect({ path: sock });
     hog.on("error", () => {});
@@ -144,7 +148,7 @@ describe("HostServer", () => {
   it("invokes the stop handler and resolves `closed`", async () => {
     const sock = sockPath();
     let stopped = false;
-    srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => { stopped = true; } }, sock);
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => { stopped = true; } }, sock);
     await srv.listen();
     expect(await ask(sock, { op: "stop" })).toMatchObject({ ok: true });
     expect(stopped).toBe(true);
@@ -157,7 +161,7 @@ describe("HostServer", () => {
     // `stop` op deadlocks: the handler calls close(), which waits for the very connection that is
     // waiting for the stop ack. It self-heals only when the client's 1s timeout fires.
     const sock = sockPath();
-    srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
     await srv.listen();
     const held = connect({ path: sock });
     await new Promise((r) => held.once("connect", r));
@@ -167,7 +171,7 @@ describe("HostServer", () => {
   });
   it("close() is idempotent and removes the socket file", async () => {
     const sock = sockPath();
-    srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
     await srv.listen(); await srv.close(); await srv.close();
     const { existsSync } = await import("node:fs");
     expect(existsSync(sock)).toBe(false);
@@ -175,7 +179,7 @@ describe("HostServer", () => {
   it("a second close() awaits the first rather than resolving early", async () => {
     // a signal handler racing the `stop` op must not resume — and exit the process — mid-teardown
     const sock = sockPath();
-    srv = new HostServer({ status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
     await srv.listen();
     let settled = false;
     void srv.closed.then(() => { settled = true; });
