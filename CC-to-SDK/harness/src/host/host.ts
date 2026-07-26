@@ -8,6 +8,9 @@ import { openSession as realOpenSession } from "../session/index.js";
 import type { HarnessConfig } from "../config/types.js";
 import { TurnBuffer } from "./follow.js";
 import type { HostEvent } from "./wire.js";
+import { PendingPermissions } from "../permissions/pending.js";
+import type { PendingEntry } from "../permissions/pending.js";
+import type { PermissionDecision, PermissionBroker, PermissionRequest } from "../permissions/types.js";
 
 export interface SessionHostOpts {
   short: string; name: string; cwd: string; kind: "bg" | "interactive";
@@ -33,6 +36,13 @@ export class SessionHost {
   private env: NodeJS.ProcessEnv;
   private followers = new Set<(ev: HostEvent) => void>();
   private turnBuffer = new TurnBuffer({ maxMessages: 500, maxBytes: 1024 * 1024 });
+  // "never": a background host parks until a human answers, which is the entire point of a worker that
+  // outlives the terminal that spawned it. The interactive case is handled by the follower rule in
+  // broker(), not by a timer — a timer is how "the human is thinking" becomes "the human said no".
+  private parked = new PendingPermissions({ expireAfterMs: "never" });
+  // Who answered what, so a second answerer can be told. A host that runs for days would otherwise
+  // accumulate one entry per permission for its whole life.
+  private settledBy = new Map<string, string>();
 
   constructor(private opts: SessionHostOpts,
     private deps: { openSession: (c: HarnessConfig) => HostSession; procStartOf?: (p: number) => Promise<string | undefined> }
@@ -59,7 +69,7 @@ export class SessionHost {
     };
     writeRoster(row, this.env);                        // written BEFORE any session id exists
     try {
-      this.session = this.deps.openSession(this.opts.config);
+      this.session = this.deps.openSession({ ...this.opts.config, permissionBroker: this.broker() });
       this.server = new HostServer({ status: () => this.status(), stop: () => this.stop("stopped") },
         hostSocketPath(process.pid, this.env));
       await this.server.listen();
@@ -75,7 +85,7 @@ export class SessionHost {
 
   async runTask(prompt: string): Promise<void> {
     this.busy = true; this.state = "working";
-    this.turnBuffer.reset();
+    this.turnBuffer.reset(); this.settledBy.clear();
     this.emit({ kind: "turn", phase: "start" });
     // Stamp the roster the MOMENT the engine's session id materializes — it arrives in the init frame
     // near the start of the turn, and Session sets .sessionId before dispatching that frame here. Waiting
@@ -122,12 +132,60 @@ export class SessionHost {
 
   private emit(ev: HostEvent): void { for (const cb of [...this.followers]) this.deliver(cb, ev); }
 
-  status(): HostStatus { return { state: this.state, status: this.busy ? "busy" : "idle" }; }
+  /** The permission seam this host exposes to its SDK session (wired as `config.permissionBroker`).
+   *
+   *  The interactive rule is evaluated HERE, when the request arrives — never retroactively when a
+   *  follower leaves. An interactive session whose human is gone denies rather than hanging; but a
+   *  request already parked stays parked through a detach, because detaching is what a human does in
+   *  order to go and think about it (spec acceptance 6). */
+  broker(): PermissionBroker {
+    return {
+      request: async (req: PermissionRequest): Promise<PermissionDecision> => {
+        if (this.opts.kind === "interactive" && this.followers.size === 0) return { kind: "deny" };
+        const decision = this.parked.brokerFor(this.short).request(req);
+        const entry = this.parked.list().find((e) => e.toolUseID === req.toolUseID);
+        if (entry) this.emit({ kind: "permission", entry });
+        this.emit({ kind: "state", status: this.status() });
+        return decision;
+      },
+    };
+  }
+
+  pending(): PendingEntry[] { return this.parked.list(); }
+
+  /** First answer wins. A second answerer is TOLD who got there first rather than erroring: two humans
+   *  racing on the same prompt is normal, and an error frame would read as "your answer failed". */
+  answer(toolUseID: string, decision: PermissionDecision, by: string): { ok: true; alreadyAnsweredBy?: string } | { ok: false; error: string } {
+    if (!this.parked.respond(toolUseID, decision)) {
+      const who = this.settledBy.get(toolUseID);
+      // Answered-by-someone-else and never-parked-at-all are different outcomes and must not share a
+      // reply: a client whose toolUseID is stale or wrong would otherwise read `{ok:true}` and believe
+      // its answer landed.
+      return who ? { ok: true, alreadyAnsweredBy: who } : { ok: false, error: `no parked request ${toolUseID}` };
+    }
+    this.settledBy.set(toolUseID, by);
+    this.emit({ kind: "permission_settled", toolUseID, by, decision: decision.kind });
+    this.emit({ kind: "state", status: this.status() });
+    return { ok: true };
+  }
+
+  /** `blocked` is live-reported, never written to `this.state`: the roster's recorded state and this
+   *  live status are deliberately separate, because `blocked` is not terminal and syncRoster's
+   *  first-terminal-wins finalize must never freeze on it. */
+  status(): HostStatus {
+    const first = this.parked.list()[0];
+    if (first) return { state: "blocked", status: "idle", waitingFor: `permission:${first.toolName}` };
+    return { state: this.state, status: this.busy ? "busy" : "idle" };
+  }
 
   /** `final` lets stop() record `stopped` while a completed run records `done`/`error`. With no argument
    *  and no finished turn the state is still `working`, and syncRoster then writes nothing down. */
   async stop(final?: FleetState): Promise<void> {
     if (final) this.state = final;
+    // Settle first, and do it explicitly. Probe 63 shows interrupt() DOES abort a parked canUseTool,
+    // so this is belt-and-braces rather than the mechanism — but it settles synchronously instead of
+    // awaiting an abort round-trip, and it covers a session with no interrupt() at all.
+    this.parked.denyAll();
     this.syncRoster();
     await this.session?.dispose().catch(() => {});
     await this.server?.close();
