@@ -41,6 +41,7 @@ function client(path: string) {
 
 const handlers = (over: Partial<HostHandlers> = {}): HostHandlers => ({
   status: () => ({ state: "working", status: "busy" }),
+  busy: () => false,
   stop: async () => {},
   pending: () => [],
   answer: () => ({ ok: true }),
@@ -140,15 +141,34 @@ describe("host ops", () => {
     await s.close();
   });
 
+  // The whole-branch review's Critical finding: SessionHost.status() deliberately projects a parked
+  // turn as {state:"blocked", status:"idle"} for consumers — so a gate built on status().status reads
+  // "idle" for the ENTIRE duration of a park, the state a background host spends real time in by
+  // design. The gate must ask the handler's own `busy()` instead. This fixture reproduces exactly that
+  // disconnect: status() claims idle, busy() says otherwise, and the op must be refused.
+  it("refuses a prompt when busy() is true, even though status() reports idle", async () => {
+    const got: string[] = [];
+    const p = sockPath();
+    const s = new HostServer(handlers({
+      status: () => ({ state: "blocked", status: "idle", waitingFor: "permission:Bash" }),
+      busy: () => true,
+      prompt: async (t) => { got.push(t); },
+    }), p);
+    await s.listen();
+    const c = client(p); await c.ready;
+    c.send({ id: 1, op: "prompt", text: "should not run" });
+    expect(await c.waitFor((f) => f.id === 1)).toMatchObject({ ok: false, error: "busy" });
+    expect(got).toEqual([]);   // the handler must never have been invoked
+    c.end(); await s.close();
+  });
+
   it("prompt reaches the handler with its text", async () => {
     const got: string[] = [];
     const p = sockPath();
-    // status must NOT be the default "busy" here: dispatch's prompt case gates on status().status,
-    // and the shared `handlers()` default (busy, to satisfy the id-echo tests above) would otherwise
-    // short-circuit before ever calling the handler, so `got` would stay empty — a defect in the
-    // test's own fixture reuse, not in the implementation. Confirmed by running it unmodified: it
-    // fails with `expected [] to deeply equal [ 'do the thing' ]`.
-    const s = new HostServer(handlers({ status: () => ({ state: "working", status: "idle" }), prompt: async (t) => { got.push(t); } }), p);
+    // dispatch's prompt case gates on busy() — not status().status, which the shared `handlers()`
+    // default leaves at "busy" for the id-echo tests above — so the fixture's `busy: () => false`
+    // default is what lets this reach the handler at all; `got` would stay empty otherwise.
+    const s = new HostServer(handlers({ prompt: async (t) => { got.push(t); } }), p);
     await s.listen();
     const c = client(p); await c.ready;
     c.send({ id: 1, op: "prompt", text: "do the thing" });
@@ -170,10 +190,11 @@ describe("host ops", () => {
   // stall the `status` reply behind it.
   it("prompt replies before its handler settles, even queued behind it in one chunk", async () => {
     const p = sockPath();
-    // status must be idle (not the shared default "busy") — busy is dispatch's own gate for `prompt`
-    // and would short-circuit before ever calling the never-resolving handler below, which would make
-    // this "regression guard" pass for the wrong reason (nothing ever hangs because nothing ever runs).
-    const s = new HostServer(handlers({ status: () => ({ state: "working", status: "idle" }), prompt: () => new Promise(() => {}) }), p);  // never resolves
+    // busy() is dispatch's own gate for `prompt` (the shared fixture default, `busy: () => false`, is
+    // what lets this reach the never-resolving handler below) — a `busy()` true here would short-circuit
+    // before ever calling it, which would make this "regression guard" pass for the wrong reason
+    // (nothing ever hangs because nothing ever runs).
+    const s = new HostServer(handlers({ prompt: () => new Promise(() => {}) }), p);  // never resolves
     await s.listen();
     const c = client(p); await c.ready;
     c.sendRaw(JSON.stringify({ id: 1, op: "prompt", text: "x" }) + "\n"

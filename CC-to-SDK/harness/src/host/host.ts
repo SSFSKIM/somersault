@@ -40,7 +40,13 @@ export class SessionHost {
   private session?: HostSession;
   private server?: HostServer;
   private state: FleetState = "working";
-  private busy = false;
+  // True for the ENTIRE life of a turn, including while it is parked mid-turn on a permission decision.
+  // Do not confuse with status()'s projection: status() deliberately reports the parked case as
+  // {state:"blocked", status:"idle"} for consumers (spec-mandated, do not change) — a caller that needs
+  // to know "is it safe to start another turn" (the socket's `prompt` gate, runTask's own re-entry
+  // guard) must ask `busy()`, never that projection, or a prompt arriving mid-park re-enters runTask and
+  // resets the turn buffer out from under a turn that never stopped.
+  private turnInFlight = false;
   private env: NodeJS.ProcessEnv;
   private followers = new Set<(ev: HostEvent) => void>();
   private turnBuffer = new TurnBuffer({ maxMessages: 500, maxBytes: 1024 * 1024 });
@@ -82,6 +88,7 @@ export class SessionHost {
       this.session = this.deps.openSession({ ...this.opts.config, permissionBroker: this.broker() });
       this.server = new HostServer({
         status: () => this.status(),
+        busy: () => this.busy(),
         stop: () => this.stop("stopped"),
         pending: () => this.pending(),
         answer: (id, d, by) => this.answer(id, d, by),
@@ -102,8 +109,15 @@ export class SessionHost {
     }
   }
 
+  /** A second call while a turn is already running MUST be refused here, not merely by the socket's own
+   *  gate: this method is public and reachable directly (RemoteChatSession.prompt() is one caller, not
+   *  the only one), and trusting every caller to check first is how the socket bug shipped. Re-entering
+   *  would reset() the turn buffer out from under a turn that is still delivering messages to followers —
+   *  a client attaching afterwards would be replayed zero messages, the exact regression the buffer
+   *  exists to prevent. */
   async runTask(prompt: string): Promise<void> {
-    this.busy = true; this.state = "working";
+    if (this.turnInFlight) throw new Error(`host ${this.short} is already running a turn`);
+    this.turnInFlight = true; this.state = "working";
     this.turnBuffer.reset(); this.settledBy.clear();
     this.emit({ kind: "turn", phase: "start" });
     // Stamp the roster the MOMENT the engine's session id materializes — it arrives in the init frame
@@ -125,7 +139,7 @@ export class SessionHost {
     // after the turn but before stop() then still reports `done` rather than waiting to be reaped by
     // liveness. An interactive host stays live across turns — finalize is first-terminal-wins, so
     // finalizing on turn one would freeze it at `done` while it works on turn two — it waits for stop().
-    finally { this.busy = false; if (this.opts.kind === "bg") this.syncRoster(); }
+    finally { this.turnInFlight = false; if (this.opts.kind === "bg") this.syncRoster(); }
     this.emit({ kind: "turn", phase: "end" });
   }
 
@@ -207,8 +221,14 @@ export class SessionHost {
   status(): HostStatus {
     const first = this.parked.list()[0];
     if (first) return { state: "blocked", status: "idle", waitingFor: `permission:${first.toolName}` };
-    return { state: this.state, status: this.busy ? "busy" : "idle" };
+    return { state: this.state, status: this.turnInFlight ? "busy" : "idle" };
   }
+
+  /** The host's OWN truthful busy signal, wired to the socket's `prompt` gate (see server.ts). Unlike
+   *  status(), it never lies during a park: true from the moment runTask starts until it returns,
+   *  covering the entire time a permission is parked mid-turn — the state a background host spends real
+   *  time in by design, and exactly when the old status()-based gate was open. */
+  busy(): boolean { return this.turnInFlight; }
 
   /** Ends the in-flight turn, settling parked decisions first (see stop()).
    *

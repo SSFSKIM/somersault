@@ -141,6 +141,40 @@ describe("host + client over a real socket", () => {
     }
   });
 
+  // The whole-branch review's Critical finding, reproduced exactly as demonstrated live: turn one in
+  // flight, a Bash permission parked mid-turn, then a `prompt` op arrives over the socket. The old gate
+  // asked status().status — which reports "idle" for the ENTIRE duration of a park — so it let the
+  // second prompt through, re-entered runTask, and turnBuffer.reset() wiped the in-flight turn. Proof
+  // that the turn survived: a client attaching AFTER the refused prompt is still replayed message n:1,
+  // not zero.
+  it("a prompt arriving while a permission is parked is refused, and the in-flight turn survives it", async () => {
+    const { host, session, path } = await startHost();
+    let c: RemoteChatSession | undefined;
+    try {
+      const turn = host.runTask("go");
+      session.emit({ type: "assistant", n: 1 });
+      const decision = host.broker().request({ toolName: "Bash", input: { command: "ls" }, toolUseID: "t20", signal: new AbortController().signal });
+      await new Promise((r) => setTimeout(r, 50));            // let the park actually land
+      c = await RemoteChatSession.connect(path);
+      expect((await c.status()).state).toBe("blocked");       // exactly the state the finding is about
+      const reply = await c.prompt("should NOT be accepted while parked");
+      expect(reply.ok).toBe(false);                           // the busy gate must hold here
+      // A client attaching NOW must still be replayed the turn that never stopped.
+      const late: any[] = [];
+      const off = c.follow((e) => late.push(e));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(late.filter((e) => e.kind === "message").map((e: any) => e.data.n)).toEqual([1]);
+      off();
+      host.answer("t20", { kind: "deny" }, "test");
+      await decision;
+      session.finish();
+      void turn.catch(() => {});
+    } finally {
+      c?.detach();
+      await stopQuietly(host);
+    }
+  });
+
   it("an interactive host with no client attached denies rather than parking", async () => {
     const { host } = await startHost("interactive");
     try {

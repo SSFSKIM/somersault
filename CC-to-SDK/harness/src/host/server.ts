@@ -11,6 +11,12 @@ import type { PermissionDecision } from "../permissions/types.js";
 
 export interface HostHandlers {
   status(): HostStatus;
+  // The `prompt` gate's OWN truthful signal — NOT status().status. status() deliberately projects a
+  // parked turn as {state:"blocked", status:"idle"} for consumers (spec-mandated), which makes it "idle"
+  // for the entire duration of a park — the state a background host spends real time in by design. A
+  // gate built on that projection is open exactly when a turn is mid-flight, letting a second `prompt`
+  // re-enter SessionHost.runTask and reset the turn buffer out from under it.
+  busy(): boolean;
   stop(): Promise<void>;
   pending(): PendingEntry[];
   answer(toolUseID: string, decision: PermissionDecision, by: string): { ok: boolean; alreadyAnsweredBy?: string; error?: string };
@@ -102,11 +108,13 @@ export class HostServer {
       case "answer": return { ...this.handlers.answer(op.data.toolUseID, { kind: op.data.decision }, op.data.by) };
       // A prompt is NOT awaited before replying: a turn runs for minutes, and holding the reply would
       // stall this connection's every other op — including the `interrupt` that ends the very turn it
-      // is waiting on. The turn's progress travels as events instead. The busy check is the host's
-      // (Task 5 tracks `busy`); a second prompt landing mid-turn would reset the TurnBuffer under the
-      // running turn and let turn one's completion finalize the roster while turn two is still going.
+      // is waiting on. The turn's progress travels as events instead. Gated on `busy()`, the handler's
+      // OWN flag — NOT `status().status`, whose "blocked"/idle projection reads idle for the entire
+      // duration of a park (see HostHandlers.busy's doc). A second prompt landing mid-turn, parked or
+      // not, would reset the TurnBuffer under the running turn and let turn one's completion finalize
+      // the roster while turn two is still going.
       case "prompt": {
-        if (this.handlers.status().status === "busy") return { ok: false, error: "busy" };
+        if (this.handlers.busy()) return { ok: false, error: "busy" };
         void this.handlers.prompt(op.data.text).catch(() => {});
         return { ok: true, accepted: true };
       }
