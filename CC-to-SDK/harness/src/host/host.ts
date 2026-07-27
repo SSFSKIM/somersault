@@ -417,8 +417,14 @@ export class SessionHost {
       await Promise.race([interruptThenDispose, deadline]);
       clearTimeout(timer);                   // whichever arm won, the other's handle must not dangle
     } finally {
-      await this.server?.close();
-      this.finishedResolve();
+      // Nested: if server.close() itself throws, `finished` must still resolve — otherwise
+      // runHostMain's interactive arm hangs forever on `await host.finished` for a host that is
+      // already gone in every other respect (roster finalized, session torn down).
+      try {
+        await this.server?.close();
+      } finally {
+        this.finishedResolve();
+      }
     }
   }
 

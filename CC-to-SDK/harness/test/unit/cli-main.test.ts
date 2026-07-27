@@ -126,6 +126,7 @@ describe("runHostMain — interactive hosts stay alive; bg is unchanged", () => 
     expect(h.calls).toEqual(["start"]);                          // never called stop() on its own
     h.resolveFinished();                                          // e.g. the idle reaper or a `stop` op fired
     await p;
+    process.removeAllListeners("SIGTERM");   // this test's own registration must not leak onto later tests
     expect(resolved).toBe(true);
     expect(h.calls).toEqual(["start"]);                           // still never called stop() itself
   });

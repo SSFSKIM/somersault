@@ -100,4 +100,22 @@ describe("SessionHost teardown", () => {
     expect(interrupt).toHaveBeenCalledTimes(1);
     expect(disposed).toHaveBeenCalledTimes(1);
   });
+
+  // Task 4 review (teardown-liveness class): `finished` is what runHostMain's interactive arm awaits
+  // forever, so it must resolve REGARDLESS of how teardown ends — including a server.close() that itself
+  // throws (e.g. a stale-socket rmSync failing). Left unguarded, a throw there skips finishedResolve()
+  // entirely and hangs the process on `await host.finished` for a host that is otherwise fully torn down.
+  it("resolves `finished` even when server.close() itself throws", async () => {
+    const env = { CCX_FLEET_ROOT: tmpFleet() } as NodeJS.ProcessEnv;
+    const host = hostWith({ sessionId: "s", submit: async () => undefined, dispose: async () => {} }, env);
+    await host.start();
+    // Real close still runs (the socket is genuinely released); only the caller sees the throw.
+    const realClose = (host as any).server.close.bind((host as any).server);
+    (host as any).server.close = async () => { await realClose(); throw new Error("close blew up"); };
+    let settled = false;
+    void host.finished.then(() => { settled = true; });
+    await expect(host.stop("stopped")).rejects.toThrow("close blew up");
+    expect(settled).toBe(true);
+    expect(readRoster("ffffffff", env)?.state).toBe("stopped");   // the terminal write still landed
+  });
 });
