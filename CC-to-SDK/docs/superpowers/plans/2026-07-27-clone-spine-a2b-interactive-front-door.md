@@ -279,6 +279,19 @@ async control(op: ControlOp): Promise<Record<string, unknown>> {
 
 (4) `status()` gains the session id: in the non-blocked return AND the blocked return, spread `...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {})`.
 
+(4b) **`follow()` replays the in-flight turn's `start` frame** (plan-review finding 2 — without it a mid-turn attacher's replayed and subsequent live messages have no turn to belong to, and the REPL drops them all): at the top of `follow()`, before the truncation frame, add
+
+```ts
+// A follower joining MID-TURN must be told a turn is open, or every replayed and live message of this
+// turn reaches a client with no LiveTurn to render into. An IDLE attach deliberately gets no start
+// frame: the buffer still holds the last COMPLETED turn, whose content the disk replay already covers —
+// no start frame means the REPL's no-live-turn guard drops it, which is the dedup (probe 62: the disk
+// gains a turn only at turn end, so mid-turn buffer content never overlaps disk).
+if (this.turnInFlight) this.deliver(cb, { kind: "turn", phase: "start", seq: this.turnSeq_, ...(this.turnBuffer.snapshot().truncated ? { truncated: true } : {}) });
+```
+
+and drop the old separate truncated-only frame (fold `truncated` into this one; when NOT in flight and the snapshot is truncated, keep emitting the old bare `{kind:"turn", phase:"start", truncated: true}` so a truncated idle replay still carries its marker). Test (in `host-control.test.ts` or `host-follow.test.ts`): a follower subscribing while a fake turn is mid-flight receives `{kind:"turn", phase:"start", seq}` FIRST, then the buffered messages; a follower subscribing while idle receives NO start frame.
+
 (5) `resumeSession()` (used by Task 4's server wiring; implement now, gate like runTask):
 
 ```ts
@@ -385,6 +398,22 @@ resumeOp(sessionId: string) { return this.send<{ ok: boolean; error?: string }>(
 
 `prompt()`'s declared reply type: `Promise<{ ok: boolean; accepted?: boolean; seq?: number; error?: string }>`. For the follow ack, in `follow()` replace `if (first) void this.send({ op: "follow" }).catch(() => {});` with `if (first) { this.followAck = this.send({ op: "follow" }); this.followAck.catch(() => {}); }` plus field `private followAck?: Promise<unknown>;` and `whenFollowed(): Promise<unknown> | undefined { return this.followAck; }` (cleared to `undefined` when the last follower leaves, next `follow` re-sends).
 
+**`onClose` hook** (plan-review finding 3 — the adapter must learn the host died or a mid-turn submit parks forever): in the constructor's `fail` closure, after rejecting in-flight requests, notify subscribers; expose
+
+```ts
+private closeCbs = new Set<(e: Error) => void>();
+/** Fires once when the connection dies (peer close or socket error), AFTER in-flight requests were
+ *  rejected. A subscriber added after the close fires immediately — a late subscriber must not wait
+ *  forever on a connection that is already gone. */
+onClose(cb: (e: Error) => void): () => void {
+  if (this.closedWith) { try { cb(this.closedWith); } catch {} return () => {}; }
+  this.closeCbs.add(cb); return () => { this.closeCbs.delete(cb); };
+}
+private closedWith?: Error;
+```
+
+with `fail` setting `closedWith` (first error wins) and invoking each cb try/catch. Test: close the server side mid-connection → `onClose` fires; a subscriber added after the close fires immediately.
+
 - [ ] **Step 3: Run + commit**
 
 Run: `npx vitest run test/unit/client-remote.test.ts && npm run typecheck` — green.
@@ -436,7 +465,7 @@ New `test/unit/host-lifetime.test.ts` (reuse the fake-session pattern):
 - after a successful `runTask` on `kind:"interactive"`, `status().state === "working"` (NOT `"done"`) and `status().status === "idle"`; on `kind:"bg"` it stays `"done"` (pin).
 - a second `runTask` on an interactive host succeeds after the first completes (multi-turn), and the roster row (use the env-injected roster dir pattern from `test/unit/host-session.test.ts`) is still non-terminal between turns; after `stop("done")` the roster row reads `done`.
 - `host.finished` resolves after `stop()` completes (and not before — assert pending via a raced sentinel while idle).
-- idle reaper: with `idleTimeoutMs: 30` (and no fake-timer games — 30ms real), an interactive host with no turn is stopped (`finished` resolves, roster `done`) ~30ms after `start()`; a `runTask` resets the timer (submit a turn at t=15ms, assert still alive at t=40ms, dead by ~turn-end+30ms); a PARKED turn does not idle out (park a request, wait 60ms, still alive).
+- idle reaper (real timers at a CI-safe scale — ≥100ms units, not 30ms): with `idleTimeoutMs: 100`, an interactive host with no turn is stopped (`finished` resolves, roster `done`) shortly after `start()`; a `runTask` resets the timer; a PARKED turn does not idle out (park a request, wait 250ms, still alive); **a host with a live connection does not idle out** — connect a bare `net.connect` to the socket, wait 250ms, still alive; disconnect, and it then reaps (the reaper exists to end UNATTENDED idle sessions, not to kill one under a watching client).
 
 Run to FAIL.
 
@@ -461,11 +490,16 @@ In `teardown`'s `finally`, after `await this.server?.close();` add `this.finishe
 ```ts
 private idleTimer?: ReturnType<typeof setTimeout>;
 /** Arm (or re-arm) the idle stop. Only ever configured for detachable hosts; a parked turn never idles
- *  out because turnInFlight spans the park, and the timer is only armed when a turn is NOT in flight. */
+ *  out because turnInFlight spans the park, and the timer is only armed when a turn is NOT in flight.
+ *  A LIVE CONNECTION also defers it: the reaper ends unattended idle sessions — an attached client
+ *  reading the transcript is not "idle beyond the timeout" in any sense the operator meant. */
 private armIdle(): void {
   if (!this.opts.idleTimeoutMs) return;
   clearTimeout(this.idleTimer);
-  this.idleTimer = setTimeout(() => { void this.stop("done"); }, this.opts.idleTimeoutMs);
+  this.idleTimer = setTimeout(() => {
+    if ((this.server?.connectionCount() ?? 0) > 0) { this.armIdle(); return; }
+    void this.stop("done");
+  }, this.opts.idleTimeoutMs);
   (this.idleTimer as { unref?: () => void }).unref?.();
 }
 ```
@@ -531,6 +565,8 @@ Cases (each over a real UDS host):
 6. **sessionId**: after any state/status traffic, `adapter.sessionId` returns the host's session id (getter, sync).
 7. **dispose detaches**: `dispose()` closes the client socket; the host keeps running (a later direct `RemoteChatSession` connect still gets a status answer) and a parked permission stays parked.
 8. **resume opt**: `remoteChatSession(path, { resume: "sid-9" })` sends `resume` before `follow` (fake `openSession` records construction configs — assert the second construction carries `resume:"sid-9"`).
+9. **fast-turn end-before-waiter** (plan-review finding 1): a fake session whose `submit` resolves SYNCHRONOUSLY (emits its messages and returns without awaiting) — the adapter's `submit` must still resolve, bounded by the test's own `vi.waitFor`/timeout, never hang. Run this case 20× in a loop — the race is scheduling-dependent and a single pass proves little.
+10. **host death mid-turn settles everything** (teardown-liveness): start a slow fake turn, then destroy the server side; the in-flight `submit` REJECTS (`/closed|host/`), and the event consumer received a synthetic `{kind:"turn", phase:"end", error}` (so a REPL's busy flag clears).
 
 Run to FAIL.
 
@@ -555,6 +591,14 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
   let sessionId: string | undefined;
   let turnWaiter: { seq: number; resolve: () => void; reject: (e: Error) => void } | undefined;
   let turnSink: ((m: unknown) => void) | undefined;
+  // Turn ends the client saw before a waiter existed for them. The end frame can legitimately be
+  // PROCESSED before submit()'s continuation installs its waiter: a fast turn's end can precede the
+  // prompt reply on the wire (runTask's continuation races dispatch's), and even a reply-first wire
+  // order coalesces into one data chunk whose frames are routed synchronously while the reply's
+  // `await` continuation is still queued. Without this ledger, submit() waits forever on a turn that
+  // already ended (plan-review finding 1). Entries are consumed on match; the map stays O(1) because
+  // turns are strictly sequential per host.
+  const endedTurns = new Map<number, string | undefined>();
   const pendingList: PendingEntry[] = [];
   const permCbs = new Set<(e: PendingEntry) => void>();
   const settledCbs = new Set<(s: { toolUseID: string; by: string; decision: string }) => void>();
@@ -569,9 +613,9 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
       if (i >= 0) pendingList.splice(i, 1);
       for (const cb of [...settledCbs]) { try { cb({ toolUseID: ev.toolUseID, by: ev.by, decision: ev.decision }); } catch {} }
     } else if (ev.kind === "state") { if (ev.status.sessionId) sessionId = ev.status.sessionId; }
-    else if (ev.kind === "turn" && ev.phase === "end" && turnWaiter && ev.seq === turnWaiter.seq) {
-      const w = turnWaiter; turnWaiter = undefined;
-      ev.error ? w.reject(new Error(ev.error)) : w.resolve();
+    else if (ev.kind === "turn" && ev.phase === "end" && ev.seq !== undefined) {
+      if (turnWaiter && ev.seq === turnWaiter.seq) { const w = turnWaiter; turnWaiter = undefined; ev.error ? w.reject(new Error(ev.error)) : w.resolve(); }
+      else endedTurns.set(ev.seq, ev.error);      // ended before its waiter existed — submit() consults this
     }
     if (eventCb) { try { eventCb(ev); } catch {} } else backlog.push(ev);
   };
@@ -579,6 +623,13 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
   const ready: Promise<RemoteChatSession> = (async () => {
     const r = await (opts.connect ?? ((p, o) => RemoteChatSession.connect(p, o)))(socketPath, { label: opts.label ?? `ccx-${process.pid}` });
     raw = r;
+    // A dead host must settle everything a REPL can be waiting on, or busy sticks true and even the
+    // Ctrl+C exit path (gated on !busy) becomes unreachable — the teardown-liveness class.
+    r.onClose((e) => {
+      if (turnWaiter) { const w = turnWaiter; turnWaiter = undefined; w.reject(e); }
+      turnSink = undefined;
+      route({ kind: "turn", phase: "end", error: e.message });   // no seq: pure UI unblock, matches no waiter
+    });
     if (opts.resume) { const rep = await r.resumeOp(opts.resume); if (!rep.ok) throw new Error(rep.error ?? "resume refused"); }
     r.follow(route);
     await r.whenFollowed();                 // registration acked — a prompt sent after this cannot race it
@@ -594,13 +645,21 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
     pendingNow: () => [...pendingList],
     async submit(prompt, onMessage) {
       const r = await ready;
+      // One in-flight submit per client: a second would clobber turnSink/turnWaiter under the first
+      // (this adapter is public API — the REPL's own queue already serializes, but callers vary).
+      if (turnWaiter || turnSink) throw new Error("a submit is already in flight on this client");
       let result: unknown;
       turnSink = (m) => { if ((m as { type?: string })?.type === "result") result = m; onMessage(m); };
       let seqReply: { ok: boolean; seq?: number; error?: string };
       try { seqReply = await r.prompt(prompt); } catch (e) { turnSink = undefined; throw e; }
       if (!seqReply.ok || seqReply.seq === undefined) { turnSink = undefined; throw new Error(seqReply.error ?? "prompt refused"); }
-      try { await new Promise<void>((resolve, reject) => { turnWaiter = { seq: seqReply.seq!, resolve, reject }; }); }
-      finally { turnSink = undefined; }
+      const seq = seqReply.seq;
+      try {
+        // The end may already be in the ledger — a fast turn's end frame is routed in onData's
+        // synchronous loop while this continuation is still queued (see endedTurns above).
+        if (endedTurns.has(seq)) { const err = endedTurns.get(seq); endedTurns.delete(seq); if (err) throw new Error(err); }
+        else await new Promise<void>((resolve, reject) => { turnWaiter = { seq, resolve, reject }; });
+      } finally { turnSink = undefined; }
       return { result };
     },
     async setPermissionMode(mode) { orFail(await (await ready).setPermissionModeOp(mode)); },
@@ -645,7 +704,8 @@ git add -A && git commit -m "feat(a2b): remoteChatSession — lazy ChatSession a
 ### Task 6: useChat/ChatApp rewiring — event-driven rendering, permission feed, Ctrl+Z, initial prompt
 
 **Files:**
-- Modify: `harness/src/tui/useChat.ts`, `harness/src/tui/ChatApp.tsx`, `harness/src/tui/PermissionDialog.tsx` (props type only, if it names `PermissionRequest`), delete `harness/src/tui/uiBroker.ts`
+- Modify: `harness/src/tui/useChat.ts`, `harness/src/tui/ChatApp.tsx`, `harness/src/tui/PermissionDialog.tsx` (props type only, if it names `PermissionRequest`)
+- Delete: `harness/src/tui/uiBroker.ts`, `harness/src/tui/chat.tsx` (the old `cc-harness-chat` bin entry — it renders the deleted `broker` prop and nothing references it since Task 1; **before deleting, copy its launch-flag handling — `parseLaunchMode`/`parseLaunchThink`/`thinking` config/banner construction — into a comment block in this task's report for Task 7 to consume**), and `harness/test/tui/live/chat.e2e.test.ts` (drives ChatApp through the deleted broker prop; superseded by Task 7/8's integration suites and Task 10's live acceptance runs)
 - Test: `harness/test/tui/useChat.test.tsx`, `harness/test/tui/chat.test.tsx` (rework the fakes to the adapter surface)
 
 **Interfaces:**
@@ -665,6 +725,7 @@ Write the failing cases first:
 4. Ctrl+Z (`stdin.write("\x1a")`) with `client.kind === "attached"` calls `onDetach` and does NOT deny the pending permission (fake records no `answerPermission` call); with `kind === "loopback"` it appends the `not detachable — run with --detachable` notice and does not exit.
 5. `initialPrompt: "do the thing"` submits exactly once on mount.
 6. own-submit path: `submit("hi")` echoes the prompt line, and the turn renders from EVENTS (assert the fake's submit `onMessage` callback is a no-op passthrough — rendering happens even if submit's onMessage delivers nothing).
+7. **mid-turn attach replay renders** (plan-review finding 2's client half): push the exact replay shape the host now sends a mid-turn joiner — `turn start (seq)` → `message`×2 → `permission` → `state` — with NO submit call; the two messages render as streaming, `busy` is true, and the dialog is open. Then push the same messages WITHOUT a preceding start frame (the idle-attach shape) — nothing renders and busy stays false (the no-live-turn guard is the disk/buffer dedup).
 
 Run to FAIL.
 
@@ -690,7 +751,7 @@ useEffect(() => {
 }, [session]);
 ```
 
-with `pushPending`/`dropPending` maintaining head+queue, `dropPending` appending a dim notice \`↳ ${toolName} ${decision === "deny" ? "denied" : "allowed"} by ${by}\` when the dropped entry was displayed and the settler wasn't this client.
+with `pushPending`/`dropPending` maintaining head+queue, and `dropPending` appending a dim notice \`↳ ${toolName} ${decision === "deny" ? "denied" : "allowed"} by ${by}\` when the dropped entry was displayed and this client did not answer it itself. "Did not answer it itself" is tracked LOCALLY: a `answeredIds = useRef(new Set<string>())` that `resolvePermission` adds to before calling `answerPermission` — the wire's `by` label is the adapter's, not something useChat can compare against.
 - `runTurn` shrinks to the command channel: echo the prompt line, then `session.submit(prompt, () => {}).catch((e) => { append([{ text: `✗ ${e.message}`, color: "red" }]); setBusy(false); drainNext(); })` — no `.finally` rendering (events own it). Keep the queue/drain logic; `busy` is now event-driven so `drainNext` stays hooked to the turn-end arm above.
 - `resolvePermission(d)` becomes: the head entry's id → `void session.answerPermission(id, d).then((r) => { if (r.alreadyAnsweredBy) append(notice); })` (feature-gated on `hasPermissionFeed`); advance the queue locally on the settled event, not optimistically.
 - The unmount sentinel effect drops its `pendingRef.current?.resolve({kind:"deny"})` line — an unanswered remote entry must stay parked (detach ≠ deny). `disposed`-marking stays.
@@ -739,12 +800,15 @@ export interface ChatClientOpts {
   client: { kind: "loopback" | "attached"; short?: string };
   cwd: string;
   initialPrompt?: string;
+  initialResume?: InitialResume;      // launch-time --resume: useChat's resumeInto owns replay + the adapter resume op
   initialLines?: RenderLine[];        // pre-rendered transcript replay (attach, Task 8) or the banner
-  replayedUuids?: Set<string>;        // uuids already rendered from disk — filled by attach (Task 8), threaded to useChat's dedup
+  hookOpts?: { initialMode?: string; initialThink?: string };   // --permission-mode / --think, threaded so the status bar and Tab ladder start on the REAL mode
   onDetach?: () => void;
   makeSession?: (resume?: string) => ChatSession;   // test seam; default builds remoteChatSession(socketPath, { resume })
 }
 ```
+
+(No uuid-dedup field: after the host replays a `turn start` only for an IN-FLIGHT turn, the no-live-turn guard in useChat drops an idle buffer replay, and probe 62 guarantees a mid-turn buffer never overlaps disk — dedup fell out of the design in plan review.)
 
 - [ ] **Step 1: `src/tui/chatMain.tsx`**
 
@@ -757,6 +821,7 @@ import { remoteChatSession } from "../client/chatAdapter.js";
 import type { ChatSession } from "../session/chatSession.js";
 import { ChatApp } from "./ChatApp.js";
 import type { RenderLine } from "./render.js";
+import type { InitialResume } from "./commands.js";
 
 export interface ChatClientOpts { /* exactly as in the Interfaces block above */ }
 
@@ -764,14 +829,15 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   const makeSession = opts.makeSession ?? ((resume?: string) => remoteChatSession(opts.socketPath, { ...(resume ? { resume } : {}) }));
   const app = render(
     <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}
-      initialPrompt={opts.initialPrompt} initialLines={opts.initialLines} onDetach={opts.onDetach} />,
+      initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialLines={opts.initialLines}
+      hookOpts={opts.hookOpts} onDetach={opts.onDetach} />,
     { exitOnCtrlC: false },
   );
   await app.waitUntilExit();
 }
 ```
 
-(Carry over `chat.tsx`'s `--permission-mode`/`--think`/banner handling INTO the caller (Step 2) where the flags already live in `CcxInvocation`; `chat.tsx` itself is deleted in this step — it was the old bin entry. Move whatever launch-mode/think parsing `ChatApp` needs into `ChatClientOpts` as `hookOpts` if `ChatApp` still takes it — keep the existing prop threading, just sourced from `CcxInvocation` fields now.)
+(`chat.tsx`, the old bin entry, was deleted in Task 6 — its report carries the launch-flag handling this task re-homes: `hookOpts.initialMode`/`initialThink` thread to `useChat` exactly as the old `hookOpts` prop did.)
 
 - [ ] **Step 2: Wire `main.ts`**
 
@@ -805,7 +871,7 @@ The `run` arm becomes:
 case "run": {
   if (inv.worktree !== undefined) { /* existing worktree block, unchanged, now ABOVE the fg/bg split */ }
   if (inv.bg) { console.log(deps.spawnDetached(inv).banner); return 0; }
-  if (inv.detachable) { /* Task 8 — keep the exit-2 refusal until then */ }
+  if (inv.detachable) return fail("--detachable ships in Task 8 (it needs attach)", 2);   // Task 8 REPLACES this line
   if (inv.print) {
     // -p: one-shot headless print — the `cc-harness "<prompt>"` shape folded into ccx (contract table).
     if (!inv.prompt) return fail("-p requires a prompt", 2);
@@ -817,6 +883,14 @@ case "run": {
 }
 ```
 
+Also in this task, `cli/args.ts` gains the foreground thinking flag (the old `cc-harness-chat --think`, otherwise silently lost in the cutover): `think?: string` on `CcxInvocation` and an arm
+
+```ts
+case "--think": { const v = val(t); if (!parseThinkArg(v)) throw new Error(`--think must be off|low|medium|high|xhigh|max or a token count, got ${JSON.stringify(v)}`); a.think = v; break; }
+```
+
+with `import { parseThinkArg } from "../tui/thinkLevels.js";` — a pure module, no ink/React in its import graph (verify with a quick look; if it ever grows one, inline the level list instead). `cli-args.test.ts`: valid/invalid `--think` cases.
+
 and, in `main.ts` (exported for its test):
 
 ```ts
@@ -825,11 +899,20 @@ and, in `main.ts` (exported for its test):
 export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Promise<number> {
   const short = mintShortId(Math.random);            // import from ../fleet/paths.js — match its real signature
   const name = inv.name ?? short;
+  const cwd = inv.config.cwd ?? process.cwd();
   process.env.CLAUDE_CODE_SESSION_NAME = name;       // engine self-registration, same as the fork path
   process.env.CLAUDE_CODE_SESSION_KIND = "interactive";
+  // Launch-time thinking budget (the old cc-harness-chat behavior): --think off disables, a level sets
+  // the budget, absent leaves the SDK default. thinkBudget/parseThinkArg from ../tui/thinkLevels.js (pure).
+  const parsedThink = inv.think ? parseThinkArg(inv.think) : undefined;
+  const thinking = parsedThink ? (parsedThink.budget === 0 ? { type: "disabled" as const } : { type: "enabled" as const, budgetTokens: parsedThink.budget }) : undefined;
+  // Launch resume goes to the CLIENT (initialResume → resumeInto → the adapter's resume op), NOT into
+  // the host's config: one resume code path, and the incr-9 replay behavior survives the cutover.
+  const { resume, ...hostConfig } = inv.config;
   const host = deps.makeHost({
-    short, name, cwd: inv.config.cwd ?? process.cwd(), kind: "interactive", detached: false,
-    ...(inv.worktreePath ? { worktree: inv.worktreePath } : {}), config: inv.config,
+    short, name, cwd, kind: "interactive", detached: false,
+    ...(inv.worktreePath ? { worktree: inv.worktreePath } : {}),
+    config: { ...hostConfig, ...(thinking ? { thinking } : {}) },
   });
   await host.start();
   // Terminal gone or OS says stop: finalize `done` — the deliberate asymmetry (acceptance 10): a default
@@ -838,8 +921,10 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   process.on("SIGHUP", onSignal); process.on("SIGTERM", onSignal);
   try {
     await deps.runChatClient({
-      socketPath: hostSocketPath(process.pid), client: { kind: "loopback" }, cwd: inv.config.cwd ?? process.cwd(),
+      socketPath: hostSocketPath(process.pid), client: { kind: "loopback" }, cwd,
       ...(inv.prompt ? { initialPrompt: inv.prompt } : {}),
+      ...(resume ? { initialResume: { kind: "id" as const, id: resume } } : { initialLines: welcomeBanner({ cwd, model: inv.config.model, mode: inv.config.permissionMode ?? "default" }) }),
+      hookOpts: { initialMode: inv.config.permissionMode ?? "default", ...(parsedThink ? { initialThink: parsedThink.level } : {}) },
     });
   } finally {
     process.off("SIGHUP", onSignal); process.off("SIGTERM", onSignal);
@@ -849,7 +934,7 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
 }
 ```
 
-(`hostSocketPath` import from `../fleet/paths.js`. The banner: build `initialLines` with the existing `welcomeBanner` from `src/tui/banner.ts` — pass through `ChatClientOpts.initialLines`; import type-only so main.ts stays React-free — `welcomeBanner` is a pure function in a `.ts` module, importable directly.)
+(`hostSocketPath` from `../fleet/paths.js`; `welcomeBanner` from `../tui/banner.ts` and `parseThinkArg` from `../tui/thinkLevels.js` — both pure `.ts` modules with no ink/React in their import graphs, so main.ts stays React-free; verify by reading their imports, and if either pulls UI, route it through `ChatClientOpts` instead. Match `welcomeBanner`'s and `parseThinkArg`'s REAL signatures — the shapes here follow the old `chat.tsx`, whose handling Task 6's report preserved. If `InitialResume`'s shape differs from `{kind:"id"; id}`, match `src/tui/commands.ts`.)
 
 - [ ] **Step 3: Routing unit tests**
 
@@ -878,7 +963,7 @@ git add -A && git commit -m "feat(a2b): foreground ccx — in-process host + loo
 
 **Interfaces:**
 - Consumes: `resolveTarget` (from `cli/lifecycle.ts`), `hostSocketPath`, `remoteChatSession`, `runChatClient`, `getSessionMessages` (from the sessions read API), `replayLines` (from `src/tui/replay.ts`).
-- Produces: `prepareAttach(target: string, deps?): Promise<{ socketPath: string; short: string; initialLines: RenderLine[] }>` in `cli/attach.ts`.
+- Produces: `prepareAttach(target: string, deps?): Promise<{ socketPath: string; short: string; sessionId?: string; cwd: string; initialLines: RenderLine[] }>` in `cli/attach.ts`; `attachToImpl(target, opts, deps)` exported from `main.ts`.
 
 - [ ] **Step 1: Parser — `--idle-timeout` + detachable constraints**
 
@@ -892,9 +977,9 @@ case "--idle-timeout": {
 }
 ```
 
-Post-parse validation (end of `parseCcx`): `if (a.idleTimeoutSec && !a.detachable) throw new Error("--idle-timeout only applies to --detachable sessions");` and `if (a.detachable && a.bg) throw new Error("--detachable and --bg are mutually exclusive");`. Tests in `cli-args.test.ts` for all three behaviors (valid, non-integer, misplaced).
+**No validation in `parseCcx` itself** — the detached child re-parses its argv WITHOUT `--detachable` (spawnDetached strips mode flags) but WITH the forwarded `--idle-timeout`, so a grammar-level "only with --detachable" rule would kill every detachable child at startup. The two policy checks live in `main.ts`'s switch (exact placement and text in Step 5) and are tested through `main()`. `cli-args.test.ts` covers the grammar only: valid value parses into `idleTimeoutSec`, non-integer/zero/negative throw.
 
-`cli/spawn.ts` `configFlags` — forward it to the child: after the loop add `if (inv.idleTimeoutSec) out.push("--idle-timeout", String(inv.idleTimeoutSec));`. (The child's `parseCcx` accepts it because the child argv carries `--detachable`? It does NOT — the child gets `--__kind interactive` and spawnDetached strips mode flags. So: in `hostMain.ts`'s `parseHostArgv` path the re-parsed `inv` has `detachable:false` — **relax the post-parse rule to skip when `argv` came through `--__host`**: simplest correct fix is for `spawnDetached` to keep NOT forwarding `--detachable`, and for the post-parse validation to live in `main.ts`'s run arm instead of `parseCcx` (main-level policy, not grammar). Put both checks at the top of the `run` case in `main.ts`, delete them from `parseCcx`, and test them through `main()`.)
+`cli/spawn.ts` `configFlags` — forward it to the child: after the loop add `if (inv.idleTimeoutSec) out.push("--idle-timeout", String(inv.idleTimeoutSec));` (a `cli-spawn.test.ts` case pins the forwarding).
 
 - [ ] **Step 2: `--detachable` spawn + auto-attach**
 
@@ -946,27 +1031,37 @@ export async function prepareAttach(target: string, deps: PrepareAttachDeps = {}
 
 (If `resolveTarget`'s signature differs — it takes `(target, env)` — match it exactly; check `cli/lifecycle.ts:23`. If `replayLines`' options differ, match `src/tui/replay.ts`'s real export.)
 
-- [ ] **Step 4: uuid dedup for the live-replay overlap**
+- [ ] **Step 4: no dedup layer — pin the invariant instead**
 
-In `useChat.ts`'s event effect, thread a `seenUuids: Set<string>` built by the CALLER from the disk replay (new `opts.replayedUuids?: Set<string>`): in the `message` arm, `const u = (ev.data as { uuid?: string })?.uuid; if (u && opts.replayedUuids?.has(u)) return;`. In `prepareAttach`'s return add `replayedUuids: Set<string>` (collect `m.uuid` strings while building `initialLines`). Thread through `ChatClientOpts` → `ChatApp` → `useChat`. A tui test: a replayed-uuid message event does not render; a fresh-uuid one does.
+There is deliberately NO uuid-dedup (plan review removed it): the host replays a `turn start` only for an IN-FLIGHT turn (Task 2 Step 5-(4b)), an idle buffer replay has no start frame and is dropped by useChat's no-live-turn guard, and probe 62 guarantees a mid-turn buffer never overlaps disk. Pin it in this task's integration suite (Step 7 case 1 asserts the start frame; the idle-attach case asserts no duplicate rendering source: an adapter attaching to an IDLE host that has a completed turn in its buffer receives NO `turn start` in its replay).
 
 - [ ] **Step 5: `attach` arm + `attachTo`**
 
-Same wiring rule as Task 7 (no self-referencing default): export `attachToImpl` from `main.ts` and call it directly with main's `deps`. `MainDeps` gains two seams so the impl is unit-testable: `prepareAttach: typeof prepareAttach` (default: the real one) and `probeSocket: (path: string) => Promise<void>` (default: the fleet's existing socket-liveness probe — find it in `src/fleet/status.ts` or `liveness.ts` and reuse, do not write a second one).
+Same wiring rule as Task 7 (no self-referencing default): export `attachToImpl` from `main.ts` and call it directly with main's `deps`. `MainDeps` gains two seams so the impl is unit-testable — `prepareAttach: typeof prepareAttach` (default: the real one) and `probeSocket: (path: string) => Promise<void>` whose default WRAPS the fleet's existing boolean probe (`socketAnswers` in `src/fleet/liveness.ts` returns `Promise<boolean>` and swallows error codes — do not write a second prober, and do not expect codes from it):
 
 ```ts
-export async function attachToImpl(target: string, o: { initialPrompt?: string }, deps: MainDeps): Promise<number> {
+probeSocket: async (p) => { const { socketAnswers } = await import("../fleet/liveness.js");   // static import is fine too — it is already a cli dependency
+  if (!(await socketAnswers(p))) throw Object.assign(new Error(`no host listening at ${p}`), { code: "HOST_NOT_LISTENING" }); },
+```
+
+```ts
+/** Retry classification: `fromSpawn` (the --detachable auto-attach) retries BOTH not-yet-resolvable
+ *  (the child writes its roster row after fork) and not-yet-listening; a plain `ccx attach` retries
+ *  NEITHER — a typo must fail fast, and a resolvable-but-silent socket is `agents`' unresponsive
+ *  case, not a startup race. Bounded at 20×250ms ≈ 5s. */
+export async function attachToImpl(target: string, o: { initialPrompt?: string; fromSpawn?: boolean }, deps: MainDeps): Promise<number> {
   let prep;
-  // A --detachable child needs a beat to start listening: short retry, bounded at ~5s, then surface
-  // the real error (a genuinely missing session fails fast on its first resolveTarget throw — only
-  // roster-row-not-yet-written / connect-refused shapes are worth retrying; rethrow anything else).
   for (let i = 0; ; i++) {
     try { prep = await deps.prepareAttach(target); await deps.probeSocket(prep.socketPath); break; }
-    catch (e) { if (i >= 20) throw e; await new Promise((r) => setTimeout(r, 250)); }
+    catch (e) {
+      const retryable = o.fromSpawn && i < 20;
+      if (!retryable) throw e;
+      await new Promise((r) => setTimeout(r, 250));
+    }
   }
   await deps.runChatClient({
     socketPath: prep.socketPath, client: { kind: "attached", short: prep.short }, cwd: prep.cwd,
-    initialLines: prep.initialLines, replayedUuids: prep.replayedUuids,
+    initialLines: prep.initialLines,
     ...(o.initialPrompt ? { initialPrompt: o.initialPrompt } : {}),
     onDetach: () => { console.error(`detached — session ${prep.short} keeps running · reattach: ccx attach ${prep.short}`); },
   });
@@ -974,20 +1069,21 @@ export async function attachToImpl(target: string, o: { initialPrompt?: string }
 }
 ```
 
-Refinement to the bounded retry: distinguish the retryable shapes — wrap only `resolveTarget`'s "not found" (a `--detachable` child may not have written its row yet; but a plain `ccx attach typo` must not spin 5 s — retry "not found" only when `o` carries `fromSpawn: true`, which the `--detachable` caller sets) and the socket probe's `ECONNREFUSED`/`ENOENT`. The `attach` arm: `case "attach": { if (!inv.target) return fail("attach requires a session: a short id, a session uuid or a name", 2); try { return await attachToImpl(inv.target, {}, deps); } catch (e) { return fail(msg(e), 1); } }` — and the Task-8 `--detachable` arm calls `attachToImpl(short, { initialPrompt: inv.prompt, fromSpawn: true }, deps)` (add `fromSpawn?: boolean` to the opts type).
+The `attach` arm: `case "attach": { if (!inv.target) return fail("attach requires a session: a short id, a session uuid or a name", 2); try { return await attachToImpl(inv.target, {}, deps); } catch (e) { return fail(msg(e), 1); } }`. Also add at the TOP of `main`'s switch (before any arm): `if (inv.idleTimeoutSec && (inv.command !== "run" || !inv.detachable)) return fail("--idle-timeout only applies to --detachable sessions", 2);` and in the run arm `if (inv.detachable && inv.bg) return fail("--detachable and --bg are mutually exclusive", 2);` — main-level, NOT parseCcx, because the detached child re-parses its argv without `--detachable` and must not die on its forwarded `--idle-timeout` (the child bypasses this switch via the `--__host` route, but keep the checks out of the parser anyway so that stays true by structure).
 
 - [ ] **Step 6: Unit tests**
 
-`cli-attach.test.ts` (DI, no sockets): terminal roster row → throws with the resume hint; live row → returns socketPath keyed by row pid; missing history → the notice line; `replayedUuids` collected. `cli-main.test.ts` (all via injected `prepareAttach`/`probeSocket`/`runChatClient`): `attach x` reaches `runChatClient` with `client.kind: "attached"`; a `prepareAttach` that throws "not found" WITHOUT `fromSpawn` fails fast (no 5 s spin — assert < ~1 s); `--detachable` spawns with `prompt: undefined` then attaches with `initialPrompt` and `fromSpawn` retry semantics.
+`cli-attach.test.ts` (DI, no sockets): terminal roster row → throws with the resume hint; live row → returns socketPath keyed by row pid; missing history → the notice line. `cli-main.test.ts` (all via injected `prepareAttach`/`probeSocket`/`runChatClient`): `attach x` reaches `runChatClient` with `client.kind: "attached"`; a `prepareAttach` that throws "not found" WITHOUT `fromSpawn` fails fast (no 5 s spin — assert < ~1 s); `--detachable` spawns with `prompt: undefined` then attaches with `initialPrompt` and `fromSpawn` retry semantics.
 
 - [ ] **Step 7: Integration test — the attach story over a real socket**
 
 `test/integration/attach.test.ts` (fixture pattern from `host-client.test.ts`; fake `HostSession`, real `SessionHost`+`HostServer`+adapter):
-1. **late-join replay**: host `detached:true` mid-turn (deferred fake) with a parked permission; a `remoteChatSession` attaching now receives, in order: buffered messages → the parked `permission` → `state` (blocked); `pendingNow()` has the entry.
+1. **late-join replay**: host `detached:true` mid-turn (deferred fake) with a parked permission; a `remoteChatSession` attaching now receives, in order: `{kind:"turn", phase:"start", seq}` FIRST (the mid-turn marker Task 2 added), then the buffered messages → the parked `permission` → `state` (blocked); `pendingNow()` has the entry.
+1b. **idle-attach has no start frame**: attach to a host whose last turn COMPLETED (buffer still holds it) — the replay contains messages but NO `turn start`, pinning the no-dedup invariant (Step 4).
 2. **detach leaves everything**: `dispose()` the adapter; the park is still pending on the host; a second adapter attaches and sees it again.
 3. **answer resumes**: second adapter answers; the fake tool proceeds; turn end reaches the second adapter.
 4. **multi-turn over the socket**: after turn 1 ends, a new `submit` on the attached adapter is ACCEPTED (multi-turn interactive host) and runs turn 2 with `seq` 2.
-5. **idle reaper end-to-end**: host with `idleTimeoutMs: 100` and no client activity finalizes `done` (roster) and its `finished` resolves.
+5. **idle reaper end-to-end**: host with `idleTimeoutMs: 100` and NO connected client finalizes `done` (roster) and its `finished` resolves; with an adapter attached it stays alive past 3× the timeout, then reaps after `dispose()`.
 
 - [ ] **Step 8: Gates + commit**
 
