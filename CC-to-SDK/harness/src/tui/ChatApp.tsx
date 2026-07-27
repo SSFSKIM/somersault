@@ -1,6 +1,7 @@
 // tui/src/ChatApp.tsx — composes the transcript, the composer (or the permission dialog when one is
-// pending), and the status bar. Global keys (Esc interrupt, Tab cycle mode, Ctrl-Z detach) are inactive
-// while a dialog is up so the dialog owns input. Renders increment 8's multiline <ChatComposer>.
+// pending), and the status bar. Esc interrupt / Tab cycle mode are owned by the composer and inactive
+// while a dialog is up; Ctrl-C / Ctrl-L / Ctrl-Z stay active even during a dialog (Ctrl-Z can still
+// detach — detach ≠ deny). Renders increment 8's multiline <ChatComposer>.
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";

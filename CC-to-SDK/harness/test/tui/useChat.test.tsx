@@ -235,6 +235,48 @@ describe("useChat", () => {
     expect(calls).toBe(2);                    // initial makeSession() + resumeInto's makeSession(id)
   });
 
+  it("/resume mid-turn is blocked (no session swap); a notice is appended; the queue drains once the ORIGINAL turn ends", async () => {
+    // The old session's submit pushes a turn-start event and then NEVER resolves and NEVER pushes a
+    // turn-end — the test pushes that manually, later, once it has proven the swap didn't happen.
+    let oldFake!: FakeRemote;
+    oldFake = fakeRemote({ submit: async () => { oldFake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); return new Promise<{ result: unknown }>(() => {}); } });
+    const newFake = fakeRemote();
+    let calls = 0;
+    const makeSession = (resume?: string) => { calls++; return resume ? newFake : oldFake; };
+    const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
+    let pick: ((s: any) => void) | undefined;
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(makeSession, {}, deps);
+      pick = (c as any).pickSession;
+      api.run = c.submit;
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"} {c.state.picker.open ? `PICKER:${c.state.picker.sessions.length}` : "NOPICK"} q:{c.state.queue.join(",")} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => frame(lastFrame).includes("NOPICK"));
+    expect(calls).toBe(1);                                            // just the initial makeSession()
+
+    api.run!("go");
+    await waitFor(() => frame(lastFrame).includes("BUSY"));           // the old session's turn is now in flight
+
+    api.run!("/resume");                                              // LOCAL_NAME → dispatched immediately even while busy
+    await waitFor(() => frame(lastFrame).includes("PICKER:1"));
+    pick!({ sessionId: "old1234567890", summary: "prior", lastModified: 1 });   // pick mid-turn
+    await waitFor(() => frame(lastFrame).includes("cannot resume mid-turn"));
+
+    expect(calls).toBe(1);                                            // (1) NO swap — resumeInto's makeSession(id) never ran
+    expect(frame(lastFrame)).toContain("BUSY");                       // the old turn is untouched, still in flight
+    expect(frame(lastFrame)).not.toContain("prior");                  // no replay landed either
+
+    api.run!("queued prompt");                                        // (3a) queues behind the still-busy old turn
+    await waitFor(() => frame(lastFrame).includes("q:queued prompt"));
+
+    oldFake.pushEvent({ kind: "turn", phase: "end", seq: 1 });         // the ORIGINAL turn finally ends
+    await waitFor(() => frame(lastFrame).includes("IDLE") || !frame(lastFrame).includes("q:queued prompt"));
+    await waitFor(() => !frame(lastFrame).includes("q:queued prompt"));   // (3b) the queue drained
+  });
+
   it("initialResume {kind:'id'} replays the session on mount", async () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "launch prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
     const deps = { listSessions: async () => [], getSessionMessages: async () => msgs };

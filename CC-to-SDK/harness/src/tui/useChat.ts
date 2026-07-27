@@ -199,8 +199,14 @@ export function useChat(
   }
   function closePicker() { if (!disposed.current) setPicker({ open: false, sessions: [] }); }
   // Fetch the persisted transcript FIRST; only swap + replay if it has history (never drop into a broken resume).
+  // Guarded on `busy` (mirrors the host's own busy-gated `resume` op, Task 2): swapping `session` mid-turn would
+  // unsubscribe the `[session]`-keyed event effect from the OLD session before its turn-end event arrives, and
+  // since busy is now cleared only by that event (no `.finally()` safety net post-refactor), busy would stay
+  // stuck true forever and drainNext would never fire. We never auto-interrupt the old turn — that's the
+  // human's call (Esc).
   async function resumeInto(id: string) {
     if (disposed.current) return;
+    if (busy) { notice("cannot resume mid-turn — wait for the turn to finish or press Esc to interrupt"); return; }
     let msgs: any[] = [];
     try { msgs = await getSessionMessages(id); } catch { msgs = []; }
     if (disposed.current) return;
