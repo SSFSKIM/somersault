@@ -20,7 +20,7 @@
 - `waitingFor` becomes `` `${kind}:${toolName}` `` (doperpowers scripts verified display-only on this string).
 - Multi-select answers join with `", "`. Free-text "Other" goes to `response` (probe 65E's proven channel); that question gets no `answers` entry.
 - The interrupt/abort-path `decision_settled(by:"system")` emit is **new wiring** (today `pending.ts` abort-settles silently).
-- Daemon (`src/daemon/*`) semantics frozen — import-alias touches only. Swarm untouched.
+- Daemon (`src/daemon/*`) files untouched — **but** the daemon routes through the shared `createPermissionGate` (`supervisor.ts:397`), so its deny copy and the AskUserQuestion/ExitPlanMode never-allowlist rule drift with the gate rewrite. That drift is **accepted, not a freeze violation** (plan-review I3). Swarm untouched.
 - Harness conventions: dense hand-style (no Prettier), ESM imports end in `.js`, DI-by-deps, TDD, keyless live-gating (`const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip`). All commands run from `CC-to-SDK/harness/`. Commit per task, no Co-Authored-By lines.
 - `test/tui/` discipline: await a tick (or `waitFor`/`pressUntil` from `test/tui/helpers`) BEFORE writing keys.
 - The public barrel `src/index.ts` is pinned by `test/unit/index.test.ts` — new public exports must be added to both.
@@ -274,15 +274,19 @@ export type PendingPermissionsOpts = PendingDecisionsOpts;
 
 In `src/index.ts`, next to the existing `PermissionDecision` export, add `DecisionKind`, `DecisionOutcome`, `PendingDecision`, `PendingDecisions` to the exported surface, and add the same names to the pinned list in `test/unit/index.test.ts`.
 
-- [ ] **Step 6: Run the suite green**
+- [ ] **Step 6: Sweep the now-required `kind` into typed entry literals**
+
+`PendingDecision.kind` is required and `PendingEntry` aliases it, so existing typed literals without `kind` fail `npm run typecheck` (tsconfig includes `test/`). Add `kind: "permission"` to every `PendingEntry` object literal in: `test/tui/useChat.test.tsx` (6 literals), `test/tui/chat.test.tsx`, `test/unit/index.test.ts` — mechanical, no behavior change (plan-review C1a).
+
+- [ ] **Step 7: Run the suite green**
 
 Run: `npx vitest run test/unit/permissions-decisions.test.ts test/unit/index.test.ts test/unit/host-park.test.ts test/unit/daemon-permissions.test.ts && npm run typecheck`
-Expected: PASS (the park/daemon suites prove the aliases really are zero-touch).
+Expected: PASS (the park/daemon suites prove the aliases really are zero-touch on daemon files).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/permissions/types.ts src/permissions/pending.ts src/index.ts test/unit/permissions-decisions.test.ts test/unit/index.test.ts
+git add src/permissions test/unit/permissions-decisions.test.ts test/unit/index.test.ts src/index.ts test/tui/useChat.test.tsx test/tui/chat.test.tsx
 git commit -m "feat(gb1): decision kinds + PendingDecisions generalization with onAutoSettle hook"
 ```
 
@@ -616,18 +620,40 @@ answer(toolUseID: string, outcome: DecisionOutcome, by: string): { ok: true; alr
 with `private planUpgradePending = false;` declared by the other private fields.
 5. `settleParkedForSystem()` emits `decision_settled` (same fields, renamed kind). `follow()`'s pending replay emits `{ kind: "decision", entry }`. `status()`'s waitingFor: `` waitingFor: `${first.kind}:${first.toolName}` ``. `pending(): PendingDecision[]`.
 
-- [ ] **Step 5: Fix the fallout, run green**
+- [ ] **Step 5: The rename is ATOMIC — land the client read alias HERE and sweep the full blast radius**
 
-The rename ripples through `test/unit/host-follow.test.ts`, `host-server.test.ts`, `cli-attach.test.ts` etc. (event kind strings) and `src/cli/attach.ts` / anything matching `kind: "permission"` — update mechanically (`grep -rn '"permission"' src test/unit | grep -v daemon` and fix each host-path site; daemon files stay untouched).
+The wire union change makes every `ev.kind === "permission"` comparison a TS2367 error, and tsconfig type-checks `test/**` too — so this task must leave the whole tree compiling (plan-review C1b). Two parts:
 
-Run: `npx vitest run test/unit && npm run typecheck`
-Expected: PASS (full unit suite — this task's blast radius is the whole host seam).
+**(a) The chatAdapter read alias (this IS Task 6's alias deliverable, landed here because the rename cannot be split; T6's tests still pin it).** In `src/client/chatAdapter.ts`'s `route()`, replace the `permission`/`permission_settled` arms with:
+
+```ts
+// READ ALIAS (spec Decision Log): a pre-Goal-B host still emits permission/permission_settled — ingest
+// them as decisions so an upgraded `ccx attach` reads a long-lived old host. kind defaults to
+// "permission" (old entries carry none); a new host's own kind wins the spread.
+const k = (ev as { kind: string }).kind;
+if (k === "decision" || k === "permission") {
+  const entry = { kind: "permission", ...(ev as any).entry } as PendingDecision;
+  pendingList.push(entry); for (const cb of [...permCbs]) { try { cb(entry); } catch {} }
+} else if (k === "decision_settled" || k === "permission_settled") {
+  const s = ev as any;
+  const i = pendingList.findIndex((e) => e.toolUseID === s.toolUseID);
+  if (i >= 0) pendingList.splice(i, 1);
+  for (const cb of [...settledCbs]) { try { cb({ toolUseID: s.toolUseID, by: s.by, decision: s.decision }); } catch {} }
+}
+```
+
+(Keep the surrounding `message`/`state`/`turn` arms and the callback-set names as they are — T6 renames the public methods; typing note: the legacy frames are no longer `HostEvent` variants, hence the `as any` reads.) `pendingList` becomes `PendingDecision[]`; `onPermission`'s replay cast follows.
+
+**(b) The mechanical sweep.** `grep -rn '"permission"\|"permission_settled"' src test | grep -v daemon` and fix every host-path site — known list: `test/unit/host-follow.test.ts`, `test/unit/host-server.test.ts`, `test/unit/host-park.test.ts`, `test/tui/helpers/fakeRemote.ts` (its route arms and `parkPermission`/`settlePermission` push `HostEvent` literals — they become `decision`/`decision_settled` with `kind:"permission"` entries), `test/tui/useChat.test.tsx`, `test/integration/host-client.test.ts` (the `e.kind === "permission"` filters). `src/cli/attach.ts` consumes NO event kinds (disk replay only) — do not touch it.
+
+Run: `npx vitest run test/unit test/tui test/integration && npm run typecheck`
+Expected: PASS (this task's gate is deliberately the widest — the rename's blast radius ends here).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A src test/unit
-git commit -m "feat(gb3): host decision park — kind-validated structured answers, decision events, system-settle emits"
+git add -A src test
+git commit -m "feat(gb3): host decision park — kind-validated structured answers, decision events, system-settle emits, atomic wire rename"
 ```
 
 ---
@@ -712,7 +738,7 @@ describe("host frame plumbing", () => {
 });
 ```
 
-Fill with real fixture code. In `test/unit/host-ops.test.ts` add dispatch cases: `tasks` returns the snapshot; `background` calls the session's `backgroundAll` and returns its boolean; `stop_task` calls `stopTask(taskId)`; each `{ ok: false, error: "…unsupported…" }` when the session lacks the member.
+Fill with real fixture code, plus one more `host-frames` case (plan-review I1): **"frames still plumb after resumeSession"** — drive a frame through the FIRST fake session, `resumeSession("sid2")` (the fixture's `openSession` returns a second fake), drive a frame through the SECOND session's `onFrame` → the follower still receives the `tasks_changed`; and the swap itself emitted an empty `tasks_changed`. In `test/unit/host-ops.test.ts` add dispatch cases: `tasks` returns the host's snapshot (always works — it never touches the session); `background` calls the session's `backgroundAll` and returns its boolean; `stop_task` calls `stopTask(taskId)`; `background`/`stop_task` (only — not `tasks`) reply `{ ok: false, error: "…unsupported…" }` when the session lacks the member.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -755,7 +781,19 @@ for (const cb of [...this.frameCbs]) { try { cb(m); } catch { /* one subscriber'
 this.offFrame = this.session.onFrame?.((m) => this.onSessionFrame(m));
 ```
 
-and in `teardown()`'s `try` block (before `settleParkedForSystem`): `this.offFrame?.();`
+in `teardown()`'s `try` block (before `settleParkedForSystem`): `this.offFrame?.();` — **and in
+`resumeSession()`**, right after the session swap (plan-review I1: the swap replaces `this.session`
+with a fresh `Session` whose subscriber set is empty — without this, mode sync, the tasks panel, and
+attribution all silently die after a `/resume`, a shipped surface):
+
+```ts
+this.offFrame?.();
+this.offFrame = this.session.onFrame?.((m) => this.onSessionFrame(m));
+this.bgTasks = []; this.emit({ kind: "tasks_changed", tasks: [] });   // the old session's tasks are gone
+this.planUpgradePending = false;                                       // (field exists from T3)
+```
+
+(T5's attribution maps get cleared here too once they exist — T5 adds the two `.clear()` lines.)
 4. The frame handler (Task 5 extends it — keep the marked seam):
 
 ```ts
@@ -902,15 +940,14 @@ private parentOf = new Map<string, string>();   // nested tool_use id → parent
 private subagentOf = new Map<string, string>(); // Agent tool_use id → subagent_type (task_started frames)
 ```
 
-2. `start()`: `this.mode = resolvedPermissionMode(this.opts.config);` before opening the session (import from `../config/resolveOptions.js`).
+2. `start()`: `this.mode = resolvedPermissionMode(this.opts.config);` before opening the session (import from `../config/resolveOptions.js`). NOTE (plan-review M8): this makes every host unit test actually execute `resolveOptions` against its fixture config (previously only the faked `openSession` saw it) — run the host suites and confirm no minimal fixture config throws; if one does, fix the fixture, not the helper.
 3. `status()` carries it: add `permissionMode: this.mode` to BOTH return branches.
-4. `onSessionFrame` grows two arms (before the task-lifecycle arm; the `task_started` match must ALSO feed `subagentOf` — order the arms so attribution capture happens first):
+4. `onSessionFrame` grows two arms (before the task-lifecycle arm; the `task_started` match must ALSO feed `subagentOf` — order the arms so attribution capture happens first). **NOTE: T4's body already declares `const sub` — hoist that ONE declaration above these new arms and reuse it; do not redeclare (plan-review M1):**
 
 ```ts
 if (mm?.type === "assistant" && mm.parent_tool_use_id) {
   for (const b of mm.message?.content ?? []) if (b?.type === "tool_use" && b.id) this.parentOf.set(String(b.id), String(mm.parent_tool_use_id));
 }
-const sub = mm?.type === "system" ? mm.subtype : mm?.type;
 if (sub === "task_started" && mm.tool_use_id && mm.subagent_type) this.subagentOf.set(String(mm.tool_use_id), String(mm.subagent_type));
 if (mm?.type === "system" && mm.subtype === "status" && typeof mm.permissionMode === "string") {
   this.mode = mm.permissionMode;
@@ -930,11 +967,13 @@ private async applyPlanUpgrade(): Promise<void> {
 }
 ```
 
-5. `runTask`: at the top (with the buffer reset): `this.parentOf.clear(); this.subagentOf.clear();` — and the belt, after `await this.session!.submit(…)` resolves (inside the try, before the state assignment):
+5. `runTask`: at the top (with the buffer reset): `this.parentOf.clear(); this.subagentOf.clear();` (and add the same two `.clear()` lines to `resumeSession()`'s reset block from T4) — the belt, after `await this.session!.submit(…)` resolves (inside the try, before the state assignment):
 
 ```ts
 if (this.planUpgradePending) { this.planUpgradePending = false; await this.applyPlanUpgrade(); }
 ```
+
+and in the CATCH arm, first line: `this.planUpgradePending = false;` — a failed/interrupted turn must not leave a stale approved-upgrade that fires at the NEXT turn's status frame (plan-review M2; add a test case for it in `host-mode-sync.test.ts`).
 
 6. `control()` `set_permission_mode` arm becomes:
 
@@ -1035,7 +1074,15 @@ export function hasBgTasks(s: ChatSession): s is ChatSession & BgTasks {
 }
 ```
 
-(`hasPermissionFeed` is deleted; grep its consumers — `useChat.ts` is updated in Task 7, everything else must be renamed here.)
+**Deprecated delegates until T7 (plan-review C1c — `useChat.ts`, `test/tui/helpers/fakeRemote.ts`, and the integration tests still use the old names, and they are NOT this task's files):** keep `PermissionFeed` and `hasPermissionFeed` as thin aliases —
+
+```ts
+/** @deprecated Goal B renames this surface to DecisionFeed — deleted in the same branch (T7). */
+export type PermissionFeed = DecisionFeed;
+export const hasPermissionFeed = hasDecisionFeed;
+```
+
+and the adapter keeps `onPermission`/`onPermissionSettled`/`answerPermission` as one-line delegates onto the new methods. T7 deletes all five.
 
 `src/client/remote.ts` — replace `answer(...)` with:
 
@@ -1052,18 +1099,7 @@ backgroundOp() { return this.send<{ ok: boolean; error?: string; backgrounded?: 
 stopTaskOp(taskId: string) { return this.send<{ ok: boolean; error?: string }>({ op: "stop_task", taskId }); }
 ```
 
-`src/client/chatAdapter.ts` — `route()`'s decision arms (replacing the permission arms), with the alias FIRST so one code path handles both:
-
-```ts
-// READ ALIAS (spec Decision Log): a pre-Goal-B host still emits permission/permission_settled — ingest
-// them as decisions so an upgraded `ccx attach` reads a long-lived old host. kind defaults to
-// "permission" because old entries carry none.
-const kind = ev.kind === "permission" ? "decision" : ev.kind === "permission_settled" ? "decision_settled" : ev.kind;
-if (kind === "decision") { const entry = { kind: "permission", ...(ev as any).entry } as PendingDecision; pendingList.push(entry); for (const cb of [...decisionCbs]) { try { cb(entry); } catch {} } }
-else if (kind === "decision_settled") { …same removal/fan-out as today, reading toolUseID/by/decision off (ev as any)… }
-```
-
-(The `{ kind: "permission", ...entry }` spread ORDER is load-bearing: a new host's entry carries its own `kind`, which must win the spread.) Rename the sets (`permCbs` → `decisionCbs`, `settledCbs` stays), `onPermission`/`onPermissionSettled`/`answerPermission` → `onDecision`/`onDecisionSettled`/`answerDecision` (calling `raw.answerDecision`), and add:
+`src/client/chatAdapter.ts` — the `route()` read-alias arms **already landed in T3 step 5(a)** (the wire rename was atomic); this task's test in step 1 pins them. Here: rename the sets (`permCbs` → `decisionCbs`, `settledCbs` stays), add the NEW public methods `onDecision`/`onDecisionSettled`/`answerDecision` (calling `raw.answerDecision`), keep the old three as `@deprecated` one-line delegates (C1c above), and add:
 
 ```ts
 async listBgTasks() { return orFail(await (await ready).tasksOp()).tasks ?? []; },
@@ -1071,7 +1107,7 @@ async background() { return orFail(await (await ready).backgroundOp()).backgroun
 async stopBgTask(taskId) { orFail(await (await ready).stopTaskOp(taskId)); },
 ```
 
-`src/index.ts`: export `DecisionFeed`, `BgTasks`, `hasDecisionFeed`, `hasBgTasks` where `PermissionFeed`/`hasPermissionFeed` were; update the pin test.
+`src/index.ts`: export `DecisionFeed`, `BgTasks`, `hasDecisionFeed`, `hasBgTasks` alongside the (deprecated, T7-removed) `PermissionFeed`/`hasPermissionFeed`; update the pin test.
 
 - [ ] **Step 4: Run green**
 
@@ -1120,6 +1156,8 @@ it("/bg opens the panel; stopBgTask calls the session; settled decision notices 
 ```
 
 Extend `test/tui/commands.test.ts`: `/bg` is in `LOCAL_NAMES` and the palette entries.
+
+Known existing tests this task UPDATES rather than works around (plan-review M4/M5): `test/tui/useChat.test.tsx:608`-area asserts the exact ladder sequence `["acceptEdits","auto","default"]` — becomes `["acceptEdits","plan","auto","default"]`; `test/tui/chat.test.tsx:82`-area Tab-cycle assertion likewise; `test/tui/components.test.tsx` pins `ChatStatusBar`'s `subagentActive` prop (~lines 94–107) — delete those two cases here (T10 adds the `⚙ N bg` replacements).
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -1178,6 +1216,7 @@ function backgroundNow() {
 
 `handleCommand` case `"bg"`: `openBgPanel(); break;`. `commands.ts` COMMANDS gains the `/bg` entry (exact line from Interfaces).
 9. Drop `subagentActive` from state/`setSubagentActive` calls (T10 removes the consumer; keep `l.subagentActive` unused rather than churning liveTurn).
+9b. Delete the five deprecated delegates T6 left (`PermissionFeed`, `hasPermissionFeed` in `chatSession.ts`/`index.ts` + the three adapter methods) and switch every remaining consumer (`useChat.ts` itself, `test/tui/helpers/fakeRemote.ts`, `test/integration/attach.test.ts`, `test/integration/loopback.test.ts`) to the Decision names — this task ends the rename.
 10. Return: `{ state: { …, pending, bgTasks, bgPanelOpen, … }, …, resolveDecision, openBgPanel, closeBgPanel, stopBgTask, backgroundNow, … }`.
 
 - [ ] **Step 4: Fix `ChatApp.tsx` compile only**
@@ -1186,14 +1225,14 @@ function backgroundNow() {
 
 - [ ] **Step 5: Run green**
 
-Run: `npx vitest run test/tui test/unit && npm run typecheck`
-Expected: PASS.
+Run: `npx vitest run test/tui test/unit test/integration && npm run typecheck`
+Expected: PASS (integration included — step 9b touched its files).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/tui test/tui
-git commit -m "feat(gb7): useChat decision queue, host-truth mode sync, plan ladder rung, /bg state, task notices"
+git add -A src test
+git commit -m "feat(gb7): useChat decision queue, host-truth mode sync, plan ladder rung, /bg state, task notices; rename complete"
 ```
 
 ---
@@ -1225,6 +1264,7 @@ it("multiSelect: space toggles, enter commits the checked labels joined with ', 
 it("Other: selecting it opens a text line; typed text lands in `response`, the question gets NO answers entry", …);
 it("Esc fires onDeny (the model is told no answer is available — never a fabricated one)", …);
 it("attribution: subagentType renders 'Subagent (code-reviewer) asks:'", …);
+it("malformed input (no questions array) auto-denies on mount", …);
 ```
 
 - [ ] **Step 2: Run to verify failure** — `npx vitest run test/tui/questionDialog.test.tsx` → FAIL (module missing).
@@ -1277,8 +1317,12 @@ export function QuestionDialog({ req, onAnswer, onDeny }: {
     onAnswer(a, r.length ? r.join("\n") : undefined);
   };
 
+  // Malformed/empty questions: auto-deny ON MOUNT (plan-review M7) — rendering null while `pending` is
+  // non-null would be an invisible dialog eating the next keypress.
+  React.useEffect(() => { if (!q) onDeny(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+
   useInput((input, key) => {
-    if (!q) { onDeny(); return; }                                   // malformed input: nothing to ask
+    if (!q) return;                                                 // auto-deny (above) is settling this
     if (other !== null) {                                           // free-text mode
       if (key.return) { const t = other.trim(); t ? advance(undefined, t) : setOther(null); return; }
       if (key.escape) { setOther(null); return; }
@@ -1481,7 +1525,7 @@ it("renders one row per task (short id · type · description) and an empty-stat
 it("↑/↓ move the selection; k stops the SELECTED task (x too); esc closes", …);
 ```
 
-`test/tui/chat.test.tsx` additions: Ctrl+B while `busy` calls `backgroundNow` (fake session records `background()`); Ctrl+B while idle opens the panel; the status bar shows `⚙ 2 bg` when `bgTasks` has two entries and nothing when empty.
+`test/tui/chat.test.tsx` additions: Ctrl+B while `busy` calls `backgroundNow` (fake session records `background()`); Ctrl+B while idle opens the panel; the status bar shows `⚙ 2 bg` when `bgTasks` has two entries and nothing when empty. `test/tui/components.test.tsx`: add the `bgCount` cases replacing the `subagentActive` ones T7 deleted (M4).
 
 - [ ] **Step 2: Run to verify failure** — `npx vitest run test/tui/bgTasksPanel.test.tsx` → FAIL.
 
@@ -1579,10 +1623,10 @@ git commit -m "docs(gb11): control-plane axis in tui-ux, coverage + spine + chec
 
 The keyless halves and the live halves of the spec's Acceptance section, executed as written. **The controller runs the live halves** (implementers stop at the clean keyless skip). Auth: `set -a; . ../.env; set +a` from `harness/`; never print the token.
 
-- [ ] **Step 1: The full keyless gate**
+- [ ] **Step 1: The full keyless gate — integration INCLUDED**
 
-Run: `npm run typecheck && npx vitest run test/unit test/tui test/contract && npm run build`
-Expected: PASS everywhere; live suites skip cleanly keyless.
+Run: `npm run typecheck && npx vitest run test/unit test/tui test/contract test/integration && npm run build`
+Expected: PASS everywhere; live suites skip cleanly keyless. (`test/integration` exercises the real UDS park/answer wire this branch renamed end-to-end — the suite that caught both prior stages' worst defects; plan-review I2.) Also confirm `test/integration/host-client.test.ts` gained one keyless **question round-trip over a real socket** (park `kind:"question"` → structured `answer` op → broker resolves `question_answer` → `decision_settled` observed by a second client) — if no earlier task added it, add it now.
 
 - [ ] **Step 2: Acceptance ⑤ keyless refusals (spec verbatim)**
 
@@ -1607,6 +1651,8 @@ Driver `acc-plan.mjs`: foreground pty `node dist/cli/bin.js -n accplan --permiss
 2. waitFor the PlanDialog (`/Approve this plan/`). Press `3`, type `hello.txt must contain 'hello world' instead` + enter.
 3. waitFor a SECOND PlanDialog (the model revised and re-called — probe 66's loop). Press `1` (approve & auto-accept).
 4. Assert the status bar reaches `mode acceptEdits` (the pushed state event — the spec's visible-mode check) and the subsequent Write runs with NO further dialog; the file lands with `hello world`.
+
+Known small race, pre-armed (plan-review M6): the `acceptEdits` setter is issued on the observed status frame while the CLI is already executing — a very fast first Write under the interim `default` mode can park one permission dialog. If that happens: answer it once (`1`), record it as a Surprise in the spec (it is the spec-mandated ordering's accepted window), and the run still PASSES on the remaining asserts.
 
 Expected: PASS.
 
