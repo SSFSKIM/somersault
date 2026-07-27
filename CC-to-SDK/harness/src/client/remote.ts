@@ -30,13 +30,33 @@ export class RemoteChatSession {
   private nextFollowerId = 1;
   private buf = "";
 
+  private followAck?: Promise<unknown>;
+  private closeCbs = new Set<(e: Error) => void>();
+  private closedWith?: Error;
+
   private constructor(private sock: Socket, private label: string, private maxFrame: number) {
     sock.on("data", (c) => this.onData(c.toString("utf8")));
     // Every awaited request must settle when the peer goes, or an attached client hangs on a host that
     // already exited — the same parked-promise class this project keeps rediscovering.
-    const fail = (e: Error) => { for (const { reject } of this.inflight.values()) reject(e); this.inflight.clear(); };
+    const fail = (e: Error) => {
+      for (const { reject } of this.inflight.values()) reject(e);
+      this.inflight.clear();
+      if (!this.closedWith) {   // first error wins — a later close/error is not a second event
+        this.closedWith = e;
+        for (const cb of [...this.closeCbs]) { try { cb(e); } catch { /* one subscriber's failure is not another's */ } }
+      }
+    };
     sock.on("close", () => fail(new Error("host connection closed")));
     sock.on("error", (e) => fail(e as Error));
+  }
+
+  /** Fires once when the connection dies (peer close or socket error), AFTER in-flight requests were
+   *  rejected. A subscriber added after the close fires immediately — a late subscriber must not wait
+   *  forever on a connection that is already gone. */
+  onClose(cb: (e: Error) => void): () => void {
+    if (this.closedWith) { try { cb(this.closedWith); } catch { /* ignore */ } return () => {}; }
+    this.closeCbs.add(cb);
+    return () => { this.closeCbs.delete(cb); };
   }
 
   /** `maxFrame` overrides MAX_FRAME — test-only, so the over-cap-flood guard test can trip the cap with
@@ -101,9 +121,23 @@ export class RemoteChatSession {
   answer(toolUseID: string, decision: PermissionDecision): Promise<{ ok: boolean; alreadyAnsweredBy?: string; error?: string }> {
     return this.send({ op: "answer", toolUseID, decision: decision.kind, by: this.label });
   }
-  prompt(text: string): Promise<{ ok: boolean; accepted?: boolean; error?: string }> { return this.send({ op: "prompt", text }); }
+  prompt(text: string): Promise<{ ok: boolean; accepted?: boolean; seq?: number; error?: string }> { return this.send({ op: "prompt", text }); }
   interrupt(): Promise<{ ok: boolean; error?: string }> { return this.send({ op: "interrupt" }); }
   stopHost(): Promise<{ ok: boolean; error?: string }> { return this.send({ op: "stop" }); }
+
+  // Task 2's control ops — one method per op, `…Op` suffix keeps this raw wire client visibly distinct
+  // from the `ChatSession` methods the Task 5 adapter layers on top.
+  setModelOp(model?: string) { return this.send<{ ok: boolean; error?: string }>({ op: "set_model", ...(model ? { model } : {}) }); }
+  setPermissionModeOp(mode: string) { return this.send<{ ok: boolean; error?: string }>({ op: "set_permission_mode", mode }); }
+  setThinkingOp(maxTokens: number | null) { return this.send<{ ok: boolean; error?: string }>({ op: "set_thinking", maxTokens }); }
+  capabilitiesOp() { return this.send<{ ok: boolean; error?: string; models?: unknown[]; commands?: unknown[]; mcpServers?: unknown[] }>({ op: "capabilities" }); }
+  compactOp() { return this.send<{ ok: boolean; error?: string; outcome?: unknown }>({ op: "compact" }); }
+  usageOp() { return this.send<{ ok: boolean; error?: string; usage?: unknown }>({ op: "usage" }); }
+  contextUsageOp() { return this.send<{ ok: boolean; error?: string; usage?: unknown }>({ op: "context_usage" }); }
+  mcpStatusOp() { return this.send<{ ok: boolean; error?: string; servers?: unknown[] }>({ op: "mcp_status" }); }
+  mcpReconnectOp(name: string) { return this.send<{ ok: boolean; error?: string }>({ op: "mcp_reconnect", name }); }
+  mcpToggleOp(name: string, enabled: boolean) { return this.send<{ ok: boolean; error?: string }>({ op: "mcp_toggle", name, enabled }); }
+  resumeOp(sessionId: string) { return this.send<{ ok: boolean; error?: string }>({ op: "resume", sessionId }); }
 
   /** Subscribe to the host's pushed events. The first live subscription sends `follow`; the last one
    *  leaving sends `unfollow`. Followers are keyed by a per-call token, not by the callback reference,
@@ -114,15 +148,20 @@ export class RemoteChatSession {
     const id = this.nextFollowerId++;
     const first = this.followers.size === 0;
     this.followers.set(id, cb);
-    if (first) void this.send({ op: "follow" }).catch(() => {});
+    if (first) { this.followAck = this.send({ op: "follow" }); this.followAck.catch(() => {}); }
     let done = false;
     return () => {
       if (done) return;
       done = true;
       this.followers.delete(id);
-      if (this.followers.size === 0) void this.send({ op: "unfollow" }).catch(() => {});
+      if (this.followers.size === 0) { void this.send({ op: "unfollow" }).catch(() => {}); this.followAck = undefined; }
     };
   }
+
+  /** The in-flight (or settled) `follow` ack for the currently-live subscription — `undefined` before
+   *  the first `follow()` and again once the last follower leaves; the next `follow()` re-sends and
+   *  re-populates it. */
+  whenFollowed(): Promise<unknown> | undefined { return this.followAck; }
 
   /** Drop this connection. The host keeps running, its turn keeps going, and anything parked stays
    *  parked — that is the whole distinction between detach and stop. */

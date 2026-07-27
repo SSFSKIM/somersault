@@ -168,4 +168,77 @@ describe("RemoteChatSession", () => {
     expect(host.seen.filter((o) => o === "unfollow").length).toBe(1);
     c.detach(); host.close();
   });
+
+  it("capabilitiesOp() resolves the server's reply body", async () => {
+    const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
+    const srv = createServer((sock) => sock.on("data", (c) => {
+      const req = JSON.parse(String(c).trim());
+      sock.write(JSON.stringify({ ok: true, id: req.id, models: ["opus"], commands: ["/help"], mcpServers: [] }) + "\n");
+    }));
+    await new Promise<void>((r) => srv.listen(p, () => r()));
+    const c = await RemoteChatSession.connect(p);
+    const res = await c.capabilitiesOp();
+    expect((res as any).ok).toBe(true);
+    expect((res as any).models).toEqual(["opus"]);
+    expect((res as any).commands).toEqual(["/help"]);
+    c.detach(); srv.close();
+  });
+
+  it("whenFollowed() is undefined before follow() and resolves after the server acks", async () => {
+    const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
+    const host = opCounter(p);
+    await host.listen();
+    const c = await RemoteChatSession.connect(p);
+    expect(c.whenFollowed()).toBeUndefined();
+    const off = c.follow(() => {});
+    await expect(c.whenFollowed()).resolves.toBeDefined();
+    expect(host.seen.filter((o) => o === "follow").length).toBe(1);
+    off(); await settle(); c.detach(); host.close();
+  });
+
+  it("prompt() surfaces seq from the reply", async () => {
+    const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
+    const srv = createServer((sock) => sock.on("data", (c) => {
+      const req = JSON.parse(String(c).trim());
+      sock.write(JSON.stringify({ ok: true, id: req.id, accepted: true, seq: 7 }) + "\n");
+    }));
+    await new Promise<void>((r) => srv.listen(p, () => r()));
+    const c = await RemoteChatSession.connect(p);
+    const res = await c.prompt("hi");
+    expect(res.seq).toBe(7);
+    c.detach(); srv.close();
+  });
+
+  it("onClose fires once when the connection dies, and the in-flight request also rejects (not left parked)", async () => {
+    const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
+    const srv = createServer(() => {});   // accepts, never replies
+    await new Promise<void>((r) => srv.listen(p, () => r()));
+    const c = await RemoteChatSession.connect(p);
+    const closeErrs: Error[] = [];
+    const inflight = c.status();
+    c.onClose((e) => closeErrs.push(e));
+    srv.close();
+    (c as any).sock.destroy();
+    await expect(inflight).rejects.toThrow();
+    expect(closeErrs.length).toBe(1);
+    // inflight map must be drained (not just the one awaited request settled) before onClose subscribers
+    // were notified — otherwise a subscriber that itself queries new state mid-callback could race a
+    // still-populated map.
+    expect((c as any).inflight.size).toBe(0);
+    c.detach();
+  });
+
+  it("onClose: a subscriber added after the connection already closed fires immediately", async () => {
+    const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
+    const srv = createServer(() => {});
+    await new Promise<void>((r) => srv.listen(p, () => r()));
+    const c = await RemoteChatSession.connect(p);
+    srv.close();
+    (c as any).sock.destroy();
+    await new Promise((r) => setTimeout(r, 30));   // let the close/error handlers run
+    let lateErr: Error | undefined;
+    c.onClose((e) => { lateErr = e; });
+    expect(lateErr).toBeInstanceOf(Error);
+    c.detach();
+  });
 });
