@@ -289,6 +289,23 @@ describe("main — run: foreground (Task 7)", () => {
     expect(clientCalls[0]).toMatchObject({ client: { kind: "loopback" } });
     expect(clientCalls[0].initialPrompt).toBe("task");
   });
+  it("refuses --resume together with a prompt (foreground only), touching neither makeHost nor runChatClient", async () => {
+    // A launch --resume + a prompt would set BOTH initialResume and initialPrompt on the client opts;
+    // the submitted prompt then starts a turn, and useChat's busy-guard (Task 6) blocks the resume with
+    // "cannot resume mid-turn" — the resume never actually happens. Refused before any side effect.
+    const hostCalls: any[] = [];
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    const { err, value } = await captureLog(() => main(["--resume", "abc", "hi"], deps({
+      isTTY: () => true,
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(value).toBe(2);
+    expect(err.join("\n")).toContain("--resume with a prompt is not supported");
+    expect(hostCalls).toEqual([]);
+    expect(clientCalls).toEqual([]);
+  });
   it("--bg still spawns instead of reaching the foreground path, even with isTTY() true", async () => {
     const { out, value } = await captureLog(() => main(["--bg", "task"], deps({ isTTY: () => true, spawnDetached: () => banner })));
     expect(value).toBe(0);

@@ -120,6 +120,12 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
 /** Foreground ccx: an IN-PROCESS host + a loopback client over its own socket — exactly one ChatSession
  *  code path, so the daily REPL continuously exercises the attach protocol (spec A2b §3). */
 export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Promise<number> {
+  // Refused BEFORE any side effect (no env var mutated, no host built): a launch --resume together with
+  // a prompt would set BOTH initialResume and initialPrompt on the same ChatClientOpts, and the REPL's
+  // busy-guard (Task 6's resumeInto) then blocks the resume with a "cannot resume mid-turn" notice once
+  // the submitted initialPrompt starts a turn first — the resume never actually happens. Foreground-only:
+  // -p and --bg never reach runForegroundImpl at all.
+  if (inv.config.resume && inv.prompt) return fail("--resume with a prompt is not supported — resume, then type your prompt", 2);
   const short = mintShortId(Math.random);
   const name = inv.name ?? short;
   const cwd = inv.config.cwd ?? process.cwd();
