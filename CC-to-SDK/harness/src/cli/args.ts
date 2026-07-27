@@ -91,10 +91,15 @@ export function parseCcx(argv: string[]): CcxInvocation {
       case "-n": case "--name": a.name = val(t); break;
       case "--worktree": a.worktree = val(t); break;
       case "--cwd": { const v = val(t); if (a.command === "agents") a.cwdFilter = v; else a.config.cwd = v; break; }
-      // Parsed into a field nothing forwarded to the child and nothing consumed: an operator who asked
-      // for a watchdog on an unattended worker got none, silently — the exact failure KNOWN_UNSUPPORTED
-      // exists to prevent. Rejected by name until the reaper it configures actually exists.
-      case "--idle-timeout": throw new Error("--idle-timeout is recognized but not wired yet (the idle reaper ships in plan A2) — omit it");
+      // Grammar only — NO "only with --detachable" rule here: the detached child re-parses its OWN argv
+      // without --detachable but WITH this forwarded flag (spawn.ts's configFlags), so a parser-level
+      // constraint would kill every detachable child at startup. That policy check lives in main.ts's
+      // switch instead, where it can tell a plain run from a --detachable one.
+      case "--idle-timeout": {
+        const v = Number(val(t));
+        if (!Number.isInteger(v) || v <= 0) throw new Error(`--idle-timeout requires a positive integer of seconds, got ${JSON.stringify(argv[i])}`);
+        a.idleTimeoutSec = v; break;
+      }
       case "--model": a.config.model = val(t); break;
       case "--effort": a.config.effort = oneOf("--effort", val(t), EFFORT_LEVELS); break;
       case "-r": case "--resume": a.config.resume = val(t); break;

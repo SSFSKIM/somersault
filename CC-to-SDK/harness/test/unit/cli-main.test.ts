@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { main } from "../../src/cli/main.js";
+import { main, attachToImpl } from "../../src/cli/main.js";
 import type { MainDeps } from "../../src/cli/main.js";
 import { parseCcx } from "../../src/cli/args.js";
 import type { CcxInvocation } from "../../src/cli/args.js";
@@ -25,6 +25,8 @@ function deps(over: Partial<MainDeps> = {}): MainDeps {
     makeHost: () => { throw new Error("makeHost must not run"); },
     runOnce: async () => { throw new Error("runOnce must not run"); },
     isTTY: () => false,
+    prepareAttach: async () => { throw new Error("prepareAttach must not run"); },
+    probeSocket: async () => { throw new Error("probeSocket must not run"); },
     ...over,
   };
 }
@@ -228,16 +230,6 @@ describe("main — run", () => {
     expect(out).toEqual([]);                         // nothing spawned, and no banner claiming it was
     expect(err.join("\n")).toContain("--worktree requires a name");
   });
-  it("refuses --detachable instead of printing a banner over a host that dies at once", async () => {
-    // Routed to the detached spawn it looked like it worked: banner on stdout, exit 0 — but nothing in
-    // A1 keeps a host alive with no turn to run, so the child stopped immediately and left a `working`
-    // roster row over a dead pid. deps() throws from spawnDetached, so the value of 2 also proves
-    // nothing was spawned.
-    const { out, err, value } = await captureLog(() => main(["--detachable", "task"], deps()));
-    expect(value).toBe(2);
-    expect(out).toEqual([]);
-    expect(err.join("\n")).toMatch(/--detachable/);
-  });
   it("reports a worktree that could not be prepared and spawns NOTHING", async () => {
     const { err, value } = await captureLog(() => main(["--bg", "--worktree", "wt", "task"],
       deps({ ensureWorktree: async () => { throw new Error("fatal: not a git repository"); } })));
@@ -311,16 +303,6 @@ describe("main — run: foreground (Task 7)", () => {
     expect(value).toBe(0);
     expect(out).toEqual(["backgrounded · 00000000"]);
   });
-  it("attach still exits 2 (until Task 8)", async () => {
-    const { err, value } = await captureLog(() => main(["attach", "w1"], deps({ isTTY: () => true })));
-    expect(value).toBe(2);
-    expect(err.join("\n")).toMatch(/attach/);
-  });
-  it("--detachable still exits 2 (until Task 8), even with isTTY() true", async () => {
-    const { err, value } = await captureLog(() => main(["--detachable", "task"], deps({ isTTY: () => true })));
-    expect(value).toBe(2);
-    expect(err.join("\n")).toMatch(/--detachable/);
-  });
 });
 
 describe("main — lifecycle and failures", () => {
@@ -354,9 +336,133 @@ describe("main — lifecycle and failures", () => {
     expect(value).toBe(0);
     expect(out).toEqual(["removed /run/1.sock"]);
   });
-  it("says attach is unimplemented instead of failing silently", async () => {
-    const { err, value } = await captureLog(() => main(["attach", "w1"], deps()));
+});
+
+const prep = (over: Partial<{ socketPath: string; short: string; sessionId?: string; cwd: string; initialLines: { text: string }[] }> = {}) =>
+  ({ socketPath: "/run/x.sock", short: "w1", cwd: "/repo", initialLines: [], ...over });
+
+describe("main — attach (Task 8)", () => {
+  it("requires a target rather than reaching prepareAttach with undefined", async () => {
+    const { err, value } = await captureLog(() => main(["attach"], deps()));
     expect(value).toBe(2);
-    expect(err.join("\n")).toMatch(/attach/);
+    expect(err.join("\n")).toContain("attach requires a session");
+  });
+  it("attach <target> resolves via prepareAttach, probes the socket, and reaches runChatClient with client.kind:'attached'", async () => {
+    const clientCalls: any[] = [];
+    const { value } = await captureLog(() => main(["attach", "w1"], deps({
+      prepareAttach: async (target) => { expect(target).toBe("w1"); return prep({ short: "w1", socketPath: "/run/w1.sock" }); },
+      probeSocket: async (p) => { expect(p).toBe("/run/w1.sock"); },
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(value).toBe(0);
+    expect(clientCalls[0]).toMatchObject({ socketPath: "/run/w1.sock", client: { kind: "attached", short: "w1" } });
+  });
+  it("a prepareAttach failure ('no session matches') is reported as a code-1 refusal, not a stack trace", async () => {
+    const { err, value } = await captureLog(() => main(["attach", "nope"], deps({
+      prepareAttach: async () => { throw new Error('no session matches "nope"'); },
+    })));
+    expect(value).toBe(1);
+    expect(err.join("\n")).toContain("no session matches");
+  });
+});
+
+describe("attachToImpl — retry classification (Task 8)", () => {
+  const mainDeps = (over: Partial<MainDeps> = {}): MainDeps => deps(over);
+
+  it("a plain attach (fromSpawn absent) fails FAST on a resolve failure — no 5s spin", async () => {
+    let calls = 0;
+    const started = Date.now();
+    await expect(attachToImpl("w1", {}, mainDeps({
+      prepareAttach: async () => { calls++; throw new Error("no session matches"); },
+    }))).rejects.toThrow(/no session matches/);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(calls).toBe(1);                             // never retried
+  });
+  it("a plain attach also fails fast when prepareAttach resolves but the socket does not answer", async () => {
+    let probeCalls = 0;
+    const started = Date.now();
+    await expect(attachToImpl("w1", {}, mainDeps({
+      prepareAttach: async () => prep(),
+      probeSocket: async () => { probeCalls++; throw Object.assign(new Error("no host listening"), { code: "HOST_NOT_LISTENING" }); },
+    }))).rejects.toThrow(/no host listening/);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(probeCalls).toBe(1);                        // a resolvable-but-silent socket is NOT a startup race
+  });
+  it("fromSpawn retries past early failures and reaches runChatClient once the host comes up", async () => {
+    let calls = 0;
+    const clientCalls: any[] = [];
+    const code = await attachToImpl("00000000", { fromSpawn: true, initialPrompt: "hi" }, mainDeps({
+      prepareAttach: async () => { calls++; if (calls < 3) throw new Error("not found yet"); return prep({ short: "00000000" }); },
+      probeSocket: async () => {},
+      runChatClient: async (o) => { clientCalls.push(o); },
+    }));
+    expect(code).toBe(0);
+    expect(calls).toBe(3);                              // two failures, then the success on the third try
+    expect(clientCalls[0]).toMatchObject({ client: { kind: "attached", short: "00000000" }, initialPrompt: "hi" });
+  });
+  it("fromSpawn retry is bounded at 20 attempts (21 total calls), then rethrows the last error", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const p = attachToImpl("00000000", { fromSpawn: true }, mainDeps({
+        prepareAttach: async () => { calls++; throw new Error("never comes up"); },
+      }));
+      let rejection: unknown;
+      p.catch((e) => { rejection = e; });
+      // 21 tries means 20 sleeps of 250ms between them — advance past all of them plus margin.
+      for (let i = 0; i < 25; i++) await vi.advanceTimersByTimeAsync(250);
+      await vi.waitFor(() => expect(rejection).toBeDefined(), { timeout: 1000 });
+      expect(calls).toBe(21);
+      expect((rejection as Error).message).toBe("never comes up");
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("main — --detachable + --idle-timeout validation and auto-attach (Task 8)", () => {
+  it("--idle-timeout without --detachable is refused before any side effect", async () => {
+    const { err, value } = await captureLog(() => main(["--idle-timeout", "30", "task"], deps({ isTTY: () => true })));
+    expect(value).toBe(2);
+    expect(err.join("\n")).toContain("--idle-timeout only applies to --detachable sessions");
+  });
+  it("--idle-timeout on a non-run command is refused, even though the parser accepts it there", async () => {
+    const { err, value } = await captureLog(() => main(["agents", "--idle-timeout", "30"], deps({ collectFleet: async () => { throw new Error("collectFleet must not run"); } })));
+    expect(value).toBe(2);
+    expect(err.join("\n")).toContain("--idle-timeout only applies to --detachable sessions");
+  });
+  it("--detachable and --bg are refused together, spawning nothing", async () => {
+    const { out, err, value } = await captureLog(() => main(["--bg", "--detachable", "task"], deps()));
+    expect(value).toBe(2);
+    expect(out).toEqual([]);
+    expect(err.join("\n")).toContain("mutually exclusive");
+  });
+  it("--detachable spawns with prompt:undefined, then auto-attaches passing the ORIGINAL prompt as initialPrompt", async () => {
+    const spawnCalls: any[] = [];
+    const attachTargets: string[] = [];
+    const clientCalls: any[] = [];
+    const { out, value } = await captureLog(() => main(["--detachable", "--idle-timeout", "30", "do the thing"], deps({
+      spawnDetached: (inv) => { spawnCalls.push(inv); return { short: "12345678", banner: "backgrounded · 12345678" }; },
+      prepareAttach: async (target) => { attachTargets.push(target); return prep({ short: "12345678" }); },
+      probeSocket: async () => {},
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(value).toBe(0);
+    expect(out[0]).toBe("backgrounded · 12345678");
+    expect(spawnCalls[0].prompt).toBeUndefined();       // the prompt stays with the client, not the spawn line
+    expect(spawnCalls[0].idleTimeoutSec).toBe(30);
+    expect(attachTargets[0]).toBe("12345678");           // auto-attach targets the freshly spawned short id
+    expect(clientCalls[0]).toMatchObject({ client: { kind: "attached", short: "12345678" }, initialPrompt: "do the thing" });
+  });
+  it("fromSpawn retry lets the auto-attach survive the child's roster-write race (resolve failure, then success)", async () => {
+    let calls = 0;
+    const clientCalls: any[] = [];
+    const { value } = await captureLog(() => main(["--detachable", "task"], deps({
+      spawnDetached: () => ({ short: "12345678", banner: "backgrounded · 12345678" }),
+      prepareAttach: async () => { calls++; if (calls < 2) throw new Error("no session matches"); return prep({ short: "12345678" }); },
+      probeSocket: async () => {},
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(value).toBe(0);
+    expect(calls).toBe(2);                               // the auto-attach path DID retry past the race
+    expect(clientCalls[0]).toMatchObject({ client: { kind: "attached", short: "12345678" } });
   });
 });

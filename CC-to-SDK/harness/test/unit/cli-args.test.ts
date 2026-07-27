@@ -55,11 +55,21 @@ describe("parseCcx", () => {
     expect(a.config.effort).toBe("xhigh");
     expect(() => parseCcx(["--bg", "--effort", "extreme", "x"])).toThrow(/extreme/);
   });
-  it("rejects --idle-timeout by name rather than parsing a watchdog nothing arms", () => {
-    // It used to parse into a field the spawn path never forwarded and no host ever read: an operator
-    // who asked an unattended worker for an idle reaper got none, in silence.
-    expect(() => parseCcx(["--bg", "--idle-timeout", "30", "x"])).toThrow(/--idle-timeout/);
-    expect(() => parseCcx(["--bg", "--idle-timeout"])).toThrow(/--idle-timeout/);
+  it("parses --idle-timeout into idleTimeoutSec — grammar only, no --detachable requirement here", () => {
+    // The "only with --detachable" policy lives in main.ts's switch (Task 8), not the parser: the
+    // detached child re-parses its OWN argv without --detachable but WITH this forwarded flag, so a
+    // grammar-level rule would kill every detachable child at startup.
+    expect(parseCcx(["--detachable", "--idle-timeout", "30"])).toMatchObject({ idleTimeoutSec: 30 });
+    expect(parseCcx(["--bg", "--idle-timeout", "30", "x"])).toMatchObject({ idleTimeoutSec: 30 });
+  });
+  it("rejects a non-integer, zero or negative --idle-timeout", () => {
+    expect(() => parseCcx(["--idle-timeout", "0", "x"])).toThrow(/--idle-timeout requires a positive integer/);
+    expect(() => parseCcx(["--idle-timeout", "-5", "x"])).toThrow(/--idle-timeout requires a positive integer/);
+    expect(() => parseCcx(["--idle-timeout", "3.5", "x"])).toThrow(/--idle-timeout requires a positive integer/);
+    expect(() => parseCcx(["--idle-timeout", "soon", "x"])).toThrow(/--idle-timeout requires a positive integer/);
+  });
+  it("throws on a dangling --idle-timeout with no value", () => {
+    expect(() => parseCcx(["--idle-timeout"])).toThrow(/--idle-timeout/);
   });
   it("throws on a second positional rather than running an agent on the first word", () => {
     expect(() => parseCcx(["fix", "the", "bug"])).toThrow(/the/);

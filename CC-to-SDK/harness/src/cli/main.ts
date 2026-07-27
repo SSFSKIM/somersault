@@ -12,6 +12,8 @@ import type { SessionHostOpts } from "../host/host.js";
 import { mintShortId, hostSocketPath } from "../fleet/paths.js";
 import { welcomeBanner } from "../tui/banner.js";
 import { parseThinkArg } from "../tui/thinkLevels.js";
+import { prepareAttach as realPrepareAttach } from "./attach.js";
+import { socketAnswers as realSocketAnswers } from "../fleet/liveness.js";
 // type-only: main.ts stays React-free. The ink import happens only inside the DEFAULT runChatClient,
 // via a dynamic import — an interactive path that never runs (e.g. every non-TTY/-p/--bg invocation)
 // never pulls ink/React into the process at all.
@@ -31,6 +33,8 @@ export interface MainDeps {
   makeHost: (o: SessionHostOpts) => SessionHost;
   runOnce: (inv: CcxInvocation) => Promise<string>;
   isTTY: () => boolean;
+  prepareAttach: typeof realPrepareAttach;
+  probeSocket: (path: string) => Promise<void>;
 }
 const defaults: MainDeps = {
   runHostMain: realRunHostMain, collectFleet: realCollectFleet, spawnDetached: realSpawnDetached,
@@ -38,6 +42,12 @@ const defaults: MainDeps = {
   makeHost: (o) => new SessionHost(o),
   // The React-free guarantee: the import happens only when an interactive path actually calls it.
   runChatClient: async (o) => (await import("../tui/chatMain.js")).runChatClient(o),
+  prepareAttach: realPrepareAttach,
+  // Wraps the fleet's existing boolean prober (socketAnswers, which already swallows error codes) into
+  // the throw-shaped seam attachToImpl expects — no second prober, no expectation of an error code.
+  probeSocket: async (p) => {
+    if (!(await realSocketAnswers(p))) throw Object.assign(new Error(`no host listening at ${p}`), { code: "HOST_NOT_LISTENING" });
+  },
   runOnce: async (inv) => {
     const { createHarness } = await import("../harness.js");
     // RunResult.result IS the final string directly (harness.ts's run(): `if ("result" in mm) result =
@@ -63,6 +73,12 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
   let inv: CcxInvocation;
   try { inv = parseCcx(argv); } catch (e) { return fail(msg(e), 2); }
 
+  // Main-level, NOT parseCcx: the detached child re-parses its own argv WITHOUT --detachable but WITH
+  // this forwarded flag (spawn.ts's configFlags), so a grammar-level rule would kill every detachable
+  // child at startup. Checked before any arm runs, for every command — --idle-timeout parses regardless
+  // of subcommand (see args.ts), so `ccx agents --idle-timeout 5` must be refused here too.
+  if (inv.idleTimeoutSec && (inv.command !== "run" || !inv.detachable)) return fail("--idle-timeout only applies to --detachable sessions", 2);
+
   switch (inv.command) {
     case "agents":
       // --all and --cwd travel UNCHANGED: doperpowers polls `agents --json --all` until a row reads a
@@ -80,9 +96,14 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
     case "gc":
       for (const p of await deps.fleetGc()) console.log(`removed ${p}`);
       return 0;
-    case "attach":
-      return fail("attach ships in plan A2", 2);
+    case "attach": {
+      // A missing target would otherwise reach prepareAttach's resolveTarget with `undefined`, which
+      // reads as "no session matches undefined" — a confusing error for what is really a missing argument.
+      if (!inv.target) return fail("attach requires a session: a short id, a session uuid or a name", 2);
+      try { return await attachToImpl(inv.target, {}, deps); } catch (e) { return fail(msg(e), 1); }
+    }
     case "run": {
+      if (inv.detachable && inv.bg) return fail("--detachable and --bg are mutually exclusive", 2);
       if (inv.worktree !== undefined) {
         // PRESENT and empty is not the same as absent: `--worktree "$WT"` with WT unset arrives here as "",
         // which the old truthiness guard read as "no worktree asked for" — the run landed in the shared
@@ -97,9 +118,14 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
         inv.config.cwd = inv.worktreePath;
       }
       if (inv.bg) { console.log(deps.spawnDetached(inv).banner); return 0; }
-      // --detachable is an ATTACHED session that survives its terminal; Task 8 is the one that brings
-      // the attach client, replacing this line.
-      if (inv.detachable) return fail("--detachable ships in Task 8 (it needs attach)", 2);
+      // --detachable is an ATTACHED session that survives its terminal: spawn it exactly like --bg
+      // (fully detached, kind:"interactive"), then attach to it ourselves — the prompt stays with US,
+      // not the spawn line, because the client is the one that submits it (spec A2b §3).
+      if (inv.detachable) {
+        const { short, banner } = deps.spawnDetached({ ...inv, prompt: undefined });
+        console.log(banner);
+        return await attachToImpl(short, { ...(inv.prompt ? { initialPrompt: inv.prompt } : {}), fromSpawn: true }, deps);
+      }
       if (inv.print) {
         // -p: one-shot headless print — the `cc-harness "<prompt>"` shape folded into ccx (contract table).
         if (!inv.prompt) return fail("-p requires a prompt", 2);
@@ -115,6 +141,30 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
       // exitAfterFlush as exit 0 — a command that did nothing, reported as success.
       return fail(`unhandled command ${String(inv.command)}`, 2);
   }
+}
+
+/** Retry classification: `fromSpawn` (the --detachable auto-attach) retries BOTH not-yet-resolvable (the
+ *  child writes its roster row after fork) and not-yet-listening; a plain `ccx attach` retries NEITHER —
+ *  a typo must fail fast, and a resolvable-but-silent socket is `agents`' unresponsive case, not a
+ *  startup race. Bounded at 20×250ms ≈ 5s. Same wiring rule as Task 7: called directly with main's live
+ *  `deps`, no self-referencing default. */
+export async function attachToImpl(target: string, o: { initialPrompt?: string; fromSpawn?: boolean }, deps: MainDeps): Promise<number> {
+  let prep;
+  for (let i = 0; ; i++) {
+    try { prep = await deps.prepareAttach(target); await deps.probeSocket(prep.socketPath); break; }
+    catch (e) {
+      const retryable = o.fromSpawn && i < 20;
+      if (!retryable) throw e;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+  await deps.runChatClient({
+    socketPath: prep.socketPath, client: { kind: "attached", short: prep.short }, cwd: prep.cwd,
+    initialLines: prep.initialLines,
+    ...(o.initialPrompt ? { initialPrompt: o.initialPrompt } : {}),
+    onDetach: () => { console.error(`detached — session ${prep.short} keeps running · reattach: ccx attach ${prep.short}`); },
+  });
+  return 0;
 }
 
 /** Foreground ccx: an IN-PROCESS host + a loopback client over its own socket — exactly one ChatSession

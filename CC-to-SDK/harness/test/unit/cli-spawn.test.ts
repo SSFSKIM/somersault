@@ -71,6 +71,19 @@ describe("spawnDetached", () => {
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("auto");
     expect(args[args.indexOf("--model") + 1]).toBe("m1");
   });
+  it("forwards --idle-timeout to the child so a --detachable spawn's reaper survives the re-parse", () => {
+    // The child re-parses its OWN argv, with no --detachable of its own to gate on — only this forwarded
+    // flag tells its host to arm an idle reaper at all.
+    const s = fakeSpawner();
+    spawnDetached(parseCcx(["--detachable", "--idle-timeout", "45", "task"]), { spawn: s.spawn, rand: () => 0 });
+    const args: string[] = s.calls[0].args;
+    expect(args[args.indexOf("--idle-timeout") + 1]).toBe("45");
+  });
+  it("omits --idle-timeout entirely when it was not given", () => {
+    const s = fakeSpawner();
+    spawnDetached(parseCcx(["--bg", "task"]), { spawn: s.spawn, rand: () => 0 });
+    expect((s.calls[0].args as string[])).not.toContain("--idle-timeout");
+  });
   it("forwards --settings as JSON text, because the parser hands it back as an object", () => {
     // parseCcx resolves --settings (inline JSON or a file path) into an OBJECT. Pushed into argv raw it
     // stringifies to "[object Object]" and the child's re-parse throws: a gateway daemon dead at startup.

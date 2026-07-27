@@ -26,6 +26,10 @@ function configFlags(inv: CcxInvocation): string[] {
   // throws — a gateway daemon dead at startup, invisibly, because the parent already printed its banner.
   // Stringified it round-trips through the parser's inline-JSON branch, file already resolved.
   if (inv.config.settings) out.push("--settings", JSON.stringify(inv.config.settings));
+  // Seconds, the human CLI unit — the child's own parseCcx arm re-validates it and hostOptsFrom converts
+  // to ms. Forwarded unconditionally when set: a --detachable spawn is the ONLY caller that combines
+  // --idle-timeout with a fork, and the child's re-parse has no --detachable of its own to gate on.
+  if (inv.idleTimeoutSec) out.push("--idle-timeout", String(inv.idleTimeoutSec));
   return out;
 }
 
