@@ -22,8 +22,9 @@ export interface SessionHostOpts {
  *  keep a detached process alive for the rest of the day. */
 const DISPOSE_GRACE_MS = 5_000;
 
-/** Exactly the three members a host drives on its session — structural, not `any`, so a signature drift
- *  in `Session` fails THIS build instead of failing at runtime inside a detached process nobody watches. */
+/** The members a host drives on its session — the 3 core ones plus the 10 optional A2b control members
+ *  below — structural, not `any`, so a signature drift in `Session` fails THIS build instead of failing
+ *  at runtime inside a detached process nobody watches. */
 export interface HostSession {
   submit(prompt: string, onMessage: (m: unknown) => void): Promise<unknown>;
   readonly sessionId: string | undefined;
