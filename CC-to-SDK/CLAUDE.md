@@ -7,8 +7,7 @@ apply; `harness/CLAUDE.md` auto-loads on demand for build/test detail.
 
 ## Structure (one line each)
 
-- **`harness/`** — the product: the headless harness, an npm package (`cc-harness`). **Has its own `CLAUDE.md`** (commands, module map, conventions). This is where almost all work happens.
-- **`tui/`** — `cc-harness-tui`: the interactive **Ink** daemon console (`cc-harness-console` bin) over the core's public `connectDaemon`/`DaemonClient`. **Has its own `CLAUDE.md`.** Build `harness/` first (it depends on `cc-harness` via `file:../harness`).
+- **`harness/`** — the product: the npm package **`cc-harness`**, shipping the `ccx` binary (foreground interactive REPL, `ccx attach`, `--detachable`) plus the library API. The interactive chat REPL (`src/tui/`, dynamic-imported) absorbed the former `tui/` package's chat half with A2b; the daemon console half retired with it. **Has its own `CLAUDE.md`** (commands, module map, conventions). This is where almost all work happens.
 - **`docs/parity/coverage.md`** — the **capability scorecard** and **source of truth** for what's built vs. reachable vs. out-of-reach (10 domains, %). Read it first to know the current state before proposing work.
 - **`docs/superpowers/specs/`** + **`plans/`** — per-feature design specs and implementation plans (one `YYYY-MM-DD-<feature>` pair each).
 - **`probes/`** — a self-contained npm workspace of **live SDK capability probes** (`probes/probes/NN-*.ts`, run with `tsx`). The evidence base for every design decision.

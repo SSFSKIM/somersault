@@ -1,6 +1,6 @@
-# TUI/UX parity — `cc-harness-chat` vs. original Claude Code
+# TUI/UX parity — `ccx` chat REPL vs. original Claude Code
 
-> **Goal (2026-06-29):** bring our SDK-backed interactive REPL (`cc-harness-chat`, the product
+> **Goal (2026-06-29):** bring our SDK-backed interactive REPL (`ccx`, the product
 > north star) to the *look-and-feel* level of the original Claude Code TUI. This scorecard is the
 > **source of truth for visual/interaction parity** — distinct from `coverage.md` (which scores SDK
 > *capability* realization). Tracked feature-by-feature against the reference TS harness in
