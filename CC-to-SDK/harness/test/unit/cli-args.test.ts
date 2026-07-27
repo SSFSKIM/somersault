@@ -88,4 +88,15 @@ describe("parseCcx", () => {
   it("fails on an unknown flag rather than treating it as the prompt", () => {
     expect(() => parseCcx(["--nope"])).toThrow(/--nope/);
   });
+  it("parses --think with a level name or a raw token count", () => {
+    expect(parseCcx(["--think", "high", "x"])).toMatchObject({ think: "high" });
+    expect(parseCcx(["--think", "off", "x"])).toMatchObject({ think: "off" });
+    expect(parseCcx(["--think", "12000", "x"])).toMatchObject({ think: "12000" });
+  });
+  it("rejects an unknown --think level", () => {
+    expect(() => parseCcx(["--think", "extreme", "x"])).toThrow(/--think/);
+  });
+  it("throws on a dangling --think with no value", () => {
+    expect(() => parseCcx(["--think"])).toThrow(/--think/);
+  });
 });

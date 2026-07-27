@@ -8,7 +8,10 @@ import { parseHostArgv, hostOptsFrom, runHostMain } from "../../src/cli/hostMain
 import type { AgentsRow } from "../../src/fleet/project.js";
 
 /** Every dispatch target throws by default, so a test that reaches the WRONG arm fails by name instead
- *  of quietly doing nothing — and nothing here spawns a process, opens a session or runs git. */
+ *  of quietly doing nothing — and nothing here spawns a process, opens a session or runs git.
+ *  `isTTY` alone defaults to a plain `() => false` rather than a throw: it is a harmless query the run
+ *  arm always calls before deciding fg-refuse vs. runForegroundImpl, so throwing there would make every
+ *  OTHER "run" test that doesn't care about it fail for an unrelated reason. */
 function deps(over: Partial<MainDeps> = {}): MainDeps {
   return {
     runHostMain: async () => { throw new Error("runHostMain must not run"); },
@@ -18,6 +21,10 @@ function deps(over: Partial<MainDeps> = {}): MainDeps {
     stopSession: async () => { throw new Error("stopSession must not run"); },
     rmSession: async () => { throw new Error("rmSession must not run"); },
     fleetGc: async () => { throw new Error("fleetGc must not run"); },
+    runChatClient: async () => { throw new Error("runChatClient must not run"); },
+    makeHost: () => { throw new Error("makeHost must not run"); },
+    runOnce: async () => { throw new Error("runOnce must not run"); },
+    isTTY: () => false,
     ...over,
   };
 }
@@ -237,12 +244,65 @@ describe("main — run", () => {
     expect(value).toBe(1);
     expect(err.join("\n")).toContain("not a git repository");
   });
-  it("refuses a foreground run WITHOUT first creating its worktree", async () => {
-    // The refusal must come before any side effect: creating the checkout and the branch for a command
-    // we then decline leaves an orphan worktree nobody has a row for, so `ccx rm` can never reach it.
-    // ensureWorktree throws here, so a value of 2 (rather than 1) is what proves it was never called.
-    const { value } = await captureLog(() => main(["--worktree", "wt", "task"], deps()));
+  it("creates the worktree for a FOREGROUND run too — worktree isolation is above the fg/bg split now that this task gives fg a real code path", async () => {
+    // Unlike A1 (where any non-bg run was refused before worktree processing ran at all), the worktree
+    // block now runs unconditionally: ensureWorktree IS called here even with no --bg, and its resolved
+    // path lands in config.cwd before the fg/bg decision is made. isTTY defaults to false (see deps()),
+    // so this still exits 2 afterward — proving the worktree was prepared for a run that was then
+    // refused only for lack of a terminal, not skipped because it was foreground.
+    const seen: string[][] = [];
+    const { value } = await captureLog(() => main(["--worktree", "wt", "task"], deps({
+      ensureWorktree: async (repo, name) => { seen.push([repo, name]); return "/repo/.claude/worktrees/wt"; },
+    })));
+    expect(seen[0]).toEqual([process.cwd(), "wt"]);
     expect(value).toBe(2);
+  });
+});
+
+describe("main — run: foreground (Task 7)", () => {
+  it("-p with a prompt calls runOnce and prints its return, spawning no host and no client", async () => {
+    const { out, value } = await captureLog(() => main(["-p", "hi"], deps({ runOnce: async (inv) => { expect(inv.prompt).toBe("hi"); return "the answer"; } })));
+    expect(value).toBe(0);
+    expect(out).toEqual(["the answer"]);
+  });
+  it("-p with no prompt exits 2 without calling runOnce", async () => {
+    const { err, value } = await captureLog(() => main(["-p"], deps()));
+    expect(value).toBe(2);
+    expect(err.join("\n")).toContain("-p requires a prompt");
+  });
+  it("with isTTY() false, a bare foreground run exits 2 with the terminal message, touching neither makeHost nor runChatClient", async () => {
+    const { err, value } = await captureLog(() => main(["task"], deps({ isTTY: () => false })));
+    expect(value).toBe(2);
+    expect(err.join("\n")).toContain("needs a terminal");
+  });
+  it("with isTTY() true, a bare foreground run reaches runForegroundImpl: makeHost gets {kind:'interactive', detached:false}, runChatClient gets {client:{kind:'loopback'}}", async () => {
+    const hostCalls: any[] = [];
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    const { value } = await captureLog(() => main(["task"], deps({
+      isTTY: () => true,
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(value).toBe(0);
+    expect(hostCalls[0]).toMatchObject({ kind: "interactive", detached: false });
+    expect(clientCalls[0]).toMatchObject({ client: { kind: "loopback" } });
+    expect(clientCalls[0].initialPrompt).toBe("task");
+  });
+  it("--bg still spawns instead of reaching the foreground path, even with isTTY() true", async () => {
+    const { out, value } = await captureLog(() => main(["--bg", "task"], deps({ isTTY: () => true, spawnDetached: () => banner })));
+    expect(value).toBe(0);
+    expect(out).toEqual(["backgrounded · 00000000"]);
+  });
+  it("attach still exits 2 (until Task 8)", async () => {
+    const { err, value } = await captureLog(() => main(["attach", "w1"], deps({ isTTY: () => true })));
+    expect(value).toBe(2);
+    expect(err.join("\n")).toMatch(/attach/);
+  });
+  it("--detachable still exits 2 (until Task 8), even with isTTY() true", async () => {
+    const { err, value } = await captureLog(() => main(["--detachable", "task"], deps({ isTTY: () => true })));
+    expect(value).toBe(2);
+    expect(err.join("\n")).toMatch(/--detachable/);
   });
 });
 

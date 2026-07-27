@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { HarnessConfig } from "../config/types.js";
+import { parseThinkArg } from "../tui/thinkLevels.js";
 
 // NB: `src/cliArgs.ts` is a DIFFERENT parser (the one-shot `cc-harness` grammar) that shares flag names
 // with this one (--model/--permission-mode/--cwd/--resume) — check which grammar you are editing.
@@ -18,6 +19,9 @@ export interface CcxInvocation {
   // Field only for now — the --idle-timeout flag arm below stays the loud rejection until Task 8
   // rewires it to set this (seconds, a human CLI unit; hostOptsFrom converts to ms for SessionHostOpts).
   idleTimeoutSec?: number;
+  // The foreground launch thinking budget (the old `cc-harness-chat --think`) — off|low|medium|high|
+  // xhigh|max or a raw token count; validated at parse time, resolved to a budget in runForegroundImpl.
+  think?: string;
   config: HarnessConfig;
 }
 
@@ -96,6 +100,7 @@ export function parseCcx(argv: string[]): CcxInvocation {
       case "-r": case "--resume": a.config.resume = val(t); break;
       case "--permission-mode": a.config.permissionMode = oneOf("--permission-mode", val(t), PERMISSION_MODES); break;
       case "--settings": a.config.settings = parseSettings(val(t)); break;
+      case "--think": { const v = val(t); if (!parseThinkArg(v)) throw new Error(`--think must be off|low|medium|high|xhigh|max or a token count, got ${JSON.stringify(v)}`); a.think = v; break; }
       default:
         if (t.startsWith("-")) throw new Error(`unknown flag ${t}`);
         if (a.command === "run" && a.prompt === undefined) a.prompt = t;
