@@ -1,41 +1,45 @@
 # Full-Use Manual QA Checklist
 
-The automated suites cover two layers: **component/unit** (real Ink UI, *fake* sessions) and
-**live e2e** (real API, but driving the *lib backend* — `openSession`/`connectDaemon` directly,
-never the rendered UI). This checklist covers the seam neither reaches: **the real rendered TUI +
-real keystrokes + the real model, used the way a person uses it.** Run it by hand in a real
-terminal at each maturity checkpoint.
+The automated suites cover three layers: **unit** (`test/unit`, DI fakes, no network), **tui**
+(`test/tui`, real Ink components via `ink-testing-library`, still no network), and **live e2e**
+(`test/live` + `test/integration`, real API or a real socket, but driving the library/process
+surface directly — `spawnSync`ing `dist/cli/bin.js`, or calling `openSession`/`SessionHost`
+in-process — never a rendered terminal a person is typing into). This checklist covers the seam
+none of those reach: **the real rendered REPL + real keystrokes + the real model + real detached
+processes, used the way a person uses them.** Run it by hand in a real terminal at each maturity
+checkpoint.
 
 - **Time:** ~25–35 min for the full pass.
 - **Cost:** burns real API credit (it talks to the live model). Keep prompts tiny.
 - **Convention below:** every box is `[ ] type this → expect that`. If a box fails, write down the
   **command, what you saw, and any stderr** under it before moving on — a half-remembered repro is
   worthless next week.
-- **Two product surfaces:** `cc-harness-chat` (the interactive REPL — the primary product) and
-  `cc-harness-console` (the daemon dashboard over a session pool). Part C (resume/replay) is the
-  deepest section by request.
+- **One product surface:** the `ccx` binary. Foreground `ccx` is the interactive REPL (the primary
+  product); `ccx -p "<prompt>"` is one-shot headless; `ccx --bg` / `ccx --detachable` spawn
+  detached sessions; `ccx attach <target>` attaches to a live one; `ccx agents` / `ccx stop` /
+  `ccx rm` / `ccx fleet gc` manage the fleet. There is no separate console/daemon binary — that
+  package was deleted when `ccx` absorbed it.
 
 ---
 
 ## 0. One-time bootstrap (fresh build)
 
-> All commands assume you start from the `CC-to-SDK/` directory. `tui/` depends on the built
-> `cc-harness` (`file:../harness`), so **harness builds first** — out of order, the tui typecheck
-> fails with "Cannot find module 'cc-harness'".
-
 ```bash
 # from CC-to-SDK/
-cd harness && npm install && npm run build && npm run typecheck     # builds harness/dist
-cd ../tui && npm install && npm run build && npm run typecheck       # builds tui/dist (needs harness/dist)
-cd ..                                                                # back to CC-to-SDK/
+cd harness && npm install && npm run build && npm run typecheck
 ```
 
-- [ ] **Harness build is clean** — `npm run build` exits 0, `npm run typecheck` exits 0.
-- [ ] **TUI build is clean** — `tui/dist/chat.js` and `tui/dist/cli.js` both exist after build.
+- [ ] **Build is clean** — `npm run build` exits 0, `npm run typecheck` exits 0.
+- [ ] **The binary exists** — `ls dist/cli/bin.js` prints, no "No such file".
+
+Optionally make the bare `ccx` command available system-wide:
 
 ```bash
-ls tui/dist/chat.js tui/dist/cli.js     # both should print, no "No such file"
+npm link      # optional — makes `ccx` resolve without a path
 ```
+
+> Every command below is written as `ccx …`. If you skipped `npm link`, substitute
+> `node dist/cli/bin.js` for `ccx` everywhere (run from `harness/`, or give the full path).
 
 **Load credentials into this shell** (gitignored, live at `CC-to-SDK/.env`). Every later command in
 this terminal inherits them. Two options:
@@ -46,238 +50,355 @@ this terminal inherits them. Two options:
 - **Metered API:** `ANTHROPIC_API_KEY=…` in `.env`. Bills per-token credits.
 
 ```bash
-set -a; . ./.env; set +a
+set -a; . ../.env; set +a
 test -n "$CLAUDE_CODE_OAUTH_TOKEN$ANTHROPIC_API_KEY" \
   && echo "auth loaded (oauth=${CLAUDE_CODE_OAUTH_TOKEN:+yes} apikey=${ANTHROPIC_API_KEY:+yes})" || echo "NO AUTH"
 ```
 
-- [ ] **Auth loaded** — prints `auth loaded (...)`, not `NO AUTH`. Without it the bins still launch
-  but the first turn errors out on auth.
+- [ ] **Auth loaded** — prints `auth loaded (...)`, not `NO AUTH`. Without it the first turn errors
+  out on auth (the binary still launches).
 
 > Keep this keyed shell open for the whole pass, or re-run the `set -a` line in each new terminal.
-> **Never** echo the full key or paste it anywhere committed.
+> **Never** echo the full key/token or paste it anywhere committed.
 
 ---
 
-## A. `cc-harness-chat` — the interactive REPL
+## A. Foreground `ccx` — the interactive REPL
 
-Run a throwaway working dir so file-edit tests don't touch the repo:
+A plain `ccx` invocation is **both host and client in one process**: an in-process session host plus
+a loopback client talking to it over its own socket — the same wire protocol `ccx attach` uses
+against a detached host. Run a throwaway working dir so file-edit tests don't touch the repo:
 
 ```bash
 mkdir -p /tmp/ccqa && printf 'ORIGINAL\n' > /tmp/ccqa/note.txt
-node tui/dist/chat.js --cwd /tmp/ccqa
+ccx --cwd /tmp/ccqa
 ```
-
-> No-build dev alternative (skips dist): `cd tui && npx tsx src/chat.tsx --cwd /tmp/ccqa`. The
-> fresh-build path above is the faithful one — it exercises the actual shipped artifact.
 
 ### A1. Launch + a basic streamed turn
 
-- [ ] **It renders** — you see a transcript area, a composer input line, and a **status bar** at the
-  bottom showing `model …  mode default` (and `think:…` only if you passed `--think`).
+- [ ] **It renders** — a welcome banner (cwd/model/mode + tips), a transcript area, a composer input
+  line, and a **status bar** at the bottom showing `model …  mode default` (no `--think` flag →
+  no `think:…` segment).
 - [ ] **Streaming works** — type `Say the single word READY and nothing else.` ↵ → the reply streams
-  token-by-token, then settles. Status bar `busy` indicator clears when the turn ends.
-- [ ] **Context indicator updates** — after the turn, the status bar shows a `ctx …%` figure (it
-  refreshes from `getContextUsage` after each turn).
+  token-by-token, then settles. The `⟳ streaming` status-bar marker clears when the turn ends.
+- [ ] **Context indicator updates** — after the turn, the status bar shows a `ctx N%` figure
+  (refreshed from `getContextUsage` after every turn).
 
-### A2. Permission flow (default mode → tool → broker dialog)
+> **Known quirk — read before A2:** the status bar's `mode` label defaults to the string
+> `"default"` purely as a UI placeholder; it does **not** reflect the harness's actual engine
+> default, which is the SDK's `auto` classifier mode (`resolveOptions`'s `DEFAULTS.permissionMode`)
+> unless you pass `--permission-mode` explicitly. Under `auto`, safe edits can go through without a
+> dialog at all — the classifier is deciding, not the label. For a **deterministic** permission-dialog
+> test (A2 below), always launch with `--permission-mode default` explicitly.
+
+### A2. Permission flow (`default` mode → tool → broker dialog)
+
+Relaunch so the mode is unambiguous:
+
+```bash
+ccx --cwd /tmp/ccqa --permission-mode default
+```
 
 - [ ] **Tool triggers an in-REPL permission dialog** — type
   `Edit note.txt: replace ORIGINAL with CHANGED, then say done.` ↵ → before the edit applies, a
-  **PermissionDialog** appears asking to allow the `Edit`.
-- [ ] **Allow applies the change** — choose allow → the turn completes, and:
+  **PermissionDialog** appears asking `Allow Claude to use Edit?` with the file path shown.
+- [ ] **Allow applies the change** — press `1` (or `↑`/`↓` + Enter on "Yes") → the turn completes,
+  and:
   ```bash
   cat /tmp/ccqa/note.txt    # → CHANGED
   ```
-- [ ] **Deny blocks it** — repeat with a second edit and **deny** → the file is unchanged and the
-  model is told the tool was denied (it should not claim success).
+- [ ] **Deny blocks it** — repeat with a second edit and press `3` or `Esc` (both deny) → the file is
+  unchanged and the model is told the tool was denied (it should not claim success).
+- [ ] **"Don't ask again" works** — trigger a third edit and press `2` → it applies, and a follow-up
+  edit in the same session no longer prompts.
 
 ### A3. Permission ladder (Tab) + `/yolo`
 
 - [ ] **Tab cycles the ladder** — press `Tab` and watch the status-bar `mode` field cycle
-  `default → acceptEdits → auto` (colors change per mode). `Tab` is inactive while a dialog or the
-  resume picker is open (the dialog owns input then).
+  `default → acceptEdits → auto` (colors change per mode: green/yellow/cyan). `Tab` only cycles the
+  mode when no dialog, mention popup, or command popup is open — those own `Tab` themselves while
+  active.
 - [ ] **`acceptEdits` stops prompting for edits** — in `acceptEdits`, an edit prompt applies without a
-  dialog.
-- [ ] **`auto` self-heals the model** — cycling to `auto` should, if the current model isn't
-  auto-capable, emit a notice and switch to a supported model (auto is model-gated). Confirm the
-  status bar `model` updates and an auto turn runs without a manual allow for safe ops.
-- [ ] **`/yolo` enables bypass** — type `/yolo` ↵ → mode shows `bypassPermissions`; tools now run
-  ungated. (Bypass is reachable **only** via `/yolo` or `--permission-mode bypassPermissions`, never
-  from the Tab cycle — verify Tab never lands on bypass.)
+  dialog (non-edit tools like `Bash` still route to the broker).
+- [ ] **`auto` self-heals the model** — cycling to `auto` on a non-auto-capable model (e.g. relaunch
+  with `--model claude-haiku-4-5-20251001` first) emits `↻ auto — switched model to … (… doesn't
+  support auto)` and the status-bar `model` updates; on an already auto-capable model (the default,
+  `claude-opus-4-8`) no swap notice appears.
+- [ ] **`/yolo` enables bypass** — type `/yolo` ↵ → mode shows `bypassPermissions` (red); tools now
+  run ungated. **Bypass is off-cycle**: verify Tab, cycled repeatedly, never lands on
+  `bypassPermissions` — it's reachable only via `/yolo` or `--permission-mode bypassPermissions`.
 
 ### A4. Slash commands
 
-Type each and confirm the response line:
+Type each and confirm the response line (the full current set, from `/help`):
 
-- [ ] `/help` → lists every command (`model, compact, context, clear, resume, continue, yolo, think, help`).
-- [ ] `/model` → prints the current model dim. `/model claude-haiku-4-5-20251001` → `model → …` and
-  the status bar `model` updates; the next turn uses it.
-- [ ] `/think` → prints current level. `/think high` → `thinking → high` and status bar shows
-  `think:high`. `/think off` → disables; `/think 12000` → accepts a raw budget. `/think bogus` → a
-  red `unknown level` error, no crash.
+- [ ] `/help` → lists all 12: `model, compact, context, cost, status, clear, resume, continue, yolo,
+  think, mcp, help`.
+- [ ] `/model` (no arg) → prints the current model dim. `/model claude-haiku-4-5-20251001` →
+  `model → …` and the status bar `model` updates; the next turn uses it.
+- [ ] `/think` (no arg) → prints current level. `/think high` → `thinking → high` and status bar
+  shows `think:high`. `/think off` → disables. `/think 12000` → accepts a raw token budget.
+  `/think bogus` → a red `thinking: unknown level "bogus" · try off/low/medium/high/xhigh/max or a
+  number`, no crash.
 - [ ] `/context` → prints `ctx N% · used / max · status`.
-- [ ] `/compact` → prints `✦ compacted X → Y` (or a dim "nothing to compact" if the context is tiny).
+- [ ] `/compact` → prints `✦ compacted X → Y` (or a dim "nothing to compact" if context is tiny).
+- [ ] `/cost` → prints a `Session cost` block: total (or "included in your … plan" on subscription
+  auth), tokens in/out, duration, and a per-model row.
+- [ ] `/status` → prints model / mode / thinking / context% / cwd / session-id in one glance.
 - [ ] `/clear` → wipes the on-screen transcript but **keeps** session context (ask a follow-up that
   references the earlier turn — it should still know).
+- [ ] `/mcp` (no arg) → prints `mcp: no servers` (or a status row per configured server).
 - [ ] `/bogus` → red `Unknown command: /bogus · try /help`, no crash.
 
 ### A5. Input ergonomics
 
-- [ ] **Multi-line** — enter a newline within the composer (per the composer's multiline binding) and
-  submit a two-line prompt; it arrives intact and the turn completes.
-- [ ] **Paste** — paste a multi-line block; it lands as one input without firing a turn per line.
+- [ ] **Multi-line** — end a line with `\` then ↵ to continue on a new line (the trailing `\` is
+  dropped); submit a two-line prompt with a bare ↵ — it arrives intact and the turn completes.
+- [ ] **`@` file mentions** — type `@` → a filesystem popup opens over `cwd`, filtered as you type;
+  `Tab`/`Enter` accepts, `Esc` closes just the popup (not the composer).
+- [ ] **`/` command popup** — type `/` → the same live command catalog pops up inline (not just on
+  submit); arrow keys move the selection, `Tab` completes the name.
+- [ ] **`!` bash mode** — a line starting with `!` borders the composer in magenta and shows
+  `! bash mode — runs locally in cwd (Enter to run)`.
+- [ ] **`#` memory mode** — a line starting with `#` borders the composer in blue and shows
+  `# memory — appends a note to CLAUDE.md (Enter to save)`.
 - [ ] **Esc interrupts a running turn** — start a long turn (`Count slowly from 1 to 50.`) then press
-  `Esc` → the turn is interrupted and the REPL returns to ready.
+  `Esc` (composer empty, no popup) → the turn is interrupted and the REPL returns to ready.
+- [ ] **Ctrl-D on an empty line exits**; **Ctrl-L clears** the screen (keeps session context);
+  **Ctrl-C** interrupts a busy turn, or arms/confirms exit (`Press Ctrl-C again to exit` within 2s)
+  when idle.
 
 ### A6. Launch flags
 
-Quit (`Ctrl-C`) and relaunch with each flag; confirm it takes at launch:
+Quit (`Ctrl-C` twice) and relaunch with each; confirm it takes at launch:
 
 - [ ] `--model claude-haiku-4-5-20251001` → status bar opens on that model.
-- [ ] `--permission-mode acceptEdits` → opens in `acceptEdits`. An unknown value prints a stderr
-  notice and falls back to `default`.
+- [ ] `--permission-mode acceptEdits` → opens in `acceptEdits`.
 - [ ] `--think high` → status bar opens showing `think:high` from the first turn.
+- [ ] `--effort high` → accepted at launch (no visible status-bar effect; verify it doesn't error).
 - [ ] `--cwd /tmp/ccqa` → file ops resolve against that dir (already used above).
+- [ ] `-n my-session-name` → accepted (names the session for `ccx agents`/`stop`/`rm` — see Part C).
+- [ ] `--settings '{"permissions":{"ask":["Bash(*)"]}}'` → accepted; combine with a `Bash` prompt and
+  confirm the dialog still appears in `default`/`auto` mode alike (the ask rule is what summons the
+  broker — this is exercised for real in Part C's attach flow).
+- [ ] **`--resume <id>` together with a prompt is refused** — `ccx --resume <id> "hi"` → exits 2 with
+  `ccx: --resume with a prompt is not supported — resume, then type your prompt` (resume, then type
+  your prompt manually).
 
 ---
 
-## B. `cc-harness-console` — the daemon dashboard
+## B. `ccx -p` — one-shot headless
 
-The console is a **client**; it needs a running daemon. Use **two terminals** (both keyed via the
-`set -a; . ./.env; set +a` line).
-
-**Terminal 1 — start the daemon:**
 ```bash
-node harness/dist/cli.js daemon       # prints: cc-harness daemon listening at <socket>
+ccx -p "Reply with exactly: OK"
+echo "test stdin" | ccx -p "Summarize stdin in 3 words"
 ```
 
-**Terminal 2 — launch the console:**
-```bash
-node tui/dist/cli.js                   # connects to the default daemon socket automatically
-```
-> No-build alt: `cd tui && npm run cli`.
-
-- [ ] **Console renders + daemon is up** — you see a **Pool** (left), a **Detail** pane (right), and a
-  status bar reading `daemon up`. The pool is empty at first.
-- [ ] **`n` spawns a session** — press `n` → a session appears in the pool; status shows `spawned …`.
-  Spawn a second so navigation is testable.
-- [ ] **`j` / `k` (or ↓ / ↑) navigate** — the selection highlight moves; the Detail pane follows.
-- [ ] **`Enter` focuses the input; `Esc` returns to the list** — press `Enter`, type a tiny prompt,
-  submit → it streams into the Detail pane; `Esc` returns focus to the pool.
-- [ ] **`m` cycles model** — status shows `model=…` cycling through the session's supported models.
-- [ ] **`p` cycles permission mode** — cycles `default → acceptEdits → bypassPermissions → plan →
-  dontAsk → auto`; on `auto` it issues a `set_model` to a supported model first (the same self-heal as
-  the REPL).
-- [ ] **`t` cycles thinking budget** — status shows `thinking=off → low → medium → …` (issues the
-  `set_thinking` control op).
-- [ ] **`/` compacts** the selected session → status `compact`.
-- [ ] **`f` forks** the selected session → status `forked → <new id>`; a new row appears.
-- [ ] **`i` interrupts** a running turn on the selected session.
-- [ ] **`P` toggles proactive** — starts/stops the proactive loop; status reflects the state.
-- [ ] **`x` stops a session** — opens a confirm dialog; confirm → the row disappears.
-- [ ] **Attached permission dialog** — submit a prompt to a session in `default` mode that triggers a
-  tool → a **PermissionDialog** appears in the console; allow/deny routes the decision back to that
-  session.
-- [ ] **`q` / `Ctrl-C` quits** the console cleanly (the daemon keeps running).
-
-**Daemon CLI cross-check** (terminal 3, keyed):
-- [ ] `node harness/dist/cli.js ps` → lists the live sessions (id, status, model) the console shows.
-- [ ] `node harness/dist/cli.js top --once` → one-shot snapshot of the pool.
-- [ ] **Shut the daemon down** — `node harness/dist/cli.js daemon stop` → terminal 1 exits; the
-  console status flips to `daemon down`.
+- [ ] One-shot prompt prints the reply and exits 0. No REPL renders (headless — this path never
+  imports Ink/React).
+- [ ] Piped stdin is composed into the prompt.
+- [ ] **`-p` with no prompt is refused** — `ccx -p` → exits 2 with `ccx: -p requires a prompt`.
+- [ ] **Non-TTY foreground is refused** — `echo hi | ccx` (no `-p`, no `--bg`) → exits 2 with
+  `ccx: foreground ccx needs a terminal (use -p or --bg for scripts)`.
 
 ---
 
-## C. Resume & replay (the deep section)
+## C. Background sessions, attach, and the fleet
+
+This is the deepest section by design — it is the newest surface (`ccx --bg` / `--detachable` /
+`attach` / the fleet commands), so give it the most scrutiny.
+
+### C0. Spawn detached + list it
+
+```bash
+ccx --bg -n qa-bg "Reply with exactly: OK"
+```
+
+- [ ] **Banner** — prints exactly `backgrounded · <8 lowercase hex chars>`, e.g.
+  `backgrounded · a1b2c3d4`, and the shell returns immediately (no streaming, no REPL).
+- [ ] **It's listed while working** —
+  ```bash
+  ccx agents --json --all
+  ```
+  → a row for the short id with `state:"working"`, `status:"busy"`, the right `name`/`cwd`.
+- [ ] **It's still listed once done** — poll again after the turn finishes → `state:"done"`,
+  `status:"idle"`. Without `--all`, `ccx agents` hides terminal rows (a live view, not a log):
+  ```bash
+  ccx agents          # the finished qa-bg row is gone
+  ccx agents --all    # it's back
+  ```
+
+### C1. Park a permission, attach, answer it (the deep flow)
+
+```bash
+ccx --bg --permission-mode default --settings '{"permissions":{"ask":["Bash(*)"]}}' \
+  -n acc5 "Run the bash command: echo PARKED-OK. Use the Bash tool."
+```
+
+- [ ] **It blocks** — poll `ccx agents --json --all` until the row reads `state:"blocked"`
+  (`status:"idle"` — a park is not a failure).
+- [ ] **Attach replays + shows the parked dialog** —
+  ```bash
+  ccx attach acc5     # or the short id from the banner
+  ```
+  → the prior transcript replays, then the live turn follows, then a **PermissionDialog** appears
+  asking to run `Bash` with `echo PARKED-OK` visible as the target.
+- [ ] **Answering resumes the session** — press `1` (allow) → the turn completes to `done` in the
+  attached view.
+
+### C2. Ctrl-Z detaches without denying
+
+Repeat C1 (a fresh `--bg` + park), attach, and **before answering**, press `Ctrl-Z`:
+
+- [ ] You're back at the shell with `detached — session <short> keeps running · reattach: ccx attach
+  <short>` on stderr — no deny was sent.
+- [ ] `ccx agents --json --all` still shows the row **`blocked`** (the pending permission is
+  untouched).
+- [ ] Re-attach (`ccx attach <short>`) → the same dialog is still there. Answer allow → the session
+  runs to `done`.
+
+### C3. `--detachable` — spawn then auto-attach
+
+```bash
+ccx --detachable -n qa-det "Reply with exactly: OK"
+```
+
+- [ ] Prints the `backgrounded · <short>` banner, then **immediately** attaches in the same
+  terminal (no second command needed) and the prompt you gave streams in.
+- [ ] `Ctrl-Z` here detaches (this session is attached, not loopback) — `ccx agents` still shows it
+  running; `ccx attach qa-det` reattaches.
+
+### C4. `--idle-timeout` (only valid with `--detachable`)
+
+```bash
+ccx --detachable --idle-timeout 10 -n qa-idle
+```
+
+- [ ] Detach immediately (`Ctrl-Z`) and leave it unattached for >10s → `ccx agents --all` shows the
+  row reach a terminal state (`done`) — the idle reaper ended it because nobody was attached.
+- [ ] **`--idle-timeout` without `--detachable` is refused** — `ccx --bg --idle-timeout 10 "hi"` →
+  exits 2 with `ccx: --idle-timeout only applies to --detachable sessions`.
+- [ ] **`--detachable` and `--bg` together are refused** — exits 2 with
+  `ccx: --detachable and --bg are mutually exclusive`.
+
+### C5. A default foreground session is attachable; its terminal owns its life
+
+**Terminal 1:**
+```bash
+ccx --cwd /tmp/ccqa -n qa-fg
+```
+**Terminal 2 (same keyed shell):**
+```bash
+ccx attach qa-fg
+```
+- [ ] Attach succeeds against a **plain foreground** `ccx` (it's a real host, just in-process +
+  loopback for its own client). Send a prompt from either terminal → both terminals see the turn
+  render.
+- [ ] **Closing terminal 1 ends the session** — close terminal 1 (or `Ctrl-D`/kill the shell, not
+  `Ctrl-C` on the REPL) → the host receives the terminal-gone signal, finalizes, and
+  `ccx agents --all` shows the row `done`. Terminal 2's attach ends too (the host is gone).
+
+### C6. Fleet lifecycle
+
+- [ ] `ccx stop <short>` — ends the turn but leaves the session resumable by its session id; running
+  it twice is silent/idempotent.
+- [ ] `ccx rm <short>` — deregisters the row; `ccx agents --all` no longer lists it. Idempotent on an
+  already-removed target.
+- [ ] **Missing target is refused, not silently a no-op** — `ccx stop` / `ccx rm` with no argument →
+  exit 2 with `ccx: stop requires a session: a short id, a session uuid or a name` (same for `rm`).
+- [ ] `ccx fleet gc` → prints `removed <path>` for each stale socket file it clears (safe to run with
+  nothing stale — prints nothing).
+- [ ] `ccx agents --cwd /tmp/ccqa` → filters the listing to sessions rooted at that directory.
+- [ ] `ccx attach <a-done-or-stopped-session>` → refuses with
+  `ccx: session <short> has ended (<state>) — resume it with: ccx --resume <uuid>` (a terminal
+  session isn't attachable — resume it instead, per D below).
+
+---
+
+## D. Resume & replay
 
 **How it works (so you know what "correct" looks like):**
 
 - The SDK persists every chat transcript to **`~/.claude/projects/<project-slug>/`**, **scoped by the
-  working directory** (`cwd`). Resume reads from there via `listSessions({dir: cwd})` /
-  `getSessionMessages(id, {dir: cwd})`.
-- **Therefore resume is cwd-scoped.** You can only see/continue sessions that were created in the
-  **same `--cwd`**. Launch from a different dir and the picker is empty and `--continue` says "No
-  sessions to continue here." This is the #1 gotcha — test it on purpose (C4).
+  working directory** (`cwd`). Resume reads from there via `listSessions()` / `getSessionMessages(id)`.
+- **Therefore resume is cwd-scoped.** You can only see/continue sessions created in the **same
+  `--cwd`**. Launch from a different dir and `/resume`'s picker is empty and `/continue` says "No
+  sessions to continue here." This is the #1 gotcha — test it on purpose (D4).
 - `resumeInto(id)` **fetches the transcript first, then swaps**: if history exists it swaps to the
-  resumed session and re-renders the prior transcript via `replayLines`; if the fetch is empty or
-  throws, it **does not swap** — it prints a warning and you stay where you are. (No dropping into a
-  broken resume.)
-- `replayLines` caps to the **last 200 messages** with an elision marker, indents nested
-  (subagent) messages, and frames the block with a `resumed: <label> · N turns · <time>` header and a
+  resumed session and re-renders the prior transcript via `replayLines`; if the fetch is empty, it
+  **does not swap** — it prints a warning and you stay where you are.
+- `replayLines` caps to the **last 200 messages** with an elision marker, indents nested (subagent)
+  messages, and frames the block with a `resumed: <label> · N turns · <time>` header and a
   `resumed here · live` divider. `tool_result` blocks are skipped (only prompts + replies render).
 
-### C0. Seed a session to resume
+### D0. Seed a session to resume
 
 ```bash
-mkdir -p /tmp/ccqa-resume
-node tui/dist/chat.js --cwd /tmp/ccqa-resume
+ccx --cwd /tmp/ccqa-resume
 ```
 In that REPL, run **3 distinct turns** so the transcript is recognizable, e.g.:
 - `My favorite number is 42. Remember it.` ↵
 - `Name three primes.` ↵
 - `What was my favorite number?` ↵  (it should answer 42)
 
-Then quit with `Ctrl-C`.
+Quit with `Ctrl-C` `Ctrl-C`.
 
-- [ ] **It persisted** — confirm a transcript file now exists for this project:
+- [ ] **It persisted** — confirm a transcript exists for this project:
   ```bash
   ls -t ~/.claude/projects/*/  | head        # newest jsonl is your session
   ```
 
-### C1. `/continue` (most-recent, same session)
+### D1. `/continue` (most-recent, same session)
 
 ```bash
-node tui/dist/chat.js --cwd /tmp/ccqa-resume
+ccx --cwd /tmp/ccqa-resume
 ```
-- [ ] Type `/continue` ↵ → the prior 3 turns **replay** into the transcript, headed by
-  `resumed: … · 3 turns · …` and followed by a `resumed here · live` divider.
-- [ ] **Context truly carried** — type `What was my favorite number?` ↵ → it answers **42** (proving
-  the SDK session context resumed, not just the on-screen text).
+- [ ] Type `/continue` ↵ → the prior 3 turns **replay**, headed by `resumed: … · 3 turns · …` and
+  followed by a `resumed here · live` divider.
+- [ ] **Context truly carried** — `What was my favorite number?` ↵ → answers **42** (proving the SDK
+  session context resumed, not just the on-screen text).
 
-### C2. `--continue` / `-c` at launch
+### D2. `--resume <id>` at launch
 
 ```bash
-node tui/dist/chat.js --cwd /tmp/ccqa-resume --continue
+ccx --cwd /tmp/ccqa-resume --resume <paste-id-from-D0>
 ```
-- [ ] The most-recent session **auto-replays on mount** (no `/continue` needed). Header + divider
-  present. `-c` is an accepted alias — verify it behaves identically.
+- [ ] That specific session **auto-replays on mount** (no `/continue` needed). Header + divider
+  present. (There is no separate `--continue` launch flag — `/continue` is REPL-only; grab the id
+  from `ls ~/.claude/projects/…` or the `/resume` picker below.)
 
-### C3. `/resume` picker + `--resume <id>`
+### D3. `/resume` picker
 
 ```bash
-node tui/dist/chat.js --cwd /tmp/ccqa-resume
+ccx --cwd /tmp/ccqa-resume
 ```
 - [ ] Type `/resume` ↵ → a **SessionPicker** lists prior sessions (most-recent first). Pick one →
   it replays exactly as `/continue` did.
 - [ ] **Cancel works** — reopen `/resume`, cancel → returns to the composer, no swap, current session
   intact.
-- [ ] **Grab an id from the picker** (the rows show session ids), quit, then relaunch targeting it:
-  ```bash
-  node tui/dist/chat.js --cwd /tmp/ccqa-resume --resume <paste-id>
-  ```
-  → that **specific** session replays on mount.
 
-### C4. The cwd-scoping gotcha (negative test)
+### D4. The cwd-scoping gotcha (negative test)
 
 ```bash
-node tui/dist/chat.js --cwd /tmp/ccqa          # a DIFFERENT dir than the seeded one
+ccx --cwd /tmp/ccqa          # a DIFFERENT dir than the seeded one
 ```
 - [ ] `/resume` → picker is **empty** (no sessions for this project).
 - [ ] `/continue` → prints a dim **"No sessions to continue here"**, and you stay in the current
   fresh session (no crash, no swap).
 
-### C5. Broken / empty resume (negative test)
+### D5. Broken / empty resume (negative test)
 
-- [ ] `node tui/dist/chat.js --cwd /tmp/ccqa-resume --resume not-a-real-id` → on mount it prints
-  `⚠ couldn't resume not-a-r… — no history found` and **stays in a working fresh session** (the
-  fetch-first-then-swap guarantee — it must not drop you into a dead session).
+- [ ] `ccx --cwd /tmp/ccqa-resume --resume not-a-real-id` → on mount prints
+  `⚠ couldn't resume not-a-r… — no history found` and **stays in a working fresh session**
+  (fetch-first-then-swap — it must not drop you into a dead session).
+- [ ] **Mid-turn resume is refused** — start a long turn, then try `/resume` or `/continue` (both
+  dispatch through the same guard) → `cannot resume mid-turn — wait for the turn to finish or press
+  Esc to interrupt`.
 
-### C6. Replay fidelity spot-checks
+### D6. Replay fidelity spot-checks
 
-- [ ] **Long transcript elision** — resume a session with many turns (or lower expectations: just
-  confirm the mechanism) → if it exceeds 200 messages, an elision marker shows and only the tail
-  renders.
+- [ ] **Long transcript elision** — resume a session with many turns (or just confirm the mechanism)
+  → past 200 messages, an elision marker shows and only the tail renders.
 - [ ] **Edit/Write diffs render** — if the resumed session contained an `Edit`/`Write`, the replayed
   lines show the diff body (shared with live rendering), not raw tool JSON.
 - [ ] **`/clear` then resume** — `/clear` wipes the screen; a subsequent `/resume` still replays the
@@ -285,32 +406,26 @@ node tui/dist/chat.js --cwd /tmp/ccqa          # a DIFFERENT dir than the seeded
 
 ---
 
-## D. Optional — headless lib sanity (one-shot)
-
-Confirms the backend the TUIs sit on still answers outside the UI:
-
-```bash
-node harness/dist/cli.js "Reply with exactly: OK"        # one-shot, bypass mode, streams to stdout
-echo "test stdin" | node harness/dist/cli.js "Summarize stdin in 3 words"
-```
-- [ ] One-shot prompt streams a reply and exits 0.
-- [ ] Piped stdin is composed into the prompt.
-
----
-
 ## E. Complementary automated layer (reference)
 
-This manual pass validates *feel* and the TTY-only behaviors (paste, raw-mode, launch flags). The
-repeatable regression net is the **gated live suite** — run it keyed when you want machine-checked
-proof the levers still work against the real API:
+This manual pass validates *feel* and the TTY-only behaviors (paste, raw-mode, launch flags, real
+detached processes). The repeatable regression net is the **gated live suite** — run it keyed when
+you want machine-checked proof the levers still work against the real API:
 
 ```bash
-set -a; . ./.env; set +a
-cd tui && npm run test:live        # tui live e2e (chat, console, auto-mode, thinking, resume-replay)
-cd ../harness && npm run test:live # harness live e2e (daemon, sessions, hooks, compaction, …)
+set -a; . ../.env; set +a
+cd harness
+npm run test:unit          # DI fakes, no network — the fast correctness gate
+npm run test:tui           # real Ink components via ink-testing-library, still keyless
+npm run test:integration   # real sockets, real SessionHost, fake SDK session
+npm run test:contract      # shells out to a real python3 filter
+npm run test:live          # real API/OAuth — the process + lib surface, not a rendered terminal
 ```
-Without a key/token these suites **skip cleanly** (they gate on `ANTHROPIC_API_KEY` **or** `CLAUDE_CODE_OAUTH_TOKEN`). Note: these drive the
-lib backend, not the rendered UI — that UI↔model seam is exactly what *this* manual checklist covers.
+
+Without a key/token, `test:live` skips cleanly (gates on `ANTHROPIC_API_KEY` **or**
+`CLAUDE_CODE_OAUTH_TOKEN`). Note: `test:live` drives `dist/cli/bin.js` via `spawnSync`/the lib API
+directly — it never renders the REPL or presses a key. That UI↔model↔process seam is exactly what
+*this* manual checklist covers.
 
 ---
 
@@ -318,17 +433,19 @@ lib backend, not the rendered UI — that UI↔model seam is exactly what *this*
 
 | Symptom | Likely cause / fix |
 |---|---|
-| `Cannot find module 'cc-harness'` on tui build | Build `harness/` **before** `tui/` (§0 order). |
-| First turn errors on auth | Key/token not loaded — re-run `set -a; . ./.env; set +a`. If using OAuth, ensure `ANTHROPIC_API_KEY` is commented in `.env` (it shadows the token). |
-| `/resume` empty though you have sessions | Wrong `--cwd` — resume is cwd-scoped (§C4). Launch from the original dir. |
-| Console shows `daemon down` | No daemon running — start `node harness/dist/cli.js daemon` first. |
-| `auto` mode never runs ungated for safe ops | Model isn't auto-capable and the self-heal didn't fire — check the status-bar `model` actually changed when you entered `auto`. |
-| Garbled rendering | Terminal too narrow, or not a real TTY (don't pipe the bins). Use a full terminal window. |
+| First turn errors on auth | Key/token not loaded — re-run `set -a; . ../.env; set +a`. If using OAuth, ensure `ANTHROPIC_API_KEY` is commented in `.env` (it shadows the token). |
+| Status bar shows `mode default` but tools aren't prompting | That's the known quirk (see A1) — the label defaults to `"default"` but the harness's real engine default is `auto`. Pass `--permission-mode default` explicitly for deterministic dialog behavior. |
+| `/resume` / `/continue` empty though you have sessions | Wrong `--cwd` — resume is cwd-scoped (§D4). Launch from the original dir. |
+| `ccx attach <id>` fails "no host listening" | The row is stale or the process died — check `ccx agents --all` for its actual state; `ccx fleet gc` clears dead sockets. |
+| `ccx attach <id>` says "has ended" | The session reached a terminal state (`done`/`error`/`stopped`) — resume it instead: `ccx --resume <uuid>`. |
+| `auto` mode never self-heals the model | The model was already auto-capable (no swap needed) — check the status-bar `model`; the notice only fires on an actual swap. |
+| Garbled rendering | Terminal too narrow, or not a real TTY (don't pipe `ccx`). Use a full terminal window. |
 
 ## Cleanup
 
 ```bash
-node harness/dist/cli.js daemon stop 2>/dev/null   # if a daemon is still up
+ccx fleet gc                                  # clears stale sockets
+for s in qa-bg qa-det qa-idle qa-fg acc5; do ccx rm "$s" 2>/dev/null; done
 rm -rf /tmp/ccqa /tmp/ccqa-resume
 # Persisted transcripts under ~/.claude/projects/ are harmless to leave; remove the test project
 # slugs by hand if you want a clean slate.
