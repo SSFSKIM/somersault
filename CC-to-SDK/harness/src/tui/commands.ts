@@ -1,0 +1,156 @@
+// tui/src/commands.ts — pure slash-command surface: parse + table + result-line formatters. No React/SDK side effects.
+import type { CompactOutcome, ContextUsageSummary } from "../index.js";
+import type { RenderLine } from "./render.js";
+import { THINK_LEVELS } from "./thinkLevels.js";
+import type { CommandEntry } from "./commandComplete.js";
+import { formatElapsed } from "./spinner.js";
+
+export interface ParsedCommand { name: string; args: string }
+
+/** Leading "/" → {name, args}; non-slash or bare "/" → null. */
+export function parseCommand(input: string): ParsedCommand | null {
+  const t = input.trim();
+  if (!t.startsWith("/")) return null;
+  const body = t.slice(1).trim();
+  if (!body) return null;                                       // bare "/" is not a command
+  const sp = body.indexOf(" ");
+  return sp < 0 ? { name: body, args: "" } : { name: body.slice(0, sp), args: body.slice(sp + 1).trim() };
+}
+
+export const COMMANDS: { name: string; summary: string }[] = [
+  { name: "model", summary: "<name> — switch model (no arg shows current)" },
+  { name: "compact", summary: "compact the conversation context" },
+  { name: "context", summary: "show context-window usage" },
+  { name: "cost", summary: "show session cost + token usage" },
+  { name: "status", summary: "show model · mode · context · session" },
+  { name: "clear", summary: "clear the screen (session context kept)" },
+  { name: "resume", summary: "resume a prior session" },
+  { name: "continue", summary: "resume the most-recent session" },
+  { name: "yolo", summary: "enable bypassPermissions (ungated tool access)" },
+  { name: "think", summary: "<off|low|medium|high|xhigh|max|N> — set thinking budget (no arg shows current)" },
+  { name: "mcp", summary: "[reconnect <name> | toggle <name> on|off] — MCP server status / controls" },
+  { name: "help", summary: "list commands" },
+];
+
+/** The 9 local engine-driving commands as CommandEntry[] (the palette merges these with the live catalog). */
+export const LOCAL_COMMAND_ENTRIES: CommandEntry[] = COMMANDS.map((c) => ({ name: c.name, description: c.summary, source: "local" }));
+/** Local command names — dispatch routes these to the engine switch (never submit-as-prompt). */
+export const LOCAL_NAMES = new Set(COMMANDS.map((c) => c.name));
+
+const k = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : `${n}`);   // 31000→"31k", 18500→"18.5k"
+
+export function formatHelp(): RenderLine[] {
+  return [{ text: "commands:", dim: true }, ...COMMANDS.map((c) => ({ text: `  /${c.name}  ${c.summary}`, dim: true }))];
+}
+export function formatModel(next?: string, current?: string): RenderLine[] {
+  return next ? [{ text: `model → ${next}` }] : [{ text: `model: ${current ?? "(default)"}`, dim: true }];
+}
+export function formatThink(next?: string, current?: string): RenderLine[] {
+  return next ? [{ text: `thinking → ${next}` }] : [{ text: `thinking: ${current ?? "default"}`, dim: true }];
+}
+export function formatCompact(o: CompactOutcome): RenderLine[] {
+  return o.ok ? [{ text: `✦ compacted ${k(o.preTokens ?? 0)} → ${k(o.postTokens ?? 0)}` }]
+              : [{ text: `compact: ${o.error ?? "nothing to compact"}`, dim: true }];
+}
+export function formatContext(s: ContextUsageSummary): RenderLine[] {
+  return [{ text: `ctx ${s.percentUsed}% · ${k(s.tokensUsed)} / ${k(s.maxTokens)} · ${s.status}`, dim: true }];
+}
+
+/** The session-cumulative usage shape from Session.usage() (SDKControlGetUsageResponse subset). */
+export interface SessionUsage {
+  session?: { total_cost_usd?: number; total_duration_ms?: number; model_usage?: Record<string, { inputTokens?: number; outputTokens?: number; costUSD?: number }> };
+  subscription_type?: string | null;
+}
+const sum = (ms: Record<string, { inputTokens?: number; outputTokens?: number }>, key: "inputTokens" | "outputTokens"): number =>
+  Object.values(ms).reduce((a, m) => a + (m[key] ?? 0), 0);
+
+/** `/cost` — total cost (or "included in <plan>" on subscription auth), tokens, duration, per-model rows. */
+export function formatCost(u: SessionUsage): RenderLine[] {
+  const s = u.session ?? {}; const models = s.model_usage ?? {};
+  const cost = s.total_cost_usd ?? 0;
+  const costText = cost > 0 ? `$${cost.toFixed(4)}` : u.subscription_type ? `included in your ${u.subscription_type} plan` : "$0.00";
+  const out: RenderLine[] = [
+    { text: "Session cost", bold: true },
+    { text: `  total      ${costText}` },
+    { text: `  tokens     ${k(sum(models, "inputTokens"))} in · ${k(sum(models, "outputTokens"))} out`, dim: true },
+    { text: `  duration   ${formatElapsed(s.total_duration_ms ?? 0)}`, dim: true },
+  ];
+  for (const [name, m] of Object.entries(models))
+    out.push({ text: `  ${name}  ${k(m.inputTokens ?? 0)} in · ${k(m.outputTokens ?? 0)} out${m.costUSD ? ` · $${m.costUSD.toFixed(4)}` : ""}`, dim: true });
+  return out;
+}
+
+/** `/status` — a one-glance snapshot of the live session (purely local state, no SDK call). */
+export function formatStatus(s: { model?: string; mode: string; thinkLevel?: string; ctxPct?: number; sessionId?: string; cwd?: string }): RenderLine[] {
+  const out: RenderLine[] = [
+    { text: "Status", bold: true },
+    { text: `  model      ${s.model ?? "(default)"}`, dim: true },
+    { text: `  mode       ${s.mode}`, dim: true },
+    { text: `  thinking   ${s.thinkLevel ?? "default"}`, dim: true },
+  ];
+  if (s.ctxPct != null) out.push({ text: `  context    ${s.ctxPct}% used`, dim: true });
+  if (s.cwd) out.push({ text: `  cwd        ${s.cwd}`, dim: true });
+  if (s.sessionId) out.push({ text: `  session    ${s.sessionId.slice(0, 8)}`, dim: true });
+  return out;
+}
+export function formatUnknown(name: string): RenderLine[] {
+  return [{ text: `Unknown command: /${name} · try /help`, color: "red" }];
+}
+
+// ---- /mcp (W3.5) ----
+export type McpAction = { kind: "status" } | { kind: "reconnect"; name: string } | { kind: "toggle"; name: string; enabled: boolean };
+
+/** `/mcp` args → an action, or null for malformed input (caller prints usage). */
+export function parseMcpArgs(args: string): McpAction | null {
+  const parts = args.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { kind: "status" };
+  if (parts[0] === "reconnect" && parts[1]) return { kind: "reconnect", name: parts[1] };
+  if (parts[0] === "toggle" && parts[1] && (parts[2] === "on" || parts[2] === "off")) return { kind: "toggle", name: parts[1], enabled: parts[2] === "on" };
+  return null;
+}
+
+/** Status rows from Session.mcpServerStatus() ([{name, status}, …] — shape tolerated loosely). */
+export function formatMcpStatus(servers: unknown[]): RenderLine[] {
+  if (!servers.length) return [{ text: "mcp: no servers", dim: true }];
+  return [{ text: "MCP servers", bold: true }, ...servers.map((s) => {
+    const r = s as { name?: string; status?: string; state?: string };
+    return { text: `  ${r.name ?? "?"}  ${r.status ?? r.state ?? "?"}`, dim: true };
+  })];
+}
+export function formatMcpUsage(): RenderLine[] {
+  return [{ text: "usage: /mcp · /mcp reconnect <name> · /mcp toggle <name> on|off (advisory — a tool call can revive a disabled server)", dim: true }];
+}
+
+export type InitialResume = { kind: "id"; id: string } | { kind: "continue" };
+
+/** The session id with the greatest lastModified, or undefined for an empty list. */
+export function pickMostRecent(sessions: { sessionId: string; lastModified: number }[]): string | undefined {
+  let best: { sessionId: string; lastModified: number } | undefined;
+  for (const s of sessions) if (!best || s.lastModified > best.lastModified) best = s;
+  return best?.sessionId;
+}
+
+/** CLI args → an initial-resume intent: `--resume <id>` / `--continue` / `-c`. */
+export function parseResumeIntent(args: string[]): InitialResume | undefined {
+  const ri = args.indexOf("--resume");
+  if (ri >= 0 && args[ri + 1]) return { kind: "id", id: args[ri + 1] };
+  if (args.includes("--continue") || args.includes("-c")) return { kind: "continue" };
+  return undefined;
+}
+
+export const PERMISSION_MODES = ["default", "acceptEdits", "auto", "bypassPermissions", "plan", "dontAsk"] as const;
+export type LaunchMode = typeof PERMISSION_MODES[number];
+
+/** `--permission-mode <m>` → a valid SDK permission mode, or "default" if absent/unknown. */
+export function parseLaunchMode(args: string[]): LaunchMode {
+  const i = args.indexOf("--permission-mode");
+  const m = i >= 0 ? args[i + 1] : undefined;
+  return m && (PERMISSION_MODES as readonly string[]).includes(m) ? (m as LaunchMode) : "default";
+}
+
+/** `--think <level>` → a valid level name (off|low|medium|high|xhigh|max), or undefined if absent/unknown. */
+export function parseLaunchThink(args: string[]): string | undefined {
+  const i = args.indexOf("--think");
+  const v = i >= 0 ? args[i + 1] : undefined;
+  return v && (THINK_LEVELS as readonly string[]).includes(v) ? v : undefined;
+}

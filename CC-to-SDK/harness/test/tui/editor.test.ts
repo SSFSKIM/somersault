@@ -1,0 +1,243 @@
+// tui/test/editor.test.ts — pure editor-reducer units. Probe 17d7116: a paste arrives as one `input` with
+// embedded \n; submit = a lone key.return; `\`+Enter = continuation.
+import { describe, it, expect } from "vitest";
+import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, inputMode, type EditorState, type KeyFlags } from "../../src/tui/editor.js";
+import type { CommandEntry } from "../../src/tui/commandComplete.js";
+
+const type = (s: EditorState, text: string): EditorState => applyKey(s, text, {}).state;
+const press = (s: EditorState, key: KeyFlags): EditorState => applyKey(s, "", key).state;
+const text = (s: EditorState): string => s.lines.join("\n");
+
+describe("editor core", () => {
+  it("inserts characters and tracks the cursor", () => {
+    let s = initialEditorState();
+    s = type(s, "h"); s = type(s, "i");
+    expect(text(s)).toBe("hi");
+    expect(s.cursor).toEqual({ row: 0, col: 2 });
+  });
+  it("inserts a multi-line paste as one input, splitting on \\n", () => {
+    let s = initialEditorState();
+    s = type(s, "a\nb\nc");                       // probe: a paste is a single input call
+    expect(s.lines).toEqual(["a", "b", "c"]);
+    expect(s.cursor).toEqual({ row: 2, col: 1 });
+  });
+  it("strips bracketed-paste markers before inserting", () => {
+    expect(stripPasteMarkers("\x1b[200~hi\x1b[201~")).toBe("hi");
+    expect(stripPasteMarkers("[200~hi[201~")).toBe("hi");          // ESC-stripped leak (probe case D)
+    let s = type(initialEditorState(), "\x1b[200~x\x1b[201~");
+    expect(text(s)).toBe("x");
+  });
+  it("backspace deletes left and joins lines at column 0", () => {
+    let s = type(initialEditorState(), "ab");
+    s = press(s, { backspace: true });
+    expect(text(s)).toBe("a");
+    s = initialEditorState(); s = type(s, "a\nb");                  // cursor at {1,1}
+    s = press(s, { leftArrow: true });                             // cursor {1,0}
+    s = press(s, { backspace: true });                             // join: "ab"
+    expect(s.lines).toEqual(["ab"]);
+    expect(s.cursor).toEqual({ row: 0, col: 1 });
+  });
+  it("Enter submits the joined buffer and resets, recording history", () => {
+    let s = type(initialEditorState(), "hello");
+    const r = applyKey(s, "", { return: true });
+    expect(r.submit).toBe("hello");
+    expect(r.state.lines).toEqual([""]);                            // reset
+    expect(r.state.history).toEqual(["hello"]);                     // recorded
+  });
+  it("ignores a whitespace-only submit", () => {
+    const r = applyKey(type(initialEditorState(), "   "), "", { return: true });
+    expect(r.submit).toBeUndefined();
+  });
+  it("`\\`+Enter inserts a newline (continuation) instead of submitting", () => {
+    let s = type(initialEditorState(), "foo\\");                    // line ends with a backslash
+    const r = applyKey(s, "", { return: true });
+    expect(r.submit).toBeUndefined();
+    expect(r.state.lines).toEqual(["foo", ""]);
+    expect(r.state.cursor).toEqual({ row: 1, col: 0 });
+  });
+  it("Left/Right move the cursor, wrapping across lines", () => {
+    let s = type(initialEditorState(), "a\nb");                     // cursor {1,1}
+    s = press(s, { leftArrow: true });                             // {1,0}
+    s = press(s, { leftArrow: true });                             // wrap to {0,1}
+    expect(s.cursor).toEqual({ row: 0, col: 1 });
+    s = press(s, { rightArrow: true });                            // {1,0}
+    expect(s.cursor).toEqual({ row: 1, col: 0 });
+  });
+});
+
+describe("editor history", () => {
+  const withHistory = (h: string[]) => initialEditorState(h);
+  it("Up on the first line recalls the previous prompt; Down returns toward the draft", () => {
+    let s = withHistory(["first", "second"]);
+    s = type(s, "draft");                                          // a live draft
+    s = press(s, { upArrow: true });                              // newest
+    expect(text(s)).toBe("second");
+    s = press(s, { upArrow: true });                              // older
+    expect(text(s)).toBe("first");
+    s = press(s, { upArrow: true });                              // clamp at oldest
+    expect(text(s)).toBe("first");
+    s = press(s, { downArrow: true });                            // newer
+    expect(text(s)).toBe("second");
+    s = press(s, { downArrow: true });                            // past newest → restore draft
+    expect(text(s)).toBe("draft");
+  });
+  it("does not recall history when the cursor is on an interior line (moves the cursor instead)", () => {
+    let s = type(initialEditorState(), "a\nb\nc");                 // 3 lines, cursor {2,1}
+    s = press(s, { upArrow: true });                              // interior move, not history
+    expect(s.cursor.row).toBe(1);
+    expect(text(s)).toBe("a\nb\nc");
+  });
+});
+
+describe("editor @-mention", () => {
+  const open = () => {                                             // open a mention with two candidate files
+    let s = type(initialEditorState(), "@");
+    s = setMentionFiles(s, ["src/app.ts", "src/util/fs.ts"]);
+    return s;
+  };
+  it("opens a mention on '@' at a word boundary and lists files", () => {
+    const s = open();
+    expect(s.mention).not.toBeNull();
+    expect(s.mention!.items.length).toBe(2);
+  });
+  it("does NOT open a mention when '@' follows a non-space character", () => {
+    let s = type(initialEditorState(), "a");
+    s = type(s, "@");
+    expect(s.mention).toBeNull();
+  });
+  it("filters the candidate list as the query is typed", () => {
+    let s = open();
+    s = type(s, "fs");                                             // query "fs"
+    expect(s.mention!.query).toBe("fs");
+    expect(s.mention!.items[0].path).toBe("src/util/fs.ts");
+  });
+  it("Up/Down move the highlight; Enter accepts the highlighted path and closes", () => {
+    let s = open();
+    s = press(s, { downArrow: true });                            // highlight index 1
+    expect(s.mention!.index).toBe(1);
+    const r = applyKey(s, "", { return: true });                 // accept (not submit)
+    expect(r.submit).toBeUndefined();
+    expect(r.state.mention).toBeNull();
+    expect(text(r.state)).toBe("@src/util/fs.ts ");               // inserted token + trailing space
+  });
+  it("Esc closes the mention but keeps the typed text", () => {
+    let s = open(); s = type(s, "ap");
+    s = press(s, { escape: true });
+    expect(s.mention).toBeNull();
+    expect(text(s)).toBe("@ap");
+  });
+  it("backspacing past the '@' anchor closes the mention", () => {
+    let s = open();                                               // buffer "@", cursor after @
+    s = press(s, { backspace: true });                           // deletes the '@'
+    expect(s.mention).toBeNull();
+    expect(text(s)).toBe("");
+  });
+});
+
+describe("editor / command palette", () => {
+  const CAT: CommandEntry[] = [
+    { name: "brainstorming", description: "plan a feature", source: "catalog" },
+    { name: "review", description: "review code", source: "catalog" },
+    { name: "model", description: "switch model", source: "local" },
+  ];
+  const open = () => setCommandCatalog(type(initialEditorState(), "/"), CAT);
+  it("opens a command popup on a buffer-leading '/' and lists the catalog", () => {
+    const s = open();
+    expect(s.command).not.toBeNull();
+    expect(s.command!.items.length).toBe(3);
+  });
+  it("does NOT open a command when '/' is not at buffer start", () => {
+    let s = type(initialEditorState(), "a"); s = type(s, "/");
+    expect(s.command).toBeNull();
+  });
+  it("filters the catalog as the query is typed", () => {
+    let s = open(); s = type(s, "rev");
+    expect(s.command!.query).toBe("rev");
+    expect(s.command!.items[0].name).toBe("review");
+  });
+  it("Tab completes the highlighted command name and closes the popup", () => {
+    let s = open(); s = type(s, "br");
+    s = press(s, { tab: true });
+    expect(s.command).toBeNull();
+    expect(text(s)).toBe("/brainstorming ");
+  });
+  it("Enter on an open command submits '/name' (runs it)", () => {
+    let s = open(); s = type(s, "br");
+    const r = applyKey(s, "", { return: true });
+    expect(r.submit).toBe("/brainstorming");
+    expect(r.state.command).toBeNull();
+  });
+  it("a space ends the command name and closes the popup (now typing args)", () => {
+    let s = open(); s = type(s, "review"); s = type(s, " ");
+    expect(s.command).toBeNull();
+    expect(text(s)).toBe("/review ");
+  });
+  it("Esc closes the command popup but keeps the typed text", () => {
+    let s = open(); s = type(s, "re"); s = press(s, { escape: true });
+    expect(s.command).toBeNull();
+    expect(text(s)).toBe("/re");
+  });
+  it("Up/Down move the command highlight", () => {
+    let s = open(); s = press(s, { downArrow: true });
+    expect(s.command!.index).toBe(1);
+  });
+  it("the @-mention path still works (regression)", () => {
+    let s = type(initialEditorState(), "@"); s = setMentionFiles(s, ["a.ts", "b.ts"]);
+    expect(s.mention!.items.length).toBe(2);
+    expect(s.command).toBeNull();
+  });
+  it("backspacing past the leading '/' closes the command popup", () => {
+    let s = open(); s = type(s, "re");          // "/re" — command open
+    s = press(s, { backspace: true });          // "/r"
+    s = press(s, { backspace: true });          // "/"
+    expect(s.command).not.toBeNull();           // still open at the bare "/"
+    s = press(s, { backspace: true });          // "" — leading slash gone
+    expect(s.command).toBeNull();
+    expect(text(s)).toBe("");
+  });
+});
+
+describe("readline keys (ctrl)", () => {
+  const ctrl = (s: EditorState, ch: string): EditorState => applyKey(s, ch, { ctrl: true }).state;
+  it("Ctrl-A / Ctrl-E jump to line start / end", () => {
+    let s = type(initialEditorState(), "hello");
+    s = ctrl(s, "a"); expect(s.cursor.col).toBe(0);
+    s = ctrl(s, "e"); expect(s.cursor.col).toBe(5);
+  });
+  it("Ctrl-K kills to end of line", () => {
+    let s = type(initialEditorState(), "hello world"); s = ctrl(s, "a"); s = applyKey(s, "", { rightArrow: true }).state;  // col 1
+    for (let i = 0; i < 5; i++) s = applyKey(s, "", { rightArrow: true }).state;   // col 6 (after "hello ")
+    s = ctrl(s, "k"); expect(text(s)).toBe("hello ");
+  });
+  it("Ctrl-U kills to start of line", () => {
+    let s = type(initialEditorState(), "hello"); s = ctrl(s, "u");
+    expect(text(s)).toBe(""); expect(s.cursor.col).toBe(0);
+  });
+  it("Ctrl-W kills the previous word", () => {
+    let s = type(initialEditorState(), "foo bar baz"); s = ctrl(s, "w");
+    expect(text(s)).toBe("foo bar "); expect(s.cursor.col).toBe(8);
+    s = ctrl(s, "w"); expect(text(s)).toBe("foo ");
+  });
+  it("an unhandled ctrl combo (e.g. Ctrl-L) never inserts a character", () => {
+    const s = ctrl(initialEditorState(), "l");
+    expect(text(s)).toBe("");
+  });
+  it("Ctrl-A in a /command line closes the popup (cursor left the token)", () => {
+    let s = type(initialEditorState(), "/"); s = type(s, "model");   // "/" opens the popup, then chars refresh it
+    expect(s.command).not.toBeNull();
+    s = ctrl(s, "a"); expect(s.command).toBeNull();
+  });
+});
+
+describe("inputMode", () => {
+  it("a leading ! = bash, # = memory, else normal", () => {
+    expect(inputMode(type(initialEditorState(), "!ls -a"))).toBe("bash");
+    expect(inputMode(type(initialEditorState(), "#remember this"))).toBe("memory");
+    expect(inputMode(type(initialEditorState(), "hello"))).toBe("normal");
+    expect(inputMode(initialEditorState())).toBe("normal");
+  });
+  it("an open / or @ popup suppresses the prefix mode", () => {
+    const cmd = type(initialEditorState(), "/");   // command popup open
+    expect(inputMode(cmd)).toBe("normal");
+  });
+});

@@ -27,6 +27,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
+    "test:tui": "vitest run test/tui",
     "test:integration": "vitest run test/integration",
     "test:contract": "vitest run test/contract",
     "test:live": "vitest run test/live",
@@ -34,12 +35,17 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.211",
-    "zod": "^4.0.0"
+    "zod": "^4.0.0",
+    "ink": "^5.0.1",
+    "ink-text-input": "^6.0.0",
+    "react": "^18.3.1"
   },
   "devDependencies": {
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "ink-testing-library": "^4.0.0",
+    "@types/react": "^18.3.0"
   }
 }
