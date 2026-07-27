@@ -11,9 +11,11 @@
 Close the four control-plane gaps where our clone silently drops model behavior a human must see or
 answer. A `tui/src` sweep (recorded in the spine spec) found **zero** handling for all four:
 
-1. **`AskUserQuestion`** — the model asks a multiple-choice question; today our gate auto-allows it
-   with unchanged input, so the model receives *no answer at all* and the human never sees the
-   question. This is the worst silent loss in the product.
+1. **`AskUserQuestion`** — the model asks a multiple-choice question; today it parks as a *generic
+   permission* (the gate consults the broker like any tool, so the human sees a raw allow/deny
+   dialog with JSON, or a detached worker blocks), and "allow" returns unchanged input — the model
+   receives *no answer at all*. No answer channel exists. This is the worst capability loss in the
+   product.
 2. **`ExitPlanMode`** — plan-mode sessions are dead ends: no approval dialog, `plan` kicked off the
    Tab ladder, no way to reject-with-feedback.
 3. **Background shells** — the lib layer is complete (`backgroundAll`/`stopTask`/
@@ -31,10 +33,11 @@ only; this work adds the control-plane axis it cannot see.
 
 | Evidence | What it settled |
 |---|---|
-| **probe 65** (`probes/probes/65-askuserquestion-canusetool.ts`) | `AskUserQuestion` consults `canUseTool` **with no ask rules** — it is always-ask, unlike every other tool (probe 58's "ask-routed only" doctrine has this one exception). Returning `{behavior:"allow", updatedInput:{...input, answers:{"<question text>":"<label>"}}}` delivers the answer: tool_result reads `answered: …="blue"` and the model's final text reflected the choice. |
+| **probe 65** (`probes/probes/65-askuserquestion-canusetool.ts`) | `AskUserQuestion` consults `canUseTool` **with no ask rules, in every probed mode — `default`, `acceptEdits`, and `bypassPermissions`** (phases A/D/C): it is always-ask, the sole exception to both probe 58's "ask-routed only" doctrine *and* probe 18d/64's "bypass silences the broker" doctrine. Under bypass the SDK prints its `CAN_USE_TOOL_SHADOWED` warning and then consults anyway for this tool — so questions are never silently lost, `/yolo` included. Returning `{behavior:"allow", updatedInput:{...input, answers:{"<question text>":"<label>"}}}` delivers the answer (`CHOSE:blue`), and `updatedInput.response` free text also flows (phase E: tool_result `The user responded: Neither — I prefer green, actually.`). |
 | **probe 66** (`probes/probes/66-exitplanmode-approval.ts`) | Under `permissionMode:"plan"`: `ExitPlanMode` parks in `canUseTool`; `deny(message)` arrives as an error tool_result with the feedback verbatim and the model **revises its plan and re-calls**; `allow` proceeds to real execution. **The CLI flips the mode itself after allow** and emits a `system`/`status` frame (`{subtype:"status", status:null, permissionMode:"default"}`) — the harness does not own the base flip, only the optional upgrade to `acceptEdits`. Plan-mode sessions auto-save the plan to `~/.claude/plans/<slug>.md`; the approval tool_result names the path. |
 | probe 39 (Wave 1) | `backgroundTasks()` (Ctrl+B) backgrounds a blocking foreground Bash **mid-turn**; `stopTask(id)` emits `task_notification{status:"stopped"}`; `background_tasks_changed` is a REPLACE snapshot. Caveat: the no-arg form returns `true` even when idle — detect via the changed-frame, not the return. |
 | probes 58 / 63 / 63b | Park = a held `canUseTool` promise, indefinitely; interrupt releases the park and the stream then throws. Inherited semantics, unchanged here. |
+| doperpowers scripts grep (2026-07-28) | `orchestrating-daemons/scripts/*.sh` contain **no** `waitingFor`/`permission:` dependencies — the poller keys on `state` only, so extending `waitingFor` with `question:`/`plan:` prefixes is display-only and safe. |
 | probe 22 / 54 / SDK 0.3.211 types | Nested subagent frames carry `parent_tool_use_id`; `SDKTaskStartedMessage` carries `{task_id, tool_use_id?, subagent_type?}` — the attribution correlation keys. `BashOutput`/`KillShell` **do not exist in this SDK**; the real tools are `TaskOutput`/`TaskStop`, and backgrounding is `Bash.run_in_background` / `Query.backgroundTasks()`. |
 | A2b outcomes (spine spec) | The park/answer wire, first-answer-wins, host-death answer-channel liveness (`.catch` fix F1), detachedness-scoped park, mid-turn attach replay — all shipped and live-proven. This spec generalizes that machinery; it does not rebuild it. |
 
@@ -71,7 +74,8 @@ type DecisionAnswer =
 
 **Routing** (in the gate, today's `createPermissionGate` — `src/permissions/gate.ts`):
 `toolName === "AskUserQuestion"` → `question` · `toolName === "ExitPlanMode"` → `plan` · else →
-`permission`. Routing is unconditional on mode: probe 65 shows questions arrive regardless of rules.
+`permission`. Routing is unconditional on mode: probe 65 phases A/C/D show questions arrive
+regardless of rules **and** of mode (`default`/`acceptEdits`/`bypassPermissions` all consult).
 
 **Resolution** (answer → `PermissionResult`):
 
@@ -80,7 +84,7 @@ type DecisionAnswer =
 | `permission` 3-way | as today (`allow` + unchanged input / `deny`) | `allow_always` keeps the existing name-keyed allowlist |
 | `question` | `allow` + `updatedInput: { ...input, answers, ...(response ? { response } : {}) }` | — |
 | `plan` `approve` | `allow` + unchanged input | none — the CLI flips the mode itself (probe 66) |
-| `plan` `approve_accept_edits` | `allow` + unchanged input | host calls its existing `setPermissionMode("acceptEdits")` after release |
+| `plan` `approve_accept_edits` | `allow` + unchanged input | host upgrades to `acceptEdits` — **triggered by observing the CLI's post-approval `status` frame**, not by answer release (see mode-sync ordering below) |
 | `plan` `reject` | `deny` + `message: feedback` (default: `"User rejected the plan. Continue planning."`) | model keeps planning (probe 66) |
 
 **Parking policy is uniform and unchanged**: detached hosts park every kind indefinitely; a
@@ -95,6 +99,12 @@ Decision Log).
   `PendingEntry` → `PendingDecision`.
 - Host events `permission` / `permission_settled` → **`decision` / `decision_settled`**
   (`src/host/wire.ts`); the pending snapshot replayed to fresh attachers carries decisions.
+  **Upgrade compatibility — detached hosts are long-lived by design**, so the new client keeps a
+  read-side alias: legacy `permission`/`permission_settled` frames are ingested as
+  `decision(kind:"permission")`, and the `permission` answer keeps the flat legacy field shape
+  (`{toolUseID, decision, by}` plus the `kind` tag old hosts ignore) — an upgraded `ccx attach`
+  against a still-running old host therefore works. The reverse (old client × new host) is
+  unsupported and accepted (Decision Log).
 - The `answer` op payload becomes the `DecisionAnswer` union (`src/host/ops.ts`); the op validates
   kind-vs-toolUseID match and rejects with an op error (park stays) on mismatch.
 - **Three new ops**: `tasks` (list `BackgroundTaskSummary[]`), `background` (no-arg Ctrl+B →
@@ -106,6 +116,16 @@ Decision Log).
   mode on its `state` event (`permissionMode` field added). Every client's status bar now tracks the
   **host's real mode** — closing A2b's recorded "status bar starts at `default`" quirk, and covering
   the CLI's own plan-approval flip.
+
+**Mode-sync ordering (one source of truth).** The host keeps a single `permissionMode` field;
+**last write wins** from exactly two writers — an intercepted `status` frame, or the resolution of
+the host's own `setPermissionMode` call — and every write emits a `state` event. The
+`approve_accept_edits` upgrade is **not** issued on answer release: the CLI's own flip-to-`default`
+frame rides the message stream and would race (or clobber) an eagerly-issued setter. Instead the
+host marks the upgrade pending on release and issues `setPermissionMode("acceptEdits")` when the
+post-approval `status` frame arrives (probe 66 shows it always does); if the turn ends with the
+upgrade still pending, it is issued at turn end as the belt. The sequence is deterministic:
+release → CLI flips + frame → host observes → setter → resolve → mode write → `state` emit.
 
 ### Session-layer change (the one and only)
 
@@ -152,8 +172,11 @@ feedback input → `reject`. Approval renders the plan-file path from the tool_r
 **Tab ladder.** `default → acceptEdits → plan → auto` (`useChat.ts` ladder array + status bar).
 Off-ladder entry behavior unchanged.
 
-**Tasks panel** (`src/tui/TasksPanel.tsx` + `/tasks` command). `Ctrl+B` mid-turn = `background` op
-(backgrounds the running foreground shell, probe 39); `Ctrl+B` when idle, or `/tasks` anytime, opens
+**Background panel** (`src/tui/BgTasksPanel.tsx` + `/bg` command; state field `bgTasks`). Named to
+avoid the one-letter trap with the **existing, unrelated** `TaskPanel.tsx` / `ChatState.tasks` (the
+model's TaskCreate/TaskUpdate checklist) — `/tasks` is deliberately **not** used for the same
+reason. `Ctrl+B` mid-turn = `background` op
+(backgrounds the running foreground shell, probe 39); `Ctrl+B` when idle, or `/bg` anytime, opens
 the panel: one row per task from the `tasks_changed` snapshot — shells, subagents, workflow tasks are
 one stream — showing id, type, description, status; ↑/↓ select, `k` or `x` → `stop_task`, Esc close.
 Status bar replaces the `⚙ subagent running` boolean with a live count (`⚙ 2 bg`), and shows
@@ -175,7 +198,7 @@ Status bar replaces the `⚙ subagent running` boolean with a live count (`⚙ 2
    `1` → `allow`; CLI flips mode + emits `status`; host layers `setPermissionMode("acceptEdits")` →
    status bar shows `acceptEdits` from the pushed frame → edits run.
 3. **Ctrl+B:** long shell running → `Ctrl+B` → `background` op → CLI backgrounds mid-turn →
-   `background_tasks_changed` → `tasks_changed` event → status bar `⚙ 1 bg`; `/tasks` → panel → `k`
+   `background_tasks_changed` → `tasks_changed` event → status bar `⚙ 1 bg`; `/bg` → panel → `k`
    → `stop_task` → `task_notification{stopped}` notice.
 
 ## Error handling & teardown (the quartet, per kind)
@@ -183,9 +206,13 @@ Status bar replaces the `⚙ subagent running` boolean with a live count (`⚙ 2
 - **Host death with a dialog open** → shared answer channel `.catch`: `✗ answer failed` notice,
   answered-mark rolled back, dialog stays (A2b F1, inherited).
 - **Interrupt during any park** → SDK releases the promise, stream throws (probe 63): parked
-  decision dropped with `decision_settled(by:"system")`.
+  decision dropped with `decision_settled(by:"system")`. **This emit is new wiring, not inherited**:
+  today `pending.ts` abort-settles straight into the map with no host event (only teardown/`stop`
+  got the explicit re-emit); the quartet suite covers it as a change.
 - **Teardown / `stop`** → `denyAllForSession` settles every kind; question denies read
-  `"No user is available to answer."`.
+  `"No user is available to answer."`. Per-kind deny copy is composed in the **gate** (it already
+  owns the deny message and knows the routing) — the settle payload stays a bare `{kind:"deny"}`;
+  only `plan` rejects carry a caller message (`feedback`).
 - **First-answer-wins** across attached clients, settled by the event, never optimistically — per
   kind.
 - **Malformed answer** (kind mismatch for the toolUseID, unknown question text, unknown taskId) →
@@ -202,19 +229,21 @@ Keyless halves always run; live halves gate on `CC-to-SDK/.env` credentials as u
    red-vs-blue parks (`state:"blocked"`, `waitingFor` starts `question:`); `ccx attach` renders the
    question dialog with both options; choosing `blue` resumes the turn; the model's final output
    contains the choice; roster reaches `done`. Ctrl+Z before answering detaches with the park intact
-   (same as A2b acceptance 6).
+   (same as A2b acceptance 6). A second run answers via the **Other** free-text row and the model's
+   output reflects the free text (the `response` channel through the full UI path, not just probe
+   65E's gate-level proof).
 2. **Plan loop (live):** a plan-mode session's `ExitPlanMode` parks; reject-with-feedback makes the
    model revise and re-call (two parks observed); approve-accept-edits flips the visible mode to
    `acceptEdits` (status bar, from the pushed state event) and a subsequent edit runs with no
    dialog.
 3. **Background shell (live, scripted pty):** Ctrl+B during a long-running Bash backgrounds it
-   mid-turn (turn continues); `/tasks` lists it; `k` stops it; the stopped notice renders.
+   mid-turn (turn continues); `/bg` lists it; `k` stops it; the stopped notice renders.
 4. **Attribution (live):** a session that dispatches a subagent whose tool call parks a permission
    shows `Subagent (<type>)` in the dialog title — or, if the probe-carried premise fails (nested
    calls don't consult), the recorded fallback: task started/done notices and panel rows present,
    dialog attribution dropped and the spec's premise note updated.
 5. **Keyless:** unit + quartet suites green; `answer` op kind-mismatch rejected with the park
-   intact; ladder cycles through `plan`; `/tasks` opens on an idle keyless host with an empty list.
+   intact; ladder cycles through `plan`; `/bg` opens on an idle keyless host with an empty list.
 6. **Docs close-out:** `tui-ux.md` gains a control-plane axis scoring these rows; `coverage.md` and
    the spine spec's Goal-boundary table updated; parent-spec Outcomes cross-linked.
 
@@ -226,6 +255,8 @@ Keyless halves always run; live halves gate on `CC-to-SDK/.env` credentials as u
 - Fan-out backpressure (still deferred on observed stall, per the spine Decision Log).
 - Daemon-library decision surfaces (stack is retiring); swarm broker unification.
 - Matching CC's side-by-side question-tab layout.
+- The `annotations` field of `AskUserQuestionOutput` (per-answer notes/previews) — seen, not
+  surfaced; the answers/response channels cover the product need.
 
 ## Decision Log
 
@@ -237,15 +268,21 @@ Keyless halves always run; live halves gate on `CC-to-SDK/.env` credentials as u
 | Full CC plan shape: `plan` on the Tab ladder + three-choice dialog | Dialog only, `plan` reachable by flag/command | CC muscle memory; the ladder change is one array entry; probe 66 proved the CLI does the heavy lifting (mode flip). |
 | Subagent scope: attribution + shared tasks panel | Minimal (attribution only) / full navigable per-subagent view | Minimal leaves shells and subagents as disconnected half-surfaces; the full view roughly doubles the TUI work for fidelity CC itself doesn't center. One panel for all background work matches CC. |
 | Sequential question flow | CC's side-by-side question tabs | Keyboard-identical outcomes at a fraction of the layout work; recorded as an accepted divergence. |
-| Clean wire rename (`decision`), no compat shims | Versioned/back-compat wire | One binary owns both ends; A2b set the precedent. |
+| Wire rename (`decision`) **with a one-line read-side alias** in the client | Fully clean rename (no alias) · versioned wire | Detached hosts are long-lived by design — an upgraded `ccx attach` must still read a pre-upgrade host's park frames (`wire.ts`'s own header makes the same promise for replies). The alias (legacy `permission`→`decision(kind:"permission")`, flat permission-answer shape kept) buys that for one line; old client × new host is unsupported and **accepted** (restart detached workers to use new dialogs from an old client — they won't exist anyway, one binary per install). |
 | Attribution by host-side correlation map | Extending the gate/SDK seam to carry parentage | The SDK's `canUseTool` simply doesn't carry it; the host already sees every frame. Best-effort stamp, miss = no attribution, never a block. |
 
 ## Surprises & Discoveries
 
 - **Probe 65:** `AskUserQuestion` is the one always-ask tool — it consults `canUseTool` with *no*
-  ask rules, the sole exception to probe 58's "ask-routed only" doctrine. Today's gate therefore
-  auto-allows it with no answers on every headless run — the silent loss was live-confirmed, not
-  inferred.
+  ask rules, the sole exception to probe 58's "ask-routed only" doctrine. Today it therefore parks
+  as a generic permission whose "allow" returns no answers — the missing-answer-channel loss was
+  live-confirmed, not inferred.
+- **Probe 65 phases C/D/E (post-review extension):** the always-ask exception holds in **every
+  mode** — under `bypassPermissions` the SDK prints its `CAN_USE_TOOL_SHADOWED` warning and then
+  consults anyway for this one tool (the warning is a general statement with an undocumented
+  exception). `updatedInput.response` free text also flows. The reviewer's framing was right:
+  per-feature probing is not per-mode probing, and the permission-mode matrix is this SDK's biggest
+  source of premise flips.
 - **Probe 66:** the CLI flips `permissionMode` itself after plan approval and announces it with a
   `system`/`status` frame. Two dividends: our dialog only layers the optional `acceptEdits`
   upgrade, and the status frame is a native push channel for the mode — the cure for A2b's
@@ -260,3 +297,12 @@ Pending — written at finish.
 
 - 2026-07-28 — initial spec from the Goal B brainstorm (probes 65/66 run live first; approach,
   scope, plan-UX, attach-reach, and subagent-depth decisions taken with the owner in-session).
+- 2026-07-28 rev 2 — external review pass, all findings adopted: ① probe 65 extended per-mode
+  (bypass/acceptEdits consult; `response` flows) — no yolo product stance needed; ② deterministic
+  `approve_accept_edits` ordering (upgrade on observed `status` frame, turn-end belt) + the
+  one-source-of-truth mode-merge rule; ③ `BgTasksPanel`/`bgTasks`/`/bg` renamed away from the
+  existing `TaskPanel` checklist collision; ④ read-side wire alias so new clients read old detached
+  hosts (Decision Log updated); plus: Purpose §1 wording corrected (parks-as-generic, not
+  auto-allow), interrupt-settle emit marked as new wiring, per-kind deny copy located in the gate,
+  Other free-text folded into acceptance ①, `annotations` noted in Non-goals, doperpowers
+  `waitingFor` grep recorded in Grounding.

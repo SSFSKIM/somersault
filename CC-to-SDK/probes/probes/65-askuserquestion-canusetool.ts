@@ -17,8 +17,13 @@ const PROMPT =
   "(two options, labels 'red' and 'blue'). After you receive my answer, reply with exactly " +
   "CHOSE:<label> and nothing else.";
 
-async function phase(name: string, settings: Record<string, unknown> | undefined) {
-  console.log(`\n=== PHASE ${name} ===`);
+async function phase(
+  name: string,
+  settings: Record<string, unknown> | undefined,
+  permissionMode: "default" | "acceptEdits" | "bypassPermissions" = "default",
+  answerStyle: "answers" | "response" = "answers",
+) {
+  console.log(`\n=== PHASE ${name} (mode=${permissionMode}, style=${answerStyle}) ===`);
   let consulted = false;
   const q = query({
     prompt: PROMPT,
@@ -26,12 +31,16 @@ async function phase(name: string, settings: Record<string, unknown> | undefined
       model: "claude-haiku-4-5-20251001",
       maxTurns: 3,
       settingSources: [],
-      permissionMode: "default",
+      permissionMode,
       ...(settings ? { settings } : {}),
       canUseTool: async (toolName, input) => {
         consulted = true;
         console.log(`[canUseTool] ${toolName} input=${JSON.stringify(input).slice(0, 400)}`);
         if (toolName === "AskUserQuestion") {
+          if (answerStyle === "response") {
+            console.log(`[canUseTool] answering via updatedInput.response (free text only)`);
+            return { behavior: "allow", updatedInput: { ...input, response: "Neither — I prefer green, actually." } } as any;
+          }
           const inp = input as { questions?: { question: string; options: { label: string }[] }[] };
           const answers: Record<string, string> = {};
           for (const qq of inp.questions ?? []) answers[qq.question] = "blue";
@@ -68,3 +77,10 @@ async function phase(name: string, settings: Record<string, unknown> | undefined
 console.log("=== PROBE 65 AskUserQuestion × canUseTool ===");
 const noRules = await phase("A (no ask rules)", undefined);
 if (!noRules) await phase("B (ask rule AskUserQuestion)", { permissions: { ask: ["AskUserQuestion"] } });
+// 2026-07-28 extension (Goal B spec review finding 1): the mode matrix. Phase A proved default-mode
+// consultation; bypassPermissions silences the broker for every OTHER tool (probes 18d/58/64) — if it
+// silences AskUserQuestion too, /yolo sessions lose questions silently and the spec must take a stance.
+await phase("C (bypassPermissions)", undefined, "bypassPermissions");
+await phase("D (acceptEdits)", undefined, "acceptEdits");
+// And the declared-but-unprobed free-text channel: does updatedInput.response reach the model?
+await phase("E (response free-text)", undefined, "default", "response");
