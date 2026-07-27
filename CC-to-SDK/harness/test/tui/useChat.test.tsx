@@ -1,69 +1,196 @@
-// tui/test/useChat.test.tsx
+// tui/test/useChat.test.tsx — reworked onto the RemoteChat adapter surface (spec A2b Task 6): the host
+// event stream is the single rendering source; submit is a command channel; permissions arrive via the
+// feed. fakeRemote() (test/tui/helpers/fakeRemote.ts) mirrors the real adapter's wire contract.
 import { describe, it, expect } from "vitest";
 import React, { useEffect } from "react";
 import { render } from "ink-testing-library";
 import { Text } from "ink";
-import { createUiBroker } from "../../src/tui/uiBroker.js";
+import { fakeRemote, type FakeRemote } from "./helpers/fakeRemote.js";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
 import type { PermissionDecision } from "../../src/index.js";
+import type { PendingEntry } from "../../src/permissions/pending.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 }
-function fakeSession(overrides: Partial<ChatSession> = {}): ChatSession & { disposed: number } {
-  const s: any = { disposed: 0,
-    async submit(_p: string, onMessage: (m: unknown) => void) { onMessage({ type: "assistant", message: { content: [{ type: "text", text: "working" }] } }); return { result: "done" }; },
-    async setPermissionMode() {}, async setModel() {}, async setMaxThinkingTokens() {}, async compact() { return { ok: true, preTokens: 0, postTokens: 0 }; },
-    async capabilities() { return { models: [{ value: "claude-opus-4-8", displayName: "Opus 4.8" }, { value: "sonnet", displayName: "Sonnet" }], commands: [], mcpServers: [] }; },
-    async interrupt() {}, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
-    async usage() { return { session: { total_cost_usd: 0.0123, total_duration_ms: 4200, model_usage: { "claude-opus-4-8": { inputTokens: 1200, outputTokens: 340, costUSD: 0.0123 } } }, subscription_type: null }; },
-    async dispose() { s.disposed++; }, sessionId: "sess-1", ...overrides };
-  return s;
+function allText(c: { state: { lines: { text: string }[]; streaming: { text: string }[] } }): string {
+  return [...c.state.lines, ...c.state.streaming].map((l) => l.text).join("|");
 }
-function Host({ makeSession, ui, prompt }: { makeSession: () => ChatSession; ui: ReturnType<typeof createUiBroker>; prompt?: string }) {
-  const c = useChat(makeSession, ui);
+function Host({ makeSession, prompt, initialPrompt }: { makeSession: () => ChatSession; prompt?: string; initialPrompt?: string }) {
+  const c = useChat(makeSession, { initialPrompt });
   useEffect(() => { if (prompt) c.submit(prompt); /* fire once */ }, []); // eslint-disable-line
-  return <Text>{c.state.pending ? `PENDING:${c.state.pending.req.toolName}` : c.state.busy ? "BUSY" : "IDLE"} m:{c.state.model ?? "-"} {c.state.lines.map((l) => l.text).join("|")}</Text>;
+  return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : c.state.busy ? "BUSY" : "IDLE"} m:{c.state.model ?? "-"} {allText(c)}</Text>;
 }
 
 function CmdHost({ makeSession, api }: { makeSession: () => ChatSession; api: { run?: (s: string) => void } }) {
-  const c = useChat(makeSession, createUiBroker());
+  const c = useChat(makeSession);
   api.run = c.submit;
-  return <Text>{c.state.busy ? "BUSY" : "IDLE"} {c.state.lines.map((l) => l.text).join("|")}</Text>;
+  return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>;
 }
 
-describe("uiBroker", () => {
-  it("denies a request when no handler is set yet", async () => {
-    expect(await createUiBroker().broker.request({ toolName: "Edit", input: {}, toolUseID: "t", signal: new AbortController().signal })).toEqual({ kind: "deny" });
+describe("useChat: the host event stream is the single rendering source", () => {
+  it("an externally-started turn (no submit call) renders streaming lines and lands in the transcript; busy is true between start and end", async () => {
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake); return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));   // let mount effects subscribe
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("BUSY"));
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "hello from elsewhere" }] } } });
+    await waitFor(() => frame(lastFrame).includes("hello from elsewhere"));
+    expect(frame(lastFrame)).toContain("BUSY");                  // still busy — the turn hasn't ended
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    expect(frame(lastFrame)).toContain("hello from elsewhere");  // finalized into the transcript
+  });
+
+  it("submit('hi') echoes the prompt line, and the turn renders from EVENTS (the fake's onMessage passthrough is inert)", async () => {
+    let capturedOnMessage: ((m: unknown) => void) | undefined;
+    let fake!: FakeRemote;
+    fake = fakeRemote({
+      async submit(_prompt, onMessage) {
+        capturedOnMessage = onMessage;
+        fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+        onMessage({ type: "assistant", message: { content: [{ type: "text", text: "SHOULD-NOT-RENDER-VIA-CALLBACK" }] } });   // onMessage-only — NOT routed
+        fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "VIA-EVENTS" }] } } });  // the real path
+        fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+        return { result: "done" };
+      },
+    });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("VIA-EVENTS"));
+    expect(frame(lastFrame)).toContain("› hi");
+    expect(frame(lastFrame)).toContain("VIA-EVENTS");
+    expect(frame(lastFrame)).not.toContain("SHOULD-NOT-RENDER-VIA-CALLBACK");   // onMessage callback is a no-op passthrough
+    expect(typeof capturedOnMessage).toBe("function");
+  });
+
+  it("mid-turn attach replay renders (turn start → messages → permission → state, no submit call); the idle-attach shape (messages, no start frame) renders NOTHING", async () => {
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake); return <Text>{c.state.busy ? "BUSY" : "IDLE"} {c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NOPEND"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    // the exact replay shape a mid-turn joiner now gets (plan-review finding 2's client half)
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 7 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "first" }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "second" }] } } });
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t9", toolName: "Read", input: { file_path: "x" }, createdAt: Date.now() };
+    fake.pushEvent({ kind: "permission", entry });
+    fake.pushEvent({ kind: "state", status: { state: "working", status: "busy" } });
+    await waitFor(() => frame(lastFrame).includes("BUSY") && frame(lastFrame).includes("PENDING:Read"));
+    expect(frame(lastFrame)).toContain("first");
+    expect(frame(lastFrame)).toContain("second");
+    // settle this turn so it doesn't leak into the next assertion
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 7 });
+    fake.settlePermission("t9", "system", "deny");
+    await waitFor(() => frame(lastFrame).includes("IDLE") && frame(lastFrame).includes("NOPEND"));
+
+    // idle-attach shape: messages with NO preceding start frame → the no-live-turn guard (disk/buffer dedup)
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "GHOST" }] } } });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).toContain("IDLE");
+    expect(frame(lastFrame)).not.toContain("GHOST");
+  });
+});
+
+describe("useChat: permission feed", () => {
+  it("a parked permission arriving via the feed opens the dialog; answering calls answerPermission with the entry's toolUseID; alreadyAnsweredBy clears the dialog and appends a notice", async () => {
+    let fake!: FakeRemote;
+    fake = fakeRemote({
+      async answerPermission(toolUseID, decision) {
+        fake.settlePermission(toolUseID, "eve", decision.kind);
+        return { ok: true, alreadyAnsweredBy: "eve" };
+      },
+    });
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t1", toolName: "Edit", input: { file_path: "f.ts" }, createdAt: Date.now() };
+    const api: { resolve?: (d: PermissionDecision) => void } = {};
+    function H() { const c = useChat(() => fake); api.resolve = c.resolvePermission; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.parkPermission(entry);
+    await waitFor(() => frame(lastFrame).includes("PENDING:Edit"));
+    api.resolve!({ kind: "allow_once" });
+    expect(fake.answeredCalls).toEqual([{ toolUseID: "t1", decision: { kind: "allow_once" } }]);
+    await waitFor(() => frame(lastFrame).includes("NONE"));
+    await waitFor(() => frame(lastFrame).includes("answered by eve"));
+  });
+
+  it("settlePermission(...by:'system', decision:'deny') with no local answer clears the dialog and appends a notice", async () => {
+    const fake = fakeRemote();
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t2", toolName: "Bash", input: { command: "rm -rf /" }, createdAt: Date.now() };
+    function H() { const c = useChat(() => fake); return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.parkPermission(entry);
+    await waitFor(() => frame(lastFrame).includes("PENDING:Bash"));
+    fake.settlePermission("t2", "system", "deny");
+    await waitFor(() => frame(lastFrame).includes("NONE"));
+    expect(frame(lastFrame)).toContain("denied by system");
+  });
+
+  it("unmount does NOT deny a pending remote permission — it stays parked (detach ≠ deny); the session is disposed exactly once", async () => {
+    const fake = fakeRemote();
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t5", toolName: "Edit", input: {}, createdAt: Date.now() };
+    function H() { const c = useChat(() => fake); return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"}</Text>; }
+    const { lastFrame, unmount } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.parkPermission(entry);
+    await waitFor(() => frame(lastFrame).includes("PENDING:Edit"));
+    unmount();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fake.answeredCalls).toEqual([]);   // never answered/denied by teardown
+    expect(fake.disposed).toBe(1);
+  });
+
+  it("three parked entries queue FIFO: dialog shows the head; answering advances to the next", async () => {
+    let fake!: FakeRemote;
+    fake = fakeRemote();
+    const e1: PendingEntry = { sessionId: "s", toolUseID: "a", toolName: "Edit", input: {}, createdAt: 1 };
+    const e2: PendingEntry = { sessionId: "s", toolUseID: "b", toolName: "Write", input: {}, createdAt: 2 };
+    const api: { resolve?: (d: PermissionDecision) => void } = {};
+    function H() { const c = useChat(() => fake); api.resolve = c.resolvePermission; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.parkPermission(e1);
+    fake.parkPermission(e2);
+    await waitFor(() => frame(lastFrame).includes("PENDING:Edit"));
+    api.resolve!({ kind: "allow_once" });
+    await waitFor(() => frame(lastFrame).includes("PENDING:Write"));   // advanced to the queued entry
+  });
+});
+
+describe("useChat: initial prompt", () => {
+  it("initialPrompt submits exactly once on mount", async () => {
+    let calls = 0;
+    const fake = fakeRemote({ submit: async () => { calls++; return { result: "x" }; } });
+    function H() { const c = useChat(() => fake, { initialPrompt: "do the thing" }); return <Text>{c.state.busy ? "BUSY" : "IDLE"}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toBe(1);
   });
 });
 
 describe("useChat", () => {
   it("streams a submitted turn into the transcript", async () => {
-    const { lastFrame } = render(<Host makeSession={() => fakeSession()} ui={createUiBroker()} prompt="hi" />);
-    await waitFor(() => frame(lastFrame).includes("working"));
-    expect(lastFrame()).toContain("working");
-  });
-  it("surfaces a broker request as pending state", async () => {
-    const ui = createUiBroker();
-    const { lastFrame } = render(<Host makeSession={() => fakeSession()} ui={ui} />);
-    await new Promise((r) => setTimeout(r, 20)); // let the mount effect set the handler
-    void ui.broker.request({ toolName: "Edit", input: {}, toolUseID: "t", signal: new AbortController().signal });
-    await waitFor(() => frame(lastFrame).includes("PENDING:Edit"));
-    expect(lastFrame()).toContain("PENDING:Edit");
+    const { lastFrame } = render(<Host makeSession={() => fakeRemote()} prompt="hi" />);
+    await waitFor(() => frame(lastFrame).includes("ok"));
+    expect(lastFrame()).toContain("ok");
   });
   it("streams partial frames live and captures the model from the assistant frame", async () => {
-    const fake = fakeSession({ async submit(_p: string, onMessage: (m: unknown) => void) {
-      onMessage({ type: "stream_event", event: { type: "message_start" } });
-      onMessage({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
-      onMessage({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "PINE" } } });
-      onMessage({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "CONE" } } });
-      onMessage({ type: "assistant", message: { model: "claude-sonnet-4-6", content: [{ type: "text", text: "PINECONE" }] } });
-      return { result: "PINECONE" };
-    } });
-    const { lastFrame } = render(<Host makeSession={() => fake} ui={createUiBroker()} prompt="hi" />);
+    const fake = fakeRemote({ submitMessages: [
+      { type: "stream_event", event: { type: "message_start" } },
+      { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } },
+      { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "PINE" } } },
+      { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "CONE" } } },
+      { type: "assistant", message: { model: "claude-sonnet-4-6", content: [{ type: "text", text: "PINECONE" }] } },
+    ] });
+    const { lastFrame } = render(<Host makeSession={() => fake} prompt="hi" />);
     await waitFor(() => frame(lastFrame).includes("PINECONE") && frame(lastFrame).includes("m:claude-sonnet-4-6"));
     expect(lastFrame()).toContain("PINECONE");
     expect(lastFrame()).toContain("m:claude-sonnet-4-6");
@@ -71,9 +198,9 @@ describe("useChat", () => {
   it("seeds the welcome banner into the scrollback, but skips it when launching into a resume", async () => {
     const banner = [{ text: "✻ Welcome to Claude Code" }, { text: "  tips" }];
     function BannerHost({ resume }: { resume?: boolean }) {
-      const c = useChat(() => fakeSession(), createUiBroker(), { initialLines: banner, ...(resume ? { initialResume: { kind: "continue" } as const } : {}) },
+      const c = useChat(() => fakeRemote(), { initialLines: banner, ...(resume ? { initialResume: { kind: "continue" } as const } : {}) },
         { listSessions: async () => [], getSessionMessages: async () => [] });
-      return <Text>{c.state.lines.map((l) => l.text).join("|")}</Text>;
+      return <Text>{allText(c)}</Text>;
     }
     const fresh = render(<BannerHost />);
     expect(frame(fresh.lastFrame)).toContain("✻ Welcome to Claude Code");
@@ -82,33 +209,19 @@ describe("useChat", () => {
     expect(frame(resumed.lastFrame)).not.toContain("✻ Welcome to Claude Code");
   });
 
-  it("settles a parked permission promise → deny on unmount, and disposes the session exactly once", async () => {
-    const ui = createUiBroker();
-    const session = fakeSession();
-    const { unmount } = render(<Host makeSession={() => session} ui={ui} />);
-    await new Promise((r) => setTimeout(r, 20));
-    let decided: PermissionDecision | undefined;
-    void ui.broker.request({ toolName: "Edit", input: {}, toolUseID: "t", signal: new AbortController().signal }).then((d) => { decided = d; });
-    await new Promise((r) => setTimeout(r, 20));
-    unmount();
-    await waitFor(() => decided !== undefined);
-    expect(decided).toEqual({ kind: "deny" });
-    expect(session.disposed).toBe(1);
-  });
-
   it("/resume → pick fetches the transcript and replays it (old session disposed)", async () => {
     let disposed = 0; let calls = 0;
-    const oldSession = fakeSession({ async dispose() { disposed++; } });
-    const newSession = fakeSession();
+    const oldSession = fakeRemote({ dispose: async () => { disposed++; } });
+    const newSession = fakeRemote();
     const makeSession = (resume?: string) => { calls++; return resume ? newSession : oldSession; };
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
     const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
     let pick: ((s: any) => void) | undefined;
     function ResumeHost() {
-      const c = useChat(makeSession, createUiBroker(), {}, deps);
+      const c = useChat(makeSession, {}, deps);
       pick = (c as any).pickSession;
       (ResumeHost as any).run = c.submit;
-      return <Text>{c.state.picker.open ? `PICKER:${c.state.picker.sessions.length}` : "NOPICK"} {c.state.lines.map((l) => l.text).join("|")}</Text>;
+      return <Text>{c.state.picker.open ? `PICKER:${c.state.picker.sessions.length}` : "NOPICK"} {allText(c)}</Text>;
     }
     const { lastFrame } = render(<ResumeHost />);
     await waitFor(() => frame(lastFrame).includes("NOPICK"));
@@ -125,7 +238,7 @@ describe("useChat", () => {
   it("initialResume {kind:'id'} replays the session on mount", async () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "launch prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
     const deps = { listSessions: async () => [], getSessionMessages: async () => msgs };
-    function H() { const c = useChat((r?: string) => fakeSession(), createUiBroker(), { initialResume: { kind: "id", id: "abc12345" } }, deps); return <Text>{c.state.lines.map((l) => l.text).join("|")}</Text>; }
+    function H() { const c = useChat((_r?: string) => fakeRemote(), { initialResume: { kind: "id", id: "abc12345" } }, deps); return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await waitFor(() => (lastFrame() ?? "").includes("launch prompt"));
     expect(lastFrame() ?? "").toContain("resumed here · live");
@@ -134,7 +247,7 @@ describe("useChat", () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "recent work" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
     const deps = { listSessions: async () => [{ sessionId: "s-old", summary: "", lastModified: 1 }, { sessionId: "s-new", summary: "", lastModified: 9 }], getSessionMessages: async (id: string) => (id === "s-new" ? msgs : []) };
     let api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat((r?: string) => fakeSession(), createUiBroker(), {}, deps); api.run = c.submit; return <Text>{c.state.lines.map((l) => l.text).join("|")}</Text>; }
+    function H() { const c = useChat((_r?: string) => fakeRemote(), {}, deps); api.run = c.submit; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.run!("/continue");
@@ -143,7 +256,7 @@ describe("useChat", () => {
   it("/continue with no sessions shows a notice", async () => {
     const deps = { listSessions: async () => [], getSessionMessages: async () => [] };
     let api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat((r?: string) => fakeSession(), createUiBroker(), {}, deps); api.run = c.submit; return <Text>{c.state.lines.map((l) => l.text).join("|")}</Text>; }
+    function H() { const c = useChat((_r?: string) => fakeRemote(), {}, deps); api.run = c.submit; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.run!("/continue");
@@ -152,11 +265,12 @@ describe("useChat", () => {
 
   it("dispatches /model, /compact, /context, /clear, /help locally — never to the model", async () => {
     let submitted = 0, modelSet = "";
-    const fake = fakeSession({
-      async submit() { submitted++; return { result: "x" }; },
-      async setModel(m?: string) { modelSet = m ?? ""; },
-      async compact() { return { ok: true, preTokens: 9000, postTokens: 2000 }; },
-      async getContextUsage() { return { totalTokens: 50, maxTokens: 200 }; },
+    const fake = fakeRemote({
+      submit: async () => { submitted++; return { result: "x" }; },
+      setModel: (m?: string) => { modelSet = m ?? ""; },
+      compact: () => ({ ok: true, preTokens: 9000, postTokens: 2000 }),
+      getContextUsage: () => ({ totalTokens: 50, maxTokens: 200 }),
+      capabilities: () => ({ models: [{ value: "claude-opus-4-8", displayName: "Opus 4.8" }, { value: "sonnet", displayName: "Sonnet" }], commands: [], mcpServers: [] }),
     });
     const api: { run?: (s: string) => void } = {};
     const { lastFrame } = render(<CmdHost makeSession={() => fake} api={api} />);
@@ -174,7 +288,7 @@ describe("useChat", () => {
   it("clear() empties the transcript and fires the terminal clear-screen", async () => {
     let cleared = 0;
     const api: { run?: (s: string) => void; clear?: () => void } = {};
-    function H() { const c = useChat(() => fakeSession(), createUiBroker(), {}, { clearScreen: () => { cleared++; } }); api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.lines.length}</Text>; }
+    function H() { const c = useChat(() => fakeRemote(), {}, { clearScreen: () => { cleared++; } }); api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.lines.length}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("hi");  await waitFor(() => !frame(lastFrame).includes("L:0"));   // lines present
@@ -184,12 +298,19 @@ describe("useChat", () => {
 
   it("queues a turn submitted while busy and drains it (FIFO) when the turn ends", async () => {
     let release = () => {}; let submits = 0;
-    const fake = fakeSession({ async submit(_p: string, onMessage: (m: unknown) => void) {
-      submits++; onMessage({ type: "assistant", message: { content: [{ type: "text", text: `reply${submits}` }] } });
-      await new Promise<void>((res) => { release = res; }); return { result: "done" };
+    let fake!: FakeRemote;
+    fake = fakeRemote({ submit: async (_p, onMessage) => {
+      submits++;
+      const seq = submits;
+      fake.pushEvent({ kind: "turn", phase: "start", seq });
+      const m = { type: "assistant", message: { content: [{ type: "text", text: `reply${submits}` }] } };
+      onMessage(m); fake.pushEvent({ kind: "message", data: m });
+      await new Promise<void>((res) => { release = res; });
+      fake.pushEvent({ kind: "turn", phase: "end", seq });
+      return { result: "done" };
     } });
     const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake, createUiBroker(), {}); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")}</Text>; }
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("first");  await waitFor(() => frame(lastFrame).includes("BUSY"));
@@ -203,9 +324,19 @@ describe("useChat", () => {
 
   it("drains PAST a queued unknown command (no stall) to a following turn", async () => {
     let release = () => {}; let submits = 0;
-    const fake = fakeSession({ async submit(_p: string, onMessage: (m: unknown) => void) { submits++; onMessage({ type: "assistant", message: { content: [{ type: "text", text: "r" }] } }); await new Promise<void>((res) => { release = res; }); return { result: "done" }; } });
+    let fake!: FakeRemote;
+    fake = fakeRemote({ submit: async (_p, onMessage) => {
+      submits++;
+      const seq = submits;
+      fake.pushEvent({ kind: "turn", phase: "start", seq });
+      const m = { type: "assistant", message: { content: [{ type: "text", text: "r" }] } };
+      onMessage(m); fake.pushEvent({ kind: "message", data: m });
+      await new Promise<void>((res) => { release = res; });
+      fake.pushEvent({ kind: "turn", phase: "end", seq });
+      return { result: "done" };
+    } });
     const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake, createUiBroker(), {}); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")}</Text>; }
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("first");  await waitFor(() => frame(lastFrame).includes("BUSY"));            // turn A (submits=1)
@@ -219,8 +350,7 @@ describe("useChat", () => {
   it("resuming bumps clearToken (so the append-only <Static> remounts and shows the full replay)", async () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
     let token = -1;
-    // launch-time resume drives resumeInto; assert the replay landed AND clearToken was bumped
-    function H() { const c = useChat((r?: string) => fakeSession(), createUiBroker(), { initialResume: { kind: "id", id: "sess-9" } }, { getSessionMessages: async () => msgs, listSessions: async () => [] }); token = c.state.clearToken; return <Text>tok:{c.state.clearToken} {c.state.lines.map((l) => l.text).join("|")}</Text>; }
+    function H() { const c = useChat((_r?: string) => fakeRemote(), { initialResume: { kind: "id", id: "sess-9" } }, { getSessionMessages: async () => msgs, listSessions: async () => [] }); token = c.state.clearToken; return <Text>tok:{c.state.clearToken} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await waitFor(() => frame(lastFrame).includes("prior"));   // replay landed
     expect(token).toBeGreaterThanOrEqual(1);                   // clearToken bumped by resumeInto
@@ -228,12 +358,22 @@ describe("useChat", () => {
 
   it("interrupt clears the queue; local commands run immediately even while busy", async () => {
     let release = () => {}; let submits = 0, modelSet = "";
-    const fake = fakeSession({
-      async submit(_p: string, onMessage: (m: unknown) => void) { submits++; onMessage({ type: "assistant", message: { content: [{ type: "text", text: "x" }] } }); await new Promise<void>((res) => { release = res; }); return { result: "done" }; },
-      async setModel(m?: string) { modelSet = m ?? ""; },
+    let fake!: FakeRemote;
+    fake = fakeRemote({
+      submit: async (_p, onMessage) => {
+        submits++;
+        const seq = submits;
+        fake.pushEvent({ kind: "turn", phase: "start", seq });
+        const m = { type: "assistant", message: { content: [{ type: "text", text: "x" }] } };
+        onMessage(m); fake.pushEvent({ kind: "message", data: m });
+        await new Promise<void>((res) => { release = res; });
+        fake.pushEvent({ kind: "turn", phase: "end", seq });
+        return { result: "done" };
+      },
+      setModel: (m?: string) => { modelSet = m ?? ""; },
     });
     const api: { run?: (s: string) => void; stop?: () => void } = {};
-    function H() { const c = useChat(() => fake, createUiBroker(), {}); api.run = c.submit; api.stop = c.interrupt; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")} m:{c.state.model ?? "-"}</Text>; }
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.stop = c.interrupt; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")} m:{c.state.model ?? "-"}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("turn");          await waitFor(() => frame(lastFrame).includes("BUSY"));
@@ -247,13 +387,13 @@ describe("useChat", () => {
 
   it("! runs bash locally (injected) and # appends to memory — neither reaches the model", async () => {
     let submitted = 0, bashCmd = "", memNote = "", memCwd = "";
-    const fake = fakeSession({ async submit() { submitted++; return { result: "x" }; } });
+    const fake = fakeRemote({ submit: async () => { submitted++; return { result: "x" }; } });
     const deps = {
       runBash: async (cmd: string) => { bashCmd = cmd; return { code: 0, output: "file1\nfile2" }; },
       appendMemory: (note: string, cwd: string) => { memNote = note; memCwd = cwd; return "/proj/CLAUDE.md"; },
     };
     const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake, createUiBroker(), { cwd: "/proj" }, deps); api.run = c.submit; return <Text>{c.state.lines.map((l) => l.text).join("|")}</Text>; }
+    function H() { const c = useChat(() => fake, { cwd: "/proj" }, deps); api.run = c.submit; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("!ls -a");   await waitFor(() => frame(lastFrame).includes("file1"));
@@ -267,7 +407,10 @@ describe("useChat", () => {
 
   it("dispatches /cost (session.usage) and /status (local state) locally", async () => {
     let submitted = 0;
-    const fake = fakeSession({ async submit() { submitted++; return { result: "x" }; } });
+    const fake = fakeRemote({
+      submit: async () => { submitted++; return { result: "x" }; },
+      usage: () => ({ session: { total_cost_usd: 0.0123, total_duration_ms: 4200, model_usage: { "claude-opus-4-8": { inputTokens: 1200, outputTokens: 340, costUSD: 0.0123 } } }, subscription_type: null }),
+    });
     const api: { run?: (s: string) => void } = {};
     const { lastFrame } = render(<CmdHost makeSession={() => fake} api={api} />);
     await waitFor(() => frame(lastFrame).includes("IDLE"));
@@ -279,13 +422,14 @@ describe("useChat", () => {
 
   it("submit sets turnStartedAt and busy during the turn", async () => {
     let hung: (() => void) | null = null;
-    const fake = fakeSession({ async submit(_p: string, onMessage: (m: unknown) => void) { await new Promise<void>((r) => { hung = r; }); return { result: "x" }; } });
+    let fake!: FakeRemote;
+    fake = fakeRemote({ submit: async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); await new Promise<void>((r) => { hung = r; }); fake.pushEvent({ kind: "turn", phase: "end", seq: 1 }); return { result: "x" }; } });
     const api: { run?: (p: string) => void; state?: any } = {};
-    function H() { const c = useChat(() => fake, createUiBroker()); api.run = c.submit; api.state = c.state; return <Text>{String(c.state.busy)}</Text>; }
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.state = c.state; return <Text>{String(c.state.busy)}</Text>; }
     render(<H />);
     await new Promise((r) => setTimeout(r, 0));
     api.run!("hello");
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => api.state.busy === true);
     expect(api.state.busy).toBe(true);
     expect(api.state.turnStartedAt).toBeGreaterThan(0);
     if (hung) (hung as () => void)();
@@ -293,12 +437,13 @@ describe("useChat", () => {
 
   it("a catalog command (not local) is submitted as a turn, not treated as unknown", async () => {
     const submitted: string[] = [];
-    const fake = fakeSession({
-      async capabilities() { return { models: [], commands: [{ name: "review", description: "review code" }], mcpServers: [] }; },
-      async submit(p: string, onMessage: (m: unknown) => void) { submitted.push(p); onMessage({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }); return { result: "ok" }; },
+    const fake = fakeRemote({
+      capabilities: () => ({ models: [], commands: [{ name: "review", description: "review code" }], mcpServers: [] }),
+      submit: async (p, onMessage) => { submitted.push(p); return { result: "ok" }; },
+      submitMessages: [{ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }],
     });
     const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake, createUiBroker()); api.run = c.submit; return <Text>{(c.state as any).commandCatalog.map((e: any) => e.name).join(",")}</Text>; }
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{(c.state as any).commandCatalog.map((e: any) => e.name).join(",")}</Text>; }
     const { lastFrame } = render(<H />);
     await waitFor(() => frame(lastFrame).includes("review"));     // wait for the init catalog fetch
     api.run!("/review");
@@ -307,14 +452,13 @@ describe("useChat", () => {
   });
 
   it("accumulates tasks from a turn's frames and exposes them in state", async () => {
-    const fake = fakeSession({ async submit(_p: string, onMessage: (m: unknown) => void) {
-      onMessage({ type: "assistant", message: { content: [{ type: "tool_use", id: "tc1", name: "TaskCreate", input: { subject: "build it" } }] } });
-      onMessage({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tc1", content: "Task #1 created successfully: build it" }] } });
-      return { result: "done" };
-    } });
+    const fake = fakeRemote({ submitMessages: [
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "tc1", name: "TaskCreate", input: { subject: "build it" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tc1", content: "Task #1 created successfully: build it" }] } },
+    ] });
     let tasks: any[] = [];
     function TaskHost() {
-      const c = useChat(() => fake, createUiBroker());
+      const c = useChat(() => fake);
       tasks = (c.state as any).tasks;
       (TaskHost as any).run = c.submit;
       return <Text>{tasks.map((t) => t.subject).join("|")}</Text>;
@@ -329,13 +473,13 @@ describe("useChat", () => {
 
 describe("permission ladder", () => {
   function LadderHost({ makeSession, api }: { makeSession: () => ChatSession; api: { cyc?: () => void; run?: (s: string) => void } }) {
-    const c = useChat(makeSession, createUiBroker());
+    const c = useChat(makeSession);
     api.cyc = c.cycleMode; api.run = c.submit;
-    return <Text>mode:{c.state.mode} model:{c.state.model ?? "-"} {c.state.lines.map((l) => l.text).join("|")}</Text>;
+    return <Text>mode:{c.state.mode} model:{c.state.model ?? "-"} {allText(c)}</Text>;
   }
   it("Tab cycles default → acceptEdits → auto → default (bypass off-cycle)", async () => {
     const setModeCalls: string[] = [];
-    const session = fakeSession({ async setPermissionMode(m: string) { setModeCalls.push(m); } });
+    const session = fakeRemote({ setPermissionMode: (m: string) => { setModeCalls.push(m); } });
     const api: { cyc?: () => void } = {};
     const { lastFrame } = render(<LadderHost makeSession={() => session} api={api} />);
     await waitFor(() => frame(lastFrame).includes("mode:default"));
@@ -346,7 +490,7 @@ describe("permission ladder", () => {
   });
   it("entering auto on an unsupported model swaps to a supported one with a notice", async () => {
     const setModelCalls: (string | undefined)[] = [];
-    const session = fakeSession({ async setModel(m?: string) { setModelCalls.push(m); } });
+    const session = fakeRemote({ setModel: (m?: string) => { setModelCalls.push(m); } });
     const api: { cyc?: () => void; run?: (s: string) => void } = {};
     const { lastFrame } = render(<LadderHost makeSession={() => session} api={api} />);
     await waitFor(() => frame(lastFrame).includes("mode:default"));
@@ -359,7 +503,7 @@ describe("permission ladder", () => {
   });
   it("entering auto on a supported model does not swap the model", async () => {
     const setModelCalls: (string | undefined)[] = [];
-    const session = fakeSession({ async setModel(m?: string) { setModelCalls.push(m); } });
+    const session = fakeRemote({ setModel: (m?: string) => { setModelCalls.push(m); } });
     const api: { cyc?: () => void; run?: (s: string) => void } = {};
     const { lastFrame } = render(<LadderHost makeSession={() => session} api={api} />);
     await waitFor(() => frame(lastFrame).includes("mode:default"));
@@ -372,7 +516,7 @@ describe("permission ladder", () => {
   });
   it("/yolo enables bypassPermissions; Tab from bypass returns to default", async () => {
     const setModeCalls: string[] = [];
-    const session = fakeSession({ async setPermissionMode(m: string) { setModeCalls.push(m); } });
+    const session = fakeRemote({ setPermissionMode: (m: string) => { setModeCalls.push(m); } });
     const api: { cyc?: () => void; run?: (s: string) => void } = {};
     const { lastFrame } = render(<LadderHost makeSession={() => session} api={api} />);
     await waitFor(() => frame(lastFrame).includes("mode:default"));
@@ -383,7 +527,7 @@ describe("permission ladder", () => {
   });
   it("cycleMode after unmount is a no-op (early disposed guard)", async () => {
     const setModeCalls: string[] = [];
-    const session = fakeSession({ async setPermissionMode(m: string) { setModeCalls.push(m); } });
+    const session = fakeRemote({ setPermissionMode: (m: string) => { setModeCalls.push(m); } });
     const api: { cyc?: () => void } = {};
     const { lastFrame, unmount } = render(<LadderHost makeSession={() => session} api={api} />);
     await waitFor(() => frame(lastFrame).includes("mode:default"));
@@ -397,9 +541,9 @@ describe("permission ladder", () => {
 
 describe("model picker", () => {
   it("/model with no arg opens the model picker from capabilities()", async () => {
-    const fake = fakeSession({ async capabilities() { return { models: [{ value: "claude-opus-4-8", displayName: "Opus 4.8" }], commands: [], mcpServers: [] }; } });
+    const fake = fakeRemote({ capabilities: () => ({ models: [{ value: "claude-opus-4-8", displayName: "Opus 4.8" }], commands: [], mcpServers: [] }) });
     const api: { run?: (p: string) => void; state?: any } = {};
-    function H() { const c = useChat(() => fake, createUiBroker()); api.run = c.submit; api.state = c.state; return <Text>{String(c.state.modelPicker.open)}</Text>; }
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.state = c.state; return <Text>{String(c.state.modelPicker.open)}</Text>; }
     render(<H />);
     await new Promise((r) => setTimeout(r, 0));
     api.run!("/model");
@@ -409,9 +553,9 @@ describe("model picker", () => {
   });
   it("/model <name> keeps the free-text fast-path (no picker, setModel called)", async () => {
     let set = "";
-    const fake = fakeSession({ async setModel(m?: string) { set = m ?? ""; } });
+    const fake = fakeRemote({ setModel: (m?: string) => { set = m ?? ""; } });
     const api: { run?: (p: string) => void; state?: any } = {};
-    function H() { const c = useChat(() => fake, createUiBroker()); api.run = c.submit; api.state = c.state; return <Text>x</Text>; }
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.state = c.state; return <Text>x</Text>; }
     render(<H />);
     await new Promise((r) => setTimeout(r, 0));
     api.run!("/model sonnet");
@@ -423,13 +567,13 @@ describe("model picker", () => {
 
 describe("thinking control", () => {
   function ThinkHost({ makeSession, api }: { makeSession: () => ChatSession; api: { run?: (s: string) => void } }) {
-    const c = useChat(makeSession, createUiBroker());
+    const c = useChat(makeSession);
     api.run = c.submit;
-    return <Text>think:{c.state.thinkLevel} {c.state.lines.map((l) => l.text).join("|")}</Text>;
+    return <Text>think:{c.state.thinkLevel} {allText(c)}</Text>;
   }
   it("/think <level> sets the thinking budget and updates the indicator", async () => {
     const budgets: (number | null)[] = [];
-    const session = fakeSession({ async setMaxThinkingTokens(n: number | null) { budgets.push(n); } });
+    const session = fakeRemote({ setMaxThinkingTokens: (n: number | null) => { budgets.push(n); } });
     const api: { run?: (s: string) => void } = {};
     const { lastFrame } = render(<ThinkHost makeSession={() => session} api={api} />);
     await waitFor(() => frame(lastFrame).includes("think:default"));
@@ -439,7 +583,7 @@ describe("thinking control", () => {
   });
   it("/think off disables thinking via setMaxThinkingTokens(0)", async () => {
     const budgets: (number | null)[] = [];
-    const session = fakeSession({ async setMaxThinkingTokens(n: number | null) { budgets.push(n); } });
+    const session = fakeRemote({ setMaxThinkingTokens: (n: number | null) => { budgets.push(n); } });
     const api: { run?: (s: string) => void } = {};
     const { lastFrame } = render(<ThinkHost makeSession={() => session} api={api} />);
     await waitFor(() => frame(lastFrame).includes("think:default"));
@@ -447,7 +591,7 @@ describe("thinking control", () => {
     expect(budgets).toEqual([0]);
   });
   it("/think with no arg shows the current level; /think bogus errors", async () => {
-    const session = fakeSession();
+    const session = fakeRemote();
     const api: { run?: (s: string) => void } = {};
     const { lastFrame } = render(<ThinkHost makeSession={() => session} api={api} />);
     await waitFor(() => frame(lastFrame).includes("think:default"));

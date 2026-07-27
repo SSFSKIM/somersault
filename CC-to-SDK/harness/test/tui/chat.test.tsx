@@ -1,11 +1,12 @@
-// tui/test/chat.test.tsx
+// tui/test/chat.test.tsx — reworked onto the adapter surface: `broker` prop is gone; ChatApp takes
+// `client: { kind, short? }` + `onDetach?`. fakeRemote() (test/tui/helpers/fakeRemote.ts) mirrors the real
+// RemoteChat wire contract (spec A2b Task 6).
 import { describe, it, expect } from "vitest";
 import React from "react";
 import { render } from "ink-testing-library";
 import { ChatApp } from "../../src/tui/ChatApp.js";
-import { createUiBroker } from "../../src/tui/uiBroker.js";
-import type { ChatSession } from "../../src/tui/useChat.js";
-import type { PermissionDecision } from "../../src/index.js";
+import { fakeRemote } from "./helpers/fakeRemote.js";
+import type { PendingEntry } from "../../src/permissions/pending.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
 async function waitFor(cond: () => boolean, timeout = 2000) {
@@ -16,18 +17,10 @@ async function pressUntil(stdin: { write: (s: string) => void }, key: string, co
   const start = Date.now();
   for (;;) { stdin.write(key); if (cond()) return; if (Date.now() - start > timeout) throw new Error(`pressUntil(${JSON.stringify(key)}) timeout`); await new Promise((r) => setTimeout(r, 5)); }
 }
-function fakeSession(onSubmit?: () => Promise<void>): ChatSession & { modes: string[] } {
-  const s: any = { modes: [],
-    async submit(_p: string, onMessage: (m: unknown) => void) { onMessage({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }); if (onSubmit) await onSubmit(); return { result: "done" }; },
-    async setPermissionMode(m: string) { s.modes.push(m); }, async setModel() {}, async setMaxThinkingTokens() {}, async interrupt() {}, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
-    async capabilities() { return { models: [{ value: "claude-opus-4-8" }], commands: [], mcpServers: [] }; },
-    async dispose() {}, sessionId: "sess-1" };
-  return s;
-}
 
 describe("<ChatApp>", () => {
   it("submits a typed prompt and streams the reply", async () => {
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeSession()} broker={createUiBroker()} cwd={process.cwd()} />);
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));      // composer mounted → TextInput live
     stdin.write("hi");
     await waitFor(() => frame(lastFrame).includes("hi"));   // typed text landed in the composer before Enter
@@ -36,26 +29,20 @@ describe("<ChatApp>", () => {
     expect(lastFrame()).toContain("ok");
   });
 
-  it("surfaces a gated tool as a dialog and 'a' allows it", async () => {
-    const ui = createUiBroker();
-    let decided: PermissionDecision | undefined;
-    const session = fakeSession(async () => {
-      await ui.broker.request({ toolName: "Edit", input: { file_path: "f.ts" }, toolUseID: "t", signal: new AbortController().signal }).then((d) => { decided = d; });
-    });
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} broker={ui} cwd={process.cwd()} />);
+  it("surfaces a parked permission as a dialog and 'a' allows it", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
-    stdin.write("edit it");
-    await waitFor(() => frame(lastFrame).includes("edit it"));   // typed text landed in the composer before Enter
-    stdin.write("\r");
+    fake.parkPermission({ sessionId: "s", toolUseID: "t", toolName: "Edit", input: { file_path: "f.ts" }, createdAt: Date.now() });
     await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));   // dialog up
     expect(lastFrame()).toContain("Edit");
     stdin.write("a");
-    await waitFor(() => decided !== undefined);
-    expect(decided).toEqual({ kind: "allow_once" });
+    await waitFor(() => fake.answeredCalls.length === 1);
+    expect(fake.answeredCalls[0]).toEqual({ toolUseID: "t", decision: { kind: "allow_once" } });
   });
 
   it("Ctrl-L is wired and keeps input flowing (clear-screen is an ANSI escape Static can't un-draw)", async () => {
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeSession()} broker={createUiBroker()} cwd={process.cwd()} />);
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
     stdin.write("hi");   await waitFor(() => frame(lastFrame).includes("hi"));
     stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("ok"));
@@ -66,11 +53,19 @@ describe("<ChatApp>", () => {
 
   it("Ctrl-C while idle arms 'press again to exit'; while busy it interrupts instead", async () => {
     let release = () => {}; let interrupts = 0;
-    const session: any = { modes: [],
-      async submit(_p: string, onMessage: (m: unknown) => void) { onMessage({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }); await new Promise<void>((res) => { release = res; }); return { result: "done" }; },
-      async setPermissionMode() {}, async setModel() {}, async setMaxThinkingTokens() {}, async interrupt() { interrupts++; }, async getContextUsage() { return { totalTokens: 5, maxTokens: 100 }; },
-      async capabilities() { return { models: [{ value: "x" }], commands: [], mcpServers: [] }; }, async usage() { return {}; }, async dispose() {}, sessionId: "s" };
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} broker={createUiBroker()} cwd={process.cwd()} />);
+    let fake: ReturnType<typeof fakeRemote>;
+    fake = fakeRemote({
+      interrupt: () => { interrupts++; },
+      submit: async (_p, onMessage) => {
+        fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+        const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+        onMessage(m); fake.pushEvent({ kind: "message", data: m });
+        await new Promise<void>((res) => { release = res; });
+        fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+        return { result: "done" };
+      },
+    });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
     stdin.write("\x03");                                                      // Ctrl-C idle → arm
     await waitFor(() => frame(lastFrame).includes("Press Ctrl-C again to exit"));
@@ -85,11 +80,41 @@ describe("<ChatApp>", () => {
   });
 
   it("Tab cycles the permission ladder default → acceptEdits → auto", async () => {
-    const session = fakeSession();
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} broker={createUiBroker()} cwd={process.cwd()} />);
+    const modes: string[] = [];
+    const session = fakeRemote({ setPermissionMode: (m: string) => { modes.push(m); } });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("mode"));
-    await pressUntil(stdin, "\t", () => session.modes.includes("auto"));   // Tab cycles default→acceptEdits→auto
-    expect(session.modes[0]).toBe("acceptEdits");
-    expect(session.modes).toContain("auto");
+    await pressUntil(stdin, "\t", () => modes.includes("auto"));   // Tab cycles default→acceptEdits→auto
+    expect(modes[0]).toBe("acceptEdits");
+    expect(modes).toContain("auto");
+  });
+
+  it("initialPrompt submits once on mount", async () => {
+    const { lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} initialPrompt="do the thing" />);
+    await waitFor(() => frame(lastFrame).includes("ok"));
+    expect(lastFrame()).toContain("› do the thing");
+  });
+
+  it("Ctrl-Z detaches when attached, and does NOT deny a pending remote permission (detach ≠ deny)", async () => {
+    let detachCalls = 0;
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "attached", short: "abc" }} onDetach={() => { detachCalls++; }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t", toolName: "Edit", input: {}, createdAt: Date.now() };
+    fake.parkPermission(entry);
+    await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
+    stdin.write("\x1a");                                     // Ctrl-Z
+    await new Promise((r) => setTimeout(r, 30));
+    expect(detachCalls).toBe(1);
+    expect(fake.answeredCalls).toEqual([]);                  // unanswered — stays parked, never denied
+  });
+
+  it("Ctrl-Z with client.kind === 'loopback' appends a not-detachable notice and does not exit", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("\x1a");
+    await waitFor(() => frame(lastFrame).includes("not detachable — run with --detachable"));
+    stdin.write("still here"); await waitFor(() => frame(lastFrame).includes("still here"));   // composer still alive
   });
 });
