@@ -9,7 +9,7 @@ import { rosterPath } from "../../src/fleet/paths.js";
 let env: NodeJS.ProcessEnv;
 beforeEach(() => { env = { CCX_FLEET_ROOT: mkdtempSync(join(tmpdir(), "ccx-host-")), HOME: "/home/u" }; });
 
-const opts = () => ({ short: "a1b2c3d4", name: "w1", cwd: "/w", kind: "bg" as const, config: {}, env });
+const opts = () => ({ short: "a1b2c3d4", name: "w1", cwd: "/w", kind: "bg" as const, detached: true, config: {}, env });
 /** Always inject procStartOf: a unit test must not spawn `ps`. */
 const deps = (openSession: any) => ({ openSession, procStartOf: async () => "Sat Jul 25 02:55:52 2026" });
 /** A fake session: resolves the turn only when we let it, so we can observe `working` mid-flight.
@@ -136,12 +136,14 @@ describe("SessionHost", () => {
     await h.stop();
   });
   it("an interactive host is not frozen at done by its first turn — it stays live and finalizes at stop()", async () => {
-    const h = new SessionHost({ ...opts(), kind: "interactive" }, deps(() => instantSession() as any));
+    const h = new SessionHost({ ...opts(), kind: "interactive", detached: false }, deps(() => instantSession() as any));
     await h.start(); await h.runTask("one");
     const mid = readRoster("a1b2c3d4", env)!;
     expect(mid.state).toBe("working"); expect(mid.endedAt).toBeUndefined();
     await h.runTask("two");
-    expect(h.status()).toMatchObject({ state: "done", status: "idle" });
+    // Multi-turn (A2b): an interactive host's success arm sets `working`, not `done` — it stays live for
+    // the NEXT turn instead of freezing terminal after the first. Only stop() records a terminal state.
+    expect(h.status()).toMatchObject({ state: "working", status: "idle" });
     await h.stop("stopped");
     expect(readRoster("a1b2c3d4", env)!.state).toBe("stopped");
   });

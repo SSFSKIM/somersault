@@ -16,7 +16,7 @@ const wedged = (over: Record<string, unknown> = {}) => ({
 });
 
 const hostWith = (session: any, env: NodeJS.ProcessEnv, disposeGraceMs?: number) =>
-  new SessionHost({ short: "ffffffff", name: "t", cwd: "/tmp", kind: "bg", config: {} as never, env },
+  new SessionHost({ short: "ffffffff", name: "t", cwd: "/tmp", kind: "bg", detached: true, config: {} as never, env },
     { openSession: () => session, procStartOf: async () => "start", disposeGraceMs });
 
 describe("SessionHost teardown", () => {

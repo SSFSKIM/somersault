@@ -65,7 +65,7 @@ function fakeSession() {
 
 const hostFor = (session: ReturnType<typeof fakeSession>, env: NodeJS.ProcessEnv) =>
   new SessionHost(
-    { short: "aaaaaaaa", name: "t", cwd: "/tmp", kind: "bg", config: {} as never, env },
+    { short: "aaaaaaaa", name: "t", cwd: "/tmp", kind: "bg", detached: true, config: {} as never, env },
     { openSession: () => session, procStartOf: async () => "start" },
   );
 

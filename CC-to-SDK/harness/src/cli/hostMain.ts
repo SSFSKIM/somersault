@@ -49,18 +49,36 @@ export function hostOptsFrom(argv: string[]): { opts: SessionHostOpts; prompt?: 
       // The MARKER's value only, never inv.worktree: that one is a name (`wt`), and recording a name
       // gives rm a row it refuses to touch forever. The parent never forwards --worktree anyway.
       short, name: process.env.CLAUDE_CODE_SESSION_NAME ?? short, cwd: process.cwd(), kind,
+      // Anything reached via `--__host` is, by construction, a spawned child process — detached from
+      // its parent terminal for BOTH kinds (--__host exists only for forks; a foreground/attached run
+      // never goes through this file).
+      detached: true,
       ...(worktree ? { worktree } : {}),
+      // `inv.idleTimeoutSec` is seconds (a human CLI unit); SessionHostOpts wants ms. The flag that sets
+      // it is still the loud rejection in args.ts (Task 8 rewires it) — this tolerates its absence.
+      ...(inv.idleTimeoutSec ? { idleTimeoutMs: inv.idleTimeoutSec * 1000 } : {}),
       config,
     },
-    ...(inv.prompt ? { prompt: inv.prompt } : {}),
+    // A `--detachable` parent keeps the prompt CLIENT-side (Task 8): the child attaches and the human
+    // types there, not on the spawn line. So an interactive child never surfaces a prompt here even if a
+    // stray positional slipped into its argv — only a bg child's prompt is real.
+    ...(inv.prompt && kind === "bg" ? { prompt: inv.prompt } : {}),
   };
 }
 
-/** The detached child's entry point. Never called by a user directly; `--__host` is internal. */
-export async function runHostMain(argv: string[]): Promise<void> {
+/** The detached child's entry point. Never called by a user directly; `--__host` is internal.
+ *  `deps.makeHost` is a test seam only — production always builds a real `SessionHost`. */
+export async function runHostMain(argv: string[], deps: { makeHost?: (o: SessionHostOpts) => Pick<SessionHost, "start" | "runTask" | "stop" | "finished"> } = {}): Promise<void> {
   const { opts, prompt } = hostOptsFrom(argv);
-  const host = new SessionHost(opts);
+  const host = (deps.makeHost ?? ((o: SessionHostOpts) => new SessionHost(o)))(opts);
   await host.start();
+  if (opts.kind === "interactive") {
+    // A detached interactive host lives until the stop op / idle reaper / a signal ends it. SIGTERM is
+    // how an operator (or the OS) asks nicely; record `stopped`, the operator-ended state.
+    process.on("SIGTERM", () => { void host.stop("stopped"); });
+    await host.finished;
+    return;
+  }
   try { if (prompt) await host.runTask(prompt); }
   finally { await host.stop(); }
 }

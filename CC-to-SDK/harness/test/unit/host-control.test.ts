@@ -31,7 +31,7 @@ function fakeSession(over: Record<string, unknown> = {}) {
 
 const hostFor = (session: unknown, opens?: unknown[]) =>
   new SessionHost(
-    { short: "c0c0c0c0", name: "t", cwd: "/tmp", kind: "bg", config: {} as never, env: { CCX_FLEET_ROOT: tmpFleet() } },
+    { short: "c0c0c0c0", name: "t", cwd: "/tmp", kind: "bg", detached: true, config: {} as never, env: { CCX_FLEET_ROOT: tmpFleet() } },
     { openSession: (c: unknown) => { opens?.push(c); return session as any; }, procStartOf: async () => "start" },
   );
 
@@ -133,7 +133,7 @@ describe("SessionHost.control", () => {
     const opens: any[] = [];
     let calls = 0;
     const host = new SessionHost(
-      { short: "c0c0c0c2", name: "t", cwd: "/tmp", kind: "bg", config: {} as never, env: { CCX_FLEET_ROOT: tmpFleet() } },
+      { short: "c0c0c0c2", name: "t", cwd: "/tmp", kind: "bg", detached: true, config: {} as never, env: { CCX_FLEET_ROOT: tmpFleet() } },
       {
         openSession: (c: unknown) => {
           opens.push(c);

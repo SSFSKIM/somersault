@@ -14,6 +14,12 @@ import type { PermissionDecision, PermissionBroker, PermissionRequest } from "..
 
 export interface SessionHostOpts {
   short: string; name: string; cwd: string; kind: "bg" | "interactive";
+  // REQUIRED, not defaulted: a defaulted boolean is exactly how a bg worker would silently lose its park
+  // (spec A2b §4). true means "surviving unattended is the point" (every bg host, plus a --detachable
+  // interactive one); false means an in-process host whose UI going away leaves nobody to answer.
+  detached: boolean;
+  // Only meaningful on a detachable host — see armIdle()'s doc. Absent = no idle reaper.
+  idleTimeoutMs?: number;
   worktree?: string; config: HarnessConfig; env?: NodeJS.ProcessEnv;
 }
 
@@ -70,12 +76,31 @@ export class SessionHost {
   private followers = new Set<(ev: HostEvent) => void>();
   private turnBuffer = new TurnBuffer({ maxMessages: 500, maxBytes: 1024 * 1024 });
   // "never": a background host parks until a human answers, which is the entire point of a worker that
-  // outlives the terminal that spawned it. The interactive case is handled by the follower rule in
+  // outlives the terminal that spawned it. The interactive case is handled by the detachedness rule in
   // broker(), not by a timer — a timer is how "the human is thinking" becomes "the human said no".
   private parked = new PendingPermissions({ expireAfterMs: "never" });
   // Who answered what, so a second answerer can be told. A host that runs for days would otherwise
   // accumulate one entry per permission for its whole life.
   private settledBy = new Map<string, string>();
+
+  private finishedResolve!: () => void;
+  /** Resolves when teardown completes (server closed). runHostMain awaits this for interactive hosts. */
+  readonly finished: Promise<void> = new Promise((r) => { this.finishedResolve = r; });
+
+  private idleTimer?: ReturnType<typeof setTimeout>;
+  /** Arm (or re-arm) the idle stop. Only ever configured for detachable hosts; a parked turn never idles
+   *  out because turnInFlight spans the park, and the timer is only armed when a turn is NOT in flight.
+   *  A LIVE CONNECTION also defers it: the reaper ends unattended idle sessions — an attached client
+   *  reading the transcript is not "idle beyond the timeout" in any sense the operator meant. */
+  private armIdle(): void {
+    if (!this.opts.idleTimeoutMs) return;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      if ((this.server?.connectionCount() ?? 0) > 0) { this.armIdle(); return; }
+      void this.stop("done");
+    }, this.opts.idleTimeoutMs);
+    (this.idleTimer as { unref?: () => void }).unref?.();
+  }
 
   constructor(private opts: SessionHostOpts,
     private deps: { openSession: (c: HarnessConfig) => HostSession; procStartOf?: (p: number) => Promise<string | undefined>;
@@ -113,8 +138,8 @@ export class SessionHost {
         answer: (id, d, by) => this.answer(id, d, by),
         prompt: (text) => this.runTask(text),
         interrupt: () => this.interrupt(),
-        // One follower per connection, delivering to that connection's sink. The host counts
-        // followers (the interactive deny rule reads that count); the server owns the sockets.
+        // One follower per connection, delivering to that connection's sink. The server owns the
+        // sockets and counts them (the deny rule reads THAT count, not the follower set — see broker()).
         follow: (deliver) => this.follow(deliver),
         control: (op) => this.control(op),
         resume: (sid) => this.resumeSession(sid),
@@ -129,6 +154,7 @@ export class SessionHost {
       finalizeRoster(this.opts.short, "error", this.env);
       throw e;
     }
+    this.armIdle();
   }
 
   /** A second call while a turn is already running MUST be refused here, not merely by the socket's own
@@ -139,6 +165,7 @@ export class SessionHost {
    *  exists to prevent. */
   async runTask(prompt: string): Promise<void> {
     if (this.turnInFlight) throw new Error(`host ${this.short} is already running a turn`);
+    clearTimeout(this.idleTimer);   // a turn (including any park inside it) must never idle out
     this.turnInFlight = true; this.state = "working";
     const seq = ++this.turnSeq_;
     this.turnBuffer.reset(); this.settledBy.clear();
@@ -156,13 +183,16 @@ export class SessionHost {
       this.turnBuffer.push(m);
       this.emit({ kind: "message", data: m });
     };
-    try { await this.session!.submit(prompt, onMessage); this.state = "done"; }
+    // A bg worker's success IS the terminal event — `done`. An interactive host stays LIVE across
+    // turns instead: `working`, the same state start() wrote, so it is ready for the next runTask()
+    // rather than frozen at a state that reads like the whole session is over.
+    try { await this.session!.submit(prompt, onMessage); this.state = this.opts.kind === "bg" ? "done" : "working"; }
     catch (e) { this.state = "error"; this.emit({ kind: "turn", phase: "end", seq, error: (e as Error)?.message }); throw e; }
     // For a BG worker the turn's completion IS the terminal event, so record it here: a host that dies
     // after the turn but before stop() then still reports `done` rather than waiting to be reaped by
     // liveness. An interactive host stays live across turns — finalize is first-terminal-wins, so
     // finalizing on turn one would freeze it at `done` while it works on turn two — it waits for stop().
-    finally { this.turnInFlight = false; if (this.opts.kind === "bg") this.syncRoster(); }
+    finally { this.turnInFlight = false; if (this.opts.kind === "bg") this.syncRoster(); this.armIdle(); }
     this.emit({ kind: "turn", phase: "end", seq });
   }
 
@@ -253,7 +283,11 @@ export class SessionHost {
   broker(): PermissionBroker {
     return {
       request: async (req: PermissionRequest): Promise<PermissionDecision> => {
-        if (this.opts.kind === "interactive" && this.followers.size === 0) return { kind: "deny" };
+        // Detachedness, not kind, decides (spec A2b §4): a detached host's purpose is surviving
+        // unattended — park. An in-process host whose UI is gone has nobody left to answer — deny.
+        // Counted on CONNECTIONS, not followers: a client that connected but has not (yet) followed is
+        // still a present human.
+        if (!this.opts.detached && (this.server?.connectionCount() ?? 0) === 0) return { kind: "deny" };
         const decision = this.parked.brokerFor(this.short).request(req);
         const entry = this.parked.list().find((e) => e.toolUseID === req.toolUseID);
         if (entry) this.emit({ kind: "permission", entry });
@@ -369,6 +403,7 @@ export class SessionHost {
    *     guaranteed by structure, not by convention. */
   private async teardown(final?: FleetState): Promise<void> {
     try {
+      clearTimeout(this.idleTimer);          // going away on our own terms — the reaper must not also fire
       if (final) this.state = final;
       this.settleParkedForSystem();
       this.syncRoster();                     // terminal state on disk BEFORE anything that can block
@@ -383,6 +418,7 @@ export class SessionHost {
       clearTimeout(timer);                   // whichever arm won, the other's handle must not dangle
     } finally {
       await this.server?.close();
+      this.finishedResolve();
     }
   }
 

@@ -4,7 +4,7 @@ import type { MainDeps } from "../../src/cli/main.js";
 import { parseCcx } from "../../src/cli/args.js";
 import type { CcxInvocation } from "../../src/cli/args.js";
 import { spawnDetached } from "../../src/cli/spawn.js";
-import { parseHostArgv, hostOptsFrom } from "../../src/cli/hostMain.js";
+import { parseHostArgv, hostOptsFrom, runHostMain } from "../../src/cli/hostMain.js";
 import type { AgentsRow } from "../../src/fleet/project.js";
 
 /** Every dispatch target throws by default, so a test that reaches the WRONG arm fails by name instead
@@ -78,6 +78,68 @@ describe("hostOptsFrom — what the detached child derives from its own argv", (
     const { opts } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "interactive", "--resume", "u-parent"]);
     expect(opts.config).toMatchObject({ resume: "u-parent" });
     expect(opts.config.forkSession).toBeUndefined();
+  });
+  it("marks the child detached for BOTH kinds — --__host exists only for forks", () => {
+    expect(hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "bg", "task"]).opts.detached).toBe(true);
+    expect(hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "interactive"]).opts.detached).toBe(true);
+  });
+  it("an interactive child does NOT surface a prompt, even from a stray positional — --detachable keeps it client-side", () => {
+    // A bg child's positional IS its task (see "does not fork a bg run..." above); an interactive
+    // child's is not — Task 8's --detachable parent types the prompt at the attached client, never on
+    // the spawn line, so a stray positional here must not resurrect the old bg behavior.
+    const { prompt } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "interactive", "stray"]);
+    expect(prompt).toBeUndefined();
+  });
+  it("idleTimeoutMs is absent until Task 8 wires --idle-timeout to set inv.idleTimeoutSec", () => {
+    const { opts } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "interactive"]);
+    expect(opts.idleTimeoutMs).toBeUndefined();
+  });
+});
+
+describe("runHostMain — interactive hosts stay alive; bg is unchanged", () => {
+  /** Every method throws unless overridden, so a call runHostMain should NOT make fails loudly by name. */
+  function fakeHost() {
+    const calls: string[] = [];
+    let resolveFinished!: () => void;
+    const finished = new Promise<void>((r) => { resolveFinished = r; });
+    return {
+      calls, resolveFinished, finished,
+      start: async () => { calls.push("start"); },
+      runTask: async (p: string) => { calls.push(`runTask:${p}`); },
+      stop: async (f?: unknown) => { calls.push(`stop:${String(f)}`); },
+    };
+  }
+
+  it("for --__kind bg: starts, runs the task, then stops — unchanged from before this task", async () => {
+    const h = fakeHost();
+    await runHostMain(["--__host", "0a1b2c3d", "--__kind", "bg", "task"], { makeHost: () => h as any });
+    expect(h.calls).toEqual(["start", "runTask:task", "stop:undefined"]);
+  });
+
+  it("for --__kind interactive: does NOT resolve until `finished` resolves, and never calls stop() itself", async () => {
+    const h = fakeHost();
+    let resolved = false;
+    const p = runHostMain(["--__host", "0a1b2c3d", "--__kind", "interactive"], { makeHost: () => h as any })
+      .then(() => { resolved = true; });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(resolved).toBe(false);
+    expect(h.calls).toEqual(["start"]);                          // never called stop() on its own
+    h.resolveFinished();                                          // e.g. the idle reaper or a `stop` op fired
+    await p;
+    expect(resolved).toBe(true);
+    expect(h.calls).toEqual(["start"]);                           // still never called stop() itself
+  });
+
+  it("SIGTERM stops an interactive host with 'stopped' and lets runHostMain resolve", async () => {
+    const h = fakeHost();
+    const realStop = h.stop;
+    h.stop = async (f?: unknown) => { await realStop(f); h.resolveFinished(); };
+    const p = runHostMain(["--__host", "0a1b2c3d", "--__kind", "interactive"], { makeHost: () => h as any });
+    await new Promise((r) => setTimeout(r, 10));
+    process.emit("SIGTERM");
+    await p;
+    process.removeAllListeners("SIGTERM");   // this test's own registration must not leak onto later tests
+    expect(h.calls).toEqual(["start", "stop:stopped"]);
   });
 });
 

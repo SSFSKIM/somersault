@@ -15,6 +15,9 @@ export interface CcxInvocation {
    *  and rmSession acts only on an absolute path. */
   worktreePath?: string;
   json: boolean; all: boolean; cwdFilter?: string;
+  // Field only for now — the --idle-timeout flag arm below stays the loud rejection until Task 8
+  // rewires it to set this (seconds, a human CLI unit; hostOptsFrom converts to ms for SessionHostOpts).
+  idleTimeoutSec?: number;
   config: HarnessConfig;
 }
 

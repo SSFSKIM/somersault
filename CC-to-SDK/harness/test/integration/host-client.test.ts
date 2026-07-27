@@ -29,11 +29,11 @@ function drivable() {
   };
 }
 
-async function startHost(kind: "bg" | "interactive" = "bg") {
+async function startHost(kind: "bg" | "interactive" = "bg", detached: boolean = kind === "bg") {
   const env = { CCX_FLEET_ROOT: tmpFleet() } as NodeJS.ProcessEnv;
   const session = drivable();
   const host = new SessionHost(
-    { short: "dddddddd", name: "int", cwd: process.cwd(), kind, config: {} as never, env },
+    { short: "dddddddd", name: "int", cwd: process.cwd(), kind, detached, config: {} as never, env },
     { openSession: () => session, procStartOf: async () => "start" });
   await host.start();
   return { host, session, env, path: hostSocketPath(process.pid, env) };

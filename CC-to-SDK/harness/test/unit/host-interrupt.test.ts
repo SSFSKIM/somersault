@@ -24,7 +24,7 @@ function fakeSession() {
 }
 
 const hostWith = (session: ReturnType<typeof fakeSession>, env: NodeJS.ProcessEnv, kind: "bg" | "interactive" = "bg") =>
-  new SessionHost({ short: "12ab34cd", name: "t", cwd: "/tmp", kind, config: {} as never, env },
+  new SessionHost({ short: "12ab34cd", name: "t", cwd: "/tmp", kind, detached: kind === "bg", config: {} as never, env },
     { openSession: () => session, procStartOf: async () => "start" });
 
 describe("SessionHost.interrupt on a background host", () => {

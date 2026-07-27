@@ -29,7 +29,7 @@ function fakeSession() {
 }
 
 const hostFor = (session: ReturnType<typeof fakeSession>, kind: "bg" | "interactive" = "bg") =>
-  new SessionHost({ short: "e5e5e5e5", name: "t", cwd: "/tmp", kind, config: {} as never, env: { CCX_FLEET_ROOT: tmpFleet() } },
+  new SessionHost({ short: "e5e5e5e5", name: "t", cwd: "/tmp", kind, detached: kind === "bg", config: {} as never, env: { CCX_FLEET_ROOT: tmpFleet() } },
     { openSession: () => session, procStartOf: async () => "start" });
 
 describe("SessionHost.runTask re-entry", () => {
