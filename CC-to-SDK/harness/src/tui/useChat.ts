@@ -2,6 +2,7 @@
 // late-bound permission broker, mode switching, and idempotent teardown.
 import { useEffect, useRef, useState } from "react";
 import type { PermissionDecision, PermissionRequest } from "../index.js";
+import type { ChatSession } from "../session/chatSession.js";
 import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import type { UiBrokerHandle } from "./uiBroker.js";
@@ -15,26 +16,11 @@ import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bas
 import { appendMemory as realAppendMemory } from "./memory.js";
 import { shortCwd } from "./banner.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel } from "../index.js";
-import type { CompactOutcome, RawContextUsage } from "../index.js";
+import type { RawContextUsage } from "../index.js";
 
-/** The subset of the lib Session the REPL drives (the real Session satisfies this). */
-export interface ChatSession {
-  submit(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown }>;
-  setPermissionMode(mode: string): Promise<void>;
-  setModel(model?: string): Promise<void>;
-  setMaxThinkingTokens(maxTokens: number | null): Promise<void>;
-  capabilities(): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] }>;
-  compact(): Promise<CompactOutcome>;
-  interrupt(): Promise<unknown>; // Wave-1 receipt ({still_queued}) — callers ignore it
-  getContextUsage(): Promise<unknown>;
-  usage(): Promise<unknown>;
-  // runtime MCP topology (W3.5)
-  mcpServerStatus(): Promise<unknown[]>;
-  reconnectMcpServer(name: string): Promise<void>;
-  toggleMcpServer(name: string, enabled: boolean): Promise<void>;
-  dispose(): Promise<void>;
-  readonly sessionId?: string;
-}
+// ChatSession is promoted to ../session/chatSession.ts (spec A2b §2) so the lib Session and the remote
+// adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
+export type { ChatSession };
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
 export interface Pending { req: PermissionRequest; resolve: (d: PermissionDecision) => void; }
 export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: Pending | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; }

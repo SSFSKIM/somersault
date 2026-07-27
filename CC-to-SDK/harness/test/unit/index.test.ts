@@ -105,6 +105,8 @@ describe("public API", () => {
       "getSessionInfo",
       "getSessionMessages",
       "guardTool",
+      "hasPermissionFeed",
+      "hasSessionEvents",
       "injectContext",
       "isAutoSupportedModel",
       "listSessions",

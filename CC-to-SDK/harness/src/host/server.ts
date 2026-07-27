@@ -3,7 +3,7 @@ import type { Server, Socket } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { hostOp } from "./ops.js";
-import type { HostStatus } from "./ops.js";
+import type { ControlOp, HostStatus } from "./ops.js";
 import { decodeFrame, encodeEvent, encodeReply } from "./wire.js";
 import type { HostEvent, HostFrame } from "./wire.js";
 import type { PendingEntry } from "../permissions/pending.js";
@@ -25,6 +25,14 @@ export interface HostHandlers {
   /** Register ONE sink for ONE connection; the returned function unregisters it. The sink is what the
    *  server writes to that socket — fan-out lives in the host's follower set, never here. */
   follow(deliver: (ev: HostEvent) => void): () => void;
+  /** The A2b control-op passthrough — one call per wire op, dispatched by `dispatch` below. */
+  control(op: ControlOp): Promise<Record<string, unknown>>;
+  /** Swap the underlying session for a resume of `sessionId`. Gated exactly like `prompt` (see the
+   *  `resume` dispatch arm) — a turn in flight must refuse it, not race it. */
+  resume(sessionId: string): Promise<void>;
+  /** The seq of the last started turn — read by the `prompt` reply so a client can correlate its
+   *  submit() to this turn's `end` event (adapter, Task 5). */
+  turnSeq(): number;
 }
 
 /** A frame with no newline in sight past this is a runaway peer, not an op. Same-user only (the socket
@@ -43,6 +51,10 @@ export class HostServer {
   private open = new Set<Socket>();
   private closeResolve!: () => void;
   readonly closed: Promise<void> = new Promise((r) => { this.closeResolve = r; });
+
+  /** How many peers currently hold a socket open (attached or not — a client that never sends `follow`
+   *  still counts, the same way `this.open` does). */
+  connectionCount(): number { return this.open.size; }
 
   constructor(private handlers: HostHandlers, private socketPath: string) {
     this.server = createServer((s) => this.onConnection(s));
@@ -116,7 +128,9 @@ export class HostServer {
       case "prompt": {
         if (this.handlers.busy()) return { ok: false, error: "busy" };
         void this.handlers.prompt(op.data.text).catch(() => {});
-        return { ok: true, accepted: true };
+        // runTask increments its seq synchronously before its first await, so it is readable here — the
+        // client correlates its submit() to THIS turn's end event by it (adapter, Task 5).
+        return { ok: true, accepted: true, seq: this.handlers.turnSeq() };
       }
       case "interrupt": await this.handlers.interrupt(); return { ok: true };
       case "follow": {
@@ -130,6 +144,15 @@ export class HostServer {
         return { ok: true, following: true };
       }
       case "unfollow": { this.unfollow(sock); return { ok: true, following: false }; }
+      case "set_model": case "set_permission_mode": case "set_thinking": case "capabilities": case "compact":
+      case "usage": case "context_usage": case "mcp_status": case "mcp_reconnect": case "mcp_toggle":
+        return await this.handlers.control(op.data);
+      // resume swaps the session under the socket; gated exactly like prompt and for the same reason.
+      case "resume": {
+        if (this.handlers.busy()) return { ok: false, error: "busy" };
+        await this.handlers.resume(op.data.sessionId);
+        return { ok: true };
+      }
     }
   }
 

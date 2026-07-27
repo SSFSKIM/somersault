@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HostServer } from "../../src/host/server.js";
 import type { HostHandlers } from "../../src/host/server.js";
+import { hostOp } from "../../src/host/ops.js";
 import type { HostEvent } from "../../src/host/wire.js";
 
 const sockPath = () => join(mkdtempSync(join(tmpdir(), "ccx-ops-")), "h.sock");
@@ -51,6 +52,9 @@ const handlers = (over: Partial<HostHandlers> = {}): HostHandlers => ({
   // `(ev: HostEvent) => void` callback param — TS rejects it (a fake that promises to accept
   // anything is not substitutable for one only ever called with HostEvent). HostEvent it is.
   follow: (_deliver: (ev: HostEvent) => void) => () => {},
+  control: async () => ({ ok: true }),
+  resume: async () => {},
+  turnSeq: () => 0,
   ...over,
 });
 
@@ -201,5 +205,20 @@ describe("host ops", () => {
             + JSON.stringify({ id: 2, op: "status" }) + "\n");
     expect(await c.waitFor((f) => f.id === 2)).toMatchObject({ ok: true });
     c.end(); await s.close();
+  });
+
+  it("parses the A2b control ops", () => {
+    for (const frame of [
+      { op: "set_model", model: "claude-sonnet-4-6" }, { op: "set_model" },
+      { op: "set_permission_mode", mode: "acceptEdits" },
+      { op: "set_thinking", maxTokens: 8000 }, { op: "set_thinking", maxTokens: null },
+      { op: "capabilities" }, { op: "compact" }, { op: "usage" }, { op: "context_usage" },
+      { op: "mcp_status" }, { op: "mcp_reconnect", name: "linear" }, { op: "mcp_toggle", name: "linear", enabled: false },
+      { op: "resume", sessionId: "a".repeat(8) },
+    ]) expect(hostOp.safeParse(frame).success, JSON.stringify(frame)).toBe(true);
+  });
+  it("rejects malformed control ops", () => {
+    for (const frame of [{ op: "set_permission_mode" }, { op: "set_thinking" }, { op: "mcp_reconnect" }, { op: "mcp_toggle", name: "x" }, { op: "resume" }])
+      expect(hostOp.safeParse(frame).success).toBe(false);
   });
 });

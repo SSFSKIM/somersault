@@ -9,7 +9,7 @@ export type HostEvent =
   | { kind: "permission"; entry: PendingEntry }                             // a decision just parked
   | { kind: "permission_settled"; toolUseID: string; by: string; decision: string }
   | { kind: "state"; status: HostStatus }
-  | { kind: "turn"; phase: "start" | "end"; error?: string; truncated?: boolean };
+  | { kind: "turn"; phase: "start" | "end"; seq?: number; error?: string; truncated?: boolean };
 
 export type HostFrame = ({ t: "event" } & HostEvent) | ({ t?: undefined } & Record<string, unknown>);
 

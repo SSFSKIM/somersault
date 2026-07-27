@@ -55,3 +55,5 @@ export type { PendingEntry } from "./permissions/pending.js";
 export { RemoteChatSession } from "./client/remote.js";
 export type { HostEvent } from "./host/wire.js";
 export type { HostStatus } from "./host/ops.js";
+export type { ChatSession, PermissionFeed, SessionEvents } from "./session/chatSession.js";
+export { hasPermissionFeed, hasSessionEvents } from "./session/chatSession.js";

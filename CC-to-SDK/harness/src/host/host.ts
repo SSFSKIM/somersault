@@ -1,5 +1,5 @@
 import { HostServer } from "./server.js";
-import type { HostStatus } from "./ops.js";
+import type { ControlOp, HostStatus } from "./ops.js";
 import { hostSocketPath } from "../fleet/paths.js";
 import { TERMINAL, finalizeRoster, readRoster, writeRoster } from "../fleet/roster.js";
 import { procStartOf as realProcStartOf } from "../fleet/liveness.js";
@@ -31,6 +31,19 @@ export interface HostSession {
   // `unknown`, not `void` — the real Session.interrupt() returns Promise<unknown>, and a Promise<void>
   // declaration here makes the default `openSession: realOpenSession` stop type-checking.
   interrupt?(): Promise<unknown>;
+  // The A2b control-op surface — exact signatures from ChatSession, all optional so every existing
+  // HostSession fake (host-session/host-follow/host-busy-gate/host-park/host-teardown fixtures) stays
+  // valid without modification.
+  setModel?(model?: string): Promise<void>;
+  setPermissionMode?(mode: string): Promise<void>;
+  setMaxThinkingTokens?(maxTokens: number | null): Promise<void>;
+  capabilities?(): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] }>;
+  compact?(): Promise<unknown>;
+  usage?(): Promise<unknown>;
+  getContextUsage?(): Promise<unknown>;
+  mcpServerStatus?(): Promise<unknown[]>;
+  reconnectMcpServer?(name: string): Promise<void>;
+  toggleMcpServer?(name: string, enabled: boolean): Promise<void>;
 }
 
 /** Owns one SDK session, its UDS socket, and its roster row. Live truth is answered over the socket;
@@ -47,6 +60,11 @@ export class SessionHost {
   // guard) must ask `busy()`, never that projection, or a prompt arriving mid-park re-enters runTask and
   // resets the turn buffer out from under a turn that never stopped.
   private turnInFlight = false;
+  // Monotonic per-host turn counter. A client's `prompt` reply carries the seq its submit() started
+  // (server.ts), and every `turn` event this turn emits carries the same seq — the correlation a
+  // follower/adapter needs to tell "this turn's end" from "some other turn's end" apart (Task 5).
+  private turnSeq_ = 0;
+  turnSeq(): number { return this.turnSeq_; }
   private env: NodeJS.ProcessEnv;
   private followers = new Set<(ev: HostEvent) => void>();
   private turnBuffer = new TurnBuffer({ maxMessages: 500, maxBytes: 1024 * 1024 });
@@ -97,6 +115,9 @@ export class SessionHost {
         // One follower per connection, delivering to that connection's sink. The host counts
         // followers (the interactive deny rule reads that count); the server owns the sockets.
         follow: (deliver) => this.follow(deliver),
+        control: (op) => this.control(op),
+        resume: (sid) => this.resumeSession(sid),
+        turnSeq: () => this.turnSeq(),
       }, hostSocketPath(process.pid, this.env));
       await this.server.listen();
     } catch (e) {
@@ -118,8 +139,9 @@ export class SessionHost {
   async runTask(prompt: string): Promise<void> {
     if (this.turnInFlight) throw new Error(`host ${this.short} is already running a turn`);
     this.turnInFlight = true; this.state = "working";
+    const seq = ++this.turnSeq_;
     this.turnBuffer.reset(); this.settledBy.clear();
-    this.emit({ kind: "turn", phase: "start" });
+    this.emit({ kind: "turn", phase: "start", seq });
     // Stamp the roster the MOMENT the engine's session id materializes — it arrives in the init frame
     // near the start of the turn, and Session sets .sessionId before dispatching that frame here. Waiting
     // for the turn to end (all syncRoster ever did) left `agents` printing sessionId "" for the session's
@@ -134,23 +156,66 @@ export class SessionHost {
       this.emit({ kind: "message", data: m });
     };
     try { await this.session!.submit(prompt, onMessage); this.state = "done"; }
-    catch (e) { this.state = "error"; this.emit({ kind: "turn", phase: "end", error: (e as Error)?.message }); throw e; }
+    catch (e) { this.state = "error"; this.emit({ kind: "turn", phase: "end", seq, error: (e as Error)?.message }); throw e; }
     // For a BG worker the turn's completion IS the terminal event, so record it here: a host that dies
     // after the turn but before stop() then still reports `done` rather than waiting to be reaped by
     // liveness. An interactive host stays live across turns — finalize is first-terminal-wins, so
     // finalizing on turn one would freeze it at `done` while it works on turn two — it waits for stop().
     finally { this.turnInFlight = false; if (this.opts.kind === "bg") this.syncRoster(); }
-    this.emit({ kind: "turn", phase: "end" });
+    this.emit({ kind: "turn", phase: "end", seq });
+  }
+
+  /** Dispatch one A2b control op onto the underlying session. Every member is OPTIONAL on HostSession,
+   *  so an absent one throws a named error here rather than a bare TypeError — the server's dispatch
+   *  catch (see server.ts) turns that into an `{ok:false, error:…}` reply instead of crashing the
+   *  connection. */
+  async control(op: ControlOp): Promise<Record<string, unknown>> {
+    const s = this.session;
+    const need = <T>(v: T | undefined, name: string): T => { if (!v) throw new Error(`${name} unsupported by this host`); return v; };
+    switch (op.op) {
+      case "set_model": await need(s?.setModel?.bind(s), "set_model")(op.model); return { ok: true };
+      case "set_permission_mode": await need(s?.setPermissionMode?.bind(s), "set_permission_mode")(op.mode); return { ok: true };
+      case "set_thinking": await need(s?.setMaxThinkingTokens?.bind(s), "set_thinking")(op.maxTokens); return { ok: true };
+      case "capabilities": return { ok: true, ...await need(s?.capabilities?.bind(s), "capabilities")() };
+      case "compact": return { ok: true, outcome: await need(s?.compact?.bind(s), "compact")() };
+      case "usage": return { ok: true, usage: await need(s?.usage?.bind(s), "usage")() };
+      case "context_usage": return { ok: true, usage: await need(s?.getContextUsage?.bind(s), "context_usage")() };
+      case "mcp_status": return { ok: true, servers: await need(s?.mcpServerStatus?.bind(s), "mcp_status")() };
+      case "mcp_reconnect": await need(s?.reconnectMcpServer?.bind(s), "mcp_reconnect")(op.name); return { ok: true };
+      case "mcp_toggle": await need(s?.toggleMcpServer?.bind(s), "mcp_toggle")(op.name, op.enabled); return { ok: true };
+    }
+  }
+
+  /** Swap the underlying SDK session for a resume of `sessionId`. Interactive /resume path — refused
+   *  mid-turn for the same reason a second prompt is. The old session's dispose is bounded by the same
+   *  grace as teardown: an idle dispose resolves immediately, but this must never hang the socket op. */
+  async resumeSession(sessionId: string): Promise<void> {
+    if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
+    const old = this.session;
+    this.session = this.deps.openSession({ ...this.opts.config, resume: sessionId, permissionBroker: this.broker() });
+    this.turnBuffer.reset(); this.settledBy.clear();
+    this.emit({ kind: "state", status: this.status() });
+    const graceMs = this.deps.disposeGraceMs ?? DISPOSE_GRACE_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>((r) => { timer = setTimeout(r, graceMs); (timer as { unref?: () => void }).unref?.(); });
+    await Promise.race([old?.dispose().catch(() => {}) ?? Promise.resolve(), deadline]);
+    clearTimeout(timer);
   }
 
   /** Subscribe to the live turn. The new follower is replayed the turn so far FIRST, synchronously, so
    *  it never sees message 3 before messages 1 and 2. Returns its own unsubscribe. */
   follow(cb: (ev: HostEvent) => void): () => void {
     const snap = this.turnBuffer.snapshot();
-    // The truncation flag has to reach the client or it is a promise we do not keep: TurnBuffer
-    // records that the replay is partial, and a follower shown a partial turn with no marker reads it
-    // as the whole turn. Sent only when true, so an untruncated replay costs no frame.
-    if (snap.truncated) this.deliver(cb, { kind: "turn", phase: "start", truncated: true });
+    // A follower joining MID-TURN must be told a turn is open, or every replayed and live message of this
+    // turn reaches a client with no LiveTurn to render into. An IDLE attach deliberately gets no start
+    // frame: the buffer still holds the last COMPLETED turn, whose content the disk replay already covers —
+    // no start frame means the REPL's no-live-turn guard drops it, which is the dedup (probe 62: the disk
+    // gains a turn only at turn end, so mid-turn buffer content never overlaps disk).
+    if (this.turnInFlight) this.deliver(cb, { kind: "turn", phase: "start", seq: this.turnSeq_, ...(snap.truncated ? { truncated: true } : {}) });
+    // NOT in flight: the buffer holds the last COMPLETED turn. The truncation flag still has to reach
+    // the client or it is a promise we do not keep — a follower shown a partial turn with no marker
+    // reads it as the whole turn — so a truncated idle replay keeps the old bare start frame.
+    else if (snap.truncated) this.deliver(cb, { kind: "turn", phase: "start", truncated: true });
     for (const m of snap.messages) this.deliver(cb, { kind: "message", data: m });
     // A request parked before this follower attached is otherwise invisible to it forever: the
     // `permission` event fires exactly once, at park time, over the followers registered at that
@@ -233,8 +298,8 @@ export class SessionHost {
    *  first-terminal-wins finalize must never freeze on it. */
   status(): HostStatus {
     const first = this.parked.list()[0];
-    if (first) return { state: "blocked", status: "idle", waitingFor: `permission:${first.toolName}` };
-    return { state: this.state, status: this.turnInFlight ? "busy" : "idle" };
+    if (first) return { state: "blocked", status: "idle", waitingFor: `permission:${first.toolName}`, ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
+    return { state: this.state, status: this.turnInFlight ? "busy" : "idle", ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
   }
 
   /** The host's OWN truthful busy signal, wired to the socket's `prompt` gate (see server.ts). Unlike

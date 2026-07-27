@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, afterAll } from "vitest";
+import { describe, it, expect, afterEach, afterAll, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +10,8 @@ afterEach(async () => { await srv?.close(); srv = undefined; });
 
 // This file predates the op union Task 6 adds; it only exercises status/stop framing, so the rest of
 // HostHandlers is stubbed once here rather than repeated at every one of its ~dozen call sites.
-const stub = { busy: () => false, pending: () => [], answer: () => ({ ok: true }), prompt: async () => {}, interrupt: async () => {}, follow: () => () => {} };
+const stub = { busy: () => false, pending: () => [], answer: () => ({ ok: true }), prompt: async () => {}, interrupt: async () => {}, follow: () => () => {},
+  control: async () => ({ ok: true }), resume: async () => {}, turnSeq: () => 0 };
 
 const root = mkdtempSync(join(tmpdir(), "ccx-host-"));   // one temp root for the file, not one per test
 let nth = 0;
@@ -188,5 +189,39 @@ describe("HostServer", () => {
     expect(settled).toBe(true);
     await first;
     srv = undefined;
+  });
+
+  it("a capabilities op round-trips the control handler's reply", async () => {
+    const sock = sockPath();
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {},
+      control: async () => ({ ok: true, models: [1], commands: [2], mcpServers: [3] }) }, sock);
+    await srv.listen();
+    expect(await ask(sock, { op: "capabilities" })).toEqual({ ok: true, models: [1], commands: [2], mcpServers: [3] });
+  });
+  it("refuses resume when busy() is true, gated exactly like prompt", async () => {
+    const sock = sockPath();
+    const resumed: string[] = [];
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {},
+      busy: () => true, resume: async (sid) => { resumed.push(sid); } }, sock);
+    await srv.listen();
+    expect(await ask(sock, { op: "resume", sessionId: "sid-1" })).toMatchObject({ ok: false, error: "busy" });
+    expect(resumed).toEqual([]);
+  });
+  it("a prompt reply carries the turn's seq", async () => {
+    const sock = sockPath();
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {},
+      prompt: async () => {}, turnSeq: () => 7 }, sock);
+    await srv.listen();
+    expect(await ask(sock, { op: "prompt", text: "go" })).toMatchObject({ ok: true, accepted: true, seq: 7 });
+  });
+  it("connectionCount() tracks open sockets, growing and shrinking as they connect/disconnect", async () => {
+    const sock = sockPath();
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    await srv.listen();
+    expect(srv.connectionCount()).toBe(0);
+    const c = session(sock); await c.ready;
+    await vi.waitFor(() => expect(srv!.connectionCount()).toBe(1));
+    c.close();
+    await vi.waitFor(() => expect(srv!.connectionCount()).toBe(0));
   });
 });
