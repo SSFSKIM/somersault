@@ -64,6 +64,9 @@ describe("public API", () => {
     expect(typeof api.RemoteChatSession).toBe("function");
     expect(typeof api.RemoteChatSession.connect).toBe("function");
   });
+  it("exports remoteChatSession, the lazy ChatSession adapter (a2b, task 5)", () => {
+    expect(typeof api.remoteChatSession).toBe("function");
+  });
   it("freezes the full public value-export surface (deliberate-update gate)", () => {
     const EXPECTED: string[] = [
       "BUILTIN_AGENTS",
@@ -113,6 +116,7 @@ describe("public API", () => {
       "mergeHooks",
       "observe",
       "openSession",
+      "remoteChatSession",
       "renameSession",
       "resolveAssistantPosture",
       "resolveAutoModel",
