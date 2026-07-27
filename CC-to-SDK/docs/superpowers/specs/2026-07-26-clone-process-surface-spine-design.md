@@ -320,6 +320,73 @@ Resolution:
 **Multiple clients:** broadcast to all, **first answer wins**, others told who answered. Answering is
 not locked to one client because a dead lock-holder would park the session forever.
 
+## A2b — the interactive front door (design, 2026-07-27, rev 4)
+
+A2a shipped the transport and the human seam; A2b ships the client half — foreground `ccx`,
+`ccx attach`, `--detachable`, `Ctrl+Z` — and the packaging that makes them one binary. Owner decisions
+(2026-07-27): absorb the TUI into `cc-harness`; A2b is the front door only, with the console deleted
+and the daemon *library* stack retired in a separate follow-up plan.
+
+**1. Packaging cutover.** The chat-REPL modules (`useChat`, `render`, `replay`, `markdown`, `theme`,
+`commands`, `commandComplete`, `fileComplete`, `uiBroker`, `bash`, `memory`, `banner`, `thinkLevels`,
+the chat components) move to `harness/src/tui/`; harness tsconfig gains `jsx`; `ink`/`react`/
+`ink-text-input` become real dependencies of `cc-harness` (`ink-testing-library` a devDep). Interactive
+code paths load the REPL by **dynamic `import()`** so headless invocations (`-p`, `--bg`, `agents`,
+`stop`, `rm`, `fleet gc`) never load React; the library barrel exports no TUI (public API unmoved).
+Deleted, not moved: the `cc-harness-tui` package itself and its console half (`useDaemon`, `Pool`,
+`Detail`, `Composer`, `StatusBar`, `ConfirmDialog`, `App`, `cli.tsx`, `format.ts`) — daemon-only UI
+whose backend is retiring. The `cc-harness-chat`/`cc-harness-console` bins disappear; `ccx` is the one
+interactive entry point. The legacy `cc-harness` bin (daemon subcommands) survives until the daemon
+retirement plan.
+
+**2. The socket speaks full `ChatSession`.** The `ChatSession` interface (today defined in
+`tui/src/useChat.ts`) is promoted into `cc-harness`'s public API, and the host socket grows the ops the
+REPL contract needs beyond A2a's six: `setModel`, `setPermissionMode`, `setMaxThinkingTokens`,
+`capabilities`, `compact`, `usage`, `getContextUsage`, `mcpServerStatus`, `reconnectMcpServer`,
+`toggleMcpServer`. `RemoteChatSession` implements the whole interface. Remote
+`submit(prompt, onMessage)` semantics: the client is always following, turn messages arrive as pushed
+events routed to `onMessage`, and `submit` resolves on the turn-end event — broadcast to every
+follower, resolution only for the submitter. `listSessions`/`getSessionMessages` stay direct local-disk
+reads (the recorded same-machine seam leak).
+
+**3. Default `ccx` is a loopback client.** The default invocation runs an in-process `SessionHost` and
+connects to **its own socket** through `RemoteChatSession` — exactly one `ChatSession` code path, so
+every local run continuously exercises the remote protocol (the reason the Architecture section opens
+the socket at all). A direct-call adapter was rejected: a second adapter to maintain, and the remote
+path would then be exercised only by attach. Client exit disposes the host and ends the process — the
+deliberate asymmetry stands.
+
+**4. Multi-turn hosts and `--detachable`.** `runHostMain`'s stop-after-initial-turn becomes
+kind-scoped: a `bg` host's life is still one task; an `interactive` host survives idle between turns
+and accepts the next socket `prompt`, ending only on the `stop` op, `--idle-timeout` (default: never),
+or — for default `ccx` — its client's exit. **Roster finalization moves with it**: interactive hosts
+write their terminal state when the *host* ends, not when a turn ends, resolving the carried
+"`state:"done"` between turns" defect (bg unchanged). `ccx --detachable` forks a detached host (kind
+`interactive`, no initial prompt) and the parent enters the attach path on its own short id. **Park
+policy is scoped by detachedness, not kind** — detached hosts (`--bg`, `--detachable`) park
+indefinitely; the in-process default `ccx` keeps deny-on-lost-UI — correcting A2a's kind-scoped park,
+which `--detachable` would otherwise inherit wrongly. The carried deny-rule defect is fixed by counting
+**connections**, not followers.
+
+**5. `ccx attach` and `Ctrl+Z`.** `attach <id>` resolves short/uuid through the fleet (ambiguity exits
+non-zero listing matches, the A1 rule), connects, and renders: past turns from disk
+(`getSessionMessages` — probe 62: completed turns only), the live turn from the host's `TurnBuffer`
+replay, a parked permission as the dialog, then live follow. `replay.ts` renders all of it. `Ctrl+Z`
+in an attached or detachable client detaches — unfollow + close, never the deny path; in default `ccx`
+it prints a notice (`not detachable — use --detachable`). Multi-client broadcast, first-answer-wins,
+and answered-by notification are already in the A2a socket layer; A2b adds only their rendering.
+
+**6. Deliberately deferred.** Event fan-out backpressure (probe 62 measured 1.4 KiB/s per follower —
+kernel socket buffers absorb orders of magnitude more; revisit on an observed stall). The daemon
+library stack including the public `connectDaemon`/`DaemonClient` API (own follow-up plan).
+Cross-machine attach (unchanged non-goal).
+
+**7. Verification.** Keyless: the moved component/app tests, plus integration growth on the real-UDS
+suite — loopback round trip, attach replay (past + live + park), `Ctrl+Z` detach not denying, an idle
+host accepting a second turn, and the four teardown-liveness tests. Live (gated): acceptance 5, 6 and
+10 as written. Contract: the bg path is untouched, so the existing doperpowers contract tests are the
+regression guard.
+
 ## Acceptance (observable behavior)
 
 1. `ccx --bg -n w "<task>"` prints `backgrounded · <8-hex>` on stdout and returns immediately; the
@@ -428,6 +495,12 @@ not locked to one client because a dead lock-holder would park the session forev
 | **First answer wins across clients** | *Lock answering to one client.* | A dead lock-holder would park the session permanently. |
 | **Default ask-policy is a floor for bare `--bg` only; any explicit permission config wins** | *An unconditional default ask-policy for `--bg` (rev 2).* | **Reversed by review.** doperpowers spawns every worker `--permission-mode auto`; an unconditional default would park each at its first tool and make the poller return `blocked` early — rev 1's failure by another route. Supply a floor for the unconfigured case, never a ceiling over expressed intent. |
 | **Crashed-host state derived at read time** | *Store a heartbeat / rewrite the roster from `agents`.* | A heartbeat adds the stale-state class back; rewriting from a read command races a restarting host. Deriving from `procStart` + socket keeps `agents` read-only. |
+| **(A2b) Absorb the TUI into `cc-harness`; retire the `cc-harness-tui` package** | *Move the `ccx` bin up into the TUI package.* | Preserves library purity but moves a bin that already shipped in A1 and keeps two packages for one product. The north star is cloning Claude Code as a product — which ships UI and engine as one package; dynamic import keeps headless paths React-free. |
+| | *Runtime delegation: `ccx` execs the TUI package's bin.* | Cross-package resolution and version skew — the most fragile option. |
+| **(A2b) Default `ccx` is a loopback client over its own socket** | *A direct-call `LocalHostChatSession` adapter.* | Avoids local serialization (negligible per probe 62) at the cost of a second adapter and a remote path exercised only by attach. One code path means the daily REPL continuously integration-tests the attach protocol. |
+| **(A2b) Front door only; console deleted, daemon library retired separately** | *Retire the whole daemon stack inside A2b.* | Mixing a large deletion into the front-door plan bloats review scope. The console dies now because its package dies and its backend is retiring; moving it would be churn. |
+| **(A2b) Park scoped by detachedness, not kind** | *Keep A2a's kind-scoped park.* | `--detachable` is kind `interactive` but must park — surviving unattended is its purpose. The correct axis is whether a host is detached from its client's life, not what kind of work it runs. |
+| **(A2b) Fan-out backpressure deferred** | *Build write backpressure now.* | Probe 62 measured 1.4 KiB/s per follower; kernel buffers absorb orders of magnitude more. Build on observed stall, not speculation. |
 
 ## Surprises & Discoveries
 
@@ -726,6 +799,14 @@ once such hosts stay alive.
 
 ## Revision Notes
 
+- **2026-07-27 rev 4 (A2b brainstorm)** — added *A2b — the interactive front door*: owner-decided
+  packaging cutover (TUI absorbed into `cc-harness`, `cc-harness-tui` retired, console deleted, daemon
+  library retirement split into its own follow-up plan), the socket promoted to the full `ChatSession`
+  contract, default `ccx` as a loopback client, kind-scoped multi-turn hosts with roster finalization
+  moved to host end, park re-scoped from kind to **detachedness** (correcting A2a's scope, which
+  `--detachable` would have inherited wrongly), `attach`/`Ctrl+Z` semantics, and the deferred-item
+  dispositions (deny rule counts connections — fixed; backpressure — deferred on probe 62's numbers).
+  Six Decision Log rows added.
 - **2026-07-26 rev 3.5 (final review) — acceptance 13's dirty-worktree clause was normatively wrong and
   is inverted.** It said `rm` must *refuse* when the worktree is dirty. The consumer requires the
   opposite: `_session_purge` in doperpowers' `_lib.sh` deliberately writes a `.daemon-turn-live` sentinel
