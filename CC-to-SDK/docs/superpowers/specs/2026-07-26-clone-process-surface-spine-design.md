@@ -609,6 +609,18 @@ regression guard.
   `_lib.sh` documents for tests — exercised the purge path immediately and cleanly. **Lesson: an identity
   gate is a liveness dependency; when a consumer's gate can fail on the same host, a passing fork tells you
   nothing about whether the cleanup half ran. Check the effect, not the exit code.**
+- **The attach window is the one hole the no-dedup design accepts** (A2b final review, F3). The disk read
+  in `prepareAttach` and the socket `follow` are separated by the ink dynamic import (~100–300 ms). A turn
+  that *completes inside that window* is in neither the disk snapshot (read before the turn ended) nor the
+  rendered replay (its buffer frames arrive with no start frame, and the no-live-turn guard drops them —
+  the very mechanism that makes idle attach duplicate-free). Self-healing on the next turn or re-attach;
+  recorded here so a future "attach lost a message" report starts at the design, not at a hunt for a bug.
+- **BSD `script` cannot drive a REPL from a pipe** — it `tcgetattr`s its own stdin and dies with
+  `Operation not supported on socket` when stdin is not a tty, so it cannot be scripted from a harness.
+  A ~40-line python `pty.fork` relay (fork the child on a real pty, forward pipe-stdin to the master,
+  master to stdout) is the reliable way to run scripted acceptance against the Ink client; Ctrl+Z and the
+  permission dialog's number keys arrive as plain bytes. The A2b live acceptance drivers live in the job
+  scratch as `ptyrun.py` + `acc56.mjs` + `acc10.mjs` and are trivially recreatable from this description.
 
 ## Outcomes & Retrospective
 
@@ -796,6 +808,54 @@ initial turn, so no idle host can yet take a second turn over the socket; event 
 backpressure; the interactive deny rule counts *followers*, so a client that connects without
 following is invisible to it; and a live interactive host will report `state:"done"` between turns
 once such hosts stay alive.
+
+**A2b (the interactive front door) shipped 2026-07-27.** Ten tasks plus a final-review fix pass, 16
+commits (`204c30053c..6a81c473ce`): the chat REPL absorbed into `cc-harness` (the `cc-harness-tui`
+package and its daemon console retired), `ChatSession`/`PermissionFeed`/`SessionEvents` promoted to the
+package's session contract, the host socket grown to the full 11-op control surface with turn `seq` and
+the mid-turn start-frame replay, the `remoteChatSession` adapter (seq-correlated submit over an
+`endedTurns` ledger; host death rejects the in-flight submit and delivers a synthetic turn end), the
+REPL rewired so **host events are the single rendering source and `submit` is only a command channel**,
+foreground `ccx` as an in-process host plus a loopback client over its own socket, `ccx attach`,
+`--detachable` spawn with fromSpawn-only bounded auto-attach retry, `--idle-timeout` with the
+connection-gated reaper, and the detachedness-scoped park (detached hosts park indefinitely; a
+non-detached host denies at `connectionCount() === 0`). Every A2a carry-over above is closed except
+backpressure, which the Decision Log defers on purpose. 1150 tests green; typecheck, build and the
+keyless-skip guarantee clean; the doperpowers contract suite unmoved.
+
+**Acceptance 5, 6 and 10 executed live** against real detached and foreground processes, real model
+turns, through a scripted pty (python `pty.fork`; see Surprises for why BSD `script` cannot do this):
+
+| # | Verdict | Evidence |
+|---|---|---|
+| 5 | **PASS** | A `--bg` session parked on a real Bash `ask` (`state:"blocked"`); `ccx attach` in a pty replayed the transcript and rendered the parked dialog — `echo PARKED-OK` and the `Yes` options visible. |
+| 6 | **PASS** | Ctrl+Z (`\x1a`) in the attached client exited with the detach notice while the roster stayed `blocked` — the park survived, nothing was denied. Re-attach showed the same dialog; pressing `1` (allow once) resumed the turn and the session finished `done`. |
+| 10 | **PASS** | A bare foreground `ccx` was attached from a second pty; a prompt typed in terminal 1 rendered in both (the event stream, not the submit channel, is what the second client saw). Killing terminal 1's pty delivered SIGHUP and the host finalized `done` on the roster. |
+
+Keyless halves: the full gate ran clean (1145 passed / 61 skipped pre-fix, 1150 post-fix) and all four
+CLI refusals matched the spec exactly (`attach nonexistent` → exit 1 `ccx: no session matches`;
+`--detachable --bg` → exit 2; `--idle-timeout` without `--detachable` → exit 2; bare `-p` → exit 2).
+
+**What the process caught, and where — the A2a lesson repeated.** Twelve per-task review passes found
+two Important defects the implementers' own gates missed: the Task 6 refactor removed the `.finally()`
+that used to clear `busy`, so a mid-turn `/resume` swap stranded the REPL forever (fixed with a
+busy-guard mirroring the host's own busy-gated resume op); and Task 4's `finished` could hang if
+`server.close()` threw. The **final whole-branch review** then found the one Important no task-scoped
+reviewer could see: the host-death-liveness work covered the *submit* channel but never the *answer*
+channel — `answerPermission`'s rejection was unhandled, so answering a dialog after the host died
+crashed the REPL with a stack trace. The flagship scenario (park → attach → answer) colliding with the
+flagship failure mode (host death), and the seam belonged to no single task. Same shape as A2a's
+Critical: the cross-cutting mechanisms earn their cost precisely at the seams the task decomposition
+created. The fix pass (`6a81c473ce`) also gave `--think` reach into `-p`/`--bg`/`--detachable` (it was
+silently foreground-only — the same silent-drop class the branch itself refuses for `--idle-timeout`)
+and made an idle host's death visible to its attached client instead of surfacing as a 10-second
+timeout on the next submit.
+
+**Accepted, recorded, unbuilt:** the attach-window turn loss (Surprises above); a refused `resume` op
+poisons the swapped-in adapter (millisecond race, F6); fan-out backpressure (deferred by decision);
+per-turn `endedTurns` growth on follower-only clients (bounded by turn count); an attached client's
+status bar starts at `default` rather than the host's real mode (the setters-not-getters class — the
+next natural increment alongside a `capabilities`-driven status refresh).
 
 ## Revision Notes
 
