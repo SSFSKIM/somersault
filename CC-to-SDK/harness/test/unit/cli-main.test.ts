@@ -7,6 +7,11 @@ import { spawnDetached } from "../../src/cli/spawn.js";
 import { parseHostArgv, hostOptsFrom, runHostMain } from "../../src/cli/hostMain.js";
 import type { AgentsRow } from "../../src/fleet/project.js";
 
+// F4's -p mapping lives inside main.ts's own (unexported) default runOnce, which calls createHarness
+// directly — the only way to pin that wiring without spawning the real SDK is to mock createHarness
+// itself and inspect the config it was called with.
+vi.mock("../../src/harness.js", () => ({ createHarness: vi.fn(() => ({ run: async () => ({ result: "ok" }) })) }));
+
 /** Every dispatch target throws by default, so a test that reaches the WRONG arm fails by name instead
  *  of quietly doing nothing — and nothing here spawns a process, opens a session or runs git.
  *  `isTTY` alone defaults to a plain `() => false` rather than a throw: it is a harmless query the run
@@ -102,6 +107,18 @@ describe("hostOptsFrom — what the detached child derives from its own argv", (
   it("idleTimeoutMs is absent until Task 8 wires --idle-timeout to set inv.idleTimeoutSec", () => {
     const { opts } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "interactive"]);
     expect(opts.idleTimeoutMs).toBeUndefined();
+  });
+  it("maps a forwarded --think into the host config's `thinking` field, for BOTH kinds (F4)", () => {
+    // --detachable's child is kind:"interactive" — the mapping must not be bg-only, or a --detachable
+    // launch would keep silently dropping the flag even after spawn.ts forwards it.
+    const bg = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "bg", "--think", "high", "task"]);
+    expect(bg.opts.config.thinking).toEqual({ type: "enabled", budgetTokens: 16000 });
+    const interactive = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "interactive", "--think", "off"]);
+    expect(interactive.opts.config.thinking).toEqual({ type: "disabled" });
+  });
+  it("leaves `thinking` unset when --think was not given", () => {
+    const { opts } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "bg", "task"]);
+    expect(opts.config.thinking).toBeUndefined();
   });
 });
 
@@ -256,6 +273,20 @@ describe("main — run: foreground (Task 7)", () => {
     const { out, value } = await captureLog(() => main(["-p", "hi"], deps({ runOnce: async (inv) => { expect(inv.prompt).toBe("hi"); return "the answer"; } })));
     expect(value).toBe(0);
     expect(out).toEqual(["the answer"]);
+  });
+  it("-p --think maps into the harness config's `thinking` field (F4) — headless print used to silently drop it", async () => {
+    const { createHarness } = await import("../../src/harness.js");
+    vi.mocked(createHarness).mockClear();
+    const { value } = await captureLog(() => main(["-p", "--think", "high", "hi"]));
+    expect(value).toBe(0);
+    expect(createHarness).toHaveBeenCalledWith(expect.objectContaining({ thinking: { type: "enabled", budgetTokens: 16000 } }));
+  });
+  it("-p with no --think leaves `thinking` unset — no accidental default budget", async () => {
+    const { createHarness } = await import("../../src/harness.js");
+    vi.mocked(createHarness).mockClear();
+    await captureLog(() => main(["-p", "hi"]));
+    const config = vi.mocked(createHarness).mock.calls[0]![0] as Record<string, unknown>;
+    expect(config.thinking).toBeUndefined();
   });
   it("-p with no prompt exits 2 without calling runOnce", async () => {
     const { err, value } = await captureLog(() => main(["-p"], deps()));

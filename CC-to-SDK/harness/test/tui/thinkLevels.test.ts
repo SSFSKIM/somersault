@@ -1,6 +1,6 @@
 // tui/test/thinkLevels.test.ts — pure level↔budget vocabulary.
 import { describe, it, expect } from "vitest";
-import { THINK_LEVELS, thinkBudget, thinkLabel, parseThinkArg } from "../../src/tui/thinkLevels.js";
+import { THINK_LEVELS, thinkBudget, thinkLabel, parseThinkArg, thinkingConfigFrom } from "../../src/tui/thinkLevels.js";
 
 describe("thinkLevels", () => {
   it("THINK_LEVELS is the effort-enum vocabulary plus off", () => {
@@ -25,5 +25,16 @@ describe("thinkLevels", () => {
     expect(parseThinkArg("15000")).toEqual({ level: "15k", budget: 15000 });
     expect(parseThinkArg("bogus")).toBeNull();
     expect(parseThinkArg("-5")).toBeNull();
+  });
+  // F4: shared by every --think-consuming launch path (runForegroundImpl, hostMain's --__host child,
+  // the -p runOnce path) so the flag behaves identically no matter which one reads it.
+  it("thinkingConfigFrom maps a level to the SDK config's thinking field", () => {
+    expect(thinkingConfigFrom("high")).toEqual({ type: "enabled", budgetTokens: 16000 });
+    expect(thinkingConfigFrom("off")).toEqual({ type: "disabled" });
+    expect(thinkingConfigFrom("16000")).toEqual({ type: "enabled", budgetTokens: 16000 });
+  });
+  it("thinkingConfigFrom is undefined when --think was not given or failed to parse", () => {
+    expect(thinkingConfigFrom(undefined)).toBeUndefined();
+    expect(thinkingConfigFrom("bogus")).toBeUndefined();
   });
 });

@@ -91,7 +91,15 @@ export function useChat(
       if (disposed.current) return;
       if (ev.kind === "turn" && ev.phase === "start") { liveTurnRef.current = new LiveTurn(); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]); }
       else if (ev.kind === "message") { const l = liveTurnRef.current; if (!l) return; l.ingest(ev.data); taskListRef.current.ingest(ev.data); setStreaming(l.snapshot()); setTasks(taskListRef.current.snapshot()); setSubagentActive(l.subagentActive); setTurnTokens(l.outputTokens); }
-      else if (ev.kind === "turn" && ev.phase === "end") { const l = liveTurnRef.current; liveTurnRef.current = null; if (l) { if (ev.error) l.fail(ev.error); setLines((x) => [...x, ...l.finalize()]); if (l.model) setModel(l.model); } setStreaming([]); setBusy(false); setSubagentActive(false); void refreshCtx(); drainNext(); }
+      else if (ev.kind === "turn" && ev.phase === "end") {
+        const l = liveTurnRef.current; liveTurnRef.current = null;
+        if (l) { if (ev.error) l.fail(ev.error); setLines((x) => [...x, ...l.finalize()]); if (l.model) setModel(l.model); }
+        // No live turn to fail INTO (an idle host died, or its synthetic close arrived with nothing
+        // rendering) but the frame still carries an error: without this, an idle host's death is
+        // invisible until the next submit times out ~10s later (F5).
+        else if (ev.error) notice(`✗ connection lost: ${ev.error}`);
+        setStreaming([]); setBusy(false); setSubagentActive(false); void refreshCtx(); drainNext();
+      }
     });
     const offPerm = hasPermissionFeed(session) ? session.onPermission((entry) => { if (!disposed.current) pushPending(entry); }) : undefined;
     const offSettled = hasPermissionFeed(session) ? session.onPermissionSettled((s) => { if (!disposed.current) dropPending(s.toolUseID, s.by, s.decision); }) : undefined;
@@ -253,7 +261,15 @@ export function useChat(
   // events, not the submit callback, own the render.
   function runTurn(prompt: string) {
     setLines((l) => [...l, { text: `› ${prompt}`, dim: true }]);
-    session.submit(prompt, () => {}).catch((e) => { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); setBusy(false); drainNext(); });
+    session.submit(prompt, () => {}).catch((e) => {
+      append([{ text: `✗ ${(e as Error).message}`, color: "red" }]);
+      // Only reclaim busy/drain when no turn is event-owned (liveTurnRef null): a live turn — another
+      // client's turn streaming, or our own turn that already started and whose end (incl. a synthetic
+      // one on host death) the turn-end event arm will still deliver — owns busy/drain on its own; doing
+      // it again here would double-drain the queue and can clobber busy out from under a stream that is
+      // in fact still live (F2).
+      if (liveTurnRef.current === null) { setBusy(false); drainNext(); }
+    });
   }
   // After a turn ends, dispatch the next queued prompt (if any) on the next macrotask, so busy=false has
   // committed before dispatch may set it true again. A drained TURN re-drains via its finally (self-chaining);
@@ -308,7 +324,15 @@ export function useChat(
     const entry = pendingRef.current;
     if (!entry || !hasPermissionFeed(session)) return;
     answeredIds.current.add(entry.toolUseID);
-    void session.answerPermission(entry.toolUseID, d).then((r) => { if (r.alreadyAnsweredBy) notice(`answered by ${r.alreadyAnsweredBy}`); });
+    void session.answerPermission(entry.toolUseID, d).then((r) => { if (r.alreadyAnsweredBy) notice(`answered by ${r.alreadyAnsweredBy}`); })
+      .catch((e) => {
+        // A designed-for rejection path (host death mid-dialog, or the 10s request deadline on a wedged
+        // host) — never leave this unhandled (F1: it used to crash the whole REPL). Un-mark it as ours so
+        // a LATER settle of the same entry (the park is still live host-side — never cleared here) still
+        // renders correctly instead of being mistaken for our own already-applied answer.
+        answeredIds.current.delete(entry.toolUseID);
+        notice(`✗ answer failed: ${(e as Error).message}`);
+      });
   }
   // Apply a permission mode. `auto` is model-gated (probe 24): if the live model can't run auto, swap to a
   // supported one FIRST (verified to take effect at runtime) with a notice, then set the mode. Disposed-guarded

@@ -20,3 +20,12 @@ export function parseThinkArg(arg: string): { level: string; budget: number } | 
   if (/^\d+$/.test(a)) { const budget = parseInt(a, 10); return { level: thinkLabel(budget), budget }; }
   return null;
 }
+
+/** Launch-time `--think` argument → the SDK config's `thinking` field (undefined when `think` is absent
+ *  or fails to parse). Shared by every `--think`-consuming launch path — `runForegroundImpl`, the
+ *  `--__host` child (hostMain.ts, both bg and interactive), and the `-p` runOnce path — so the flag
+ *  behaves identically no matter which one reads it (F4: it used to work on foreground only). */
+export function thinkingConfigFrom(think?: string): { type: "disabled" } | { type: "enabled"; budgetTokens: number } | undefined {
+  const parsed = think ? parseThinkArg(think) : undefined;
+  return parsed ? (parsed.budget === 0 ? { type: "disabled" } : { type: "enabled", budgetTokens: parsed.budget }) : undefined;
+}

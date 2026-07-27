@@ -30,6 +30,10 @@ function configFlags(inv: CcxInvocation): string[] {
   // to ms. Forwarded unconditionally when set: a --detachable spawn is the ONLY caller that combines
   // --idle-timeout with a fork, and the child's re-parse has no --detachable of its own to gate on.
   if (inv.idleTimeoutSec) out.push("--idle-timeout", String(inv.idleTimeoutSec));
+  // Without this, `--bg --think high` and `--detachable --think high` silently ran the child on the SDK
+  // default budget — the exact silent-drop class this file already refuses for other flags (F4). The
+  // child's own parseCcx re-validates it; hostOptsFrom maps it into the config via thinkingConfigFrom.
+  if (inv.think) out.push("--think", inv.think);
   return out;
 }
 

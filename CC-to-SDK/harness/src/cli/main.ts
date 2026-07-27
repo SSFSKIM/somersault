@@ -11,7 +11,7 @@ import { SessionHost } from "../host/host.js";
 import type { SessionHostOpts } from "../host/host.js";
 import { mintShortId, hostSocketPath } from "../fleet/paths.js";
 import { welcomeBanner } from "../tui/banner.js";
-import { parseThinkArg } from "../tui/thinkLevels.js";
+import { parseThinkArg, thinkingConfigFrom } from "../tui/thinkLevels.js";
 import { prepareAttach as realPrepareAttach } from "./attach.js";
 import { socketAnswers as realSocketAnswers } from "../fleet/liveness.js";
 // type-only: main.ts stays React-free. The ink import happens only inside the DEFAULT runChatClient,
@@ -50,9 +50,12 @@ const defaults: MainDeps = {
   },
   runOnce: async (inv) => {
     const { createHarness } = await import("../harness.js");
+    // --think reached only runForegroundImpl before F4; -p is headless (no REPL /think), so the launch
+    // flag is the ONLY way to set it here — same mapping, via the shared helper.
+    const thinking = thinkingConfigFrom(inv.think);
     // RunResult.result IS the final string directly (harness.ts's run(): `if ("result" in mm) result =
     // mm.result` copies the SDK result message's own `result` field verbatim, one layer, not two).
-    const r = await createHarness(inv.config).run(inv.prompt!);
+    const r = await createHarness({ ...inv.config, ...(thinking ? { thinking } : {}) }).run(inv.prompt!);
     return typeof r.result === "string" ? r.result : JSON.stringify(r.result);
   },
   isTTY: () => Boolean(process.stdin.isTTY),
@@ -184,7 +187,7 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   // Launch-time thinking budget (the old cc-harness-chat behavior): --think off disables, a level sets
   // the budget, absent leaves the SDK default. thinkBudget/parseThinkArg from ../tui/thinkLevels.js (pure).
   const parsedThink = inv.think ? parseThinkArg(inv.think) : undefined;
-  const thinking = parsedThink ? (parsedThink.budget === 0 ? { type: "disabled" as const } : { type: "enabled" as const, budgetTokens: parsedThink.budget }) : undefined;
+  const thinking = thinkingConfigFrom(inv.think);
   // Launch resume goes to the CLIENT (initialResume → resumeInto → the adapter's resume op), NOT into
   // the host's config: one resume code path, and the incr-9 replay behavior survives the cutover.
   const { resume, ...hostConfig } = inv.config;

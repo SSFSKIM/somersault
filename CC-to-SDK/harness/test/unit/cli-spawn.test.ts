@@ -84,6 +84,19 @@ describe("spawnDetached", () => {
     spawnDetached(parseCcx(["--bg", "task"]), { spawn: s.spawn, rand: () => 0 });
     expect((s.calls[0].args as string[])).not.toContain("--idle-timeout");
   });
+  it("forwards --think to the child, so --bg/--detachable stop silently dropping the launch thinking budget (F4)", () => {
+    // Before F4 only foreground consumed --think; --bg and --detachable accepted it and ignored it —
+    // the exact silent-drop class this file already refuses --settings/--idle-timeout for.
+    const s = fakeSpawner();
+    spawnDetached(parseCcx(["--bg", "--think", "high", "task"]), { spawn: s.spawn, rand: () => 0 });
+    const args: string[] = s.calls[0].args;
+    expect(args[args.indexOf("--think") + 1]).toBe("high");
+  });
+  it("omits --think entirely when it was not given", () => {
+    const s = fakeSpawner();
+    spawnDetached(parseCcx(["--bg", "task"]), { spawn: s.spawn, rand: () => 0 });
+    expect((s.calls[0].args as string[])).not.toContain("--think");
+  });
   it("forwards --settings as JSON text, because the parser hands it back as an object", () => {
     // parseCcx resolves --settings (inline JSON or a file path) into an OBJECT. Pushed into argv raw it
     // stringifies to "[object Object]" and the child's re-parse throws: a gateway daemon dead at startup.

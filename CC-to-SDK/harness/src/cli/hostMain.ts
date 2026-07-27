@@ -4,6 +4,7 @@ import type { SessionHostOpts } from "../host/host.js";
 import { isShortId } from "../fleet/paths.js";
 import { parseCcx } from "./args.js";
 import type { CcxInvocation } from "./args.js";
+import { thinkingConfigFrom } from "../tui/thinkLevels.js";
 
 /** Read POSITIONALLY and validated, never by value. `argv[argv.indexOf("--__kind") + 1]` yields argv[0]
  *  when the marker is absent — a *defined* value, so a `?? "bg"` fallback never fires: kind lands as
@@ -44,6 +45,11 @@ export function hostOptsFrom(argv: string[]): { opts: SessionHostOpts; prompt?: 
   // Forking is also what makes that purge safe: the child's transcript physically carries the parent's
   // conversation, so deleting the parent costs no history.
   const config = kind === "bg" && inv.config.resume ? { ...inv.config, forkSession: true } : inv.config;
+  // --think reaches a --__host child two ways: forwarded by spawnDetached for --bg/--detachable
+  // (spawn.ts's configFlags), or typed directly at `ccx --__host …` (untested-by-a-human, but the same
+  // parseCcx arm handles it either way). Mapped exactly like runForegroundImpl's launch-time budget, via
+  // the shared pure helper (F4) — for BOTH kinds, since --detachable's child is kind:"interactive".
+  const thinking = thinkingConfigFrom(inv.think);
   return {
     opts: {
       // The MARKER's value only, never inv.worktree: that one is a name (`wt`), and recording a name
@@ -57,7 +63,7 @@ export function hostOptsFrom(argv: string[]): { opts: SessionHostOpts; prompt?: 
       // `inv.idleTimeoutSec` is seconds (a human CLI unit); SessionHostOpts wants ms. The flag that sets
       // it is still the loud rejection in args.ts (Task 8 rewires it) — this tolerates its absence.
       ...(inv.idleTimeoutSec ? { idleTimeoutMs: inv.idleTimeoutSec * 1000 } : {}),
-      config,
+      config: { ...config, ...(thinking ? { thinking } : {}) },
     },
     // A `--detachable` parent keeps the prompt CLIENT-side (Task 8): the child attaches and the human
     // types there, not on the spawn line. So an interactive child never surfaces a prompt here even if a

@@ -97,6 +97,19 @@ describe("useChat: the host event stream is the single rendering source", () => 
     expect(frame(lastFrame)).toContain("IDLE");
     expect(frame(lastFrame)).not.toContain("GHOST");
   });
+
+  it("a synthetic close with NO live turn (an idle host dying) surfaces a notice instead of nothing (F5)", async () => {
+    // Without this, an idle attached client gets no indication at all that its host died — the next
+    // submit just fails ~10s later with the generic "host did not answer" timeout line.
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake); return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "end", error: "host connection closed" });   // no seq, no preceding start
+    await waitFor(() => frame(lastFrame).includes("connection lost"));
+    expect(frame(lastFrame)).toContain("host connection closed");
+    expect(frame(lastFrame)).toContain("IDLE");   // busy untouched — it was already false
+  });
 });
 
 describe("useChat: permission feed", () => {
@@ -119,6 +132,24 @@ describe("useChat: permission feed", () => {
     expect(fake.answeredCalls).toEqual([{ toolUseID: "t1", decision: { kind: "allow_once" } }]);
     await waitFor(() => frame(lastFrame).includes("NONE"));
     await waitFor(() => frame(lastFrame).includes("answered by eve"));
+  });
+
+  it("a rejecting answerPermission (host death mid-dialog, or a wedged host's deadline) appends a notice instead of crashing, and does NOT clear the dialog", async () => {
+    // F1: this is the ONLY session call in useChat whose promise used to have no rejection handler at
+    // all — an unhandled rejection here used to kill the whole attached REPL process.
+    let fake!: FakeRemote;
+    fake = fakeRemote({ answerPermission: async () => { throw new Error("host connection closed"); } });
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t7", toolName: "Bash", input: { command: "rm -rf /" }, createdAt: Date.now() };
+    const api: { resolve?: (d: PermissionDecision) => void } = {};
+    function H() { const c = useChat(() => fake); api.resolve = c.resolvePermission; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.parkPermission(entry);
+    await waitFor(() => frame(lastFrame).includes("PENDING:Bash"));
+    api.resolve!({ kind: "allow_once" });
+    await waitFor(() => frame(lastFrame).includes("answer failed"));
+    expect(frame(lastFrame)).toContain("host connection closed");
+    expect(frame(lastFrame)).toContain("PENDING:Bash");   // NOT cleared — the park may still be live host-side
   });
 
   it("settlePermission(...by:'system', decision:'deny') with no local answer clears the dialog and appends a notice", async () => {
@@ -387,6 +418,61 @@ describe("useChat", () => {
     release();          await waitFor(() => submits === 2);                                // A ends → drain /zzz (no turn) → re-drain → "second" runs
     release();
     expect(submits).toBe(2);
+  });
+
+  it("F2: a submit that rejects with 'busy' WHILE another client's turn is live does not clobber busy or drain", async () => {
+    // Mirrors the cross-client refusal race: the OTHER client's turn-start event lands on our connection
+    // (setting liveTurnRef non-null, busy true) BEFORE our own prompt's reply comes back refused — the
+    // event-owned turn is still streaming and must own busy/drain, not this catch.
+    let fake!: FakeRemote;
+    fake = fakeRemote({
+      submit: async () => {
+        fake.pushEvent({ kind: "turn", phase: "start", seq: 99 });   // another client's turn just started
+        throw new Error("host refused: busy");
+      },
+    });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("busy"));
+    expect(frame(lastFrame)).toContain("BUSY");   // untouched — the OTHER turn is still streaming
+  });
+
+  it("F2: host death mid-turn (submit rejects AND the synthetic turn-end arrives) drains exactly once", async () => {
+    let submits = 0;
+    let rejectFirst!: (e: Error) => void;
+    let fake!: FakeRemote;
+    fake = fakeRemote({
+      submit: async () => {
+        submits++;
+        if (submits === 1) {
+          fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+          return new Promise<{ result: unknown }>((_resolve, reject) => { rejectFirst = reject; });
+        }
+        // the drained second prompt: a clean turn this time
+        fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
+        fake.pushEvent({ kind: "turn", phase: "end", seq: 2 });
+        return { result: "ok" };
+      },
+    });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("first");  await waitFor(() => frame(lastFrame).includes("BUSY"));
+    expect(submits).toBe(1);
+    api.run!("second"); await waitFor(() => frame(lastFrame).includes("q:second"));   // queued behind the in-flight first
+
+    // Mirrors chatAdapter's onClose: the synthetic turn-end fires (the event arm owns busy/drain), and
+    // the in-flight submit's promise ALSO rejects — the SAME host death, on two channels.
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1, error: "host connection closed" });
+    rejectFirst(new Error("host connection closed"));
+
+    await waitFor(() => submits === 2);           // the queued "second" drained exactly once
+    await new Promise((r) => setTimeout(r, 50));   // give a wrongly-doubled drain time to fire
+    expect(submits).toBe(2);                       // still exactly 2 — no double-dispatch
   });
 
   it("resuming bumps clearToken (so the append-only <Static> remounts and shows the full replay)", async () => {
