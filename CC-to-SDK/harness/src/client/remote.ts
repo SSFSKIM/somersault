@@ -4,7 +4,8 @@ import { decodeFrame } from "../host/wire.js";
 import type { HostEvent } from "../host/wire.js";
 import type { HostStatus } from "../host/ops.js";
 import type { PendingEntry } from "../permissions/pending.js";
-import type { PermissionDecision } from "../permissions/types.js";
+import type { DecisionOutcome, PermissionDecision } from "../permissions/types.js";
+import type { BackgroundTaskInfo } from "../session/session.js";
 
 /** Long enough that a busy host answering a `status` while streaming a turn is never mistaken for a
  *  dead one; short enough that a client does not sit on a promise that will never settle. */
@@ -118,9 +119,21 @@ export class RemoteChatSession {
   // dispatch in try/catch), so `error` is a real field on every one of these, not decoration.
   status(): Promise<HostStatus & { ok: boolean; error?: string }> { return this.send({ op: "status" }); }
   pending(): Promise<{ ok: boolean; pending: PendingEntry[]; error?: string }> { return this.send({ op: "pending" }); }
+  /** @deprecated the 3-way subset of answerDecision — kept so existing callers (test/integration) keep
+   *  working; delegates rather than duplicating the flat-shape logic. */
   answer(toolUseID: string, decision: PermissionDecision): Promise<{ ok: boolean; alreadyAnsweredBy?: string; error?: string }> {
-    return this.send({ op: "answer", toolUseID, decision: decision.kind, by: this.label });
+    return this.answerDecision(toolUseID, decision);
   }
+  /** Structured kinds travel under `answer`; the 3-way kinds keep the FLAT legacy fields so an old host's
+   *  schema still parses a new client's permission answer (spec: upgrade compat, read-side only). */
+  answerDecision(toolUseID: string, outcome: DecisionOutcome): Promise<{ ok: boolean; alreadyAnsweredBy?: string; error?: string }> {
+    const flat = outcome.kind === "allow_once" || outcome.kind === "allow_always" || outcome.kind === "deny";
+    return this.send(flat ? { op: "answer", toolUseID, decision: outcome.kind, by: this.label }
+                          : { op: "answer", toolUseID, answer: outcome, by: this.label });
+  }
+  tasksOp() { return this.send<{ ok: boolean; error?: string; tasks?: BackgroundTaskInfo[] }>({ op: "tasks" }); }
+  backgroundOp() { return this.send<{ ok: boolean; error?: string; backgrounded?: boolean }>({ op: "background" }); }
+  stopTaskOp(taskId: string) { return this.send<{ ok: boolean; error?: string }>({ op: "stop_task", taskId }); }
   prompt(text: string): Promise<{ ok: boolean; accepted?: boolean; seq?: number; error?: string }> { return this.send({ op: "prompt", text }); }
   interrupt(): Promise<{ ok: boolean; error?: string }> { return this.send({ op: "interrupt" }); }
   stopHost(): Promise<{ ok: boolean; error?: string }> { return this.send({ op: "stop" }); }

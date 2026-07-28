@@ -228,6 +228,48 @@ describe("RemoteChatSession", () => {
     c.detach();
   });
 
+  it("answerDecision sends the FLAT legacy shape for permission kinds and `answer` for structured", async () => {
+    const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
+    const seen: Record<string, unknown>[] = [];
+    const srv = createServer((sock) => sock.on("data", (c) => {
+      const req = JSON.parse(String(c).trim());
+      seen.push(req);
+      sock.write(JSON.stringify({ ok: true, id: req.id }) + "\n");
+    }));
+    await new Promise<void>((r) => srv.listen(p, () => r()));
+    const c = await RemoteChatSession.connect(p, { label: "me" });
+    await c.answerDecision("t1", { kind: "allow_once" });
+    await c.answerDecision("t2", { kind: "question_answer", answers: { q: "a" } });
+    c.detach(); srv.close();
+    expect(seen[0]).toMatchObject({ op: "answer", toolUseID: "t1", decision: "allow_once", by: "me" });
+    expect(seen[0]).not.toHaveProperty("answer");
+    expect(seen[1]).toMatchObject({ op: "answer", toolUseID: "t2", answer: { kind: "question_answer", answers: { q: "a" } }, by: "me" });
+    expect(seen[1]).not.toHaveProperty("decision");
+  });
+
+  it("tasksOp/backgroundOp/stopTaskOp round-trip", async () => {
+    const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
+    const seen: Record<string, unknown>[] = [];
+    const srv = createServer((sock) => sock.on("data", (c) => {
+      const req = JSON.parse(String(c).trim());
+      seen.push(req);
+      if (req.op === "tasks") sock.write(JSON.stringify({ ok: true, id: req.id, tasks: [{ task_id: "t1", task_type: "bash", description: "x" }] }) + "\n");
+      else if (req.op === "background") sock.write(JSON.stringify({ ok: true, id: req.id, backgrounded: true }) + "\n");
+      else sock.write(JSON.stringify({ ok: true, id: req.id }) + "\n");
+    }));
+    await new Promise<void>((r) => srv.listen(p, () => r()));
+    const c = await RemoteChatSession.connect(p);
+    const tasksRep = await c.tasksOp();
+    const bgRep = await c.backgroundOp();
+    const stopRep = await c.stopTaskOp("t1");
+    c.detach(); srv.close();
+    expect(seen.map((r) => r.op)).toEqual(["tasks", "background", "stop_task"]);
+    expect(seen[2].taskId).toBe("t1");
+    expect(tasksRep).toMatchObject({ ok: true, tasks: [{ task_id: "t1" }] });
+    expect(bgRep).toMatchObject({ ok: true, backgrounded: true });
+    expect(stopRep).toMatchObject({ ok: true });
+  });
+
   it("onClose: a subscriber added after the connection already closed fires immediately", async () => {
     const p = join(mkdtempSync(join(tmpdir(), "ccx-rc-")), "h.sock");
     const srv = createServer(() => {});

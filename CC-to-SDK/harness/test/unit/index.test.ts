@@ -75,6 +75,18 @@ describe("public API", () => {
   it("exports remoteChatSession, the lazy ChatSession adapter (a2b, task 5)", () => {
     expect(typeof api.remoteChatSession).toBe("function");
   });
+  it("exports the decision feed + bg-task mixins and their guards (goal B, task 6)", () => {
+    expect(typeof api.hasDecisionFeed).toBe("function");
+    expect(typeof api.hasBgTasks).toBe("function");
+    expect(typeof api.hasPermissionFeed).toBe("function");
+    const _df: api.DecisionFeed = {
+      onDecision: () => () => {}, onDecisionSettled: () => () => {},
+      answerDecision: async () => ({ ok: true }),
+    };
+    const _bg: api.BgTasks = { listBgTasks: async () => [], background: async () => false, stopBgTask: async () => {} };
+    expect(typeof _df.answerDecision).toBe("function");
+    expect(typeof _bg.background).toBe("function");
+  });
   it("freezes the full public value-export surface (deliberate-update gate)", () => {
     const EXPECTED: string[] = [
       "BUILTIN_AGENTS",
@@ -117,6 +129,8 @@ describe("public API", () => {
       "getSessionInfo",
       "getSessionMessages",
       "guardTool",
+      "hasBgTasks",
+      "hasDecisionFeed",
       "hasPermissionFeed",
       "hasSessionEvents",
       "injectContext",

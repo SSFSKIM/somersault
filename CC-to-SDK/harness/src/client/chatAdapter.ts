@@ -2,13 +2,17 @@
 // makeSession() must return synchronously (ink renders immediately); every method awaits `ready`.
 import { RemoteChatSession } from "./remote.js";
 import type { HostEvent } from "../host/wire.js";
-import type { ChatSession, PermissionFeed, SessionEvents } from "../session/chatSession.js";
+import type { ChatSession, DecisionFeed, PermissionFeed, BgTasks, SessionEvents } from "../session/chatSession.js";
 import type { PendingDecision } from "../permissions/pending.js";
-import type { PermissionDecision } from "../permissions/types.js";
+import type { DecisionOutcome, PermissionDecision } from "../permissions/types.js";
 import type { CompactOutcome } from "../compaction/index.js";
 
 export interface RemoteChatOpts { label?: string; resume?: string; connect?: (p: string, o?: { label?: string }) => Promise<RemoteChatSession>; }
-export type RemoteChat = ChatSession & PermissionFeed & SessionEvents & { detach(): void; whenReady(): Promise<void>; pendingNow(): PendingDecision[] };
+// PermissionFeed is included alongside DecisionFeed (not superseded by it — see chatSession.ts's note on
+// why the two are separate interfaces) so the adapter's deprecated onPermission/onPermissionSettled/
+// answerPermission delegates stay part of RemoteChat's TYPE until T7 deletes them, matching what the
+// object literal below actually implements.
+export type RemoteChat = ChatSession & DecisionFeed & PermissionFeed & BgTasks & SessionEvents & { detach(): void; whenReady(): Promise<void>; pendingNow(): PendingDecision[] };
 
 export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {}): RemoteChat {
   let raw: RemoteChatSession | undefined;
@@ -24,7 +28,7 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
   // turns are strictly sequential per host.
   const endedTurns = new Map<number, string | undefined>();
   const pendingList: PendingDecision[] = [];
-  const permCbs = new Set<(e: PendingDecision) => void>();
+  const decisionCbs = new Set<(e: PendingDecision) => void>();
   const settledCbs = new Set<(s: { toolUseID: string; by: string; decision: string }) => void>();
   let eventCb: ((ev: HostEvent) => void) | undefined;
   const backlog: HostEvent[] = [];          // events before the single consumer subscribes
@@ -39,7 +43,7 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
       const k = (ev as { kind: string }).kind;
       if (k === "decision" || k === "permission") {
         const entry = { kind: "permission", ...(ev as any).entry } as PendingDecision;
-        pendingList.push(entry); for (const cb of [...permCbs]) { try { cb(entry); } catch {} }
+        pendingList.push(entry); for (const cb of [...decisionCbs]) { try { cb(entry); } catch {} }
       } else if (k === "decision_settled" || k === "permission_settled") {
         const s = ev as any;
         const i = pendingList.findIndex((e) => e.toolUseID === s.toolUseID);
@@ -111,9 +115,17 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
     // that means detach, never stop: the host, its turn and its parks outlive this client (spec §5).
     async dispose() { raw?.detach(); void ready.catch(() => {}); },
     detach() { raw?.detach(); },
-    onPermission(cb) { permCbs.add(cb); for (const e of [...pendingList]) { try { cb(e); } catch {} } return () => { permCbs.delete(cb); }; },
-    onPermissionSettled(cb) { settledCbs.add(cb); return () => { settledCbs.delete(cb); }; },
-    async answerPermission(toolUseID, decision: PermissionDecision) { return (await ready).answer(toolUseID, decision); },
+    onDecision(cb) { decisionCbs.add(cb); for (const e of [...pendingList]) { try { cb(e); } catch {} } return () => { decisionCbs.delete(cb); }; },
+    onDecisionSettled(cb) { settledCbs.add(cb); return () => { settledCbs.delete(cb); }; },
+    async answerDecision(toolUseID, outcome: DecisionOutcome) { return (await ready).answerDecision(toolUseID, outcome); },
+    // @deprecated one-line delegates onto the new methods above — kept until T7 deletes them (useChat.ts,
+    // test/tui/helpers/fakeRemote.ts, and the integration tests still call these names).
+    onPermission(cb) { return this.onDecision(cb); },
+    onPermissionSettled(cb) { return this.onDecisionSettled(cb); },
+    async answerPermission(toolUseID, decision: PermissionDecision) { return this.answerDecision(toolUseID, decision); },
+    async listBgTasks() { return orFail(await (await ready).tasksOp()).tasks ?? []; },
+    async background() { return orFail(await (await ready).backgroundOp()).backgrounded ?? false; },
+    async stopBgTask(taskId) { orFail(await (await ready).stopTaskOp(taskId)); },
     onSessionEvent(cb) {
       if (!eventCb) { eventCb = cb; for (const ev of backlog.splice(0)) { try { cb(ev); } catch {} } }
       else eventCb = cb;                     // single consumer: a re-subscribe replaces (useChat's session swap)

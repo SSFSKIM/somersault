@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createServer } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import type { HostSession } from "../../src/host/host.js";
 import { RemoteChatSession } from "../../src/client/remote.js";
 import { hostSocketPath } from "../../src/fleet/paths.js";
 import { remoteChatSession } from "../../src/client/chatAdapter.js";
+import { hasBgTasks } from "../../src/session/chatSession.js";
 import type { HostEvent } from "../../src/host/wire.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
 
@@ -45,6 +47,26 @@ function syncSession(sessionId: string, messages: unknown[]) {
     sessionId,
     submit: async (_p: string, onMessage: (m: unknown) => void) => { for (const m of messages) onMessage(m); },
     dispose: async () => {},
+  };
+}
+
+/** A session exposing `onFrame` (mirrors host-frames.test.ts's fakeSession) plus the bg-task control
+ *  members, so `drive()` can push a `system/background_tasks_changed` frame the way Session's real
+ *  read-loop does, and `backgroundAll`/`stopTask` are reachable through the host's `background`/`stopTask`
+ *  handlers. */
+function bgSession(sessionId = "sid-bg") {
+  let frameCb: ((m: unknown) => void) | undefined;
+  const backgroundCalls: (string | undefined)[] = [];
+  const stopCalls: string[] = [];
+  return {
+    sessionId,
+    submit: async (_p: string, on: (m: unknown) => void) => { on({ type: "assistant" }); return { result: {} }; },
+    dispose: async () => {},
+    onFrame: (cb: (m: unknown) => void) => { frameCb = cb; return () => { frameCb = undefined; }; },
+    backgroundAll: async (toolUseId?: string) => { backgroundCalls.push(toolUseId); return true; },
+    stopTask: async (taskId: string) => { stopCalls.push(taskId); },
+    drive: (m: unknown) => frameCb?.(m),
+    backgroundCalls, stopCalls,
   };
 }
 
@@ -246,6 +268,88 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
       await stopQuietly(host);
     }
   }, 20_000);
+
+  it("11. routes decision/decision_settled events into the feed", async () => {
+    const { host, path } = await startHost();
+    const adapter = remoteChatSession(path);
+    try {
+      await adapter.whenReady();
+      const seen: PendingEntry[] = [];
+      adapter.onDecision((e) => seen.push(e));
+      const settled: { toolUseID: string; by: string; decision: string }[] = [];
+      adapter.onDecisionSettled((s) => settled.push(s));
+      const decision = host.broker().request({ toolName: "AskUserQuestion", input: {}, toolUseID: "q1", kind: "question", signal: new AbortController().signal });
+      await vi.waitFor(() => expect(seen).toHaveLength(1));
+      expect(seen[0]).toMatchObject({ toolUseID: "q1", kind: "question" });
+      expect(adapter.pendingNow().map((e) => e.toolUseID)).toEqual(["q1"]);
+      host.answer("q1", { kind: "question_answer", answers: { a: "b" } }, "test");
+      await decision.catch(() => {});
+      await vi.waitFor(() => expect(settled).toHaveLength(1));
+      expect(adapter.pendingNow()).toHaveLength(0);
+    } finally {
+      adapter.detach();
+      await stopQuietly(host);
+    }
+  });
+
+  it("12. READ ALIAS: legacy permission/permission_settled frames from an old host arrive as decisions with kind permission", async () => {
+    // A raw stub host that never landed the Goal-B wire rename: replies {ok:true} to every op (incl.
+    // `follow`, which the adapter's ready-gate awaits), then pushes the OLD event shape — no `kind` on
+    // the entry, because a pre-Goal-B host never wrote one.
+    const p = join(mkdtempSync(join(tmpdir(), "ccx-adapter-legacy-")), "h.sock");
+    const srv = createServer((sock) => {
+      let buf = "";
+      sock.on("data", (c) => {
+        buf += c.toString();
+        for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+          const req = JSON.parse(buf.slice(0, nl)); buf = buf.slice(nl + 1);
+          sock.write(JSON.stringify({ ok: true, id: req.id }) + "\n");
+          if (req.op === "follow") {
+            sock.write(JSON.stringify({ t: "event", kind: "permission", entry: { toolUseID: "p1", toolName: "Bash", input: {}, sessionId: "s", createdAt: 1 } }) + "\n");
+            sock.write(JSON.stringify({ t: "event", kind: "permission_settled", toolUseID: "p1", by: "sys", decision: "deny" }) + "\n");
+          }
+        }
+      });
+    });
+    await new Promise<void>((r) => srv.listen(p, () => r()));
+    const adapter = remoteChatSession(p);
+    const seen: PendingEntry[] = [];
+    adapter.onDecision((e) => seen.push(e));
+    const settled: { toolUseID: string; by: string; decision: string }[] = [];
+    adapter.onDecisionSettled((s) => settled.push(s));
+    try {
+      await adapter.whenReady();
+      await vi.waitFor(() => expect(seen).toHaveLength(1));
+      expect(seen[0]).toMatchObject({ toolUseID: "p1", kind: "permission" });
+      await vi.waitFor(() => expect(settled).toHaveLength(1));
+      expect(settled[0]).toMatchObject({ toolUseID: "p1", by: "sys", decision: "deny" });
+      expect(adapter.pendingNow()).toHaveLength(0);
+    } finally {
+      adapter.detach();
+      srv.close();
+    }
+  });
+
+  it("13. exposes bg tasks: listBgTasks/background/stopBgTask call the ops; hasBgTasks guards true", async () => {
+    const session = bgSession();
+    const { host, path } = await startHost(session as unknown as HostSession);
+    const adapter = remoteChatSession(path);
+    try {
+      await adapter.whenReady();
+      expect(hasBgTasks(adapter)).toBe(true);
+      session.drive({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "bt1", task_type: "bash", description: "x" }] });
+      const tasks = await adapter.listBgTasks();
+      expect(tasks).toEqual([{ task_id: "bt1", task_type: "bash", description: "x" }]);
+      const backgrounded = await adapter.background();
+      expect(backgrounded).toBe(true);
+      expect(session.backgroundCalls).toEqual([undefined]);
+      await expect(adapter.stopBgTask("bt1")).resolves.toBeUndefined();
+      expect(session.stopCalls).toEqual(["bt1"]);
+    } finally {
+      adapter.detach();
+      await stopQuietly(host);
+    }
+  });
 
   it("10. host death mid-turn: the in-flight submit rejects and the event consumer sees a synthetic turn-end error", async () => {
     const session = drivable();
