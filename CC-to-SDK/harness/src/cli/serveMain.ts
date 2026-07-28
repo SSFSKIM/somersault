@@ -32,7 +32,10 @@ export async function runServe(inv: CcxInvocation): Promise<void> {
   const { token, tokenFile } = loadOrMintToken(inv.tokenFile, dir);
   const server = new AppServer({ token });
   const { port, close } = await listenWs(server, { host: inv.listen.host, port: inv.listen.port, allowOrigins: inv.allowOrigins, token });
-  console.log(`appserver listening ws://${inv.listen.host}:${port}`);
+  // Hosts are stored unbracketed (args.ts strips IPv6 brackets so the bind and the loopback check agree);
+  // a URL needs them back or `ws://::1:9001` is unparseable.
+  const shown = inv.listen.host.includes(":") ? `[${inv.listen.host}]` : inv.listen.host;
+  console.log(`appserver listening ws://${shown}:${port}`);
   // Run-file deliberately excludes the token itself (global constraint) — a reader gets `tokenFile` and
   // must have filesystem access to that separate, narrower-permissioned (0o600) file to learn the secret.
   writeFileSync(join(dir, "appserver.json"), JSON.stringify({ port, tokenFile }), { mode: 0o600 });
