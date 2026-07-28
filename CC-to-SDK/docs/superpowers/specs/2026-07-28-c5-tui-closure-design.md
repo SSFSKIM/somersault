@@ -214,6 +214,13 @@ keyed live test, ⑤ is the standing keyless gate.
 - **It took four probe harness shapes to make a live control call**: `break` closes the query; a
   string-prompt query closes at result; an exhausted input generator starts shutdown; only a
   held-open streaming query works. Worth remembering for every future `Query`-control probe.
+- **The plan's own `rewind()` snippet ordered validation after a destructive side effect** (found by
+  the T2 review, fixed in `19cec68eb9`): the null-`prevUuid` refusal sat inside the conversation
+  block, *below* the file-restore block, so `scope:"both"` on a first-prompt anchor reverted the
+  working tree and only then rejected — a partially-applied state the caller is told never happened.
+  The design rule this stage now carries: **every guard runs before any side effect**, and a guard
+  test must assert the side effect did NOT occur, not merely that the call rejected. The original
+  test asserted only the message and would have passed against the bug.
 
 ## Outcomes & Retrospective
 
