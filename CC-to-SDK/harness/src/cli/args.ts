@@ -118,7 +118,11 @@ export function parseCcx(argv: string[]): CcxInvocation {
         let u: URL;
         try { u = new URL(v); } catch { throw new Error(`--listen must be a ws:// URL, got ${JSON.stringify(v)}`); }
         if (u.protocol !== "ws:") throw new Error(`--listen must use the ws:// scheme, got ${JSON.stringify(v)}`);
-        a.listen = { host: u.hostname, port: u.port ? Number(u.port) : 0 };
+        // `URL#hostname` keeps IPv6 brackets ("[::1]") — strip them ONCE here so both the loopback check
+        // below and the value handed to listenWs/net.Server.listen see the bare literal ("::1"); a
+        // bracketed string fails to bind at all (ENOTFOUND) and never matches LOOPBACK_HOSTS.
+        const host = u.hostname.startsWith("[") && u.hostname.endsWith("]") ? u.hostname.slice(1, -1) : u.hostname;
+        a.listen = { host, port: u.port ? Number(u.port) : 0 };
         break;
       }
       case "--token-file": a.tokenFile = val(t); break;

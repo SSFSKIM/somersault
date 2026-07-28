@@ -19,7 +19,7 @@ function loadOrMintToken(path: string | undefined, dir: string): { token: string
   const tokenFile = path ?? join(dir, "appserver.token");
   if (existsSync(tokenFile)) return { token: readFileSync(tokenFile, "utf8").trim(), tokenFile };
   const token = randomBytes(16).toString("hex"); // 16 bytes -> 32 hex chars
-  mkdirSync(dirname(tokenFile), { recursive: true });
+  mkdirSync(dirname(tokenFile), { recursive: true, mode: 0o700 });
   writeFileSync(tokenFile, token, { mode: 0o600 });
   return { token, tokenFile };
 }
@@ -28,7 +28,7 @@ function loadOrMintToken(path: string | undefined, dir: string): { token: string
  *  command's lifetime (the process's ordinary Ctrl-C exit, not a crash path). */
 export async function runServe(inv: CcxInvocation): Promise<void> {
   const dir = runDir();
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   const { token, tokenFile } = loadOrMintToken(inv.tokenFile, dir);
   const server = new AppServer({ token });
   const { port, close } = await listenWs(server, { host: inv.listen.host, port: inv.listen.port, allowOrigins: inv.allowOrigins, token });

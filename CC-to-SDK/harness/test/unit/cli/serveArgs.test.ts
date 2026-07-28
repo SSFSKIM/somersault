@@ -21,6 +21,20 @@ describe("parseCcx serve", () => {
     expect(a.listen).toEqual({ host: "localhost", port: 0 });
   });
 
+  it("strips IPv6 brackets from --listen ws://[::1]:PORT, recognizing it as loopback", () => {
+    // `URL#hostname` keeps the brackets ("[::1]") — LOOPBACK_HOSTS and net.Server.listen both need the
+    // bare "::1"; a bracketed string neither matches loopback nor binds (ENOTFOUND).
+    const a = parseCcx(["serve", "--listen", "ws://[::1]:9001"]);
+    expect(a.listen).toEqual({ host: "::1", port: 9001 });
+    expect(nonLocalWithoutToken(a)).toBe(false); // loopback, no --token-file required
+  });
+
+  it("a non-loopback bracketed IPv6 --listen still triggers the token-file refusal", () => {
+    const a = parseCcx(["serve", "--listen", "ws://[2001:db8::1]:9001"]);
+    expect(a.listen).toEqual({ host: "2001:db8::1", port: 9001 });
+    expect(nonLocalWithoutToken(a)).toBe(true);
+  });
+
   it("rejects a --listen value that isn't a ws:// URL", () => {
     expect(() => parseCcx(["serve", "--listen", "not a url"])).toThrow(/ws:\/\//);
     expect(() => parseCcx(["serve", "--listen", "http://127.0.0.1:9001"])).toThrow(/ws:\/\//);
