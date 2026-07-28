@@ -10,6 +10,7 @@ import type { RenderLine } from "./render.js";
 import { Transcript } from "./Transcript.js";
 import { ChatComposer } from "./ChatComposer.js";
 import { PermissionDialog } from "./PermissionDialog.js";
+import { QuestionDialog } from "./QuestionDialog.js";
 import { ChatStatusBar } from "./ChatStatusBar.js";
 import { SessionPicker } from "./SessionPicker.js";
 import { ModelPicker } from "./ModelPicker.js";
@@ -68,7 +69,16 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         : state.picker.open
           ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
           : state.pending
-            ? <PermissionDialog req={state.pending} onDecision={(d) => resolveDecision(d)} />
+            ? state.pending.kind === "question"
+              // key = toolUseID: dropPending promotes the NEXT queued decision straight into `pending`
+              // with no intermediate null render, so without a key the same QuestionDialog instance
+              // would carry stale internal progress (qi/idx/checked) into an unrelated toolUseID's
+              // question set — a fresh key forces the clean remount a new decision needs.
+              ? <QuestionDialog key={state.pending.toolUseID} req={state.pending}
+                  onAnswer={(answers, response) => resolveDecision({ kind: "question_answer", answers, ...(response ? { response } : {}) })}
+                  onDeny={() => resolveDecision({ kind: "deny" })} />
+              // plan temporarily falls through to PermissionDialog until T9 lands PlanDialog.
+              : <PermissionDialog key={state.pending.toolUseID} req={state.pending} onDecision={(d) => resolveDecision(d)} />
             : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} />}
       {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
       <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} thinkLevel={state.thinkLevel} />

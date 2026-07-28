@@ -43,6 +43,11 @@ describe("<PermissionDialog>", () => {
     expect(f).toContain("don't ask again");
     expect(f).toContain("No, and tell Claude");
   });
+  it("attribution: subagentType renders 'Subagent (code-reviewer) asks:'", () => {
+    const attributed = { ...req, subagentType: "code-reviewer" };
+    const f = render(<PermissionDialog req={attributed} onDecision={() => {}} />).lastFrame() ?? "";
+    expect(f).toContain("Subagent (code-reviewer) asks:");
+  });
   it("shows the full Bash command with a $ prefix", () => {
     const bashReq = { toolName: "Bash", input: { command: "rm -rf build && make" }, toolUseID: "t", signal: new AbortController().signal };
     const f = render(<PermissionDialog req={bashReq} onDecision={() => {}} />).lastFrame() ?? "";

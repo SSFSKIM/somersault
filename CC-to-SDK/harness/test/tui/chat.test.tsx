@@ -41,6 +41,70 @@ describe("<ChatApp>", () => {
     expect(fake.answeredCalls[0]).toEqual({ toolUseID: "t", decision: { kind: "allow_once" } });
   });
 
+  it("surfaces a parked question as a QuestionDialog (kind dispatcher) and answers it", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    fake.parkPermission({
+      sessionId: "s", toolUseID: "t", toolName: "AskUserQuestion", kind: "question",
+      input: { questions: [{ question: "Red or blue?", header: "Color", multiSelect: false, options: [{ label: "red" }, { label: "blue" }] }] },
+      createdAt: Date.now(),
+    });
+    await waitFor(() => frame(lastFrame).includes("Red or blue?"));   // QuestionDialog up, not PermissionDialog
+    expect(frame(lastFrame)).not.toContain("Allow Claude to use");
+    stdin.write("2");                                                // selects "blue" — single question → onAnswer fires
+    await waitFor(() => fake.answeredCalls.length === 1);
+    expect(fake.answeredCalls[0]).toEqual({ toolUseID: "t", decision: { kind: "question_answer", answers: { "Red or blue?": "blue" } } });
+  });
+
+  it("a second queued question (fewer questions than the first) does not inherit stale progress — dialog remounts per toolUseID", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    // A: 2 questions. Queue B (1 question) behind it BEFORE A is answered — dropPending promotes B
+    // straight into `pending` with no intermediate null render once A settles.
+    fake.parkPermission({
+      sessionId: "s", toolUseID: "a", toolName: "AskUserQuestion", kind: "question",
+      input: { questions: [
+        { question: "Red or blue?", header: "Color", multiSelect: false, options: [{ label: "red" }, { label: "blue" }] },
+        { question: "Which meals?", header: "Meals", multiSelect: false, options: [{ label: "breakfast" }, { label: "dinner" }] },
+      ] }, createdAt: Date.now(),
+    });
+    await waitFor(() => frame(lastFrame).includes("Red or blue?"));
+    fake.parkPermission({
+      sessionId: "s", toolUseID: "b", toolName: "AskUserQuestion", kind: "question",
+      input: { questions: [{ question: "Continue?", multiSelect: false, options: [{ label: "yes" }, { label: "no" }] }] },
+      createdAt: Date.now(),
+    });
+    stdin.write("2");                                        // A Q1: blue → advances to A Q2 (qi becomes 1)
+    await waitFor(() => frame(lastFrame).includes("Which meals?"));
+    stdin.write("1");                                         // A Q2: breakfast → A is fully answered, B is promoted
+    await waitFor(() => fake.answeredCalls.length === 1);
+    // B has only ONE question (index 0) — if the dialog reused A's stale qi=1, `questions[1]` is
+    // undefined and the mount-only auto-deny effect (deps `[]`) never re-fires, rendering an invisible,
+    // input-eating dialog forever instead of B's question.
+    await waitFor(() => frame(lastFrame).includes("Continue?"));
+    expect(frame(lastFrame)).not.toContain("Which meals?");
+    stdin.write("1");                                         // B: yes
+    await waitFor(() => fake.answeredCalls.length === 2);
+    expect(fake.answeredCalls[1]).toEqual({ toolUseID: "b", decision: { kind: "question_answer", answers: { "Continue?": "yes" } } });
+  });
+
+  it("Esc on a parked question denies via the dispatcher (never a fabricated answer)", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    fake.parkPermission({
+      sessionId: "s", toolUseID: "t2", toolName: "AskUserQuestion", kind: "question",
+      input: { questions: [{ question: "Continue?", multiSelect: false, options: [{ label: "yes" }, { label: "no" }] }] },
+      createdAt: Date.now(),
+    });
+    await waitFor(() => frame(lastFrame).includes("Continue?"));
+    stdin.write("\x1b");
+    await waitFor(() => fake.answeredCalls.length === 1);
+    expect(fake.answeredCalls[0]).toEqual({ toolUseID: "t2", decision: { kind: "deny" } });
+  });
+
   it("Ctrl-L is wired and keeps input flowing (clear-screen is an ANSI escape Static can't un-draw)", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));

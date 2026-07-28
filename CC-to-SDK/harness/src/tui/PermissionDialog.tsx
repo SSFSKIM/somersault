@@ -18,7 +18,7 @@ const clip = (s: string, n = 140): string => (s.length > n ? s.slice(0, n - 1) +
 
 interface Opt { key: string; label: string; decision: PermissionDecision }
 
-export function PermissionDialog({ req, onDecision }: { req: { toolName: string; input: Record<string, unknown>; title?: string }; onDecision: (d: PermissionDecision) => void }) {
+export function PermissionDialog({ req, onDecision }: { req: { toolName: string; input: Record<string, unknown>; title?: string; subagentType?: string }; onDecision: (d: PermissionDecision) => void }) {
   const opts: Opt[] = [
     { key: "1", label: "Yes", decision: { kind: "allow_once" } },
     { key: "2", label: `Yes, and don't ask again for ${req.toolName} this session`, decision: { kind: "allow_always" } },
@@ -39,6 +39,7 @@ export function PermissionDialog({ req, onDecision }: { req: { toolName: string;
   const tgt = clip(target(req.toolName, req.input));
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
+      {req.subagentType ? <Text dimColor>Subagent ({req.subagentType}) asks:</Text> : null}
       <Text bold>Allow Claude to use <Text color={ACCENT}>{req.toolName}</Text>?</Text>
       {tgt ? <Text dimColor>{"  "}{req.toolName === "Bash" ? "$ " : ""}{tgt}</Text> : null}
       <Text> </Text>
