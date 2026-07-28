@@ -21,16 +21,28 @@ polish* that makes CC instantly recognizable: **no welcome banner, a non-CC spin
 glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input modes, no queued input, no
 `/cost`, and thin terminal-native editor ergonomics** (Ctrl-A/E/K/U/W, Ctrl-L, Ctrl-C-twice).
 
-| Category | Parity (start) | Parity (now) |
-|---|---|---|
-| 1. Input / composer ergonomics | ~45% | ~88% |
-| 2. Transcript / message rendering | ~50% | ~74% |
-| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% |
-| 4. Modals / overlays | ~60% | ~88% |
-| 5. Slash commands | ~55% | ~70% |
-| 6. Polish (glyphs, colors, affordances) | ~40% | ~74% |
-| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% |
-| **Overall (impact-weighted)** | **~46%** | **~83%** |
+| Category | Parity (start) | Parity (pre-C5) | Parity (now, post-C5) |
+|---|---|---|---|
+| 1. Input / composer ergonomics | ~45% | ~88% | ~89% |
+| 2. Transcript / message rendering | ~50% | ~74% | ~83% |
+| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% |
+| 4. Modals / overlays | ~60% | ~88% | ~88% (untouched this stage) |
+| 5. Slash commands | ~55% | ~70% | ~88% |
+| 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% |
+| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~81% (untouched this stage) |
+| **Overall (impact-weighted)** | **~46%** | **~83%** | **~88%** |
+
+**C5 recompute method (2026-07-28), disclosed for auditability:** each row is scored ✅=1.0 ·
+🟡=0.5 · ❌=0, `🚫` rows excluded from the denominator; a category's percentage is that plain
+count over its non-🚫 row total (no hidden per-row impact weights); the headline is the unweighted
+average of the 7 category percentages. Categories 4 and 7 carry no C5 rows and are left at their
+previously-published values rather than re-derived. This lands the honest headline at **~88%**,
+short of the spec's ~93–95% aspiration (`docs/superpowers/specs/2026-07-28-c5-tui-closure-design.md`
+§ Purpose) — the gap is the residual 🟡/❌ rows this stage deliberately left alone: Bash output's
+missing exit-code framing (no reliable exit code exists in a `tool_result`, so this stays 🟡 rather
+than being promoted), long-output expand, the `›` user-echo divergence (an intentional CC deviation),
+vim mode, external editor, tip-of-day, and focus-border styling — all either explicit spec non-goals
+or LOW-priority tail items, never rows tuned to hit the target number.
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -73,6 +85,47 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
   injectable). 11 tests. (Ink's `<Static>` is write-once — only the ANSI escape erases scrolled history; CC
   does the same.)
 
+**C5 — TUI closure shipped (2026-07-28)**, `docs/superpowers/specs/2026-07-28-c5-tui-closure-design.md`:
+
+- **Esc-Esc rewind — the flagship (U12).** Four layers: the anchor classifier (`sessions/rows.ts`
+  `rewindAnchorsFrom`/`rowKind`) reads persisted `getSessionMessages` rows by content shape (no meta
+  flags exist) and pairs each real prompt with its file anchor (`uuid`) and conversation anchor
+  (`prevUuid`, the nearest real predecessor row — phantom command-echo/compact-summary rows are walked
+  past); the host (`host/host.ts` `rewindAnchors`/`rewindDryRun`/`rewind`) validates before any side
+  effect, swaps engines at the current runtime mode for `conversation`/`both`, and clears the
+  background-task roster with a notice since the engine swap kills the old CLI's shells; the client
+  (`client/chatAdapter.ts`) passes the three ops through; the REPL (`tui/RewindPicker.tsx` +
+  `tui/useChat.ts` + the Esc-Esc arming in `tui/ChatApp.tsx`, 1.5s idle-only window, busy Esc stays
+  interrupt) lists prompts newest-first, shows a dry-run file-change summary, and offers CC's 3-way
+  restore (conversation+code / conversation-only / code-only), pre-filling the composer with the
+  selected prompt's text on a conversation restore (CC's edit-and-resend loop). Also reachable via
+  `/rewind`.
+- **The usage surface (F4).** `tui/usageFormat.ts` (`formatUsage`/`usageWarning`/`usageSummaryLine`)
+  renders `session.usage().rate_limits` as per-window utilization bars (`/usage`), a one-line `/status`
+  summary, and a status-bar warning chip once any window crosses 80% (`ChatStatusBar.tsx`); degrades
+  honestly to a `plan usage not available under this credential` line when `rate_limits_available` is
+  false (OAuth-token auth, probe 55).
+- **`?` shortcuts overlay** (`tui/ShortcutsOverlay.tsx`, opened by `?` on a genuinely empty composer —
+  `ChatComposer.tsx`) lists every binding this package actually wires (readline keys, word movement,
+  Tab ladder, Esc-Esc, Ctrl+B, `!`/`#` modes); any key closes it.
+- **Alt/Ctrl word movement** (`tui/editor.ts` `wordLeft`/`wordRight`, checked ahead of the ctrl-combo
+  branch so no meta chord falls through to insertion).
+- **Transcript fidelity.** Tool-invocation rows adopt CC's `● Name(target)` bullet (`render.ts`
+  `toolUseLines`, replacing `⚙`); Edit/Write diffs gain a real hunk body — up to 3 dim numbered context
+  lines each side of the change, numbered `-`/`+` rows for the changed lines (`render.ts`
+  `toolDiffLines`) — numbering is **hunk-relative** (1-based within the `old_string`/`new_string`
+  snippet only; the file is never read from disk, so absolute file-line numbers are not available); a
+  failed tool_result renders red with a `✗` prefix on its first line (`render.ts` `resultLines`, keyed
+  on `is_error` — the only signal a `tool_result` carries, there is no exit code).
+- **Markdown tables** (`markdown.ts` `flushTableBuffer` — a buffered run of `|`-lines becomes a
+  column-padded table only once a `|---|` separator confirms it, otherwise it's re-emitted as prose
+  untouched) and a **zero-dependency syntax highlighter** (`tui/highlight.ts` — a manual regex lexer
+  for keywords/strings/comments/numbers across ts/js/py/sh/json; **not a real grammar**, a
+  recognizable-90% approximation per the spec's Decision Log against pulling in a ~1MB dependency).
+- **Compact-boundary divider** (`tui/useChat.ts`, a `system`/`compact_boundary` frame renders
+  `─── context compacted ───`) and **`/copy`** (`tui/copy.ts`, DI'd `pbcopy`/`xclip` spawn — copies the
+  last assistant reply, live or replayed via `sessions/rows.ts` `lastAssistantText`).
+
 ---
 
 ## 1 — Input / composer ergonomics
@@ -89,12 +142,12 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | Ctrl-A / Ctrl-E (line start/end) | ✅ | — | **U7** `editor.ts` readline keys |
 | Ctrl-K / Ctrl-U (kill to end/start) | ✅ | — | **U7** `editor.ts` |
 | Ctrl-W (kill word back) | ✅ | — | **U7** `editor.ts` |
-| Word movement (Alt/Ctrl ←→) | ❌ | LOW | `useTextInput.ts` |
+| Word movement (Alt/Ctrl ←→) | ✅ | — | **C5** `editor.ts` `wordLeft`/`wordRight` (Alt-←→ and Alt-b/f), checked ahead of the ctrl-combo branch so no meta chord falls through to insertion |
 | Ctrl-L (clear screen) | ✅ | — | **U7** clears model + remounts Static + ANSI screen-clear (CC parity) |
 | Ctrl-C twice / Ctrl-D to exit | ✅ | — | **U8** Ctrl-C interrupts a turn, else "Press Ctrl-C again to exit"; Ctrl-D on empty = EOF exit |
 | Queued messages while busy | ✅ | — | **U6** turns queue while busy + drain FIFO on turn end; `⋯ queued:` indicator; Esc clears |
 | Placeholder / ghost text ("Ask Claude…") | ✅ | — | **U7** dim placeholder on empty buffer |
-| `?` shortcuts / help menu | 🟡 | LOW | **U7** footer key-hint line (`⏎ send · \⏎ newline · @ files · / commands · ! bash · Tab mode`); no separate overlay |
+| `?` shortcuts / help menu | ✅ | — | **C5** `ShortcutsOverlay.tsx` — a real bordered overlay listing the keymap, opened by `?` on a genuinely empty composer; the U7 footer hint line stays alongside it |
 | Vim mode (`/vim`) | ❌ | LOW | large; reachable but low ROI |
 | External editor (Ctrl-G / `$EDITOR`) | ❌ | LOW | `PromptInputHelpMenu` |
 | Image paste (Ctrl-V) | 🚫 | — | non-terminal / out of scope here |
@@ -106,16 +159,16 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | User prompt echo | 🟡 | LOW | we show `› text` dim (intentional clean variant); CC uses `>` |
 | Assistant message identity (`●` bullet, accent) | ✅ | — | **U3** accent `●` gutter + aligned continuation (live + replay) |
 | Thinking blocks (stream + collapse) | ✅ | — | `liveTurn.ts` `✦ Thinking`; CC `✻`/token count |
-| Tool-use rows | 🟡 | LOW | we use `⚙`/live `⟳✓✗` status; CC uses `●` |
+| Tool-use rows | ✅ | — | **C5** `render.ts` `toolUseLines` — CC's `● Name(target)` bullet form (was `⚙`); live turn status glyphs unchanged |
 | Tool result tree glyph (`⎿`) | ✅ | — | **U3** dim `⎿` result tree |
 | Markdown: headers/lists/quote/fenced | ✅ | — | `markdown.ts` (lightweight) |
 | Markdown: inline mixed bold/italic spans | ✅ | — | **U11** per-span `segments` (bold/italic/code) rendered within a line |
-| Markdown: tables | ❌ | LOW | `MarkdownTable.tsx` |
-| Markdown: code-block syntax highlight | ❌ | LOW | needs a highlighter; we dim+indent |
-| Edit/Write diff | 🟡 | MED | we show +/- capped; CC adds line numbers + context |
-| Bash output rendering | 🟡 | MED | generic result preview; no `$`/exit-code framing |
+| Markdown: tables | ✅ | — | **C5** `markdown.ts` `flushTableBuffer` — a buffered run of `\|`-lines becomes a column-padded table only once a `\|---\|` separator confirms it; otherwise re-emitted as prose untouched |
+| Markdown: code-block syntax highlight | ✅ | — | **C5** `highlight.ts` — a zero-dependency regex lexer (keywords/strings/comments/numbers for ts/js/py/sh/json). **Not a full grammar** — a hand-rolled single-pass lexer, a recognizable-90% approximation (spec Decision Log against a ~1MB dependency), unknown langs fall back to dim |
+| Edit/Write diff | ✅ | — | **C5** `render.ts` `toolDiffLines` — a real hunk body: up to 3 dim numbered context lines each side of the change, numbered `-`/`+` rows for the changed lines. **Numbering is hunk-relative** (1-based within the `old_string`/`new_string` snippet) — we never read the file from disk, so absolute file-line numbers are not available; scored honestly |
+| Bash output rendering | 🟡 | MED | **C5**: only error framing landed — a failed `tool_result` (`is_error`) renders red with a `✗` prefix on its first line (`render.ts` `resultLines`). A `tool_result` carries no exit code, so `$`/exit-code framing is not reachable; stays 🟡, not promoted |
 | Long-output truncation + expand | 🟡 | LOW | we cap; no interactive expand |
-| Compact boundary marker | ❌ | LOW | `CompactBoundaryMessage.tsx` |
+| Compact boundary marker | ✅ | — | **C5** `useChat.ts` — a `system`/`compact_boundary` frame renders a `─── context compacted ───` divider notice |
 | Welcome banner / splash | ✅ | — | **U1** `banner.ts` — accent `✻ Welcome` box + cwd/model/mode + tips |
 | Tip of the day | ❌ | LOW | `tipScheduler.ts` |
 | Message timestamps | 🚫 | — | off by default in CC |
@@ -133,7 +186,8 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | Context-left % + threshold warning | ✅ | — | **U13** ctx% color-escalates green→yellow→red + "⚠ auto-compact soon" near the window |
 | Permission-mode indicator (color) | ✅ | — | `ChatStatusBar.tsx` modeColor |
 | Cost in status / `/cost` | ✅ | — | **U4** `/cost` via `session.usage()` |
-| `? for shortcuts` hint line | ❌ | MED | `PromptInputFooter.tsx` |
+| `? for shortcuts` hint line | ✅ | — | **C5** `ShortcutsOverlay.tsx`, opened by `?` — supersedes the footer-hint-only prior state (§1) |
+| Plan-usage warning chip (≥80% utilization) | ✅ | — | **C5** (F4) `usageFormat.ts` `usageWarning` → `ChatStatusBar.tsx` — a red chip once any rate-limit window crosses 80%, mirroring U13's ctx% escalation style |
 | Vim mode indicator | ❌ | LOW | tied to vim mode |
 
 ## 4 — Modals / overlays
@@ -159,7 +213,9 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | `/status` | ✅ | **U4** — model · mode · thinking · context · cwd · session snapshot |
 | `/vim` | ❌ | LOW |
 | `/doctor` `/config` `/theme` `/terminal-setup` | 🚫/LOW | env/IDE-coupled |
-| `/copy` | ❌ | LOW — clipboard |
+| `/copy` | ✅ | **C5** `copy.ts` (DI'd `pbcopy`/`xclip` spawn) — copies the last assistant reply, live or replayed (`sessions/rows.ts` `lastAssistantText`) |
+| `/usage` | ✅ | **C5** (F4) — `usageFormat.ts` `formatUsage` renders per-window utilization bars from `session.usage()`; honest unavailable-line when `rate_limits_available` is false |
+| `/rewind` | ✅ | **C5** — opens the Esc-Esc picker via command (`useChat.ts`), the same entry point as the gesture |
 
 ## 6 — Polish
 
@@ -170,7 +226,7 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | `●`/`⎿` message prefix glyphs + accent colors | ✅ | **U3** (`>` user echo kept as `›` by choice) |
 | "esc to interrupt" everywhere a turn runs | ✅ | **U2** |
 | Ctrl-C interrupt + double-press-to-exit | ✅ | **U8** |
-| Double-Esc to rewind affordance | ❌ | MED |
+| Double-Esc to rewind affordance | ✅ | **C5 — the flagship (U12)**: `RewindPicker.tsx` + `sessions/rows.ts` (content-shape anchor classifier, shared with `replay.ts`) + `host/host.ts` (`rewindAnchors`/`rewindDryRun`/`rewind`, validated before every side effect) + `ChatApp.tsx` Esc-Esc arming (1.5s idle-only window; busy Esc stays interrupt). Restores conversation and/or code via CC's 3-way picker; a conversation restore pre-fills the composer with the prompt text (CC's edit-and-resend loop) |
 | Newline instructions hint | ✅ | **U7** footer (`\⏎ newline`) |
 | Focus borders / input box styling | 🟡 | LOW |
 
@@ -254,9 +310,14 @@ Claude reviewer — **converged on the same 5 bugs**; all fixed, +5 regression t
   collapses multi-line to one bullet. (Lesson: an interactive Ink app needs a TTY — smoke-test under a
   PTY (`script`), not a pipe, or you hit a spurious "Raw mode is not supported" error.)
 
-### Next candidates (remaining gaps are lower-ROI or hard)
-- **U12 — Esc-Esc rewind / message edit** (§1, highest CC-fidelity, HARD): revert to a prior message
-  (needs `rewindFiles` + transcript truncation + re-prompt).
-- Code-block syntax highlight + tables (§2); vim mode; `/copy` clipboard; word-wise cursor movement
-  (Alt/Ctrl ←→). All lower-visibility. (Plan-mode approval shipped as part of the control-plane axis —
-  see §8.)
+**C5 (2026-07-28) shipped the remaining highest-ROI gaps** — see the "C5 — TUI closure shipped" block
+above: Esc-Esc rewind (U12, the flagship), the usage surface (F4), the `?` overlay, word movement,
+tool-row/diff/bash-error framing, tables, syntax highlight, the compact-boundary divider, and `/copy`.
+
+### Remaining gaps (all explicit spec non-goals or LOW-priority tail items)
+- Vim mode (`/vim` + its status indicator) and external editor (Ctrl-G / `$EDITOR`) — large,
+  low-ROI, out of scope for C5 (spec Decision Log).
+- Bash output's `$`/exit-code framing — not reachable: a `tool_result` carries no exit code, only
+  `is_error` (the error-framing half already landed).
+- Long-output interactive expand, the `›` vs `>` user-echo glyph (intentional divergence), and
+  focus-border/input-box styling polish.

@@ -292,7 +292,14 @@ still running, re-attach.
 
 **Risk.** Medium-high, but *bounded* — it is our protocol, so there is no compatibility target.
 
-### C5 — TUI closure (~82% → ~95%)
+### C5 — TUI closure (~82% → ~95%) — ✅ shipped 2026-07-28
+
+See `docs/superpowers/specs/2026-07-28-c5-tui-closure-design.md` for the full design, Decision Log,
+and acceptance record. The rescored headline landed **~88%** (`docs/parity/tui-ux.md` § Headline) —
+the honest arithmetic came in under the ~95% aspiration below because several residual rows are
+explicit non-goals or LOW-priority tail items (vim mode, external editor, Bash exit-code framing,
+long-output expand, the `›` user-echo divergence, focus-border styling), not because the flagship
+work was incomplete.
 
 **Goal.** Close `tui-ux.md`'s remaining gaps, led by the one with the highest fidelity payoff.
 
