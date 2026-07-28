@@ -101,6 +101,8 @@ function setBuffer(s: EditorState, t: string): EditorState {
   const lines = splitLines(t); const r = lines.length - 1;
   return { ...s, lines, cursor: { row: r, col: lines[r].length } };
 }
+/** Replace the buffer's text wholesale, cursor at the end — the composer's rewind prefill (edit-and-resend). */
+export function withBufferText(s: EditorState, t: string): EditorState { return setBuffer(s, t); }
 function historyPrev(s: EditorState): EditorState {
   if (s.history.length === 0) return s;
   if (s.histIndex === null) { const idx = s.history.length - 1; return setBuffer({ ...s, stash: bufferText(s), histIndex: idx }, s.history[idx]); }

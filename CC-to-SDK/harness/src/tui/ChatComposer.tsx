@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { readdirSync } from "node:fs";
-import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, type EditorState } from "./editor.js";
+import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, withBufferText, type EditorState } from "./editor.js";
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
 
@@ -53,12 +53,21 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, prefill }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; prefill?: { text: string; token: number } | null }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
   const disposed = useRef(false);
   useEffect(() => () => { disposed.current = true; }, []);
+
+  // Rewind's edit-and-resend: a NEW prefill (token bump) replaces the buffer wholesale; a re-render with the
+  // same token (or none) is a no-op — this must fire exactly once per rewind, not on every parent re-render.
+  const lastPrefill = useRef(0);
+  useEffect(() => {
+    if (!prefill || prefill.token === lastPrefill.current) return;
+    lastPrefill.current = prefill.token;
+    setState((s) => withBufferText(s, prefill.text));
+  }, [prefill]);
 
   // Read stateRef.current (NOT the closure `state`): Ink re-registers this handler in a passive effect that
   // flushes after commit, so a closure read lags one render and would submit stale text. The ref updates every render.

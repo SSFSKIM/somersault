@@ -1,7 +1,7 @@
 // tui/test/editor.test.ts — pure editor-reducer units. Probe 17d7116: a paste arrives as one `input` with
 // embedded \n; submit = a lone key.return; `\`+Enter = continuation.
 import { describe, it, expect } from "vitest";
-import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, inputMode, type EditorState, type KeyFlags } from "../../src/tui/editor.js";
+import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, inputMode, withBufferText, type EditorState, type KeyFlags } from "../../src/tui/editor.js";
 import type { CommandEntry } from "../../src/tui/commandComplete.js";
 
 const type = (s: EditorState, text: string): EditorState => applyKey(s, text, {}).state;
@@ -62,6 +62,14 @@ describe("editor core", () => {
     expect(s.cursor).toEqual({ row: 0, col: 1 });
     s = press(s, { rightArrow: true });                            // {1,0}
     expect(s.cursor).toEqual({ row: 1, col: 0 });
+  });
+});
+
+describe("editor composer prefill", () => {
+  it("withBufferText replaces the buffer and puts the cursor at the end (rewind's edit-and-resend prefill)", () => {
+    const s = withBufferText(initialEditorState(), "a\nb");
+    expect(s.lines).toEqual(["a", "b"]);
+    expect(s.cursor).toEqual({ row: 1, col: 1 });
   });
 });
 

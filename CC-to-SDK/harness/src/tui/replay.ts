@@ -17,7 +17,7 @@ function firstUserText(messages: any[]): string {
 const hhmm = (ts: unknown): string => (typeof ts === "string" && ts.length >= 16 && ts[10] === "T" ? ts.slice(11, 16) : "");
 const divider = (label: string): RenderLine => ({ text: `─── ${label} ───`, dim: true });
 
-export function replayLines(messages: any[], opts: { cap?: number; id?: string } = {}): RenderLine[] {
+export function replayLines(messages: any[], opts: { cap?: number; id?: string; label?: string } = {}): RenderLine[] {
   const cap = opts.cap ?? 200;
   const shown = messages.filter((m) => { const k = rowKind(m); return k !== "tool_result" && k !== "command_output" && k !== "caveat"; });
   const elided = Math.max(0, shown.length - cap);
@@ -25,7 +25,7 @@ export function replayLines(messages: any[], opts: { cap?: number; id?: string }
   const turns = shown.filter((m) => m?.type === "user").length;
   const label = trunc(firstUserText(messages) || (opts.id ? opts.id.slice(0, 8) : "session"), 40);
   const time = hhmm(messages.at(-1)?.timestamp);
-  const head = `resumed: ${label} · ${turns} turn${turns === 1 ? "" : "s"}${time ? " · " + time : ""}`;
+  const head = `${opts.label ?? "resumed"}: ${label} · ${turns} turn${turns === 1 ? "" : "s"}${time ? " · " + time : ""}`;
   const out: RenderLine[] = [divider(head)];
   if (elided > 0) out.push({ text: `… ${elided} earlier message${elided === 1 ? "" : "s"} elided`, dim: true });
   for (const m of kept) {
@@ -42,6 +42,6 @@ export function replayLines(messages: any[], opts: { cap?: number; id?: string }
     }
     else out.push(...lines);
   }
-  out.push(divider("resumed here · live"));
+  out.push(divider(`${opts.label ?? "resumed"} here · live`));
   return out;
 }
