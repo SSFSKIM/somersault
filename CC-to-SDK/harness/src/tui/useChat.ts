@@ -31,7 +31,7 @@ import type { RawContextUsage } from "../index.js";
 // adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
 export type { ChatSession };
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number } | null; usageWarn?: string; shortcutsOpen: boolean; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; }
 
 const LADDER = ["default", "acceptEdits", "plan", "auto"] as const;   // Tab cycles these; bypassPermissions stays off-cycle (/yolo)
 /** Next mode on the Tab ladder; any off-ladder mode (e.g. bypassPermissions/dontAsk) re-enters at "default". */
@@ -65,6 +65,7 @@ export function useChat(
   const [modelPicker, setModelPicker] = useState<{ open: boolean; models: ModelInfo[] }>({ open: false, models: [] });
   const [rewindPicker, setRewindPicker] = useState<{ open: boolean; anchors: RewindAnchor[] }>({ open: false, anchors: [] });
   const [composerPrefill, setComposerPrefill] = useState<{ text: string; token: number } | null>(null);
+  const [rewinding, setRewinding] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);   // the `?` help overlay (pure display)
   const [commandCatalog, setCommandCatalog] = useState<CommandEntry[]>(LOCAL_COMMAND_ENTRIES);   // local-only until the live fetch resolves
   const catalogNames = useRef<Set<string>>(new Set());                                            // catalog (non-local) names → routed to submit-as-prompt
@@ -134,6 +135,7 @@ export function useChat(
           else if (sub === "task_notification") notice(t.status === "failed" ? `✗ task failed: ${t.summary ?? t.task_id}` : `${t.status === "stopped" ? "◼ task stopped" : "✓ task done"}: ${t.summary ?? t.task_id}`);
         }
       }
+      else if (ev.kind === "rewound") void rebuildAfterRewind();   // ANOTHER client rewound: rebuild from disk (no prefill — not our prompt)
       else if (ev.kind === "state" && ev.status.permissionMode && ev.status.permissionMode !== modeRef.current) setMode(ev.status.permissionMode);
     });
     const offDecision = hasDecisionFeed(session) ? session.onDecision((entry) => { if (!disposed.current) pushPending(entry); }) : undefined;
@@ -322,6 +324,23 @@ export function useChat(
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
   }
   function closeRewindPicker() { if (!disposed.current) setRewindPicker({ open: false, anchors: [] }); }
+  /** Rebuild the transcript from the PERSISTED session after a conversation rewind truncated it. Shared by
+   *  the client that confirmed the rewind and by every other follower reacting to the host's `rewound`
+   *  broadcast — a follower passes no prefill, because someone else's rewound prompt does not belong in
+   *  this user's composer. Idempotent: re-reading disk and re-rendering is harmless if it runs twice. */
+  async function rebuildAfterRewind(prefill?: string) {
+    const id = session.sessionId;
+    let msgs: any[] = [];
+    if (id) { try { msgs = await getSessionMessages(id); } catch { msgs = []; } }
+    if (disposed.current) return;
+    setStreaming([]);
+    setLines(msgs.length ? replayLines(msgs, { id, label: "⏪ rewound" }) : [{ text: "⏪ rewound", dim: true }]);
+    lastAssistant.current = lastAssistantText(msgs);        // /copy follows what is on screen
+    setClearToken((t) => t + 1);
+    taskListRef.current.reset(); setTasks([]);
+    if (prefill !== undefined) setComposerPrefill({ text: prefill, token: Date.now() });
+  }
+
   function rewindDryRun(uuid: string): Promise<RewindDryRun> {
     return hasRewind(session) ? session.rewindDryRun(uuid) : Promise.resolve({ canRewind: false, error: "unsupported" });
   }
@@ -331,22 +350,19 @@ export function useChat(
   function confirmRewind(anchor: RewindAnchor, scope: RewindScope) {
     closeRewindPicker();
     if (!hasRewind(session)) return;
+    // A rewind is a multi-second engine operation (file restore + engine swap). Without a modal the
+    // composer remounts immediately while `busy` is still false, so a prompt typed in that window is
+    // cleared from the editor, forwarded, and rejected by the host as busy — silently losing what the
+    // user typed. `rewinding` keeps the composer off-screen until the operation settles.
+    setRewinding(true);
     void (async () => {
       try {
         await session.rewind(anchor, scope);
         if (disposed.current) return;
         if (scope === "code") { notice(`⏪ code restored to before "${anchor.text.slice(0, 40)}"`); return; }
-        const id = session.sessionId;
-        let msgs: any[] = [];
-        if (id) { try { msgs = await getSessionMessages(id); } catch { msgs = []; } }
-        if (disposed.current) return;
-        setStreaming([]);
-        setLines(msgs.length ? replayLines(msgs, { id, label: "⏪ rewound" }) : [{ text: "⏪ rewound", dim: true }]);
-        lastAssistant.current = lastAssistantText(msgs);        // same rule after a rewind: copy what is shown
-        setClearToken((t) => t + 1);
-        taskListRef.current.reset(); setTasks([]);
-        setComposerPrefill({ text: anchor.text, token: Date.now() });
+        await rebuildAfterRewind(anchor.text);
       } catch (e) { append([{ text: `✗ rewind failed: ${(e as Error).message}`, color: "red" }]); }
+      finally { if (!disposed.current) setRewinding(false); }
     })();
   }
 
@@ -470,5 +486,5 @@ export function useChat(
   function interrupt() { drainGen.current++; setQueue([]); void session.interrupt().catch(() => {}); }   // Esc stops everything: queue + any scheduled drain
   function clear() { if (!disposed.current) { clearScreen(); setLines([]); setStreaming([]); setClearToken((t) => t + 1); } }   // Ctrl-L / /clear: wipe screen + model (session context kept)
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, usageWarn, shortcutsOpen } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill };
 }

@@ -1,11 +1,14 @@
 // tui/src/copy.ts — clipboard via the platform's own tool (DI'd for tests, like bash.ts's runBash):
-// pbcopy on darwin, xclip on linux. No clipboard-library dependency for a LOW-priority row.
+// pbcopy on darwin, xclip on linux, clip.exe on win32. No clipboard-library dependency for a LOW row.
 import { spawn as realSpawn } from "node:child_process";
 
 export function copyToClipboard(text: string, deps: { platform?: string; spawn?: typeof realSpawn } = {}): Promise<void> {
   const platform = deps.platform ?? process.platform;
   const spawn = deps.spawn ?? realSpawn;
-  const cmd = platform === "darwin" ? ["pbcopy"] : platform === "linux" ? ["xclip", "-selection", "clipboard"] : undefined;
+  const cmd = platform === "darwin" ? ["pbcopy"]
+    : platform === "linux" ? ["xclip", "-selection", "clipboard"]
+    : platform === "win32" ? ["clip"]          // clip.exe ships with Windows and reads stdin
+    : undefined;
   if (!cmd) return Promise.reject(new Error(`no clipboard tool for ${platform}`));
   return new Promise((resolve, reject) => {
     const p = spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "ignore", "ignore"] });

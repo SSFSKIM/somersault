@@ -17,6 +17,12 @@ export type HostEvent =
   | { kind: "tasks_changed"; tasks: BackgroundTaskInfo[] }                   // REPLACE snapshot (Task 4 emits)
   | { kind: "task"; data: unknown }                                         // raw task lifecycle frame (Task 4 emits)
   | { kind: "state"; status: HostStatus }
+  // A conversation rewind replaced the engine: the persisted transcript is now TRUNCATED, so every
+  // follower (not just whoever confirmed it) must rebuild from disk. A generic `state` event is not
+  // enough — its handler only syncs permissionMode, so other attached clients would keep rendering the
+  // pre-rewind transcript, and /copy would keep offering text the host no longer knows about, while
+  // their next prompt runs against the truncated conversation.
+  | { kind: "rewound"; sessionId?: string }
   | { kind: "turn"; phase: "start" | "end"; seq?: number; error?: string; truncated?: boolean };
 
 export type HostFrame = ({ t: "event" } & HostEvent) | ({ t?: undefined } & Record<string, unknown>);

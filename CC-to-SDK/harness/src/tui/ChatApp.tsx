@@ -88,6 +88,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       ) : null}
       {state.shortcutsOpen
         ? <ShortcutsOverlay onClose={closeShortcuts} />
+        // A confirmed rewind takes seconds (file restore + engine swap). Hold a modal until it settles:
+        // if the composer came back first, a prompt typed in that window would be cleared from the editor,
+        // sent, and refused by the host as busy — the user's text lost rather than queued.
+        : state.rewinding
+        ? <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>
         : state.rewindPicker.open
           ? <RewindPicker anchors={state.rewindPicker.anchors} onDryRun={rewindDryRun} onConfirm={confirmRewind} onClose={closeRewindPicker} />
           : state.bgPanelOpen

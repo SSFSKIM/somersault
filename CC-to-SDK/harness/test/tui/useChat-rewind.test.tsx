@@ -188,4 +188,47 @@ describe("useChat: rewind flow", () => {
     expect(out[0].text.startsWith("─── ⏪ rewound:")).toBe(true);
     expect(out.at(-1)!.text).toBe("─── ⏪ rewound here · live ───");
   });
+
+  it("9. a `rewound` broadcast from ANOTHER client rebuilds this follower's transcript (no prefill — not our prompt)", async () => {
+    // The host swaps the engine and truncates the persisted conversation; a generic `state` event only
+    // syncs permissionMode, so without this every other attached client keeps rendering the pre-rewind
+    // transcript while its next prompt runs against the truncated host conversation.
+    const msgs = [
+      { type: "user", uuid: "u-a", message: { content: [{ type: "text", text: "the surviving prompt" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
+      { type: "assistant", message: { content: [{ type: "text", text: "the surviving reply" }] } },
+    ];
+    const session = fakeRewindSession();
+    const deps = { getSessionMessages: async () => msgs };
+    function H() {
+      const c = useChat(() => session, {}, deps);
+      const st = c.state as any;
+      return <Text>prefill:{st.composerPrefill ? st.composerPrefill.text : "-"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    session.pushEvent({ kind: "rewound", sessionId: "s1" } as any);
+    await waitFor(() => frame(lastFrame).includes("the surviving reply"));
+    expect(frame(lastFrame)).toContain("⏪ rewound");
+    expect(frame(lastFrame)).toContain("prefill:-");     // a follower must NOT inherit the other user's prompt
+  });
+
+  it("10. the composer is held behind a modal while a rewind runs, so a prompt typed mid-rewind cannot be lost", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    const session = fakeRewindSession({ rewind: async () => { await held; } });
+    const deps = { getSessionMessages: async () => [] as any[] };
+    const api: Parameters<typeof RewindHost>[0]["api"] = {};
+    function H() {
+      const c = useChat(() => session, {}, deps);
+      api.confirmRewind = (c as any).confirmRewind;
+      const st = c.state as any;
+      return <Text>rewinding:{String(st.rewinding)} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.confirmRewind!(ANCHOR, "both");
+    await waitFor(() => frame(lastFrame).includes("rewinding:true"));
+    release();
+    await waitFor(() => frame(lastFrame).includes("rewinding:false"));
+  });
 });

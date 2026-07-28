@@ -36,7 +36,8 @@ describe("copyToClipboard", () => {
   });
   it("an unknown platform rejects with a clear message, without spawning anything", async () => {
     const { spawn, calls } = fakeSpawn();
-    await expect(copyToClipboard("x", { platform: "win32", spawn })).rejects.toThrow(/no clipboard tool for win32/);
+    // was "win32" until win32 became supported (clip.exe) — pick a platform we genuinely have no tool for
+    await expect(copyToClipboard("x", { platform: "aix", spawn })).rejects.toThrow(/no clipboard tool for aix/);
     expect(calls).toEqual([]);
   });
   it("a nonzero exit code rejects", async () => {
@@ -47,4 +48,16 @@ describe("copyToClipboard", () => {
     const { spawn } = fakeSpawn({ error: new Error("ENOENT") });
     await expect(copyToClipboard("x", { platform: "linux", spawn })).rejects.toThrow(/xclip unavailable/);
   });
+
+  it("spawns clip on win32 (the command is advertised in /help and the shortcuts overlay on every platform)", async () => {
+    const calls: { cmd: string; args: string[]; stdin: string }[] = [];
+    const spawn: any = (cmd: string, args: string[]) => {
+      const p: any = { on: (ev: string, cb: (x?: unknown) => void) => { if (ev === "close") setTimeout(() => cb(0), 0); return p; },
+                       stdin: { end: (t: string) => calls.push({ cmd, args, stdin: t }) } };
+      return p;
+    };
+    await copyToClipboard("hello", { platform: "win32", spawn });
+    expect(calls).toEqual([{ cmd: "clip", args: [], stdin: "hello" }]);
+  });
+
 });
