@@ -107,7 +107,8 @@ describe("useChat: rewind flow", () => {
     const rewindCalls: { anchor: RewindAnchor; scope: RewindScope }[] = [];
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "fix the parser" }] }, timestamp: "2026-07-28T08:00:00.000Z" }];
     const session = fakeRewindSession({ rewind: async (a, s) => { rewindCalls.push({ anchor: a, scope: s }); } });
-    const deps = { getSessionMessages: async () => msgs };
+    let fetched = 0;
+    const deps = { getSessionMessages: async () => { fetched++; return msgs; } };
     const api: Parameters<typeof RewindHost>[0]["api"] = {};
     function H() {
       const c = useChat(() => session, {}, deps);
@@ -120,7 +121,9 @@ describe("useChat: rewind flow", () => {
     api.confirmRewind!(ANCHOR, "both");
     await waitFor(() => frame(lastFrame).includes("prefill:fix the parser"));
     expect(rewindCalls).toEqual([{ anchor: ANCHOR, scope: "both" }]);
-    expect(frame(lastFrame)).toContain("⏪ rewound");
+    expect(fetched).toBe(1);
+    // the DERIVED header ("… · 1 turn"), not the bare "⏪ rewound" fallback that an empty fetch also renders
+    expect(frame(lastFrame)).toContain("⏪ rewound: fix the parser · 1 turn");
   });
 
   it("6. confirmRewind(anchor, 'code') rewinds but never fetches messages, notices 'code restored', and leaves the composer alone", async () => {
