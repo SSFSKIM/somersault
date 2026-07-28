@@ -3,7 +3,10 @@ import { describe, it, expect } from "vitest";
 import { replayLines } from "../../src/tui/replay.js";
 
 const TS = "2026-06-19T15:58:00.000Z";
-const userText = (text: string, timestamp = "2026-06-19T15:56:00.000Z") => ({ type: "user", message: { role: "user", content: [{ type: "text", text }] }, timestamp });
+// `uuid` matters: rowKind() only classifies a plain (non-echo/non-summary) user row as "prompt" when it
+// carries one (real transcript rows always do — see sessions/rows.ts) — omitting it here would silently
+// make every fixture "other", not "prompt", under the Minor-3 fix (turns counted via rowKind).
+const userText = (text: string, timestamp = "2026-06-19T15:56:00.000Z", uuid = "u-test") => ({ type: "user", uuid, message: { role: "user", content: [{ type: "text", text }] }, timestamp });
 const asstText = (text: string, timestamp = TS) => ({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] }, timestamp });
 const asstTool = (name: string, input: any, timestamp = TS) => ({ type: "assistant", message: { content: [{ type: "tool_use", name, input }] }, timestamp });
 const toolResult = (text: string, timestamp = TS) => ({ type: "user", message: { content: [{ type: "tool_result", content: text }] }, timestamp });
@@ -44,5 +47,16 @@ describe("replayLines", () => {
     expect(text).not.toContain("local-command-stdout");
     expect(text).not.toContain("Summary…");
     expect(text).toContain("─── context compacted earlier ───");
+  });
+  it("counts only real prompts as turns — a command echo and a compaction summary are not turns (Minor 3)", () => {
+    const msgs = [
+      { type: "user", uuid: "u1", timestamp: "2026-07-28T08:00:00Z", message: { role: "user", content: "hi" } },
+      { type: "user", uuid: "u2", message: { role: "user", content: "<command-name>/compact</command-name> <command-message>compact</command-message>" } },
+      { type: "user", uuid: "u3", message: { role: "user", content: "<local-command-stdout>Compacted</local-command-stdout>" } },
+      { type: "user", uuid: "u4", message: { role: "user", content: "This session is being continued from a previous conversation that ran out of context. Summary…" } },
+    ];
+    // Only u1 is rowKind()==="prompt": u2 is a command_echo, u3 a command_output (already excluded from
+    // `shown`), u4 a compact_summary. The old `type==="user"` count would have read 3 (u1+u2+u4).
+    expect(replayLines(msgs)[0].text).toBe("─── resumed: session · 1 turn ───");
   });
 });

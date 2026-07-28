@@ -57,6 +57,14 @@ describe("formatters", () => {
     expect(lines).toContain("42% used");
     expect(lines).toContain("abcdef12");
   });
+
+  it("renders the usage row only when a usage summary is passed", () => {
+    const base = { model: "m", mode: "default", thinkLevel: "high", ctxPct: 1, sessionId: "s", cwd: "/x" };
+    const withUsage = formatStatus({ ...base, usage: "5h 43% · 7d 12%" }).map((l) => l.text).join("\n");
+    expect(withUsage).toContain("usage");
+    expect(withUsage).toContain("5h 43% · 7d 12%");
+    expect(formatStatus(base).map((l) => l.text).join("\n")).not.toContain("usage");
+  });
   it("cost/status are in the command table", () => {
     expect(COMMANDS.some((c) => c.name === "cost")).toBe(true);
     expect(COMMANDS.some((c) => c.name === "status")).toBe(true);

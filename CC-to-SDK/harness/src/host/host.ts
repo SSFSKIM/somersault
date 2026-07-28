@@ -79,6 +79,16 @@ export class SessionHost {
   // guard) must ask `busy()`, never that projection, or a prompt arriving mid-park re-enters runTask and
   // resets the turn buffer out from under a turn that never stopped.
   private turnInFlight = false;
+  // True for the ENTIRE duration of rewind()/resumeSession() — both awaited across the engine's dry run,
+  // its real file restore, and the engine swap itself. Without this, the `prompt` op's gate (busy(), read
+  // by server.ts BEFORE it calls runTask) is false throughout that whole window — turnInFlight alone says
+  // nothing about a swap in progress — so a second attached client's prompt arriving mid-rewind starts a
+  // turn on the OLD engine (the model reasons over the pre-rewind conversation while the working tree has
+  // already been reverted), and swapEngine then resets the turn buffer and disposes that engine out from
+  // under the still-running turn. Set for the whole method body and cleared in a `finally` — a `finally`
+  // is load-bearing: a rewind that throws must not leave this stuck true forever, or the host would wedge
+  // every later prompt behind a busy error nothing will ever clear.
+  private swapInFlight = false;
   // Monotonic per-host turn counter. A client's `prompt` reply carries the seq its submit() started
   // (server.ts), and every `turn` event this turn emits carries the same seq — the correlation a
   // follower/adapter needs to tell "this turn's end" from "some other turn's end" apart (Task 5).
@@ -323,7 +333,9 @@ export class SessionHost {
    *  grace as teardown: an idle dispose resolves immediately, but this must never hang the socket op. */
   async resumeSession(sessionId: string): Promise<void> {
     if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
-    await this.swapEngine({ resume: sessionId });
+    this.swapInFlight = true;
+    try { await this.swapEngine({ resume: sessionId }); }
+    finally { this.swapInFlight = false; }
   }
 
   /** Subscribe to the live turn. The new follower is replayed the turn so far FIRST, synchronously, so
@@ -462,16 +474,24 @@ export class SessionHost {
     // A code-only rewind is legitimate for a null-prevUuid anchor — that is the intended degradation —
     // so this is gated on `scope !== "code"`, same as the conversation-swap step it protects.
     if (scope !== "code" && !anchor.prevUuid) throw new Error("no conversation anchor before the first prompt — code-only rewind is available");
-    if (scope !== "conversation") {
-      const dry = await this.rewindDryRun(anchor.uuid);
-      if (!dry.canRewind) throw new Error(dry.error ?? "file rewind unavailable");
-      const fn = this.session?.rewind?.bind(this.session);
-      if (!fn) throw new Error("rewind unsupported by this host");
-      await fn(anchor.uuid);
-    }
-    if (scope !== "code") {
-      if (this.bgTasks.length) this.emit({ kind: "task", data: { type: "task_notification", status: "stopped", task_id: "rewind", summary: "background tasks ended by rewind" } });
-      await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid as string });
+    // Spans the dry run, the real file restore, AND the engine swap — the whole window server.ts's
+    // `prompt` gate must see as busy (see the field doc above). `finally` guarantees it clears even on a
+    // throw from the dry run, the real restore, or the swap itself.
+    this.swapInFlight = true;
+    try {
+      if (scope !== "conversation") {
+        const dry = await this.rewindDryRun(anchor.uuid);
+        if (!dry.canRewind) throw new Error(dry.error ?? "file rewind unavailable");
+        const fn = this.session?.rewind?.bind(this.session);
+        if (!fn) throw new Error("rewind unsupported by this host");
+        await fn(anchor.uuid);
+      }
+      if (scope !== "code") {
+        if (this.bgTasks.length) this.emit({ kind: "task", data: { type: "task_notification", status: "stopped", task_id: "rewind", summary: "background tasks ended by rewind" } });
+        await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid as string });
+      }
+    } finally {
+      this.swapInFlight = false;
     }
   }
 
@@ -563,7 +583,7 @@ export class SessionHost {
    *  status(), it never lies during a park: true from the moment runTask starts until it returns,
    *  covering the entire time a permission is parked mid-turn — the state a background host spends real
    *  time in by design, and exactly when the old status()-based gate was open. */
-  busy(): boolean { return this.turnInFlight; }
+  busy(): boolean { return this.turnInFlight || this.swapInFlight; }
 
   /** Ends the in-flight turn, settling parked decisions first (see stop()).
    *

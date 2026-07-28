@@ -429,6 +429,14 @@ export function useChat(
         notice(`✗ answer failed: ${(e as Error).message}`);
       });
   }
+  // The "already applied" knowledge lives HERE, not in a ref inside ChatComposer: the composer unmounts
+  // whenever any popup arm takes over (shortcuts/rewind/bg-tasks/model/session picker, any decision
+  // dialog), which resets a component-local dedup ref to its initial value while `composerPrefill` still
+  // holds the already-consumed rewound prompt — so on remount the ref-guarded effect re-applies it,
+  // resurrecting a stale prompt into the composer after the user already edited/submitted past it. A
+  // prefill is applied at most once: the composer calls this the moment it applies the text, clearing the
+  // state so no later remount (with a reset ref) can ever see a non-null prefill to re-apply.
+  function clearPrefill() { if (!disposed.current) setComposerPrefill(null); }
   function openBgPanel() { if (!disposed.current) setBgPanelOpen(true); }
   function closeBgPanel() { if (!disposed.current) setBgPanelOpen(false); }
   function openShortcuts() { if (!disposed.current) setShortcutsOpen(true); }
@@ -462,5 +470,5 @@ export function useChat(
   function interrupt() { drainGen.current++; setQueue([]); void session.interrupt().catch(() => {}); }   // Esc stops everything: queue + any scheduled drain
   function clear() { if (!disposed.current) { clearScreen(); setLines([]); setStreaming([]); setClearToken((t) => t + 1); } }   // Ctrl-L / /clear: wipe screen + model (session context kept)
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, usageWarn, shortcutsOpen } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, usageWarn, shortcutsOpen } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill };
 }

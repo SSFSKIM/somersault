@@ -281,6 +281,34 @@ describe("<ChatApp>", () => {
     release();
   });
 
+  it("a consumed rewind prefill does not resurrect after a popup remount — through the REAL ChatApp wiring", async () => {
+    // The composerPrefillRemount test pins the useChat↔composer contract with its own harness; this one
+    // exercises ChatApp itself, so dropping the onPrefillApplied prop in ChatApp is caught too.
+    const ANCHOR: RewindAnchor = { uuid: "u1", prevUuid: "u0", text: "fix the parser", index: 2 };
+    const fake = fakeRewindRemote({ rewindAnchors: async () => [ANCHOR], rewind: async () => {} });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+
+    stdin.write("\x1b");                                            // arm
+    await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
+    stdin.write("\x1b");                                            // open the picker
+    await waitFor(() => frame(lastFrame).includes("Rewind to a previous message"));
+    stdin.write("\r");                                              // select the anchor → scope stage
+    await waitFor(() => frame(lastFrame).includes("Restore conversation only"));
+    stdin.write("2");                                               // conversation-only: no dryRun dependency
+    await waitFor(() => frame(lastFrame).includes("fix the parser"));   // prefill landed in the composer
+
+    stdin.write("\x15");                                            // Ctrl-U: clear the composer buffer
+    await waitFor(() => !frame(lastFrame).includes("fix the parser"));
+
+    stdin.write("?");                                               // empty composer → shortcuts overlay (composer unmounts)
+    await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
+    stdin.write("x");                                               // any key closes it → composer REMOUNTS
+    await waitFor(() => frame(lastFrame).includes("›"));
+    await new Promise((r) => setTimeout(r, 80));
+    expect(frame(lastFrame)).not.toContain("fix the parser");       // must not resurrect
+  });
+
   it("a turn start revokes an idle Esc arm — the rewind hint never survives into a busy turn", async () => {
     let release = () => {};
     let fake: ReturnType<typeof fakeRewindRemote>;

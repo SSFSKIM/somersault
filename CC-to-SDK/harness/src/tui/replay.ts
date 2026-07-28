@@ -22,7 +22,11 @@ export function replayLines(messages: any[], opts: { cap?: number; id?: string; 
   const shown = messages.filter((m) => { const k = rowKind(m); return k !== "tool_result" && k !== "command_output" && k !== "caveat"; });
   const elided = Math.max(0, shown.length - cap);
   const kept = elided > 0 ? shown.slice(shown.length - cap) : shown;
-  const turns = shown.filter((m) => m?.type === "user").length;
+  // Only rows the shared classifier calls a real prompt — `shown` still carries command echoes and
+  // compact-summary rows (only tool_result/command_output/caveat are filtered above), and both are
+  // `type:"user"` rows that used to inflate the count: a slash-command echo or a compaction summary is
+  // not a turn the human took.
+  const turns = shown.filter((m) => rowKind(m) === "prompt").length;
   const label = trunc(firstUserText(messages) || (opts.id ? opts.id.slice(0, 8) : "session"), 40);
   const time = hhmm(messages.at(-1)?.timestamp);
   const head = `${opts.label ?? "resumed"}: ${label} · ${turns} turn${turns === 1 ? "" : "s"}${time ? " · " + time : ""}`;

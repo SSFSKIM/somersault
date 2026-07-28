@@ -84,9 +84,12 @@ describe("toolDiffLines", () => {
   });
   it("produces no negative-length ranges when old_string === new_string (identical → context only, no change rows)", () => {
     const out = toolDiffLines("Edit", { file_path: "f.ts", old_string: "a\nb\nc\nd\ne", new_string: "a\nb\nc\nd\ne" });
-    expect(out[0]).toEqual({ text: "Edit f.ts", gutter: { text: "● " } });
-    expect(out.slice(1).some((l) => l.color === "red" || l.color === "green")).toBe(false); // no +/- rows
-    for (const l of out.slice(1)) expect(l.dim).toBe(true);                                  // pure context
+    // EXACT rows, not just "no red/green + all dim": those negative assertions also hold for a regression
+    // that duplicates or mis-numbers context rows (e.g. an unbounded suffix scan), so they pinned nothing.
+    expect(out).toEqual([
+      { text: "Edit f.ts", gutter: { text: "● " } },
+      { text: "  3  c", dim: true }, { text: "  4  d", dim: true }, { text: "  5  e", dim: true },
+    ]);
   });
   it("produces no negative-length ranges when new_string is a strict prefix of old_string (trailing removal only)", () => {
     const out = toolDiffLines("Edit", { file_path: "f.ts", old_string: "a\nb\nc", new_string: "a\nb" });

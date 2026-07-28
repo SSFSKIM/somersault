@@ -53,7 +53,7 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number } | null }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number } | null; onPrefillApplied?: () => void }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -62,11 +62,20 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
 
   // Rewind's edit-and-resend: a NEW prefill (token bump) replaces the buffer wholesale; a re-render with the
   // same token (or none) is a no-op — this must fire exactly once per rewind, not on every parent re-render.
+  // `lastPrefill` alone used to be the ONLY guard, but it lives in THIS component and resets to 0 every
+  // time the composer unmounts — which happens whenever any popup arm (shortcuts overlay, rewind picker,
+  // bg-tasks panel, model/session picker, any decision dialog) takes over. `composerPrefill` was never
+  // cleared after being consumed, so a remount re-armed the ref while the parent state still held the
+  // already-applied prefill, and the effect re-applied a stale rewound prompt into a freshly-typed buffer.
+  // `onPrefillApplied` moves the "already applied" knowledge up to useChat (which survives remounts): it
+  // clears `composerPrefill` to null the moment this fires, so no later remount can ever see a non-null
+  // prefill to re-apply — the ref here is now just a same-mount double-invoke guard, not the real dedup.
   const lastPrefill = useRef(0);
   useEffect(() => {
     if (!prefill || prefill.token === lastPrefill.current) return;
     lastPrefill.current = prefill.token;
     setState((s) => withBufferText(s, prefill.text));
+    onPrefillApplied?.();
   }, [prefill]);
 
   // Read stateRef.current (NOT the closure `state`): Ink re-registers this handler in a passive effect that

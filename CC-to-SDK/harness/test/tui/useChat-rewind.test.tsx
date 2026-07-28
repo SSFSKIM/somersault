@@ -105,7 +105,7 @@ describe("useChat: rewind flow", () => {
 
   it("5. confirmRewind(anchor, 'both') rewinds, re-fetches messages, renders the ⏪ rewound header, and pre-fills the composer", async () => {
     const rewindCalls: { anchor: RewindAnchor; scope: RewindScope }[] = [];
-    const msgs = [{ type: "user", message: { content: [{ type: "text", text: "fix the parser" }] }, timestamp: "2026-07-28T08:00:00.000Z" }];
+    const msgs = [{ type: "user", uuid: "u-fix", message: { content: [{ type: "text", text: "fix the parser" }] }, timestamp: "2026-07-28T08:00:00.000Z" }];   // uuid: rowKind() only calls a user row a "prompt" (hence a counted turn) when it carries one, as every real transcript row does
     const session = fakeRewindSession({ rewind: async (a, s) => { rewindCalls.push({ anchor: a, scope: s }); } });
     let fetched = 0;
     const deps = { getSessionMessages: async () => { fetched++; return msgs; } };
@@ -128,7 +128,7 @@ describe("useChat: rewind flow", () => {
 
   it("5b. after a rewind, /copy copies the assistant reply the REPLAY put on screen (never 'nothing to copy')", async () => {
     const msgs = [
-      { type: "user", message: { content: [{ type: "text", text: "fix the parser" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
+      { type: "user", uuid: "u-fix2", message: { content: [{ type: "text", text: "fix the parser" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
       { type: "assistant", message: { content: [{ type: "text", text: "the parser is fixed" }] } },
     ];
     const session = fakeRewindSession({ rewind: async () => {} });
