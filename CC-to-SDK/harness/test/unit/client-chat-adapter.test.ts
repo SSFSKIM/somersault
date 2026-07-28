@@ -149,6 +149,31 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
     }
   });
 
+  it("4. decision feed: park -> onDecision fires -> answerDecision settles the park -> a second answerDecision reports alreadyAnsweredBy -> onDecisionSettled fires once", async () => {
+    const { host, path } = await startHost();
+    const adapter = remoteChatSession(path);
+    try {
+      await adapter.whenReady();
+      const seen: PendingEntry[] = [];
+      adapter.onDecision((e) => seen.push(e));
+      const settled: { toolUseID: string; by: string; decision: string }[] = [];
+      adapter.onDecisionSettled((s) => settled.push(s));
+      const decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t9", signal: new AbortController().signal });
+      await vi.waitFor(() => expect(seen).toHaveLength(1));
+      expect(seen[0].toolUseID).toBe("t9");
+      const first = await adapter.answerDecision("t9", { kind: "allow_once" });
+      expect(first.ok).toBe(true);
+      await expect(decision).resolves.toEqual({ kind: "allow_once" });
+      const second = await adapter.answerDecision("t9", { kind: "deny" });
+      expect(second.ok).toBe(true);
+      expect(second.alreadyAnsweredBy).toBeTruthy();
+      await vi.waitFor(() => expect(settled).toHaveLength(1));
+    } finally {
+      adapter.detach();
+      await stopQuietly(host);
+    }
+  });
+
   it("5. replay-first: a permission parked BEFORE connect is in pendingNow(), and the first onSessionEvent subscriber is flushed permission+state in order", async () => {
     const { host, path } = await startHost();
     let decision: Promise<unknown> | undefined;

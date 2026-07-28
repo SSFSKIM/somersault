@@ -118,7 +118,7 @@ describe("useChat: the host event stream is the single rendering source", () => 
 });
 
 describe("useChat: permission feed", () => {
-  it("a parked permission arriving via the feed opens the dialog; answering calls answerPermission with the entry's toolUseID; alreadyAnsweredBy clears the dialog and appends a notice", async () => {
+  it("a parked permission arriving via the feed opens the dialog; answering calls answerDecision with the entry's toolUseID; alreadyAnsweredBy clears the dialog and appends a notice", async () => {
     let fake!: FakeRemote;
     fake = fakeRemote({
       async answerDecision(toolUseID, outcome) {
@@ -139,7 +139,7 @@ describe("useChat: permission feed", () => {
     await waitFor(() => frame(lastFrame).includes("answered by eve"));
   });
 
-  it("a rejecting answerPermission (host death mid-dialog, or a wedged host's deadline) appends a notice instead of crashing, and does NOT clear the dialog", async () => {
+  it("a rejecting answerDecision (host death mid-dialog, or a wedged host's deadline) appends a notice instead of crashing, and does NOT clear the dialog", async () => {
     // F1: this is the ONLY session call in useChat whose promise used to have no rejection handler at
     // all — an unhandled rejection here used to kill the whole attached REPL process.
     let fake!: FakeRemote;

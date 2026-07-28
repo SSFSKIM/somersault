@@ -33,7 +33,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const disarm = () => { setExitArmed(false); if (disarmTimer.current) { clearTimeout(disarmTimer.current); disarmTimer.current = null; } };
   useEffect(() => () => { if (disarmTimer.current) clearTimeout(disarmTimer.current); }, []);
   const onInterrupt = () => { interrupt(); disarm(); };
-  const onCycleMode = () => { cycleMode(); disarm(); };   // Tab cycles the permission ladder (default → acceptEdits → auto)
+  const onCycleMode = () => { cycleMode(); disarm(); };   // Tab cycles the permission ladder (default → acceptEdits → plan → auto)
   // Only Ctrl-C / Ctrl-L / Ctrl-Z live here — they conflict with nothing (composer/dialog/pickers never act
   // on them), so this stays active even during a pending dialog (so Ctrl-C can still quit, Ctrl-Z can still
   // detach). Tab/Esc are owned by whatever input is focused (the composer routes them to
