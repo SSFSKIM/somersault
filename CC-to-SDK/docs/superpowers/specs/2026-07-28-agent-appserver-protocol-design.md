@@ -1,4 +1,4 @@
-# Agent App-Server Protocol — design (rev 2)
+# Agent App-Server Protocol — design (rev 3)
 
 **Date:** 2026-07-28 · **Status:** DESIGN (pre-plan) · **Aimed coverage: 100% of the harness's
 reachable capability surface** (defined precisely in §10).
@@ -33,9 +33,11 @@ wire-compat extension.**
 
 The server mounts on the existing engine seams — `ChatSession` (+ `DecisionFeed`/`BgTasks`/
 `SessionEvents`/`RewindOps` mixins), `Session.onFrame`, the `PermissionBroker` interface, and the
-`sessions/` store wrappers. **No new engine capability is invented; the protocol is a re-projection
-of what the harness already does** (that is what makes 100% coverage a closure property, not a
-feature wishlist).
+`sessions/` store wrappers. **No new engine capability is invented — with two deliberate,
+named refactors**: the broker's unattended policy becomes an explicit knob instead of the
+connection-count heuristic (D3), and the TUI's pure reducers are extracted into a style-free item
+mapper (§5). Everything else is a re-projection of what the harness already does (that is what
+makes 100% coverage a closure property, not a feature wishlist).
 
 ## 2. Placement & process model
 
@@ -47,6 +49,16 @@ feature wishlist).
   `resumeSession`) *and* threads it adopted from the fleet (an existing `ccx --bg` host, reached
   over its UDS via `remoteChatSession()` — both satisfy the same `ChatSession` contract, so the
   registry stores one interface). This is the same one-code-path trick `runForegroundImpl` plays.
+- **Origin-scoped reachability.** The `ChatSession` contract (+ mixins) is the *intersection* of
+  the two origins; §7's inventory exceeds it (`thread/settings/apply`, `thread/reinitialize`,
+  `mcpServer/set`, `mcpServer/permissionModeOverride/set` exist only on the lib `Session`, not on
+  the 25-op host wire). Rule: **every §7 method declares its origin scope** (`both` | `inProcess`
+  only), the scorecard carries the column, and calling an `inProcess`-only method on a
+  fleet-origin thread returns **`-33006 unsupportedForOrigin`** — a distinct, machine-readable
+  refusal (never `-32601`, never `-33005`). `thread/capabilities/read` reports the thread's
+  reachable method set so a web UI can grey out controls instead of probing. Growing the host
+  wire to shrink the `inProcess`-only set is legitimate follow-up work, but each such op is a
+  named engine change, not something this spec smuggles in.
 - The web UI itself is **out of scope** for this spec (it is the first consumer, and its needs
   drive method priority, but the protocol is client-agnostic — same rule as Codex's README being
   written for the VS Code extension without depending on it).
@@ -74,7 +86,8 @@ feature wishlist).
   `-32700/-32600/-32601/-32602/-32603`, `-32001` overloaded, plus app codes: `-33001 busy`
   (turn-gated method while a turn is in flight), `-33002 alreadySettled` (decision raced —
   carries `{by}`), `-33003 unauthenticated`, `-33004 threadNotFound`, `-33005 engineGone`
-  (adopted fleet host died).
+  (adopted fleet host died), `-33006 unsupportedForOrigin` (method exists but this thread's
+  origin cannot reach it — see §2).
 - Method naming: `<resource>/<verb>` singular (`thread/start`, `decision/respond`, `fleet/list`).
 - All v-shapes camelCase; every method's params/response defined in zod (single source), schemas
   generated (§9).
@@ -107,10 +120,21 @@ renderers; the extraction gives them a structured-item output too — this fixes
 | `compaction` | compact boundary frames | — |
 | `error` | error/limit frames (`classifyLimitMessage`) | — |
 
+**Item identity.** Item ids are **derived, not minted**, from identifiers the SDK already
+stamps — `toolCall` items use the `tool_use_id`; message-level items use the frame `uuid`, with
+`#<blockIndex>` suffixes when one assistant frame yields multiple items (text + thinking blocks).
+Because persisted transcripts and live frames carry the *same* identifiers, "live shape ≡
+persisted shape" extends to ids: the same item has the same id whether it arrived via
+`thread/read` or a subscription replay. Every delta names its target `{threadId, turnId, itemId}`.
+
 Replay rule (straight from the host's replay-first `follow()`): `thread/subscribe` synchronously
 replays — `turn/started` only if a turn is in flight, buffered items, parked decisions, task
 snapshot, then a final `thread/status/changed`. Cold history comes from `thread/read`
-(`getSessionMessages` → the same item mapper `replay` path), so live shape ≡ persisted shape.
+(`getSessionMessages` → the same item mapper `replay` path). **Join stitch rule** (the cold ↔
+live boundary): a client joins by calling `thread/subscribe` *first* (buffering incoming events),
+then `thread/read`, then draining the buffer — dropping any buffered `item/*` whose `itemId`
+already appeared in the read page. Derived ids make this dedup exact; the server does not need a
+coordination handshake, and a disconnect is cheap to recover (resubscribe + re-read).
 
 ## 6. Decisions (the park model) — deviation D1 from Codex
 
@@ -121,19 +145,28 @@ indefinitely, clients come and go, and the first answer wins. So decisions are m
 
 - `decision/requested` notification — `{threadId, turnId, decision: PendingDecision}` (kind
   `permission | question | plan`, full payload incl. attribution, `expiresAt?`).
-- `decision/respond` method — `{threadId, toolUseId, answer, by}` where `answer` is the structured
-  union already defined by `KIND_ANSWERS` (permission: `allow_once | allow_always | deny`;
-  question: `question_answer{answers} | deny`; plan: `plan_approve{mode?} | plan_reject{feedback}
-  | deny`), each with optional `abortTurn: true` (Codex's `cancel` semantics — deny **and**
-  interrupt).
+- `decision/respond` method — `{threadId, toolUseId, answer}`. `answer` is a kind-validated
+  union that maps 1:1 onto the host wire's `KIND_ANSWERS` + structured-answer schema
+  (`host/ops.ts`): permission → `allow_once | allow_always | deny`; question →
+  `question_answer{answers: Record<string,string>, response?: string} | deny`; plan →
+  `plan_approve{acceptEdits: boolean} | plan_reject{feedback?: string} | deny`. (On the host
+  wire `deny` rides the legacy flat `decision` field for every kind; the adapter maps.) Each
+  variant takes optional `abortTurn: true` (Codex's `cancel` semantics — deny **and**
+  interrupt). There is **no client-supplied `by`**: the server stamps attribution as
+  `clientInfo.name#connId` from the connection's `initialize` identity when forwarding to the
+  host op (whose `by` is required), so attribution is never free-text.
 - `decision/resolved` notification — `{threadId, toolUseId, by, answer}` broadcast to all
   subscribers (our `decision_settled` ≡ Codex's `serverRequest/resolved`, unified). A losing
   responder gets `-33002 alreadySettled {by}` — informational, not an error dialog.
 - Parked decisions are replayed on subscribe (§5), so a browser that opens *after* the park sees it.
 
 Broker policy becomes **explicit per thread** (`thread/start` param `unattended: "park" |
-"deny"`), replacing the host's connection-count heuristic — a browser tab asleep is not a
-disconnection, so counting sockets is no longer a sane proxy for "someone is watching".
+"deny"`, **default `park`** — parking is the engine's defining behavior), replacing the host's
+connection-count heuristic — a browser tab asleep is not a disconnection, so counting sockets is
+no longer a sane proxy for "someone is watching". Fleet-adopted threads keep their spawn-time
+policy in v1: `ccx --bg` hosts are detached and therefore already park forever (the
+connection-count deny only ever applied to non-detached hosts), so adoption changes nothing;
+rewiring an adopted host's policy would need a new host op and is deliberately out (§2 rule).
 
 ## 7. Client→server method inventory (the 100% matrix)
 
@@ -148,12 +181,16 @@ thread count; backs `collect()` snapshot).
   agents, mcpServers, hooks config, thinking, sandbox…) — the 63-field knob work is the payload.
 - `thread/resume` (store id), `thread/fork` (`forkSession`), `thread/attach` (adopt a fleet host
   by roster name), `thread/list` (cursor; filters cwd/tag/status; merges store sessions + live
-  registry + fleet roster), `thread/read` (persisted transcript → items, `includeItems`),
+  registry + fleet roster, **deduplicated on `sessionId`, live-wins** — a live thread is also in
+  the store), `thread/read` (persisted transcript → items; **cursor-paginated** like every
+  long-payload read, default page ≈200 items newest-first — the TUI's own replay cap),
   `thread/name/set` (`renameSession`), `thread/tag/set` (`tagSession`), `thread/delete`
   (`deleteSession`), `thread/subscribe` / `thread/unsubscribe` (follow/unfollow + replay-first),
   `thread/close` (dispose in-process engine; fleet host keeps running), `thread/stop` (end a
   fleet host — host `stop`).
-- `thread/compact/start` (host `compact`), `thread/reinitialize` (ControlFrame `reinitialize`).
+- `thread/compact/start` (host `compact`), `thread/reinitialize` (ControlFrame `reinitialize`;
+  **inProcess-only**), `thread/directory/add` *(X, probe-gated — the 0.3.220 `register_repo_root`
+  control request, §13; inProcess-only)*.
 - Rewind: `thread/rewind/anchors`, `thread/rewind/dryRun`, `thread/rewind` `{uuid, prevUuid,
   scope: both|conversation|code}` — host ops verbatim; busy-gated (`-33001`).
 
@@ -161,8 +198,14 @@ thread count; backs `collect()` snapshot).
 - `turn/start` — `{threadId, input: userMessage content[], settingsOverride?}` → `{turn}` with
   the seq-correlated id; busy-gated. Slash-catalog commands submit here as prompts (3-way dispatch
   stays client-side, as in the TUI).
-- `turn/interrupt`, `turn/background` (Ctrl+B → `backgroundAll`), `turn/queue` *(X)* — server-side
-  input queue mirroring the TUI's client-side queue; drains FIFO on idle.
+- `turn/interrupt` `{cancelQueued?: boolean}` — plain interrupt by default; `cancelQueued: true`
+  is **Stop-means-stop-everything**: it flushes the app-server's own `turn/queue` *and* passes
+  `cancel_queued: true` to the SDK interrupt (0.3.220 `interrupt_cancel_queued_v1`, §13), and the
+  receipt reports both sets (`cancelledQueued[]` server-side, `cancelled[]`/`still_queued[]`
+  SDK-side). Halting the SDK while the server queue starts the next turn is exactly the failure
+  the SDK docstring warns about.
+- `turn/background` (Ctrl+B → `backgroundAll`), `turn/queue` *(X)* — server-side input queue
+  mirroring the TUI's client-side queue; drains FIFO on idle.
 - `turn/steer` *(X)* — **probe-gated**: requires proving the unused SDK `streamInput` mid-turn
   injection headlessly. If the probe fails, the method ships `-32601` until it can work (declared
   ≠ reachable; we do not fake steer via interrupt+resubmit).
@@ -170,9 +213,11 @@ thread count; backs `collect()` snapshot).
 **Decisions** — `decision/list` (≡ host `pending`), `decision/respond` (§6).
 
 **Runtime controls** — backing: host set-ops / ControlFrame / `Query` setters:
-`thread/model/set`, `thread/permissionMode/set` (full ladder incl. off-ladder `bypassPermissions`/
+`thread/model/set` (`model: string | null` — null resets to session default, §13),
+`thread/permissionMode/set` (full ladder incl. off-ladder `bypassPermissions`/
 `dontAsk`; server re-runs the `resolveAutoModel` self-heal), `thread/thinking/set` (level or raw
-tokens, `thinkLevels.ts` shared), `thread/settings/apply` (`applyFlagSettings`).
+tokens, `thinkLevels.ts` shared), `thread/settings/apply` (`applyFlagSettings`;
+**inProcess-only**).
 
 **Introspection** — backing: capabilities + wrapped Query getters:
 `thread/capabilities/read` (models + commands + agents + mcpServers — the 105-command catalog for
@@ -182,7 +227,8 @@ fields from the C5-T6 work), `thread/init/read` (`initializationResult`), `accou
 headless login flow to drive; documented gap, counts in the denominator as N/A).
 
 **MCP** — `mcpServer/status/list`, `mcpServer/reconnect`, `mcpServer/toggle`,
-`mcpServer/set` (runtime `setMcpServers` topology swap), `mcpServer/permissionModeOverride/set`.
+`mcpServer/set` (runtime `setMcpServers` topology swap; **inProcess-only**),
+`mcpServer/permissionModeOverride/set` (**inProcess-only**).
 
 **Background tasks** — `task/list`, `task/stop`; lifecycle arrives as notifications.
 
@@ -196,7 +242,9 @@ diff viewing in a browser; full Codex-style `fs/*`+watch is explicitly out (the 
 does not manage files).
 
 **Shell** *(X)* — `thread/shellCommand` (the `!` escape; `bash.ts` seam; runs outside the
-permission gate exactly like the TUI's).
+permission gate exactly like the TUI's). Its command + output are emitted as a `toolCall` item
+(view `command`, attributed to the invoking client) so every subscriber's transcript stays
+complete — a hub with multiple watchers must not have invisible side effects.
 
 Sessions-store note: `listSessions`/`getSessionMessages`/`getSessionInfo`/`forkSession`/
 `renameSession`/`tagSession`/`deleteSession` — all 7 wrappers are covered above; the 3 unused
@@ -208,7 +256,9 @@ is internal plumbing, N/A by design.
 
 Thread: `thread/started`, `thread/status/changed`, `thread/settings/changed` (model / mode /
 thinking — one notification, write-back-sourced so *any* client sees another client's change:
-the dashboard-live-state precedent), `thread/name/updated`, `thread/deleted`, `thread/closed`,
+the dashboard-live-state precedent), `thread/capabilities/changed` (the SDK's mid-session
+command-list push — replace, don't merge; §13), `thread/name/updated`, `thread/deleted`,
+`thread/closed`,
 `thread/tokenUsage/updated` (per-turn result usage + context %), `thread/limits/updated`
 (limit/overage classification — sparse merge like Codex rate limits).
 Turn: `turn/started` `{turnId}`, `turn/completed` `{turnId, status, error?, truncated?}`,
@@ -230,13 +280,20 @@ entry keep wire ↔ schema ↔ docs in sync. Every notification wrapped in `{…
 
 ## 10. What "100% coverage" means (the scorecard)
 
-Denominator: the union of (a) all 22 host ops, (b) the 11 ControlFrame verbs, (c) the 7 session
-store wrappers, (d) every TUI-reachable capability in `docs/parity/tui-ux.md` §control-plane,
-(e) the fleet CLI verbs, (f) the 27 SDK `Query` methods (the 22 used + the 5 unused: probed and
-either exposed or recorded N/A-dead). Each row in the matrix (§7) names its seam; a row is
-**covered** when the method ships with a unit test + the item/notification mapping it needs.
-Target: every row covered or explicitly N/A-with-evidence — no silent gaps. A new
-`docs/parity/appserver.md` scorecard tracks this, and `coverage.md` domain 10 absorbs the result.
+Denominator: the union of (a) all **25** host ops (`host/ops.ts` union — 22 pre-C5 plus the
+rewind trio), (b) the 11 ControlFrame verbs, (c) the 7 session store wrappers, (d) every
+TUI-reachable capability in `docs/parity/tui-ux.md` §control-plane, (e) the fleet CLI verbs,
+(f) the 27 SDK `Query` methods (the 22 used + the 5 unused: probed and either exposed or
+recorded N/A-dead). **The denominator is generated, not hand-counted** — the very "22 vs 25"
+drift this paragraph originally contained is the failure mode: `scripts/drift-check.mjs` gains
+an appserver pass that walks the `hostOp` union, the `ControlFrame` union, the `sessions/`
+wrapper exports, and the `Query` method surface in `sdk.d.ts`, and **fails when the scorecard's
+row set diverges** from that walk (the Wave-4 discipline: a claim whose ground truth is a code
+artifact is encoded as a check against that artifact, not as prose). Each row names its seam and
+its **origin scope** (§2); a row is **covered** when the method ships with a unit test + the
+item/notification mapping it needs. Target: every row covered or explicitly N/A-with-evidence —
+no silent gaps. A new `docs/parity/appserver.md` scorecard tracks this, and `coverage.md`
+domain 10 absorbs the result.
 The daemon's 26 ops are **not** in the denominator as ops (the daemon predates the host protocol;
 its unique capabilities — proactive loops, warm pool, supervisor spawn — enter via `fleet/*` and
 `thread/start` params; a daemon-retirement decision is separate and out of scope).
@@ -245,12 +302,18 @@ its unique capabilities — proactive loops, warm pool, supervisor spawn — ent
 
 - Default bind `ws://127.0.0.1:0` (ephemeral port, printed + written to
   `~/.claude/ccx/run/appserver.json`); UDS and stdio for same-box embedding.
-- **Token auth for WS**: server mints a bearer token at startup (or `--token-file`); clients pass
-  `?token=` at upgrade or `authorization` in `initialize`. UDS/stdio inherit the OS boundary
-  (0o700 — today's model, unchanged). Any `Origin` not explicitly allowed → 403 (Codex's rule;
-  web UI origins registered via `--allow-origin`).
-- `by` attribution on `decision/respond` becomes `clientInfo.name#connId` — server-stamped, not
-  free-text, once identity exists.
+- **Token auth for WS**: server mints a bearer token at startup (or `--token-file`); the
+  **primary carrier is `authorization` in `initialize`** (or a `Sec-WebSocket-Protocol` bearer),
+  with `?token=` a documented fallback only — query strings leak into proxy/access logs, and the
+  spec explicitly contemplates non-localhost binds. UDS/stdio inherit the OS boundary (0o700 —
+  today's model, unchanged). Any `Origin` not explicitly allowed → 403 (Codex's rule; web UI
+  origins registered via `--allow-origin`).
+- Decision attribution is server-stamped `clientInfo.name#connId` (§6) — never free-text.
+- **Outbound backpressure** (the slow-consumer case `-32001` doesn't cover — a backgrounded
+  browser tab not draining deltas): bounded per-connection send queue; on overflow the server
+  **disconnects that subscriber** rather than buffering unboundedly or stalling the fan-out.
+  Replay-first subscribe (§5) makes this cheap by design — a dropped client resubscribes and is
+  made whole — which is a concrete payoff of D1 worth naming.
 - Non-localhost binds refuse to start without both token and explicit `--listen` — remote
   exposure is a deliberate act.
 
@@ -333,3 +396,19 @@ M1**, since `cancelQueued` and the ask-enrichment fields change M1 wire shapes.
   surface as the coverage target. (§10)
 - **D8** Protocol shapes target SDK 0.3.220 (rev 2); the bump precedes/accompanies M1 so the wire
   is not born stale. (§13)
+- **D9** (rev 3) Methods are origin-scoped; `inProcess`-only methods refuse fleet-origin threads
+  with `-33006 unsupportedForOrigin`, and `thread/capabilities/read` advertises the reachable
+  set. Growing the host wire to close the gap is named follow-up work, never implicit. (§2)
+- **D10** (rev 3) Item ids are derived from SDK identifiers (`tool_use_id`, frame `uuid` +
+  block suffix), which makes the cold-history ↔ live-replay stitch an exact client-side dedup
+  with no handshake. (§5)
+- **D11** (rev 3) The coverage denominator is generated by a drift-check pass over the code
+  artifacts it counts; the scorecard fails CI when its row set diverges. (§10)
+
+Rev 3 incorporates the 2026-07-28 external review: three P1s (origin-scoped reachability, item
+identity/stitch, generated denominator), §6 answer shapes corrected to the real `host/ops.ts`
+schema (`plan_approve{acceptEdits}`, `question_answer{answers, response?}`, deny-on-flat-field),
+client-supplied `by` dropped, §13 additions folded into §7/§8, Stop-button queue interplay,
+unattended default + adoption semantics, and the P3 line items (token carrier, `thread/read`
+pagination, `thread/list` dedup, shellCommand-as-item, outbound backpressure, honest closure
+claim).
