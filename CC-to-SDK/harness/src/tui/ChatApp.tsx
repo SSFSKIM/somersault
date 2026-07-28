@@ -40,11 +40,16 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // never arms; an idle Esc arms for 1.5s, and a second Esc within the window opens the rewind picker.
   const [escArmed, setEscArmed] = useState(false);
   const escTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const disarmEsc = () => { setEscArmed(false); if (escTimer.current) { clearTimeout(escTimer.current); escTimer.current = null; } };
   useEffect(() => () => { if (escTimer.current) clearTimeout(escTimer.current); }, []);
+  // A turn start revokes the arm: otherwise the "Press Esc again" hint outlives the idle moment it was
+  // armed in and renders during a busy turn. Keyed on state.busy (not on onSubmit) so a turn started by
+  // ANOTHER attached client revokes it too.
+  useEffect(() => { if (state.busy) disarmEsc(); }, [state.busy]);   // eslint-disable-line react-hooks/exhaustive-deps
   const onInterrupt = () => {
     disarm();
-    if (state.busy) { interrupt(); setEscArmed(false); return; }       // busy: Esc stays interrupt, never arms
-    if (escArmed) { setEscArmed(false); if (escTimer.current) clearTimeout(escTimer.current); void openRewind(); return; }
+    if (state.busy) { interrupt(); disarmEsc(); return; }              // busy: Esc stays interrupt, never arms
+    if (escArmed) { disarmEsc(); void openRewind(); return; }
     setEscArmed(true);
     if (escTimer.current) clearTimeout(escTimer.current);
     escTimer.current = setTimeout(() => setEscArmed(false), 1500);

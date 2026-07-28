@@ -280,4 +280,29 @@ describe("<ChatApp>", () => {
     expect(anchorsFetched).toBe(1);                                 // the busy Esc never triggered another fetch
     release();
   });
+
+  it("a turn start revokes an idle Esc arm — the rewind hint never survives into a busy turn", async () => {
+    let release = () => {};
+    let fake: ReturnType<typeof fakeRewindRemote>;
+    fake = fakeRewindRemote({}, {
+      submit: async (_p, onMessage) => {
+        fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+        const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+        onMessage(m); fake.pushEvent({ kind: "message", data: m });
+        await new Promise<void>((res) => { release = res; });
+        fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+        return { result: "done" };
+      },
+    });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+
+    stdin.write("hi"); await waitFor(() => frame(lastFrame).includes("hi"));
+    stdin.write("\x1b");                                            // arm on an idle composer, THEN submit without a second Esc
+    await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("ok"));            // turn running
+    expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
+    release();
+  });
 });
