@@ -226,7 +226,54 @@ keyed live test, ⑤ is the standing keyless gate.
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Shipped 2026-07-29**, 10 tasks + 2 fix passes, `01e7514587..3a0ad314d6`. Keyless gate: typecheck clean,
+**1373 passed / 9 skipped**, build clean. Live acceptance ①–④ all PASS (drivers in the job scratch dir,
+scripted PTY via `python3 pty.fork`, run by the controller against the built `dist/`):
+
+- **① foreground rewind e2e** — two turns (`VERSION_ONE` → `VERSION_TWO`), Esc armed, second Esc opened
+  the picker, the scope stage showed all three choices verbatim, choice `1` reverted the working tree to
+  `VERSION_ONE`, the transcript rewound, the composer pre-filled with the rewound prompt, and the edited
+  resend ran.
+- **② the same over `ccx attach`** — a `--detachable` host, a second terminal attached, the turn AND the
+  whole rewind driven from the attached client: anchors, dry run (`1 file changed (+1 −1)`), restore, and
+  the composer pre-fill all crossed the socket.
+- **③ scope variants** — *code only* reverted the tree while leaving the transcript untouched (no `⏪`
+  header, "code restored" notice); *conversation only* rewound the transcript and pre-filled the composer
+  while leaving `VERSION_TWO` on disk. Both negatives asserted, not just the positives.
+- **④ usage surface** — token-free half rendered a real utilization bar with a reset time under the
+  interactive credential; the keyed half degraded to the honest-unavailable line. Each half skips cleanly
+  when the other's gate applies.
+
+**Scorecard:** `tui-ux.md` ~83% → **~88%**, and the number is deliberately *not* the ~93–95% the spec
+aspired to. The gap is honest: the Bash-output row cannot reach ✅ (a `tool_result` carries no exit code),
+and vim mode / external editor / tip-of-day are declared non-goals. The stage also changed the scoring
+method (impact-weighted → plain row count, because the weights were never written down and could not be
+audited), so **~83% → ~88% is not a like-for-like delta** — the real, checkable movement is 26 individual
+rows flipping ❌/🟡 → ✅.
+
+**What the process caught that the code review alone would not have.** Every layer of gating earned its
+place, and each caught a *different* class:
+
+- *Per-task reviews* caught a destructive file rewind that ran **before** its own validation (so a
+  first-prompt anchor reverted the tree and only then rejected), and — by running Ink's real
+  `parseKeypress` rather than reading the source — that Ink flags **every bare Escape as `meta`**, so the
+  new word-movement branch silently swallowed Escape and broke popup-cancel.
+- *The whole-branch review* caught the two defects only a cross-task view exposes: a consumed rewind
+  prefill **resurrecting** into the composer after any popup remount (the dedup lived in a component that
+  unmounts), and rewind **not being atomic** against a second attached client's prompt.
+- *Live acceptance* caught what no test could: the client's fixed 10s deadline is too tight for a rewind
+  dry run, which is an engine round trip that diffs the tree against file checkpoints. Over `ccx attach`
+  it regularly takes tens of seconds. The old behaviour greyed out both code choices and showed the raw
+  "a pre-upgrade host, or a wedged one" text — a healthy host reading as broken, exactly on the flagship
+  path. Fixed with a 60s deadline for the rewind ops only.
+
+**The recurring lesson, in one line:** three separate tests in this stage passed against their own
+regression — the prefill test (it mirrored ChatApp's ternary in a private harness instead of driving
+ChatApp, so deleting ChatApp's prop left it green), the dry-run guard test (nothing asserted *which* call
+was the dry one), and the new deadline test (both timers fire at ~10s, so it was judging microtask
+ordering). Sabotage-verification — revert the fix, watch the test fail, restore it — is the only thing
+that distinguishes a guard test from a decorative one, and it was worth running every single time.
+
 
 ## Revision Notes
 
