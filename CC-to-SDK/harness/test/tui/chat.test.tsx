@@ -182,4 +182,49 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("not detachable — run with --detachable"));
     stdin.write("still here"); await waitFor(() => frame(lastFrame).includes("still here"));   // composer still alive
   });
+
+  it("Ctrl-B while busy backgrounds the running turn (does not open the panel)", async () => {
+    let release = () => {}; let backgroundCalls = 0;
+    let fake: ReturnType<typeof fakeRemote>;
+    fake = fakeRemote({
+      background: () => { backgroundCalls++; return true; },
+      submit: async (_p, onMessage) => {
+        fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+        const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+        onMessage(m); fake.pushEvent({ kind: "message", data: m });
+        await new Promise<void>((res) => { release = res; });
+        fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+        return { result: "done" };
+      },
+    });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("hi"); await waitFor(() => frame(lastFrame).includes("hi"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("ok"));   // turn started, hanging
+    stdin.write("\x02");                                                       // Ctrl-B busy → background the turn
+    await waitFor(() => backgroundCalls === 1);
+    expect(frame(lastFrame)).not.toContain("Background tasks");                // panel did NOT open
+    release();
+  });
+
+  it("Ctrl-B while idle opens the background-tasks panel", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("\x02");                                                       // Ctrl-B idle → open panel
+    await waitFor(() => frame(lastFrame).includes("Background tasks"));
+    expect(frame(lastFrame)).toContain("none running");
+  });
+
+  it("the status bar shows a live bg-task count and updates on tasks_changed", async () => {
+    const fake = fakeRemote();
+    const { lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    expect(frame(lastFrame)).not.toContain("⚙");
+    fake.pushEvent({ kind: "tasks_changed", tasks: [
+      { task_id: "a", task_type: "local_bash", description: "x" },
+      { task_id: "b", task_type: "agent", description: "y" },
+    ] });
+    await waitFor(() => frame(lastFrame).includes("⚙ 2 bg"));
+  });
 });

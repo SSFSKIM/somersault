@@ -108,6 +108,16 @@ describe("<ChatStatusBar>", () => {
     expect(lastFrame()).toContain("think");
     expect(lastFrame()).toContain("high");
   });
+  it("shows the bg-task count when bgCount is set", () => {
+    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} hasPending={false} bgCount={2} />);
+    expect(lastFrame()).toContain("⚙ 2 bg");
+  });
+  it("hides the bg-task count when bgCount is 0/undefined", () => {
+    const zero = render(<ChatStatusBar mode="default" busy={false} hasPending={false} bgCount={0} />).lastFrame() ?? "";
+    expect(zero).not.toContain("bg");
+    const absent = render(<ChatStatusBar mode="default" busy={false} hasPending={false} />).lastFrame() ?? "";
+    expect(absent).not.toContain("bg");
+  });
 });
 describe("SessionPicker", () => {
   const sessions = [
