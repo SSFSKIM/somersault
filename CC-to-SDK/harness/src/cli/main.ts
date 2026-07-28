@@ -1,4 +1,4 @@
-import { parseCcx } from "./args.js";
+import { parseCcx, nonLocalWithoutToken } from "./args.js";
 import type { CcxInvocation } from "./args.js";
 import { spawnDetached as realSpawnDetached } from "./spawn.js";
 import { runHostMain as realRunHostMain } from "./hostMain.js";
@@ -35,6 +35,7 @@ export interface MainDeps {
   isTTY: () => boolean;
   prepareAttach: typeof realPrepareAttach;
   probeSocket: (path: string) => Promise<void>;
+  runServe: (inv: CcxInvocation) => Promise<void>;
 }
 const defaults: MainDeps = {
   runHostMain: realRunHostMain, collectFleet: realCollectFleet, spawnDetached: realSpawnDetached,
@@ -59,6 +60,9 @@ const defaults: MainDeps = {
     return typeof r.result === "string" ? r.result : JSON.stringify(r.result);
   },
   isTTY: () => Boolean(process.stdin.isTTY),
+  // The React-free-equivalent guarantee for the WebSocket stack: `ws` and the whole appserver module tree
+  // load only when a `serve` invocation actually reaches this dispatch, never for `-p`/`--bg`/foreground.
+  runServe: async (inv) => { const { runServe } = await import("./serveMain.js"); await runServe(inv); },
 };
 
 const msg = (e: unknown): string => (e as Error)?.message ?? String(e);
@@ -99,6 +103,13 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
     case "gc":
       for (const p of await deps.fleetGc()) console.log(`removed ${p}`);
       return 0;
+    case "serve": {
+      // Pure, checked before any listener binds (spec §11 last rule): a non-loopback --listen with no
+      // --token-file would mean the only copy of the freshly-minted token lives in THIS process's memory,
+      // reachable from anywhere on the network with nothing to authenticate against.
+      if (nonLocalWithoutToken(inv)) return fail("--listen to a non-localhost host requires --token-file (spec §11)", 1);
+      try { await deps.runServe(inv); return 0; } catch (e) { return fail(msg(e), 1); }
+    }
     case "attach": {
       // A missing target would otherwise reach prepareAttach's resolveTarget with `undefined`, which
       // reads as "no session matches undefined" — a confusing error for what is really a missing argument.
