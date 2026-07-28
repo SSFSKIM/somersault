@@ -306,6 +306,15 @@ Keyless halves always run; live halves gate on `CC-to-SDK/.env` credentials as u
   `sleep` in a `Bash` call and steers the model toward `run_in_background` instead — which is what
   forced the Ctrl+B acceptance phase to use a loop command rather than a plain `sleep`, and is part
   of how the Ctrl+B gap below (④) was surfaced.
+- **Probe 67 (2026-07-28, written to settle the Ctrl+B negative):** the gap is the CLI's, not our
+  wiring. Called directly on the SDK `Query` mid-turn, `backgroundTasks()` **returns `true`** while
+  an in-flight foreground `Bash` keeps running: no `background_tasks_changed` frame arrives and the
+  eventual `tool_result` carries the command's *full* foreground output (all 30 ticks, 44.9 s). The
+  control phase — the same command with `run_in_background: true` — emits the snapshot 2.6 s in and
+  returns "Command running in background with ID". So `backgroundTasks()` is an unconditional-`true`
+  no-op for an already-running foreground shell; probe 39's original finding described the call's
+  return, not a detach. Note the CLI *does* emit `task_started` for foreground shells too — which is
+  why task notices appear even when nothing was backgrounded.
 
 ## Outcomes & Retrospective
 
