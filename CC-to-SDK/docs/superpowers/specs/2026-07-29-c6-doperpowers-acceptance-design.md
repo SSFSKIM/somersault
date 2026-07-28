@@ -50,40 +50,75 @@ for scenario ④ — skill-triggering *is* model-quality-dependent and the basel
 The gap: no prior run ever verified a worker's *work product*.
 
 1. In a throwaway git repo, `daemon-spawn.sh <name> "<task that writes a specific file with specific
-   content>" <cwd> <wtname> claude-haiku-4-5-20251001`.
+   content AND commits it>" <cwd> <wtname> claude-haiku-4-5-20251001`. The commit instruction is
+   load-bearing: `ccx rm`'s clean-delete (step 7) only fires on a clean worktree, and an untracked
+   file is dirt.
 2. **PASS requires the file to exist inside `<repo>/.claude/worktrees/<wtname>` on branch
    `worktree-<wtname>` with the demanded content** — real work, in the worktree, not the repo root.
 3. `daemon-resume.sh` with a follow-up task that *edits* that file. PASS: stable daemon uuid unchanged,
    fresh session uuid, superseded roster row purged (the fork contract), and the edit landed.
 4. `daemon-reply.sh` returns the actual reply text (not a limit banner — the first time this is
    possible).
-5. `daemon-finalize.sh` prints `idle` and finalizes the meta; a second call prints `noop`.
-6. `daemon-retire.sh <id> purge`: registry files (meta/reply/err) gone, the **worktree deliberately
+5. `daemon-finalize.sh` prints **`noop`** — the blocking spawn/resume watchers already recorded the
+   reply and finalized the meta to `idle`, so there is nothing left to finalize. (The `done`→`idle`
+   arm itself was closed in A1's record; ① does not need to re-reach it, and expecting `idle` here
+   would be unobservable.)
+6. Snapshot the meta's `current` uuid **before** retiring (purge deletes the meta, and
+   `daemon-retire.sh`'s printed resume hint names the **stable original** uuid — stale after any
+   fork, since the fork purged that session's transcript; candidate upstream finding). Then
+   `daemon-retire.sh <id> purge`: registry files (meta/reply/err) gone, the **worktree deliberately
    left in place** with the script's "merge or remove its worktree yourself" NOTE printed (the script
-   never auto-deletes worktrees), and the transcript still resumable (`ccx --resume <uuid>` in the cwd
-   loads the conversation).
+   never auto-deletes worktrees), and the transcript still resumable — `ccx --resume <current-uuid>`
+   run **from the worktree** (resume is cwd-scoped, and the worktree is the daemon's cwd) loads the
+   conversation.
 7. Then **our** contract closes the loop: `ccx rm <short>` on the final session deletes the clean
    worktree (and refuses if dirtied first — assert the refusal on a scratch file, then clean and rm).
 
 ### ② Park-and-answer (the roadmap's "spawned into a worktree, parked, answered, and resumed")
 
-1. Spawn a worker whose task instructs it to ask the human a question via `AskUserQuestion` before
-   proceeding, using `--no-wait` — not because the blocking form would hang (`_poll_until_done`
-   terminates on `blocked` too) but so the driver observes the `working → blocked` transition itself.
-2. PASS chain, each step observable:
-   - `claude agents --json --all` (i.e. ccx via the PATH shim) shows the row reach `state:"blocked"`;
-   - `daemon-finalize.sh` prints `live` (blocked is resumable, not terminal — meta untouched);
-   - `daemon-reply.sh` surfaces the pending question text (the blocked-reply renderer's
-     `AskUserQuestion` arm — dead code against ccx until Goal B);
-   - `ccx attach <short>` renders the parked question; answering it interactively releases the turn;
-   - detach; the turn completes; `daemon-finalize.sh` prints `idle`.
-3. Stretch (only if cheap after the primary passes): the permission-prompt park variant, exercising
-   the renderer's *other* arm (`_lib.sh`'s harness-prompt marker text).
+**Pre-probe first (live-probe-first discipline).** The blocked-reply renderer's `AskUserQuestion` arm
+needs the assistant `tool_use` to be **on disk mid-turn**, and probe 62 proved the engine does not
+write the transcript mid-turn for an ordinary tool call. Whether it *flushes at an AskUserQuestion
+park* is unknown. So ② opens with a probe (`probes/probes/NN-transcript-at-park.ts`): park a session
+on `AskUserQuestion`, read the on-disk transcript, record whether the question's `tool_use` is
+present. The probe's answer decides which renderer arm the PASS chain asserts — the question text
+(flushed) or `_lib.sh`'s harness-prompt marker (not flushed). Both are recorded outcomes, not
+failures; only an *empty* recorded reply is a FAIL.
+
+**The chain, corrected against the actual finalize code** (`status=="idle" && state=="blocked"` is
+normalized to `done-blocked` → records the blocked-shape reply, finalizes the meta, prints `idle` —
+ccx's park row is exactly that shape, `{state:"blocked", status:"idle"}`, so `live`-on-park is
+unobservable against ccx; `live` requires `status:"busy"`, i.e. mid-turn before the park):
+
+1. Spawn a **worktree'd** worker (`--no-wait`) whose task instructs it to ask the human a question
+   via `AskUserQuestion` before proceeding.
+2. While the turn is still working: `daemon-finalize.sh` prints `live` (the mid-turn arm, meta
+   untouched) — asserted on the way, cheap.
+3. `claude agents --json --all` (ccx via the PATH shim) shows the row reach
+   `{state:"blocked", status:"idle", waitingFor}`.
+4. `daemon-finalize.sh` on the parked worker prints **`idle`**: the blocked-shape reply is recorded
+   (question text or marker, per the probe) and the meta finalized. A second call prints `noop`.
+   *Pre-registered consumer semantic, not a defect on either side:* doperpowers treats blocked+idle
+   as "session over, resumable-or-attachable" (its own renderer text says "Resume with an
+   answer/instruction … or 'claude attach'"); a ccx park is additionally still **live** — the same
+   session can be answered in place. A superset, aligned with the consumer's own guidance.
+5. `daemon-reply.sh` returns that recorded blocked reply — actionable, never empty.
+6. **Leg A — attach-answer (the Goal B seam):** `ccx attach <short>` renders the parked question;
+   answering interactively releases the turn; detach; the roster row reaches `state:"done"`.
+7. **Leg B — the scripts' own answer path, on a second parked worker:**
+   `daemon-resume.sh <id> "<answer>"` — the consumer's documented route for a blocked daemon: stops
+   the parked turn (ccx records the terminal state before the interrupt releases the park — the
+   probe-63 ordering), forks with the answer as the new turn, the fork completes with a reply that
+   reflects the answer, and the superseded parked turn is purged. This is the roadmap's "resumed".
+8. Stretch (only if cheap after both legs pass): the permission-prompt park variant, exercising the
+   renderer's marker arm deliberately rather than as the probe-determined fallback.
 
 ### ③ Retire/mark edges
 
 1. On a finished (`done`) daemon: `daemon-mark.sh <id> awaiting-human "escalated: test note"` →
-   `daemon-list.sh` renders `awaiting-human` and the note.
+   `daemon-list.sh awaiting-human` (the script's status filter) lists exactly that row. The note is
+   asserted via `daemon-mark.sh`'s own echo and the meta file — `daemon-list.sh` never renders notes
+   (it builds rows from updated/name/short/status/engine/turns/reply only).
 2. `daemon-retire.sh <id>` (no purge): prints `retired … (still resumable: …)`, meta `status=retired`,
    registry files kept, transcript resumable.
 3. `daemon-retire.sh <id> purge` on a second daemon: registry files (meta/reply/err) deleted.
@@ -98,15 +133,35 @@ The gap: no prior run ever verified a worker's *work product*.
 3. **PASS = parity**: ccx matches the baseline. Both-positive is the strong pass; both-negative is
    recorded as *vacuous-but-parity* (the fork removed the bootstrap; a both-negative outcome is
    upstream's regression, not ours). ccx-negative/real-positive is a FAIL and becomes a defect.
-4. Both runs drive the REPL through the pty rig; the transcript is the evidence.
+4. Both runs drive the REPL through the pty rig; the transcript is the evidence. The evidence report
+   records each side's **resolved model** (ccx's default is opus-4-8 via `resolveOptions`; the real
+   claude's default may differ — "default on both" means each binary's own default, and the recorded
+   pair contextualizes any divergence) and confirms both binaries surface the **same doperpowers
+   7.25.0 skills** through the same settings sources before the prompt is sent.
 
 ## The rig
 
 All previously proven, reused as-is:
 
 - **PATH shim**: a temp dir with `claude` → `node <repo>/CC-to-SDK/harness/dist/cli/bin.js`, prepended
-  to `PATH`, so the unmodified scripts' `claude` calls resolve to ccx (the A1 technique).
+  to `PATH`, so the unmodified scripts' `claude` calls resolve to ccx (the A1 technique). (The
+  roadmap's C6 line mentions "the `CLAUDE_BIN` override" — no such knob exists in any of the eleven
+  scripts; the PATH shim is the real, proven mechanism. The close-out fixes the roadmap line.)
 - **`CCX_FLEET_ROOT`** at a temp dir — the real fleet is never touched.
+- **`DAEMON_HOME`** at a temp dir — `_lib.sh` defaults the scripts' registry to
+  `$HOME/.claude/orchestrating-daemons`, the user's **real** daemon registry; unpinned, every
+  scenario would write metas into it and ③'s list assertions would read live daemons. The override
+  is explicitly supported "for tests".
+- **`DAEMON_TIMEOUT`** bounded (600 s) — the default is 18000, and a wedged worker would hold a
+  blocking driver for hours.
+- **`ANTHROPIC_BASE_URL` affirmatively unset** — the finalize-arms run stalled the transport through
+  it; a leftover would silently re-create that rig.
+- **`CLAUDE_CONFIG_DIR` left at default** — `_lib.sh`'s transcript reader hardcodes
+  `$HOME/.claude/projects`, so config-dir isolation would break every transcript-reading script.
+  Accepted consequences, documented rather than isolated: session transcripts land in the real
+  `~/.claude/projects` (cleaned up by the driver at scenario end), and `_session_purge`
+  unconditionally `rm -rf`s `$HOME/.claude/jobs/<short>` — the real jobs dir; shorts are random
+  8-hex, so a collision with a live Claude Code job id is negligible (~2⁻³²) but is on record.
 - **Env scrubbing** in every spawn path: `CLAUDE_JOB_DIR`, `CLAUDE_CODE_SESSION_ID`,
   `CLAUDE_CODE_CHILD_SESSION` (the A1 job-adoption trap — we run from inside a Claude Code session).
 - **`DAEMON_BOOT_ID`** pinned to a constant for the whole run (macOS `kern.boottime` drifts a second
@@ -175,6 +230,16 @@ project memory.
   prints a "merge or remove its worktree yourself" NOTE by design. The design's first draft wrongly
   assigned worktree deletion to retire-purge; it belongs to *our* `ccx rm` clean-delete contract, now
   scenario ①.7.
+- (rev 2, independent spec review) The reviewer's central catch: **the first draft's ② chain was
+  unobservable** — it expected `live` on a parked worker, but `daemon-finalize.sh` normalizes ccx's
+  park shape (`state:"blocked", status:"idle"`) to `done-blocked` → prints `idle` and finalizes.
+  Both facts were already in this project's own records (the Goal-B-mandated row shape; probe 62's
+  transcript-not-written-mid-turn) and the draft cited one of them while contradicting it. Same
+  review also caught: ①.5's `idle` expectation unreachable after blocking watchers (→ `noop`);
+  `DAEMON_HOME` unpinned (real registry pollution); the stale stable-uuid resume hint after a fork
+  (candidate upstream finding); `daemon-list.sh` never rendering notes; the missing
+  commit-for-clean-worktree precondition; and the scripts' `daemon-resume.sh <id> "<answer>"` path
+  being the roadmap's actual "resumed" (now ② Leg B).
 
 ## Outcomes & Retrospective
 
@@ -183,3 +248,8 @@ Pending — written at finish.
 ## Revision Notes
 
 - rev 1 (2026-07-29): initial design, brainstormed and approved section-by-section.
+- rev 2 (2026-07-29): independent spec review (fable) — ② rewritten around the real finalize
+  semantics + pre-probe + resume-as-answer Leg B; ①.1 commit precondition, ①.5 `noop`, ①.6
+  current-uuid snapshot; ③.1 note assertion corrected; rig gains `DAEMON_HOME`, `DAEMON_TIMEOUT`,
+  `ANTHROPIC_BASE_URL`-unset, `CLAUDE_CONFIG_DIR`-default pins; ④ records resolved models; roadmap's
+  stale `CLAUDE_BIN` mention flagged for close-out.
