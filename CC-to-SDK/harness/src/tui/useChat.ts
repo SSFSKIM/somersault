@@ -17,6 +17,7 @@ import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, form
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
+import { lastAssistantText } from "../sessions/rows.js";
 import type { ModelInfo } from "./ModelPicker.js";
 import { replayLines } from "./replay.js";
 import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bash.js";
@@ -273,6 +274,7 @@ export function useChat(
     setSession(makeSession(id));                                   // [session] effect disposes the old
     setStreaming([]);
     setLines(replayLines(msgs, { id }));
+    lastAssistant.current = lastAssistantText(msgs);            // /copy follows what is ON SCREEN, not just live turns
     setClearToken((t) => t + 1);                                   // remount the append-only <Static> so the full replay shows (not sliced)
     taskListRef.current.reset(); setTasks([]);
   }
@@ -340,6 +342,7 @@ export function useChat(
         if (disposed.current) return;
         setStreaming([]);
         setLines(msgs.length ? replayLines(msgs, { id, label: "⏪ rewound" }) : [{ text: "⏪ rewound", dim: true }]);
+        lastAssistant.current = lastAssistantText(msgs);        // same rule after a rewind: copy what is shown
         setClearToken((t) => t + 1);
         taskListRef.current.reset(); setTasks([]);
         setComposerPrefill({ text: anchor.text, token: Date.now() });

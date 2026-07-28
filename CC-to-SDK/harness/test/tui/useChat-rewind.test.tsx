@@ -126,6 +126,29 @@ describe("useChat: rewind flow", () => {
     expect(frame(lastFrame)).toContain("⏪ rewound: fix the parser · 1 turn");
   });
 
+  it("5b. after a rewind, /copy copies the assistant reply the REPLAY put on screen (never 'nothing to copy')", async () => {
+    const msgs = [
+      { type: "user", message: { content: [{ type: "text", text: "fix the parser" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
+      { type: "assistant", message: { content: [{ type: "text", text: "the parser is fixed" }] } },
+    ];
+    const session = fakeRewindSession({ rewind: async () => {} });
+    let copied: string | undefined;
+    const deps = { getSessionMessages: async () => msgs, copyText: async (t: string) => { copied = t; } };
+    const api: Parameters<typeof RewindHost>[0]["api"] & { run?: (p: string) => void } = {};
+    function H() {
+      const c = useChat(() => session, {}, deps);
+      api.confirmRewind = (c as any).confirmRewind; (api as any).run = c.submit;
+      return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.confirmRewind!(ANCHOR, "both");
+    await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
+    (api as any).run!("/copy");
+    await waitFor(() => frame(lastFrame).includes("✓ copied"));
+    expect(copied).toBe("the parser is fixed");
+  });
+
   it("6. confirmRewind(anchor, 'code') rewinds but never fetches messages, notices 'code restored', and leaves the composer alone", async () => {
     const rewindCalls: RewindScope[] = [];
     let fetched = 0;

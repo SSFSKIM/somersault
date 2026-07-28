@@ -47,3 +47,15 @@ export function rewindAnchorsFrom(messages: any[]): RewindAnchor[] {
   });
   return out.reverse();
 }
+
+/** The last assistant reply's text in a persisted transcript ("" if none). Lets a replayed view (resume,
+ *  rewind) seed /copy with the reply that is actually ON SCREEN — the live message arm never saw it. */
+export function lastAssistantText(messages: any[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as any;
+    if (m?.type !== "assistant") continue;
+    const t = (m.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
+    if (t.trim()) return t;
+  }
+  return "";
+}

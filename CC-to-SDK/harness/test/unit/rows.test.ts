@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rowKind, rewindAnchorsFrom, promptText } from "../../src/sessions/rows.js";
+import { rowKind, rewindAnchorsFrom, promptText, lastAssistantText } from "../../src/sessions/rows.js";
 
 const user = (text: string, uuid?: string) => ({ type: "user", uuid, message: { role: "user", content: text } });
 const userBlocks = (blocks: unknown[], uuid = "u") => ({ type: "user", uuid, message: { role: "user", content: blocks } });
@@ -49,4 +49,22 @@ describe("rewindAnchorsFrom", () => {
 describe("promptText", () => {
   it("string content", () => expect(promptText(user("hello", "u"))).toBe("hello"));
   it("block content first text", () => expect(promptText(userBlocks([{ type: "text", text: "hey" }]))).toBe("hey"));
+});
+
+describe("lastAssistantText", () => {
+  it("returns the LAST assistant reply's text", () => {
+    const msgs = [assistant("first", "a1"), user("q", "u1"), assistant("second", "a2")];
+    expect(lastAssistantText(msgs)).toBe("second");
+  });
+  it("skips trailing assistant rows that carry no text (tool_use only)", () => {
+    const msgs = [assistant("real", "a1"), { type: "assistant", uuid: "a2", message: { role: "assistant", content: [{ type: "tool_use", name: "Bash", input: {} }] } }];
+    expect(lastAssistantText(msgs)).toBe("real");
+  });
+  it("joins multiple text blocks of one reply", () => {
+    const msgs = [{ type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "one" }, { type: "text", text: "two" }] } }];
+    expect(lastAssistantText(msgs)).toBe("one\ntwo");
+  });
+  it("returns empty string when there is no assistant text at all", () => {
+    expect(lastAssistantText([user("q", "u1")])).toBe("");
+  });
 });
