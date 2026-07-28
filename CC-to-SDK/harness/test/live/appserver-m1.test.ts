@@ -127,6 +127,17 @@ live("M1 live acceptance: spawn -> subscribe -> turn -> park -> respond -> compl
       expect(toolCall, `expected a Write/Edit toolCall item with view "fileChange" among: ${JSON.stringify(items)}`).toBeTruthy();
       const agentMessage = items.find((it) => it.type === "agentMessage");
       expect(agentMessage, `expected an agentMessage item among: ${JSON.stringify(items)}`).toBeTruthy();
+
+      // The cold half of the spec's §5 join rule, and the only real proof of the `sessionId` refresh:
+      // `Session.sessionId` is undefined until the first turn's init frame, so a thread that never
+      // refreshed it reads back an empty page here no matter how many turns completed. Unit fakes set
+      // it eagerly at construction, which is exactly how that stayed invisible until a live run.
+      const read = await client.call("thread/read", { threadId }, 30_000);
+      expect(read.data.length, "thread/read returned an empty page — record.sessionId never refreshed").toBeGreaterThan(0);
+      // Stitch: an item present in both halves carries ONE id, so a client dedups rather than doubling.
+      const liveIds = new Set(items.map((it: { id: string }) => it.id));
+      const shared = read.data.filter((it: { id: string }) => liveIds.has(it.id));
+      expect(shared.length, `expected the read page to share item ids with the live stream; read=${JSON.stringify(read.data.map((i: { id: string }) => i.id))} live=${JSON.stringify([...liveIds])}`).toBeGreaterThan(0);
     } finally {
       if (threadId) { try { await client.call("thread/close", { threadId }, 10_000); } catch { /* best-effort cleanup */ } }
       ws.close();
