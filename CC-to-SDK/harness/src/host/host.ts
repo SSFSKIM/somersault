@@ -8,6 +8,9 @@ import { openSession as realOpenSession } from "../session/index.js";
 import { resolvedPermissionMode } from "../config/resolveOptions.js";
 import type { HarnessConfig } from "../config/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
+import { rewindAnchorsFrom } from "../sessions/rows.js";
+import { getSessionMessages as realGetMessages } from "../sessions/index.js";
+import type { RewindAnchor, RewindDryRun, RewindScope } from "../session/chatSession.js";
 import { TurnBuffer } from "./follow.js";
 import type { HostEvent } from "./wire.js";
 import { PendingDecisions } from "../permissions/pending.js";
@@ -58,6 +61,8 @@ export interface HostSession {
   listBackgroundTasks?(): Promise<BackgroundTaskInfo[]>;
   backgroundAll?(toolUseId?: string): Promise<boolean>;
   stopTask?(taskId: string): Promise<void>;
+  // C5 T2: the real Session.rewind (src/session/session.ts:184) already matches this signature.
+  rewind?(userMessageId: string, opts?: { dryRun?: boolean }): Promise<unknown>;
 }
 
 /** Owns one SDK session, its UDS socket, and its roster row. Live truth is answered over the socket;
@@ -141,7 +146,9 @@ export class SessionHost {
     private deps: { openSession: (c: HarnessConfig) => HostSession; procStartOf?: (p: number) => Promise<string | undefined>;
       /** Test-only override for DISPOSE_GRACE_MS — otherwise every wedged-dispose test burns the real
        *  grace period in a suite that runs on every commit. */
-      disposeGraceMs?: number }
+      disposeGraceMs?: number;
+      /** Test seam for rewindAnchors' transcript read — defaults to the real getSessionMessages. */
+      getMessages?: (id: string, opts: { cwd?: string }) => Promise<any[]> }
       = { openSession: realOpenSession }) {
     this.short = opts.short;
     this.env = opts.env ?? process.env;
@@ -277,11 +284,11 @@ export class SessionHost {
     }
   }
 
-  /** Swap the underlying SDK session for a resume of `sessionId`. Interactive /resume path — refused
-   *  mid-turn for the same reason a second prompt is. The old session's dispose is bounded by the same
-   *  grace as teardown: an idle dispose resolves immediately, but this must never hang the socket op. */
-  async resumeSession(sessionId: string): Promise<void> {
-    if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
+  /** Swap the underlying engine for a fresh open carrying `extra` (resume / resumeAt). Everything
+   *  session-scoped resets with it; the swap opens at the CURRENT runtime mode (`this.mode`) — see
+   *  resumeSession's doc for why launch-config would be the worse surprise. Shared by resumeSession
+   *  and rewind (the conversation-restore engine swap). */
+  private async swapEngine(extra: Partial<HarnessConfig>): Promise<void> {
     const old = this.session;
     // Open the resumed engine at the CURRENT runtime mode (`this.mode`), not the launch config's. `this.mode`
     // is the one field every writer (status-frame intercept, set_permission_mode, plan-upgrade) keeps
@@ -290,7 +297,7 @@ export class SessionHost {
     // (re-seeding from resolvedPermissionMode instead) would be the OTHER obvious fix, but it throws away a
     // choice the user just made with no notice — the worse surprise of the two. This keeps the host's
     // reported mode and the engine's actual mode in agreement, which is the one invariant that must hold.
-    this.session = this.deps.openSession({ ...this.opts.config, resume: sessionId, permissionMode: this.mode as HarnessConfig["permissionMode"], permissionBroker: this.broker() });
+    this.session = this.deps.openSession({ ...this.opts.config, ...extra, permissionMode: this.mode as HarnessConfig["permissionMode"], permissionBroker: this.broker() });
     this.turnBuffer.reset(); this.settledBy.clear();
     this.parentOf.clear(); this.subagentOf.clear();   // the old session's attribution is gone with it
     // Plan-review I1: the swap replaces `this.session` with a fresh Session whose subscriber set is
@@ -306,6 +313,14 @@ export class SessionHost {
     const deadline = new Promise<void>((r) => { timer = setTimeout(r, graceMs); (timer as { unref?: () => void }).unref?.(); });
     await Promise.race([old?.dispose().catch(() => {}) ?? Promise.resolve(), deadline]);
     clearTimeout(timer);
+  }
+
+  /** Swap the underlying SDK session for a resume of `sessionId`. Interactive /resume path — refused
+   *  mid-turn for the same reason a second prompt is. The old session's dispose is bounded by the same
+   *  grace as teardown: an idle dispose resolves immediately, but this must never hang the socket op. */
+  async resumeSession(sessionId: string): Promise<void> {
+    if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
+    await this.swapEngine({ resume: sessionId });
   }
 
   /** Subscribe to the live turn. The new follower is replayed the turn so far FIRST, synchronously, so
@@ -405,6 +420,49 @@ export class SessionHost {
     const fn = this.session?.stopTask?.bind(this.session);
     if (!fn) throw new Error("stop_task unsupported by this host");
     await fn(taskId);
+  }
+
+  /** User-prompt rewind anchors from the persisted transcript — always re-read, never cached (probe
+   *  68 Q4: post-rewind row counts defy local arithmetic; the transcript is the truth). */
+  async rewindAnchors(): Promise<RewindAnchor[]> {
+    const sid = this.session?.sessionId;
+    if (!sid) return [];
+    const rows = await (this.deps.getMessages ?? realGetMessages)(sid, { cwd: this.opts.cwd });
+    return rewindAnchorsFrom(rows);
+  }
+
+  /** dryRun on the FILE anchor. Normalizes the throw-vs-return split (probe 68d): checkpointing-off
+   *  makes dryRun RETURN {canRewind:false} but other failures (and older engines) THROW — callers get
+   *  one shape either way. */
+  async rewindDryRun(uuid: string): Promise<RewindDryRun> {
+    const fn = this.session?.rewind?.bind(this.session);
+    if (!fn) return { canRewind: false, error: "rewind unsupported by this host" };
+    try { return (await fn(uuid, { dryRun: true })) as RewindDryRun; }
+    catch (e) { return { canRewind: false, error: (e as Error).message }; }
+  }
+
+  /** Esc-Esc rewind. ORDER IS LOAD-BEARING: file restore runs on the LIVE engine first (probe 68d:
+   *  rewindFiles needs the open transport), THEN the conversation swap replaces the engine. The dry-run
+   *  guard exists because with checkpointing off the real call THROWS where dryRun merely reports
+   *  (probe 68d) — never reach the throwing call with a known-bad state. Live background tasks die
+   *  with the swap (they belong to the old CLI process): announce, then clear via swapEngine. */
+  async rewind(anchor: { uuid: string; prevUuid: string | null }, scope: RewindScope): Promise<void> {
+    if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
+    if (this.parked.list().length) throw new Error("a decision is pending — answer it first");
+    const sid = this.session?.sessionId;
+    if (!sid) throw new Error("no session to rewind");
+    if (scope !== "conversation") {
+      const fn = this.session?.rewind?.bind(this.session);
+      if (!fn) throw new Error("rewind unsupported by this host");
+      const dry = (await fn(anchor.uuid, { dryRun: true })) as RewindDryRun;
+      if (!dry?.canRewind) throw new Error(dry?.error ?? "file rewind unavailable");
+      await fn(anchor.uuid);
+    }
+    if (scope !== "code") {
+      if (!anchor.prevUuid) throw new Error("no conversation anchor before the first prompt — code-only rewind is available");
+      if (this.bgTasks.length) this.emit({ kind: "task", data: { type: "task_notification", status: "stopped", task_id: "rewind", summary: "background tasks ended by rewind" } });
+      await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid });
+    }
   }
 
   /** The permission seam this host exposes to its SDK session (wired as `config.permissionBroker`).
