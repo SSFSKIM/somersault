@@ -25,6 +25,13 @@ describe("appserver decisions (Task 7)", () => {
     await new Promise((r) => setTimeout(r, 0));
     const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
 
+    // Task 9 tightened decision fan-out to real per-thread subscribers (was: every initialized conn) —
+    // both watchers must subscribe before the park to see decision/requested and decision/resolved.
+    send(connA, { id: 90, method: "thread/subscribe", params: { threadId } });
+    send(connB, { id: 90, method: "thread/subscribe", params: { threadId } });
+    await new Promise((r) => setTimeout(r, 0));
+    a.lines.length = 0; b.lines.length = 0; // discard subscribe replies/idle replay noise
+
     const decision = broker.request({ toolName: "Bash", input: { command: "ls" }, toolUseID: "toolu_d", signal: new AbortController().signal });
     await new Promise((r) => setTimeout(r, 0));
 
@@ -76,9 +83,9 @@ describe("appserver decisions (Task 7)", () => {
   });
 
   it("unattended:'deny' with zero watchers denies immediately", async () => {
-    // interim hasWatchers = "at least one initialized connection" (Task 9 tightens to real subscribers).
-    // To exercise the zero-watchers path we simulate a full detach: close the only connection after
-    // thread/start, then trigger the broker directly (as a live SDK canUseTool callback would).
+    // hasWatchers = record.subscribers.size > 0 (Task 9): connA never subscribes to this thread, so it
+    // is not a watcher even while still connected. Closing it too is just belt-and-suspenders for the
+    // "fully detached" scenario this test documents.
     let broker: any;
     const srv = new AppServer({}, { sessionFactory: (cfg: any) => { broker = cfg.permissionBroker; return fakeSession(); } });
     const a = mkSink(); const connA = srv.connect(a.sink);

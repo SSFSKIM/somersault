@@ -12,7 +12,10 @@ const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l));
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const init = (c: { feed(ch: string): void }, id: number, name = "t") => send(c, { id, method: "initialize", params: { clientInfo: { name } } });
 
-/** boots a server, initializes one connection, starts one thread; returns { srv, s, c, threadId } */
+/** boots a server, initializes one connection, starts one thread, and subscribes that connection to it
+ *  (Task 9 tightened turn/item fan-out to real per-thread subscribers — was: every initialized conn);
+ *  returns { srv, s, c, threadId }. The subscribe reply + its idle replay (thread/status/changed) are
+ *  discarded from `s.lines` so callers' notification-order assertions start clean. */
 async function bootThread(sessionFactory: () => any) {
   const srv = new AppServer({}, { sessionFactory });
   const s = mkSink(); const c = srv.connect(s.sink);
@@ -20,6 +23,9 @@ async function bootThread(sessionFactory: () => any) {
   send(c, { id: 2, method: "thread/start", params: {} });
   await tick();
   const threadId = parsed(s.lines).find((f) => f.id === 2).result.thread.id;
+  send(c, { id: 99, method: "thread/subscribe", params: { threadId } });
+  await tick();
+  s.lines.length = 0;
   return { srv, s, c, threadId };
 }
 

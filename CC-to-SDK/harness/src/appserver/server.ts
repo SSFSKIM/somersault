@@ -9,13 +9,15 @@ import { Registry, type ThreadRecord, type EngineSession } from "./registry.js";
 import { openSession, resumeSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, type DecisionEvent } from "./broker.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
+import type { PendingDecision } from "../permissions/pending.js";
 import { turnStart, turnInterrupt } from "./turns.js";
+import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
 
 const require = createRequire(import.meta.url);
 const pkgVersion = (require("../../package.json") as { version: string }).version;
 const USER_AGENT = "cc-harness-appserver";
 
-export interface AppServerDeps { sessionFactory?: (config: Record<string, unknown>) => EngineSession }
+export interface AppServerDeps { sessionFactory?: (config: Record<string, unknown>) => EngineSession; getSessionMessages?: (sessionId: string) => Promise<unknown[]> }
 export interface ConnCtx { peer: Peer; initialized: boolean; authed: boolean; clientName?: string; connId: number }
 
 const initializeParams = z.object({ clientInfo: z.object({ name: z.string() }), authorization: z.string().optional() });
@@ -134,9 +136,12 @@ export class AppServer {
     },
     "turn/start": turnStart,
     "turn/interrupt": turnInterrupt,
+    "thread/subscribe": threadSubscribe,
+    "thread/unsubscribe": threadUnsubscribe,
+    "thread/read": threadRead,
   };
 
-  constructor(private opts: { token?: string } = {}, private deps: AppServerDeps = {}) {}
+  constructor(private opts: { token?: string } = {}, public readonly deps: AppServerDeps = {}) {}
 
   /** Mints this thread's decision broker. `unattended` is captured at thread/start time (spec: the
    *  brief's `unattended` field is set once per thread, not renegotiated per-request). Deliberately
@@ -148,27 +153,29 @@ export class AppServer {
     return new ThreadDecisions(
       (ev) => this.broadcastDecision(threadId, ev),
       () => unattended,
-      () => this.hasWatchers(),
+      () => this.hasWatchers(threadId),
     );
   }
 
-  /** Interim definition (until Task 9's thread/subscribe tightens this to real per-thread subscribers,
-   *  spec §7): at least one initialized connection anywhere on the server — every initialized peer
-   *  currently receives every thread's decision broadcasts, so any one of them IS a watcher. */
-  private hasWatchers(): boolean {
-    for (const c of this.conns.values()) if (c.initialized) return true;
-    return false;
+  /** Task 9: a watcher is a real subscriber of THIS thread — not just any initialized connection on the
+   *  server (the interim Task 7 shim). */
+  private hasWatchers(threadId: string): boolean {
+    return (this.registry.get(threadId)?.subscribers.size ?? 0) > 0;
   }
 
   /** The one small broadcast helper (spec) every thread-scoped notification goes through — decisions
-   *  (Task 7) and turns/items (Task 8) alike — so Task 9 narrows fan-out to `record.subscribers` in
-   *  exactly one place. Interim (until Task 9): `threadId` is accepted but unused — every initialized
-   *  connection on the server receives every thread's notifications. */
+   *  (Task 7) and turns/items (Task 8) alike. Task 9: fan-out is `record.subscribers` only, not every
+   *  initialized connection on the server. */
   broadcast(threadId: string, method: string, params: Record<string, unknown>): void {
-    for (const c of this.conns.values()) {
-      if (!c.initialized) continue;
-      c.peer.notify(method, params);
-    }
+    const record = this.registry.get(threadId);
+    if (!record) return;
+    for (const peer of record.subscribers) peer.notify(method, params);
+  }
+
+  /** The parked decisions for one thread — subscribe.ts's replay step (spec §5) reads this to hand a
+   *  newly-attached client every decision still awaiting an answer. */
+  pendingDecisions(threadId: string): PendingDecision[] {
+    return this.decisions.get(threadId)?.pending() ?? [];
   }
 
   private broadcastDecision(threadId: string, ev: DecisionEvent): void {
@@ -182,7 +189,9 @@ export class AppServer {
     const ctx: ConnCtx = { peer, initialized: false, authed: false, connId };
     this.conns.set(connId, ctx);
     const feed = (chunk: string) => peer.feed(chunk, (frame) => this.onFrame(ctx, frame));
-    const close = () => { this.conns.delete(connId); sink.end(); };
+    // A closing connection must not leave a dead Peer in any thread's subscriber set (spec: a browser
+    // tab closing sweeps every record, not just whichever thread it last touched).
+    const close = () => { this.conns.delete(connId); for (const record of this.registry.list()) record.subscribers.delete(peer); sink.end(); };
     return { peer, feed, close };
   }
 

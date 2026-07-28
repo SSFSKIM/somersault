@@ -32,4 +32,16 @@ describe("itemsFromTranscript", () => {
     const items = itemsFromTranscript(frames);
     expect(items.some((i) => i.type === "userMessage" && i.id === "u-r")).toBe(false);
   });
+  it("Task 9: filters phantom persisted rows (command echo, local-command output/caveat, compaction summary) — real transcripts carry CLI bookkeeping rows that must never surface as ordinary user messages", () => {
+    const withPhantoms = [
+      { type: "user", uuid: "u-echo", message: { content: "<command-name>/compact</command-name>" } },
+      { type: "user", uuid: "u-out", message: { content: "<local-command-stdout>ok</local-command-stdout>" } },
+      { type: "user", uuid: "u-caveat", message: { content: "<local-command-caveat>careful</local-command-caveat>" } },
+      { type: "user", uuid: "u-compact", message: { content: "This session is being continued from a previous conversation summary." } },
+      { type: "user", uuid: "u-p", message: { content: "run ls" } },
+      { type: "assistant", uuid: "u-a", message: { id: "msg_A", content: [{ type: "text", text: "sure" }, { type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls" } }] } },
+      { type: "user", uuid: "u-r", message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "file.txt" }] } },
+    ];
+    expect(itemsFromTranscript(withPhantoms)).toEqual(itemsFromTranscript(frames)); // identical to the phantom-free fixture
+  });
 });

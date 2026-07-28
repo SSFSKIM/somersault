@@ -1,0 +1,72 @@
+// appserver/subscribe.ts — thread/subscribe + thread/unsubscribe + thread/read (Task 9): the
+// replay-first join a client uses to attach to a thread already in progress (spec §5), plus paginated
+// read of the persisted transcript. Split out of server.ts per the plan's "extract before letting a hot
+// file sprawl" rule (turns.ts is the precedent for this split).
+import { z } from "zod/v4";
+import { ERR } from "./rpc.js";
+import { itemEventNotification } from "./turns.js";
+import { itemsFromTranscript } from "./items/replay.js";
+import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
+import type { AppServer, Handler } from "./server.js";
+
+const threadIdParams = z.object({ threadId: z.string().min(1) });
+const threadReadParams = z.object({ threadId: z.string().min(1), cursor: z.string().optional(), limit: z.number().int().positive().optional() });
+const DEFAULT_LIMIT = 200;
+
+const defaultGetSessionMessages = (sessionId: string): Promise<unknown[]> => sdkGetSessionMessages(sessionId);
+
+export const threadSubscribe: Handler = (srv, ctx, id, params) => {
+  const parsed = threadIdParams.safeParse(params);
+  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  const record = srv.registry.get(parsed.data.threadId);
+  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  record.subscribers.add(ctx.peer);
+  ctx.peer.reply(id, { subscribed: true });
+  // Replay, host-follow() order (spec §5): turn/started (only if a turn is in flight) -> buffered item
+  // events -> parked decisions -> thread/status/changed LAST. Each buffered event is replayed under its
+  // OWN tagged turnId (BufferedItemEvent.turnId) rather than a single computed "current" one — the
+  // buffer is already scoped per-turn by the reset in turns.ts, but this avoids trusting that invariant
+  // a second time (the registry.ts doc comment on BufferedItemEvent is explicit about this).
+  if (record.busy) {
+    const turnId = record.buffer.length ? record.buffer[record.buffer.length - 1].turnId : `turn_${record.id}_${record.turnSeq}`;
+    ctx.peer.notify("turn/started", { threadId: record.id, turn: { id: turnId, status: "inProgress" } });
+  }
+  for (const b of record.buffer) {
+    const { method, params: p } = itemEventNotification(record.id, b.turnId, b.event);
+    ctx.peer.notify(method, p);
+  }
+  for (const entry of srv.pendingDecisions(record.id)) ctx.peer.notify("decision/requested", { threadId: record.id, decision: entry });
+  ctx.peer.notify("thread/status/changed", { threadId: record.id, status: record.busy ? "active" : "idle" });
+};
+
+export const threadUnsubscribe: Handler = (srv, ctx, id, params) => {
+  const parsed = threadIdParams.safeParse(params);
+  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  const record = srv.registry.get(parsed.data.threadId);
+  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  record.subscribers.delete(ctx.peer);
+  ctx.peer.reply(id, { subscribed: false });
+};
+
+/** Newest-first pagination over the persisted transcript, offset-from-end cursor: `cursor` is how many
+ *  of the newest items the client has already consumed (as a decimal string). Each page itself reads
+ *  oldest->newest so the client can prepend it directly above what it already holds. Absent
+ *  `record.sessionId` (never persisted yet) is an empty page, not an error. */
+export const threadRead: Handler = async (srv, ctx, id, params) => {
+  const parsed = threadReadParams.safeParse(params);
+  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  const record = srv.registry.get(parsed.data.threadId);
+  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  if (!record.sessionId) { ctx.peer.reply(id, { data: [], nextCursor: null }); return; }
+  const getMessages = srv.deps.getSessionMessages ?? defaultGetSessionMessages;
+  const messages = await getMessages(record.sessionId);
+  const items = itemsFromTranscript(messages);
+  const limit = parsed.data.limit ?? DEFAULT_LIMIT;
+  const offset = parsed.data.cursor ? Number(parsed.data.cursor) : 0;
+  const total = items.length;
+  const end = Math.max(0, total - offset);
+  const start = Math.max(0, end - limit);
+  const page = items.slice(start, end);
+  const consumed = offset + page.length;
+  ctx.peer.reply(id, { data: page, nextCursor: consumed < total ? String(consumed) : null });
+};

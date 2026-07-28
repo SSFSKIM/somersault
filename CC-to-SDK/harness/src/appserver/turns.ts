@@ -26,12 +26,20 @@ function deltaMethod(channel: ItemDeltaChannel): string {
   return "item/toolCall/argumentsDelta";
 }
 
+/** The live broadcast path (emitItems, below) and Task 9's subscribe-time replay (subscribe.ts) both
+ *  need the SAME ItemEvent -> (method, params) mapping, so it lives in exactly one place — the two
+ *  paths can never drift on method names or param shape. */
+export function itemEventNotification(threadId: string, turnId: string, ev: ItemEvent): { method: string; params: Record<string, unknown> } {
+  if (ev.kind === "started") return { method: "item/started", params: { threadId, turnId, item: ev.item } };
+  if (ev.kind === "completed") return { method: "item/completed", params: { threadId, turnId, item: ev.item } };
+  return { method: deltaMethod(ev.channel), params: { threadId, turnId, itemId: ev.itemId, delta: ev.delta } };
+}
+
 function emitItems(srv: AppServer, record: ThreadRecord, turnId: string, events: ItemEvent[]): void {
   for (const ev of events) {
     pushBounded(record.buffer, turnId, ev);
-    if (ev.kind === "started") srv.broadcast(record.id, "item/started", { threadId: record.id, turnId, item: ev.item });
-    else if (ev.kind === "completed") srv.broadcast(record.id, "item/completed", { threadId: record.id, turnId, item: ev.item });
-    else srv.broadcast(record.id, deltaMethod(ev.channel), { threadId: record.id, turnId, itemId: ev.itemId, delta: ev.delta });
+    const { method, params } = itemEventNotification(record.id, turnId, ev);
+    srv.broadcast(record.id, method, params);
   }
 }
 
