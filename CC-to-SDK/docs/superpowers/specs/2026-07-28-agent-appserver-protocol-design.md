@@ -427,6 +427,17 @@ M1**, since `cancelQueued` and the ask-enrichment fields change M1 wire shapes.
   parked decisions are state rather than a request/response. The rejection path still exists for
   genuine engine failures.
 
+- **M1 T13 (2026-07-29): under `permissionMode: "default"` the SDK does not consult `canUseTool` for
+  a trivial bash command.** The first keyed acceptance run asked the model to `echo appserver-live-ok`
+  and the whole turn — reasoning, `Bash` tool call, result, assistant message, `turn/completed` — ran
+  through with **no `decision/requested` at all**. The same flow with a file write parks immediately
+  (`Write`, `view: "fileChange"`). So "default mode asks for everything" is false headlessly: what
+  summons the broker is the tool's own risk classification, not the mode alone. A live test that needs
+  a park must use a write, which is the shape `test/live/daemon-permissions.e2e.test.ts` already uses.
+  Second-order lesson: the acceptance must also pass `settingSources: []` — the harness loads user +
+  project + local settings by default, so a developer's own `permissions.allow` rules and `defaultMode`
+  silently decide whether the acceptance parks at all.
+
 ## Revision Notes
 
 - **Planning (M1, 2026-07-28):** item identity for assistant text/thinking refined from "frame

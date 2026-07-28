@@ -75,7 +75,7 @@ function wsOpen(url: string): Promise<WebSocket> {
 }
 
 live("M1 live acceptance: spawn -> subscribe -> turn -> park -> respond -> completed", () => {
-  it("a real WS client drives a real session through one full Bash-permission park/respond cycle", async () => {
+  it("a real WS client drives a real session through one full write-permission park/respond cycle", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cc-appserver-m1-"));
     const server = new AppServer({}); // no token — this test only exercises the wire, not auth (covered by wsTransport.test.ts)
     const { port, close: closeListener } = await listenWs(server, {});
@@ -86,22 +86,30 @@ live("M1 live acceptance: spawn -> subscribe -> turn -> park -> respond -> compl
       const init = await client.call("initialize", { clientInfo: { name: "m1-live-test" } });
       expect(init.userAgent).toBe("cc-harness-appserver");
 
-      const started = await client.call("thread/start", { config: { permissionMode: "default", cwd }, unattended: "park" });
+      // `settingSources: []` is load-bearing, not tidiness: the harness defaults to loading user +
+      // project + local settings, and a developer's own `~/.claude/settings.json` (a `defaultMode`,
+      // any `permissions.allow` Bash rule) would pre-authorize the command and the turn would run to
+      // completion with no park at all — which is exactly how the first keyed run failed.
+      const started = await client.call("thread/start", { config: { permissionMode: "default", cwd, settingSources: [], model: "claude-sonnet-4-6" }, unattended: "park" });
       threadId = started.thread.id;
       expect(threadId).toBeTruthy();
 
       const sub = await client.call("thread/subscribe", { threadId });
       expect(sub.subscribed).toBe(true);
 
-      const turn = await client.call("turn/start", { threadId, input: "Run exactly this bash command: echo appserver-live-ok" });
+      // A file write, not a bash command. The first keyed run used `echo appserver-live-ok` and the turn
+      // ran clean through to completion with NO park at all: under permissionMode "default" the SDK does
+      // not consult canUseTool for a trivial echo, so there was nothing to answer. A write does park —
+      // which is also the shape test/live/daemon-permissions.e2e.test.ts already proves for this engine.
+      const turn = await client.call("turn/start", { threadId, input: "Create a file note.txt in the current directory containing exactly: appserver-live-ok" });
       expect(turn.turn.status).toBe("inProgress");
 
-      // Park: the model must actually call Bash and the injected canUseTool broker must actually route
-      // it into decision/requested — this is the SDK-level behavior only the keyed run proves.
-      const requested = await client.waitFor("decision/requested (Bash permission)", 90_000, (n) => n.method === "decision/requested" && n.params.threadId === threadId);
+      // Park: the model must actually call a write tool and the injected canUseTool broker must actually
+      // route it into decision/requested — this is the SDK-level behavior only the keyed run proves.
+      const requested = await client.waitFor("decision/requested (write permission)", 90_000, (n) => n.method === "decision/requested" && n.params.threadId === threadId);
       const entry = requested.params.decision;
       expect(entry.kind).toBe("permission");
-      expect(entry.toolName).toBe("Bash");
+      expect(["Write", "Edit"]).toContain(entry.toolName);
       expect(typeof entry.toolUseID).toBe("string");
 
       const respond = await client.call("decision/respond", { threadId, toolUseId: entry.toolUseID, answer: { kind: "allow_once" } });
@@ -115,8 +123,8 @@ live("M1 live acceptance: spawn -> subscribe -> turn -> park -> respond -> compl
       expect(completed.params.turn.status).toBe("completed");
 
       const items = client.notifications.filter((n) => n.method === "item/started" || n.method === "item/completed").map((n) => n.params.item);
-      const toolCall = items.find((it) => it.type === "toolCall" && it.view === "command" && it.tool === "Bash");
-      expect(toolCall, `expected a Bash toolCall item with view "command" among: ${JSON.stringify(items)}`).toBeTruthy();
+      const toolCall = items.find((it) => it.type === "toolCall" && it.view === "fileChange" && (it.tool === "Write" || it.tool === "Edit"));
+      expect(toolCall, `expected a Write/Edit toolCall item with view "fileChange" among: ${JSON.stringify(items)}`).toBeTruthy();
       const agentMessage = items.find((it) => it.type === "agentMessage");
       expect(agentMessage, `expected an agentMessage item among: ${JSON.stringify(items)}`).toBeTruthy();
     } finally {
