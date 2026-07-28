@@ -610,6 +610,7 @@ describe("permission ladder", () => {
     api.cyc = c.cycleMode; api.run = c.submit;
     return <Text>mode:{c.state.mode} model:{c.state.model ?? "-"} {allText(c)}</Text>;
   }
+  // Goal B acceptance ⑤ evidence (spec: docs/superpowers/specs/2026-07-28-control-plane-fidelity-design.md).
   it("Tab cycles default → acceptEdits → plan → auto → default (bypass off-cycle)", async () => {
     const setModeCalls: string[] = [];
     const session = fakeRemote({ setPermissionMode: (m: string) => { setModeCalls.push(m); } });
@@ -729,6 +730,7 @@ describe("useChat: decisions, mode sync, bg tasks (Goal B task 7)", () => {
     expect(frame(lastFrame)).not.toContain("hidden");
   });
 
+  // Goal B acceptance ⑤ evidence (spec: docs/superpowers/specs/2026-07-28-control-plane-fidelity-design.md).
   it("/bg opens the panel; stopBgTask calls the session; settled decision notices name the kind action", async () => {
     const stopCalls: string[] = [];
     const fake = fakeRemote({ stopBgTask: async (id: string) => { stopCalls.push(id); } });

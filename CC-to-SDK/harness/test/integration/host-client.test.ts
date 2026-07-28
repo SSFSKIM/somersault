@@ -175,6 +175,38 @@ describe("host + client over a real socket", () => {
     }
   });
 
+  // Goal B acceptance ⑤ evidence (keyless): a question park settles via the STRUCTURED `answer` op over
+  // the real UDS wire (not the flat legacy `decision` field), and the settle broadcasts to every
+  // connected client — proven only at this layer, where "broadcast" means an actual second socket, not
+  // an in-process observer.
+  it("a question parks, settles via a structured answer over the wire, and a second connected client sees it settle", async () => {
+    const { host, path } = await startHost();
+    let a: RemoteChatSession | undefined, b: RemoteChatSession | undefined;
+    try {
+      a = await RemoteChatSession.connect(path, { label: "tty-a" });
+      b = await RemoteChatSession.connect(path, { label: "tty-b" });
+      const seenA: any[] = [], seenB: any[] = [];
+      a.follow((e) => seenA.push(e)); b.follow((e) => seenB.push(e));
+      const decision = host.broker().request({
+        toolName: "AskUserQuestion", input: { question: "red or blue?" }, toolUseID: "q9", kind: "question",
+        signal: new AbortController().signal,
+      });
+      await new Promise((r) => setTimeout(r, 80));
+      const parked = seenB.find((e) => e.kind === "decision");
+      expect(parked?.entry).toMatchObject({ kind: "question", toolUseID: "q9", input: { question: "red or blue?" } });
+      const reply = await a.answerDecision("q9", { kind: "question_answer", answers: { "red or blue?": "blue" } });
+      expect(reply.ok).toBe(true);
+      await expect(decision).resolves.toEqual({ kind: "question_answer", answers: { "red or blue?": "blue" } });
+      // The point of this test: the settle must reach a SECOND connected client over the real socket,
+      // not merely be visible to whoever answered it.
+      await new Promise((r) => setTimeout(r, 80));
+      expect(seenB).toContainEqual({ t: "event", kind: "decision_settled", toolUseID: "q9", by: "tty-a", decision: "question_answer" });
+    } finally {
+      a?.detach(); b?.detach();
+      await stopQuietly(host);
+    }
+  });
+
   it("an interactive host with no client attached denies rather than parking", async () => {
     const { host } = await startHost("interactive");
     try {

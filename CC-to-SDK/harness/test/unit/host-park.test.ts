@@ -190,6 +190,7 @@ describe("host park policy", () => {
       await host.stop();
     });
 
+    // Goal B acceptance ⑤ evidence (spec: docs/superpowers/specs/2026-07-28-control-plane-fidelity-design.md).
     it("refuses a kind-mismatched answer and keeps the park", async () => {
       const { host } = hostFor("bg"); await host.start();
       const decision = host.broker().request({
