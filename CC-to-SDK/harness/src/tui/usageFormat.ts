@@ -3,7 +3,9 @@
 // has no profile scope, so rate_limits_available comes back false — degrade honestly, never render blank.
 import type { RenderLine } from "./render.js";
 
-const WINDOWS: [string, string][] = [["five_hour", "5h"], ["seven_day", "7d"], ["seven_day_opus", "7d opus"], ["seven_day_sonnet", "7d sonnet"]];
+// The fixed windows, in display order. `model_scoped` is additive and dynamic (the server names each
+// bucket), and `extra_usage` has a different shape entirely — both are handled separately below.
+const WINDOWS: [string, string][] = [["five_hour", "5h"], ["seven_day", "7d"], ["seven_day_oauth_apps", "7d apps"], ["seven_day_opus", "7d opus"], ["seven_day_sonnet", "7d sonnet"]];
 const bar = (p: number): string => "▓".repeat(Math.round(p / 10)).padEnd(10, "░");
 const hhmm = (iso?: string): string => typeof iso === "string" && iso.length >= 16 ? iso.slice(11, 16) + "Z" : "";
 
@@ -18,23 +20,29 @@ function isUnavailable(u: unknown): boolean {
   return !p || p.rate_limits_available === false || !p.rate_limits;
 }
 
-/** Present windows (in WINDOWS order) that carry a numeric utilization, or [] if unavailable/none.
- * The unit (fraction 0-1 vs. already-a-percent 0-100) is inferred ONCE across the whole payload,
- * not per value: if any present window's utilization is greater than 1, the payload is expressed
- * in percent and every value is used as-is; otherwise every value is a fraction and gets ×100. This
- * disambiguates the realistic mixed case (five_hour: 43, seven_day: 1 -> 43%/1%, not 43%/100%). The
- * one case that's genuinely irreducible — a payload whose ONLY present value is exactly 1 — can't be
- * told apart from "1.0 == 100%" with a single sample, so it stays fraction-interpreted (100%). */
+/** Every present window carrying a numeric utilization, or [] if unavailable/none: the fixed WINDOWS in
+ * display order, then the server's dynamic `model_scoped` buckets (labelled by their display_name), then
+ * `extra_usage` when enabled.
+ *
+ * `utilization` is a PERCENTAGE, 0-100 — the SDK's own type says so on every window ("Percentage of the
+ * window used, 0-100", sdk.d.ts SDKControlGetUsageResponse). An earlier revision inferred the unit from
+ * the values (treating <=1 as a fraction and scaling by 100), which rendered a genuine 1% as 100% and
+ * fired the >=80% warning on a nearly-unused plan. Do not reintroduce unit inference: read the declared
+ * contract, not the sample. */
 function presentWindows(u: unknown): { label: string; p: number; resetsAt?: string }[] {
   if (isUnavailable(u)) return [];
   const p = u as UsagePayload;
-  const raw: { label: string; value: number; resetsAt?: string }[] = [];
+  const out: { label: string; p: number; resetsAt?: string }[] = [];
+  const rl = p.rate_limits as Record<string, unknown>;
   for (const [key, label] of WINDOWS) {
-    const w = p.rate_limits![key];
-    if (typeof w?.utilization === "number") raw.push({ label, value: w.utilization, resetsAt: w.resets_at });
+    const w = rl[key] as RateWindow | null | undefined;
+    if (typeof w?.utilization === "number") out.push({ label, p: Math.round(w.utilization), resetsAt: w.resets_at });
   }
-  const isPercent = raw.some((r) => r.value > 1);
-  return raw.map((r) => ({ label: r.label, p: Math.round(isPercent ? r.value : r.value * 100), resetsAt: r.resetsAt }));
+  for (const m of (Array.isArray(rl.model_scoped) ? rl.model_scoped : []) as { display_name?: string; utilization?: number; resets_at?: string }[])
+    if (typeof m?.utilization === "number") out.push({ label: String(m.display_name ?? "model"), p: Math.round(m.utilization), resetsAt: m.resets_at });
+  const extra = rl.extra_usage as { is_enabled?: boolean; utilization?: number } | null | undefined;
+  if (extra?.is_enabled && typeof extra.utilization === "number") out.push({ label: "extra", p: Math.round(extra.utilization) });
+  return out;
 }
 
 /** `/usage` — one bar row per present rate-limit window, or the honest-unavailable line. */

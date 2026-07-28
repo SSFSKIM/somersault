@@ -5,7 +5,7 @@ import { formatUsage, usageWarning, usageSummaryLine, UNAVAILABLE } from "../../
 describe("formatUsage", () => {
   it("renders one bar row per present window with a % and a reset time", () => {
     const u = { rate_limits_available: true, rate_limits: {
-      five_hour: { utilization: 0.43, resets_at: "2026-07-28T15:00:00Z" },
+      five_hour: { utilization: 43, resets_at: "2026-07-28T15:00:00Z" },
       seven_day: { utilization: 12 },
     } };
     const lines = formatUsage(u);
@@ -15,14 +15,11 @@ describe("formatUsage", () => {
     expect(text).toContain("resets");
   });
 
-  it("normalizes utilization arriving as a fraction (0-1) or a percent (0-100) to the same %", () => {
-    const fraction = formatUsage({ rate_limits_available: true, rate_limits: { five_hour: { utilization: 0.43 } } });
-    const percent = formatUsage({ rate_limits_available: true, rate_limits: { five_hour: { utilization: 43 } } });
-    expect(fraction.map((l) => l.text).join("\n")).toContain("43%");
-    expect(percent.map((l) => l.text).join("\n")).toContain("43%");
-  });
-
-  it("infers the unit once across the whole payload: a mixed percent/1 payload reads 43% and 1%, not 43% and 100%", () => {
+  it("reads utilization as the percentage the SDK declares it to be (0-100), with no unit inference", () => {
+    // sdk.d.ts SDKControlGetUsageResponse documents every window's utilization as "Percentage of the
+    // window used, 0-100". An earlier revision inferred the unit from the values (<=1 treated as a
+    // fraction and scaled ×100), which turned a genuine 1% into 100% and fired the ≥80% warning on a
+    // nearly-unused plan. These pin the contract so that inference cannot come back.
     const u = { rate_limits_available: true, rate_limits: { five_hour: { utilization: 43 }, seven_day: { utilization: 1 } } };
     const text = formatUsage(u).map((l) => l.text).join("\n");
     expect(text).toContain("43%");
@@ -31,12 +28,37 @@ describe("formatUsage", () => {
     expect(usageWarning(u)).toBeUndefined();
   });
 
-  it("an all-fraction payload (including a bare 1.0) reads 43% and 100%, and fires the warning", () => {
-    const u = { rate_limits_available: true, rate_limits: { five_hour: { utilization: 0.43 }, seven_day: { utilization: 1 } } };
+  it("a genuinely low payload stays low — every window at or below 1% must not read as 100%", () => {
+    const u = { rate_limits_available: true, rate_limits: { five_hour: { utilization: 1 }, seven_day: { utilization: 0.4 } } };
     const text = formatUsage(u).map((l) => l.text).join("\n");
-    expect(text).toContain("43%");
-    expect(text).toContain("100%");
-    expect(usageWarning(u)).toBe("⚠ 7d 100%");
+    expect(text).toContain("1%");
+    expect(text).not.toContain("100%");
+    expect(text).not.toContain("40%");
+    expect(usageWarning(u)).toBeUndefined();
+  });
+
+  it("includes the oauth-apps window, the server's dynamic model_scoped buckets, and enabled extra_usage", () => {
+    const u = { rate_limits_available: true, rate_limits: {
+      five_hour: { utilization: 5 },
+      seven_day_oauth_apps: { utilization: 22 },
+      model_scoped: [{ display_name: "Fable", utilization: 91, resets_at: "2026-07-30T09:00:00Z" }],
+      extra_usage: { is_enabled: true, monthly_limit: 100, used_credits: 30, utilization: 30 },
+    } };
+    const text = formatUsage(u).map((l) => l.text).join("\n");
+    expect(text).toContain("7d apps");
+    expect(text).toContain("22%");
+    expect(text).toContain("Fable");
+    expect(text).toContain("91%");
+    expect(text).toContain("extra");
+    expect(text).toContain("30%");
+    // the warning must SEE the model-scoped window — it is the most-utilized one here
+    expect(usageWarning(u)).toBe("⚠ Fable 91%");
+  });
+
+  it("skips extra_usage when it is not enabled", () => {
+    const u = { rate_limits_available: true, rate_limits: { five_hour: { utilization: 5 }, extra_usage: { is_enabled: false, utilization: 80 } } };
+    expect(formatUsage(u).map((l) => l.text).join("\n")).not.toContain("extra");
+    expect(usageWarning(u)).toBeUndefined();
   });
 
   it("degrades to the exact honest-unavailable line when rate_limits_available is false", () => {

@@ -19,6 +19,12 @@ const REQUEST_TIMEOUT_MS = 10_000;
 // perfectly healthy host reads as broken and the flagship restore is unavailable until the user backs out
 // and re-selects. rewind_anchors keeps the default — it is a transcript read, not an engine call.
 const REWIND_TIMEOUT_MS = 60_000;
+// The MUTATING rewind gets no client deadline at all. A deadline on a destructive op is not a safety net,
+// it is a lie: the protocol has no cancellation, so when the timer fires the client reports failure while
+// the host keeps going — reverting the working tree and truncating the conversation afterwards, with the
+// late reply dropped and no transcript rebuild. Waiting is the honest behaviour; a genuinely dead host is
+// still caught, because the socket closing rejects every in-flight request (see the close handler).
+const NO_TIMEOUT = Number.POSITIVE_INFINITY;
 
 /** THIS direction's own cap — NOT the server's `MAX_FRAME`. The two directions carry different traffic:
  *  the server bounds small fixed-shape client→host ops (`status`/`answer`/`prompt`), while this buffers
@@ -110,14 +116,14 @@ export class RemoteChatSession {
       // A deadline, because a silent peer is a real case, not a hypothetical: a host started before
       // this stage answers without the `id` we correlate on (its schema strips the unknown key), so
       // its reply is dropped in onData and this promise would never settle without one.
-      const timer = setTimeout(() => {
+      const timer = timeoutMs === NO_TIMEOUT ? undefined : setTimeout(() => {
         if (!this.inflight.delete(id)) return;   // already settled by a reply — never reject a promise that already resolved
         reject(new Error(`host did not answer ${String(op["op"])} within ${timeoutMs}ms (a pre-upgrade host, or a wedged one)`));
       }, timeoutMs);
-      (timer as { unref?: () => void }).unref?.();
+      (timer as { unref?: () => void } | undefined)?.unref?.();
       this.inflight.set(id, {
-        resolve: (v) => { clearTimeout(timer); resolve(v); },
-        reject: (e) => { clearTimeout(timer); reject(e); },
+        resolve: (v) => { if (timer) clearTimeout(timer); resolve(v); },
+        reject: (e) => { if (timer) clearTimeout(timer); reject(e); },
       });
       this.sock.write(JSON.stringify({ ...op, id }) + "\n");
     });
@@ -165,7 +171,7 @@ export class RemoteChatSession {
   // server.ts's dispatch arm), same as resumeOp.
   rewindAnchorsOp() { return this.send<{ ok: boolean; error?: string; anchors?: RewindAnchor[] }>({ op: "rewind_anchors" }); }
   rewindDryRunOp(uuid: string) { return this.send<{ ok: boolean; error?: string; dryRun?: RewindDryRun }>({ op: "rewind_dryrun", uuid }, REWIND_TIMEOUT_MS); }
-  rewindOp(uuid: string, prevUuid: string | null, scope: RewindScope) { return this.send<{ ok: boolean; error?: string }>({ op: "rewind", uuid, prevUuid, scope }, REWIND_TIMEOUT_MS); }
+  rewindOp(uuid: string, prevUuid: string | null, scope: RewindScope) { return this.send<{ ok: boolean; error?: string }>({ op: "rewind", uuid, prevUuid, scope }, NO_TIMEOUT); }
 
   /** Subscribe to the host's pushed events. The first live subscription sends `follow`; the last one
    *  leaving sends `unfollow`. Followers are keyed by a per-call token, not by the callback reference,

@@ -307,4 +307,34 @@ describe("RemoteChatSession", () => {
       expect(settled).not.toContain("dry:rejected");                     // the rewind deadline has NOT
     } finally { rc.detach(); srv.close(); }
   }, 20_000);
+
+  it("the MUTATING rewind op has no client deadline — a timeout would report failure while the host keeps going", async () => {
+    // The protocol has no cancellation: if the client gave up, the host would still revert the working
+    // tree and truncate the conversation, with the late reply dropped. So rewind must simply wait.
+    const dir = mkdtempSync(join(tmpdir(), "rt2-"));
+    const path = join(dir, "s.sock");
+    const srv = createServer(() => {});                                  // accepts, never replies
+    await new Promise<void>((r) => srv.listen(path, () => r()));
+    const rc = await RemoteChatSession.connect(path, { label: "t" });
+    try {
+      const settled: string[] = [];
+      const status = rc.status().then(() => settled.push("status:ok"), () => settled.push("status:rejected"));
+      void rc.rewindOp("u1", "u0", "both").then(() => settled.push("rewind:ok"), () => settled.push("rewind:rejected"));
+      await status;
+      await new Promise((r) => setTimeout(r, 4000));                     // well past the 10s default
+      expect(settled).toEqual(["status:rejected"]);
+      expect(settled).not.toContain("rewind:rejected");
+    } finally { rc.detach(); srv.close(); }
+  }, 25_000);
+
+  it("a dead host still rejects an in-flight deadline-free rewind (the socket close is the real safety net)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rt3-"));
+    const path = join(dir, "s.sock");
+    const srv = createServer((sock) => { setTimeout(() => sock.destroy(), 300); });   // accept, then die
+    await new Promise<void>((r) => srv.listen(path, () => r()));
+    const rc = await RemoteChatSession.connect(path, { label: "t" });
+    try {
+      await expect(rc.rewindOp("u1", "u0", "both")).rejects.toThrow();
+    } finally { rc.detach(); srv.close(); }
+  }, 15_000);
 });
