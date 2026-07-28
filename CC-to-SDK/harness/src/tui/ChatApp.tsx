@@ -11,6 +11,7 @@ import { Transcript } from "./Transcript.js";
 import { ChatComposer } from "./ChatComposer.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { QuestionDialog } from "./QuestionDialog.js";
+import { PlanDialog } from "./PlanDialog.js";
 import { ChatStatusBar } from "./ChatStatusBar.js";
 import { SessionPicker } from "./SessionPicker.js";
 import { ModelPicker } from "./ModelPicker.js";
@@ -77,8 +78,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
               ? <QuestionDialog key={state.pending.toolUseID} req={state.pending}
                   onAnswer={(answers, response) => resolveDecision({ kind: "question_answer", answers, ...(response ? { response } : {}) })}
                   onDeny={() => resolveDecision({ kind: "deny" })} />
-              // plan temporarily falls through to PermissionDialog until T9 lands PlanDialog.
-              : <PermissionDialog key={state.pending.toolUseID} req={state.pending} onDecision={(d) => resolveDecision(d)} />
+              : state.pending.kind === "plan"
+                ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
+                : <PermissionDialog key={state.pending.toolUseID} req={state.pending} onDecision={(d) => resolveDecision(d)} />
             : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} />}
       {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
       <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} thinkLevel={state.thinkLevel} />
