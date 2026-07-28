@@ -6,9 +6,11 @@ const MAX_IN = 256 * 1024;          // client→server frame cap (mirrors host/s
 const MAX_OUT = 32 * 1024 * 1024;   // server→client pressure cap (mirrors client/remote.ts rationale)
 export class Peer {
   private buf = "";
+  private dead = false;
   constructor(private sink: PeerSink, private opts: { maxIncomingFrame?: number; maxBuffered?: number; onOverflow?: () => void } = {}) {}
   private send(msg: object): void {
-    if (this.sink.buffered() > (this.opts.maxBuffered ?? MAX_OUT)) { this.opts.onOverflow?.(); this.sink.end(); return; }
+    if (this.dead) return;
+    if (this.sink.buffered() > (this.opts.maxBuffered ?? MAX_OUT)) { this.dead = true; this.opts.onOverflow?.(); this.sink.end(); return; }
     this.sink.write(encode(msg));
   }
   reply(id: RequestId, result: unknown): void { this.send({ id, result }); }
