@@ -5,11 +5,16 @@ import { homedir } from "node:os";
 import { openSession } from "../../src/index.js";
 import { formatUsage, UNAVAILABLE } from "../../src/tui/usageFormat.js";
 
+// Token-free half bills the INTERACTIVE credential (~/.claude/.credentials.json) with a real API call
+// and needs an explicit opt-in: `CC_LIVE_INTERACTIVE_USAGE=1 npx vitest run test/live/usage-surface.e2e.test.ts`
+// with NO ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN exported. Keyed half needs the OAuth token sourced
+// from ../.env: `set -a; . ../.env; set +a; npx vitest run test/live/usage-surface.e2e.test.ts`.
 const envToken = !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN);
 const haveCreds = existsSync(join(homedir(), ".claude", ".credentials.json"));
-// Token-free half: NO env token (the CLI falls back to the interactive credential — F4) AND the
-// credential file exists on this machine. Anything else skips cleanly (spec acceptance ④ gate).
-const tokenFree = !envToken && haveCreds ? describe : describe.skip;
+// Token-free half: requires the explicit opt-in env var (having run `claude login` once is not
+// consent to a billed call on every plain `npx vitest run`) AND no env token AND the credential
+// file exists on this machine. Anything else skips cleanly (spec acceptance ④ gate).
+const tokenFree = process.env.CC_LIVE_INTERACTIVE_USAGE === "1" && !envToken && haveCreds ? describe : describe.skip;
 // Keyed half: the standard gate — proves the honest-unavailable line under CLAUDE_CODE_OAUTH_TOKEN.
 const keyed = process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_API_KEY ? describe : describe.skip;
 

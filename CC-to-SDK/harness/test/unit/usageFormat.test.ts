@@ -22,7 +22,27 @@ describe("formatUsage", () => {
     expect(percent.map((l) => l.text).join("\n")).toContain("43%");
   });
 
+  it("infers the unit once across the whole payload: a mixed percent/1 payload reads 43% and 1%, not 43% and 100%", () => {
+    const u = { rate_limits_available: true, rate_limits: { five_hour: { utilization: 43 }, seven_day: { utilization: 1 } } };
+    const text = formatUsage(u).map((l) => l.text).join("\n");
+    expect(text).toContain("43%");
+    expect(text).toContain("1%");
+    expect(text).not.toContain("100%");
+    expect(usageWarning(u)).toBeUndefined();
+  });
+
+  it("an all-fraction payload (including a bare 1.0) reads 43% and 100%, and fires the warning", () => {
+    const u = { rate_limits_available: true, rate_limits: { five_hour: { utilization: 0.43 }, seven_day: { utilization: 1 } } };
+    const text = formatUsage(u).map((l) => l.text).join("\n");
+    expect(text).toContain("43%");
+    expect(text).toContain("100%");
+    expect(usageWarning(u)).toBe("⚠ 7d 100%");
+  });
+
   it("degrades to the exact honest-unavailable line when rate_limits_available is false", () => {
+    expect(formatUsage({ rate_limits_available: false })).toEqual([
+      { text: "plan usage not available under this credential (claude setup-token has no profile scope)", dim: true },
+    ]);
     expect(formatUsage({ rate_limits_available: false })).toEqual([{ text: UNAVAILABLE, dim: true }]);
   });
 
