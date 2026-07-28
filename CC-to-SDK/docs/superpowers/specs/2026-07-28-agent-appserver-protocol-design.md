@@ -438,6 +438,47 @@ M1**, since `cancelQueued` and the ask-enrichment fields change M1 wire shapes.
   project + local settings by default, so a developer's own `permissions.allow` rules and `defaultMode`
   silently decide whether the acceptance parks at all.
 
+## Outcomes & Retrospective (M1, 2026-07-29)
+
+**Achieved against the original purpose.** The spec set out to give this harness the role
+`codex app-server` plays for Codex: a control plane a web UI can drive without touching the engine.
+M1 delivers the core loop end to end — a browser-shaped client connects over WebSocket, starts or
+resumes a thread, subscribes and is replayed what it missed, runs a turn and watches it as a
+structured item stream, answers a parked permission decision, and reads the persisted history back
+with ids that stitch to the live stream. It is proven, not asserted: a keyed live test drives
+`initialize → thread/start → thread/subscribe → turn/start → decision/requested → decision/respond →
+decision/resolved → turn/completed → thread/read`, against a real session, in about 15 seconds.
+Coverage is auditable rather than claimed — a drift pass walks 70 seam tokens out of the real source
+and fails the build when the scorecard falls behind, which is D11 working as intended.
+
+**What the design got right.** D1 (decisions as *state*, not a server→client request) survived
+contact with reality and paid for itself repeatedly: parks outlive a disconnect, any client can
+answer, and the answer is broadcast. Extracting the item mapper as a pure sibling module rather than
+re-pointing the TUI's reducers kept a live C5 branch out of the blast radius. Origin scoping was
+specified before it was needed, so M3's fleet adoption has a defined refusal (`-33006`) instead of a
+retrofit.
+
+**Where the process caught what review alone would not.** Every task passed a scoped review, and
+most still needed a fix round; the two whole-branch reviews then found six defects that no per-task
+reviewer could have seen, three of them Critical. The pattern is worth naming: **the fakes hid the
+bugs**. A fake session whose `dispose()` resolves instantly cannot expose a teardown that deadlocks
+against its own parked decision; a fake that sets `sessionId` eagerly cannot expose that the real
+getter stays undefined until the first turn, so `thread/read` returned an empty page forever. Both
+were invisible to 1153 green unit tests and were caught only by reasoning about the *engine's* real
+semantics. The lesson for M2: when a fake stands in for the engine, make it model the engine's
+awkward timing, not its convenient shape.
+
+**The live run was the highest-yield hour.** The first keyed acceptance failed by *completing
+successfully* — a trivial `echo` never asks for permission under `default` mode, so there was
+nothing to answer. That flushed out two facts now recorded above: what summons the broker is the
+tool's risk classification rather than the mode, and a live test that loads the developer's own
+settings is testing the developer's machine.
+
+**Gaps shipped knowingly.** Ten, each named in the next section rather than discovered later by
+whoever writes the web UI. The one that will be felt first is `threadView`'s five-of-thirteen fields
+and the flattened `ThreadStatus`, since a UI wants `active{waitingOn}` to distinguish "thinking"
+from "waiting on you".
+
 ## Carried into M2 (named, not silently dropped)
 
 M1 shipped after two independent whole-branch reviews. These are the gaps they found that were
