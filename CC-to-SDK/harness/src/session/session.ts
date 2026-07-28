@@ -39,6 +39,7 @@ export class Session implements ControllableSession {
   private _limit?: LimitState;             // state-of-last-signal (result / rate_limit_event); cleared by a clean one
   private _bgTasks: BackgroundTaskInfo[] = []; // LEVEL signal: REPLACED wholesale on each background_tasks_changed
   private _mirrorErrors: MirrorErrorInfo[] = []; // EVENT log: appended per mirror_error frame (bounded, last 50)
+  private frameCbs = new Set<(m: unknown) => void>();
 
   constructor(deps: SessionDeps, options: Record<string, unknown>, sessionOpts: SessionOpts = {}) {
     this.now = sessionOpts.now ?? Date.now;
@@ -140,6 +141,12 @@ export class Session implements ControllableSession {
   /** Async accessor for the live background-task set (bridge/daemon payload shape). */
   async listBackgroundTasks(): Promise<BackgroundTaskInfo[]> { return this._bgTasks; }
 
+  /** Persistent frame listener — fires for EVERY frame the read-loop sees, waiter or not. This is the one
+   *  session-layer change of Goal B: between turns there is no waiter, so system frames (task changes,
+   *  status/mode) previously vanished (spec §session-layer). Subscribers are independent; one throwing
+   *  does not starve another. */
+  onFrame(cb: (m: unknown) => void): () => void { this.frameCbs.add(cb); return () => { this.frameCbs.delete(cb); }; }
+
   async getContextUsage(): Promise<unknown> { this.assertRunning(); return this.callQValue("getContextUsage"); }
   async accountInfo(): Promise<unknown> { this.assertRunning(); return this.callQValue("accountInfo"); }
 
@@ -193,6 +200,7 @@ export class Session implements ControllableSession {
     try {
       for await (const m of this.q) {
         this.lastActiveAt = this.now();
+        for (const cb of [...this.frameCbs]) { try { cb(m); } catch { /* one subscriber's failure is not another's */ } }
         const mm = m as any;
         if (mm.type === "system" && mm.subtype === "init" && !this._sessionId) this._sessionId = mm.session_id;
         if (mm.type === "system" && mm.subtype === "background_tasks_changed") this._bgTasks = mm.tasks ?? []; // REPLACE, never merge

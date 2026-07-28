@@ -6,6 +6,7 @@ import { procStartOf as realProcStartOf } from "../fleet/liveness.js";
 import type { FleetState, RosterRow } from "../fleet/roster.js";
 import { openSession as realOpenSession } from "../session/index.js";
 import type { HarnessConfig } from "../config/types.js";
+import type { BackgroundTaskInfo } from "../session/session.js";
 import { TurnBuffer } from "./follow.js";
 import type { HostEvent } from "./wire.js";
 import { PendingDecisions } from "../permissions/pending.js";
@@ -51,6 +52,11 @@ export interface HostSession {
   mcpServerStatus?(): Promise<unknown[]>;
   reconnectMcpServer?(name: string): Promise<void>;
   toggleMcpServer?(name: string, enabled: boolean): Promise<void>;
+  // GB T4: the background-task surface — all optional, so every existing HostSession fake stays valid.
+  onFrame?(cb: (m: unknown) => void): () => void;
+  listBackgroundTasks?(): Promise<BackgroundTaskInfo[]>;
+  backgroundAll?(toolUseId?: string): Promise<boolean>;
+  stopTask?(taskId: string): Promise<void>;
 }
 
 /** Owns one SDK session, its UDS socket, and its roster row. Live truth is answered over the socket;
@@ -95,6 +101,13 @@ export class SessionHost {
   // Set when a plan_approve settles with acceptEdits:true — consumed by the status-frame handler (Task
   // 5), which is the only reason this task ever SETS it rather than also acting on it.
   private planUpgradePending = false;
+  // REPLACE snapshot of the live background-task set — the last background_tasks_changed frame the
+  // session's onFrame delivered (probe 39: never merge). Read by the `tasks` op and replayed to a
+  // follower that joins after the frame already fired.
+  private bgTasks: BackgroundTaskInfo[] = [];
+  // Unsubscribe from the CURRENT session's onFrame — re-pointed at the fresh session on resumeSession
+  // (see there for why: the swap replaces `this.session` with a subscriber set of zero).
+  private offFrame?: () => void;
 
   private finishedResolve!: () => void;
   /** Resolves when teardown completes (server closed). runHostMain awaits this for interactive hosts. */
@@ -143,6 +156,7 @@ export class SessionHost {
     writeRoster(row, this.env);                        // written BEFORE any session id exists
     try {
       this.session = this.deps.openSession({ ...this.opts.config, permissionBroker: this.broker() });
+      this.offFrame = this.session.onFrame?.((m) => this.onSessionFrame(m));
       this.server = new HostServer({
         status: () => this.status(),
         busy: () => this.busy(),
@@ -157,6 +171,9 @@ export class SessionHost {
         control: (op) => this.control(op),
         resume: (sid) => this.resumeSession(sid),
         turnSeq: () => this.turnSeq(),
+        tasks: () => this.bgTasks,
+        background: (toolUseId) => this.background(toolUseId),
+        stopTask: (taskId) => this.stopBgTask(taskId),
       }, hostSocketPath(process.pid, this.env));
       await this.server.listen();
     } catch (e) {
@@ -238,6 +255,13 @@ export class SessionHost {
     const old = this.session;
     this.session = this.deps.openSession({ ...this.opts.config, resume: sessionId, permissionBroker: this.broker() });
     this.turnBuffer.reset(); this.settledBy.clear();
+    // Plan-review I1: the swap replaces `this.session` with a fresh Session whose subscriber set is
+    // empty — without re-pointing onFrame here, mode sync, the tasks panel, and attribution all
+    // silently die after a /resume, a shipped surface.
+    this.offFrame?.();
+    this.offFrame = this.session.onFrame?.((m) => this.onSessionFrame(m));
+    this.bgTasks = []; this.emit({ kind: "tasks_changed", tasks: [] });   // the old session's tasks are gone
+    this.planUpgradePending = false;                                       // (field exists from T3)
     this.emit({ kind: "state", status: this.status() });
     const graceMs = this.deps.disposeGraceMs ?? DISPOSE_GRACE_MS;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -268,6 +292,9 @@ export class SessionHost {
     // decision — or one that simply reconnects — would see it only through the separate `pending()`
     // poll, never through the live stream it otherwise relies on.
     for (const entry of this.parked.list()) this.deliver(cb, { kind: "decision", entry });
+    // The live background-task snapshot, if any: a follower joining after the last change would
+    // otherwise never learn a task is running until the NEXT change fires (or never, if there is none).
+    if (this.bgTasks.length) this.deliver(cb, { kind: "tasks_changed", tasks: this.bgTasks });
     // LAST in the replay, not first: every frame above describes history so far; this one describes
     // "right now", so it belongs immediately before we start relaying genuinely live events. Without
     // it, a follower attaching mid-turn has no way to tell a live turn from the tail of a finished one
@@ -286,6 +313,41 @@ export class SessionHost {
   }
 
   private emit(ev: HostEvent): void { for (const cb of [...this.followers]) this.deliver(cb, ev); }
+
+  /** Every session frame, waiter or not (Session.onFrame). Task events and the tasks snapshot are emitted
+   *  from HERE, not from runTask's onMessage: between turns there is no waiter, and a bg task finishing
+   *  while the host idles must still reach an attached client (spec §background). */
+  private onSessionFrame(m: unknown): void {
+    const mm = m as any;
+    if (mm?.type === "system" && mm.subtype === "background_tasks_changed") {
+      this.bgTasks = mm.tasks ?? [];                                     // REPLACE, never merge (probe 39)
+      this.emit({ kind: "tasks_changed", tasks: this.bgTasks });
+      return;
+    }
+    // Task lifecycle frames arrive with either a bare type tag or as a system subtype depending on SDK
+    // path — match both, deterministically (spec §attribution note; acceptance ③ pins the live shape).
+    const sub = mm?.type === "system" ? mm.subtype : mm?.type;
+    if (sub === "task_started" || sub === "task_notification" || sub === "task_progress" || sub === "task_updated") {
+      this.emit({ kind: "task", data: m });
+      return;
+    }
+  }
+
+  /** Ctrl+B passthrough: background in-flight foreground tasks on the underlying session. Throws a
+   *  named error (dispatch's catch turns it into `{ok:false, error:…}`, see server.ts) when the session
+   *  lacks the member — same shape as control()'s `need`. */
+  async background(toolUseId?: string): Promise<boolean> {
+    const fn = this.session?.backgroundAll?.bind(this.session);
+    if (!fn) throw new Error("background unsupported by this host");
+    return fn(toolUseId);
+  }
+
+  /** Stop one running background task on the underlying session. */
+  async stopBgTask(taskId: string): Promise<void> {
+    const fn = this.session?.stopTask?.bind(this.session);
+    if (!fn) throw new Error("stop_task unsupported by this host");
+    await fn(taskId);
+  }
 
   /** The permission seam this host exposes to its SDK session (wired as `config.permissionBroker`).
    *
@@ -436,6 +498,7 @@ export class SessionHost {
     try {
       clearTimeout(this.idleTimer);          // going away on our own terms — the reaper must not also fire
       if (final) this.state = final;
+      this.offFrame?.();
       this.settleParkedForSystem();
       this.syncRoster();                     // terminal state on disk BEFORE anything that can block
       const graceMs = this.deps.disposeGraceMs ?? DISPOSE_GRACE_MS;

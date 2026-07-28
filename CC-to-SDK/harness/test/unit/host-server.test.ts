@@ -13,7 +13,8 @@ afterEach(async () => { await srv?.close(); srv = undefined; });
 // This file predates the op union Task 6 adds; it only exercises status/stop framing, so the rest of
 // HostHandlers is stubbed once here rather than repeated at every one of its ~dozen call sites.
 const stub = { busy: () => false, pending: () => [], answer: () => ({ ok: true }), prompt: async () => {}, interrupt: async () => {}, follow: () => () => {},
-  control: async () => ({ ok: true }), resume: async () => {}, turnSeq: () => 0 };
+  control: async () => ({ ok: true }), resume: async () => {}, turnSeq: () => 0,
+  tasks: () => [], background: async () => true, stopTask: async () => {} };
 
 const root = mkdtempSync(join(tmpdir(), "ccx-host-"));   // one temp root for the file, not one per test
 let nth = 0;

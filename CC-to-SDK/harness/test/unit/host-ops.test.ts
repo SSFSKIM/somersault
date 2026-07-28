@@ -55,6 +55,9 @@ const handlers = (over: Partial<HostHandlers> = {}): HostHandlers => ({
   control: async () => ({ ok: true }),
   resume: async () => {},
   turnSeq: () => 0,
+  tasks: () => [],
+  background: async () => true,
+  stopTask: async () => {},
   ...over,
 });
 
@@ -220,5 +223,62 @@ describe("host ops", () => {
   it("rejects malformed control ops", () => {
     for (const frame of [{ op: "set_permission_mode" }, { op: "set_thinking" }, { op: "mcp_reconnect" }, { op: "mcp_toggle", name: "x" }, { op: "resume" }])
       expect(hostOp.safeParse(frame).success).toBe(false);
+  });
+
+  // GB T4: tasks/background/stop_task dispatch. `tasks` reads the host's OWN snapshot and never fails
+  // (it never touches the session); `background`/`stop_task` call through to the session and can be
+  // "unsupported" when the session lacks the member.
+  describe("bg-task ops (GB T4)", () => {
+    it("tasks returns the host's snapshot", async () => {
+      const p = sockPath();
+      const tasks = [{ task_id: "t1", task_type: "bash", description: "x" }];
+      const s = new HostServer(handlers({ tasks: () => tasks }), p);
+      await s.listen();
+      const c = client(p); await c.ready;
+      c.send({ id: 1, op: "tasks" });
+      expect(await c.waitFor((f) => f.id === 1)).toMatchObject({ ok: true, tasks });
+      c.end(); await s.close();
+    });
+
+    it("background calls the session's backgroundAll and returns its boolean", async () => {
+      const seen: (string | undefined)[] = [];
+      const p = sockPath();
+      const s = new HostServer(handlers({ background: async (toolUseId?: string) => { seen.push(toolUseId); return true; } }), p);
+      await s.listen();
+      const c = client(p); await c.ready;
+      c.send({ id: 1, op: "background" });
+      expect(await c.waitFor((f) => f.id === 1)).toMatchObject({ ok: true, backgrounded: true });
+      expect(seen).toEqual([undefined]);
+      c.end(); await s.close();
+    });
+
+    it("stop_task calls stopTask(taskId) and reports ok", async () => {
+      const seen: string[] = [];
+      const p = sockPath();
+      const s = new HostServer(handlers({ stopTask: async (taskId: string) => { seen.push(taskId); } }), p);
+      await s.listen();
+      const c = client(p); await c.ready;
+      c.send({ id: 1, op: "stop_task", taskId: "t1" });
+      expect(await c.waitFor((f) => f.id === 1)).toMatchObject({ ok: true });
+      expect(seen).toEqual(["t1"]);
+      c.end(); await s.close();
+    });
+
+    it("background/stop_task reply unsupported when the session lacks the member — tasks never fails that way", async () => {
+      const p = sockPath();
+      const s = new HostServer(handlers({
+        background: async () => { throw new Error("background unsupported by this host"); },
+        stopTask: async () => { throw new Error("stop_task unsupported by this host"); },
+      }), p);
+      await s.listen();
+      const c = client(p); await c.ready;
+      c.send({ id: 1, op: "background" });
+      expect(await c.waitFor((f) => f.id === 1)).toMatchObject({ ok: false, error: expect.stringContaining("unsupported") });
+      c.send({ id: 2, op: "stop_task", taskId: "t1" });
+      expect(await c.waitFor((f) => f.id === 2)).toMatchObject({ ok: false, error: expect.stringContaining("unsupported") });
+      c.send({ id: 3, op: "tasks" });
+      expect(await c.waitFor((f) => f.id === 3)).toMatchObject({ ok: true });
+      c.end(); await s.close();
+    });
   });
 });

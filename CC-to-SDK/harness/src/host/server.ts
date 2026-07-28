@@ -8,6 +8,7 @@ import { decodeFrame, encodeEvent, encodeReply } from "./wire.js";
 import type { HostEvent, HostFrame } from "./wire.js";
 import type { PendingEntry } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
+import type { BackgroundTaskInfo } from "../session/session.js";
 
 export interface HostHandlers {
   status(): HostStatus;
@@ -33,6 +34,12 @@ export interface HostHandlers {
   /** The seq of the last started turn — read by the `prompt` reply so a client can correlate its
    *  submit() to this turn's `end` event (adapter, Task 5). */
   turnSeq(): number;
+  // GB T4: the background-task surface. `tasks` reads the host's own snapshot and never fails — it
+  // never touches the session. `background`/`stopTask` call through to the session and throw (dispatch's
+  // catch turns it into `{ok:false, error:…}`) when the session lacks the member.
+  tasks(): BackgroundTaskInfo[];
+  background(toolUseId?: string): Promise<boolean>;
+  stopTask(taskId: string): Promise<void>;
 }
 
 /** A frame with no newline in sight past this is a runaway peer, not an op. Same-user only (the socket
@@ -161,10 +168,9 @@ export class HostServer {
         await this.handlers.resume(op.data.sessionId);
         return { ok: true };
       }
-      // Schema-only placeholders (Task 4 wires the real handlers) — a dispatch arm here, not merely a
-      // schema entry, is what keeps the client-facing surface from crashing the connection in the
-      // meantime: an unhandled case would fail TS's exhaustiveness check on this switch, not this one.
-      case "tasks": case "background": case "stop_task": return { ok: false, error: "unsupported" };
+      case "tasks": return { ok: true, tasks: this.handlers.tasks() };
+      case "background": return { ok: true, backgrounded: await this.handlers.background() };
+      case "stop_task": await this.handlers.stopTask(op.data.taskId); return { ok: true };
     }
   }
 
