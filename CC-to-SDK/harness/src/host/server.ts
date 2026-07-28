@@ -7,7 +7,7 @@ import type { ControlOp, HostStatus } from "./ops.js";
 import { decodeFrame, encodeEvent, encodeReply } from "./wire.js";
 import type { HostEvent, HostFrame } from "./wire.js";
 import type { PendingEntry } from "../permissions/pending.js";
-import type { PermissionDecision } from "../permissions/types.js";
+import type { DecisionOutcome } from "../permissions/types.js";
 
 export interface HostHandlers {
   status(): HostStatus;
@@ -19,7 +19,7 @@ export interface HostHandlers {
   busy(): boolean;
   stop(): Promise<void>;
   pending(): PendingEntry[];
-  answer(toolUseID: string, decision: PermissionDecision, by: string): { ok: boolean; alreadyAnsweredBy?: string; error?: string };
+  answer(toolUseID: string, outcome: DecisionOutcome, by: string): { ok: boolean; alreadyAnsweredBy?: string; error?: string };
   prompt(text: string): Promise<void>;
   interrupt(): Promise<void>;
   /** Register ONE sink for ONE connection; the returned function unregisters it. The sink is what the
@@ -117,7 +117,15 @@ export class HostServer {
       case "status": return { ok: true, ...this.handlers.status() };
       case "stop": await this.handlers.stop(); return { ok: true };
       case "pending": return { ok: true, pending: this.handlers.pending() };
-      case "answer": return { ...this.handlers.answer(op.data.toolUseID, { kind: op.data.decision }, op.data.by) };
+      // Exactly one of the flat legacy `decision` or the structured `answer` must be present — an old
+      // client (pre-Goal-B) only ever sends `decision`, so that shape stays supported forever; ambiguity
+      // (both, or neither) is refused here rather than silently preferring one.
+      case "answer": {
+        const d = op.data;
+        const outcome = d.answer ?? (d.decision ? ({ kind: d.decision } as const) : undefined);
+        if (!outcome || (d.answer && d.decision)) return { ok: false, error: "answer needs exactly one of decision|answer" };
+        return { ...this.handlers.answer(d.toolUseID, outcome, d.by) };
+      }
       // A prompt is NOT awaited before replying: a turn runs for minutes, and holding the reply would
       // stall this connection's every other op — including the `interrupt` that ends the very turn it
       // is waiting on. The turn's progress travels as events instead. Gated on `busy()`, the handler's
@@ -153,6 +161,10 @@ export class HostServer {
         await this.handlers.resume(op.data.sessionId);
         return { ok: true };
       }
+      // Schema-only placeholders (Task 4 wires the real handlers) — a dispatch arm here, not merely a
+      // schema entry, is what keeps the client-facing surface from crashing the connection in the
+      // meantime: an unhandled case would fail TS's exhaustiveness check on this switch, not this one.
+      case "tasks": case "background": case "stop_task": return { ok: false, error: "unsupported" };
     }
   }
 

@@ -60,7 +60,7 @@ describe("ccx attach — host + adapter over a real socket (Task 8)", () => {
       await adapter.whenReady();
       const frames: any[] = [];
       adapter.onSessionEvent((ev) => frames.push(ev));    // first subscriber is flushed the whole replay, in order
-      expect(frames.map((f) => f.kind)).toEqual(["turn", "message", "message", "permission", "state"]);
+      expect(frames.map((f) => f.kind)).toEqual(["turn", "message", "message", "decision", "state"]);
       expect(frames[0]).toMatchObject({ phase: "start" });
       expect(frames[1].data.n).toBe(1);
       expect(frames[2].data.n).toBe(2);

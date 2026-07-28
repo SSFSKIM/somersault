@@ -81,7 +81,7 @@ describe("useChat: the host event stream is the single rendering source", () => 
     fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "first" }] } } });
     fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "second" }] } } });
     const entry: PendingEntry = { sessionId: "s", toolUseID: "t9", toolName: "Read", kind: "permission", input: { file_path: "x" }, createdAt: Date.now() };
-    fake.pushEvent({ kind: "permission", entry });
+    fake.pushEvent({ kind: "decision", entry });
     fake.pushEvent({ kind: "state", status: { state: "working", status: "busy" } });
     await waitFor(() => frame(lastFrame).includes("BUSY") && frame(lastFrame).includes("PENDING:Read"));
     expect(frame(lastFrame)).toContain("first");

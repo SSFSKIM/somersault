@@ -83,11 +83,11 @@ describe("host + client over a real socket", () => {
       a.follow((e) => seenA.push(e)); b.follow((e) => seenB.push(e));
       const decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t9", signal: new AbortController().signal });
       await new Promise((r) => setTimeout(r, 80));
-      // EXACT counts, not `.some`. One park must produce one permission event per client; a fan-out that
+      // EXACT counts, not `.some`. One park must produce one decision event per client; a fan-out that
       // broadcasts once per registered follower delivers it N times to each of N clients, and `.some`
       // passes cheerfully on 2, 4 or 16 copies.
-      expect(seenA.filter((e) => e.kind === "permission")).toHaveLength(1);
-      expect(seenB.filter((e) => e.kind === "permission")).toHaveLength(1);
+      expect(seenA.filter((e) => e.kind === "decision")).toHaveLength(1);
+      expect(seenB.filter((e) => e.kind === "decision")).toHaveLength(1);
       expect((await a.status()).state).toBe("blocked");
       const first = await a.answer("t9", { kind: "allow_once" });
       expect(first.alreadyAnsweredBy).toBeUndefined();

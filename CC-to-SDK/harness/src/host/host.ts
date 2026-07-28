@@ -8,9 +8,9 @@ import { openSession as realOpenSession } from "../session/index.js";
 import type { HarnessConfig } from "../config/types.js";
 import { TurnBuffer } from "./follow.js";
 import type { HostEvent } from "./wire.js";
-import { PendingPermissions } from "../permissions/pending.js";
-import type { PendingEntry } from "../permissions/pending.js";
-import type { PermissionDecision, PermissionBroker, PermissionRequest, DecisionOutcome } from "../permissions/types.js";
+import { PendingDecisions } from "../permissions/pending.js";
+import type { PendingDecision } from "../permissions/pending.js";
+import type { PermissionBroker, PermissionRequest, DecisionOutcome, DecisionKind } from "../permissions/types.js";
 
 export interface SessionHostOpts {
   short: string; name: string; cwd: string; kind: "bg" | "interactive";
@@ -78,10 +78,23 @@ export class SessionHost {
   // "never": a background host parks until a human answers, which is the entire point of a worker that
   // outlives the terminal that spawned it. The interactive case is handled by the detachedness rule in
   // broker(), not by a timer — a timer is how "the human is thinking" becomes "the human said no".
-  private parked = new PendingPermissions({ expireAfterMs: "never" });
+  private parked = new PendingDecisions({
+    expireAfterMs: "never",
+    // An SDK-side abort (NOT our own interrupt()/stop(), which settle via settleParkedForSystem below)
+    // used to vanish silently — the client's dialog stayed up forever waiting on a park nobody would ever
+    // answer. This is the NEW wiring (spec: interrupt-path emit) that tells a follower it is gone.
+    onAutoSettle: (e) => {
+      this.settledBy.set(e.toolUseID, "system");
+      this.emit({ kind: "decision_settled", toolUseID: e.toolUseID, by: "system", decision: "deny" });
+      this.emit({ kind: "state", status: this.status() });
+    },
+  });
   // Who answered what, so a second answerer can be told. A host that runs for days would otherwise
-  // accumulate one entry per permission for its whole life.
+  // accumulate one entry per decision for its whole life.
   private settledBy = new Map<string, string>();
+  // Set when a plan_approve settles with acceptEdits:true — consumed by the status-frame handler (Task
+  // 5), which is the only reason this task ever SETS it rather than also acting on it.
+  private planUpgradePending = false;
 
   private finishedResolve!: () => void;
   /** Resolves when teardown completes (server closed). runHostMain awaits this for interactive hosts. */
@@ -249,12 +262,12 @@ export class SessionHost {
     else if (snap.truncated) this.deliver(cb, { kind: "turn", phase: "start", truncated: true });
     for (const m of snap.messages) this.deliver(cb, { kind: "message", data: m });
     // A request parked before this follower attached is otherwise invisible to it forever: the
-    // `permission` event fires exactly once, at park time, over the followers registered at that
+    // `decision` event fires exactly once, at park time, over the followers registered at that
     // instant. A socket-borne follower's registration is not synchronous with its client's `follow()`
     // call (it lands after an async round trip), so without this replay a client that raced a parked
-    // permission — or one that simply reconnects — would see it only through the separate `pending()`
+    // decision — or one that simply reconnects — would see it only through the separate `pending()`
     // poll, never through the live stream it otherwise relies on.
-    for (const entry of this.parked.list()) this.deliver(cb, { kind: "permission", entry });
+    for (const entry of this.parked.list()) this.deliver(cb, { kind: "decision", entry });
     // LAST in the replay, not first: every frame above describes history so far; this one describes
     // "right now", so it belongs immediately before we start relaying genuinely live events. Without
     // it, a follower attaching mid-turn has no way to tell a live turn from the tail of a finished one
@@ -290,41 +303,59 @@ export class SessionHost {
         if (!this.opts.detached && (this.server?.connectionCount() ?? 0) === 0) return { kind: "deny" };
         const decision = this.parked.brokerFor(this.short).request(req);
         const entry = this.parked.list().find((e) => e.toolUseID === req.toolUseID);
-        if (entry) this.emit({ kind: "permission", entry });
+        if (entry) this.emit({ kind: "decision", entry });
         this.emit({ kind: "state", status: this.status() });
         return decision;
       },
     };
   }
 
-  pending(): PendingEntry[] { return this.parked.list(); }
+  pending(): PendingDecision[] { return this.parked.list(); }
+
+  /** Which outcome kinds each parked kind may settle with. `deny` is universal (system teardown, and a
+   *  human declining any of the three, settle the same way); everything else is kind-specific — a
+   *  question park cannot be answered with a bare permission decision, and vice versa. */
+  private static readonly KIND_ANSWERS: Record<DecisionKind, ReadonlySet<string>> = {
+    permission: new Set(["allow_once", "allow_always", "deny"]),
+    question: new Set(["question_answer", "deny"]),
+    plan: new Set(["plan_approve", "plan_reject", "deny"]),
+  };
 
   /** First answer wins. A second answerer is TOLD who got there first rather than erroring: two humans
-   *  racing on the same prompt is normal, and an error frame would read as "your answer failed". */
-  answer(toolUseID: string, decision: PermissionDecision, by: string): { ok: true; alreadyAnsweredBy?: string } | { ok: false; error: string } {
-    if (!this.parked.respond(toolUseID, decision)) {
+   *  racing on the same prompt is normal, and an error frame would read as "your answer failed". A
+   *  kind-mismatched outcome (e.g. a 3-way decision against a parked question) is refused BEFORE
+   *  settling, so the park stays intact for a correctly-shaped answer to land later. */
+  answer(toolUseID: string, outcome: DecisionOutcome, by: string): { ok: true; alreadyAnsweredBy?: string } | { ok: false; error: string } {
+    const entry = this.parked.list().find((e) => e.toolUseID === toolUseID);
+    if (entry && !SessionHost.KIND_ANSWERS[entry.kind].has(outcome.kind)) {
+      return { ok: false, error: `kind mismatch: ${entry.kind} park cannot take ${outcome.kind}` };
+    }
+    if (!this.parked.respond(toolUseID, outcome)) {
       const who = this.settledBy.get(toolUseID);
       // Answered-by-someone-else and never-parked-at-all are different outcomes and must not share a
       // reply: a client whose toolUseID is stale or wrong would otherwise read `{ok:true}` and believe
       // its answer landed.
       return who ? { ok: true, alreadyAnsweredBy: who } : { ok: false, error: `no parked request ${toolUseID}` };
     }
+    // acceptEdits upgrades the SESSION's permission mode going forward — this task only flags it; the
+    // status-frame handler (Task 5) is what actually calls setPermissionMode and clears the flag.
+    if (outcome.kind === "plan_approve" && outcome.acceptEdits) this.planUpgradePending = true;
     this.settledBy.set(toolUseID, by);
-    this.emit({ kind: "permission_settled", toolUseID, by, decision: decision.kind });
+    this.emit({ kind: "decision_settled", toolUseID, by, decision: outcome.kind });
     this.emit({ kind: "state", status: this.status() });
     return { ok: true };
   }
 
-  /** `PendingPermissions.denyAll()` settles straight into its own map, bypassing `answer()`'s
-   *  `permission_settled`/`state` emits entirely — so, unfixed, a follower watching a parked request is
+  /** `PendingDecisions.denyAll()` settles straight into its own map, bypassing `answer()`'s
+   *  `decision_settled`/`state` emits entirely — so, unfixed, a follower watching a parked request is
    *  never told the decision is gone; it can only infer that later from a `turn end` frame, and until
-   *  then a client's permission dialog is stuck showing a request nobody will ever answer. Both
-   *  interrupt() and teardown() settle this way (the host, not a human, is ending the request), so the
-   *  emit is centralized here instead of duplicated at each call site. */
+   *  then a client's dialog is stuck showing a request nobody will ever answer. Both interrupt() and
+   *  teardown() settle this way (the host, not a human, is ending the request), so the emit is
+   *  centralized here instead of duplicated at each call site. */
   private settleParkedForSystem(): void {
     for (const e of this.parked.denyAll()) {
       this.settledBy.set(e.toolUseID, "system");
-      this.emit({ kind: "permission_settled", toolUseID: e.toolUseID, by: "system", decision: "deny" });
+      this.emit({ kind: "decision_settled", toolUseID: e.toolUseID, by: "system", decision: "deny" });
     }
   }
 
@@ -333,7 +364,7 @@ export class SessionHost {
    *  first-terminal-wins finalize must never freeze on it. */
   status(): HostStatus {
     const first = this.parked.list()[0];
-    if (first) return { state: "blocked", status: "idle", waitingFor: `permission:${first.toolName}`, ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
+    if (first) return { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}`, ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
     return { state: this.state, status: this.turnInFlight ? "busy" : "idle", ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
   }
 

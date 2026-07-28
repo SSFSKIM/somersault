@@ -78,12 +78,12 @@ describe("host park policy", () => {
     await host.stop();
   });
 
-  it("parking emits a permission event to followers", async () => {
+  it("parking emits a decision event to followers", async () => {
     const { host } = hostFor("bg"); await host.start();
     const seen: string[] = [];
     host.follow((e) => seen.push(e.kind));
     void ask(host);
-    expect(seen).toContain("permission");
+    expect(seen).toContain("decision");
     host.answer("t1", { kind: "deny" }, "test");
     await host.stop();
   });
@@ -102,7 +102,7 @@ describe("host park policy", () => {
   });
 
   // Minor whole-branch finding: denyAll() (interrupt()/teardown()'s settling path) bypasses answer()'s
-  // `permission_settled` emit entirely, so a follower watching a parked request is never told the
+  // `decision_settled` emit entirely, so a follower watching a parked request is never told the
   // decision is gone — it can only infer that later from a `turn end` frame, and a client's dialog is
   // stuck showing a request nobody will ever answer.
   it("stop() settling a park via denyAll tells a follower the decision is gone", async () => {
@@ -112,8 +112,8 @@ describe("host park policy", () => {
     const decision = ask(host);
     await host.stop();
     await decision;
-    const settled = seen.filter((e) => e.kind === "permission_settled");
-    expect(settled).toEqual([{ kind: "permission_settled", toolUseID: "t1", by: "system", decision: "deny" }]);
+    const settled = seen.filter((e) => e.kind === "decision_settled");
+    expect(settled).toEqual([{ kind: "decision_settled", toolUseID: "t1", by: "system", decision: "deny" }]);
   });
 
   it("interrupt() settling a park via denyAll ALSO tells a follower, and a late answer is told 'system' got there first", async () => {
@@ -123,8 +123,8 @@ describe("host park policy", () => {
     const decision = ask(host);
     await host.interrupt();
     await decision;
-    expect(seen.filter((e) => e.kind === "permission_settled"))
-      .toEqual([{ kind: "permission_settled", toolUseID: "t1", by: "system", decision: "deny" }]);
+    expect(seen.filter((e) => e.kind === "decision_settled"))
+      .toEqual([{ kind: "decision_settled", toolUseID: "t1", by: "system", decision: "deny" }]);
     // Consistent with answer()'s own "who got there first" contract (see the settledBy map above) — a
     // human answering the same request after the system already denied it is told so, not given the
     // generic "never parked" error a request the system silently dropped would produce.
@@ -167,6 +167,69 @@ describe("host park policy", () => {
       const decision = ask(host);
       expect(host.pending()).toHaveLength(1);
       host.answer("t1", { kind: "deny" }, "test"); await decision;
+      await host.stop();
+    });
+  });
+
+  describe("decision kinds: question/plan routing and structured answers (GB T3)", () => {
+    it("parks a question with waitingFor question:AskUserQuestion and settles via a structured answer", async () => {
+      const { host } = hostFor("bg"); await host.start();
+      const seen: any[] = [];
+      host.follow((e) => seen.push(e));
+      const decision = host.broker().request({
+        toolName: "AskUserQuestion", input: { question: "red or blue?" }, toolUseID: "q1", kind: "question",
+        signal: new AbortController().signal,
+      });
+      expect(host.status().waitingFor).toBe("question:AskUserQuestion");
+      const parked = seen.find((e) => e.kind === "decision");
+      expect(parked?.entry).toMatchObject({ kind: "question", toolUseID: "q1" });
+      const reply = host.answer("q1", { kind: "question_answer", answers: { "red or blue?": "blue" } }, "me");
+      expect(reply).toEqual({ ok: true });
+      await expect(decision).resolves.toEqual({ kind: "question_answer", answers: { "red or blue?": "blue" } });
+      expect(seen).toContainEqual({ kind: "decision_settled", toolUseID: "q1", by: "me", decision: "question_answer" });
+      await host.stop();
+    });
+
+    it("refuses a kind-mismatched answer and keeps the park", async () => {
+      const { host } = hostFor("bg"); await host.start();
+      const decision = host.broker().request({
+        toolName: "AskUserQuestion", input: {}, toolUseID: "q2", kind: "question", signal: new AbortController().signal,
+      });
+      expect(host.answer("q2", { kind: "allow_once" }, "test")).toEqual({ ok: false, error: "kind mismatch: question park cannot take allow_once" });
+      expect(host.pending()).toHaveLength(1);
+      let settled = false; void decision.then(() => { settled = true; });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(settled).toBe(false);
+      expect(host.answer("q2", { kind: "question_answer", answers: { a: "b" } }, "test")).toEqual({ ok: true });
+      await expect(decision).resolves.toEqual({ kind: "question_answer", answers: { a: "b" } });
+      await host.stop();
+    });
+
+    it("plan_approve with acceptEdits sets planUpgradePending (consumed by the status-frame handler, Task 5)", async () => {
+      const { host } = hostFor("bg"); await host.start();
+      const d1 = host.broker().request({ toolName: "ExitPlanMode", input: {}, toolUseID: "p1", kind: "plan", signal: new AbortController().signal });
+      expect((host as any).planUpgradePending).toBe(false);
+      host.answer("p1", { kind: "plan_approve", acceptEdits: false }, "test");
+      await d1;
+      expect((host as any).planUpgradePending).toBe(false);   // acceptEdits:false must NOT set it
+
+      const d2 = host.broker().request({ toolName: "ExitPlanMode", input: {}, toolUseID: "p2", kind: "plan", signal: new AbortController().signal });
+      host.answer("p2", { kind: "plan_approve", acceptEdits: true }, "test");
+      await d2;
+      expect((host as any).planUpgradePending).toBe(true);
+      await host.stop();
+    });
+
+    it("an SDK-side abort emits decision_settled by:system (the onAutoSettle wiring — NEW, was silent)", async () => {
+      const { host } = hostFor("bg"); await host.start();
+      const seen: any[] = [];
+      host.follow((e) => seen.push(e));
+      const ac = new AbortController();
+      const decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "a1", signal: ac.signal });
+      expect(host.pending()).toHaveLength(1);
+      ac.abort();   // an SDK-side abort — NOT host.interrupt()/stop()
+      await expect(decision).resolves.toEqual({ kind: "deny" });
+      expect(seen).toContainEqual({ kind: "decision_settled", toolUseID: "a1", by: "system", decision: "deny" });
       await host.stop();
     });
   });

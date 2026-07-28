@@ -3,12 +3,12 @@
 import { RemoteChatSession } from "./remote.js";
 import type { HostEvent } from "../host/wire.js";
 import type { ChatSession, PermissionFeed, SessionEvents } from "../session/chatSession.js";
-import type { PendingEntry } from "../permissions/pending.js";
+import type { PendingDecision } from "../permissions/pending.js";
 import type { PermissionDecision } from "../permissions/types.js";
 import type { CompactOutcome } from "../compaction/index.js";
 
 export interface RemoteChatOpts { label?: string; resume?: string; connect?: (p: string, o?: { label?: string }) => Promise<RemoteChatSession>; }
-export type RemoteChat = ChatSession & PermissionFeed & SessionEvents & { detach(): void; whenReady(): Promise<void>; pendingNow(): PendingEntry[] };
+export type RemoteChat = ChatSession & PermissionFeed & SessionEvents & { detach(): void; whenReady(): Promise<void>; pendingNow(): PendingDecision[] };
 
 export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {}): RemoteChat {
   let raw: RemoteChatSession | undefined;
@@ -23,23 +23,33 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
   // already ended (plan-review finding 1). Entries are consumed on match; the map stays O(1) because
   // turns are strictly sequential per host.
   const endedTurns = new Map<number, string | undefined>();
-  const pendingList: PendingEntry[] = [];
-  const permCbs = new Set<(e: PendingEntry) => void>();
+  const pendingList: PendingDecision[] = [];
+  const permCbs = new Set<(e: PendingDecision) => void>();
   const settledCbs = new Set<(s: { toolUseID: string; by: string; decision: string }) => void>();
   let eventCb: ((ev: HostEvent) => void) | undefined;
   const backlog: HostEvent[] = [];          // events before the single consumer subscribes
 
   const route = (ev: HostEvent): void => {
     if (ev.kind === "message") { try { turnSink?.(ev.data); } catch { /* sink is the consumer's problem */ } }
-    else if (ev.kind === "permission") { pendingList.push(ev.entry); for (const cb of [...permCbs]) { try { cb(ev.entry); } catch {} } }
-    else if (ev.kind === "permission_settled") {
-      const i = pendingList.findIndex((e) => e.toolUseID === ev.toolUseID);
-      if (i >= 0) pendingList.splice(i, 1);
-      for (const cb of [...settledCbs]) { try { cb({ toolUseID: ev.toolUseID, by: ev.by, decision: ev.decision }); } catch {} }
-    } else if (ev.kind === "state") { if (ev.status.sessionId) sessionId = ev.status.sessionId; }
-    else if (ev.kind === "turn" && ev.phase === "end" && ev.seq !== undefined) {
-      if (turnWaiter && ev.seq === turnWaiter.seq) { const w = turnWaiter; turnWaiter = undefined; ev.error ? w.reject(new Error(ev.error)) : w.resolve(); }
-      else endedTurns.set(ev.seq, ev.error);      // ended before its waiter existed — submit() consults this
+    // READ ALIAS (spec Decision Log): a pre-Goal-B host still emits permission/permission_settled — ingest
+    // them as decisions so an upgraded `ccx attach` reads a long-lived old host. kind defaults to
+    // "permission" (old entries carry none); a new host's own kind wins the spread. Cast to `any`: the
+    // legacy frames are no longer `HostEvent` variants, so `ev` cannot narrow onto them.
+    else {
+      const k = (ev as { kind: string }).kind;
+      if (k === "decision" || k === "permission") {
+        const entry = { kind: "permission", ...(ev as any).entry } as PendingDecision;
+        pendingList.push(entry); for (const cb of [...permCbs]) { try { cb(entry); } catch {} }
+      } else if (k === "decision_settled" || k === "permission_settled") {
+        const s = ev as any;
+        const i = pendingList.findIndex((e) => e.toolUseID === s.toolUseID);
+        if (i >= 0) pendingList.splice(i, 1);
+        for (const cb of [...settledCbs]) { try { cb({ toolUseID: s.toolUseID, by: s.by, decision: s.decision }); } catch {} }
+      } else if (ev.kind === "state") { if (ev.status.sessionId) sessionId = ev.status.sessionId; }
+      else if (ev.kind === "turn" && ev.phase === "end" && ev.seq !== undefined) {
+        if (turnWaiter && ev.seq === turnWaiter.seq) { const w = turnWaiter; turnWaiter = undefined; ev.error ? w.reject(new Error(ev.error)) : w.resolve(); }
+        else endedTurns.set(ev.seq, ev.error);      // ended before its waiter existed — submit() consults this
+      }
     }
     if (eventCb) { try { eventCb(ev); } catch {} } else backlog.push(ev);
   };

@@ -163,8 +163,8 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
       expect(adapter.pendingNow().map((e) => e.toolUseID)).toEqual(["tY"]);
       const frames: HostEvent[] = [];
       adapter.onSessionEvent((ev) => frames.push(ev));
-      expect(frames.map((f) => f.kind)).toEqual(["permission", "state"]);
-      expect((frames[0] as Extract<HostEvent, { kind: "permission" }>).entry.toolUseID).toBe("tY");
+      expect(frames.map((f) => f.kind)).toEqual(["decision", "state"]);
+      expect((frames[0] as Extract<HostEvent, { kind: "decision" }>).entry.toolUseID).toBe("tY");
     } finally {
       adapter.detach();
       host.answer("tY", { kind: "deny" }, "test");

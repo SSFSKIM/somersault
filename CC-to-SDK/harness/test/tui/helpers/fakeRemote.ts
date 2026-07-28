@@ -12,11 +12,11 @@ export type FakeRemote = ChatSession & PermissionFeed & SessionEvents & {
   disposed: number;
   answeredCalls: { toolUseID: string; decision: PermissionDecision }[];
   /** Push one host frame straight into the wire pipe — replay-first, single-consumer, exactly like the
-   *  real adapter's route(): permission/permission_settled ALSO notify the PermissionFeed callbacks. */
+   *  real adapter's route(): decision/decision_settled ALSO notify the PermissionFeed callbacks. */
   pushEvent(ev: HostEvent): void;
-  /** Convenience: park + notify (`pushEvent({kind:"permission", entry})`). */
+  /** Convenience: park + notify (`pushEvent({kind:"decision", entry})`). */
   parkPermission(entry: PendingEntry): void;
-  /** Convenience: settle + notify (`pushEvent({kind:"permission_settled", ...})`). */
+  /** Convenience: settle + notify (`pushEvent({kind:"decision_settled", ...})`). */
   settlePermission(toolUseID: string, by: string, decision: string): void;
 };
 
@@ -49,13 +49,13 @@ export function fakeRemote(opts: FakeRemoteOpts = {}): FakeRemote {
   const backlog: HostEvent[] = [];
   const answeredCalls: { toolUseID: string; decision: PermissionDecision }[] = [];
 
-  // Mirrors chatAdapter.ts's route(): permission(_settled) kinds ALSO drive the PermissionFeed
+  // Mirrors chatAdapter.ts's route(): decision(_settled) kinds ALSO drive the PermissionFeed
   // callbacks; every kind (incl. those) forwards to the single onSessionEvent consumer.
   const route = (ev: HostEvent): void => {
-    if (ev.kind === "permission") {
+    if (ev.kind === "decision") {
       pendingList.push(ev.entry);
       for (const cb of [...permCbs]) cb(ev.entry);
-    } else if (ev.kind === "permission_settled") {
+    } else if (ev.kind === "decision_settled") {
       const i = pendingList.findIndex((e) => e.toolUseID === ev.toolUseID);
       if (i >= 0) pendingList.splice(i, 1);
       for (const cb of [...settledCbs]) cb({ toolUseID: ev.toolUseID, by: ev.by, decision: ev.decision });
@@ -104,8 +104,8 @@ export function fakeRemote(opts: FakeRemoteOpts = {}): FakeRemote {
       return () => { if (eventCb === cb) eventCb = undefined; };
     },
     pushEvent(ev) { route(ev); },
-    parkPermission(entry) { route({ kind: "permission", entry }); },
-    settlePermission(toolUseID, by, decision) { route({ kind: "permission_settled", toolUseID, by, decision }); },
+    parkPermission(entry) { route({ kind: "decision", entry }); },
+    settlePermission(toolUseID, by, decision) { route({ kind: "decision_settled", toolUseID, by, decision }); },
   };
   return fake;
 }
