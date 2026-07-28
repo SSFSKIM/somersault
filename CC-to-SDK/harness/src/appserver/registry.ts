@@ -6,6 +6,12 @@ import type { ItemEvent } from "./items/types.js";
 
 export type ThreadOrigin = "inProcess"; // fleet adoption is M3
 
+/** One buffered item event tagged with the turn it belongs to. The buffer is a bounded PER-TURN
+ *  window (spec §5: subscribe-time replay is the in-flight turn's items; completed-turn history comes
+ *  from thread/read) — `record.buffer` is reset at the start of every turn, and each event also carries
+ *  its `turnId` so a later replay (Task 9) can filter reliably instead of trusting the reset alone. */
+export interface BufferedItemEvent { turnId: string; event: ItemEvent }
+
 /** The subset of the lib Session the server drives in M1 (structural — the real Session satisfies
  *  this without adapting). */
 export interface EngineSession {
@@ -23,8 +29,8 @@ export interface ThreadRecord {
   unattended: "park" | "deny";
   busy: boolean;
   turnSeq: number;
-  interruptRequested: boolean; // set by turn/interrupt; read by the submit-rejection handler to pick "interrupted" vs "failed"
-  buffer: ItemEvent[];
+  interruptRequested: boolean; // set by turn/interrupt; read by both the success and rejection paths to pick "interrupted" vs "completed"/"failed"
+  buffer: BufferedItemEvent[]; // reset at the start of every turn (see BufferedItemEvent) — not a rolling lifetime window
   subscribers: Set<Peer>;
   chain: Promise<unknown>;      // serialization scope for thread-scoped methods (record.chain = record.chain.then(...))
   sessionId?: string;

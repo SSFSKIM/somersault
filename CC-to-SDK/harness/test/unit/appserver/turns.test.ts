@@ -89,6 +89,75 @@ describe("appserver turns (Task 8)", () => {
     expect(parsed(s.lines).find((f) => f.id === 4).result.turn.status).toBe("inProgress");
   });
 
+  it("a submit that RESOLVES after interrupt() (the real engine's actual contract — session.ts's readLoop discards error_during_execution and resolves the waiter) completes as 'interrupted', not 'completed'", async () => {
+    let resolveSubmit!: (r: { result: unknown }) => void;
+    const sessionFactory = () => ({
+      submit: (_prompt: string, _onMessage: (m: unknown) => void) => new Promise<{ result: unknown }>((resolve) => { resolveSubmit = resolve; }),
+      interrupt: async () => { resolveSubmit({ result: {} }); return {}; },
+      dispose: async () => {},
+      onFrame: () => () => {},
+      sessionId: "sess-1",
+    });
+    const { s, c, threadId } = await bootThread(sessionFactory);
+
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await tick(); // let the chain callback run and call submit(), capturing resolveSubmit
+    send(c, { id: 4, method: "turn/interrupt", params: { threadId } });
+    await tick();
+
+    const interruptReply = parsed(s.lines).find((f) => f.id === 4);
+    expect(interruptReply.result).toEqual({ interrupted: true });
+    const completed = parsed(s.lines).find((f) => f.method === "turn/completed");
+    expect(completed.params.turn).toEqual({ id: `turn_${threadId}_1`, status: "interrupted" });
+  });
+
+  it("turn/interrupt arriving in the SAME synchronous tick as turn/start (before the chain callback runs) still reports 'interrupted' — the flag must not be wiped by that turn's own deferred setup", async () => {
+    const sessionFactory = () => ({
+      // Resolves quickly regardless of whether interrupt() ran first — the point under test is only
+      // whether interruptRequested survives to when onSuccess reads it, not submit/interrupt ordering.
+      submit: async () => ({ result: {} }),
+      interrupt: async () => ({}),
+      dispose: async () => {},
+      onFrame: () => () => {},
+      sessionId: "sess-1",
+    });
+    const { s, c, threadId } = await bootThread(sessionFactory);
+
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    send(c, { id: 4, method: "turn/interrupt", params: { threadId } }); // same tick — no await between sends
+    await tick();
+
+    const completed = parsed(s.lines).find((f) => f.method === "turn/completed");
+    expect(completed.params.turn).toEqual({ id: `turn_${threadId}_1`, status: "interrupted" });
+  });
+
+  it("submit() throwing SYNCHRONOUSLY (not returning a rejected promise) still completes as failed, clears busy, and does not wedge the thread's chain", async () => {
+    const sessionFactory = () => ({
+      submit: () => { throw new Error("sync boom"); },
+      interrupt: async () => ({}),
+      dispose: async () => {},
+      onFrame: () => () => {},
+      sessionId: "sess-1",
+    });
+    const { s, c, threadId } = await bootThread(sessionFactory);
+
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await tick();
+    const completed = parsed(s.lines).find((f) => f.method === "turn/completed");
+    expect(completed.params.turn.status).toBe("failed");
+    expect(completed.params.turn.error).toMatch(/sync boom/);
+
+    // busy must be cleared — a subsequent turn/start on this thread is accepted, not -33001
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "again" } });
+    await tick();
+    expect(parsed(s.lines).find((f) => f.id === 4).result.turn.status).toBe("inProgress");
+
+    // the chain must not be wedged — a subsequent thread/close still gets a reply
+    send(c, { id: 5, method: "thread/close", params: { threadId } });
+    await tick();
+    expect(parsed(s.lines).find((f) => f.id === 5).result).toEqual({ ok: true });
+  });
+
   it("turn/interrupt sets interruptRequested; a submit that subsequently rejects completes as 'interrupted' (mirrors the engine's interrupt-throws contract)", async () => {
     let rejectSubmit!: (e: unknown) => void;
     const sessionFactory = () => ({
@@ -137,7 +206,7 @@ describe("appserver turns (Task 8)", () => {
     expect(parsed(s.lines).find((f) => f.id === 3).error.code).toBe(ERR.INVALID_PARAMS);
   });
 
-  it("record.buffer caps at 500 events and drops the oldest (Task 9 replays this bound)", async () => {
+  it("record.buffer caps at 500 events and drops the oldest, tagged with their turnId (Task 9 replays this bound)", async () => {
     const sessionFactory = () => ({
       submit: async (_prompt: string, onMessage: (m: unknown) => void) => {
         for (let i = 0; i < 300; i++) {
@@ -155,9 +224,35 @@ describe("appserver turns (Task 8)", () => {
     await tick();
 
     const record = srv.registry.get(threadId)!;
+    const turnId = `turn_${threadId}_1`;
     expect(record.buffer).toHaveLength(500);
     // 300 frames * 2 events (started, completed) = 600 pushed; the oldest 100 are dropped.
-    expect(record.buffer[0]).toEqual({ kind: "started", item: { type: "agentMessage", id: "msg50#0", text: "t50" } });
-    expect(record.buffer[499]).toEqual({ kind: "completed", item: { type: "agentMessage", id: "msg299#0", text: "t299" } });
+    expect(record.buffer[0]).toEqual({ turnId, event: { kind: "started", item: { type: "agentMessage", id: "msg50#0", text: "t50" } } });
+    expect(record.buffer[499]).toEqual({ turnId, event: { kind: "completed", item: { type: "agentMessage", id: "msg299#0", text: "t299" } } });
+  });
+
+  it("record.buffer is a PER-TURN window — reset at the start of the next turn, not a rolling lifetime window", async () => {
+    const sessionFactory = () => ({
+      submit: async (_prompt: string, onMessage: (m: unknown) => void) => {
+        onMessage({ type: "assistant", message: { id: "msgA", content: [{ type: "text", text: "a" }] } });
+        return { result: {} };
+      },
+      interrupt: async () => ({}),
+      dispose: async () => {},
+      onFrame: () => () => {},
+      sessionId: "sess-1",
+    });
+    const { srv, c, threadId } = await bootThread(sessionFactory);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await tick();
+    const record = srv.registry.get(threadId)!;
+    expect(record.buffer).toHaveLength(2); // started + completed for the first turn's one item
+    expect(record.buffer.every((b) => b.turnId === `turn_${threadId}_1`)).toBe(true);
+
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "again" } });
+    await tick();
+    // the second turn's buffer must contain ONLY its own events, not the first turn's leftovers
+    expect(record.buffer).toHaveLength(2);
+    expect(record.buffer.every((b) => b.turnId === `turn_${threadId}_2`)).toBe(true);
   });
 });
