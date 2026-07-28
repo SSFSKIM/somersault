@@ -29,8 +29,8 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | 4. Modals / overlays | ~60% | ~88% |
 | 5. Slash commands | ~55% | ~70% |
 | 6. Polish (glyphs, colors, affordances) | ~40% | ~74% |
-| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~86% |
-| **Overall (impact-weighted)** | **~46%** | **~84%** |
+| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% |
+| **Overall (impact-weighted)** | **~46%** | **~83%** |
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -187,18 +187,23 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | AskUserQuestion dialog | 🟡 | — | **GB8** `QuestionDialog.tsx` — sequential per-question flow (`[i/N]` progress, header chip), options as numbered rows + arrows, `multiSelect` toggled with space, an always-present "Other" free-text row → `response`; consults `canUseTool` in every permission mode incl. `bypassPermissions` (probe 65). Divergence: CC renders multiple questions as **side-by-side tabs**; we go one at a time — keyboard-identical outcomes, an accepted divergence (spec Decision Log) |
 | Plan-mode approval dialog (ExitPlanMode) | ✅ | — | **GB9** — moved here from §4 (was ❌). `PlanDialog.tsx` renders the plan as markdown in a 14-line scrollable window (↑↓ scroll), then CC's three choices (`1` approve + auto-accept edits · `2` approve, manual edits · `3`/Esc reject with a one-line feedback prompt); approve lets the CLI flip `permissionMode` itself (probe 66) — the dialog only reports the human's choice |
 | `plan` on the Tab ladder | ✅ | — | **GB7** the ladder is now `default → acceptEdits → plan → auto` (`useChat.ts` `ladderNext`); off-ladder modes (`bypassPermissions`) still re-enter at `default` |
-| Ctrl+B background | ✅ | — | **GB10** `ChatApp.tsx` — mid-turn `Ctrl+B` backgrounds the running turn (`backgroundNow` → `Session.backgroundAll()`, probe 39); idle `Ctrl+B` opens the background-task panel |
+| Ctrl+B background | 🟡 | — | **GB10** `ChatApp.tsx` — the key and the host `background` op are fully wired (`backgroundNow` → `Session.backgroundAll()`, probe 39) and idle `Ctrl+B` opens the background-task panel; but **live acceptance (2026-07-28)** found the real CLI does not detach an in-flight foreground `Bash` call — the op is accepted and the SDK reports success, yet the command runs to completion in the foreground regardless. The verified surface is **model-initiated** background shells (`run_in_background: true`): `⚙ N` status-bar count, `/bg` panel row, and stop-from-panel all confirmed live |
 | `/bg` panel | 🟡 | — | **GB10** `BgTasksPanel.tsx` — one row per background task (shells/subagents/workflow — one stream) from the live `tasks_changed` snapshot; ↑↓ select, `k`/`x` stop, Esc close. Divergence: the command is **`/bg`**, not `/tasks` — `/tasks` would collide with the existing `TaskPanel.tsx` (the model's todo checklist), a deliberate rename recorded in the spec's Decision Log |
 | Task lifecycle notices | ✅ | — | **GB7** `task_started`/`task_notification` frames render as one-line transcript notices (`⚙ task started: …` / `✓ task done: …` / `✗ task failed: …` / `◼ task stopped: …`), honoring `skip_transcript` |
 | Subagent attribution on dialogs | 🟡 | — | **GB5** a host-side correlation map (`parentToolUseID` from nested frames → `subagentType` from `task_started` frames) stamps `Subagent (<type>) asks:` on the Question/Plan/Permission dialogs when known; **best-effort** — a miss renders unattributed and never blocks (no per-subagent drill-in transcript view — spec Non-goals) |
 | Status-bar mode truth | ✅ | — | **GB5** the host intercepts the CLI's own `system`/`status` frames and pushes the real `permissionMode` on every `state` event (one field, last-write-wins between the CLI's own flip and the host's setter calls); closes the previously recorded "status bar starts at `default`" quirk — see the `full-use-checklist.md` A1 note, updated alongside this |
 
-**Score: ~86%** — 5 of 8 rows are fully CC-faithful (✅); 3 carry an accepted, spec-recorded divergence
-from CC's exact form while delivering the same functional/keyboard outcome (🟡 — sequential questions,
-`/bg` naming, best-effort attribution). All eight rows work identically in the foreground REPL and over
-`ccx attach` — closing the spec's motivating failure ("a `--bg` worker that hits a question and can only
-stall"). **Live acceptance has not run yet** (that is a separate task) — this scores what the shipped code
-implements, not a verified live pass.
+**Score: ~81%** — 4 of 8 rows are fully CC-faithful (✅); 4 carry a caveat (🟡). Three are accepted,
+spec-recorded divergences from CC's exact form while delivering the same functional/keyboard outcome
+(sequential questions, `/bg` naming, best-effort attribution). The fourth — Ctrl+B background — is a
+**live-acceptance-verified functional gap**, not a form divergence: the key/op path backgrounds nothing
+for an already-running foreground shell, and only the model-initiated path (`run_in_background: true`)
+reaches the panel. The other seven rows work identically in the foreground REPL and over `ccx attach` —
+closing the spec's motivating failure ("a `--bg` worker that hits a question and can only stall").
+**Live acceptance ran 2026-07-28** (`docs/superpowers/specs/2026-07-28-control-plane-fidelity-design.md`
+§ Outcomes): the AskUserQuestion round-trip (detached + Other free-text), the plan-approval loop, and
+subagent attribution all PASS; background shells PASS for the model-initiated path and are where the
+Ctrl+B gap above was found.
 
 ---
 

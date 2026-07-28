@@ -372,17 +372,23 @@ ccx --cwd /tmp/ccqa --permission-mode plan
   PlanDialog에 다시 도달하고, 이번엔 `2`를 누름 → 상태 표시줄이 `acceptEdits`가 아니라
   `mode default`를 보여주고, 이어지는 편집은 여전히 일반 PermissionDialog를 띄운다.
 
-### C9. Ctrl+B 백그라운드 + `/bg` 패널
+### C9. 백그라운드 셸 + `/bg` 패널
 
 ```bash
 ccx --cwd /tmp/ccqa
 ```
 
-- [ ] **턴 도중 Ctrl+B가 그것을 백그라운드로 보냄** — 긴 셸을 시작하고
-  (`Run the bash command: sleep 20 && echo BG-DONE. Use the Bash tool.`), 실행 중일 때(상태
-  표시줄에 `⟳ streaming`) `Ctrl+B`를 누름 → 다이얼로그 없이, 턴이 계속 실행되어 완료되고(더 이상
-  Bash 호출이 포그라운드를 막지 않음), SDK의 백그라운드 태스크 스냅샷이 도착하면 상태 표시줄에
-  `⚙ 1 bg` 카운트가 나타난다.
+- [ ] **모델에게 백그라운드로 무언가를 실행하도록 요청함** — `Run the bash command: sleep 20 &&
+  echo BG-DONE, in the background.`라고 프롬프트해 모델이 `run_in_background: true`로 `Bash`를
+  호출하게 함 → 다이얼로그 없이 턴이 계속 실행되고, SDK의 백그라운드 태스크 스냅샷이 도착하면
+  상태 표시줄에 `⚙ 1 bg` 카운트가 나타난다.
+- [ ] **알려진 한계: Ctrl+B는 이미 실행 중인 포그라운드 셸을 백그라운드로 보내지 못함** — 긴
+  *포그라운드* 셸을 시작하고(`Run the bash command: sleep 20 && echo BG-DONE. Use the Bash
+  tool.`), 실행 중일 때(상태 표시줄에 `⟳ streaming`) `Ctrl+B`를 누름: 키 입력은 받아들여지고
+  SDK도 성공을 보고하지만, 실제 CLI는 그 호출을 분리하지 않는다 — 포그라운드에서 완료까지
+  실행되고 백그라운드 태스크 스냅샷은 나타나지 않는다. 2026-07-28에 라이브로 검증됨
+  (`docs/superpowers/specs/2026-07-28-control-plane-fidelity-design.md` § Outcomes); 패널을
+  채우려면 위의 모델 주도 단계를 사용할 것.
 - [ ] **`/bg`는 언제든 패널을 염** — `/bg` ↵ 입력(또는 **유휴** 상태에서 `Ctrl+B`) →
   **BgTasksPanel**이 백그라운드 태스크를 `<short id> · <type> · <description>` 형태로 나열한다.
 - [ ] **`k`/`x`가 그것을 중지시킴** — 패널이 열린 상태에서 ↑/↓로 행을 선택하고 `k` 또는 `x`를

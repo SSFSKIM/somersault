@@ -362,17 +362,23 @@ Prompt: `Plan how you'd add a hello() function to note.txt. Call ExitPlanMode wh
   PlanDialog again, and this time press `2` → the status bar shows `mode default` (not
   `acceptEdits`), and a follow-up edit **does** prompt a normal PermissionDialog.
 
-### C9. Ctrl+B background + `/bg` panel
+### C9. Background shells + `/bg` panel
 
 ```bash
 ccx --cwd /tmp/ccqa
 ```
 
-- [ ] **Ctrl+B mid-turn backgrounds it** — start a long shell
-  (`Run the bash command: sleep 20 && echo BG-DONE. Use the Bash tool.`) and, while it's running
-  (status bar shows `⟳ streaming`), press `Ctrl+B` → no dialog appears, the turn keeps running to
-  completion (the Bash call is no longer blocking it), and once the SDK's background-tasks snapshot
-  arrives the status bar shows a `⚙ 1 bg` count.
+- [ ] **Ask the model to run something in the background** — prompt
+  `Run the bash command: sleep 20 && echo BG-DONE, in the background.` so the model calls `Bash`
+  with `run_in_background: true` → no dialog appears, the turn keeps running, and once the SDK's
+  background-tasks snapshot arrives the status bar shows a `⚙ 1 bg` count.
+- [ ] **Known gap: Ctrl+B does not background an already-running foreground shell** — start a long
+  *foreground* shell (`Run the bash command: sleep 20 && echo BG-DONE. Use the Bash tool.`) and,
+  while it's running (status bar shows `⟳ streaming`), press `Ctrl+B`: the keypress is accepted and
+  the SDK reports success, but the live CLI does not detach the call — it runs to completion in the
+  foreground and no background-task snapshot appears. Verified live 2026-07-28
+  (`docs/superpowers/specs/2026-07-28-control-plane-fidelity-design.md` § Outcomes); use the
+  model-initiated step above to populate the panel instead.
 - [ ] **`/bg` opens the panel anytime** — type `/bg` ↵ (or press `Ctrl+B` while **idle**) → a
   **BgTasksPanel** lists the backgrounded task as `<short id> · <type> · <description>`.
 - [ ] **`k`/`x` stops it** — with the panel open, ↑/↓ to select the row, press `k` or `x` → a

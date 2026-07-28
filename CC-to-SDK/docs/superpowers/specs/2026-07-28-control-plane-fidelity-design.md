@@ -287,11 +287,55 @@ Keyless halves always run; live halves gate on `CC-to-SDK/.env` credentials as u
   `system`/`status` frame. Two dividends: our dialog only layers the optional `acceptEdits`
   upgrade, and the status frame is a native push channel for the mode — the cure for A2b's
   "status bar starts at `default`" quirk, which this spec closes as a side effect.
-- (During implementation — append here.)
+- **Live acceptance (2026-07-28), Ink `key.return` chunk bug:** Ink only sets `key.return === true`
+  when the raw input chunk is *exactly* `"\r"`. Any longer chunk — a paste, or a scripted pty write
+  of `"green actually\r"` — arrives with `key.return === false` and the newline embedded in
+  `input`. Both `QuestionDialog`'s and `PlanDialog`'s free-text rows checked `key.return` first, so
+  the typed text (and its trailing submit) was silently discarded and the host stayed parked
+  forever. Found because the acceptance driver hung on the Other-channel run. Fixed in commit
+  `1d1cd36e13` by splitting the chunk at the first newline (the idiom already used in
+  `src/tui/editor.ts`), with four new regression tests per dialog.
+- **Live acceptance (2026-07-28), roster vs. socket:** the fleet roster (`ccx agents --json`) does
+  not carry `waitingFor` — only the host's `status` op does. Acceptance drivers that need to assert
+  the park *kind* (question vs. plan vs. permission) must query the socket directly, not the roster.
+- **Live acceptance (2026-07-28), Ink full-frame redraws:** Ink redraws the whole frame on every
+  update, so a pty-driven assertion must match against the *tail* of the accumulated output buffer
+  (the current frame), never the whole buffer — and a long dialog title can scroll out of a small
+  tail window, so anchor assertions on the bottom-of-frame choice lines instead.
+- **Live acceptance (2026-07-28), no leading-sleep Bash:** the SDK CLI refuses a leading foreground
+  `sleep` in a `Bash` call and steers the model toward `run_in_background` instead — which is what
+  forced the Ctrl+B acceptance phase to use a loop command rather than a plain `sleep`, and is part
+  of how the Ctrl+B gap below (④) was surfaced.
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+Live acceptance executed 2026-07-28 (scripted-pty drivers against the real SDK, controller-run per
+Task 12). Verdict table for the spec's Acceptance ①–⑥:
+
+| # | Item | Verdict | Evidence |
+|---|---|---|---|
+| ① | Question round-trip, detached | **PASS** | `--bg` host parked `waitingFor=question:AskUserQuestion` (read off `status`); `ccx attach` rendered `QuestionDialog`; Ctrl+Z detached with the park intact (roster stayed `blocked`); re-attach re-rendered it; `2` answered "blue" → model replied `CHOSE:blue`. A second run exercised the Other free-text row: typed text arrived as `The user responded: green actually` → model replied `CHOSE:green actually` — the `updatedInput.response` channel works end-to-end through the UI. |
+| ② | Plan-mode loop | **PASS** | Foreground `--permission-mode plan`: first `PlanDialog` rendered; `3` + "hello.txt must contain 'hello world' instead" sent the rejection; model revised and re-called `ExitPlanMode` (second `PlanDialog`); `1` (approve + auto-accept) drove the status bar to `acceptEdits` and the file landed with `hello world`. The interim-mode race this design pre-armed for (a fast first Write parking one permission dialog under the interim `default` mode) **did not occur in the passing run** — the race is unexercised, not disproven. |
+| ③ | Background shells | **PASS, with a real negative** | Phase A (asserted): a model-initiated background shell (`Bash` with `run_in_background: true`) produced `⚙ 1` in the status bar, `/bg` listed it in the panel, `k` stopped it with a `task stopped` notice. Phase B (informational): pressing **Ctrl+B while an ordinary foreground `Bash` call was running produced no background-task snapshot at all** — the command ran to completion in the foreground per the model's own summary. The host's `background` op is accepted and the SDK reports success, but the live CLI does not detach an in-flight foreground shell. The panel, the count, and stop-from-panel are real; Ctrl+B-as-backgrounding is not. |
+| ④ | Subagent attribution | **CLOSED POSITIVE** | Settles the carried premise (§ Grounding): a `general-purpose` subagent's `Bash` call parked the host (`waitingFor=permission:Bash`) and the dialog rendered the `Subagent (…) asks:` attribution line; task lifecycle notices appeared too. The premise is now **settled-positive** (was: unverified) — the recorded fallback (task notices + panel rows only, no dialog attribution) was not needed. |
+| ⑤ | Keyless refusals | **PASS** | The three named tests exist and pass; a keyless question round-trip over the real UDS socket was added to `test/integration/host-client.test.ts` (commit `4bccb1669e`). |
+| ⑥ | Docs close-out | **landed** | Commit `b5f75f9b3c` (Task 11), plus this acceptance-recording update. |
+
+Full keyless gate at acceptance time: `npm run typecheck` clean; `npx vitest run test/unit test/tui
+test/contract test/integration` → 1245 passed, 9 skipped (live suites, no key); `npm run build` clean.
+
+**Retrospective.** Three of the four acceptance items that touch live UI input (①'s Other row, ②'s
+rejection feedback) share one root cause — the Ink `key.return`-chunking bug above — caught only
+because a scripted driver hangs instead of silently mis-happening the way a human typist wouldn't
+reproduce (a human always sends `Enter` as its own keystroke). ④'s carried premise resolved cleanly
+in the direction the design hoped, so the attribution dialog-title code path is live, not a dead
+fallback. ③ is the one genuine capability gap this acceptance found: the design's own grounding
+(probe 39) established that `backgroundTasks()` backgrounds a blocking foreground `Bash` mid-turn,
+but the live acceptance run — using the real `ccx` CLI end-to-end rather than probing the SDK
+`Query` object directly — did not reproduce that for a `Ctrl+B` keypress. The wiring (key → host
+`background` op → `session.backgroundAll()`) is exactly as designed; what's missing is the CLI
+actually detaching the call. This is recorded as a known gap in `docs/parity/tui-ux.md` §8 and the
+two `full-use-checklist*.md` walkthroughs, not silently absorbed.
 
 ## Revision Notes
 
@@ -306,3 +350,9 @@ Pending — written at finish.
   auto-allow), interrupt-settle emit marked as new wiring, per-kind deny copy located in the gate,
   Other free-text folded into acceptance ①, `annotations` noted in Non-goals, doperpowers
   `waitingFor` grep recorded in Grounding.
+- 2026-07-28 rev 3 — live acceptance executed and recorded: ①②④⑤⑥ PASS; ③ PASS with a real negative
+  (Ctrl+B does not background an in-flight foreground shell live, though model-initiated background
+  shells fully work); ④'s carried premise settled positive; four new Surprises (Ink `key.return`
+  chunking, roster-vs-socket `waitingFor`, Ink full-frame redraw tail-matching, no-leading-sleep
+  Bash) added above. Downstream docs corrected to match: `docs/parity/tui-ux.md` §8, both
+  `full-use-checklist*.md` walkthroughs, `docs/parity/coverage.md`.
