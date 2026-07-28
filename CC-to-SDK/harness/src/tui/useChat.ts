@@ -30,7 +30,7 @@ export interface SessionInfo { sessionId: string; summary: string; firstPrompt?:
 export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; }
 
 const LADDER = ["default", "acceptEdits", "plan", "auto"] as const;   // Tab cycles these; bypassPermissions stays off-cycle (/yolo)
-/** Next mode on the Tab ladder; any off-ladder mode (bypassPermissions/plan/…) re-enters at "default". */
+/** Next mode on the Tab ladder; any off-ladder mode (e.g. bypassPermissions/dontAsk) re-enters at "default". */
 function ladderNext(mode: string): string { const i = (LADDER as readonly string[]).indexOf(mode); return i >= 0 ? LADDER[(i + 1) % LADDER.length] : "default"; }
 
 export function useChat(

@@ -370,4 +370,31 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
       await stopQuietly(host);
     }
   });
+
+  // Final-review finding 2: onClose used to settle the turn waiter but leave any still-parked decision
+  // untouched — dropPending never fired, so the decision dialog stayed mounted on a dead connection
+  // until the 10s request timeout. This pins the fix: a dead host synthesizes a system settle for every
+  // still-parked decision, exactly once.
+  it("14. host death mid-park: a parked decision is settled system/deny exactly once when the connection dies, and pendingNow() empties", async () => {
+    const { host, path } = await startHost();
+    const adapter = remoteChatSession(path);
+    const settled: { toolUseID: string; by: string; decision: string }[] = [];
+    let decision: Promise<unknown> | undefined;
+    try {
+      await adapter.whenReady();
+      adapter.onDecisionSettled((s) => settled.push(s));
+      decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "tD", signal: new AbortController().signal });
+      await vi.waitFor(() => expect(adapter.pendingNow()).toHaveLength(1));
+      // Destroy the transport out from under the running host — the process-crash case, same trick as test 10.
+      await (host as unknown as { server: { close(): Promise<void> } }).server.close();
+      await vi.waitFor(() => expect(settled).toHaveLength(1));
+      expect(settled[0]).toMatchObject({ toolUseID: "tD", by: "system", decision: "deny" });
+      expect(adapter.pendingNow()).toHaveLength(0);   // the dialog's underlying entry is gone — dropPending can fire
+    } finally {
+      adapter.detach();
+      host.answer("tD", { kind: "deny" }, "test");   // the host's own park is untouched by the socket close — settle it so the test doesn't leak a pending promise
+      await decision?.catch(() => {});
+      await stopQuietly(host);
+    }
+  });
 });

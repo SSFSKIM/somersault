@@ -11,7 +11,7 @@ export function BgTasksPanel({ tasks, onStop, onClose }: { tasks: BackgroundTask
   useInput((input, key) => {
     if (key.escape) { onClose(); return; }
     if (key.upArrow) { setIdx((i) => Math.max(0, i - 1)); return; }
-    if (key.downArrow) { setIdx((i) => Math.min(tasks.length - 1, i + 1)); return; }
+    if (key.downArrow) { setIdx((i) => Math.min(Math.max(0, tasks.length - 1), i + 1)); return; }
     if ((input === "k" || input === "x") && tasks[sel]) onStop(tasks[sel].task_id);
   });
   return (

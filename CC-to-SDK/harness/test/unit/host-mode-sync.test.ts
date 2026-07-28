@@ -114,6 +114,32 @@ describe("host mode sync (one source of truth, last-write-wins)", () => {
     await host.stop();
   });
 
+  // Final-review finding 1: resumeSession() used to open the fresh engine from the LAUNCH config only,
+  // never re-consulting `this.mode` — so a live Tab-laddered (or plan-earned) mode choice silently
+  // evaporated on /resume while status() kept reporting it. Chosen repair: open the resumed engine at
+  // the CURRENT runtime mode (carries live user intent across the resume), not re-seeded from the launch
+  // config (which would silently discard that choice with no notice). Whichever repair, the host's
+  // reported mode and the engine's actual mode must agree afterward — this pins that invariant AND the
+  // specific engine-open call.
+  it("resumeSession opens the new engine at the CURRENT runtime mode, not the launch config's", async () => {
+    const { fake } = fakeSession();
+    const opens: any[] = [];
+    const host = new SessionHost(
+      { short: "e0e0e0e1", name: "t", cwd: "/tmp", kind: "bg", detached: true, config: { permissionMode: "acceptEdits" } as never, env: { CCX_FLEET_ROOT: tmpFleet() } },
+      { openSession: (c: unknown) => { opens.push(c); return fake as any; }, procStartOf: async () => "start" },
+    );
+    await host.start();
+    expect(host.status().permissionMode).toBe("acceptEdits");
+    await host.control({ op: "set_permission_mode", mode: "default" });   // live Tab-ladder choice
+    expect(host.status().permissionMode).toBe("default");
+    await host.resumeSession("resume-id-1");
+    // The resumed engine must be opened at the LIVE runtime mode ("default"), not the launch config's
+    // stale "acceptEdits" — and status() must agree with what the engine actually has.
+    expect(opens[1]).toMatchObject({ resume: "resume-id-1", permissionMode: "default" });
+    expect(host.status().permissionMode).toBe("default");
+    await host.stop();
+  });
+
   it("a failed/interrupted turn clears planUpgradePending in the catch, not just the try", async () => {
     const fake = {
       sessionId: "sid-1",

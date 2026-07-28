@@ -62,6 +62,16 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
     r.onClose((e) => {
       if (turnWaiter) { const w = turnWaiter; turnWaiter = undefined; w.reject(e); }
       turnSink = undefined;
+      // A dead host must also settle every still-parked decision — otherwise useChat's dropPending
+      // never fires, the dialog stays mounted on a connection that will never answer, and the only way
+      // out is the 10s request timeout or Ctrl+C (the teardown-liveness bug class this project keeps
+      // rediscovering). Snapshot pendingList BEFORE routing: route() mutates it as each synthetic
+      // decision_settled is processed, and iterating the live array while splicing it would skip
+      // entries. Settles exactly once and cannot double-fire against a real decision_settled already in
+      // flight: Node delivers all buffered `data` (including any settle the host sent before it went
+      // away) before `close` fires, so by the time this callback runs, pendingList already reflects
+      // every real settle — an entry this loop touches was never settled for real.
+      for (const entry of [...pendingList]) route({ kind: "decision_settled", toolUseID: entry.toolUseID, by: "system", decision: "deny" });
       route({ kind: "turn", phase: "end", error: e.message });   // no seq: pure UI unblock, matches no waiter
     });
     if (opts.resume) { const rep = await r.resumeOp(opts.resume); if (!rep.ok) throw new Error(rep.error ?? "resume refused"); }

@@ -283,7 +283,14 @@ export class SessionHost {
   async resumeSession(sessionId: string): Promise<void> {
     if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
     const old = this.session;
-    this.session = this.deps.openSession({ ...this.opts.config, resume: sessionId, permissionBroker: this.broker() });
+    // Open the resumed engine at the CURRENT runtime mode (`this.mode`), not the launch config's. `this.mode`
+    // is the one field every writer (status-frame intercept, set_permission_mode, plan-upgrade) keeps
+    // truthful for exactly this purpose — a Tab-laddered or plan-earned mode is live user intent, and
+    // /resume is "same conversation continues," not "reset to launch config." Silently reverting it here
+    // (re-seeding from resolvedPermissionMode instead) would be the OTHER obvious fix, but it throws away a
+    // choice the user just made with no notice — the worse surprise of the two. This keeps the host's
+    // reported mode and the engine's actual mode in agreement, which is the one invariant that must hold.
+    this.session = this.deps.openSession({ ...this.opts.config, resume: sessionId, permissionMode: this.mode as HarnessConfig["permissionMode"], permissionBroker: this.broker() });
     this.turnBuffer.reset(); this.settledBy.clear();
     this.parentOf.clear(); this.subagentOf.clear();   // the old session's attribution is gone with it
     // Plan-review I1: the swap replaces `this.session` with a fresh Session whose subscriber set is
