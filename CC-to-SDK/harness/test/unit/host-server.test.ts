@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect } from "node:net";
 import { HostServer } from "../../src/host/server.js";
+import type { PendingEntry } from "../../src/permissions/pending.js";
+import type { DecisionOutcome } from "../../src/permissions/types.js";
 
 let srv: HostServer | undefined;
 afterEach(async () => { await srv?.close(); srv = undefined; });
@@ -223,5 +225,49 @@ describe("HostServer", () => {
     await vi.waitFor(() => expect(srv!.connectionCount()).toBe(1));
     c.close();
     await vi.waitFor(() => expect(srv!.connectionCount()).toBe(0));
+  });
+
+  // GB fix pass: the mutual-exclusivity guard on `answer` (both/neither of decision|answer refused) was
+  // implemented in server.ts's dispatch but never exercised — these three pin it, including the
+  // previously-untested structured-only accept path.
+  describe("answer op: decision|answer mutual exclusivity", () => {
+    it("refuses both decision and answer present, and leaves the park intact", async () => {
+      const sock = sockPath();
+      const parked: PendingEntry[] = [{ sessionId: "s1", toolUseID: "tu-1", toolName: "ExitPlanMode", kind: "plan", input: {}, createdAt: 0 }];
+      const settled = new Set<string>();
+      srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {},
+        pending: () => parked.filter((e) => !settled.has(e.toolUseID)),
+        answer: (toolUseID) => { settled.add(toolUseID); return { ok: true }; } }, sock);
+      await srv.listen();
+      const reply = await ask(sock, { op: "answer", toolUseID: "tu-1", by: "human", decision: "deny", answer: { kind: "plan_reject" } });
+      expect(reply).toEqual({ ok: false, error: "answer needs exactly one of decision|answer" });
+      expect(settled.size).toBe(0);   // the handler must never have been reached
+      expect(await ask(sock, { op: "pending" })).toEqual({ ok: true, pending: parked });   // still parked
+    });
+
+    it("refuses neither decision nor answer present, and leaves the park intact", async () => {
+      const sock = sockPath();
+      const parked: PendingEntry[] = [{ sessionId: "s1", toolUseID: "tu-2", toolName: "Bash", kind: "permission", input: {}, createdAt: 0 }];
+      const settled = new Set<string>();
+      srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {},
+        pending: () => parked.filter((e) => !settled.has(e.toolUseID)),
+        answer: (toolUseID) => { settled.add(toolUseID); return { ok: true }; } }, sock);
+      await srv.listen();
+      const reply = await ask(sock, { op: "answer", toolUseID: "tu-2", by: "human" });
+      expect(reply).toEqual({ ok: false, error: "answer needs exactly one of decision|answer" });
+      expect(settled.size).toBe(0);
+      expect(await ask(sock, { op: "pending" })).toEqual({ ok: true, pending: parked });
+    });
+
+    it("accepts a structured-only answer and forwards the outcome to the handler untouched", async () => {
+      const sock = sockPath();
+      const calls: { toolUseID: string; outcome: DecisionOutcome; by: string }[] = [];
+      srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {},
+        answer: (toolUseID, outcome, by) => { calls.push({ toolUseID, outcome, by }); return { ok: true }; } }, sock);
+      await srv.listen();
+      const reply = await ask(sock, { op: "answer", toolUseID: "tu-3", by: "human", answer: { kind: "question_answer", answers: { q: "a" } } });
+      expect(reply).toEqual({ ok: true });
+      expect(calls).toEqual([{ toolUseID: "tu-3", outcome: { kind: "question_answer", answers: { q: "a" } }, by: "human" }]);
+    });
   });
 });
