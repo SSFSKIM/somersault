@@ -275,6 +275,42 @@ ordering). Sabotage-verification — revert the fix, watch the test fail, restor
 that distinguishes a guard test from a decorative one, and it was worth running every single time.
 
 
+### Post-merge round: independent Codex review (2026-07-29)
+
+`codex exec review --base <pre-C5>` over the 28-commit range returned **2 P1 + 4 P2**, all real, all
+fixed in `21b2c2ac81` + `1a31fce9a8` (gate after: typecheck clean, **1379 passed / 9 skipped**, build
+clean; live acceptance ① and ② re-run green on the fixed build).
+
+- **P1 — followers kept a stale transcript.** A conversation rewind rebuilt the transcript only in the
+  client that confirmed it; `swapEngine` broadcast a generic `state` event whose handler only syncs
+  `permissionMode`. Every *other* attached client kept rendering the pre-rewind conversation — and kept
+  offering it to `/copy` — while its next prompt ran against the truncated host conversation. Fixed with
+  a new `rewound` host event; all followers rebuild from disk, and a follower deliberately takes **no**
+  composer prefill (someone else's prompt does not belong in this user's editor).
+- **P1 — a timed-out destructive rewind kept running.** The 60s client deadline added earlier that same
+  day was itself a defect on the *mutating* op: the protocol has no cancellation, so on timeout the UI
+  reported failure while the host went on to revert the tree and truncate the conversation, with the late
+  reply dropped. The mutating `rewind` op now has **no client deadline** — a dead host is still caught,
+  because the socket closing rejects every in-flight request (pinned by a test).
+- **P2 — a prompt typed mid-rewind was lost.** The picker closed immediately while `busy` was still
+  false, so a prompt submitted during the (multi-second) restore was cleared from the editor, forwarded,
+  and refused as busy. A `⏪ restoring…` modal now holds the composer until the rewind settles.
+- **P2 — utilization was mis-normalized, and this correction supersedes rev 4(c).** The SDK's own type
+  documents every window's `utilization` as *"Percentage of the window used, 0-100"*
+  (`SDKControlGetUsageResponse`). Rev 4's payload-wide unit inference was therefore wrong in the same
+  direction as the bug it replaced: a genuine 1% still rendered as 100% and fired the ≥80% warning. Unit
+  inference is **deleted** — the value is read as the percent it is declared to be. **The lesson:** this
+  was a *declared-surface* question that a type lookup answers authoritatively, and it was answered by
+  reasoning about sample values instead. `sdk.d.ts` / the `ant` CLI is the tool for "what does it mean";
+  probing is for "does it actually work headlessly."
+- **P2 — `/usage` omitted supported buckets:** `seven_day_oauth_apps`, the server's dynamic
+  `model_scoped[]` windows (labelled by `display_name`), and `extra_usage`. The warning chip could
+  therefore miss a saturated model-scoped window entirely. All three are now parsed and rendered.
+- **P2 — `/copy` could never work on Windows.** `win32` fell through to "no clipboard tool" while the
+  command was advertised in `/help` and the `?` overlay on every platform. Now spawns `clip`. (Note: the
+  package declares no `os` field, so Codex's "Windows support requirement" could not be substantiated —
+  the fix stands on its own merits, not on that claim.)
+
 ## Revision Notes
 
 - rev 1 (2026-07-28): initial spec, written after probe 68 ran (live-probe-first honored).
