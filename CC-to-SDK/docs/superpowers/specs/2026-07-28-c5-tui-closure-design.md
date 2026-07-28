@@ -172,8 +172,10 @@ keyed live test, ⑤ is the standing keyless gate.
    recalls it; *code only* reverts the disk while the transcript and composer are untouched.
 4. **Usage surface**: token-free live run renders at least one utilization bar with a reset time in
    `/usage`; the same command under `CLAUDE_CODE_OAUTH_TOKEN` renders the honest-unavailable line.
-   The token-free half additionally gates on `~/.claude/.credentials.json` existing on the runner
-   (the env-var gate can't see it) — absent, it skips cleanly, never machine-dependent-red.
+   The token-free half gates on **`CC_LIVE_INTERACTIVE_USAGE=1`** *and* `~/.claude/.credentials.json`
+   existing on the runner — absent either, it skips cleanly, never machine-dependent-red. (rev 4: the
+   credentials-file check ALONE silently made a real billed call on any machine that had ever run
+   `claude login`, breaking the project's "keyless means no network" invariant; the opt-in restores it.)
 5. **Keyless gate**: typecheck, unit + tui suites, and build green; every new component carries
    keyless tests (picker flow incl. disabled code rows, usage formatter incl. degraded shape,
    overlay, highlighter, tables, word movement, diff numbering, bash framing, `/copy` DI).
@@ -238,3 +240,11 @@ Pending — written at finish.
   claim), `RewindDryRun` corrected (`filesChanged: string[]`, `error`), host guard for the
   throw-vs-return failure split, background-tasks-die-with-rewind decision, compact-boundary reach
   limit, and the acceptance-④ credentials-file skip gate.
+- rev 4 (2026-07-28, execution): two rev-2/rev-3 decisions corrected by findings during T2/T6.
+  (a) The rewind guard order — validation now precedes every side effect (see Surprises).
+  (b) Acceptance ④'s token-free gate now also requires `CC_LIVE_INTERACTIVE_USAGE=1`: the
+  credentials-file check alone let a plain keyless `vitest run` make a real billed call on any
+  machine with `claude login` history. (c) Utilization unit inference is payload-wide, not
+  per-value: `<=1 → ×100` applied per value turned a genuine `1` (one percent) into `100%` and fired
+  the ≥80% warning; the whole payload is now read as percent if ANY window exceeds 1. A payload
+  whose only present value is exactly `1` stays irreducibly ambiguous and is read as a fraction.
