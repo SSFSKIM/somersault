@@ -104,3 +104,9 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   if (config.agentProgressSummaries !== undefined) options.agentProgressSummaries = config.agentProgressSummaries;
   return { ...options, ...(config.extraOptions ?? {}) };
 }
+
+/** The permission mode the engine will ACTUALLY start in for this config — the host's initial mode
+ *  truth (spec: one mode field, seeded here so a fresh client's status bar never shows a placeholder). */
+export function resolvedPermissionMode(config: HarnessConfig): string {
+  return String((resolveOptions(config) as { permissionMode?: string }).permissionMode ?? "default");
+}

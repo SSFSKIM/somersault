@@ -5,6 +5,7 @@ import { TERMINAL, finalizeRoster, readRoster, writeRoster } from "../fleet/rost
 import { procStartOf as realProcStartOf } from "../fleet/liveness.js";
 import type { FleetState, RosterRow } from "../fleet/roster.js";
 import { openSession as realOpenSession } from "../session/index.js";
+import { resolvedPermissionMode } from "../config/resolveOptions.js";
 import type { HarnessConfig } from "../config/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import { TurnBuffer } from "./follow.js";
@@ -101,6 +102,14 @@ export class SessionHost {
   // Set when a plan_approve settles with acceptEdits:true — consumed by the status-frame handler (Task
   // 5), which is the only reason this task ever SETS it rather than also acting on it.
   private planUpgradePending = false;
+  // ONE source of truth for the engine's permission mode; last-write-wins between an intercepted CLI
+  // `status` frame and a successful set_permission_mode/plan-upgrade setter (spec §mode-sync). Seeded
+  // from resolvedPermissionMode in start(), before this default is ever read.
+  private mode = "default";
+  // Nested tool_use id → parent Agent tool_use id (from nested assistant frames' parent_tool_use_id).
+  private parentOf = new Map<string, string>();
+  // Agent tool_use id → subagent_type (from task_started frames).
+  private subagentOf = new Map<string, string>();
   // REPLACE snapshot of the live background-task set — the last background_tasks_changed frame the
   // session's onFrame delivered (probe 39: never merge). Read by the `tasks` op and replayed to a
   // follower that joins after the frame already fired.
@@ -154,6 +163,9 @@ export class SessionHost {
       ...(this.opts.worktree ? { worktree: this.opts.worktree } : {}),
     };
     writeRoster(row, this.env);                        // written BEFORE any session id exists
+    // Seed the mode truth from the SAME config the engine is about to be opened with — before opening
+    // it, so a fresh client's status bar never shows a placeholder (spec §mode-sync).
+    this.mode = resolvedPermissionMode(this.opts.config);
     try {
       this.session = this.deps.openSession({ ...this.opts.config, permissionBroker: this.broker() });
       this.offFrame = this.session.onFrame?.((m) => this.onSessionFrame(m));
@@ -199,6 +211,7 @@ export class SessionHost {
     this.turnInFlight = true; this.state = "working";
     const seq = ++this.turnSeq_;
     this.turnBuffer.reset(); this.settledBy.clear();
+    this.parentOf.clear(); this.subagentOf.clear();   // attribution is per-turn (spec §attribution)
     this.emit({ kind: "turn", phase: "start", seq });
     // Stamp the roster the MOMENT the engine's session id materializes — it arrives in the init frame
     // near the start of the turn, and Session sets .sessionId before dispatching that frame here. Waiting
@@ -216,8 +229,20 @@ export class SessionHost {
     // A bg worker's success IS the terminal event — `done`. An interactive host stays LIVE across
     // turns instead: `working`, the same state start() wrote, so it is ready for the next runTask()
     // rather than frozen at a state that reads like the whole session is over.
-    try { await this.session!.submit(prompt, onMessage); this.state = this.opts.kind === "bg" ? "done" : "working"; }
-    catch (e) { this.state = "error"; this.emit({ kind: "turn", phase: "end", seq, error: (e as Error)?.message }); throw e; }
+    try {
+      await this.session!.submit(prompt, onMessage);
+      // Turn-end belt: a plan_approve(acceptEdits:true) that settled but never saw the CLI's own
+      // post-approval status frame (e.g. the turn ended before the CLI emitted one) must still upgrade —
+      // never leave an approved upgrade silently unapplied (spec §mode-sync ordering).
+      if (this.planUpgradePending) { this.planUpgradePending = false; await this.applyPlanUpgrade(); }
+      this.state = this.opts.kind === "bg" ? "done" : "working";
+    }
+    catch (e) {
+      // A failed/interrupted turn must not leave a stale approved-upgrade that fires at the NEXT turn's
+      // status frame (plan-review M2) — the plan this upgrade belonged to did not survive the turn.
+      this.planUpgradePending = false;
+      this.state = "error"; this.emit({ kind: "turn", phase: "end", seq, error: (e as Error)?.message }); throw e;
+    }
     // For a BG worker the turn's completion IS the terminal event, so record it here: a host that dies
     // after the turn but before stop() then still reports `done` rather than waiting to be reaped by
     // liveness. An interactive host stays live across turns — finalize is first-terminal-wins, so
@@ -235,7 +260,12 @@ export class SessionHost {
     const need = <T>(v: T | undefined, name: string): T => { if (!v) throw new Error(`${name} unsupported by this host`); return v; };
     switch (op.op) {
       case "set_model": await need(s?.setModel?.bind(s), "set_model")(op.model); return { ok: true };
-      case "set_permission_mode": await need(s?.setPermissionMode?.bind(s), "set_permission_mode")(op.mode); return { ok: true };
+      case "set_permission_mode": {
+        await need(s?.setPermissionMode?.bind(s), "set_permission_mode")(op.mode);
+        this.mode = op.mode;                                      // our own successful set is the second writer
+        this.emit({ kind: "state", status: this.status() });
+        return { ok: true };
+      }
       case "set_thinking": await need(s?.setMaxThinkingTokens?.bind(s), "set_thinking")(op.maxTokens); return { ok: true };
       case "capabilities": return { ok: true, ...await need(s?.capabilities?.bind(s), "capabilities")() };
       case "compact": return { ok: true, outcome: await need(s?.compact?.bind(s), "compact")() };
@@ -255,6 +285,7 @@ export class SessionHost {
     const old = this.session;
     this.session = this.deps.openSession({ ...this.opts.config, resume: sessionId, permissionBroker: this.broker() });
     this.turnBuffer.reset(); this.settledBy.clear();
+    this.parentOf.clear(); this.subagentOf.clear();   // the old session's attribution is gone with it
     // Plan-review I1: the swap replaces `this.session` with a fresh Session whose subscriber set is
     // empty — without re-pointing onFrame here, mode sync, the tasks panel, and attribution all
     // silently die after a /resume, a shipped surface.
@@ -327,10 +358,30 @@ export class SessionHost {
     // Task lifecycle frames arrive with either a bare type tag or as a system subtype depending on SDK
     // path — match both, deterministically (spec §attribution note; acceptance ③ pins the live shape).
     const sub = mm?.type === "system" ? mm.subtype : mm?.type;
+    // Attribution capture happens FIRST, ahead of the task-lifecycle re-emit below, so a task_started
+    // frame both feeds subagentOf AND is re-emitted as a `task` event.
+    if (mm?.type === "assistant" && mm.parent_tool_use_id) {
+      for (const b of mm.message?.content ?? []) if (b?.type === "tool_use" && b.id) this.parentOf.set(String(b.id), String(mm.parent_tool_use_id));
+    }
+    if (sub === "task_started" && mm.tool_use_id && mm.subagent_type) this.subagentOf.set(String(mm.tool_use_id), String(mm.subagent_type));
+    if (mm?.type === "system" && mm.subtype === "status" && typeof mm.permissionMode === "string") {
+      this.mode = mm.permissionMode;
+      // The upgrade is triggered by OBSERVING this frame, never by answer release — the CLI's own flip
+      // rides the message stream and an eager setter would race it (spec §mode-sync ordering).
+      if (this.planUpgradePending) { this.planUpgradePending = false; void this.applyPlanUpgrade(); }
+      else this.emit({ kind: "state", status: this.status() });
+      return;
+    }
     if (sub === "task_started" || sub === "task_notification" || sub === "task_progress" || sub === "task_updated") {
       this.emit({ kind: "task", data: m });
       return;
     }
+  }
+
+  private async applyPlanUpgrade(): Promise<void> {
+    try { await this.session?.setPermissionMode?.("acceptEdits"); this.mode = "acceptEdits"; }
+    catch { /* the CLI's own flip stands; mode stays what the status frame wrote */ }
+    this.emit({ kind: "state", status: this.status() });
   }
 
   /** Ctrl+B passthrough: background in-flight foreground tasks on the underlying session. Throws a
@@ -363,7 +414,10 @@ export class SessionHost {
         // Counted on CONNECTIONS, not followers: a client that connected but has not (yet) followed is
         // still a present human.
         if (!this.opts.detached && (this.server?.connectionCount() ?? 0) === 0) return { kind: "deny" };
-        const decision = this.parked.brokerFor(this.short).request(req);
+        // A map miss parks unattributed, never blocks — attribution is best-effort (spec §attribution).
+        const parentToolUseID = this.parentOf.get(req.toolUseID);
+        const subagentType = parentToolUseID ? this.subagentOf.get(parentToolUseID) : undefined;
+        const decision = this.parked.brokerFor(this.short).request({ ...req, ...(parentToolUseID ? { parentToolUseID } : {}), ...(subagentType ? { subagentType } : {}) });
         const entry = this.parked.list().find((e) => e.toolUseID === req.toolUseID);
         if (entry) this.emit({ kind: "decision", entry });
         this.emit({ kind: "state", status: this.status() });
@@ -426,8 +480,8 @@ export class SessionHost {
    *  first-terminal-wins finalize must never freeze on it. */
   status(): HostStatus {
     const first = this.parked.list()[0];
-    if (first) return { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}`, ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
-    return { state: this.state, status: this.turnInFlight ? "busy" : "idle", ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
+    if (first) return { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}`, permissionMode: this.mode, ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
+    return { state: this.state, status: this.turnInFlight ? "busy" : "idle", permissionMode: this.mode, ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
   }
 
   /** The host's OWN truthful busy signal, wired to the socket's `prompt` gate (see server.ts). Unlike

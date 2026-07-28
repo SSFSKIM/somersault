@@ -105,4 +105,36 @@ describe("host frame plumbing", () => {
     expect(seen).toContainEqual({ kind: "tasks_changed", tasks: tasksAfter });
     await host.stop();
   });
+
+  it("stamps parentToolUseID + subagentType onto a parked decision via the correlation maps", async () => {
+    const { fake, drive } = fakeSession();
+    const host = hostFor(fake);
+    await host.start();
+    drive({ type: "task_started", task_id: "bg1", tool_use_id: "agent-tu", subagent_type: "code-reviewer" });
+    drive({ type: "assistant", parent_tool_use_id: "agent-tu", message: { content: [{ type: "tool_use", id: "inner-tu", name: "Bash", input: {} }] } });
+    void host.broker().request({ toolUseID: "inner-tu", toolName: "Bash", input: {}, kind: "permission", signal: new AbortController().signal });
+    const entry = host.pending()[0];
+    expect(entry.parentToolUseID).toBe("agent-tu");
+    expect(entry.subagentType).toBe("code-reviewer");
+    // A toolUseID with no map hit parks WITHOUT the fields (never blocks).
+    void host.broker().request({ toolUseID: "unmapped-tu", toolName: "Bash", input: {}, kind: "permission", signal: new AbortController().signal });
+    const unattributed = host.pending().find((e) => e.toolUseID === "unmapped-tu")!;
+    expect(unattributed.parentToolUseID).toBeUndefined();
+    expect(unattributed.subagentType).toBeUndefined();
+    await host.stop();
+  });
+
+  it("clears the attribution maps at turn start", async () => {
+    const { fake, drive } = fakeSession();
+    const host = hostFor(fake);
+    await host.start();
+    drive({ type: "task_started", task_id: "bg1", tool_use_id: "agent-tu", subagent_type: "code-reviewer" });
+    drive({ type: "assistant", parent_tool_use_id: "agent-tu", message: { content: [{ type: "tool_use", id: "inner-tu", name: "Bash", input: {} }] } });
+    await host.runTask("go");   // a fake (resolving) turn — must reset the correlation maps
+    void host.broker().request({ toolUseID: "inner-tu", toolName: "Bash", input: {}, kind: "permission", signal: new AbortController().signal });
+    const entry = host.pending().find((e) => e.toolUseID === "inner-tu")!;
+    expect(entry.parentToolUseID).toBeUndefined();
+    expect(entry.subagentType).toBeUndefined();
+    await host.stop();
+  });
 });
