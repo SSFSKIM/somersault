@@ -419,6 +419,14 @@ M1**, since `cancelQueued` and the ask-enrichment fields change M1 wire shapes.
   true}` can only flush the **app-server's own** queued prompts — the SDK's internal input queue
   cannot be flushed at 0.3.220. The scorecard records this as an upstream gap, not a coverage miss.
 
+- **M1 T8 (2026-07-29): an interrupted turn RESOLVES, it does not reject.** `Session.submit()`
+  (`src/session/session.ts`) resolves normally when a turn is interrupted — the SDK result's
+  `error_during_execution` subtype is discarded by `readLoop` before the caller sees it. Any
+  consumer that infers "interrupted" from a rejected submit promise is wrong: interruption must be
+  tracked as *server-side state* (an `interruptRequested` flag scoped to the turn), exactly the way
+  parked decisions are state rather than a request/response. The rejection path still exists for
+  genuine engine failures.
+
 ## Revision Notes
 
 - **Planning (M1, 2026-07-28):** item identity for assistant text/thinking refined from "frame
