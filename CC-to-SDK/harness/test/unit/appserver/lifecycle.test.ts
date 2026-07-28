@@ -64,6 +64,64 @@ describe("appserver thread teardown (C1/I7)", () => {
     expect(parsed(s.lines).find((f) => f.id === 6).error.code).toBe(-33004);
   });
 
+  it("a tool the model reaches for AFTER the closing deny is denied too, instead of parking with nobody left to answer", async () => {
+    // The re-parking case the first fix wave missed: denying a tool hands control back to the model, and a
+    // denied model routinely tries a different tool. If that second request parks, dispose() waits on it
+    // forever and the C1 deadlock is back — teardown() has already run and will not run again.
+    const state = { parked: [] as Promise<unknown>[], disposed: 0 };
+    let broker: any;
+    const srv = new AppServer({}, { sessionFactory: (cfg: any) => { broker = cfg.permissionBroker; return blockingSession(state); } });
+    const s = mkSink(); const c = srv.connect(s.sink);
+    init(c, 1);
+    send(c, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(s.lines).find((f) => f.id === 2).result.thread.id;
+    send(c, { id: 3, method: "thread/subscribe", params: { threadId } });
+    await tick();
+
+    const first = park(broker, "toolu_first");
+    // The model's reaction to the deny: ask for a different tool. Chained off the first park so it is
+    // raised at exactly the moment the closing deny lands, which is when the real engine would raise it.
+    const second = first.then(() => park(broker, "toolu_second"));
+    state.parked.push(first, second);
+    await tick();
+
+    send(c, { id: 4, method: "thread/close", params: { threadId } });
+    await tick(); await tick(); await tick();
+
+    expect(await second).toEqual({ kind: "deny" });                       // pre-fix: parks forever
+    expect(parsed(s.lines).find((f) => f.id === 4)?.result).toEqual({ ok: true }); // pre-fix: never replies
+    expect(state.disposed).toBe(1);
+  });
+
+  it("a decision parked while the thread is idle carries NO turnId, not the finished turn's", async () => {
+    // currentTurnId is never cleared at completion (replay wants the last turn's id), so reading it bare
+    // stamps an idle-thread park with the id of a turn that already ended — a UI would hang the park off a
+    // dead turn row. `busy` is the honest gate.
+    const state = { parked: [] as Promise<unknown>[], disposed: 0 };
+    let broker: any;
+    const srv = new AppServer({}, { sessionFactory: (cfg: any) => { broker = cfg.permissionBroker; return blockingSession(state); } });
+    const s = mkSink(); const c = srv.connect(s.sink);
+    init(c, 1);
+    send(c, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(s.lines).find((f) => f.id === 2).result.thread.id;
+    send(c, { id: 3, method: "thread/subscribe", params: { threadId } });
+    await tick();
+
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "x" } });
+    await tick(); await tick();
+    const turnId = parsed(s.lines).find((f) => f.id === 4).result.turn.id;
+    expect(parsed(s.lines).find((f) => f.method === "turn/completed")).toBeTruthy(); // the thread is idle again
+    s.lines.length = 0;
+
+    state.parked.push(park(broker, "toolu_idle"));
+    await tick();
+    const requested = parsed(s.lines).find((f) => f.method === "decision/requested");
+    expect(requested.params.threadId).toBe(threadId);
+    expect(requested.params.turnId, `stamped the finished turn ${turnId}`).toBeUndefined();
+  });
+
   it("thread/close broadcasts thread/closed to that thread's subscribers before the record is removed", async () => {
     const state = { parked: [] as Promise<unknown>[], disposed: 0 };
     const srv = new AppServer({}, { sessionFactory: () => blockingSession(state) });

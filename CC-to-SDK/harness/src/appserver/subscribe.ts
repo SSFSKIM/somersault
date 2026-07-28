@@ -7,6 +7,7 @@ import { ERR } from "./rpc.js";
 import { itemEventNotification } from "./turns.js";
 import { itemsFromTranscript } from "./items/replay.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
+import { activeTurnId } from "./registry.js";
 import type { Handler } from "./server.js";
 
 const threadIdParams = z.object({ threadId: z.string().min(1) });
@@ -50,7 +51,7 @@ export const threadSubscribe: Handler = (srv, ctx, id, params) => {
   }
   // Same payload as the live broadcast (server.ts's broadcastDecision), turnId included — replay and live
   // must never drift on shape; absent when no turn is in flight.
-  for (const entry of srv.pendingDecisions(record.id)) ctx.peer.notify("decision/requested", { threadId: record.id, turnId: record.currentTurnId, decision: entry });
+  for (const entry of srv.pendingDecisions(record.id)) ctx.peer.notify("decision/requested", { threadId: record.id, turnId: activeTurnId(record), decision: entry });
   ctx.peer.notify("thread/status/changed", { threadId: record.id, status: record.busy ? "active" : "idle" });
 };
 

@@ -49,6 +49,12 @@ export interface ThreadRecord {
   createdAt: number;            // unix seconds
 }
 
+/** The id of the turn a decision belongs to, or undefined when none is in flight. `currentTurnId` is
+ *  never cleared at completion (the replay path wants the last turn's id), so reading it bare stamps a
+ *  park raised on an idle thread with the id of a turn that already finished — a UI would attach the
+ *  park to a dead turn row. `busy` is the honest gate. */
+export const activeTurnId = (r: ThreadRecord | undefined): string | undefined => (r?.busy ? r.currentTurnId : undefined);
+
 export class Registry {
   private threads = new Map<string, ThreadRecord>();
   mint(): string { return "thr_" + randomBytes(6).toString("hex"); }

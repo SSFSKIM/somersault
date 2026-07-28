@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { z } from "zod/v4";
 import { Peer, type PeerSink } from "./peer.js";
 import { classify, ERR, type RequestId } from "./rpc.js";
-import { Registry, type ThreadRecord, type EngineSession } from "./registry.js";
+import { Registry, activeTurnId, type ThreadRecord, type EngineSession } from "./registry.js";
 import { openSession, resumeSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, type DecisionEvent } from "./broker.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
@@ -244,7 +244,7 @@ export class AppServer {
   private broadcastDecision(threadId: string, ev: DecisionEvent): void {
     // spec §6's payload is {threadId, turnId, decision} — without turnId a UI cannot attach a park to a
     // turn row. Legitimately absent when nothing is in flight (JSON.stringify drops the undefined key).
-    if (ev.type === "requested") this.broadcast(threadId, "decision/requested", { threadId, turnId: this.registry.get(threadId)?.currentTurnId, decision: ev.entry });
+    if (ev.type === "requested") this.broadcast(threadId, "decision/requested", { threadId, turnId: activeTurnId(this.registry.get(threadId)), decision: ev.entry });
     else this.broadcast(threadId, "decision/resolved", { threadId, toolUseId: ev.toolUseID, by: ev.by, answer: ev.outcome });
   }
 

@@ -24,6 +24,7 @@ export type DecisionEvent =
 export class ThreadDecisions {
   private inner: PendingDecisions;
   private settledBy = new Map<string, string>(); // toolUseID -> who/what settled it, for a late second answer's alreadySettled.data.by
+  private closed = false;                        // set by teardown(); see broker() for why this must latch
 
   constructor(
     private emit: (ev: DecisionEvent) => void,
@@ -43,6 +44,11 @@ export class ThreadDecisions {
   broker(threadId: string): PermissionBroker {
     return {
       request: (req) => {
+        // Closing is a LATCH, not a one-shot sweep: denying a tool hands control back to the model, which
+        // routinely reaches for a different tool — and that second call would park with nobody left to
+        // answer it, re-opening the very deadlock teardown() exists to prevent (dispose() awaits the read
+        // loop, the read loop awaits this promise). While closed, every request denies immediately.
+        if (this.closed) return Promise.resolve({ kind: "deny" });
         if (this.unattended() === "deny" && !this.hasWatchers()) return Promise.resolve({ kind: "deny" });
         const settled = this.inner.brokerFor(threadId).request(req); // parks synchronously (Promise executor runs sync) before returning
         const entry = this.inner.list().find((e) => e.toolUseID === req.toolUseID);
@@ -67,6 +73,7 @@ export class ThreadDecisions {
   /** Deny + settle everything still parked (thread close) — denyAll() bypasses respond()'s own emit, so
    *  this is the one place that emits for it (mirrors PendingDecisions.denyAll's documented contract). */
   teardown(): void {
+    this.closed = true;
     for (const entry of this.inner.denyAll()) {
       this.settledBy.set(entry.toolUseID, "system");
       this.emit({ type: "resolved", toolUseID: entry.toolUseID, by: "system", outcome: { kind: "deny" } });
