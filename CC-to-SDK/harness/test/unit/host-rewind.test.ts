@@ -74,9 +74,16 @@ describe("rewind", () => {
     await expect(host.rewind({ uuid: "uB", prevUuid: "aA" }, "both")).rejects.toThrow(/not enabled/);
     expect(rewind).toHaveBeenCalledTimes(1);   // dry only
   });
-  it("refuses conversation scopes with a null prevUuid", async () => {
-    const { host } = makeHost();
+  it("refuses conversation scopes with a null prevUuid — and never touches files (validate before side effects)", async () => {
+    const { host, session } = makeHost();
     await expect(host.rewind({ uuid: "uA", prevUuid: null }, "both")).rejects.toThrow(/code-only/);
+    expect(session.rewind).not.toHaveBeenCalled();
+  });
+  it("scope code with a null prevUuid still succeeds and performs the file restore (the intended degradation)", async () => {
+    const { host, calls, opened } = makeHost();
+    await host.rewind({ uuid: "uA", prevUuid: null }, "code");
+    expect(calls).toEqual(["rewind:uA:dry", "rewind:uA:real"]);
+    expect(opened).toHaveLength(0);
   });
   it("refuses while a turn is in flight", async () => {
     const { host } = makeHost();

@@ -441,27 +441,34 @@ export class SessionHost {
     catch (e) { return { canRewind: false, error: (e as Error).message }; }
   }
 
-  /** Esc-Esc rewind. ORDER IS LOAD-BEARING: file restore runs on the LIVE engine first (probe 68d:
-   *  rewindFiles needs the open transport), THEN the conversation swap replaces the engine. The dry-run
-   *  guard exists because with checkpointing off the real call THROWS where dryRun merely reports
-   *  (probe 68d) — never reach the throwing call with a known-bad state. Live background tasks die
-   *  with the swap (they belong to the old CLI process): announce, then clear via swapEngine. */
+  /** Esc-Esc rewind. VALIDATION FIRST, THEN SIDE EFFECTS: the null-prevUuid refusal below runs before the
+   *  file-restore block even though it only governs the LATER conversation-swap step — a `both`-scope
+   *  rewind whose anchor has no prevUuid (the first prompt, or the first prompt after a compaction
+   *  boundary) must be refused before the real, filesystem-mutating file rewind runs, or the caller sees
+   *  a rejection implying nothing happened while the working tree was already reverted with no matching
+   *  conversation swap. ORDER IS OTHERWISE LOAD-BEARING: file restore runs on the LIVE engine first
+   *  (probe 68d: rewindFiles needs the open transport), THEN the conversation swap replaces the engine.
+   *  The dry-run guard exists because with checkpointing off the real call THROWS where dryRun merely
+   *  reports (probe 68d) — never reach the throwing call with a known-bad state. Live background tasks
+   *  die with the swap (they belong to the old CLI process): announce, then clear via swapEngine. */
   async rewind(anchor: { uuid: string; prevUuid: string | null }, scope: RewindScope): Promise<void> {
     if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
     if (this.parked.list().length) throw new Error("a decision is pending — answer it first");
     const sid = this.session?.sessionId;
     if (!sid) throw new Error("no session to rewind");
+    // A code-only rewind is legitimate for a null-prevUuid anchor — that is the intended degradation —
+    // so this is gated on `scope !== "code"`, same as the conversation-swap step it protects.
+    if (scope !== "code" && !anchor.prevUuid) throw new Error("no conversation anchor before the first prompt — code-only rewind is available");
     if (scope !== "conversation") {
+      const dry = await this.rewindDryRun(anchor.uuid);
+      if (!dry.canRewind) throw new Error(dry.error ?? "file rewind unavailable");
       const fn = this.session?.rewind?.bind(this.session);
       if (!fn) throw new Error("rewind unsupported by this host");
-      const dry = (await fn(anchor.uuid, { dryRun: true })) as RewindDryRun;
-      if (!dry?.canRewind) throw new Error(dry?.error ?? "file rewind unavailable");
       await fn(anchor.uuid);
     }
     if (scope !== "code") {
-      if (!anchor.prevUuid) throw new Error("no conversation anchor before the first prompt — code-only rewind is available");
       if (this.bgTasks.length) this.emit({ kind: "task", data: { type: "task_notification", status: "stopped", task_id: "rewind", summary: "background tasks ended by rewind" } });
-      await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid });
+      await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid as string });
     }
   }
 
