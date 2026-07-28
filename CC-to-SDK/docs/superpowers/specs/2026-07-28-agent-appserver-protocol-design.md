@@ -438,6 +438,11 @@ M1**, since `cancelQueued` and the ask-enrichment fields change M1 wire shapes.
   changing `src/tui/` and M1 must not touch it.
 - M1 plan: `docs/superpowers/plans/2026-07-28-agent-appserver-m1-core-loop.md` (M2/M3 get their
   own plans).
+- **M1 shipped (2026-07-29):** plan `docs/superpowers/plans/2026-07-28-agent-appserver-m1-core-loop.md`;
+  item ids refined to `message.id#index` (planning); TUI reducer adoption deferred to M2. Live
+  acceptance (§12's spawn→subscribe→turn→park→respond→completed) ran against a real WS connection
+  and a real session (`harness/test/live/appserver-m1.test.ts`); seam-coverage scorecard at
+  `docs/parity/appserver.md`.
 
 Rev 3 incorporates the 2026-07-28 external review: three P1s (origin-scoped reachability, item
 identity/stitch, generated denominator), §6 answer shapes corrected to the real `host/ops.ts`
