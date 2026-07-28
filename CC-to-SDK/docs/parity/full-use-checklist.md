@@ -84,12 +84,17 @@ ccx --cwd /tmp/ccqa
 - [ ] **Context indicator updates** — after the turn, the status bar shows a `ctx N%` figure
   (refreshed from `getContextUsage` after every turn).
 
-> **Known quirk — read before A2:** the status bar's `mode` label defaults to the string
-> `"default"` purely as a UI placeholder; it does **not** reflect the harness's actual engine
-> default, which is the SDK's `auto` classifier mode (`resolveOptions`'s `DEFAULTS.permissionMode`)
-> unless you pass `--permission-mode` explicitly. Under `auto`, safe edits can go through without a
-> dialog at all — the classifier is deciding, not the label. For a **deterministic** permission-dialog
-> test (A2 below), always launch with `--permission-mode default` explicitly.
+> **Known quirk — read before A2 — mostly fixed 2026-07-28 (Goal B, control-plane fidelity):** the
+> status bar's `mode` label is *seeded* from the string `"default"` as a UI placeholder at mount
+> (`main.ts`'s `hookOpts.initialMode` still falls back to `"default"` when you don't pass
+> `--permission-mode`) — that placeholder is **not** the harness's actual engine default, which is the
+> SDK's `auto` classifier mode (`resolveOptions`'s `DEFAULTS.permissionMode`). As of the control-plane
+> work, though, the host now pushes the **real** `permissionMode` on its first `state` event the moment a
+> client connects/follows (host-truth mode sync), so the placeholder self-corrects to `auto` within a tick
+> of launch instead of staying wrong for the whole session — you may see a one-frame flash of `default`
+> before it flips. Under `auto`, safe edits can still go through without a dialog at all — the classifier
+> is deciding, not the label. For a **deterministic** permission-dialog test (A2 below), still always
+> launch with `--permission-mode default` explicitly.
 
 ### A2. Permission flow (`default` mode → tool → broker dialog)
 
@@ -313,6 +318,69 @@ ccx attach qa-fg
   `ccx: session <short> has ended (<state>) — resume it with: ccx --resume <uuid>` (a terminal
   session isn't attachable — resume it instead, per D below).
 
+### C7. Question park → attach → answer (`AskUserQuestion`)
+
+`AskUserQuestion` always parks — unlike Bash/Edit it needs **no** `--settings` ask rule; it consults
+the broker in every permission mode, `bypassPermissions` included.
+
+```bash
+ccx --bg -n acc-q "Use the AskUserQuestion tool to ask me whether I prefer the color red or blue \
+(single-select, one question). Wait for my answer, then reply with exactly: You chose <the color>."
+```
+
+- [ ] **It blocks** — poll `ccx agents --json --all` until the row reads `state:"blocked"` with a
+  `waitingFor` starting `question:` (e.g. `question:AskUserQuestion`).
+- [ ] **Attach shows the question** —
+  ```bash
+  ccx attach acc-q
+  ```
+  → the prior transcript replays, the live turn follows, then a **QuestionDialog** appears with both
+  options listed and numbered (`1.`/`2.`), plus an **Other…** row after them.
+- [ ] **Answering resumes the session** — press `1` to pick the first-listed option → the dialog
+  closes, the turn completes, and the model's reply names the color you picked.
+- [ ] **Free-text "Other" also flows (optional)** — repeat with a fresh `--bg` question; this time
+  select the **Other…** row (the number after the last option), type a short answer, ↵ → the model's
+  final reply reflects your free text (the `response` channel, not a listed option).
+
+### C8. Plan-mode loop (`ExitPlanMode`)
+
+```bash
+ccx --cwd /tmp/ccqa --permission-mode plan
+```
+Prompt: `Plan how you'd add a hello() function to note.txt. Call ExitPlanMode when the plan is ready — don't implement anything yet.`
+
+- [ ] **Plan dialog appears** — a **PlanDialog** renders the plan as markdown in a scrollable window
+  (↑/↓ scrolls if it's long), with three choices below it.
+- [ ] **Reject with feedback loops the model** — press `3` (or `Esc`) → a one-line feedback prompt
+  opens; type `also handle the empty-file case` ↵ → the dialog closes, the model revises its plan and
+  calls `ExitPlanMode` again (a second PlanDialog appears).
+- [ ] **Approve + auto-accept edits flips the mode** — on that second dialog, press `1` → the dialog
+  closes and the status bar's `mode` moves off `plan` to `acceptEdits` (the CLI flips to `default`
+  itself; the host then layers the `acceptEdits` upgrade once it observes that). A follow-up prompt
+  that edits `note.txt` now applies with **no** dialog.
+- [ ] **Approve, manual edits stays gated** — relaunch fresh (`--permission-mode plan`), reach the
+  PlanDialog again, and this time press `2` → the status bar shows `mode default` (not
+  `acceptEdits`), and a follow-up edit **does** prompt a normal PermissionDialog.
+
+### C9. Ctrl+B background + `/bg` panel
+
+```bash
+ccx --cwd /tmp/ccqa
+```
+
+- [ ] **Ctrl+B mid-turn backgrounds it** — start a long shell
+  (`Run the bash command: sleep 20 && echo BG-DONE. Use the Bash tool.`) and, while it's running
+  (status bar shows `⟳ streaming`), press `Ctrl+B` → no dialog appears, the turn keeps running to
+  completion (the Bash call is no longer blocking it), and once the SDK's background-tasks snapshot
+  arrives the status bar shows a `⚙ 1 bg` count.
+- [ ] **`/bg` opens the panel anytime** — type `/bg` ↵ (or press `Ctrl+B` while **idle**) → a
+  **BgTasksPanel** lists the backgrounded task as `<short id> · <type> · <description>`.
+- [ ] **`k`/`x` stops it** — with the panel open, ↑/↓ to select the row, press `k` or `x` → a
+  `◼ task stopped: …` notice appears in the transcript once the stop is confirmed, and the row drops
+  off the panel on the next refresh.
+- [ ] **Esc closes the panel** — press `Esc` → back to the composer; the `⚙ N bg` status-bar count
+  persists as long as tasks remain running.
+
 ---
 
 ## D. Resume & replay
@@ -445,7 +513,7 @@ directly — it never renders the REPL or presses a key. That UI↔model↔proce
 
 ```bash
 ccx fleet gc                                  # clears stale sockets
-for s in qa-bg qa-det qa-idle qa-fg acc5; do ccx rm "$s" 2>/dev/null; done
+for s in qa-bg qa-det qa-idle qa-fg acc5 acc-q; do ccx rm "$s" 2>/dev/null; done
 rm -rf /tmp/ccqa /tmp/ccqa-resume
 # Persisted transcripts under ~/.claude/projects/ are harmless to leave; remove the test project
 # slugs by hand if you want a clean slate.

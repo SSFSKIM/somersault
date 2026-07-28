@@ -26,10 +26,11 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | 1. Input / composer ergonomics | ~45% | ~88% |
 | 2. Transcript / message rendering | ~50% | ~74% |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% |
-| 4. Modals / overlays | ~60% | ~78% |
+| 4. Modals / overlays | ~60% | ~88% |
 | 5. Slash commands | ~55% | ~70% |
 | 6. Polish (glyphs, colors, affordances) | ~40% | ~74% |
-| **Overall (impact-weighted)** | **~46%** | **~82%** |
+| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~86% |
+| **Overall (impact-weighted)** | **~46%** | **~84%** |
 
 **Shipped:**
 - **U1 — Welcome banner** (`banner.ts` + `useChat` seed). Accent `✻ Welcome to Claude Code` box +
@@ -144,7 +145,6 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | Model picker | ✅ | — | `ModelPicker.tsx` |
 | Resume session picker | ✅ | — | `SessionPicker.tsx` |
 | Task/todo panel | ✅ | — | `TaskPanel.tsx` |
-| Plan-mode approval (ExitPlanMode) | ❌ | MED | `ExitPlanModePermissionRequest` |
 | `/help` overlay | 🟡 | LOW | we print lines; CC has a modal |
 | IDE diff viewer | 🚫 | — | IDE-coupled |
 | MCP elicitation dialog | 🚫 | — | rarely fires headless |
@@ -173,6 +173,32 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | Double-Esc to rewind affordance | ❌ | MED |
 | Newline instructions hint | ✅ | **U7** footer (`\⏎ newline`) |
 | Focus borders / input box styling | 🟡 | LOW |
+
+## 8 — Control plane
+
+> A distinct axis from §1–6: those measure *look-and-feel*; this measures whether the model's
+> control-plane calls (`AskUserQuestion`, `ExitPlanMode`, background shells, subagent task lifecycle)
+> reach a human **at all** — the gap `docs/superpowers/specs/2026-07-28-control-plane-fidelity-design.md`
+> (Goal B of the clone spine) closed. Before this work the sweep behind that spec found **zero** handling
+> for all four surfaces. Shipped GB1–GB10 (`main` `fb8933dee8..260fad720e`).
+
+| Feature | Status | Priority | Notes / CC reference |
+|---|---|---|---|
+| AskUserQuestion dialog | 🟡 | — | **GB8** `QuestionDialog.tsx` — sequential per-question flow (`[i/N]` progress, header chip), options as numbered rows + arrows, `multiSelect` toggled with space, an always-present "Other" free-text row → `response`; consults `canUseTool` in every permission mode incl. `bypassPermissions` (probe 65). Divergence: CC renders multiple questions as **side-by-side tabs**; we go one at a time — keyboard-identical outcomes, an accepted divergence (spec Decision Log) |
+| Plan-mode approval dialog (ExitPlanMode) | ✅ | — | **GB9** — moved here from §4 (was ❌). `PlanDialog.tsx` renders the plan as markdown in a 14-line scrollable window (↑↓ scroll), then CC's three choices (`1` approve + auto-accept edits · `2` approve, manual edits · `3`/Esc reject with a one-line feedback prompt); approve lets the CLI flip `permissionMode` itself (probe 66) — the dialog only reports the human's choice |
+| `plan` on the Tab ladder | ✅ | — | **GB7** the ladder is now `default → acceptEdits → plan → auto` (`useChat.ts` `ladderNext`); off-ladder modes (`bypassPermissions`) still re-enter at `default` |
+| Ctrl+B background | ✅ | — | **GB10** `ChatApp.tsx` — mid-turn `Ctrl+B` backgrounds the running turn (`backgroundNow` → `Session.backgroundAll()`, probe 39); idle `Ctrl+B` opens the background-task panel |
+| `/bg` panel | 🟡 | — | **GB10** `BgTasksPanel.tsx` — one row per background task (shells/subagents/workflow — one stream) from the live `tasks_changed` snapshot; ↑↓ select, `k`/`x` stop, Esc close. Divergence: the command is **`/bg`**, not `/tasks` — `/tasks` would collide with the existing `TaskPanel.tsx` (the model's todo checklist), a deliberate rename recorded in the spec's Decision Log |
+| Task lifecycle notices | ✅ | — | **GB7** `task_started`/`task_notification` frames render as one-line transcript notices (`⚙ task started: …` / `✓ task done: …` / `✗ task failed: …` / `◼ task stopped: …`), honoring `skip_transcript` |
+| Subagent attribution on dialogs | 🟡 | — | **GB5** a host-side correlation map (`parentToolUseID` from nested frames → `subagentType` from `task_started` frames) stamps `Subagent (<type>) asks:` on the Question/Plan/Permission dialogs when known; **best-effort** — a miss renders unattributed and never blocks (no per-subagent drill-in transcript view — spec Non-goals) |
+| Status-bar mode truth | ✅ | — | **GB5** the host intercepts the CLI's own `system`/`status` frames and pushes the real `permissionMode` on every `state` event (one field, last-write-wins between the CLI's own flip and the host's setter calls); closes the previously recorded "status bar starts at `default`" quirk — see the `full-use-checklist.md` A1 note, updated alongside this |
+
+**Score: ~86%** — 5 of 8 rows are fully CC-faithful (✅); 3 carry an accepted, spec-recorded divergence
+from CC's exact form while delivering the same functional/keyboard outcome (🟡 — sequential questions,
+`/bg` naming, best-effort attribution). All eight rows work identically in the foreground REPL and over
+`ccx attach` — closing the spec's motivating failure ("a `--bg` worker that hits a question and can only
+stall"). **Live acceptance has not run yet** (that is a separate task) — this scores what the shipped code
+implements, not a verified live pass.
 
 ---
 
@@ -226,5 +252,6 @@ Claude reviewer — **converged on the same 5 bugs**; all fixed, +5 regression t
 ### Next candidates (remaining gaps are lower-ROI or hard)
 - **U12 — Esc-Esc rewind / message edit** (§1, highest CC-fidelity, HARD): revert to a prior message
   (needs `rewindFiles` + transcript truncation + re-prompt).
-- Plan-mode (ExitPlanMode) approval dialog (§4); code-block syntax highlight + tables (§2); vim mode;
-  `/copy` clipboard; word-wise cursor movement (Alt/Ctrl ←→). All lower-visibility.
+- Code-block syntax highlight + tables (§2); vim mode; `/copy` clipboard; word-wise cursor movement
+  (Alt/Ctrl ←→). All lower-visibility. (Plan-mode approval shipped as part of the control-plane axis —
+  see §8.)

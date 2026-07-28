@@ -85,13 +85,17 @@ ccx --cwd /tmp/ccqa
 - [ ] **컨텍스트 인디케이터 갱신** — 턴이 끝난 뒤 상태 표시줄에 `ctx N%` 수치가 표시된다(매 턴
   이후 `getContextUsage`로부터 새로고침됨).
 
-> **알려진 특이사항 — A2 전에 읽을 것:** 상태 표시줄의 `mode` 라벨은 순전히 UI 표시용 값으로
-> `"default"`를 기본값으로 삼는다; 이것이 하네스의 실제 엔진 기본값을 반영하는 것은 **아니다** —
-> `--permission-mode`를 명시적으로 넘기지 않으면 실제 기본값은 SDK의 `auto` 분류기 모드다
-> (`resolveOptions`의 `DEFAULTS.permissionMode`). `auto` 아래에서는 안전한 편집이 다이얼로그
-> 없이 그냥 통과할 수도 있다 — 분류기가 결정하는 것이지 라벨이 결정하는 게 아니다. A2의
-> **결정론적인** 권한 다이얼로그 테스트를 위해서는 항상 `--permission-mode default`를 명시적으로
-> 주고 실행하라.
+> **알려진 특이사항 — A2 전에 읽을 것 — 2026-07-28(Goal B, control-plane fidelity)에 대부분
+> 수정됨:** 상태 표시줄의 `mode` 라벨은 마운트 시 UI 표시용 값으로 `"default"`에서 *시드*된다
+> (`--permission-mode`를 넘기지 않으면 `main.ts`의 `hookOpts.initialMode`가 여전히 `"default"`로
+> 폴백한다) — 이 표시용 값은 하네스의 실제 엔진 기본값이 **아니다**, 실제 기본값은 SDK의 `auto`
+> 분류기 모드다(`resolveOptions`의 `DEFAULTS.permissionMode`). 다만 control-plane 작업 이후로는
+> 클라이언트가 연결/follow하는 즉시 호스트가 첫 `state` 이벤트로 **실제** `permissionMode`를
+> 밀어주므로(호스트-진실 모드 동기화), 이 표시용 값이 세션 내내 틀린 채로 남는 대신 실행 직후
+> 한 틱 안에 `auto`로 스스로 교정된다 — 바뀌기 전에 `default`가 한 프레임 정도 깜빡이는 것을
+> 볼 수도 있다. `auto` 아래에서는 안전한 편집이 여전히 다이얼로그 없이 그냥 통과할 수 있다 —
+> 분류기가 결정하는 것이지 라벨이 결정하는 게 아니다. A2의 **결정론적인** 권한 다이얼로그
+> 테스트를 위해서는 여전히 항상 `--permission-mode default`를 명시적으로 주고 실행하라.
 
 ### A2. 권한 플로우 (`default` 모드 → 도구 → 브로커 다이얼로그)
 
@@ -324,6 +328,69 @@ ccx attach qa-fg
   `ccx: session <short> has ended (<state>) — resume it with: ccx --resume <uuid>`
   (종결된 세션은 attach 대상이 아니다 — 아래 D에 따라 대신 resume하라).
 
+### C7. 질문을 park하고, attach하고, 답하기 (`AskUserQuestion`)
+
+`AskUserQuestion`은 항상 park된다 — Bash/Edit와 달리 `--settings` ask 규칙이 **필요 없다**;
+`bypassPermissions`를 포함한 모든 권한 모드에서 브로커에게 물어본다.
+
+```bash
+ccx --bg -n acc-q "Use the AskUserQuestion tool to ask me whether I prefer the color red or blue \
+(single-select, one question). Wait for my answer, then reply with exactly: You chose <the color>."
+```
+
+- [ ] **블록됨** — `ccx agents --json --all`을 폴링해 행이 `state:"blocked"`이고 `waitingFor`가
+  `question:`으로 시작(예: `question:AskUserQuestion`)할 때까지 기다린다.
+- [ ] **attach가 질문을 보여줌** —
+  ```bash
+  ccx attach acc-q
+  ```
+  → 이전 트랜스크립트가 리플레이되고, 라이브 턴이 따라오고, 그다음 **QuestionDialog**가 나타나
+  두 옵션이 번호(`1.`/`2.`)와 함께 나열되며 마지막에 **Other…** 행이 붙는다.
+- [ ] **답하면 세션이 재개됨** — `1`을 눌러 첫 번째로 나열된 옵션을 고름 → 다이얼로그가 닫히고,
+  턴이 완료되며, 모델의 응답이 고른 색을 지목한다.
+- [ ] **자유 텍스트 "Other"도 동작함(선택)** — 새로운 `--bg` 질문으로 반복하되, 이번엔 **Other…**
+  행(마지막 옵션 다음 번호)을 골라 짧은 답을 입력하고 ↵ → 모델의 최종 응답이 나열된 옵션이 아닌
+  자유 텍스트(`response` 채널)를 반영한다.
+
+### C8. Plan 모드 루프 (`ExitPlanMode`)
+
+```bash
+ccx --cwd /tmp/ccqa --permission-mode plan
+```
+프롬프트: `Plan how you'd add a hello() function to note.txt. Call ExitPlanMode when the plan is ready — don't implement anything yet.`
+
+- [ ] **Plan 다이얼로그가 나타남** — **PlanDialog**가 plan을 마크다운으로 스크롤 가능한 창에
+  렌더링하고(길면 ↑/↓로 스크롤), 그 아래 세 가지 선택지가 나타난다.
+- [ ] **피드백과 함께 거부하면 모델이 다시 계획함** — `3`(또는 `Esc`)을 누름 → 한 줄짜리 피드백
+  입력이 열림; `also handle the empty-file case` ↵ 입력 → 다이얼로그가 닫히고, 모델이 계획을
+  수정해 `ExitPlanMode`를 다시 호출한다(두 번째 PlanDialog가 나타남).
+- [ ] **승인 + 편집 자동 수락은 모드를 전환함** — 그 두 번째 다이얼로그에서 `1`을 누름 →
+  다이얼로그가 닫히고 상태 표시줄의 `mode`가 `plan`에서 `acceptEdits`로 옮겨간다(CLI가 스스로
+  `default`로 전환하고, 그다음 호스트가 그것을 관찰한 뒤 `acceptEdits` 업그레이드를 얹는다).
+  이어서 `note.txt`를 편집하는 프롬프트를 주면 다이얼로그 **없이** 적용된다.
+- [ ] **승인, 수동 편집은 계속 게이팅됨** — (`--permission-mode plan`으로) 새로 다시 실행해
+  PlanDialog에 다시 도달하고, 이번엔 `2`를 누름 → 상태 표시줄이 `acceptEdits`가 아니라
+  `mode default`를 보여주고, 이어지는 편집은 여전히 일반 PermissionDialog를 띄운다.
+
+### C9. Ctrl+B 백그라운드 + `/bg` 패널
+
+```bash
+ccx --cwd /tmp/ccqa
+```
+
+- [ ] **턴 도중 Ctrl+B가 그것을 백그라운드로 보냄** — 긴 셸을 시작하고
+  (`Run the bash command: sleep 20 && echo BG-DONE. Use the Bash tool.`), 실행 중일 때(상태
+  표시줄에 `⟳ streaming`) `Ctrl+B`를 누름 → 다이얼로그 없이, 턴이 계속 실행되어 완료되고(더 이상
+  Bash 호출이 포그라운드를 막지 않음), SDK의 백그라운드 태스크 스냅샷이 도착하면 상태 표시줄에
+  `⚙ 1 bg` 카운트가 나타난다.
+- [ ] **`/bg`는 언제든 패널을 염** — `/bg` ↵ 입력(또는 **유휴** 상태에서 `Ctrl+B`) →
+  **BgTasksPanel**이 백그라운드 태스크를 `<short id> · <type> · <description>` 형태로 나열한다.
+- [ ] **`k`/`x`가 그것을 중지시킴** — 패널이 열린 상태에서 ↑/↓로 행을 선택하고 `k` 또는 `x`를
+  누름 → 중지가 확인되면 트랜스크립트에 `◼ task stopped: …` 알림이 나타나고, 다음 갱신에서 해당
+  행이 패널에서 사라진다.
+- [ ] **Esc가 패널을 닫음** — `Esc`를 누름 → 컴포저로 복귀; `⚙ N bg` 상태 표시줄 카운트는 태스크가
+  남아 있는 한 유지된다.
+
 ---
 
 ## D. Resume & replay
@@ -457,7 +524,7 @@ UI↔모델↔프로세스 이음새가 *이* 수동 체크리스트가 커버�
 
 ```bash
 ccx fleet gc                                  # clears stale sockets
-for s in qa-bg qa-det qa-idle qa-fg acc5; do ccx rm "$s" 2>/dev/null; done
+for s in qa-bg qa-det qa-idle qa-fg acc5 acc-q; do ccx rm "$s" 2>/dev/null; done
 rm -rf /tmp/ccqa /tmp/ccqa-resume
 # Persisted transcripts under ~/.claude/projects/ are harmless to leave; remove the test project
 # slugs by hand if you want a clean slate.

@@ -29,7 +29,7 @@ inherit an existing ecosystem for free.
 | | |
 |---|---|
 | **Goal A — spine** (this spec) | one binary + the doperpowers CLI contract · `--bg` / `--detachable` detached sessions · `ccx agents` fleet view · `ccx attach` with a full REPL | ✅ |
-| **Goal B — control plane fidelity** | `AskUserQuestion` interactive answering · background shells (`Ctrl+B`, list/control) · `ExitPlanMode` approval dialog · subagent view | ❌ separate spec |
+| **Goal B — control plane fidelity** (`docs/superpowers/specs/2026-07-28-control-plane-fidelity-design.md`) | `AskUserQuestion` interactive answering · background shells (`Ctrl+B`, list/control) · `ExitPlanMode` approval dialog · subagent view | ✅ shipped 2026-07-28 (GB1–GB10; live acceptance tracked separately) |
 | **Goal C — harness superset surfacing** | warm pool, OTel, store, tenant presets through the new CLI | ❌ later |
 
 Goal B's motivation, recorded here because it drove the split: a `tui/src` sweep found **zero**
