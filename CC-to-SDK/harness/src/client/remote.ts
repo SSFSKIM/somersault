@@ -11,6 +11,14 @@ import type { RewindAnchor, RewindDryRun, RewindScope } from "../session/chatSes
 /** Long enough that a busy host answering a `status` while streaming a turn is never mistaken for a
  *  dead one; short enough that a client does not sit on a promise that will never settle. */
 const REQUEST_TIMEOUT_MS = 10_000;
+// The rewind ops are the exception to the 10s default: rewind_dryrun and rewind are not cheap replies the
+// host composes from memory — the host forwards them to the engine's live transport, which diffs the
+// working tree against its file checkpoints. Measured live over `ccx attach`, that round trip regularly
+// exceeds 10s on a loaded machine, and a timeout here is user-visible damage rather than a safety net: the
+// picker greys out BOTH code choices and shows the raw "pre-upgrade host, or a wedged one" text, so a
+// perfectly healthy host reads as broken and the flagship restore is unavailable until the user backs out
+// and re-selects. rewind_anchors keeps the default — it is a transcript read, not an engine call.
+const REWIND_TIMEOUT_MS = 60_000;
 
 /** THIS direction's own cap — NOT the server's `MAX_FRAME`. The two directions carry different traffic:
  *  the server bounds small fixed-shape client→host ops (`status`/`answer`/`prompt`), while this buffers
@@ -96,7 +104,7 @@ export class RemoteChatSession {
     if (this.buf.length > this.maxFrame) { this.buf = ""; this.sock.destroy(); }
   }
 
-  private send<T>(op: Record<string, unknown>): Promise<T> {
+  private send<T>(op: Record<string, unknown>, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
       // A deadline, because a silent peer is a real case, not a hypothetical: a host started before
@@ -104,8 +112,8 @@ export class RemoteChatSession {
       // its reply is dropped in onData and this promise would never settle without one.
       const timer = setTimeout(() => {
         if (!this.inflight.delete(id)) return;   // already settled by a reply — never reject a promise that already resolved
-        reject(new Error(`host did not answer ${String(op["op"])} within ${REQUEST_TIMEOUT_MS}ms (a pre-upgrade host, or a wedged one)`));
-      }, REQUEST_TIMEOUT_MS);
+        reject(new Error(`host did not answer ${String(op["op"])} within ${timeoutMs}ms (a pre-upgrade host, or a wedged one)`));
+      }, timeoutMs);
       (timer as { unref?: () => void }).unref?.();
       this.inflight.set(id, {
         resolve: (v) => { clearTimeout(timer); resolve(v); },
@@ -156,8 +164,8 @@ export class RemoteChatSession {
   // C5 T3: Esc-Esc rewind wire ops. anchors/dryRun are read-only; rewind is busy-gated server-side (see
   // server.ts's dispatch arm), same as resumeOp.
   rewindAnchorsOp() { return this.send<{ ok: boolean; error?: string; anchors?: RewindAnchor[] }>({ op: "rewind_anchors" }); }
-  rewindDryRunOp(uuid: string) { return this.send<{ ok: boolean; error?: string; dryRun?: RewindDryRun }>({ op: "rewind_dryrun", uuid }); }
-  rewindOp(uuid: string, prevUuid: string | null, scope: RewindScope) { return this.send<{ ok: boolean; error?: string }>({ op: "rewind", uuid, prevUuid, scope }); }
+  rewindDryRunOp(uuid: string) { return this.send<{ ok: boolean; error?: string; dryRun?: RewindDryRun }>({ op: "rewind_dryrun", uuid }, REWIND_TIMEOUT_MS); }
+  rewindOp(uuid: string, prevUuid: string | null, scope: RewindScope) { return this.send<{ ok: boolean; error?: string }>({ op: "rewind", uuid, prevUuid, scope }, REWIND_TIMEOUT_MS); }
 
   /** Subscribe to the host's pushed events. The first live subscription sends `follow`; the last one
    *  leaving sends `unfollow`. Followers are keyed by a per-call token, not by the callback reference,

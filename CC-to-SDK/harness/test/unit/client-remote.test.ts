@@ -283,4 +283,28 @@ describe("RemoteChatSession", () => {
     expect(lateErr).toBeInstanceOf(Error);
     c.detach();
   });
+
+  it("gives the rewind ops a longer deadline than the 10s default (a dry run diffs the working tree)", async () => {
+    // A host that answers nothing at all: status must reject on the 10s default, while rewind_dryrun must
+    // still be waiting — the picker greys out both code choices on a dry-run rejection, so a slow-but-
+    // healthy host must not be judged by the deadline meant for cheap in-memory replies.
+    const dir = mkdtempSync(join(tmpdir(), "rt-"));
+    const path = join(dir, "s.sock");
+    const srv = createServer(() => {});                                  // accepts, never replies
+    await new Promise<void>((r) => srv.listen(path, () => r()));
+    const rc = await RemoteChatSession.connect(path, { label: "t" });
+    try {
+      const settled: string[] = [];
+      const status = rc.status().then(() => settled.push("status:ok"), () => settled.push("status:rejected"));
+      const dry = rc.rewindDryRunOp("u1").then(() => settled.push("dry:ok"), () => settled.push("dry:rejected"));
+      void dry;
+      await status;
+      // Both deadlines would fire at ~10s if the rewind op used the default, and the two rejections land
+      // in the same tick-neighbourhood — so wait well past the default before judging, or the assertion
+      // passes purely on microtask ordering (it did, until this margin was added).
+      await new Promise((r) => setTimeout(r, 4000));
+      expect(settled).toEqual(["status:rejected"]);                      // the default deadline fired
+      expect(settled).not.toContain("dry:rejected");                     // the rewind deadline has NOT
+    } finally { rc.detach(); srv.close(); }
+  }, 20_000);
 });
