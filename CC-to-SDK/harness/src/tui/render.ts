@@ -69,6 +69,8 @@ export function toolDiffLines(name: string, input: Record<string, unknown>, cap 
     for (let i = o.length - suf; i < Math.min(o.length, o.length - suf + CTX); i++) body.push({ text: `${num(i)}  ${o[i]}`, dim: true });
   } else if (newS !== undefined) {
     for (const l of newS.split("\n")) body.push({ text: `  + ${l}`, color: "green" });
+  } else if (oldS !== undefined) {                     // removal-only shape: keep the pre-hunk all-red rendering
+    for (const l of oldS.split("\n")) body.push({ text: `  - ${l}`, color: "red" });
   }
   if (body.length <= cap) return [head, ...body];
   return [head, ...body.slice(0, cap), { text: `  … ${body.length - cap} more lines`, dim: true }];

@@ -112,6 +112,12 @@ describe("toolDiffLines", () => {
       { text: "  + a", color: "green" }, { text: "  + b", color: "green" },
     ]);
   });
+  it("renders a removal-only Edit (old_string, no new_string) as an all-red body, never an empty one", () => {
+    expect(toolDiffLines("Edit", { file_path: "f.ts", old_string: "a\nb" })).toEqual([
+      { text: "Edit f.ts", gutter: { text: "● " } },
+      { text: "  - a", color: "red" }, { text: "  - b", color: "red" },
+    ]);
+  });
   it("caps long diffs and notes the remainder (Write, all-+ body)", () => {
     const new_string = Array.from({ length: 40 }, (_, i) => `line${i}`).join("\n");
     const out = toolDiffLines("Write", { file_path: "big.ts", content: new_string }, 24);
