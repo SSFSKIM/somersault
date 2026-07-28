@@ -85,3 +85,52 @@ console.log(any
   : installedVersion === headVersion
     ? "\nInstalled IS npm HEAD — nothing to compare beyond identity."
     : "\nNo name-level drift (bodies/semantics may still have moved — spot-check the changelog).");
+
+// ---- Appserver pass (Task 12, spec D11): docs/parity/appserver.md's generated denominator. Unlike the
+// SDK-vs-npm-HEAD pass above (a report, not a gate), THIS pass IS a gate: a walked token with no
+// scorecard row means the "100% coverage" scorecard's row set has silently diverged from the code it
+// claims to cover, so the whole script exits 1. No network needed — purely local source + doc.
+const installedDtsRaw = readFileSync(installedPath, "utf8"); // reuse the file already read for `installed` above
+const appserverSources = {
+  "host/ops.ts": () => [...readFileSync(join(root, "harness", "src", "host", "ops.ts"), "utf8").matchAll(/op: z\.literal\("(\w+)"\)/g)].map((m) => m[1]),
+  "bridge/types.ts": () => [...readFileSync(join(root, "harness", "src", "bridge", "types.ts"), "utf8").matchAll(/type: z\.literal\("(\w+)"\)/g)].map((m) => m[1]),
+  // Only the 7 wrappers re-exported from reader/fork/mutate — rows.ts's rowKind/promptText/
+  // rewindAnchorsFrom are row-shape helpers, not their own protocol seams (spec §10(c): "the 7 session
+  // store wrappers"), so a bare `export {...}` scan over-counts; scope to those three source files.
+  "sessions/index.ts": () => [...readFileSync(join(root, "harness", "src", "sessions", "index.ts"), "utf8")
+    .matchAll(/^export \{ ([^}]+) \} from "\.\/(?:reader|fork|mutate)\.js";$/gm)]
+    .flatMap((m) => m[1].split(",").map((s) => s.trim())),
+  // Deliberately NOT reusing surfaces()'s block() helper above: that helper's "\n};" end-marker is
+  // correct for `type Options = {...};` but `interface Query {...}` closes with a bare "\n}" (no
+  // semicolon) — block() overruns into the next semicolon-closed type and over-counts (32 vs the true
+  // 27; see docs/parity/appserver.md gap 5). This pass re-parses independently, ending at the first
+  // flush-left "\n}" (verified against the installed sdk.d.ts to yield exactly 27 methods).
+  "sdk.d.ts (Query)": () => {
+    const m = installedDtsRaw.match(/export declare interface Query[^{]*\{/);
+    if (!m) return [];
+    const start = m.index + m[0].length;
+    const end = installedDtsRaw.indexOf("\n}", start);
+    const body = end === -1 ? "" : installedDtsRaw.slice(start, end);
+    return [...body.matchAll(/^\s{4}(\w+)\(/gm)].map((mm) => mm[1]);
+  },
+};
+const scorecardPath = join(root, "docs", "parity", "appserver.md");
+const scorecardRows = new Set(
+  [...readFileSync(scorecardPath, "utf8").matchAll(/^\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|/gm)]
+    .map(([, token, source]) => `${source}::${token}`),
+);
+
+console.log(`\nappserver scorecard drift (docs/parity/appserver.md, spec D11):`);
+const appserverMissing = [];
+for (const [source, walk] of Object.entries(appserverSources)) {
+  const tokens = walk();
+  console.log(`  ${source}: ${tokens.length} tokens walked`);
+  for (const t of tokens) if (!scorecardRows.has(`${source}::${t}`)) appserverMissing.push(`${source}::${t}`);
+}
+if (appserverMissing.length) {
+  console.error(`\nFAIL: walked token(s) with no scorecard row: ${appserverMissing.join(", ")}`);
+  console.error(`Add a row to docs/parity/appserver.md (or fix the source) — see spec D11.`);
+  process.exitCode = 1;
+} else {
+  console.log(`  every walked token has a scorecard row — no drift`);
+}
