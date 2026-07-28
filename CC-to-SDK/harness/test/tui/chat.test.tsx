@@ -305,4 +305,24 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
     release();
   });
+
+  it("? on an empty idle composer opens the shortcuts overlay; any keypress closes it back to the composer", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("?");
+    await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
+    expect(frame(lastFrame)).not.toContain("›");                     // composer is replaced by the overlay
+    stdin.write("x");
+    await waitFor(() => frame(lastFrame).includes("›"));
+    expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");
+  });
+
+  it("? mid-buffer inserts a literal '?' instead of opening the overlay", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("hi"); await waitFor(() => frame(lastFrame).includes("hi"));
+    stdin.write("?");
+    await waitFor(() => frame(lastFrame).includes("hi?"));
+    expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");
+  });
 });

@@ -53,7 +53,7 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, prefill }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; prefill?: { text: string; token: number } | null }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number } | null }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -74,6 +74,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   useInput((input, key) => {
     const s = stateRef.current;
     if (key.ctrl && input === "d" && s.lines.length === 1 && s.lines[0] === "") { onExit?.(); return; }   // Ctrl-D on empty = EOF exit
+    // '?' on a genuinely empty composer (no buffer text, no open '/' or '@' popup) opens the shortcuts
+    // overlay; typed anywhere else it must fall through to applyKey and insert a literal '?'.
+    if (input === "?" && !s.command && !s.mention && s.lines.length === 1 && s.lines[0] === "") { onHelp?.(); return; }
     // Tab/Esc are global ONLY when no autocomplete popup is open; with a popup, applyKey owns them
     // (Tab completes / Esc closes). This single owner prevents the ChatApp+composer double-handling.
     if (!s.command && !s.mention) {

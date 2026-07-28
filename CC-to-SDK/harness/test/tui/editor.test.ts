@@ -237,6 +237,57 @@ describe("readline keys (ctrl)", () => {
   });
 });
 
+describe("word movement (Alt/Option)", () => {
+  const meta = (s: EditorState, input: string, extra: KeyFlags = {}): EditorState => applyKey(s, input, { meta: true, ...extra }).state;
+  it("Alt-Left steps back a word at a time, then stops at col 0", () => {
+    let s = type(initialEditorState(), "hello world");            // cursor {0,11}
+    s = meta(s, "", { leftArrow: true });
+    expect(s.cursor).toEqual({ row: 0, col: 6 });                  // start of "world"
+    s = meta(s, "", { leftArrow: true });
+    expect(s.cursor).toEqual({ row: 0, col: 0 });
+  });
+  it("Alt-Left at col 0 of a later row crosses to the end of the row above", () => {
+    let s = type(initialEditorState(), "ab\ncd");                  // cursor {1,2}
+    s = press(s, { leftArrow: true });                            // {1,1}
+    s = press(s, { leftArrow: true });                            // {1,0}
+    s = meta(s, "", { leftArrow: true });
+    expect(s.cursor).toEqual({ row: 0, col: 2 });                  // end of "ab"
+  });
+  it("Alt-Right steps forward a word at a time (mirrors Alt-Left)", () => {
+    let s = type(initialEditorState(), "hello world");
+    s = applyKey(s, "a", { ctrl: true }).state;                   // Ctrl-A → col 0
+    expect(s.cursor.col).toBe(0);
+    s = meta(s, "", { rightArrow: true });
+    expect(s.cursor).toEqual({ row: 0, col: 5 });
+    s = meta(s, "", { rightArrow: true });
+    expect(s.cursor).toEqual({ row: 0, col: 11 });
+  });
+  it("Alt-Right at end of an earlier row crosses to col 0 of the row below", () => {
+    let s = type(initialEditorState(), "ab\ncd");                  // cursor {1,2}
+    s = press(s, { upArrow: true });                              // {0,2} — end of "ab" (col clamped)
+    expect(s.cursor).toEqual({ row: 0, col: 2 });
+    s = meta(s, "", { rightArrow: true });
+    expect(s.cursor).toEqual({ row: 1, col: 0 });
+  });
+  it('Alt-b / Alt-f (meta + input "b"/"f") behave identically to Alt-Left/Right', () => {
+    let s = type(initialEditorState(), "hello world");
+    s = meta(s, "b");
+    expect(s.cursor).toEqual({ row: 0, col: 6 });
+    s = applyKey(s, "a", { ctrl: true }).state;                   // back to col 0
+    s = meta(s, "f");
+    expect(s.cursor).toEqual({ row: 0, col: 5 });
+  });
+  it("an unrecognized meta combo is a no-op — never inserts a character or moves the cursor", () => {
+    let s = type(initialEditorState(), "hi");                     // cursor {0,2}
+    s = meta(s, "x");
+    expect(text(s)).toBe("hi");
+    expect(s.cursor).toEqual({ row: 0, col: 2 });
+    s = meta(s, "", { upArrow: true });                           // meta+other-key combos are no-ops too
+    expect(text(s)).toBe("hi");
+    expect(s.cursor).toEqual({ row: 0, col: 2 });
+  });
+});
+
 describe("inputMode", () => {
   it("a leading ! = bash, # = memory, else normal", () => {
     expect(inputMode(type(initialEditorState(), "!ls -a"))).toBe("bash");

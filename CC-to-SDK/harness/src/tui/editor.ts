@@ -79,6 +79,20 @@ function killWordBack(s: EditorState): EditorState {     // Ctrl-W: delete the w
   let i = col; while (i > 0 && /\s/.test(line[i - 1])) i--; while (i > 0 && !/\s/.test(line[i - 1])) i--;
   const lines = [...s.lines]; lines[row] = line.slice(0, i) + line.slice(col); return { ...s, lines, cursor: { row, col: i } };
 }
+function wordLeft(s: EditorState): EditorState {         // Alt/Option-Left (and Alt-b): jump back a word
+  let { row, col } = s.cursor;
+  if (col === 0) { if (row === 0) return s; return { ...s, cursor: { row: row - 1, col: s.lines[row - 1].length } }; }
+  const line = s.lines[row];
+  let i = col; while (i > 0 && /\s/.test(line[i - 1])) i--; while (i > 0 && !/\s/.test(line[i - 1])) i--;
+  return { ...s, cursor: { row, col: i } };
+}
+function wordRight(s: EditorState): EditorState {        // Alt/Option-Right (and Alt-f): jump forward a word
+  let { row, col } = s.cursor;
+  const line = s.lines[row];
+  if (col >= line.length) { if (row === s.lines.length - 1) return s; return { ...s, cursor: { row: row + 1, col: 0 } }; }
+  let i = col; while (i < line.length && /\s/.test(line[i])) i++; while (i < line.length && !/\s/.test(line[i])) i++;
+  return { ...s, cursor: { row, col: i } };
+}
 function moveCursorVert(s: EditorState, delta: number): EditorState {
   const row = s.cursor.row + delta;
   if (row < 0 || row >= s.lines.length) return s;
@@ -187,6 +201,11 @@ function onUp(s: EditorState): EditorState { if (s.command) return moveCommand(s
 function onDown(s: EditorState): EditorState { if (s.command) return moveCommand(s, 1); if (s.mention) return moveMention(s, 1); if (s.cursor.row === s.lines.length - 1) return historyNext(s); return moveCursorVert(s, 1); }
 
 export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorResult {
+  if (key.meta) {                                        // Alt/Option: word movement (Alt-←→, Alt-b/f) — checked BEFORE
+    if (key.leftArrow || input === "b") return { state: syncCompletions(wordLeft(s)) };   // key.ctrl so no meta combo
+    if (key.rightArrow || input === "f") return { state: syncCompletions(wordRight(s)) }; // ever falls through to insert
+    return { state: s };                                 // an unrecognized meta combo never inserts text
+  }
   if (key.ctrl) {                                        // readline keys; other ctrl combos (l/c/d) act at app level → ignore here (never insert)
     switch (input) {
       case "a": return { state: syncCompletions(lineStart(s)) };
