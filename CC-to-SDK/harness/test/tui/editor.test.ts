@@ -286,6 +286,35 @@ describe("word movement (Alt/Option)", () => {
     expect(text(s)).toBe("hi");
     expect(s.cursor).toEqual({ row: 0, col: 2 });
   });
+  it("an unrecognized meta combo (meta + input \"q\") still inserts nothing", () => {
+    const s = meta(type(initialEditorState(), "hi"), "q");
+    expect(text(s)).toBe("hi");
+  });
+});
+
+// Regression coverage for a bug that shipped because the old press()/meta() helpers never modeled Ink's real
+// key shape: Ink sets key.meta on a BARE Escape and on ESC-prefixed backspace/delete, not only on genuine
+// Alt combos (ink/build/hooks/use-input.js: meta = keypress.meta || keypress.name === "escape" || keypress.option).
+// These tests use that realistic shape so a regression of the too-broad `if (key.meta)` branch fails here.
+describe("meta co-occurring with escape/backspace (Ink's real key shape)", () => {
+  it("Escape delivered as {meta:true, escape:true} still closes an open '/' command popup", () => {
+    const s = type(initialEditorState(), "/");
+    expect(s.command).not.toBeNull();
+    const r = applyKey(s, "", { meta: true, escape: true });
+    expect(r.state.command).toBeNull();
+  });
+  it("Escape delivered as {meta:true, escape:true} still closes an open '@' mention popup", () => {
+    let s = type(initialEditorState(), "@");
+    s = setMentionFiles(s, ["a.ts", "b.ts"]);
+    expect(s.mention).not.toBeNull();
+    const r = applyKey(s, "", { meta: true, escape: true });
+    expect(r.state.mention).toBeNull();
+  });
+  it("Backspace delivered as {meta:true, backspace:true} (Alt-Backspace/ESC-backspace) still deletes a character", () => {
+    const s = type(initialEditorState(), "ab");
+    const r = applyKey(s, "", { meta: true, backspace: true });
+    expect(text(r.state)).toBe("a");
+  });
 });
 
 describe("inputMode", () => {

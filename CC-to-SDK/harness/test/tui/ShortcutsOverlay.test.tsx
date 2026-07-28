@@ -12,19 +12,29 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await new Promise((r) => setTimeout(r, 0)); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 }
+const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
+/** Find the exact keymap row for `key` (border char + key + whitespace boundary, so "Esc" doesn't match
+ *  the "Esc Esc" row and vice versa) and return its full text — so a check against the row's label fails
+ *  if that row is ever dropped, unlike a bare `toContain(key)` which any incidental match elsewhere satisfies. */
+function rowFor(frameText: string, key: string): string {
+  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^│ ${esc}(?:\\s|$)`);
+  const line = stripAnsi(frameText).split("\n").find((l) => re.test(l));
+  if (line === undefined) throw new Error(`ShortcutsOverlay: no row found for key ${JSON.stringify(key)}`);
+  return line;
+}
 
 describe("<ShortcutsOverlay>", () => {
   it("renders the heading and the keymap rows for real bindings", async () => {
     const { lastFrame } = render(<ShortcutsOverlay onClose={() => {}} />);
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
     const f = frame(lastFrame);
-    expect(f).toContain("Esc Esc");
-    expect(f).toContain("rewind");
-    expect(f).toContain("Tab");
-    expect(f).toContain("Ctrl+B");
-    expect(f).toContain("!");
-    expect(f).toContain("#");
-    expect(f).toContain("?");
+    expect(rowFor(f, "Esc Esc")).toContain("rewind");
+    expect(rowFor(f, "Tab")).toContain("mode ladder");
+    expect(rowFor(f, "Ctrl+B")).toContain("background");
+    expect(rowFor(f, "!")).toContain("bash");
+    expect(rowFor(f, "#")).toContain("memory");
+    expect(rowFor(f, "?")).toContain("this help");
   });
 
   it("any keypress calls onClose", async () => {

@@ -201,9 +201,13 @@ function onUp(s: EditorState): EditorState { if (s.command) return moveCommand(s
 function onDown(s: EditorState): EditorState { if (s.command) return moveCommand(s, 1); if (s.mention) return moveMention(s, 1); if (s.cursor.row === s.lines.length - 1) return historyNext(s); return moveCursorVert(s, 1); }
 
 export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorResult {
-  if (key.meta) {                                        // Alt/Option: word movement (Alt-←→, Alt-b/f) — checked BEFORE
-    if (key.leftArrow || input === "b") return { state: syncCompletions(wordLeft(s)) };   // key.ctrl so no meta combo
-    if (key.rightArrow || input === "f") return { state: syncCompletions(wordRight(s)) }; // ever falls through to insert
+  // Alt/Option word movement (Alt-←→, Alt-b/f) — checked BEFORE key.ctrl so no meta combo ever falls through to
+  // insert. Ink also sets key.meta on a BARE Escape and on ESC-prefixed backspace/delete (use-input.js:
+  // meta = keypress.meta || keypress.name === "escape" || keypress.option), so those must NOT be swallowed here —
+  // exclude them so escape/backspace/delete/return keep their own semantics via the handlers further below.
+  if (key.meta && !key.escape && !key.backspace && !key.delete && !key.return) {
+    if (key.leftArrow || input === "b") return { state: syncCompletions(wordLeft(s)) };
+    if (key.rightArrow || input === "f") return { state: syncCompletions(wordRight(s)) };
     return { state: s };                                 // an unrecognized meta combo never inserts text
   }
   if (key.ctrl) {                                        // readline keys; other ctrl combos (l/c/d) act at app level → ignore here (never insert)
