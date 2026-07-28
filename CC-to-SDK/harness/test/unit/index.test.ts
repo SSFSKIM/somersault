@@ -44,8 +44,16 @@ describe("public API", () => {
     expect(typeof api.createPermissionGate).toBe("function");
   });
   it("exports the PendingEntry wire type (advanced-seam, increment 4)", () => {
-    const _pe: api.PendingEntry = { sessionId: "s", toolUseID: "t", toolName: "Edit", input: {}, createdAt: 0 };
+    const _pe: api.PendingEntry = { sessionId: "s", toolUseID: "t", toolName: "Edit", input: {}, createdAt: 0, kind: "permission" };
     expect(_pe.toolUseID).toBe("t");
+  });
+  it("exports the decision kinds + PendingDecision(s) (goal B, task 1)", () => {
+    const k: api.DecisionKind = "question";
+    const out: api.DecisionOutcome = { kind: "plan_approve", acceptEdits: true };
+    const pd: api.PendingDecision = { sessionId: "s", toolUseID: "t", toolName: "AskUserQuestion", kind: k, input: {}, createdAt: 0 };
+    expect(pd.kind).toBe("question");
+    expect(out.kind).toBe("plan_approve");
+    expect(typeof api.PendingDecisions).toBe("function");
   });
   it("exports the daemon permission client methods on connectDaemon's return (advanced-seam, increment 4)", () => {
     const c = api.connectDaemon("/x", (async () => []) as any);
@@ -79,6 +87,7 @@ describe("public API", () => {
       "DaemonSupervisor",
       "HarnessConfigError",
       "KairosAssistant",
+      "PendingDecisions",
       "RemoteChatSession",
       "Session",
       "StructuredRunError",

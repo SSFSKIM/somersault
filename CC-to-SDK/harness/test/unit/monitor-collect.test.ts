@@ -52,9 +52,9 @@ describe("collect", () => {
   it("surfaces parked permissions in snapshot.pending; empty when the client lacks the method", async () => {
     const withPending: MonitorClient = {
       list: async () => [rec({ id: "a", status: "idle" })], contextUsage: async () => ({}),
-      pendingPermissions: async () => [{ sessionId: "a", toolUseID: "t", toolName: "Edit", input: {}, createdAt: 0 }],
+      pendingPermissions: async () => [{ sessionId: "a", toolUseID: "t", toolName: "Edit", kind: "permission", input: {}, createdAt: 0 }],
     };
-    expect((await collect(withPending, { now: () => 0 })).pending).toEqual([{ sessionId: "a", toolUseID: "t", toolName: "Edit", input: {}, createdAt: 0 }]);
+    expect((await collect(withPending, { now: () => 0 })).pending).toEqual([{ sessionId: "a", toolUseID: "t", toolName: "Edit", kind: "permission", input: {}, createdAt: 0 }]);
     const noPending: MonitorClient = { list: async () => [rec({ id: "a", status: "idle" })], contextUsage: async () => ({}) };
     expect((await collect(noPending, { now: () => 0 })).pending).toEqual([]);
   });

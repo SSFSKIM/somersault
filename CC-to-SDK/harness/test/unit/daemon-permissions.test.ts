@@ -10,7 +10,7 @@ describe("PendingPermissions", () => {
   it("park → respond resolves the awaited promise with the decision", async () => {
     const reg = new PendingPermissions({ expireAfterMs: 30_000, now: () => 7 });
     const p = reg.brokerFor("sess-1").request(req("t1"));
-    expect(reg.list()).toEqual([{ sessionId: "sess-1", toolUseID: "t1", toolName: "Edit", input: { file_path: "f.ts" }, createdAt: 7 }]);
+    expect(reg.list()).toEqual([{ sessionId: "sess-1", toolUseID: "t1", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: 7 }]);
     expect(reg.respond("t1", { kind: "allow_once" })).toBe(true);
     await expect(p).resolves.toEqual({ kind: "allow_once" });
     expect(reg.list()).toEqual([]);

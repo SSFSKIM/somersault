@@ -80,7 +80,7 @@ describe("useChat: the host event stream is the single rendering source", () => 
     fake.pushEvent({ kind: "turn", phase: "start", seq: 7 });
     fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "first" }] } } });
     fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "second" }] } } });
-    const entry: PendingEntry = { sessionId: "s", toolUseID: "t9", toolName: "Read", input: { file_path: "x" }, createdAt: Date.now() };
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t9", toolName: "Read", kind: "permission", input: { file_path: "x" }, createdAt: Date.now() };
     fake.pushEvent({ kind: "permission", entry });
     fake.pushEvent({ kind: "state", status: { state: "working", status: "busy" } });
     await waitFor(() => frame(lastFrame).includes("BUSY") && frame(lastFrame).includes("PENDING:Read"));
@@ -121,7 +121,7 @@ describe("useChat: permission feed", () => {
         return { ok: true, alreadyAnsweredBy: "eve" };
       },
     });
-    const entry: PendingEntry = { sessionId: "s", toolUseID: "t1", toolName: "Edit", input: { file_path: "f.ts" }, createdAt: Date.now() };
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t1", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() };
     const api: { resolve?: (d: PermissionDecision) => void } = {};
     function H() { const c = useChat(() => fake); api.resolve = c.resolvePermission; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
@@ -139,7 +139,7 @@ describe("useChat: permission feed", () => {
     // all — an unhandled rejection here used to kill the whole attached REPL process.
     let fake!: FakeRemote;
     fake = fakeRemote({ answerPermission: async () => { throw new Error("host connection closed"); } });
-    const entry: PendingEntry = { sessionId: "s", toolUseID: "t7", toolName: "Bash", input: { command: "rm -rf /" }, createdAt: Date.now() };
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t7", toolName: "Bash", kind: "permission", input: { command: "rm -rf /" }, createdAt: Date.now() };
     const api: { resolve?: (d: PermissionDecision) => void } = {};
     function H() { const c = useChat(() => fake); api.resolve = c.resolvePermission; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
@@ -154,7 +154,7 @@ describe("useChat: permission feed", () => {
 
   it("settlePermission(...by:'system', decision:'deny') with no local answer clears the dialog and appends a notice", async () => {
     const fake = fakeRemote();
-    const entry: PendingEntry = { sessionId: "s", toolUseID: "t2", toolName: "Bash", input: { command: "rm -rf /" }, createdAt: Date.now() };
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t2", toolName: "Bash", kind: "permission", input: { command: "rm -rf /" }, createdAt: Date.now() };
     function H() { const c = useChat(() => fake); return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
@@ -167,7 +167,7 @@ describe("useChat: permission feed", () => {
 
   it("unmount does NOT deny a pending remote permission — it stays parked (detach ≠ deny); the session is disposed exactly once", async () => {
     const fake = fakeRemote();
-    const entry: PendingEntry = { sessionId: "s", toolUseID: "t5", toolName: "Edit", input: {}, createdAt: Date.now() };
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t5", toolName: "Edit", kind: "permission", input: {}, createdAt: Date.now() };
     function H() { const c = useChat(() => fake); return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"}</Text>; }
     const { lastFrame, unmount } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
@@ -182,8 +182,8 @@ describe("useChat: permission feed", () => {
   it("three parked entries queue FIFO: dialog shows the head; answering advances to the next", async () => {
     let fake!: FakeRemote;
     fake = fakeRemote();
-    const e1: PendingEntry = { sessionId: "s", toolUseID: "a", toolName: "Edit", input: {}, createdAt: 1 };
-    const e2: PendingEntry = { sessionId: "s", toolUseID: "b", toolName: "Write", input: {}, createdAt: 2 };
+    const e1: PendingEntry = { sessionId: "s", toolUseID: "a", toolName: "Edit", kind: "permission", input: {}, createdAt: 1 };
+    const e2: PendingEntry = { sessionId: "s", toolUseID: "b", toolName: "Write", kind: "permission", input: {}, createdAt: 2 };
     const api: { resolve?: (d: PermissionDecision) => void } = {};
     function H() { const c = useChat(() => fake); api.resolve = c.resolvePermission; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"}</Text>; }
     const { lastFrame } = render(<H />);

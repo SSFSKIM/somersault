@@ -50,8 +50,9 @@ export type {
   PreToolUseHookInput, PostToolUseHookInput, UserPromptSubmitHookInput, StopHookInput, SubagentStopHookInput,
 } from "./hooks/index.js";
 export { createPermissionGate } from "./permissions/gate.js";
-export type { PermissionBroker, PermissionDecision, PermissionRequest } from "./permissions/types.js";
-export type { PendingEntry } from "./permissions/pending.js";
+export type { PermissionBroker, PermissionDecision, PermissionRequest, DecisionKind, DecisionOutcome } from "./permissions/types.js";
+export type { PendingEntry, PendingDecision } from "./permissions/pending.js";
+export { PendingDecisions } from "./permissions/pending.js";
 export { RemoteChatSession } from "./client/remote.js";
 export { remoteChatSession } from "./client/chatAdapter.js";
 export type { RemoteChat, RemoteChatOpts } from "./client/chatAdapter.js";

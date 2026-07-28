@@ -1,5 +1,5 @@
 // harness/src/permissions/gate.ts
-import type { PermissionBroker, PermissionDecision, PermissionRequest } from "./types.js";
+import type { PermissionBroker, PermissionRequest, DecisionOutcome } from "./types.js";
 
 // The SDK CanUseTool shape (sdk.d.ts): (toolName, input, options) => Promise<PermissionResult>.
 type CanUseToolOptions = { signal: AbortSignal; toolUseID: string; title?: string; displayName?: string; description?: string; [k: string]: unknown };
@@ -7,7 +7,7 @@ type PermissionResult = { behavior: "allow"; updatedInput: Record<string, unknow
 export type CanUseTool = (toolName: string, input: Record<string, unknown>, options: CanUseToolOptions) => Promise<PermissionResult>;
 
 // Resolve the broker, but lose the race to an abort (turn interrupted) → deny. Pre-aborted → deny immediately.
-function requestOrAbort(broker: PermissionBroker, req: PermissionRequest, signal: AbortSignal): Promise<PermissionDecision> {
+function requestOrAbort(broker: PermissionBroker, req: PermissionRequest, signal: AbortSignal): Promise<DecisionOutcome> {
   if (signal?.aborted) return Promise.resolve({ kind: "deny" });
   return new Promise((resolve) => {
     signal?.addEventListener("abort", () => resolve({ kind: "deny" }), { once: true });

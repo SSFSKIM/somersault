@@ -10,7 +10,7 @@ import { TurnBuffer } from "./follow.js";
 import type { HostEvent } from "./wire.js";
 import { PendingPermissions } from "../permissions/pending.js";
 import type { PendingEntry } from "../permissions/pending.js";
-import type { PermissionDecision, PermissionBroker, PermissionRequest } from "../permissions/types.js";
+import type { PermissionDecision, PermissionBroker, PermissionRequest, DecisionOutcome } from "../permissions/types.js";
 
 export interface SessionHostOpts {
   short: string; name: string; cwd: string; kind: "bg" | "interactive";
@@ -282,7 +282,7 @@ export class SessionHost {
    *  order to go and think about it (spec acceptance 6). */
   broker(): PermissionBroker {
     return {
-      request: async (req: PermissionRequest): Promise<PermissionDecision> => {
+      request: async (req: PermissionRequest): Promise<DecisionOutcome> => {
         // Detachedness, not kind, decides (spec A2b §4): a detached host's purpose is surviving
         // unattended — park. An in-process host whose UI is gone has nobody left to answer — deny.
         // Counted on CONNECTIONS, not followers: a client that connected but has not (yet) followed is

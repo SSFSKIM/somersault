@@ -33,7 +33,7 @@ describe("<ChatApp>", () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
-    fake.parkPermission({ sessionId: "s", toolUseID: "t", toolName: "Edit", input: { file_path: "f.ts" }, createdAt: Date.now() });
+    fake.parkPermission({ sessionId: "s", toolUseID: "t", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
     await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));   // dialog up
     expect(lastFrame()).toContain("Edit");
     stdin.write("a");
@@ -100,7 +100,7 @@ describe("<ChatApp>", () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "attached", short: "abc" }} onDetach={() => { detachCalls++; }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
-    const entry: PendingEntry = { sessionId: "s", toolUseID: "t", toolName: "Edit", input: {}, createdAt: Date.now() };
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t", toolName: "Edit", kind: "permission", input: {}, createdAt: Date.now() };
     fake.parkPermission(entry);
     await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
     stdin.write("\x1a");                                     // Ctrl-Z
