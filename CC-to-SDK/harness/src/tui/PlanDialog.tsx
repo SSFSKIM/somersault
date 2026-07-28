@@ -5,21 +5,13 @@
 import React, { useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { renderMarkdown } from "./markdown.js";
-import type { RenderLine } from "./render.js";
+// The transcript's line renderer, reused verbatim: renderMarkdown's RenderLine carries bold/italic/segments
+// (not just `{text, dim?, color?}`), and one renderer keeps the dialog's styling from drifting from the
+// transcript's. `gutter` is never set on markdown output, so the shared branch is simply inert here.
+import { Line } from "./Transcript.js";
 import { ACCENT } from "./theme.js";
 
 const WINDOW = 14;   // visible plan lines; ↑/↓ scrolls when longer
-
-// Faithful RenderLine → <Text> (segments/bold/italic/color/dim), mirroring Transcript.tsx's <Line> — the
-// brief's naive `{l.text}` map would silently drop the bold header / mixed-inline styling renderMarkdown
-// actually produces (its RenderLine carries more than `{text, dim?, color?}`).
-const PlanLine = ({ l }: { l: RenderLine }) => (
-  <Text>
-    {l.segments
-      ? l.segments.map((s, i) => <Text key={i} color={s.color} dimColor={s.dim} bold={s.bold} italic={s.italic}>{s.text}</Text>)
-      : <Text color={l.color} dimColor={l.dim} bold={l.bold} italic={l.italic}>{l.text || " "}</Text>}
-  </Text>
-);
 
 export function PlanDialog({ req, onDecision }: {
   req: { input: Record<string, unknown>; subagentType?: string };
@@ -49,7 +41,7 @@ export function PlanDialog({ req, onDecision }: {
       {req.subagentType ? <Text dimColor>Subagent ({req.subagentType}) asks:</Text> : null}
       <Text bold>Claude has finished planning. <Text color={ACCENT}>Approve this plan?</Text></Text>
       {top > 0 ? <Text dimColor>… ↑ {top} more</Text> : null}
-      {visible.map((l, i) => <PlanLine key={top + i} l={l} />)}
+      {visible.map((l, i) => <Line key={top + i} l={l} />)}
       {top < maxTop ? <Text dimColor>… ↓ {maxTop - top} more</Text> : null}
       <Text> </Text>
       {feedback !== null

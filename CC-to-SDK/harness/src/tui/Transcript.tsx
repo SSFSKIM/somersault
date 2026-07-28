@@ -3,7 +3,9 @@ import React from "react";
 import { Box, Text, Static } from "ink";
 import type { RenderLine } from "./render.js";
 
-const Line = ({ l }: { l: RenderLine }) => (
+/** RenderLine → <Text>. Exported because PlanDialog renders renderMarkdown() output the same way — one
+ *  renderer, so a styling-rule change can't silently drift between the transcript and the dialogs. */
+export const Line = ({ l }: { l: RenderLine }) => (
   <Text>
     {l.gutter ? <Text color={l.gutter.color} dimColor={l.gutter.dim}>{l.gutter.text}</Text> : null}
     {l.segments
