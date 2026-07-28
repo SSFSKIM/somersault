@@ -5,8 +5,9 @@ import { describe, it, expect } from "vitest";
 import React from "react";
 import { render } from "ink-testing-library";
 import { ChatApp } from "../../src/tui/ChatApp.js";
-import { fakeRemote } from "./helpers/fakeRemote.js";
+import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
+import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
 async function waitFor(cond: () => boolean, timeout = 2000) {
@@ -16,6 +17,13 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 async function pressUntil(stdin: { write: (s: string) => void }, key: string, cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { stdin.write(key); if (cond()) return; if (Date.now() - start > timeout) throw new Error(`pressUntil(${JSON.stringify(key)}) timeout`); await new Promise((r) => setTimeout(r, 5)); }
+}
+// A fakeRemote() extended onto the RewindOps surface (fakeRemote() alone has no rewind methods, so
+// hasRewind() is false on it as-is — mirrors useChat-rewind.test.tsx's fakeRewindSession).
+type RewindFakeOpts = { rewindAnchors?: () => Promise<RewindAnchor[]>; rewindDryRun?: (uuid: string) => Promise<RewindDryRun>; rewind?: (anchor: RewindAnchor, scope: RewindScope) => Promise<void> };
+function fakeRewindRemote(rewindOpts: RewindFakeOpts, remoteOpts: FakeRemoteOpts = {}) {
+  const base = fakeRemote(remoteOpts);
+  return { ...base, rewindAnchors: rewindOpts.rewindAnchors ?? (async () => []), rewindDryRun: rewindOpts.rewindDryRun ?? (async () => ({ canRewind: true }) as RewindDryRun), rewind: rewindOpts.rewind ?? (async () => {}) };
 }
 
 describe("<ChatApp>", () => {
@@ -226,5 +234,50 @@ describe("<ChatApp>", () => {
       { task_id: "b", task_type: "agent", description: "y" },
     ] });
     await waitFor(() => frame(lastFrame).includes("⚙ 2 bg"));
+  });
+
+  it("Esc on an idle composer arms 'Press Esc again to rewind'; second Esc opens the picker (rewindAnchors called); while busy Esc interrupts and never arms", async () => {
+    let anchorsFetched = 0;
+    let interrupts = 0;
+    let release = () => {};
+    const ANCHOR: RewindAnchor = { uuid: "u1", prevUuid: "u0", text: "fix it", index: 1 };
+    let fake: ReturnType<typeof fakeRewindRemote>;
+    fake = fakeRewindRemote(
+      { rewindAnchors: async () => { anchorsFetched++; return [ANCHOR]; } },
+      {
+        interrupt: () => { interrupts++; },
+        submit: async (_p, onMessage) => {
+          fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+          const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+          onMessage(m); fake.pushEvent({ kind: "message", data: m });
+          await new Promise<void>((res) => { release = res; });
+          fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+          return { result: "done" };
+        },
+      },
+    );
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+
+    stdin.write("\x1b");                                            // Esc idle → arm
+    await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
+    expect(anchorsFetched).toBe(0);
+
+    stdin.write("\x1b");                                            // second Esc within the window → opens the picker
+    await waitFor(() => anchorsFetched === 1);
+    await waitFor(() => frame(lastFrame).includes("Rewind to a previous message"));
+    expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
+
+    stdin.write("\x1b");                                            // list-stage esc closes the picker (no selection made)
+    await waitFor(() => frame(lastFrame).includes("›"));
+
+    stdin.write("hi"); await waitFor(() => frame(lastFrame).includes("hi"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("ok"));   // turn started, hanging
+
+    stdin.write("\x1b");                                            // Esc while busy → interrupt, never arms
+    await waitFor(() => interrupts === 1);
+    expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
+    expect(anchorsFetched).toBe(1);                                 // the busy Esc never triggered another fetch
+    release();
   });
 });

@@ -18,6 +18,7 @@ import { ModelPicker } from "./ModelPicker.js";
 import { TaskPanel } from "./TaskPanel.js";
 import { TurnSpinner } from "./TurnSpinner.js";
 import { BgTasksPanel } from "./BgTasksPanel.js";
+import { RewindPicker } from "./RewindPicker.js";
 
 export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialLines }: {
   makeSession: (resume?: string) => ChatSession;
@@ -29,13 +30,25 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   initialResume?: InitialResume;
   initialLines?: RenderLine[];
 }) {
-  const { state, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, backgroundNow } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt });
+  const { state, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt });
   const { exit } = useApp();
   const [exitArmed, setExitArmed] = useState(false);
   const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disarm = () => { setExitArmed(false); if (disarmTimer.current) { clearTimeout(disarmTimer.current); disarmTimer.current = null; } };
   useEffect(() => () => { if (disarmTimer.current) clearTimeout(disarmTimer.current); }, []);
-  const onInterrupt = () => { interrupt(); disarm(); };
+  // Esc-Esc rewind arming (mirrors the Ctrl-C double-press pattern above): busy Esc always interrupts and
+  // never arms; an idle Esc arms for 1.5s, and a second Esc within the window opens the rewind picker.
+  const [escArmed, setEscArmed] = useState(false);
+  const escTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (escTimer.current) clearTimeout(escTimer.current); }, []);
+  const onInterrupt = () => {
+    disarm();
+    if (state.busy) { interrupt(); setEscArmed(false); return; }       // busy: Esc stays interrupt, never arms
+    if (escArmed) { setEscArmed(false); if (escTimer.current) clearTimeout(escTimer.current); void openRewind(); return; }
+    setEscArmed(true);
+    if (escTimer.current) clearTimeout(escTimer.current);
+    escTimer.current = setTimeout(() => setEscArmed(false), 1500);
+  };
   const onCycleMode = () => { cycleMode(); disarm(); };   // Tab cycles the permission ladder (default → acceptEdits → plan → auto)
   // Only Ctrl-C / Ctrl-L / Ctrl-Z live here — they conflict with nothing (composer/dialog/pickers never act
   // on them), so this stays active even during a pending dialog (so Ctrl-C can still quit, Ctrl-Z can still
@@ -67,26 +80,29 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           {state.queue.map((q, i) => <Text key={i} dimColor>⋯ queued: {q.length > 60 ? q.slice(0, 59) + "…" : q}</Text>)}
         </Box>
       ) : null}
-      {state.bgPanelOpen
-        ? <BgTasksPanel tasks={state.bgTasks} onStop={stopBgTask} onClose={closeBgPanel} />
-        : state.modelPicker.open
-          ? <ModelPicker models={state.modelPicker.models} onPick={pickModel} onCancel={closeModelPicker} />
-          : state.picker.open
-            ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
-            : state.pending
-              ? state.pending.kind === "question"
-                // key = toolUseID: dropPending promotes the NEXT queued decision straight into `pending`
-                // with no intermediate null render, so without a key the same QuestionDialog instance
-                // would carry stale internal progress (qi/idx/checked) into an unrelated toolUseID's
-                // question set — a fresh key forces the clean remount a new decision needs.
-                ? <QuestionDialog key={state.pending.toolUseID} req={state.pending}
-                    onAnswer={(answers, response) => resolveDecision({ kind: "question_answer", answers, ...(response ? { response } : {}) })}
-                    onDeny={() => resolveDecision({ kind: "deny" })} />
-                : state.pending.kind === "plan"
-                  ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
-                  : <PermissionDialog key={state.pending.toolUseID} req={state.pending} onDecision={(d) => resolveDecision(d)} />
-              : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} />}
+      {state.rewindPicker.open
+        ? <RewindPicker anchors={state.rewindPicker.anchors} onDryRun={rewindDryRun} onConfirm={confirmRewind} onClose={closeRewindPicker} />
+        : state.bgPanelOpen
+          ? <BgTasksPanel tasks={state.bgTasks} onStop={stopBgTask} onClose={closeBgPanel} />
+          : state.modelPicker.open
+            ? <ModelPicker models={state.modelPicker.models} onPick={pickModel} onCancel={closeModelPicker} />
+            : state.picker.open
+              ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
+              : state.pending
+                ? state.pending.kind === "question"
+                  // key = toolUseID: dropPending promotes the NEXT queued decision straight into `pending`
+                  // with no intermediate null render, so without a key the same QuestionDialog instance
+                  // would carry stale internal progress (qi/idx/checked) into an unrelated toolUseID's
+                  // question set — a fresh key forces the clean remount a new decision needs.
+                  ? <QuestionDialog key={state.pending.toolUseID} req={state.pending}
+                      onAnswer={(answers, response) => resolveDecision({ kind: "question_answer", answers, ...(response ? { response } : {}) })}
+                      onDeny={() => resolveDecision({ kind: "deny" })} />
+                  : state.pending.kind === "plan"
+                    ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
+                    : <PermissionDialog key={state.pending.toolUseID} req={state.pending} onDecision={(d) => resolveDecision(d)} />
+                : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} prefill={state.composerPrefill} />}
       {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
+      {escArmed ? <Box paddingX={1}><Text dimColor>Press Esc again to rewind</Text></Box> : null}
       <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} thinkLevel={state.thinkLevel} bgCount={state.bgTasks.length} />
     </Box>
   );
