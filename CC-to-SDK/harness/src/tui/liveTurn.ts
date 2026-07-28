@@ -149,6 +149,4 @@ export class LiveTurn {
     const s = Math.floor((this.now() - b.startedAt) / 1000);
     return [{ text: `⟳ ${label}${s >= 1 ? ` ${s}s` : ""}` }];                 // running, elapsed ≥1s
   }
-
-  get subagentActive(): boolean { return [...this.byTool.values()].some((b) => b.name === "Agent" && b.doneAt == null); }
 }

@@ -162,7 +162,6 @@ describe("LiveTurn", () => {
     let t = 0; const lt = new LiveTurn(() => t);
     // top-level Agent tool_use (full message — no partials for the agent's own content)
     lt.ingest({ type: "assistant", message: { content: [{ type: "tool_use", id: "ag1", name: "Agent", input: { description: "research" } }] } });
-    expect(lt.subagentActive).toBe(true);
     expect(texts(lt).some((x) => x.startsWith("⚙ Agent"))).toBe(true);
     // nested subagent turns (parent_tool_use_id = ag1)
     lt.ingest({ type: "user", parent_tool_use_id: "ag1", message: { content: [{ type: "text", text: "do the thing" }] } });
@@ -175,7 +174,6 @@ describe("LiveTurn", () => {
     // top-level Agent result closes + collapses
     t = 12000;
     lt.ingest({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "ag1", content: "done" }] } });
-    expect(lt.subagentActive).toBe(false);
     const collapsed = texts(lt);
     expect(collapsed.some((x) => /⚙ Agent .*✓ \(1 tools? · 12s\)/.test(x))).toBe(true);
     expect(collapsed.some((x) => x.includes("the output is hi"))).toBe(false); // nested hidden after collapse
