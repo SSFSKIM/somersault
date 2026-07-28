@@ -13,18 +13,20 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const init = (c: { feed(ch: string): void }, id: number, name = "t") => send(c, { id, method: "initialize", params: { clientInfo: { name } } });
 
 describe("appserver subscribe + thread/read (Task 9)", () => {
-  it("a pipelined turn/start + thread/subscribe (no tick between, same synchronous step) never yields a mismatched turn/started — the subscribing peer's replay-time turn id and the later live-broadcast turn id are always the SAME value, matching turn/start's reply and the eventual turn/completed (Task 9 finding 1 regression guard)", async () => {
-    // Pre-fix, this exact interleaving reproduced the reviewer's finding verbatim: turn/start's
-    // synchronous gate sets busy/resets the buffer but only minted the turn id LATER inside the
-    // deferred chain callback, so thread/subscribe's busy-but-empty-buffer fallback (subscribe.ts)
-    // read a STALE turnSeq and replayed a bogus `turn_<id>_0` a tick before the real `turn_<id>_1`
-    // broadcast landed — two turn/started for the SAME turn, with DIFFERENT ids, and no
-    // turn/completed ever closing out the bogus one. (Verified live against this suite before the
-    // fix landed: the peer received ids "..._0" then "..._1".) Note the design here ALSO always
-    // delivers turn/started twice to a peer that subscribes into this exact gap — once from
-    // subscribe's own replay, once from the live broadcast that follows once this peer is already a
-    // subscriber — that duplication is pre-existing and out of scope for finding 1; what must never
-    // happen again is the two deliveries disagreeing on the turn id.
+  it("a pipelined turn/start + thread/subscribe (no tick between, same synchronous step) delivers EXACTLY ONE turn/started, from the live broadcast, with the correct turn id (Task 9 finding 1 + finding 2 regression guard)", async () => {
+    // Finding 1 (fixed in round 1): turn/start's synchronous gate set busy/reset the buffer but only
+    // minted the turn id LATER inside the deferred chain callback, so thread/subscribe's busy-but-
+    // empty-buffer fallback (subscribe.ts) read a STALE turnSeq and replayed a bogus `turn_<id>_0` a
+    // tick before the real `turn_<id>_1` broadcast landed.
+    //
+    // Finding 2 (fixed here): even once the id was correct, the subscribing peer still received
+    // turn/started TWICE for this exact interleaving — once from subscribe's own replay (which saw
+    // record.busy already true, since that flips synchronously at turn/start's request-arrival time,
+    // before the chain callback's broadcast has fired), once from the live broadcast that follows once
+    // this peer is already in record.subscribers (added before the replay branch runs). A turn whose
+    // turn/started has not yet been broadcast was never MISSED by this subscriber — the live broadcast
+    // about to fire is not a replay's job to duplicate. Reproduced live pre-fix against this exact test
+    // (asserting count===1 failed with 2 deliveries); post-fix it's exactly 1.
     const sessionFactory = () => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1" });
     const srv = new AppServer({}, { sessionFactory });
     const a = mkSink(); const connA = srv.connect(a.sink);
@@ -45,11 +47,44 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     expect(turnId).toBe(`turn_${threadId}_1`);
 
     const bStarted = parsed(b.lines).filter((f) => f.method === "turn/started");
-    expect(bStarted.length).toBeGreaterThan(0);
-    for (const ev of bStarted) expect(ev.params).toEqual({ threadId, turn: { id: turnId, status: "inProgress" } });
+    expect(bStarted).toHaveLength(1);
+    expect(bStarted[0].params).toEqual({ threadId, turn: { id: turnId, status: "inProgress" } });
 
     const bCompleted = parsed(b.lines).find((f) => f.method === "turn/completed");
     expect(bCompleted.params.turn.id).toBe(turnId);
+  });
+  it("subscribing to a thread whose turn/started has ALREADY broadcast (ordinary mid-turn join, not the same-tick gap) still replays turn/started first, before the buffered item events", async () => {
+    const sessionFactory = () => ({
+      submit: async (_prompt: string, onMessage: (m: unknown) => void) => {
+        onMessage({ type: "assistant", message: { id: "msg1", content: [{ type: "text", text: "hi" }] } });
+        return new Promise<{ result: unknown }>(() => {}); // never resolves — the turn stays in flight for this test
+      },
+      interrupt: async () => ({}),
+      dispose: async () => {},
+      onFrame: () => () => {},
+      sessionId: "sess-1",
+    });
+    const srv = new AppServer({}, { sessionFactory });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    const b = mkSink(); const connB = srv.connect(b.sink);
+    init(connA, 1, "A"); init(connB, 1, "B");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    send(connA, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await tick(); // the chain callback runs to completion in this tick: turn/started broadcasts, then
+                  // submit() emits its item and parks on the never-resolving promise — turnStartedBroadcast
+                  // is now true and stays true, since this turn never completes within the test.
+
+    b.lines.length = 0;
+    send(connB, { id: 4, method: "thread/subscribe", params: { threadId } });
+    await tick();
+
+    const turnId = `turn_${threadId}_1`;
+    const notifs = parsed(b.lines).filter((f) => !("id" in f));
+    expect(notifs.map((f) => f.method)).toEqual(["turn/started", "item/started", "item/completed", "thread/status/changed"]);
+    expect(notifs[0].params).toEqual({ threadId, turn: { id: turnId, status: "inProgress" } });
   });
   it("(a) replay order: turn/started -> buffered item events -> decision/requested -> thread/status/changed last", async () => {
     let broker: any;

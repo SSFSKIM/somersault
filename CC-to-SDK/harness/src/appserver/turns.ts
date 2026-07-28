@@ -82,11 +82,17 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
     ctx.peer.reply(id, { turn });
     statusChanged(srv, record);
     srv.broadcast(record.id, "turn/started", { threadId: record.id, turn });
+    // Recorded AFTER the broadcast actually goes out, so a subscribe landing between turn/start's
+    // synchronous gate (above, in turnStart) and this point still sees turnStartedBroadcast unset and
+    // correctly skips its own turn/started replay — the live broadcast just above/about to fire is the
+    // only delivery that peer needs (Task 9 finding 2).
+    record.turnStartedBroadcast = true;
 
     const mapper = new TurnMapper(); // one instance per turn — dropped at completion, never reused
     const reportFailed = (err: unknown) => {
       emitItems(srv, record, turnId, mapper.finalize(true));
       record.busy = false;
+      record.turnStartedBroadcast = false;
       srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: { id: turnId, status: "failed", error: String(err) } });
       statusChanged(srv, record);
     };
@@ -99,12 +105,14 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
       const interrupted = record.interruptRequested;
       emitItems(srv, record, turnId, mapper.finalize(interrupted));
       record.busy = false;
+      record.turnStartedBroadcast = false;
       srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: { id: turnId, status: interrupted ? "interrupted" : "completed" } });
       statusChanged(srv, record);
     };
     const onFailure = (err: unknown) => {
       emitItems(srv, record, turnId, mapper.finalize(true));
       record.busy = false;
+      record.turnStartedBroadcast = false;
       const status = record.interruptRequested ? "interrupted" : "failed";
       const turn2: Record<string, unknown> = { id: turnId, status };
       if (status === "failed") turn2.error = String(err);

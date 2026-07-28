@@ -25,12 +25,19 @@ export const threadSubscribe: Handler = (srv, ctx, id, params) => {
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
   record.subscribers.add(ctx.peer);
   ctx.peer.reply(id, { subscribed: true });
-  // Replay, host-follow() order (spec §5): turn/started (only if a turn is in flight) -> buffered item
-  // events -> parked decisions -> thread/status/changed LAST. Each buffered event is replayed under its
+  // Replay, host-follow() order (spec §5): turn/started (only if the client actually MISSED it) -> buffered
+  // item events -> parked decisions -> thread/status/changed LAST. Each buffered event is replayed under its
   // OWN tagged turnId (BufferedItemEvent.turnId) rather than a single computed "current" one — the
   // buffer is already scoped per-turn by the reset in turns.ts, but this avoids trusting that invariant
   // a second time (the registry.ts doc comment on BufferedItemEvent is explicit about this).
-  if (record.busy) {
+  //
+  // Gated on record.turnStartedBroadcast, NOT on record.busy alone (Task 9 finding 2): busy flips true
+  // synchronously at turn/start's request-arrival time, before the chain callback's live turn/started
+  // broadcast actually fires. A subscribe landing in that gap already joined `record.subscribers` above,
+  // so the live broadcast is about to reach it anyway — replaying here too would double-deliver. A turn
+  // that HAS broadcast turn/started, though, was missed by a peer subscribing after the fact, and must be
+  // replayed.
+  if (record.busy && record.turnStartedBroadcast) {
     // record.currentTurnId is minted synchronously by turn/start in the SAME step as busy=true (Task 9
     // finding 1) — it is never stale, unlike a turnSeq re-derivation would be if this replay landed
     // before the chain callback's microtask ran.

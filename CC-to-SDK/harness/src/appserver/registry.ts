@@ -33,6 +33,14 @@ export interface ThreadRecord {
                                 // source of "the in-flight turn's id" a subscribe-time replay may read;
                                 // never reconstruct it from turnSeq (that increments in the same step now,
                                 // but re-deriving invites drift back in — see Task 9 finding 1)
+  turnStartedBroadcast?: boolean; // true only once the chain callback has actually broadcast turn/started
+                                // for currentTurnId; false while busy=true but the broadcast is still
+                                // pending (the same-tick turn/start+subscribe gap), and reset to false when
+                                // the turn completes. This — NOT `busy` — is what subscribe-time replay
+                                // gates turn/started on (Task 9 finding 2): busy flips true synchronously at
+                                // request-arrival, before the broadcast; replaying to a peer that is already
+                                // wired into `subscribers` by then would double-deliver turn/started once
+                                // the live broadcast lands right after.
   interruptRequested: boolean; // set by turn/interrupt; read by both the success and rejection paths to pick "interrupted" vs "completed"/"failed"
   buffer: BufferedItemEvent[]; // reset at the start of every turn (see BufferedItemEvent) — not a rolling lifetime window
   subscribers: Set<Peer>;
