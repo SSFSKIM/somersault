@@ -256,6 +256,19 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     expect(srv.registry.get(t2)!.subscribers.size).toBe(0);
   });
 
+  it("thread/read rejects a non-numeric cursor as INVALID_PARAMS instead of producing a NaN-driven page", async () => {
+    const srv = new AppServer({}, { sessionFactory: () => fakeSession(), getSessionMessages: async () => [] });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    send(connA, { id: 3, method: "thread/read", params: { threadId, cursor: "not-a-number" } });
+    await tick();
+    expect(parsed(a.lines).find((f) => f.id === 3).error.code).toBe(-32602);
+  });
+
   it("subscribe/unsubscribe/read on an unknown threadId are all -33004", async () => {
     const srv = new AppServer({}, { sessionFactory: () => fakeSession() });
     const a = mkSink(); const connA = srv.connect(a.sink);

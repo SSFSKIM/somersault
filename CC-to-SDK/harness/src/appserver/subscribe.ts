@@ -10,7 +10,10 @@ import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.j
 import type { AppServer, Handler } from "./server.js";
 
 const threadIdParams = z.object({ threadId: z.string().min(1) });
-const threadReadParams = z.object({ threadId: z.string().min(1), cursor: z.string().optional(), limit: z.number().int().positive().optional() });
+// `cursor` is server-minted (an offset-from-end count, see threadRead below) but still crosses the wire
+// from the client on the NEXT call — validate its shape here rather than let a malformed value flow
+// into `Number(...)` and silently produce a NaN-driven garbage page.
+const threadReadParams = z.object({ threadId: z.string().min(1), cursor: z.string().regex(/^\d+$/).optional(), limit: z.number().int().positive().optional() });
 const DEFAULT_LIMIT = 200;
 
 const defaultGetSessionMessages = (sessionId: string): Promise<unknown[]> => sdkGetSessionMessages(sessionId);
