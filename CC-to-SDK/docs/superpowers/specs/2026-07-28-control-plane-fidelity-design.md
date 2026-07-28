@@ -344,7 +344,26 @@ but the live acceptance run — using the real `ccx` CLI end-to-end rather than 
 `Query` object directly — did not reproduce that for a `Ctrl+B` keypress. The wiring (key → host
 `background` op → `session.backgroundAll()`) is exactly as designed; what's missing is the CLI
 actually detaching the call. This is recorded as a known gap in `docs/parity/tui-ux.md` §8 and the
-two `full-use-checklist*.md` walkthroughs, not silently absorbed.
+two `full-use-checklist*.md` walkthroughs, not silently absorbed. Probe 67 later settled *whose* gap
+it is: called directly on the `Query`, `backgroundTasks()` returns `true` and does nothing to a
+running foreground shell — our wiring is faithful; the call is a no-op on that path.
+
+**Final whole-branch review (fable, xhigh).** Twelve per-task reviews came back clean; the
+whole-branch pass found one Important defect in exactly the seam this branch exists to own — and,
+for the third stage running, in a seam no single task owned. `resumeSession()` opened the resumed
+engine from the **launch** config while `this.mode` still carried the live runtime mode, so a
+Tab-laddered or plan-earned mode diverged from the engine after `/resume`: the status bar could read
+`default` while the engine auto-accepted edits (and the inverse). Fixed by opening the resumed
+session at the current runtime mode — live user intent survives the resume and the reported mode
+agrees with the engine — with a sabotage-verified guard test. Three Minors fixed in the same pass:
+the client adapter's `onClose` now synthesizes a system `decision_settled` for every still-parked
+decision (a dead host used to leave the dialog mounted until the 10 s request timeout — the last
+hole in the park-lifecycle table, and another instance of this project's recurring
+parked-promise-on-teardown class), `BgTasksPanel`'s down-arrow no longer underflows on an empty
+list, and `harness/CLAUDE.md` plus a `useChat.ts` comment were still describing the pre-rename
+surface. One Minor was left standing by decision: an open `/bg` panel outranks a newly parked
+decision in the dialog dispatcher (plan-mandated focus order; Esc recovers). Post-fix gate: 1256
+passed, 9 skipped, typecheck and build clean.
 
 ## Revision Notes
 
@@ -365,3 +384,6 @@ two `full-use-checklist*.md` walkthroughs, not silently absorbed.
   chunking, roster-vs-socket `waitingFor`, Ink full-frame redraw tail-matching, no-leading-sleep
   Bash) added above. Downstream docs corrected to match: `docs/parity/tui-ux.md` §8, both
   `full-use-checklist*.md` walkthroughs, `docs/parity/coverage.md`.
+- **2026-07-28 (rev 4, post-final-review):** probe 67 added (it settles the Ctrl+B negative as the
+  CLI's, not our wiring); the final whole-branch review's one Important (`resumeSession` mode drift)
+  and three Minors recorded above and fixed in `b8212e4f82`.
