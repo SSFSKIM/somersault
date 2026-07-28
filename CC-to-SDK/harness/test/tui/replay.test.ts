@@ -32,4 +32,17 @@ describe("replayLines", () => {
     const out = replayLines(msgs, { cap: 200 });
     expect(out[1]).toEqual({ text: "… 50 earlier messages elided", dim: true });
   });
+  it("hides command stdout/caveat rows, renders command echoes as dim slash lines, and marks compact summaries", () => {
+    const msgs = [
+      { type: "user", uuid: "u1", timestamp: "2026-07-28T08:00:00Z", message: { role: "user", content: "hi" } },
+      { type: "user", uuid: "u2", message: { role: "user", content: "<command-name>/compact</command-name> <command-message>compact</command-message>" } },
+      { type: "user", uuid: "u3", message: { role: "user", content: "<local-command-stdout>Compacted</local-command-stdout>" } },
+      { type: "user", uuid: "u4", message: { role: "user", content: "This session is being continued from a previous conversation that ran out of context. Summary…" } },
+    ];
+    const text = replayLines(msgs).map((l) => l.text).join("\n");
+    expect(text).toContain("› /compact");
+    expect(text).not.toContain("local-command-stdout");
+    expect(text).not.toContain("Summary…");
+    expect(text).toContain("─── context compacted earlier ───");
+  });
 });

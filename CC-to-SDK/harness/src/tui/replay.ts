@@ -3,9 +3,8 @@
 // bodies); caps to the last N messages with an elision marker; indents nested (subagent) messages; frames the
 // block with resumed/live dividers. Header label/time/turns are DERIVED from the messages (no clock, no fetch).
 import { renderMessage, trunc, type RenderLine } from "./render.js";
+import { rowKind, promptText } from "../sessions/rows.js";
 
-const isToolResult = (m: any): boolean =>
-  m?.type === "user" && Array.isArray(m.message?.content) && m.message.content.length > 0 && m.message.content.every((b: any) => b?.type === "tool_result");
 function firstUserText(messages: any[]): string {
   for (const m of messages) {
     if (m?.type === "user" && Array.isArray(m.message?.content)) {
@@ -20,7 +19,7 @@ const divider = (label: string): RenderLine => ({ text: `─── ${label} ─�
 
 export function replayLines(messages: any[], opts: { cap?: number; id?: string } = {}): RenderLine[] {
   const cap = opts.cap ?? 200;
-  const shown = messages.filter((m) => !isToolResult(m));                 // drop tool_result bodies
+  const shown = messages.filter((m) => { const k = rowKind(m); return k !== "tool_result" && k !== "command_output" && k !== "caveat"; });
   const elided = Math.max(0, shown.length - cap);
   const kept = elided > 0 ? shown.slice(shown.length - cap) : shown;
   const turns = shown.filter((m) => m?.type === "user").length;
@@ -30,6 +29,9 @@ export function replayLines(messages: any[], opts: { cap?: number; id?: string }
   const out: RenderLine[] = [divider(head)];
   if (elided > 0) out.push({ text: `… ${elided} earlier message${elided === 1 ? "" : "s"} elided`, dim: true });
   for (const m of kept) {
+    const k = rowKind(m);
+    if (k === "command_echo") { const name = /<command-name>\s*\/?([^<]+)</.exec(promptText(m))?.[1] ?? "command"; out.push({ text: `› /${name.trim()}`, dim: true }); continue; }
+    if (k === "compact_summary") { out.push(divider("context compacted earlier")); continue; }
     const lines = renderMessage(m);
     // nested (subagent) messages: indent + dim, DROP the gutter (the ● bullet belongs to the top-level turn).
     // For segment lines the <Line> renders `segments` (ignoring line-level dim/text), so dim+indent EACH segment.

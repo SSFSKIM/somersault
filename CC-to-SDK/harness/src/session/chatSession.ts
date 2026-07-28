@@ -45,6 +45,19 @@ export interface SessionEvents {
   onSessionEvent(cb: (ev: HostEvent) => void): () => void;
 }
 
+/** Esc-Esc rewind surface (host path only, like DecisionFeed). Two anchors per row (probe 68c):
+ *  `uuid` (the selected prompt) drives rewindFiles; `prevUuid` (the nearest preceding REAL row)
+ *  drives resumeSessionAt, because resumeSessionAt KEEPS its anchor and drops only what follows.
+ *  prevUuid null = first prompt (or first-after-compact) → code-only restore. */
+export type RewindScope = "both" | "conversation" | "code";
+export interface RewindAnchor { uuid: string; prevUuid: string | null; text: string; index: number }
+export interface RewindDryRun { canRewind: boolean; filesChanged?: string[]; insertions?: number; deletions?: number; error?: string }
+export interface RewindOps {
+  rewindAnchors(): Promise<RewindAnchor[]>;
+  rewindDryRun(uuid: string): Promise<RewindDryRun>;
+  rewind(anchor: RewindAnchor, scope: RewindScope): Promise<void>;
+}
+
 export function hasDecisionFeed(s: ChatSession): s is ChatSession & DecisionFeed {
   return typeof (s as Partial<DecisionFeed>).answerDecision === "function";
 }
@@ -53,4 +66,7 @@ export function hasBgTasks(s: ChatSession): s is ChatSession & BgTasks {
 }
 export function hasSessionEvents(s: ChatSession): s is ChatSession & SessionEvents {
   return typeof (s as Partial<SessionEvents>).onSessionEvent === "function";
+}
+export function hasRewind(s: ChatSession): s is ChatSession & RewindOps {
+  return typeof (s as Partial<RewindOps>).rewind === "function" && typeof (s as Partial<RewindOps>).rewindAnchors === "function";
 }

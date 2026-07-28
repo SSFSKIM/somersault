@@ -130,6 +130,7 @@ describe("public API", () => {
       "guardTool",
       "hasBgTasks",
       "hasDecisionFeed",
+      "hasRewind",
       "hasSessionEvents",
       "injectContext",
       "isAutoSupportedModel",

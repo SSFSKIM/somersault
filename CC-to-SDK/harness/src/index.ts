@@ -59,4 +59,5 @@ export type { RemoteChat, RemoteChatOpts } from "./client/chatAdapter.js";
 export type { HostEvent } from "./host/wire.js";
 export type { HostStatus } from "./host/ops.js";
 export type { ChatSession, DecisionFeed, BgTasks, SessionEvents } from "./session/chatSession.js";
-export { hasDecisionFeed, hasBgTasks, hasSessionEvents } from "./session/chatSession.js";
+export type { RewindScope, RewindAnchor, RewindDryRun, RewindOps } from "./session/chatSession.js";
+export { hasDecisionFeed, hasBgTasks, hasSessionEvents, hasRewind } from "./session/chatSession.js";
