@@ -33,7 +33,9 @@ Read directly from `harness/src/appserver/{server,turns,subscribe}.ts`: `initial
 and notifications `thread/started`\*, `thread/status/changed`, `turn/started`, `turn/completed`,
 `item/started`, `item/completed`, `item/agentMessage/delta`, `item/reasoning/delta`,
 `item/toolCall/argumentsDelta`, `decision/requested`, `decision/resolved`. This matches the M1 list
-handed into this task exactly, with one caveat: \*`thread/started` is not literally broadcast anywhere
+Since the whole-branch review wave, M1 also ships `thread/closed` (broadcast to that thread's subscribers
+before the record is removed) and `decision/requested` carries the spec's `turnId` (present only while a
+turn is in flight). One caveat below still stands: \*`thread/started` is not literally broadcast anywhere
 in `server.ts`/`turns.ts`/`subscribe.ts` today — `thread/start`/`thread/resume` reply directly with the
 thread view and never `ctx.peer.notify("thread/started", …)`. It is still listed as intended-M1 per the
 brief; this file records the gap rather than silently agreeing it is wired.

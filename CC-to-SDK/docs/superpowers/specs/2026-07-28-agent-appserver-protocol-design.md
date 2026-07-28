@@ -438,6 +438,33 @@ M1**, since `cancelQueued` and the ask-enrichment fields change M1 wire shapes.
   project + local settings by default, so a developer's own `permissions.allow` rules and `defaultMode`
   silently decide whether the acceptance parks at all.
 
+## Carried into M2 (named, not silently dropped)
+
+M1 shipped after two independent whole-branch reviews. These are the gaps they found that were
+deliberately deferred rather than fixed — each is a *known* debt, not an oversight:
+
+1. **`thread/started` is never broadcast.** `thread/start`/`thread/resume` reply with the thread view
+   and notify nobody. With fan-out scoped to `record.subscribers`, a brand-new thread has no
+   recipients, so this needs a list-level (connection-scoped) fan-out that M1 does not have.
+2. **`thread/list` and `decision/list` return `{data}` with no `nextCursor`**, against §3's "cursor
+   pagination on every list method". `thread/read` implements it correctly.
+3. **`threadView` returns 5 of §5's 13 Thread fields**, and `ThreadStatus` is flattened to bare
+   `idle`/`active` — a thread blocked on a park is indistinguishable from one that is thinking,
+   losing `active{waitingOn}`.
+4. **`thread/list` is registry-only** — the spec's merge of session store + fleet roster (dedup'd on
+   `sessionId`, live-wins) is not wired.
+5. **`-32001 overloaded`, `-33005 engineGone`, `-33006 unsupportedForOrigin` are defined and never
+   emitted** — they belong to the fleet-origin work (M3) and to backpressure policy.
+6. **No `userMessage` item on the live path** — a subscriber never sees its own prompt in the stream,
+   only in a later `thread/read`.
+7. **`AppServer.shutdown()` bypasses `record.chain`**, so a queued `thread/close` can run concurrently
+   with it; benign today because `dispose()` memoizes and `denyAll()` is idempotent.
+8. **`ws` `maxPayload` is left at the library default (100 MiB)** while the protocol's own inbound cap
+   is 256 KiB one layer up, so a pre-`initialize` client can make the server buffer large frames.
+9. **The `ccx serve` run-file is not removed on shutdown**, so a stale file can name a dead port.
+10. **`thread/read`'s `limit` has no upper bound** — a large enough page can exceed the outbound cap
+    and disconnect the requesting client.
+
 ## Revision Notes
 
 - **Planning (M1, 2026-07-28):** item identity for assistant text/thinking refined from "frame
