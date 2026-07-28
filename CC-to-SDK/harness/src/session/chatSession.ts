@@ -1,7 +1,7 @@
 // harness/src/session/chatSession.ts — the REPL-facing session contract, promoted from the old tui
 // package so the lib Session and the remote adapter satisfy ONE interface (spec A2b §2).
 import type { CompactOutcome } from "../compaction/index.js";
-import type { DecisionOutcome, PermissionDecision } from "../permissions/types.js";
+import type { DecisionOutcome } from "../permissions/types.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import type { HostEvent } from "../host/wire.js";
 import type { BackgroundTaskInfo } from "./session.js";
@@ -53,20 +53,4 @@ export function hasBgTasks(s: ChatSession): s is ChatSession & BgTasks {
 }
 export function hasSessionEvents(s: ChatSession): s is ChatSession & SessionEvents {
   return typeof (s as Partial<SessionEvents>).onSessionEvent === "function";
-}
-
-/** @deprecated Goal B renames this surface to DecisionFeed. Kept as its OWN interface (not a type
- *  alias onto DecisionFeed) — not-yet-migrated consumers (`useChat.ts`, `test/tui/helpers/fakeRemote.ts`,
- *  the integration tests) still call `onPermission`/`onPermissionSettled`/`answerPermission` and are NOT
- *  this task's files (plan-review C1c: T7 renames their call sites and deletes this + hasPermissionFeed
- *  in the same branch). Aliasing to DecisionFeed here would narrow `hasPermissionFeed`'s guard onto the
- *  new method names and break every one of those unmigrated call sites' typecheck today. */
-export interface PermissionFeed {
-  onPermission(cb: (entry: PendingDecision) => void): () => void;
-  onPermissionSettled(cb: (s: { toolUseID: string; by: string; decision: string }) => void): () => void;
-  answerPermission(toolUseID: string, decision: PermissionDecision): Promise<{ ok: boolean; alreadyAnsweredBy?: string; error?: string }>;
-}
-/** @deprecated see PermissionFeed above — deleted alongside it in T7. */
-export function hasPermissionFeed(s: ChatSession): s is ChatSession & PermissionFeed {
-  return typeof (s as Partial<PermissionFeed>).answerPermission === "function";
 }

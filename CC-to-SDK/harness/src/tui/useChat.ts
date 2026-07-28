@@ -1,12 +1,14 @@
-// tui/src/useChat.ts — owns the session (event-driven, spec A2b Task 6): the host event stream is the
-// SINGLE rendering source (turn/message/permission events all arrive via ChatSession & SessionEvents &
-// PermissionFeed), `submit`/`answerPermission` are command channels only. Owns the transcript, the
-// streaming turn, the permission queue, mode switching, and idempotent teardown.
+// tui/src/useChat.ts — owns the session (event-driven, Goal B task 7): the host event stream is the
+// SINGLE rendering source (turn/message/decision/tasks_changed/task/state events all arrive via
+// ChatSession & SessionEvents & DecisionFeed & BgTasks), `submit`/`resolveDecision` are command channels
+// only. Owns the transcript, the streaming turn, the decision queue, mode switching (Tab ladder + host
+// truth via state events), the bg-task panel, and idempotent teardown.
 import { useEffect, useRef, useState } from "react";
-import type { PermissionDecision } from "../index.js";
 import type { ChatSession } from "../session/chatSession.js";
-import { hasPermissionFeed, hasSessionEvents } from "../session/chatSession.js";
-import type { PendingEntry } from "../permissions/pending.js";
+import { hasDecisionFeed, hasBgTasks, hasSessionEvents } from "../session/chatSession.js";
+import type { PendingDecision } from "../permissions/pending.js";
+import type { DecisionOutcome } from "../permissions/types.js";
+import type { BackgroundTaskInfo } from "../session/session.js";
 import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import { TaskList, type TaskItem } from "./taskList.js";
@@ -25,9 +27,9 @@ import type { RawContextUsage } from "../index.js";
 // adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
 export type { ChatSession };
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingEntry | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; subagentActive: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; }
 
-const LADDER = ["default", "acceptEdits", "auto"] as const;   // Tab cycles these; bypassPermissions is off-cycle (/yolo)
+const LADDER = ["default", "acceptEdits", "plan", "auto"] as const;   // Tab cycles these; bypassPermissions stays off-cycle (/yolo)
 /** Next mode on the Tab ladder; any off-ladder mode (bypassPermissions/plan/…) re-enters at "default". */
 function ladderNext(mode: string): string { const i = (LADDER as readonly string[]).indexOf(mode); return i >= 0 ? LADDER[(i + 1) % LADDER.length] : "default"; }
 
@@ -41,13 +43,14 @@ export function useChat(
   // replay fills `lines` and a banner would be misleading above a rejoined transcript).
   const [lines, setLines] = useState<RenderLine[]>(() => (opts.initialResume ? [] : opts.initialLines ?? []));
   const [streaming, setStreaming] = useState<RenderLine[]>([]);
-  const [pending, setPending] = useState<PendingEntry | null>(null);
-  const pendingRef = useRef<PendingEntry | null>(null); pendingRef.current = pending;
-  const [pendingQueue, setPendingQueue] = useState<PendingEntry[]>([]);
-  const pendingQueueRef = useRef<PendingEntry[]>([]); pendingQueueRef.current = pendingQueue;
+  const [pending, setPending] = useState<PendingDecision | null>(null);
+  const pendingRef = useRef<PendingDecision | null>(null); pendingRef.current = pending;
+  const [pendingQueue, setPendingQueue] = useState<PendingDecision[]>([]);
+  const pendingQueueRef = useRef<PendingDecision[]>([]); pendingQueueRef.current = pendingQueue;
   const answeredIds = useRef<Set<string>>(new Set());     // toolUseIDs THIS client answered — dropPending consults it, not the wire's `by` label
   const liveTurnRef = useRef<LiveTurn | null>(null);       // the in-flight turn's renderer (event-driven)
   const [mode, setMode] = useState(opts.initialMode ?? "default");
+  const modeRef = useRef(mode); modeRef.current = mode;    // read inside the event effect without re-subscribing on every mode change
   const [busy, setBusy] = useState(false);
   const [turnStartedAt, setTurnStartedAt] = useState(0);
   const [ctxPct, setCtxPct] = useState<number | undefined>(undefined);
@@ -59,7 +62,8 @@ export function useChat(
   const catalogNames = useRef<Set<string>>(new Set());                                            // catalog (non-local) names → routed to submit-as-prompt
   const taskListRef = useRef(new TaskList());
   const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [subagentActive, setSubagentActive] = useState(false);
+  const [bgTasks, setBgTasks] = useState<BackgroundTaskInfo[]>([]);
+  const [bgPanelOpen, setBgPanelOpen] = useState(false);
   const [turnTokens, setTurnTokens] = useState(0);    // live output-token count for the in-flight turn (spinner)
   const [queue, setQueue] = useState<string[]>([]);   // prompts/turns submitted while busy; drained FIFO on turn end
   const queueRef = useRef<string[]>([]); queueRef.current = queue;
@@ -90,7 +94,7 @@ export function useChat(
     const off = session.onSessionEvent((ev) => {
       if (disposed.current) return;
       if (ev.kind === "turn" && ev.phase === "start") { liveTurnRef.current = new LiveTurn(); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]); }
-      else if (ev.kind === "message") { const l = liveTurnRef.current; if (!l) return; l.ingest(ev.data); taskListRef.current.ingest(ev.data); setStreaming(l.snapshot()); setTasks(taskListRef.current.snapshot()); setSubagentActive(l.subagentActive); setTurnTokens(l.outputTokens); }
+      else if (ev.kind === "message") { const l = liveTurnRef.current; if (!l) return; l.ingest(ev.data); taskListRef.current.ingest(ev.data); setStreaming(l.snapshot()); setTasks(taskListRef.current.snapshot()); setTurnTokens(l.outputTokens); }
       else if (ev.kind === "turn" && ev.phase === "end") {
         const l = liveTurnRef.current; liveTurnRef.current = null;
         if (l) { if (ev.error) l.fail(ev.error); setLines((x) => [...x, ...l.finalize()]); if (l.model) setModel(l.model); }
@@ -98,12 +102,22 @@ export function useChat(
         // rendering) but the frame still carries an error: without this, an idle host's death is
         // invisible until the next submit times out ~10s later (F5).
         else if (ev.error) notice(`✗ connection lost: ${ev.error}`);
-        setStreaming([]); setBusy(false); setSubagentActive(false); void refreshCtx(); drainNext();
+        setStreaming([]); setBusy(false); void refreshCtx(); drainNext();
       }
+      else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);
+      else if (ev.kind === "task") {
+        const t = ev.data as any;
+        const sub = t?.type === "system" ? t.subtype : t?.type;
+        if (!t?.skip_transcript) {
+          if (sub === "task_started") notice(`⚙ task started: ${t.description ?? t.task_id}`);
+          else if (sub === "task_notification") notice(t.status === "failed" ? `✗ task failed: ${t.summary ?? t.task_id}` : `${t.status === "stopped" ? "◼ task stopped" : "✓ task done"}: ${t.summary ?? t.task_id}`);
+        }
+      }
+      else if (ev.kind === "state" && ev.status.permissionMode && ev.status.permissionMode !== modeRef.current) setMode(ev.status.permissionMode);
     });
-    const offPerm = hasPermissionFeed(session) ? session.onPermission((entry) => { if (!disposed.current) pushPending(entry); }) : undefined;
-    const offSettled = hasPermissionFeed(session) ? session.onPermissionSettled((s) => { if (!disposed.current) dropPending(s.toolUseID, s.by, s.decision); }) : undefined;
-    return () => { off(); offPerm?.(); offSettled?.(); };
+    const offDecision = hasDecisionFeed(session) ? session.onDecision((entry) => { if (!disposed.current) pushPending(entry); }) : undefined;
+    const offSettled = hasDecisionFeed(session) ? session.onDecisionSettled((s) => { if (!disposed.current) dropPending(s.toolUseID, s.by, s.decision); }) : undefined;
+    return () => { off(); offDecision?.(); offSettled?.(); };
   }, [session]);
   // Launch-time resume: run once on mount if an initialResume intent was passed.
   useEffect(() => {
@@ -143,9 +157,9 @@ export function useChat(
   function append(ls: RenderLine[]) { if (!disposed.current && ls.length) setLines((l) => [...l, ...ls]); }
   function notice(text: string) { append([{ text, dim: true }]); }
 
-  // Permission FIFO: the dialog shows the head; extras queue behind it. `pushPending`/`dropPending` are
-  // driven by the PermissionFeed subscription above — never optimistically from resolvePermission.
-  function pushPending(entry: PendingEntry) {
+  // Decision FIFO: the dialog shows the head; extras queue behind it. `pushPending`/`dropPending` are
+  // driven by the DecisionFeed subscription above — never optimistically from resolveDecision.
+  function pushPending(entry: PendingDecision) {
     if (pendingRef.current === null) setPending(entry);
     else setPendingQueue((q) => [...q, entry]);
   }
@@ -153,7 +167,10 @@ export function useChat(
     const wasMine = answeredIds.current.has(toolUseID);
     answeredIds.current.delete(toolUseID);
     if (pendingRef.current?.toolUseID === toolUseID) {
-      if (!wasMine) notice(`↳ ${pendingRef.current.toolName} ${decision === "deny" ? "denied" : "allowed"} by ${by}`);
+      if (!wasMine) {
+        const verb = decision === "deny" ? "denied" : decision === "question_answer" ? "answered" : decision === "plan_approve" ? "approved" : decision === "plan_reject" ? "sent back" : "allowed";
+        notice(`↳ ${pendingRef.current.toolName} ${verb} by ${by}`);
+      }
       const q = pendingQueueRef.current;
       setPending(q[0] ?? null);
       setPendingQueue(q.slice(1));
@@ -196,6 +213,7 @@ export function useChat(
           else { await session.toggleMcpServer(action.name, action.enabled); append([{ text: `mcp: ${action.name} → ${action.enabled ? "enabled" : "disabled (advisory — a tool call can revive it)"}` }]); }
           break;
         }
+        case "bg": openBgPanel(); break;
         default: append(formatUnknown(cmd.name));
       }
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
@@ -320,11 +338,11 @@ export function useChat(
   }
   // Answer the head entry via the remote feed; the dialog clears/advances on the SETTLED event (dropPending),
   // never optimistically here — a race (someone else answered first) still needs the settle to land.
-  function resolvePermission(d: PermissionDecision) {
+  function resolveDecision(outcome: DecisionOutcome) {
     const entry = pendingRef.current;
-    if (!entry || !hasPermissionFeed(session)) return;
+    if (!entry || !hasDecisionFeed(session)) return;
     answeredIds.current.add(entry.toolUseID);
-    void session.answerPermission(entry.toolUseID, d).then((r) => { if (r.alreadyAnsweredBy) notice(`answered by ${r.alreadyAnsweredBy}`); })
+    void session.answerDecision(entry.toolUseID, outcome).then((r) => { if (r.alreadyAnsweredBy) notice(`answered by ${r.alreadyAnsweredBy}`); })
       .catch((e) => {
         // A designed-for rejection path (host death mid-dialog, or the 10s request deadline on a wedged
         // host) — never leave this unhandled (F1: it used to crash the whole REPL). Un-mark it as ours so
@@ -333,6 +351,13 @@ export function useChat(
         answeredIds.current.delete(entry.toolUseID);
         notice(`✗ answer failed: ${(e as Error).message}`);
       });
+  }
+  function openBgPanel() { if (!disposed.current) setBgPanelOpen(true); }
+  function closeBgPanel() { if (!disposed.current) setBgPanelOpen(false); }
+  function stopBgTask(id: string) { if (hasBgTasks(session)) void session.stopBgTask(id).catch((e) => append([{ text: `✗ ${(e as Error).message}`, color: "red" }])); }
+  function backgroundNow() {
+    if (!hasBgTasks(session)) { notice("background unsupported on this session"); return; }
+    void session.background().then((b) => { if (!b) notice("nothing to background"); }).catch((e) => append([{ text: `✗ ${(e as Error).message}`, color: "red" }]));
   }
   // Apply a permission mode. `auto` is model-gated (probe 24): if the live model can't run auto, swap to a
   // supported one FIRST (verified to take effect at runtime) with a notice, then set the mode. Disposed-guarded
@@ -358,5 +383,5 @@ export function useChat(
   function interrupt() { drainGen.current++; setQueue([]); void session.interrupt().catch(() => {}); }   // Esc stops everything: queue + any scheduled drain
   function clear() { if (!disposed.current) { clearScreen(); setLines([]); setStreaming([]); setClearToken((t) => t + 1); } }   // Ctrl-L / /clear: wipe screen + model (session context kept)
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, subagentActive, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens } as ChatState, submit, resolvePermission, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, backgroundNow };
 }

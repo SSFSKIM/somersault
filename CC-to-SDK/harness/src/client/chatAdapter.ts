@@ -2,17 +2,13 @@
 // makeSession() must return synchronously (ink renders immediately); every method awaits `ready`.
 import { RemoteChatSession } from "./remote.js";
 import type { HostEvent } from "../host/wire.js";
-import type { ChatSession, DecisionFeed, PermissionFeed, BgTasks, SessionEvents } from "../session/chatSession.js";
+import type { ChatSession, DecisionFeed, BgTasks, SessionEvents } from "../session/chatSession.js";
 import type { PendingDecision } from "../permissions/pending.js";
-import type { DecisionOutcome, PermissionDecision } from "../permissions/types.js";
+import type { DecisionOutcome } from "../permissions/types.js";
 import type { CompactOutcome } from "../compaction/index.js";
 
 export interface RemoteChatOpts { label?: string; resume?: string; connect?: (p: string, o?: { label?: string }) => Promise<RemoteChatSession>; }
-// PermissionFeed is included alongside DecisionFeed (not superseded by it — see chatSession.ts's note on
-// why the two are separate interfaces) so the adapter's deprecated onPermission/onPermissionSettled/
-// answerPermission delegates stay part of RemoteChat's TYPE until T7 deletes them, matching what the
-// object literal below actually implements.
-export type RemoteChat = ChatSession & DecisionFeed & PermissionFeed & BgTasks & SessionEvents & { detach(): void; whenReady(): Promise<void>; pendingNow(): PendingDecision[] };
+export type RemoteChat = ChatSession & DecisionFeed & BgTasks & SessionEvents & { detach(): void; whenReady(): Promise<void>; pendingNow(): PendingDecision[] };
 
 export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {}): RemoteChat {
   let raw: RemoteChatSession | undefined;
@@ -118,11 +114,6 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
     onDecision(cb) { decisionCbs.add(cb); for (const e of [...pendingList]) { try { cb(e); } catch {} } return () => { decisionCbs.delete(cb); }; },
     onDecisionSettled(cb) { settledCbs.add(cb); return () => { settledCbs.delete(cb); }; },
     async answerDecision(toolUseID, outcome: DecisionOutcome) { return (await ready).answerDecision(toolUseID, outcome); },
-    // @deprecated one-line delegates onto the new methods above — kept until T7 deletes them (useChat.ts,
-    // test/tui/helpers/fakeRemote.ts, and the integration tests still call these names).
-    onPermission(cb) { return this.onDecision(cb); },
-    onPermissionSettled(cb) { return this.onDecisionSettled(cb); },
-    async answerPermission(toolUseID, decision: PermissionDecision) { return this.answerDecision(toolUseID, decision); },
     async listBgTasks() { return orFail(await (await ready).tasksOp()).tasks ?? []; },
     async background() { return orFail(await (await ready).backgroundOp()).backgrounded ?? false; },
     async stopBgTask(taskId) { orFail(await (await ready).stopTaskOp(taskId)); },

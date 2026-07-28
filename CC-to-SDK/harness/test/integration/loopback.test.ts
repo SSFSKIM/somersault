@@ -49,7 +49,7 @@ async function startHost() {
 const stopQuietly = (host: SessionHost) => host.stop("done").catch(() => {});
 
 describe("foreground loopback round trip (Task 7)", () => {
-  it("whenReady → submit renders from events and returns the result; a parked permission on the SAME connection PARKS, answerPermission settles it, and teardown is bounded", async () => {
+  it("whenReady → submit renders from events and returns the result; a parked permission on the SAME connection PARKS, answerDecision settles it, and teardown is bounded", async () => {
     const { host, session, path } = await startHost();
     const client = remoteChatSession(path);
     try {
@@ -69,7 +69,7 @@ describe("foreground loopback round trip (Task 7)", () => {
 
       // --- a permission parked while THIS client is connected must PARK, not deny ---
       const permSeen: { toolUseID: string }[] = [];
-      client.onPermission((e) => permSeen.push(e));
+      client.onDecision((e) => permSeen.push(e));
       let settled = false;
       const decision = host.broker()
         .request({ toolName: "Bash", input: { command: "ls" }, toolUseID: "t-loop-1", signal: new AbortController().signal })
@@ -79,8 +79,8 @@ describe("foreground loopback round trip (Task 7)", () => {
       expect(settled).toBe(false);                             // PARKED — the connection-counted rule, loopback case
       expect(client.pendingNow().map((e) => e.toolUseID)).toEqual(["t-loop-1"]);
 
-      // --- answerPermission settles it ---
-      const reply = await client.answerPermission("t-loop-1", { kind: "allow_once" });
+      // --- answerDecision settles it ---
+      const reply = await client.answerDecision("t-loop-1", { kind: "allow_once" });
       expect(reply.ok).toBe(true);
       await expect(decision).resolves.toEqual({ kind: "allow_once" });
       expect(settled).toBe(true);

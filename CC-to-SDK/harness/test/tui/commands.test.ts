@@ -1,6 +1,6 @@
 // tui/test/commands.test.ts — pure parser + formatters.
 import { describe, it, expect } from "vitest";
-import { parseCommand, COMMANDS, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, parseResumeIntent, parseLaunchMode, parseLaunchThink } from "../../src/tui/commands.js";
+import { parseCommand, COMMANDS, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, parseResumeIntent, parseLaunchMode, parseLaunchThink, LOCAL_NAMES, LOCAL_COMMAND_ENTRIES } from "../../src/tui/commands.js";
 
 describe("parseCommand", () => {
   it("splits a slash command into name + args", () => {
@@ -122,5 +122,13 @@ describe("/mcp (W3.5)", () => {
   });
   it("is a registered command", () => {
     expect(COMMANDS.some((c) => c.name === "mcp")).toBe(true);
+  });
+});
+
+describe("/bg (Goal B task 7)", () => {
+  it("is a registered command, in LOCAL_NAMES, and in the palette entries", () => {
+    expect(COMMANDS.some((c) => c.name === "bg")).toBe(true);
+    expect(LOCAL_NAMES.has("bg")).toBe(true);
+    expect(LOCAL_COMMAND_ENTRIES.some((e) => e.name === "bg")).toBe(true);
   });
 });

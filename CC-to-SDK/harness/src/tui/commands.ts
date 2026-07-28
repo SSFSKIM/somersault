@@ -29,6 +29,7 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "yolo", summary: "enable bypassPermissions (ungated tool access)" },
   { name: "think", summary: "<off|low|medium|high|xhigh|max|N> — set thinking budget (no arg shows current)" },
   { name: "mcp", summary: "[reconnect <name> | toggle <name> on|off] — MCP server status / controls" },
+  { name: "bg", summary: "list background tasks (k/x stops one)" },
   { name: "help", summary: "list commands" },
 ];
 

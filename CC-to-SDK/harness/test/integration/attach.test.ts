@@ -133,7 +133,7 @@ describe("ccx attach — host + adapter over a real socket (Task 8)", () => {
       adapter.onSessionEvent((ev) => events.push(ev));
       const decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "tC", signal: new AbortController().signal });
       await vi.waitFor(() => expect(adapter.pendingNow()).toHaveLength(1));
-      const reply = await adapter.answerPermission("tC", { kind: "allow_once" });
+      const reply = await adapter.answerDecision("tC", { kind: "allow_once" });
       expect(reply.ok).toBe(true);
       await expect(decision).resolves.toEqual({ kind: "allow_once" });   // the fake tool call "proceeds"
       session.emit({ type: "assistant", n: 9 });

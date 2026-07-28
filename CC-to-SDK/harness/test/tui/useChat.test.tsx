@@ -9,8 +9,13 @@ import { fakeRemote, type FakeRemote } from "./helpers/fakeRemote.js";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
 import type { PermissionDecision } from "../../src/index.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
+import type { DecisionOutcome } from "../../src/permissions/types.js";
 
-const frame = (f: () => string | undefined) => f() ?? "";
+// Ink hard-wraps a long single-line <Text> at the terminal width, inserting a real "\n" at whichever word
+// boundary the reflow lands on — a boundary that shifts whenever earlier content in the SAME joined line
+// grows or shrinks (e.g. the /help catalog gaining a command). De-wrap before substring checks so those
+// checks assert on rendered CONTENT, not on an incidental wrap point.
+const frame = (f: () => string | undefined) => (f() ?? "").replace(/\n/g, " ");
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
@@ -116,14 +121,14 @@ describe("useChat: permission feed", () => {
   it("a parked permission arriving via the feed opens the dialog; answering calls answerPermission with the entry's toolUseID; alreadyAnsweredBy clears the dialog and appends a notice", async () => {
     let fake!: FakeRemote;
     fake = fakeRemote({
-      async answerPermission(toolUseID, decision) {
-        fake.settlePermission(toolUseID, "eve", decision.kind);
+      async answerDecision(toolUseID, outcome) {
+        fake.settlePermission(toolUseID, "eve", outcome.kind);
         return { ok: true, alreadyAnsweredBy: "eve" };
       },
     });
     const entry: PendingEntry = { sessionId: "s", toolUseID: "t1", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() };
     const api: { resolve?: (d: PermissionDecision) => void } = {};
-    function H() { const c = useChat(() => fake); api.resolve = c.resolvePermission; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"} {allText(c)}</Text>; }
+    function H() { const c = useChat(() => fake); api.resolve = c.resolveDecision; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.parkPermission(entry);
@@ -138,10 +143,10 @@ describe("useChat: permission feed", () => {
     // F1: this is the ONLY session call in useChat whose promise used to have no rejection handler at
     // all — an unhandled rejection here used to kill the whole attached REPL process.
     let fake!: FakeRemote;
-    fake = fakeRemote({ answerPermission: async () => { throw new Error("host connection closed"); } });
+    fake = fakeRemote({ answerDecision: async () => { throw new Error("host connection closed"); } });
     const entry: PendingEntry = { sessionId: "s", toolUseID: "t7", toolName: "Bash", kind: "permission", input: { command: "rm -rf /" }, createdAt: Date.now() };
     const api: { resolve?: (d: PermissionDecision) => void } = {};
-    function H() { const c = useChat(() => fake); api.resolve = c.resolvePermission; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"} {allText(c)}</Text>; }
+    function H() { const c = useChat(() => fake); api.resolve = c.resolveDecision; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.parkPermission(entry);
@@ -185,7 +190,7 @@ describe("useChat: permission feed", () => {
     const e1: PendingEntry = { sessionId: "s", toolUseID: "a", toolName: "Edit", kind: "permission", input: {}, createdAt: 1 };
     const e2: PendingEntry = { sessionId: "s", toolUseID: "b", toolName: "Write", kind: "permission", input: {}, createdAt: 2 };
     const api: { resolve?: (d: PermissionDecision) => void } = {};
-    function H() { const c = useChat(() => fake); api.resolve = c.resolvePermission; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"}</Text>; }
+    function H() { const c = useChat(() => fake); api.resolve = c.resolveDecision; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.parkPermission(e1);
@@ -605,16 +610,17 @@ describe("permission ladder", () => {
     api.cyc = c.cycleMode; api.run = c.submit;
     return <Text>mode:{c.state.mode} model:{c.state.model ?? "-"} {allText(c)}</Text>;
   }
-  it("Tab cycles default → acceptEdits → auto → default (bypass off-cycle)", async () => {
+  it("Tab cycles default → acceptEdits → plan → auto → default (bypass off-cycle)", async () => {
     const setModeCalls: string[] = [];
     const session = fakeRemote({ setPermissionMode: (m: string) => { setModeCalls.push(m); } });
     const api: { cyc?: () => void } = {};
     const { lastFrame } = render(<LadderHost makeSession={() => session} api={api} />);
     await waitFor(() => frame(lastFrame).includes("mode:default"));
     api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:acceptEdits"));
+    api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:plan"));
     api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:auto"));
     api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:default"));
-    expect(setModeCalls).toEqual(["acceptEdits", "auto", "default"]);
+    expect(setModeCalls).toEqual(["acceptEdits", "plan", "auto", "default"]);
   });
   it("entering auto on an unsupported model swaps to a supported one with a notice", async () => {
     const setModelCalls: (string | undefined)[] = [];
@@ -625,6 +631,7 @@ describe("permission ladder", () => {
     api.run!("/model claude-haiku-4-5");
     await waitFor(() => frame(lastFrame).includes("model:claude-haiku-4-5"));
     api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:acceptEdits"));
+    api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:plan"));
     api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:auto"));
     expect(setModelCalls).toContain("claude-sonnet-4-6");
     expect(frame(lastFrame)).toContain("switched model to claude-sonnet-4-6");
@@ -638,6 +645,7 @@ describe("permission ladder", () => {
     api.run!("/model claude-opus-4-8");
     await waitFor(() => frame(lastFrame).includes("model:claude-opus-4-8"));
     api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:acceptEdits"));
+    api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:plan"));
     api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:auto"));
     expect(setModelCalls).toEqual(["claude-opus-4-8"]);
     expect(frame(lastFrame)).not.toContain("switched model");
@@ -664,6 +672,79 @@ describe("permission ladder", () => {
     cyc();
     await new Promise((r) => setTimeout(r, 20));
     expect(setModeCalls).toEqual([]);
+  });
+});
+
+describe("useChat: decisions, mode sync, bg tasks (Goal B task 7)", () => {
+  it("a state event carrying permissionMode overwrites the local mode (host truth wins)", async () => {
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake); return <Text>mode:{c.state.mode}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "state", status: { state: "working", status: "idle", permissionMode: "acceptEdits" } });
+    await waitFor(() => frame(lastFrame).includes("mode:acceptEdits"));
+  });
+
+  it("a question decision parks into pending with its kind intact", async () => {
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake); return <Text>{c.state.pending ? `PENDING:${c.state.pending.kind}` : "NONE"}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "q1", toolName: "AskUserQuestion", kind: "question", input: {}, createdAt: Date.now() };
+    fake.parkPermission(entry);
+    await waitFor(() => frame(lastFrame).includes("PENDING:question"));
+  });
+
+  it("resolveDecision answers via answerDecision and clears only on the settle event", async () => {
+    let fake!: FakeRemote;
+    fake = fakeRemote({ async answerDecision() { return { ok: true }; } });   // deliberately does NOT auto-settle
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "q2", toolName: "AskUserQuestion", kind: "question", input: {}, createdAt: Date.now() };
+    const api: { resolve?: (d: DecisionOutcome) => void } = {};
+    function H() { const c = useChat(() => fake); api.resolve = c.resolveDecision; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolUseID}` : "NONE"}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.parkPermission(entry);
+    await waitFor(() => frame(lastFrame).includes("PENDING:q2"));
+    api.resolve!({ kind: "question_answer", answers: {} });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fake.answeredCalls).toEqual([{ toolUseID: "q2", decision: { kind: "question_answer", answers: {} } }]);
+    expect(frame(lastFrame)).toContain("PENDING:q2");    // still parked — the settle event hasn't landed yet
+    fake.settlePermission("q2", "me", "question_answer");
+    await waitFor(() => frame(lastFrame).includes("NONE"));
+  });
+
+  it("tasks_changed updates bgTasks; task frames render notices honoring skip_transcript", async () => {
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake); return <Text>bg:{c.state.bgTasks.length} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "t1", task_type: "bash", description: "sleep 99" }] });
+    await waitFor(() => frame(lastFrame).includes("bg:1"));
+    fake.pushEvent({ kind: "task", data: { type: "task_started", description: "reviewing", task_id: "t2" } });
+    await waitFor(() => frame(lastFrame).includes("⚙ task started: reviewing"));
+    fake.pushEvent({ kind: "task", data: { type: "task_notification", status: "completed", summary: "done", task_id: "t2" } });
+    await waitFor(() => frame(lastFrame).includes("✓ task done: done"));
+    fake.pushEvent({ kind: "task", data: { type: "task_started", description: "hidden", skip_transcript: true } });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).not.toContain("hidden");
+  });
+
+  it("/bg opens the panel; stopBgTask calls the session; settled decision notices name the kind action", async () => {
+    const stopCalls: string[] = [];
+    const fake = fakeRemote({ stopBgTask: async (id: string) => { stopCalls.push(id); } });
+    const api: { run?: (s: string) => void; stop?: (id: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.stop = c.stopBgTask; return <Text>panel:{String(c.state.bgPanelOpen)} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/bg");
+    await waitFor(() => frame(lastFrame).includes("panel:true"));
+    api.stop!("t9");
+    await waitFor(() => stopCalls.includes("t9"));
+
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "p1", toolName: "ExitPlanMode", kind: "plan", input: {}, createdAt: Date.now() };
+    fake.parkPermission(entry);
+    fake.settlePermission("p1", "someone", "plan_approve");
+    await waitFor(() => frame(lastFrame).includes("approved by someone"));
   });
 });
 

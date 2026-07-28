@@ -79,13 +79,14 @@ describe("<ChatApp>", () => {
     expect(interrupts).toBe(1);
   });
 
-  it("Tab cycles the permission ladder default → acceptEdits → auto", async () => {
+  it("Tab cycles the permission ladder default → acceptEdits → plan → auto", async () => {
     const modes: string[] = [];
     const session = fakeRemote({ setPermissionMode: (m: string) => { modes.push(m); } });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("mode"));
-    await pressUntil(stdin, "\t", () => modes.includes("auto"));   // Tab cycles default→acceptEdits→auto
+    await pressUntil(stdin, "\t", () => modes.includes("auto"));   // Tab cycles default→acceptEdits→plan→auto
     expect(modes[0]).toBe("acceptEdits");
+    expect(modes).toContain("plan");
     expect(modes).toContain("auto");
   });
 

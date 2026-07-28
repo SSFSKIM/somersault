@@ -78,7 +78,6 @@ describe("public API", () => {
   it("exports the decision feed + bg-task mixins and their guards (goal B, task 6)", () => {
     expect(typeof api.hasDecisionFeed).toBe("function");
     expect(typeof api.hasBgTasks).toBe("function");
-    expect(typeof api.hasPermissionFeed).toBe("function");
     const _df: api.DecisionFeed = {
       onDecision: () => () => {}, onDecisionSettled: () => () => {},
       answerDecision: async () => ({ ok: true }),
@@ -131,7 +130,6 @@ describe("public API", () => {
       "guardTool",
       "hasBgTasks",
       "hasDecisionFeed",
-      "hasPermissionFeed",
       "hasSessionEvents",
       "injectContext",
       "isAutoSupportedModel",

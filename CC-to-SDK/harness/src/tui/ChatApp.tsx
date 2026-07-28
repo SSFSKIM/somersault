@@ -26,7 +26,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   initialResume?: InitialResume;
   initialLines?: RenderLine[];
 }) {
-  const { state, submit, resolvePermission, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt });
+  const { state, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt });
   const { exit } = useApp();
   const [exitArmed, setExitArmed] = useState(false);
   const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -68,10 +68,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         : state.picker.open
           ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
           : state.pending
-            ? <PermissionDialog req={state.pending} onDecision={resolvePermission} />
+            ? <PermissionDialog req={state.pending} onDecision={(d) => resolveDecision(d)} />
             : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} />}
       {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
-      <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} subagentActive={state.subagentActive} thinkLevel={state.thinkLevel} />
+      <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} thinkLevel={state.thinkLevel} />
     </Box>
   );
 }

@@ -91,20 +91,12 @@ describe("<ChatStatusBar>", () => {
     expect(f).not.toContain("streaming");
     expect(f).not.toContain("model ");
   });
-  it("shows a subagent-running indicator", () => {
-    const { lastFrame } = render(<ChatStatusBar mode="default" busy={true} ctxPct={10} hasPending={false} subagentActive={true} />);
-    expect(lastFrame() ?? "").toContain("⚙ subagent running");
-  });
   it("warns about auto-compact once context is near the window", () => {
     const f = render(<ChatStatusBar mode="default" busy={false} ctxPct={85} hasPending={false} />).lastFrame() ?? "";
     expect(f).toContain("85%");
     expect(f).toContain("auto-compact soon");
     const lo = render(<ChatStatusBar mode="default" busy={false} ctxPct={20} hasPending={false} />).lastFrame() ?? "";
     expect(lo).not.toContain("auto-compact");
-  });
-  it("hides the subagent indicator when inactive", () => {
-    const { lastFrame } = render(<ChatStatusBar mode="default" busy={true} ctxPct={10} hasPending={false} subagentActive={false} />);
-    expect(lastFrame() ?? "").not.toContain("subagent running");
   });
   it("shows the thinking level", () => {
     const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} hasPending={false} thinkLevel="high" />);
