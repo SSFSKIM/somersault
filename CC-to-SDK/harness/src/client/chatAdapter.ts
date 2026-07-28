@@ -2,13 +2,13 @@
 // makeSession() must return synchronously (ink renders immediately); every method awaits `ready`.
 import { RemoteChatSession } from "./remote.js";
 import type { HostEvent } from "../host/wire.js";
-import type { ChatSession, DecisionFeed, BgTasks, SessionEvents } from "../session/chatSession.js";
+import type { ChatSession, DecisionFeed, BgTasks, SessionEvents, RewindOps, RewindAnchor, RewindDryRun, RewindScope } from "../session/chatSession.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { CompactOutcome } from "../compaction/index.js";
 
 export interface RemoteChatOpts { label?: string; resume?: string; connect?: (p: string, o?: { label?: string }) => Promise<RemoteChatSession>; }
-export type RemoteChat = ChatSession & DecisionFeed & BgTasks & SessionEvents & { detach(): void; whenReady(): Promise<void>; pendingNow(): PendingDecision[] };
+export type RemoteChat = ChatSession & DecisionFeed & BgTasks & SessionEvents & RewindOps & { detach(): void; whenReady(): Promise<void>; pendingNow(): PendingDecision[] };
 
 export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {}): RemoteChat {
   let raw: RemoteChatSession | undefined;
@@ -127,6 +127,9 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
     async listBgTasks() { return orFail(await (await ready).tasksOp()).tasks ?? []; },
     async background() { return orFail(await (await ready).backgroundOp()).backgrounded ?? false; },
     async stopBgTask(taskId) { orFail(await (await ready).stopTaskOp(taskId)); },
+    async rewindAnchors() { return orFail(await (await ready).rewindAnchorsOp()).anchors ?? []; },
+    async rewindDryRun(uuid: string) { return orFail(await (await ready).rewindDryRunOp(uuid)).dryRun ?? { canRewind: false, error: "no reply" }; },
+    async rewind(anchor: RewindAnchor, scope: RewindScope) { orFail(await (await ready).rewindOp(anchor.uuid, anchor.prevUuid, scope)); },
     onSessionEvent(cb) {
       if (!eventCb) { eventCb = cb; for (const ev of backlog.splice(0)) { try { cb(ev); } catch {} } }
       else eventCb = cb;                     // single consumer: a re-subscribe replaces (useChat's session swap)

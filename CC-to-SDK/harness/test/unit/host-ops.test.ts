@@ -58,6 +58,9 @@ const handlers = (over: Partial<HostHandlers> = {}): HostHandlers => ({
   tasks: () => [],
   background: async () => true,
   stopTask: async () => {},
+  rewindAnchors: async () => [],
+  rewindDryRun: async () => ({ canRewind: false }),
+  rewind: async () => {},
   ...over,
 });
 

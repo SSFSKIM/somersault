@@ -1,11 +1,15 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionHost } from "../../src/host/host.js";
 import { RemoteChatSession } from "../../src/client/remote.js";
+import { remoteChatSession } from "../../src/client/chatAdapter.js";
 import { hostSocketPath } from "../../src/fleet/paths.js";
 import { readRoster } from "../../src/fleet/roster.js";
+
+const rewindUser = (text: string, uuid: string) => ({ type: "user", uuid, message: { role: "user", content: text } });
+const rewindAssistant = (uuid: string) => ({ type: "assistant", uuid, message: { role: "assistant", content: [{ type: "text", text: "ok" }] } });
 
 const fleets: string[] = [];
 const tmpFleet = () => { const d = mkdtempSync(join(tmpdir(), "ccx-int-")); fleets.push(d); return d; };
@@ -213,6 +217,37 @@ describe("host + client over a real socket", () => {
       await expect(host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t12", signal: new AbortController().signal }))
         .resolves.toEqual({ kind: "deny" });
     } finally {
+      await stopQuietly(host);
+    }
+  });
+
+  // C5 T3: the rewind ops travel client -> server -> HostHandlers -> SessionHost over the real socket.
+  // rewind(both) makes THREE underlying engine calls: the client's own rewindDryRun, the host's OWN
+  // dry-run guard inside rewind() (see SessionHost.rewind's doc), then the real file rewind — that is
+  // correct per Task 2/3's contract, not a double-call bug.
+  it("rewind ops round-trip: anchors → dryRun → rewind(both) reaches the host in order", async () => {
+    const env = { CCX_FLEET_ROOT: tmpFleet() } as NodeJS.ProcessEnv;
+    const fakeRewind = vi.fn(async (u: string, o?: { dryRun?: boolean }) =>
+      o?.dryRun ? { canRewind: true, filesChanged: [], insertions: 0, deletions: 0 } : {});
+    const session = { sessionId: "sid-r", submit: vi.fn(async () => ({})), dispose: vi.fn(async () => {}), rewind: fakeRewind };
+    const getMessages = async () => [rewindUser("A", "uA"), rewindAssistant("aA"), rewindUser("B", "uB")];
+    const host = new SessionHost(
+      { short: "eeeeeeee", name: "rw", cwd: process.cwd(), kind: "bg", detached: true, config: {} as never, env },
+      { openSession: () => session, procStartOf: async () => "start", getMessages });
+    await host.start();
+    const path = hostSocketPath(process.pid, env);
+    const chat = remoteChatSession(path);
+    try {
+      await chat.whenReady();
+      const anchors = await chat.rewindAnchors();
+      expect(anchors[0]).toMatchObject({ uuid: "uB", prevUuid: "aA" });
+      const dry = await chat.rewindDryRun(anchors[0].uuid);
+      expect(dry.canRewind).toBe(true);
+      await chat.rewind(anchors[0], "both");
+      // the fake's rewind saw dry + real for uB (the host's own guard dry counts too: 3 calls total)
+      expect(fakeRewind.mock.calls.map((c) => `${c[0]}:${c[1]?.dryRun ? "dry" : "real"}`)).toEqual(["uB:dry", "uB:dry", "uB:real"]);
+    } finally {
+      chat.detach();
       await stopQuietly(host);
     }
   });

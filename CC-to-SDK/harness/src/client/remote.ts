@@ -6,6 +6,7 @@ import type { HostStatus } from "../host/ops.js";
 import type { PendingEntry } from "../permissions/pending.js";
 import type { DecisionOutcome, PermissionDecision } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
+import type { RewindAnchor, RewindDryRun, RewindScope } from "../session/chatSession.js";
 
 /** Long enough that a busy host answering a `status` while streaming a turn is never mistaken for a
  *  dead one; short enough that a client does not sit on a promise that will never settle. */
@@ -151,6 +152,12 @@ export class RemoteChatSession {
   mcpReconnectOp(name: string) { return this.send<{ ok: boolean; error?: string }>({ op: "mcp_reconnect", name }); }
   mcpToggleOp(name: string, enabled: boolean) { return this.send<{ ok: boolean; error?: string }>({ op: "mcp_toggle", name, enabled }); }
   resumeOp(sessionId: string) { return this.send<{ ok: boolean; error?: string }>({ op: "resume", sessionId }); }
+
+  // C5 T3: Esc-Esc rewind wire ops. anchors/dryRun are read-only; rewind is busy-gated server-side (see
+  // server.ts's dispatch arm), same as resumeOp.
+  rewindAnchorsOp() { return this.send<{ ok: boolean; error?: string; anchors?: RewindAnchor[] }>({ op: "rewind_anchors" }); }
+  rewindDryRunOp(uuid: string) { return this.send<{ ok: boolean; error?: string; dryRun?: RewindDryRun }>({ op: "rewind_dryrun", uuid }); }
+  rewindOp(uuid: string, prevUuid: string | null, scope: RewindScope) { return this.send<{ ok: boolean; error?: string }>({ op: "rewind", uuid, prevUuid, scope }); }
 
   /** Subscribe to the host's pushed events. The first live subscription sends `follow`; the last one
    *  leaving sends `unfollow`. Followers are keyed by a per-call token, not by the callback reference,

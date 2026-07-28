@@ -8,7 +8,7 @@ import type { HostSession } from "../../src/host/host.js";
 import { RemoteChatSession } from "../../src/client/remote.js";
 import { hostSocketPath } from "../../src/fleet/paths.js";
 import { remoteChatSession } from "../../src/client/chatAdapter.js";
-import { hasBgTasks } from "../../src/session/chatSession.js";
+import { hasBgTasks, hasRewind } from "../../src/session/chatSession.js";
 import type { HostEvent } from "../../src/host/wire.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
 
@@ -395,6 +395,35 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
       host.answer("tD", { kind: "deny" }, "test");   // the host's own park is untouched by the socket close — settle it so the test doesn't leak a pending promise
       await decision?.catch(() => {});
       await stopQuietly(host);
+    }
+  });
+
+  // C5 T3: a raw stub host (fake-connect style, mirrors test 12's legacy-frame stub) that answers
+  // canned replies — proves the adapter's rewind passthrough shape without driving a real engine.
+  it("15. rewind passthrough: rewindAnchors() resolves [] from {ok:true,anchors:[]}; rewind() throws on {ok:false,error:busy}", async () => {
+    const p = join(mkdtempSync(join(tmpdir(), "ccx-adapter-rewind-")), "h.sock");
+    const srv = createServer((sock) => {
+      let buf = "";
+      sock.on("data", (c) => {
+        buf += c.toString();
+        for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+          const req = JSON.parse(buf.slice(0, nl)); buf = buf.slice(nl + 1);
+          if (req.op === "rewind_anchors") sock.write(JSON.stringify({ ok: true, id: req.id, anchors: [] }) + "\n");
+          else if (req.op === "rewind") sock.write(JSON.stringify({ ok: false, id: req.id, error: "busy" }) + "\n");
+          else sock.write(JSON.stringify({ ok: true, id: req.id }) + "\n");
+        }
+      });
+    });
+    await new Promise<void>((r) => srv.listen(p, () => r()));
+    const adapter = remoteChatSession(p);
+    try {
+      await adapter.whenReady();
+      expect(hasRewind(adapter)).toBe(true);
+      await expect(adapter.rewindAnchors()).resolves.toEqual([]);
+      await expect(adapter.rewind({ uuid: "u1", prevUuid: null, text: "hi", index: 0 }, "both")).rejects.toThrow(/busy/);
+    } finally {
+      adapter.detach();
+      srv.close();
     }
   });
 });

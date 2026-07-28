@@ -9,6 +9,7 @@ import type { HostEvent, HostFrame } from "./wire.js";
 import type { PendingEntry } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
+import type { RewindAnchor, RewindDryRun, RewindScope } from "../session/chatSession.js";
 
 export interface HostHandlers {
   status(): HostStatus;
@@ -40,6 +41,12 @@ export interface HostHandlers {
   tasks(): BackgroundTaskInfo[];
   background(toolUseId?: string): Promise<boolean>;
   stopTask(taskId: string): Promise<void>;
+  // C5 T3: Esc-Esc rewind — anchors/dryRun are read-only passthroughs; `rewind` is gated like `resume`
+  // (see the dispatch arm) because it swaps the underlying engine.
+  rewindAnchors(): Promise<RewindAnchor[]>;
+  rewindDryRun(uuid: string): Promise<RewindDryRun>;
+  /** Gated like `resume` (see the dispatch arm) — busy must refuse, not race. */
+  rewind(anchor: { uuid: string; prevUuid: string | null }, scope: RewindScope): Promise<void>;
 }
 
 /** A frame with no newline in sight past this is a runaway peer, not an op. Same-user only (the socket
@@ -171,6 +178,14 @@ export class HostServer {
       case "tasks": return { ok: true, tasks: this.handlers.tasks() };
       case "background": return { ok: true, backgrounded: await this.handlers.background() };
       case "stop_task": await this.handlers.stopTask(op.data.taskId); return { ok: true };
+      case "rewind_anchors": return { ok: true, anchors: await this.handlers.rewindAnchors() };
+      case "rewind_dryrun": return { ok: true, dryRun: await this.handlers.rewindDryRun(op.data.uuid) };
+      // rewind swaps the underlying engine under the socket; gated exactly like resume and for the same reason.
+      case "rewind": {
+        if (this.handlers.busy()) return { ok: false, error: "busy" };
+        await this.handlers.rewind({ uuid: op.data.uuid, prevUuid: op.data.prevUuid }, op.data.scope);
+        return { ok: true };
+      }
     }
   }
 

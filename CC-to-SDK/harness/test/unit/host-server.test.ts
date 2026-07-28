@@ -14,7 +14,8 @@ afterEach(async () => { await srv?.close(); srv = undefined; });
 // HostHandlers is stubbed once here rather than repeated at every one of its ~dozen call sites.
 const stub = { busy: () => false, pending: () => [], answer: () => ({ ok: true }), prompt: async () => {}, interrupt: async () => {}, follow: () => () => {},
   control: async () => ({ ok: true }), resume: async () => {}, turnSeq: () => 0,
-  tasks: () => [], background: async () => true, stopTask: async () => {} };
+  tasks: () => [], background: async () => true, stopTask: async () => {},
+  rewindAnchors: async () => [], rewindDryRun: async () => ({ canRewind: false }), rewind: async () => {} };
 
 const root = mkdtempSync(join(tmpdir(), "ccx-host-"));   // one temp root for the file, not one per test
 let nth = 0;
@@ -209,6 +210,24 @@ describe("HostServer", () => {
     await srv.listen();
     expect(await ask(sock, { op: "resume", sessionId: "sid-1" })).toMatchObject({ ok: false, error: "busy" });
     expect(resumed).toEqual([]);
+  });
+  it("refuses rewind when busy() is true, gated exactly like resume — and never reaches the handler", async () => {
+    const sock = sockPath();
+    const rewound: unknown[] = [];
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {},
+      busy: () => true, rewind: async (anchor, scope) => { rewound.push([anchor, scope]); } }, sock);
+    await srv.listen();
+    expect(await ask(sock, { op: "rewind", uuid: "u1", prevUuid: null, scope: "both" })).toMatchObject({ ok: false, error: "busy" });
+    expect(rewound).toEqual([]);
+  });
+  it("rewind_anchors/rewind_dryrun are NOT busy-gated: they answer even while busy() is true", async () => {
+    const sock = sockPath();
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {},
+      busy: () => true, rewindAnchors: async () => [{ uuid: "uB", prevUuid: "aA", text: "B", index: 2 }],
+      rewindDryRun: async () => ({ canRewind: true }) }, sock);
+    await srv.listen();
+    expect(await ask(sock, { op: "rewind_anchors" })).toMatchObject({ ok: true, anchors: [{ uuid: "uB" }] });
+    expect(await ask(sock, { op: "rewind_dryrun", uuid: "uB" })).toMatchObject({ ok: true, dryRun: { canRewind: true } });
   });
   it("a prompt reply carries the turn's seq", async () => {
     const sock = sockPath();

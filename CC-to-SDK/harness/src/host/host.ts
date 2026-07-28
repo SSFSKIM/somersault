@@ -193,6 +193,9 @@ export class SessionHost {
         tasks: () => this.bgTasks,
         background: (toolUseId) => this.background(toolUseId),
         stopTask: (taskId) => this.stopBgTask(taskId),
+        rewindAnchors: () => this.rewindAnchors(),
+        rewindDryRun: (uuid) => this.rewindDryRun(uuid),
+        rewind: (anchor, scope) => this.rewind(anchor, scope),
       }, hostSocketPath(process.pid, this.env));
       await this.server.listen();
     } catch (e) {
