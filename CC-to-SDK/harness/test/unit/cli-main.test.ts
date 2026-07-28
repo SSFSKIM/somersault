@@ -32,6 +32,7 @@ function deps(over: Partial<MainDeps> = {}): MainDeps {
     isTTY: () => false,
     prepareAttach: async () => { throw new Error("prepareAttach must not run"); },
     probeSocket: async () => { throw new Error("probeSocket must not run"); },
+    runServe: async () => { throw new Error("runServe must not run"); },
     ...over,
   };
 }
@@ -366,6 +367,30 @@ describe("main — lifecycle and failures", () => {
     const { out, value } = await captureLog(() => main(["fleet", "gc"], deps({ fleetGc: async () => ["/run/1.sock"] })));
     expect(value).toBe(0);
     expect(out).toEqual(["removed /run/1.sock"]);
+  });
+  it("serve dispatches to runServe and returns 0", async () => {
+    const seen: CcxInvocation[] = [];
+    const { value } = await captureLog(() => main(["serve"], deps({ runServe: async (inv) => { seen.push(inv); } })));
+    expect(value).toBe(0);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ command: "serve", listen: { host: "127.0.0.1", port: 0 } });
+  });
+  it("refuses a non-localhost --listen with no --token-file BEFORE calling runServe, exit 1", async () => {
+    const { err, value } = await captureLog(() => main(["serve", "--listen", "ws://0.0.0.0:9001"], deps()));
+    expect(value).toBe(1);
+    expect(err.join("\n")).toMatch(/--token-file/);
+  });
+  it("a non-localhost --listen WITH --token-file reaches runServe", async () => {
+    const seen: CcxInvocation[] = [];
+    const { value } = await captureLog(() => main(["serve", "--listen", "ws://0.0.0.0:9001", "--token-file", "/tmp/tok"],
+      deps({ runServe: async (inv) => { seen.push(inv); } })));
+    expect(value).toBe(0);
+    expect(seen).toHaveLength(1);
+  });
+  it("propagates a runServe failure as exit 1 with its own message", async () => {
+    const { err, value } = await captureLog(() => main(["serve"], deps({ runServe: async () => { throw new Error("EADDRINUSE"); } })));
+    expect(value).toBe(1);
+    expect(err.join("\n")).toContain("EADDRINUSE");
   });
 });
 

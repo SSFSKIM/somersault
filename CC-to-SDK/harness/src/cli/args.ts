@@ -6,10 +6,16 @@ import { parseThinkArg } from "../tui/thinkLevels.js";
 // with this one (--model/--permission-mode/--cwd/--resume) — check which grammar you are editing.
 
 export interface CcxInvocation {
-  command: "run" | "agents" | "attach" | "stop" | "rm" | "gc";
+  command: "run" | "agents" | "attach" | "stop" | "rm" | "gc" | "serve";
   prompt?: string; target?: string;
   bg: boolean; detachable: boolean; print: boolean;
   name?: string; worktree?: string;
+  // `serve`-only fields. Always present (like `config`/`bg` above) so the type stays simple even though
+  // only the `serve` arm reads them — `--listen`'s default is loopback:ephemeral, `allowOrigins` fails
+  // closed at the transport (Task 10) so an omitted/empty list is exactly the safe default.
+  listen: { host: string; port: number };
+  tokenFile?: string;
+  allowOrigins: string[];
   /** The ABSOLUTE path `--worktree` resolved to. The parser never sets it — main fills it in after
    *  ensureWorktree, and spawnDetached carries it to the child, which is what writes it on the roster
    *  row. Distinct from `worktree` (the name as typed) on purpose: the two live in different domains,
@@ -64,10 +70,11 @@ function parseSettings(v: string): Record<string, unknown> {
 }
 
 export function parseCcx(argv: string[]): CcxInvocation {
-  const a: CcxInvocation = { command: "run", bg: false, detachable: false, print: false, json: false, all: false, config: {} };
+  const a: CcxInvocation = { command: "run", bg: false, detachable: false, print: false, json: false, all: false, config: {}, listen: { host: "127.0.0.1", port: 0 }, allowOrigins: [] };
   let i = 0;
   const sub = argv[0];
   if (sub === "agents" || sub === "attach" || sub === "stop" || sub === "rm") { a.command = sub; i = 1; }
+  else if (sub === "serve") { a.command = "serve"; i = 1; }
   else if (sub === "fleet" && argv[1] === "gc") { a.command = "gc"; i = 2; }
 
   /** Consume this flag's value. A dangling flag in final position used to yield `undefined`, which for
@@ -106,13 +113,39 @@ export function parseCcx(argv: string[]): CcxInvocation {
       case "--permission-mode": a.config.permissionMode = oneOf("--permission-mode", val(t), PERMISSION_MODES); break;
       case "--settings": a.config.settings = parseSettings(val(t)); break;
       case "--think": { const v = val(t); if (!parseThinkArg(v)) throw new Error(`--think must be off|low|medium|high|xhigh|max or a token count, got ${JSON.stringify(v)}`); a.think = v; break; }
+      case "--listen": {
+        const v = val(t);
+        let u: URL;
+        try { u = new URL(v); } catch { throw new Error(`--listen must be a ws:// URL, got ${JSON.stringify(v)}`); }
+        if (u.protocol !== "ws:") throw new Error(`--listen must use the ws:// scheme, got ${JSON.stringify(v)}`);
+        // `URL#hostname` keeps IPv6 brackets ("[::1]") — strip them ONCE here so both the loopback check
+        // below and the value handed to listenWs/net.Server.listen see the bare literal ("::1"); a
+        // bracketed string fails to bind at all (ENOTFOUND) and never matches LOOPBACK_HOSTS.
+        const host = u.hostname.startsWith("[") && u.hostname.endsWith("]") ? u.hostname.slice(1, -1) : u.hostname;
+        a.listen = { host, port: u.port ? Number(u.port) : 0 };
+        break;
+      }
+      case "--token-file": a.tokenFile = val(t); break;
+      // Repeatable — a web UI's own origin plus e.g. a dev server's are both real cases (spec §11: the
+      // transport fails closed, so this list is the ONLY way a browser client ever gets in at all).
+      case "--allow-origin": a.allowOrigins.push(val(t)); break;
       default:
         if (t.startsWith("-")) throw new Error(`unknown flag ${t}`);
         if (a.command === "run" && a.prompt === undefined) a.prompt = t;
+        else if (a.command === "serve") throw new Error(`unexpected argument ${JSON.stringify(t)} — serve takes no positional target`);
         else if (a.command !== "run" && a.target === undefined) a.target = t;
         // Silently dropping it is how `ccx fix the bug` (unquoted) runs an agent on the prompt "fix".
         else throw new Error(`unexpected argument ${JSON.stringify(t)} — quote the prompt as one argument`);
     }
   }
   return a;
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+/** spec §11's last rule, kept pure (no I/O) so it can run before any listener binds: a `serve` bound to
+ *  anything but loopback with no `--token-file` would let a foreign, unauthenticated network client hit
+ *  the control plane the moment a random token is only ever known to THIS process. Non-`serve` invocations
+ *  are never asked (their `listen`/`tokenFile` fields are the unused defaults). */
+export function nonLocalWithoutToken(inv: CcxInvocation): boolean {
+  return inv.command === "serve" && !LOOPBACK_HOSTS.has(inv.listen.host) && !inv.tokenFile;
 }
