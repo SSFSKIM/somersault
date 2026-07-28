@@ -9,6 +9,7 @@ import { Registry, type ThreadRecord, type EngineSession } from "./registry.js";
 import { openSession, resumeSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, type DecisionEvent } from "./broker.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
+import { turnStart, turnInterrupt } from "./turns.js";
 
 const require = createRequire(import.meta.url);
 const pkgVersion = (require("../../package.json") as { version: string }).version;
@@ -46,7 +47,7 @@ function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "pa
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
 
-type Handler = (srv: AppServer, ctx: ConnCtx, id: RequestId, params: Record<string, unknown>) => void | Promise<void>;
+export type Handler = (srv: AppServer, ctx: ConnCtx, id: RequestId, params: Record<string, unknown>) => void | Promise<void>;
 
 export class AppServer {
   readonly registry = new Registry();
@@ -67,7 +68,7 @@ export class AppServer {
       const factory = srv.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
       const session = factory(config as Record<string, unknown>); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
       srv.decisions.set(threadId, dec);
-      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, createdAt: nowSec() };
+      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, createdAt: nowSec() };
       srv.registry.add(record);
       ctx.peer.reply(id, { thread: threadView(record) });
     },
@@ -80,7 +81,7 @@ export class AppServer {
       const factory = srv.deps.sessionFactory ?? ((c: Record<string, unknown>) => resumeSession(parsed.data.sessionId, c as OpenSessionConfig));
       const session = factory(config as Record<string, unknown>); // same ordering as thread/start: register dec only once the factory hasn't thrown
       srv.decisions.set(threadId, dec);
-      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId ?? parsed.data.sessionId, createdAt: nowSec() };
+      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId ?? parsed.data.sessionId, createdAt: nowSec() };
       srv.registry.add(record);
       ctx.peer.reply(id, { thread: threadView(record) });
     },
@@ -131,6 +132,8 @@ export class AppServer {
       if (outcome.kind === "deny" && parsed.data.abortTurn) await record.session.interrupt();
       ctx.peer.reply(id, { ok: true });
     },
+    "turn/start": turnStart,
+    "turn/interrupt": turnInterrupt,
   };
 
   constructor(private opts: { token?: string } = {}, private deps: AppServerDeps = {}) {}
@@ -157,14 +160,20 @@ export class AppServer {
     return false;
   }
 
-  /** Broadcast one small helper (spec) — Task 9 narrows this to `record.subscribers` without touching
-   *  the call sites in `broker.ts`/the handlers above. */
-  private broadcastDecision(threadId: string, ev: DecisionEvent): void {
+  /** The one small broadcast helper (spec) every thread-scoped notification goes through — decisions
+   *  (Task 7) and turns/items (Task 8) alike — so Task 9 narrows fan-out to `record.subscribers` in
+   *  exactly one place. Interim (until Task 9): `threadId` is accepted but unused — every initialized
+   *  connection on the server receives every thread's notifications. */
+  broadcast(threadId: string, method: string, params: Record<string, unknown>): void {
     for (const c of this.conns.values()) {
       if (!c.initialized) continue;
-      if (ev.type === "requested") c.peer.notify("decision/requested", { threadId, decision: ev.entry });
-      else c.peer.notify("decision/resolved", { threadId, toolUseId: ev.toolUseID, by: ev.by, answer: ev.outcome });
+      c.peer.notify(method, params);
     }
+  }
+
+  private broadcastDecision(threadId: string, ev: DecisionEvent): void {
+    if (ev.type === "requested") this.broadcast(threadId, "decision/requested", { threadId, decision: ev.entry });
+    else this.broadcast(threadId, "decision/resolved", { threadId, toolUseId: ev.toolUseID, by: ev.by, answer: ev.outcome });
   }
 
   connect(sink: PeerSink): { peer: Peer; feed(chunk: string): void; close(): void } {

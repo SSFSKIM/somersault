@@ -23,6 +23,7 @@ export interface ThreadRecord {
   unattended: "park" | "deny";
   busy: boolean;
   turnSeq: number;
+  interruptRequested: boolean; // set by turn/interrupt; read by the submit-rejection handler to pick "interrupted" vs "failed"
   buffer: ItemEvent[];
   subscribers: Set<Peer>;
   chain: Promise<unknown>;      // serialization scope for thread-scoped methods (record.chain = record.chain.then(...))
