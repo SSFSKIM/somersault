@@ -15,7 +15,7 @@ const USER_AGENT = "cc-harness-appserver";
 export interface AppServerDeps { sessionFactory?: (config: Record<string, unknown>) => EngineSession }
 export interface ConnCtx { peer: Peer; initialized: boolean; authed: boolean; clientName?: string; connId: number }
 
-const initializeParams = z.object({ clientInfo: z.object({ name: z.string() }).passthrough(), authorization: z.string().optional() }).passthrough();
+const initializeParams = z.object({ clientInfo: z.object({ name: z.string() }), authorization: z.string().optional() });
 const threadStartParams = z.object({ config: z.record(z.string(), z.unknown()).optional(), unattended: z.enum(["park", "deny"]).default("park") });
 const threadResumeParams = z.object({ sessionId: z.string().min(1), config: z.record(z.string(), z.unknown()).optional(), unattended: z.enum(["park", "deny"]).default("park") });
 const threadIdParams = z.object({ threadId: z.string().min(1) });
@@ -77,7 +77,10 @@ export class AppServer {
           await record.session.dispose();
           srv.registry.delete(record.id);
           ctx.peer.reply(id, { ok: true });
-        } catch (e) { ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e)); }
+        } catch (e) {
+          srv.registry.delete(record.id); // engine is gone either way from the server's POV — don't leak the record on a failed dispose
+          ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+        }
       });
     },
   };
@@ -117,6 +120,7 @@ export class AppServer {
     ctx.initialized = true;
     ctx.clientName = parsed.data.clientInfo.name;
     ctx.peer.reply(id, { userAgent: USER_AGENT, version: pkgVersion, platformOs: process.platform });
+    ctx.peer.notify("initialized", {}); // spec §7: identical to Codex — reply first, notification second, no fields specified
   }
 
   private async dispatch(ctx: ConnCtx, id: RequestId, method: string, params: Record<string, unknown>): Promise<void> {
@@ -128,6 +132,12 @@ export class AppServer {
     }
     const handler = this.handlers[method];
     if (!handler) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, `Unknown method: ${method}`); return; }
-    await handler(this, ctx, id, params);
+    try {
+      await handler(this, ctx, id, params);
+    } catch (e) {
+      // one guard for every current and future handler — a thrown/rejecting handler must still reply,
+      // never leave the caller hanging or surface as an unhandled rejection (dispatch is fired `void`)
+      ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+    }
   }
 }
