@@ -48,10 +48,16 @@ export function QuestionDialog({ req, onAnswer, onDeny }: {
   useInput((input, key) => {
     if (!q) return;                                                 // auto-deny (above) is settling this
     if (other !== null) {                                           // free-text mode
-      if (key.return) { const t = other.trim(); t ? advance(undefined, t) : setOther(null); return; }
       if (key.escape) { setOther(null); return; }
       if (key.backspace || key.delete) { setOther(other.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setOther(other + input);
+      // Ink can deliver a CHUNK that carries typed text AND the submit together (paste, or a programmatic
+      // "text\r" write) — split at the first newline instead of trusting key.return alone, or the text is
+      // silently dropped (gb12). Mirrors editor.ts's insertText: a chunk's embedded \r/\n is the signal, not
+      // just key.return.
+      const t = input && !key.ctrl && !key.meta ? input : "";
+      const nl = t.search(/\r\n?|\n/);
+      if (key.return || nl !== -1) { const v = (other + (nl !== -1 ? t.slice(0, nl) : t)).trim(); v ? advance(undefined, v) : setOther(null); return; }
+      if (t) setOther(other + t);
       return;
     }
     if (key.escape) { onDeny(); return; }

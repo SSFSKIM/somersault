@@ -23,10 +23,14 @@ export function PlanDialog({ req, onDecision }: {
   const maxTop = Math.max(0, lines.length - WINDOW);
   useInput((input, key) => {
     if (feedback !== null) {
-      if (key.return) { const t = feedback.trim(); onDecision({ kind: "plan_reject", ...(t ? { feedback: t } : {}) }); return; }
       if (key.escape) { setFeedback(null); return; }
       if (key.backspace || key.delete) { setFeedback(feedback.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setFeedback(feedback + input);
+      // Same chunked-submit hazard as QuestionDialog's "Other" row (gb12): a chunk can carry typed text AND
+      // the submit together, so split at the first newline instead of trusting key.return alone.
+      const t = input && !key.ctrl && !key.meta ? input : "";
+      const nl = t.search(/\r\n?|\n/);
+      if (key.return || nl !== -1) { const v = (feedback + (nl !== -1 ? t.slice(0, nl) : t)).trim(); onDecision({ kind: "plan_reject", ...(v ? { feedback: v } : {}) }); return; }
+      if (t) setFeedback(feedback + t);
       return;
     }
     if (key.upArrow) { setTop((t) => Math.max(0, t - 1)); return; }

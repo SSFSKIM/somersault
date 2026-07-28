@@ -74,6 +74,57 @@ describe("<QuestionDialog>", () => {
     expect(answers[0]).toEqual([{}, "nope"]);
   });
 
+  it("Other: a CHUNKED write (typed text + trailing \\r in ONE call) commits the text, not a silent close (gb12)", async () => {
+    const single = { questions: [INPUT.questions[0]] };
+    const answers: [Record<string, string>, string | undefined][] = [];
+    const { stdin, lastFrame } = render(<QuestionDialog req={{ input: single }} onAnswer={(a, r) => answers.push([a, r])} onDeny={() => {}} />);
+    await waitFor(() => frame(lastFrame).includes("Red or blue?"));
+    stdin.write("3");
+    await waitFor(() => frame(lastFrame).includes("❯ Other:"));
+    stdin.write("green actually\r");                       // one chunk: text AND the submit together
+    await waitFor(() => answers.length === 1);
+    expect(answers[0]).toEqual([{}, "green actually"]);
+  });
+
+  it("Other: plain text chunks (no newline) still just append", async () => {
+    const single = { questions: [INPUT.questions[0]] };
+    const answers: [Record<string, string>, string | undefined][] = [];
+    const { stdin, lastFrame } = render(<QuestionDialog req={{ input: single }} onAnswer={(a, r) => answers.push([a, r])} onDeny={() => {}} />);
+    await waitFor(() => frame(lastFrame).includes("Red or blue?"));
+    stdin.write("3");
+    await waitFor(() => frame(lastFrame).includes("❯ Other:"));
+    stdin.write("gr"); await waitFor(() => frame(lastFrame).includes("❯ Other: gr"));
+    stdin.write("een"); await waitFor(() => frame(lastFrame).includes("❯ Other: green"));
+    expect(answers).toEqual([]);
+    stdin.write("\r");
+    await waitFor(() => answers.length === 1);
+    expect(answers[0]).toEqual([{}, "green"]);
+  });
+
+  it("Other: a bare Enter on an EMPTY buffer keeps its existing meaning (closes the row, no answer)", async () => {
+    const single = { questions: [INPUT.questions[0]] };
+    const answers: unknown[] = [];
+    const { stdin, lastFrame } = render(<QuestionDialog req={{ input: single }} onAnswer={(a, r) => answers.push([a, r])} onDeny={() => {}} />);
+    await waitFor(() => frame(lastFrame).includes("Red or blue?"));
+    stdin.write("3");
+    await waitFor(() => frame(lastFrame).includes("❯ Other:"));
+    stdin.write("\r");                                      // bare enter, nothing typed
+    await waitFor(() => frame(lastFrame).includes("3. Other…"));   // back to list mode
+    expect(answers).toEqual([]);
+  });
+
+  it("Other: a multi-line paste commits only the text up to the first newline", async () => {
+    const single = { questions: [INPUT.questions[0]] };
+    const answers: [Record<string, string>, string | undefined][] = [];
+    const { stdin, lastFrame } = render(<QuestionDialog req={{ input: single }} onAnswer={(a, r) => answers.push([a, r])} onDeny={() => {}} />);
+    await waitFor(() => frame(lastFrame).includes("Red or blue?"));
+    stdin.write("3");
+    await waitFor(() => frame(lastFrame).includes("❯ Other:"));
+    stdin.write("a\nb\n");
+    await waitFor(() => answers.length === 1);
+    expect(answers[0]).toEqual([{}, "a"]);
+  });
+
   it("Esc fires onDeny (the model is told no answer is available — never a fabricated one)", async () => {
     let denies = 0;
     const answers: unknown[] = [];

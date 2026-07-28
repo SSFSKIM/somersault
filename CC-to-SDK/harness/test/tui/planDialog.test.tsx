@@ -69,6 +69,54 @@ describe("<PlanDialog>", () => {
     expect(decisions[0]).not.toHaveProperty("feedback");
   });
 
+  it("a CHUNKED write (typed feedback + trailing \\r in ONE call) commits the feedback, not a silent no-feedback reject (gb12)", async () => {
+    const decisions: unknown[] = [];
+    const { stdin, lastFrame } = render(<PlanDialog req={REQ} onDecision={(o) => decisions.push(o)} />);
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    stdin.write("3");
+    await waitFor(() => frame(lastFrame).includes("What should Claude do differently?"));
+    stdin.write("check the config first\r");                 // one chunk: text AND the submit together
+    await waitFor(() => decisions.length === 1);
+    expect(decisions[0]).toEqual({ kind: "plan_reject", feedback: "check the config first" });
+  });
+
+  it("plain text chunks (no newline) still just append", async () => {
+    const decisions: unknown[] = [];
+    const { stdin, lastFrame } = render(<PlanDialog req={REQ} onDecision={(o) => decisions.push(o)} />);
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    stdin.write("3");
+    await waitFor(() => frame(lastFrame).includes("What should Claude do differently?"));
+    stdin.write("check "); await waitFor(() => frame(lastFrame).includes("check "));
+    stdin.write("config"); await waitFor(() => frame(lastFrame).includes("check config"));
+    expect(decisions).toEqual([]);
+    stdin.write("\r");
+    await waitFor(() => decisions.length === 1);
+    expect(decisions[0]).toEqual({ kind: "plan_reject", feedback: "check config" });
+  });
+
+  it("a bare Enter on an EMPTY feedback buffer keeps its existing meaning (reject, no feedback field)", async () => {
+    const decisions: unknown[] = [];
+    const { stdin, lastFrame } = render(<PlanDialog req={REQ} onDecision={(o) => decisions.push(o)} />);
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    stdin.write("3");
+    await waitFor(() => frame(lastFrame).includes("What should Claude do differently?"));
+    stdin.write("\r");                                        // bare enter, nothing typed
+    await waitFor(() => decisions.length === 1);
+    expect(decisions[0]).toEqual({ kind: "plan_reject" });
+    expect(decisions[0]).not.toHaveProperty("feedback");
+  });
+
+  it("a multi-line paste commits only the text up to the first newline", async () => {
+    const decisions: unknown[] = [];
+    const { stdin, lastFrame } = render(<PlanDialog req={REQ} onDecision={(o) => decisions.push(o)} />);
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    stdin.write("3");
+    await waitFor(() => frame(lastFrame).includes("What should Claude do differently?"));
+    stdin.write("a\nb\n");
+    await waitFor(() => decisions.length === 1);
+    expect(decisions[0]).toEqual({ kind: "plan_reject", feedback: "a" });
+  });
+
   it("↑/↓ scroll a long plan (first visible line changes; the choices stay put)", async () => {
     const longPlan = Array.from({ length: 20 }, (_, i) => `- line ${i}`).join("\n");
     const req = { input: { plan: longPlan } };
