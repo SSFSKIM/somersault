@@ -1,11 +1,30 @@
 // appserver/transport/ws.test.ts — Task 10: real `ws` client against an ephemeral loopback port.
 // Covers spec §11: localhost bind, Origin allowlist (present+mismatched -> 403 before any socket;
-// absent -> allowed), initialize-carried token (never URL/query), one-frame-one-message round trips,
-// and close() actually releasing the port.
+// absent -> allowed; omitted allowOrigins fails closed), initialize-carried token (never URL/query),
+// one-frame-one-message round trips, close() actually releasing the port, a per-connection protocol
+// error not taking down the process or other connections, and a durable server-level error handler.
 import { describe, it, expect } from "vitest";
+import net from "node:net";
+import crypto from "node:crypto";
 import WebSocket from "ws";
 import { AppServer } from "../../../src/appserver/server.js";
 import { listenWs } from "../../../src/appserver/transport/ws.js";
+
+// A raw TCP client that performs the HTTP/1.1 Upgrade handshake by hand, then can write arbitrary
+// (including protocol-invalid) frames straight onto the wire — `ws`'s own client always masks
+// correctly, so reproducing Finding 1 (an unmasked client frame) needs a socket below `ws`'s client API.
+function rawUpgrade(port: number): Promise<net.Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ port, host: "127.0.0.1" }, () => {
+      const key = crypto.randomBytes(16).toString("base64");
+      socket.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+    });
+    socket.once("data", (buf) => {
+      if (buf.toString("utf8", 0, 12).includes("101")) resolve(socket); else reject(new Error("handshake failed: " + buf.toString()));
+    });
+    socket.once("error", reject);
+  });
+}
 
 const fakeSession = () => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "s" });
 const rpc = (ws: WebSocket, obj: object) => ws.send(JSON.stringify(obj));
@@ -92,6 +111,35 @@ describe("ws transport", () => {
     await opened(ws);
     rpc(ws, { id: 1, method: "thread/list", params: {} }); // never initialized — URL token must not have authed it
     expect((await once(ws)).error.code).toBe(-33003);
+    ws.close();
+    await close();
+  });
+
+  it("allowOrigins omitted fails closed: a present Origin is refused with 403, absent Origin is still allowed", async () => {
+    const srv = new AppServer({}, { sessionFactory: () => fakeSession() });
+    const { port, close } = await listenWs(srv, {}); // no allowOrigins at all
+    const withOrigin = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin: "http://anything.test" } });
+    const rejected = await new Promise<any>((r) => withOrigin.once("unexpected-response", (_req, res) => r(res)));
+    expect(rejected.statusCode).toBe(403);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`); // no Origin header — non-browser client
+    await opened(ws);
+    rpc(ws, { id: 1, method: "initialize", params: { clientInfo: { name: "no-origin" } } });
+    expect((await once(ws)).result.userAgent).toBe("cc-harness-appserver");
+    ws.close();
+    await close();
+  });
+
+  it("a malformed frame on one connection is isolated — the process survives and a fresh connection still completes initialize", async () => {
+    const srv = new AppServer({}, { sessionFactory: () => fakeSession() });
+    const { port, close } = await listenWs(srv, {});
+    const bad = await rawUpgrade(port);
+    bad.write(Buffer.from([0x81, 0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f])); // FIN+text, MASK bit unset — a client frame MUST be masked (RFC 6455 §5.1)
+    await new Promise((r) => setTimeout(r, 150)); // give the server-side protocol error time to surface and get handled
+    bad.destroy();
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    await opened(ws);
+    rpc(ws, { id: 1, method: "initialize", params: { clientInfo: { name: "after-bad" } } });
+    expect((await once(ws)).result.userAgent).toBe("cc-harness-appserver");
     ws.close();
     await close();
   });
