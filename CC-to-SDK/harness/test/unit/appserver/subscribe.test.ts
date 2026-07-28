@@ -13,6 +13,44 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const init = (c: { feed(ch: string): void }, id: number, name = "t") => send(c, { id, method: "initialize", params: { clientInfo: { name } } });
 
 describe("appserver subscribe + thread/read (Task 9)", () => {
+  it("a pipelined turn/start + thread/subscribe (no tick between, same synchronous step) never yields a mismatched turn/started — the subscribing peer's replay-time turn id and the later live-broadcast turn id are always the SAME value, matching turn/start's reply and the eventual turn/completed (Task 9 finding 1 regression guard)", async () => {
+    // Pre-fix, this exact interleaving reproduced the reviewer's finding verbatim: turn/start's
+    // synchronous gate sets busy/resets the buffer but only minted the turn id LATER inside the
+    // deferred chain callback, so thread/subscribe's busy-but-empty-buffer fallback (subscribe.ts)
+    // read a STALE turnSeq and replayed a bogus `turn_<id>_0` a tick before the real `turn_<id>_1`
+    // broadcast landed — two turn/started for the SAME turn, with DIFFERENT ids, and no
+    // turn/completed ever closing out the bogus one. (Verified live against this suite before the
+    // fix landed: the peer received ids "..._0" then "..._1".) Note the design here ALSO always
+    // delivers turn/started twice to a peer that subscribes into this exact gap — once from
+    // subscribe's own replay, once from the live broadcast that follows once this peer is already a
+    // subscriber — that duplication is pre-existing and out of scope for finding 1; what must never
+    // happen again is the two deliveries disagreeing on the turn id.
+    const sessionFactory = () => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1" });
+    const srv = new AppServer({}, { sessionFactory });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    const b = mkSink(); const connB = srv.connect(b.sink);
+    init(connA, 1, "A"); init(connB, 1, "B");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    b.lines.length = 0;
+    // no await between these two sends — turn/start's synchronous gate (busy/buffer/turn-id mint) and
+    // thread/subscribe's replay must both run before either request's deferred work fires.
+    send(connA, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    send(connB, { id: 4, method: "thread/subscribe", params: { threadId } });
+    await tick();
+
+    const turnId = parsed(a.lines).find((f) => f.id === 3).result.turn.id;
+    expect(turnId).toBe(`turn_${threadId}_1`);
+
+    const bStarted = parsed(b.lines).filter((f) => f.method === "turn/started");
+    expect(bStarted.length).toBeGreaterThan(0);
+    for (const ev of bStarted) expect(ev.params).toEqual({ threadId, turn: { id: turnId, status: "inProgress" } });
+
+    const bCompleted = parsed(b.lines).find((f) => f.method === "turn/completed");
+    expect(bCompleted.params.turn.id).toBe(turnId);
+  });
   it("(a) replay order: turn/started -> buffered item events -> decision/requested -> thread/status/changed last", async () => {
     let broker: any;
     const sessionFactory = (cfg: any) => {

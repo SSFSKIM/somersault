@@ -29,6 +29,10 @@ export interface ThreadRecord {
   unattended: "park" | "deny";
   busy: boolean;
   turnSeq: number;
+  currentTurnId?: string;      // minted synchronously by turn/start (same tick as busy=true) — the ONLY
+                                // source of "the in-flight turn's id" a subscribe-time replay may read;
+                                // never reconstruct it from turnSeq (that increments in the same step now,
+                                // but re-deriving invites drift back in — see Task 9 finding 1)
   interruptRequested: boolean; // set by turn/interrupt; read by both the success and rejection paths to pick "interrupted" vs "completed"/"failed"
   buffer: BufferedItemEvent[]; // reset at the start of every turn (see BufferedItemEvent) — not a rolling lifetime window
   subscribers: Set<Peer>;

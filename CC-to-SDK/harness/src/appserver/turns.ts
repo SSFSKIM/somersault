@@ -67,10 +67,17 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
   //    this turn's own setup once that setup finally executes; proven by turns.test.ts's same-tick case.
   record.buffer = [];
   record.interruptRequested = false;
-  // The chain still gates the mint+submit work below so it stays ordered after any prior
-  // thread-scoped chain item (e.g. a queued thread/close finishing its dispose first).
+  // The turn id is minted HERE too — synchronously, in the same step as busy/buffer above — not inside
+  // the deferred chain callback below. subscribe.ts's replay reads record.currentTurnId for a busy
+  // thread whose buffer is still empty; if minting were deferred, a subscribe (or even a second frame in
+  // the same transport chunk — Peer.feed() explicitly supports multi-frame chunks) landing before the
+  // chain callback's microtask runs would see a STALE turnSeq and emit a bogus turn/started that never
+  // gets a matching turn/completed (Task 9 finding 1).
+  const turnId = `turn_${record.id}_${++record.turnSeq}`;
+  record.currentTurnId = turnId;
+  // The chain still gates the submit work below so it stays ordered after any prior thread-scoped chain
+  // item (e.g. a queued thread/close finishing its dispose first).
   record.chain = record.chain.then(() => {
-    const turnId = `turn_${record.id}_${++record.turnSeq}`;
     const turn = { id: turnId, status: "inProgress" };
     ctx.peer.reply(id, { turn });
     statusChanged(srv, record);

@@ -7,7 +7,7 @@ import { ERR } from "./rpc.js";
 import { itemEventNotification } from "./turns.js";
 import { itemsFromTranscript } from "./items/replay.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
-import type { AppServer, Handler } from "./server.js";
+import type { Handler } from "./server.js";
 
 const threadIdParams = z.object({ threadId: z.string().min(1) });
 // `cursor` is server-minted (an offset-from-end count, see threadRead below) but still crosses the wire
@@ -31,7 +31,10 @@ export const threadSubscribe: Handler = (srv, ctx, id, params) => {
   // buffer is already scoped per-turn by the reset in turns.ts, but this avoids trusting that invariant
   // a second time (the registry.ts doc comment on BufferedItemEvent is explicit about this).
   if (record.busy) {
-    const turnId = record.buffer.length ? record.buffer[record.buffer.length - 1].turnId : `turn_${record.id}_${record.turnSeq}`;
+    // record.currentTurnId is minted synchronously by turn/start in the SAME step as busy=true (Task 9
+    // finding 1) — it is never stale, unlike a turnSeq re-derivation would be if this replay landed
+    // before the chain callback's microtask ran.
+    const turnId = record.buffer.length ? record.buffer[record.buffer.length - 1].turnId : record.currentTurnId!;
     ctx.peer.notify("turn/started", { threadId: record.id, turn: { id: turnId, status: "inProgress" } });
   }
   for (const b of record.buffer) {
