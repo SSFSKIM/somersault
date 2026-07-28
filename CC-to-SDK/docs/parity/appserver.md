@@ -182,7 +182,12 @@ read-state plumbing, never a protocol method).
 | `streamInput` | sdk.d.ts (Query) | `turn/steer` *(X)* | inProcess | probe-gated — unprobed (D5) |
 | `stopTask` | sdk.d.ts (Query) | `task/stop` | both | planned(M2) |
 | `backgroundTasks` | sdk.d.ts (Query) | `turn/background` | both | planned(M2) |
-| `close` | sdk.d.ts (Query) | `thread/close` | both | shipped(M1) |
+| `close` | sdk.d.ts (Query) | `thread/close` | both | shipped(M1)† |
+
+† Scored by the *method*, not the literal seam — the same qualifier gaps 2 and 3 apply to the
+`host/ops.ts` / `bridge/types.ts` tokens. `thread/close` works end to end, but it reaches teardown
+through `Session.dispose()` (which closes the input queue and awaits the read loop), never through
+the SDK's own `Query.close()`, which nothing in `harness/src` calls.
 
 ## Totals
 

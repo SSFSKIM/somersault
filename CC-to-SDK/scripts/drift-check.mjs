@@ -92,8 +92,10 @@ console.log(any
 // claims to cover, so the whole script exits 1. No network needed — purely local source + doc.
 const installedDtsRaw = readFileSync(installedPath, "utf8"); // reuse the file already read for `installed` above
 const appserverSources = {
-  "host/ops.ts": () => [...readFileSync(join(root, "harness", "src", "host", "ops.ts"), "utf8").matchAll(/op: z\.literal\("(\w+)"\)/g)].map((m) => m[1]),
-  "bridge/types.ts": () => [...readFileSync(join(root, "harness", "src", "bridge", "types.ts"), "utf8").matchAll(/type: z\.literal\("(\w+)"\)/g)].map((m) => m[1]),
+  // Both quote styles: a single-quoted literal is still an op, and a walker that only sees double
+  // quotes is a gate that a style change can silently switch off (review finding, T12).
+  "host/ops.ts": () => [...readFileSync(join(root, "harness", "src", "host", "ops.ts"), "utf8").matchAll(/op: z\.literal\(["'](\w+)["']\)/g)].map((m) => m[1]),
+  "bridge/types.ts": () => [...readFileSync(join(root, "harness", "src", "bridge", "types.ts"), "utf8").matchAll(/type: z\.literal\(["'](\w+)["']\)/g)].map((m) => m[1]),
   // Only the 7 wrappers re-exported from reader/fork/mutate — rows.ts's rowKind/promptText/
   // rewindAnchorsFrom are row-shape helpers, not their own protocol seams (spec §10(c): "the 7 session
   // store wrappers"), so a bare `export {...}` scan over-counts; scope to those three source files.
@@ -111,7 +113,9 @@ const appserverSources = {
     const start = m.index + m[0].length;
     const end = installedDtsRaw.indexOf("\n}", start);
     const body = end === -1 ? "" : installedDtsRaw.slice(start, end);
-    return [...body.matchAll(/^\s{4}(\w+)\(/gm)].map((mm) => mm[1]);
+    // `[(<]`, not `(`: a generic method (`foo<T>(x: T)`) is still a method, and requiring the paren
+    // to follow the name immediately let one slip past the gate unseen (review finding, T12).
+    return [...body.matchAll(/^\s{4}(\w+)\s*[(<]/gm)].map((mm) => mm[1]);
   },
 };
 const scorecardPath = join(root, "docs", "parity", "appserver.md");
