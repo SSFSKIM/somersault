@@ -1,4 +1,4 @@
-# Agent App-Server Protocol — design (rev 1)
+# Agent App-Server Protocol — design (rev 2)
 
 **Date:** 2026-07-28 · **Status:** DESIGN (pre-plan) · **Aimed coverage: 100% of the harness's
 reachable capability surface** (defined precisely in §10).
@@ -269,7 +269,53 @@ its unique capabilities — proactive loops, warm pool, supervisor spawn — ent
 - Each milestone: unit + gated live tests, `coverage.md` refresh, memory update (the standing
   ritual).
 
-## 13. Decision log
+## 13. SDK 0.3.211 → 0.3.220 delta (rev 2 addendum)
+
+The harness is lockfile-pinned to 0.3.211; npm latest is 0.3.220. A declared-surface diff of the
+two tarballs (2026-07-28) found changes that bear directly on this protocol — the bump itself is
+separate work (drift-check ritual + live suite), but the protocol must be designed for the 0.3.220
+shapes so it isn't born stale:
+
+- **`interrupt_cancel_queued_v1`** — interrupt now takes `cancel_queued: true`, and the SDK's own
+  docstring names our exact consumer: *"a Stop-means-stop-everything client (a remote UI's Stop
+  button) sets this true so one round-trip halts the session."* → `turn/interrupt` gains
+  `cancelQueued?: boolean`, feature-detected via the system/init `capabilities` list; the receipt's
+  `cancelled[]`/`still_queued[]` surface as the `turn/completed` payload for interrupted turns.
+- **Permission-ask enrichment** — asks can now carry `suppress_always_allow_rule` (host MUST NOT
+  render a persistent "always allow" affordance) and `matched_ask_rule` (ask forced by a
+  user-configured `permissions.ask` rule; treat as human-intent, exempt from host auto-approval;
+  render-unsafe → sanitize). Both ride `PendingDecision` verbatim; the web dialog honors them.
+  `decision_reason` may carry ANSI escapes — the server sanitizes before emitting.
+- **`DirectoryAdded` hook + `register_repo_root` control request** (HOOK_EVENTS 30 → 31) → new
+  method `thread/directory/add` *(X, probe-gated)*; strict-subdirectory + no-re-register rules per
+  the SDK docs.
+- **`aborted: true` on interrupt-truncated assistant messages** → the item mapper stamps
+  `aborted` on the affected `agentMessage`/`reasoning` items instead of guessing from turn status.
+- **`supportedCommands()` now tracks the mid-session push** (0.3.211 returned the stale init
+  list) → `thread/capabilities/read` is re-fetch-safe on 0.3.220; the command-list-changed push
+  still becomes a `thread/capabilities/changed` notification.
+- **Rewind result gains `skippedLinks`** (link-safety refusals, real rewind only — never on
+  dryRun) → include in `thread/rewind` response; C5's rewind surface should adopt it at bump time.
+- **`setModel(null|'default')` resets to session default** → `thread/model/set` models `model:
+  string | null`.
+- **Task/subagent telemetry** — task outputs add `modelsUsed[]`, `liveSubscription`; stream frames
+  add `heartbeat`/`subagent_type`/`subagent_retry` → richer `task/event` payloads, pass-through.
+  The Task tool's `mode` param is now **deprecated/ignored** (subagents inherit the parent
+  session's permission mode) — audit swarm/task callers at bump time.
+- **New model tools `SendFeedback`, `ProposeSkills`** → render as `toolCall` view `other`; no
+  protocol change.
+- **Fast mode** (`fast_mode_disabled_reason`, `FastModeDisabledReason`), **session-scoped
+  `effortLevel: 'max'`**, **`workflowSizeGuideline`** setting, `anthropicGoogleCloud` provider,
+  `canonicalModel`/`provider` on usage rows → settings/usage passthrough fields; fold into the
+  63-field knob model at bump time (drift-check will flag them).
+- **Cross-session messaging identity** — `fromSession`, `verifiedPeerPid` (kernel-verified
+  SO_PEERCRED, explicitly *provenance not authentication*), `subkind: 'scheduled-trigger'` —
+  relevant to future fleet-messaging surfaces, not v1.
+
+Sequencing: the SDK bump (0.3.220 + drift-check + live re-verification) lands **before or with
+M1**, since `cancelQueued` and the ask-enrichment fields change M1 wire shapes.
+
+## 14. Decision log
 
 - **D1** Decisions are notification+method (park-first), not server→client requests — Codex's
   reverse-request model presumes a connected approver; our detach-first engine cannot. We keep
@@ -285,3 +331,5 @@ its unique capabilities — proactive loops, warm pool, supervisor spawn — ent
   headless login to drive; `account/read` is the whole surface. (§7)
 - **D7** Daemon ops enter the denominator by capability, not by op — avoids enshrining a legacy
   surface as the coverage target. (§10)
+- **D8** Protocol shapes target SDK 0.3.220 (rev 2); the bump precedes/accompanies M1 so the wire
+  is not born stale. (§13)
