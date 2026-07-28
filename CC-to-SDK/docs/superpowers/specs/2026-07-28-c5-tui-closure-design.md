@@ -131,10 +131,15 @@ swaps nothing and leaves tasks untouched.
 - **`?` shortcuts overlay**: `?` on an empty composer opens a real overlay (new
   `ShortcutsOverlay.tsx`) listing the keymap (readline keys, Tab ladder, Esc-Esc, Ctrl-B, `!`/`#`
   modes, popups); any key closes. The footer hint line stays.
-- **Edit/Write diff fidelity**: the shared `toolDiffLines` gains line numbers + up to 3 context
-  lines (CC's format), flowing to transcript rendering and the permission dialog alike.
-- **Bash result framing**: tool rows for Bash render `$ <command>` above the output preview and a
-  dim `⎿ exit <code>` tail on non-zero exit.
+- **Edit/Write diff fidelity**: the shared `toolDiffLines` gains a real hunk diff — common
+  prefix/suffix rendered as up to 3 dim context lines with line numbers, changed lines as -/+.
+  Numbering is **hunk-relative** (1-based within the snippet): `old_string`/`new_string` are the
+  only data we have; the file is never read, so absolute file lines are not available — scored
+  honestly in the rescore.
+- **Bash/tool-row framing**: tool rows adopt CC's bullet form (`● Bash(<command>)`, `● Read(<path>)`)
+  and **error** tool results render red with a `✗` prefix. The rev-2 `⎿ exit <code>` tail is
+  dropped: tool_result blocks carry no reliable exit code (only `is_error`), and correlating
+  result→tool across messages for a cosmetic tail isn't worth the state (planning finding).
 
 ### 4. LOW polish batch
 
@@ -217,6 +222,10 @@ Pending — written at finish.
 ## Revision Notes
 
 - rev 1 (2026-07-28): initial spec, written after probe 68 ran (live-probe-first honored).
+- rev 3 (2026-07-28, planning): Bash framing corrected — `⎿ exit <code>` tail dropped (no reliable
+  exit code in tool_result; `is_error` is the signal), replaced by CC's `●` bullet rows + red `✗`
+  error-result framing; Edit-diff numbering stated as hunk-relative (the file is never read). The
+  `⚙`→`●` swap and the tool-row form merge into one T8 change.
 - rev 2 (2026-07-28): pre-plan review (3 findings) resolved by probes 68b/68c/68d — anchor
   classifier + two-anchor rows (68c's keep-through-anchor rule **supersedes** rev 1's "exclusive"
   claim), `RewindDryRun` corrected (`filesChanged: string[]`, `error`), host guard for the
