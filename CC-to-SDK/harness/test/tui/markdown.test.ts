@@ -43,4 +43,37 @@ describe("renderMarkdown", () => {
     const out = renderMarkdown("run *fast* and **safe**");
     expect(out[0].segments).toEqual([{ text: "run " }, { text: "fast", italic: true }, { text: " and " }, { text: "safe", bold: true }]);
   });
+
+  it("a 2-col table renders padded columns, bold header, a dim rule sized to the header, plain data row", () => {
+    const out = renderMarkdown("| a | b |\n|---|---|\n| 1 | 2 |");
+    expect(out).toEqual([
+      { text: "a │ b", bold: true },
+      { text: "─".repeat("a │ b".length), dim: true },
+      { text: "1 │ 2" },
+    ]);
+  });
+  it("column widths pad to the widest cell in each column", () => {
+    const out = renderMarkdown("| name | val |\n|---|---|\n| x | 100 |\n| yy | 2 |");
+    expect(out[0]).toEqual({ text: "name │ val", bold: true });   // "name"(4) / "val"(3) already widest
+    expect(out[2]).toEqual({ text: "x    │ 100" });               // "x" padded to 4, "100" fits in 3
+    expect(out[3]).toEqual({ text: "yy   │ 2  " });                // "yy" padded to 4, "2" padded to 3
+  });
+  it("a lone `|`-containing prose line is NOT a table (needs the |---| separator as line 2)", () => {
+    expect(renderMarkdown("just a | pipe")).toEqual([{ text: "just a | pipe" }]);
+  });
+  it("two consecutive `|` lines where line 2 isn't a separator are left as ordinary prose, not a table", () => {
+    expect(renderMarkdown("a | b\nc | d")).toEqual([{ text: "a | b" }, { text: "c | d" }]);
+  });
+  it("a fenced ts block gets segment-styled lines (indentation + highlight)", () => {
+    const out = renderMarkdown("```ts\nconst x = 1;\n```");
+    expect(out).toEqual([
+      { text: "  const x = 1;", segments: [{ text: "  " }, { text: "const", color: "cyan" }, { text: " x = " }, { text: "1", color: "yellow" }, { text: ";" }] },
+    ]);
+  });
+  it("a fence with no language stays the current plain dim line (not segment-styled)", () => {
+    expect(renderMarkdown("```\nplain text\n```")).toEqual([{ text: "  plain text", dim: true }]);
+  });
+  it("a fence with an unrecognized language falls back to the plain dim line", () => {
+    expect(renderMarkdown("```rust\nfn main() {}\n```")).toEqual([{ text: "  fn main() {}", dim: true }]);
+  });
 });

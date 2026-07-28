@@ -575,10 +575,14 @@ describe("useChat", () => {
       submit: async (p, onMessage) => { submitted.push(p); return { result: "ok" }; },
       submitMessages: [{ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }],
     });
-    const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{(c.state as any).commandCatalog.map((e: any) => e.name).join(",")}</Text>; }
-    const { lastFrame } = render(<H />);
-    await waitFor(() => frame(lastFrame).includes("review"));     // wait for the init catalog fetch
+    const api: { run?: (s: string) => void; state?: any } = {};
+    // Read the catalog off c.state directly (not the wrapped <Text>): the comma-joined catalog string has
+    // no spaces to wrap at, so ink's hard-wrap can land mid-word — exactly the "gaining a command" risk the
+    // frame()/dewrap helper above warns about — and the /copy command (Task 9) is one more local entry that
+    // shifts that boundary, so this test must not depend on where a line happens to wrap.
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.state = c.state; return <Text>{(c.state as any).commandCatalog.map((e: any) => e.name).join(",")}</Text>; }
+    render(<H />);
+    await waitFor(() => api.state.commandCatalog.some((e: any) => e.name === "review"));   // wait for the init catalog fetch
     api.run!("/review");
     await waitFor(() => submitted.includes("/review"));
     expect(submitted).toContain("/review");
@@ -773,6 +777,60 @@ describe("model picker", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(set).toBe("sonnet");
     expect(api.state.modelPicker.open).toBe(false);
+  });
+});
+
+describe("useChat: compact divider + /copy (Task 9)", () => {
+  it("a system/compact_boundary message event (mid-turn, like the real host emits it) appends the compacted divider", async () => {
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake); return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "compact_boundary" } });
+    await waitFor(() => frame(lastFrame).includes("context compacted"));
+    expect(frame(lastFrame)).toContain("─── context compacted ───");
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+  });
+  it("an assistant message with NO owning live turn (a ghost replay) is ignored — it must not leak into /copy either", async () => {
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "GHOST-NEVER-SHOWN" }] } } });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).not.toContain("GHOST-NEVER-SHOWN");
+    api.run!("/copy");
+    await waitFor(() => frame(lastFrame).includes("nothing to copy"));   // the ghost text never reached lastAssistant
+    expect(frame(lastFrame)).not.toContain("GHOST-NEVER-SHOWN");
+  });
+
+  it("/copy with no assistant text yet notices 'nothing to copy' and never calls the copy fn", async () => {
+    let calls = 0;
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { copyText: async () => { calls++; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/copy");
+    await waitFor(() => frame(lastFrame).includes("nothing to copy"));
+    expect(calls).toBe(0);
+  });
+
+  it("/copy after an assistant message calls the injected copy fn with THAT text and notices ✓ copied", async () => {
+    let copied: string | undefined;
+    const fake = fakeRemote({ submitMessages: [{ type: "assistant", message: { content: [{ type: "text", text: "the answer is 42" }] } }] });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { copyText: async (t: string) => { copied = t; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("the answer is 42"));
+    api.run!("/copy");
+    await waitFor(() => frame(lastFrame).includes("✓ copied"));
+    expect(copied).toBe("the answer is 42");                          // the fn received the actual text, not just a call
+    expect(frame(lastFrame)).toContain(`✓ copied ${"the answer is 42".length} chars`);
   });
 });
 

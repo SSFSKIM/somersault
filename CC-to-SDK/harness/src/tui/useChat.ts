@@ -20,6 +20,7 @@ import { parseThinkArg } from "./thinkLevels.js";
 import type { ModelInfo } from "./ModelPicker.js";
 import { replayLines } from "./replay.js";
 import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bash.js";
+import { copyToClipboard as realCopyToClipboard } from "./copy.js";
 import { appendMemory as realAppendMemory } from "./memory.js";
 import { shortCwd } from "./banner.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel } from "../index.js";
@@ -38,7 +39,7 @@ function ladderNext(mode: string): string { const i = (LADDER as readonly string
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
   opts: { initialMode?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialLines?: RenderLine[]; initialPrompt?: string } = {},
-  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void } = {},
+  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void> } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   // Seed the scrollback with the welcome banner — unless we're launching straight into a resume (the
@@ -80,6 +81,8 @@ export function useChat(
   const getSessionMessages = deps.getSessionMessages ?? ((id: string) => realGetSessionMessages(id, { cwd: opts.cwd }) as Promise<any[]>);
   const runBash = deps.runBash ?? realRunBash;
   const appendMemory = deps.appendMemory ?? realAppendMemory;
+  const copyText = deps.copyText ?? realCopyToClipboard;
+  const lastAssistant = useRef("");    // the last assistant reply's text, for /copy
   // Real terminal clear: wipe screen + scrollback + home cursor (Static is append-only — a model reset alone
   // can't erase already-printed lines, so we also clear the terminal, exactly like CC's /clear).
   const clearScreen = deps.clearScreen ?? (() => { try { if (process.stdout.isTTY) process.stdout.write("\x1b[2J\x1b[3J\x1b[H"); } catch { /* no tty */ } });
@@ -100,7 +103,18 @@ export function useChat(
     const off = session.onSessionEvent((ev) => {
       if (disposed.current) return;
       if (ev.kind === "turn" && ev.phase === "start") { liveTurnRef.current = new LiveTurn(); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]); }
-      else if (ev.kind === "message") { const l = liveTurnRef.current; if (!l) return; l.ingest(ev.data); taskListRef.current.ingest(ev.data); setStreaming(l.snapshot()); setTasks(taskListRef.current.snapshot()); setTurnTokens(l.outputTokens); }
+      else if (ev.kind === "message") {
+        // Same no-live-turn guard as everything else in this arm (F5/GHOST): a message with no owning
+        // turn is a disk/buffer replay dup, not something the user is watching — so /copy must not
+        // capture text from it either, or it could copy a reply that was never actually rendered.
+        const l = liveTurnRef.current; if (!l) return;
+        const data = ev.data as any;
+        if (data?.type === "assistant") {
+          const t = (data.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
+          if (t.trim()) lastAssistant.current = t;
+        } else if (data?.type === "system" && data.subtype === "compact_boundary") notice("─── context compacted ───");
+        l.ingest(ev.data); taskListRef.current.ingest(ev.data); setStreaming(l.snapshot()); setTasks(taskListRef.current.snapshot()); setTurnTokens(l.outputTokens);
+      }
       else if (ev.kind === "turn" && ev.phase === "end") {
         const l = liveTurnRef.current; liveTurnRef.current = null;
         if (l) { if (ev.error) l.fail(ev.error); setLines((x) => [...x, ...l.finalize()]); if (l.model) setModel(l.model); }
@@ -232,6 +246,7 @@ export function useChat(
         }
         case "bg": openBgPanel(); break;
         case "rewind": void openRewind(); break;
+        case "copy": { const t = lastAssistant.current; if (!t) { notice("nothing to copy"); break; } await copyText(t); notice(`✓ copied ${t.length} chars`); break; }
         default: append(formatUnknown(cmd.name));
       }
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }

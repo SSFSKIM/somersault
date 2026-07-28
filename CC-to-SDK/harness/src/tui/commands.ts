@@ -32,6 +32,7 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "bg", summary: "list background tasks (k/x stops one)" },
   { name: "rewind", summary: "rewind to a previous message (Esc Esc)" },
   { name: "usage", summary: "show plan usage / rate-limit windows" },
+  { name: "copy", summary: "copy the last response to the clipboard" },
   { name: "help", summary: "list commands" },
 ];
 
