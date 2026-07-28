@@ -65,7 +65,8 @@ export class AppServer {
       const dec = srv.makeDecisions(threadId, parsed.data.unattended);
       const config = buildConfig(parsed.data, dec.broker(threadId));
       const factory = srv.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
-      const session = factory(config as Record<string, unknown>);
+      const session = factory(config as Record<string, unknown>); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
+      srv.decisions.set(threadId, dec);
       const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, createdAt: nowSec() };
       srv.registry.add(record);
       ctx.peer.reply(id, { thread: threadView(record) });
@@ -77,7 +78,8 @@ export class AppServer {
       const dec = srv.makeDecisions(threadId, parsed.data.unattended);
       const config = buildConfig(parsed.data, dec.broker(threadId));
       const factory = srv.deps.sessionFactory ?? ((c: Record<string, unknown>) => resumeSession(parsed.data.sessionId, c as OpenSessionConfig));
-      const session = factory(config as Record<string, unknown>);
+      const session = factory(config as Record<string, unknown>); // same ordering as thread/start: register dec only once the factory hasn't thrown
+      srv.decisions.set(threadId, dec);
       const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId ?? parsed.data.sessionId, createdAt: nowSec() };
       srv.registry.add(record);
       ctx.peer.reply(id, { thread: threadView(record) });
@@ -134,15 +136,17 @@ export class AppServer {
   constructor(private opts: { token?: string } = {}, private deps: AppServerDeps = {}) {}
 
   /** Mints this thread's decision broker. `unattended` is captured at thread/start time (spec: the
-   *  brief's `unattended` field is set once per thread, not renegotiated per-request). */
+   *  brief's `unattended` field is set once per thread, not renegotiated per-request). Deliberately
+   *  does NOT register into `this.decisions` — the session factory the caller feeds this broker into
+   *  can still throw synchronously on an invalid config, and a registered-but-never-returned threadId
+   *  would orphan forever (nothing can ever reach it to close it). Callers register after the factory
+   *  succeeds. */
   private makeDecisions(threadId: string, unattended: "park" | "deny"): ThreadDecisions {
-    const dec = new ThreadDecisions(
+    return new ThreadDecisions(
       (ev) => this.broadcastDecision(threadId, ev),
       () => unattended,
       () => this.hasWatchers(),
     );
-    this.decisions.set(threadId, dec);
-    return dec;
   }
 
   /** Interim definition (until Task 9's thread/subscribe tightens this to real per-thread subscribers,
