@@ -2,7 +2,7 @@
 // makeSession() must return synchronously (ink renders immediately); every method awaits `ready`.
 import { RemoteChatSession } from "./remote.js";
 import type { HostEvent } from "../host/wire.js";
-import type { ChatSession, DecisionFeed, BgTasks, SessionEvents, RewindOps, RewindAnchor, RewindDryRun, RewindScope } from "../session/chatSession.js";
+import type { ChatSession, DecisionFeed, BgTasks, SessionEvents, RewindOps, RewindAnchor, RewindScope } from "../session/chatSession.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { CompactOutcome } from "../compaction/index.js";
