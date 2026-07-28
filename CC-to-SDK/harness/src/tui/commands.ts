@@ -31,6 +31,7 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "mcp", summary: "[reconnect <name> | toggle <name> on|off] — MCP server status / controls" },
   { name: "bg", summary: "list background tasks (k/x stops one)" },
   { name: "rewind", summary: "rewind to a previous message (Esc Esc)" },
+  { name: "usage", summary: "show plan usage / rate-limit windows" },
   { name: "help", summary: "list commands" },
 ];
 
@@ -83,7 +84,7 @@ export function formatCost(u: SessionUsage): RenderLine[] {
 }
 
 /** `/status` — a one-glance snapshot of the live session (purely local state, no SDK call). */
-export function formatStatus(s: { model?: string; mode: string; thinkLevel?: string; ctxPct?: number; sessionId?: string; cwd?: string }): RenderLine[] {
+export function formatStatus(s: { model?: string; mode: string; thinkLevel?: string; ctxPct?: number; sessionId?: string; cwd?: string; usage?: string }): RenderLine[] {
   const out: RenderLine[] = [
     { text: "Status", bold: true },
     { text: `  model      ${s.model ?? "(default)"}`, dim: true },
@@ -93,6 +94,7 @@ export function formatStatus(s: { model?: string; mode: string; thinkLevel?: str
   if (s.ctxPct != null) out.push({ text: `  context    ${s.ctxPct}% used`, dim: true });
   if (s.cwd) out.push({ text: `  cwd        ${s.cwd}`, dim: true });
   if (s.sessionId) out.push({ text: `  session    ${s.sessionId.slice(0, 8)}`, dim: true });
+  if (s.usage) out.push({ text: `  usage      ${s.usage}`, dim: true });
   return out;
 }
 export function formatUnknown(name: string): RenderLine[] {

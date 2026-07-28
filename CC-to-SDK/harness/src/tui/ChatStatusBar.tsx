@@ -7,13 +7,14 @@ export function modeColor(mode: string): string { return mode === "bypassPermiss
 /** Context-usage color: green under half, yellow past half, red once compaction is near (CC's threshold feel). */
 export function ctxColor(pct: number): string | undefined { return pct >= 80 ? "red" : pct >= 50 ? "yellow" : undefined; }
 
-export function ChatStatusBar({ model, mode, busy, ctxPct, hasPending, thinkLevel, bgCount }: { model?: string; mode: string; busy: boolean; ctxPct?: number; hasPending: boolean; thinkLevel?: string; bgCount?: number }) {
+export function ChatStatusBar({ model, mode, busy, ctxPct, hasPending, thinkLevel, bgCount, usageWarn }: { model?: string; mode: string; busy: boolean; ctxPct?: number; hasPending: boolean; thinkLevel?: string; bgCount?: number; usageWarn?: string }) {
   return (
     <Box>
       {model ? <Text>model <Text color="cyan">{model}</Text>{"  "}</Text> : null}
       <Text>mode </Text><Text color={modeColor(mode)}>{mode}</Text>
       {thinkLevel ? <Text>{"  "}think <Text color="magenta">{thinkLevel}</Text></Text> : null}
       {ctxPct != null ? <Text>{"  ctx "}<Text color={ctxColor(ctxPct)}>{ctxPct}%</Text>{ctxPct >= 80 ? <Text color="red"> ⚠ auto-compact soon</Text> : null}</Text> : null}
+      {usageWarn ? <Text color="red">{"  " + usageWarn}</Text> : null}
       <Text>{busy ? "  ⟳ streaming" : ""}</Text>
       <Text>{bgCount ? `  ⚙ ${bgCount} bg` : ""}</Text>
       <Text dimColor>{hasPending ? "   [↑↓·1/2/3·esc]" : "   Tab mode · Esc interrupt · ? help"}</Text>

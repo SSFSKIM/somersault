@@ -14,6 +14,7 @@ import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
 import type { ModelInfo } from "./ModelPicker.js";
@@ -28,7 +29,7 @@ import type { RawContextUsage } from "../index.js";
 // adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
 export type { ChatSession };
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number } | null; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number } | null; usageWarn?: string; }
 
 const LADDER = ["default", "acceptEdits", "plan", "auto"] as const;   // Tab cycles these; bypassPermissions stays off-cycle (/yolo)
 /** Next mode on the Tab ladder; any off-ladder mode (e.g. bypassPermissions/dontAsk) re-enters at "default". */
@@ -55,6 +56,7 @@ export function useChat(
   const [busy, setBusy] = useState(false);
   const [turnStartedAt, setTurnStartedAt] = useState(0);
   const [ctxPct, setCtxPct] = useState<number | undefined>(undefined);
+  const [usageWarn, setUsageWarn] = useState<string | undefined>(undefined);
   const [model, setModel] = useState<string | undefined>(undefined);
   const [thinkLevel, setThinkLevel] = useState(opts.initialThink ?? "default");
   const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[] }>({ open: false, sessions: [] });
@@ -105,7 +107,7 @@ export function useChat(
         // rendering) but the frame still carries an error: without this, an idle host's death is
         // invisible until the next submit times out ~10s later (F5).
         else if (ev.error) notice(`✗ connection lost: ${ev.error}`);
-        setStreaming([]); setBusy(false); void refreshCtx(); drainNext();
+        setStreaming([]); setBusy(false); void refreshCtx(); void refreshUsage(); drainNext();
       }
       else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);
       else if (ev.kind === "task") {
@@ -156,6 +158,12 @@ export function useChat(
       if (!disposed.current && u?.maxTokens) setCtxPct(Math.round(((u.totalTokens ?? 0) / u.maxTokens) * 100));
     } catch { /* best-effort */ }
   }
+  // Fire-and-forget at turn-end only — never poll (spec's no-polling rule). Drives the status-bar warning;
+  // /status and /usage fetch usage() directly themselves and don't route through this.
+  async function refreshUsage() {
+    try { const u = await session.usage(); if (!disposed.current) setUsageWarn(usageWarning(u)); return u; }
+    catch { return undefined; }
+  }
 
   function append(ls: RenderLine[]) { if (!disposed.current && ls.length) setLines((l) => [...l, ...ls]); }
   function notice(text: string) { append([{ text, dim: true }]); }
@@ -193,7 +201,12 @@ export function useChat(
         case "compact": append(formatCompact(await session.compact())); break;
         case "context": append(formatContext(summarizeUsage((await session.getContextUsage()) as RawContextUsage))); break;
         case "cost": append(formatCost((await session.usage()) as SessionUsage)); break;
-        case "status": append(formatStatus({ model, mode, thinkLevel, ctxPct, sessionId: session.sessionId, cwd: opts.cwd })); break;
+        case "status": {
+          const u = await session.usage().catch(() => undefined);
+          append(formatStatus({ model, mode, thinkLevel, ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined }));
+          break;
+        }
+        case "usage": append(formatUsage(await session.usage())); break;
         case "clear": clear(); break;
         case "help": append(formatHelp()); break;
         case "resume": void openPicker(); break;
@@ -428,5 +441,5 @@ export function useChat(
   function interrupt() { drainGen.current++; setQueue([]); void session.interrupt().catch(() => {}); }   // Esc stops everything: queue + any scheduled drain
   function clear() { if (!disposed.current) { clearScreen(); setLines([]); setStreaming([]); setClearToken((t) => t + 1); } }   // Ctrl-L / /clear: wipe screen + model (session context kept)
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, usageWarn } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind };
 }
