@@ -42,6 +42,27 @@ describe("TurnMapper", () => {
     const evs = m.ingest({ type: "assistant", parent_tool_use_id: "toolu_t", uuid: "u-n", message: { id: "msg_6", content: [{ type: "text", text: "inner" }] } });
     expect(evs).toEqual([]); // M1: nested activity is not itemized; attribution only
   });
+  it("duplicate tool_result for an already-completed tool is ignored", () => {
+    const m = new TurnMapper();
+    m.ingest(asst("msg_7", [{ type: "tool_use", id: "toolu_d", name: "Bash", input: { command: "ls" } }]));
+    const [done] = m.ingest(toolResult("toolu_d", "ok"));
+    expect(done).toMatchObject({ kind: "completed", item: { id: "toolu_d", status: "completed", result: "ok" } });
+    const again = m.ingest(toolResult("toolu_d", "different"));
+    expect(again).toEqual([]);
+    expect(done).toMatchObject({ item: { id: "toolu_d", status: "completed", result: "ok" } }); // stored result unchanged
+  });
+  it("finalize(true) closes a still-open tool_use as failed", () => {
+    const m = new TurnMapper();
+    m.ingest(asst("msg_8", [{ type: "tool_use", id: "toolu_i", name: "Bash", input: { command: "ls" } }]));
+    const evs = m.finalize(true);
+    expect(evs).toEqual([{ kind: "completed", item: { type: "toolCall", id: "toolu_i", tool: "Bash", view: "command", arguments: { command: "ls" }, status: "failed" } }]);
+  });
+  it("finalize(false) closes a still-open tool_use as completed", () => {
+    const m = new TurnMapper();
+    m.ingest(asst("msg_9", [{ type: "tool_use", id: "toolu_j", name: "Bash", input: { command: "ls" } }]));
+    const evs = m.finalize(false);
+    expect(evs).toEqual([{ kind: "completed", item: { type: "toolCall", id: "toolu_j", tool: "Bash", view: "command", arguments: { command: "ls" }, status: "completed" } }]);
+  });
   it("toolView classifies", () => {
     expect(toolView("Bash")).toBe("command"); expect(toolView("Edit")).toBe("fileChange");
     expect(toolView("Read")).toBe("fileRead"); expect(toolView("Grep")).toBe("search");

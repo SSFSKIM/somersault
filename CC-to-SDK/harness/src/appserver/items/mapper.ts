@@ -128,6 +128,7 @@ export class TurnMapper {
       if (b?.type !== "tool_result") continue;
       const tool = this.tools.get(String(b.tool_use_id ?? ""));
       if (!tool) continue;
+      if (tool.status !== "inProgress") continue;         // duplicate tool_result for an already-closed tool: ignore (no re-completion, no mutation)
       tool.status = b.is_error ? "failed" : "completed";
       tool.result = firstResultLine(b.content);
       out.push({ kind: "completed", item: tool });
