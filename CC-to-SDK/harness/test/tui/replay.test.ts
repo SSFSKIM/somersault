@@ -18,7 +18,7 @@ describe("replayLines", () => {
     const out = replayLines([userText("add a flag"), asstTool("Read", { file_path: "cli.ts" }), toolResult("FILE BODY HERE"), asstText("added")]);
     const texts = out.map((l) => l.text);
     expect(texts).toContain("› add a flag");
-    expect(texts).toContain("⚙ Read cli.ts");
+    expect(texts).toContain("Read(cli.ts)");
     expect(texts).toContain("added");
     expect(texts.some((t) => t.includes("FILE BODY HERE"))).toBe(false);   // tool_result body skipped
   });

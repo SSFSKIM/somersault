@@ -16,7 +16,7 @@ live("chat rich rendering (live)", () => {
         (m) => { lt.ingest(m); tl.ingest(m); },
       );
       const lines = lt.finalize().map((l) => l.text).join("\n");
-      expect(lines).toMatch(/⚙ Agent/);                       // a subagent block rendered
+      expect(lines).toMatch(/● Agent/);                        // a subagent block rendered
       expect(tl.snapshot().length).toBeGreaterThanOrEqual(1); // a task was reduced
     } finally {
       await session.dispose();

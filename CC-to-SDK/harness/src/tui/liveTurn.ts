@@ -50,7 +50,7 @@ export class LiveTurn {
     if (!agent.nested) { agent.nested = []; agent.toolCount = 0; }
     for (const b of mm.message?.content ?? []) {
       if (b?.type === "text" && b.text) for (const l of String(b.text).split("\n")) agent.nested.push({ text: `  │ ${l}`, dim: true });
-      else if (b?.type === "tool_use") { agent.toolCount = (agent.toolCount ?? 0) + 1; agent.nested.push({ text: `  ⚙ ${b.name}${b.input ? " " + toolTarget(String(b.name), b.input) : ""}`, dim: true }); }
+      else if (b?.type === "tool_use") { agent.toolCount = (agent.toolCount ?? 0) + 1; agent.nested.push({ text: `  ● ${b.name}${b.input ? " " + toolTarget(String(b.name), b.input) : ""}`, dim: true }); }
       else if (b?.type === "tool_result") { const p = trunc(firstResultLine(b.content)); if (p) agent.nested.push({ text: `  ⎿ ${p}`, dim: true }); }
     }
   }
@@ -136,8 +136,8 @@ export class LiveTurn {
         : (b.text ? b.text.split("\n").map((t) => ({ text: t, dim: true })) : []);
     const label = b.target ? `${b.name} ${b.target}` : b.name;
     if (b.name === "Agent") {
-      if (b.doneAt != null) { const s = Math.floor((b.doneAt - b.startedAt) / 1000); return [{ text: `⚙ ${label} ✓ (${b.toolCount ?? 0} tools · ${s}s)` }]; }
-      return [{ text: `⚙ ${label}` }, ...(b.nested ?? [])];      // expanded while running
+      if (b.doneAt != null) { const s = Math.floor((b.doneAt - b.startedAt) / 1000); return [{ text: `● ${label} ✓ (${b.toolCount ?? 0} tools · ${s}s)` }]; }
+      return [{ text: `● ${label}` }, ...(b.nested ?? [])];      // expanded while running
     }
     if ((b.name === "Edit" || b.name === "Write") && b.input) {
       const head = b.status === "done" ? `✓ ${label}` : b.status === "error" ? `✗ ${label}` : this.ended ? `· ${label}` : `⟳ ${label}`;

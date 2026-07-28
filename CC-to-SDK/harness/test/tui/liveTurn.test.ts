@@ -126,8 +126,8 @@ describe("LiveTurn", () => {
     lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "e1", name: "Edit", input: {} } }));
     lt.ingest({ type: "assistant", message: { content: [{ type: "tool_use", id: "e1", name: "Edit", input: { file_path: "f.ts", old_string: "x", new_string: "y" } }] } });
     const out = texts(lt);
-    expect(out).toContain("  - x");
-    expect(out).toContain("  + y");
+    expect(out).toContain("  1 - x");
+    expect(out).toContain("  1 + y");
   });
 
   it("captures the running output-token count from message_delta usage", () => {
@@ -162,7 +162,7 @@ describe("LiveTurn", () => {
     let t = 0; const lt = new LiveTurn(() => t);
     // top-level Agent tool_use (full message — no partials for the agent's own content)
     lt.ingest({ type: "assistant", message: { content: [{ type: "tool_use", id: "ag1", name: "Agent", input: { description: "research" } }] } });
-    expect(texts(lt).some((x) => x.startsWith("⚙ Agent"))).toBe(true);
+    expect(texts(lt).some((x) => x.startsWith("● Agent"))).toBe(true);
     // nested subagent turns (parent_tool_use_id = ag1)
     lt.ingest({ type: "user", parent_tool_use_id: "ag1", message: { content: [{ type: "text", text: "do the thing" }] } });
     lt.ingest({ type: "assistant", parent_tool_use_id: "ag1", message: { content: [{ type: "tool_use", id: "b1", name: "Bash", input: { command: "echo hi" } }] } });
@@ -175,7 +175,7 @@ describe("LiveTurn", () => {
     t = 12000;
     lt.ingest({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "ag1", content: "done" }] } });
     const collapsed = texts(lt);
-    expect(collapsed.some((x) => /⚙ Agent .*✓ \(1 tools? · 12s\)/.test(x))).toBe(true);
+    expect(collapsed.some((x) => /● Agent .*✓ \(1 tools? · 12s\)/.test(x))).toBe(true);
     expect(collapsed.some((x) => x.includes("the output is hi"))).toBe(false); // nested hidden after collapse
   });
 });
