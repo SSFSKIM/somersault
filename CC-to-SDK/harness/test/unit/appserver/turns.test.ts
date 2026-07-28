@@ -237,6 +237,61 @@ describe("appserver turns (Task 8)", () => {
     expect(record.buffer[499]).toEqual({ turnId, event: { kind: "completed", item: { type: "agentMessage", id: "msg299#0", text: "t299" } } });
   });
 
+  it("a mid-turn joiner's replayed item/started carries the text as it was WHEN IT STARTED, not the accumulated text (the deltas that follow would double it)", async () => {
+    // The mapper mutates its item in place (item.text += delta) and the buffer held the ItemEvent BY
+    // REFERENCE, so a buffered item/started was serialized at replay time carrying what the item holds
+    // NOW. A client following the spec's join rule (apply the started item, then the deltas) rendered
+    // "Hello worldHello world". The buffer now snapshots the item at emit time.
+    const sessionFactory = () => ({
+      submit: (_prompt: string, onMessage: (m: unknown) => void) => {
+        onMessage({ type: "stream_event", event: { type: "message_start", message: { id: "msg1" } } });
+        onMessage({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+        onMessage({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello" } } });
+        onMessage({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " world" } } });
+        return new Promise<{ result: unknown }>(() => {}); // the turn stays in flight so a second client can join it
+      },
+      interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
+    });
+    const { srv, c, threadId } = await bootThread(sessionFactory);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await tick();
+
+    const b = mkSink(); const connB = srv.connect(b.sink);
+    init(connB, 1, "B");
+    send(connB, { id: 4, method: "thread/subscribe", params: { threadId } });
+    await tick();
+
+    const notifs = parsed(b.lines).filter((f) => !("id" in f) && f.method !== "initialized");
+    const started = notifs.find((f) => f.method === "item/started");
+    expect(started.params.item).toEqual({ type: "agentMessage", id: "msg1#0", text: "" });
+    expect(notifs.filter((f) => f.method === "item/agentMessage/delta").map((f) => f.params.delta)).toEqual(["Hello", " world"]);
+  });
+
+  it("a mid-turn joiner's replayed item/started for a tool call still reads inProgress with no result, even though the tool has since completed", async () => {
+    const sessionFactory = () => ({
+      submit: (_prompt: string, onMessage: (m: unknown) => void) => {
+        onMessage({ type: "assistant", message: { id: "msg1", content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls" } }] } });
+        onMessage({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "file.txt", is_error: false }] } });
+        return new Promise<{ result: unknown }>(() => {});
+      },
+      interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
+    });
+    const { srv, c, threadId } = await bootThread(sessionFactory);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await tick();
+
+    const b = mkSink(); const connB = srv.connect(b.sink);
+    init(connB, 1, "B");
+    send(connB, { id: 4, method: "thread/subscribe", params: { threadId } });
+    await tick();
+
+    const notifs = parsed(b.lines).filter((f) => !("id" in f) && f.method !== "initialized");
+    const started = notifs.find((f) => f.method === "item/started");
+    expect(started.params.item).toEqual({ type: "toolCall", id: "toolu_1", tool: "Bash", view: "command", arguments: { command: "ls" }, status: "inProgress" });
+    const completed = notifs.find((f) => f.method === "item/completed");
+    expect(completed.params.item).toMatchObject({ id: "toolu_1", status: "completed", result: "file.txt" });
+  });
+
   it("record.buffer is a PER-TURN window — reset at the start of the next turn, not a rolling lifetime window", async () => {
     const sessionFactory = () => ({
       submit: async (_prompt: string, onMessage: (m: unknown) => void) => {

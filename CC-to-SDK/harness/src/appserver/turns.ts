@@ -15,8 +15,19 @@ const turnInterruptParams = z.object({ threadId: z.string().min(1), cancelQueued
 
 const BUFFER_CAP = 500; // Task 9 replays this bound — a bounded PER-TURN buffer (reset every turn/start), drop-oldest
 
+/** TurnMapper mutates its Items IN PLACE (`item.text += delta`, a tool's status/result filled in when its
+ *  tool_result lands, `aborted` stamped by finalize), so buffering the ItemEvent by reference means the
+ *  buffer no longer holds what it held when the event was live. A client joining mid-turn then got
+ *  item/started already carrying the full text — and the deltas after it, rendering "Hello worldHello
+ *  world" — or a tool "started" already reading completed with its result.
+ *  Cloned HERE, at buffer time, not at replay time: the mutation is continuous, so the only moment the
+ *  snapshot is still correct is the moment the event is emitted. Deltas carry no Item and need no clone. */
+function snapshot(ev: ItemEvent): ItemEvent {
+  return ev.kind === "delta" ? ev : { kind: ev.kind, item: structuredClone(ev.item) };
+}
+
 function pushBounded(buf: BufferedItemEvent[], turnId: string, ev: ItemEvent): void {
-  buf.push({ turnId, event: ev });
+  buf.push({ turnId, event: snapshot(ev) });
   if (buf.length > BUFFER_CAP) buf.shift();
 }
 
@@ -136,12 +147,20 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
   });
 };
 
+/** The ONE interrupt path — turn/interrupt and decision/respond's abortTurn both go through it. Setting
+ *  interruptRequested is not optional bookkeeping: onSuccess above reads it to tell a turn the client
+ *  aborted from a turn that genuinely finished, so an interrupt that skips the flag reports the aborted
+ *  turn as "completed" and finalizes its open items as completed rather than failed. */
+export async function requestInterrupt(record: ThreadRecord): Promise<void> {
+  record.interruptRequested = true;
+  await record.session.interrupt(); // zero-arg (see file header) — turn/interrupt's cancelQueued accepted, unused
+}
+
 export const turnInterrupt: Handler = async (srv, ctx, id, params) => {
   const parsed = turnInterruptParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-  record.interruptRequested = true;
-  await record.session.interrupt(); // zero-arg (see file header) — params.cancelQueued accepted, unused
+  await requestInterrupt(record);
   ctx.peer.reply(id, { interrupted: true });
 };

@@ -10,7 +10,7 @@ import { openSession, resumeSession, type OpenSessionConfig } from "../session/i
 import { ThreadDecisions, type DecisionEvent } from "./broker.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
 import type { PendingDecision } from "../permissions/pending.js";
-import { turnStart, turnInterrupt } from "./turns.js";
+import { turnStart, turnInterrupt, requestInterrupt } from "./turns.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
 
 const require = createRequire(import.meta.url);
@@ -49,6 +49,24 @@ function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "pa
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
 
+/** `Session.sessionId` is a GETTER that stays undefined until the first turn's system/init frame lands
+ *  (session.ts's own doc comment) — the value snapshotted at thread/start is therefore `undefined` for the
+ *  whole life of the thread unless something refreshes it, which left thread/read answering an empty page
+ *  forever and threadView never reporting an id to resume from. Latch it off the engine's own frame seam
+ *  (the one registry.ts declares) rather than at turn boundaries, so a client learns the id mid-first-turn
+ *  rather than only after it ends. NB the read loop invokes frame callbacks BEFORE it records the id from
+ *  the init frame, so this reads `session.sessionId` on EVERY frame until it appears (latched on the frame
+ *  after init, still well inside the first turn) instead of reaching into the frame's own shape. */
+function latchSessionId(record: ThreadRecord): void {
+  if (record.sessionId) return;
+  const off = record.session.onFrame(() => {
+    const sid = record.session.sessionId;
+    if (!sid) return;
+    record.sessionId = sid;
+    off();
+  });
+}
+
 export type Handler = (srv: AppServer, ctx: ConnCtx, id: RequestId, params: Record<string, unknown>) => void | Promise<void>;
 
 export class AppServer {
@@ -72,6 +90,7 @@ export class AppServer {
       srv.decisions.set(threadId, dec);
       const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, createdAt: nowSec() };
       srv.registry.add(record);
+      latchSessionId(record); // the snapshot above is undefined until the first turn's init frame (see latchSessionId)
       ctx.peer.reply(id, { thread: threadView(record) });
     },
     "thread/resume": async (srv, ctx, id, params) => {
@@ -85,6 +104,7 @@ export class AppServer {
       srv.decisions.set(threadId, dec);
       const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId ?? parsed.data.sessionId, createdAt: nowSec() };
       srv.registry.add(record);
+      latchSessionId(record); // no-op here in practice — resume already knows the id — but keeps one rule for both entry points
       ctx.peer.reply(id, { thread: threadView(record) });
     },
     "thread/list": (srv, ctx, id) => {
@@ -97,15 +117,11 @@ export class AppServer {
       if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
       record.chain = record.chain.then(async () => {
         try {
-          await record.session.dispose();
-          srv.decisions.get(record.id)?.teardown();
-          srv.decisions.delete(record.id);
-          srv.registry.delete(record.id);
+          await srv.closeRecord(record);
           ctx.peer.reply(id, { ok: true });
         } catch (e) {
-          srv.decisions.get(record.id)?.teardown();
-          srv.decisions.delete(record.id);
-          srv.registry.delete(record.id); // engine is gone either way from the server's POV — don't leak the record on a failed dispose
+          // the record/decisions are already gone (closeRecord's finally) — the engine is gone from the
+          // server's POV either way, so a failed dispose still owes the caller an error, not silence
           ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
         }
       });
@@ -131,7 +147,9 @@ export class AppServer {
         else ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Answer kind does not match the parked decision's kind");
         return;
       }
-      if (outcome.kind === "deny" && parsed.data.abortTurn) await record.session.interrupt();
+      // spec §6: EVERY answer variant may carry abortTurn, not just `deny` — and aborting goes through the
+      // same flag-then-interrupt path turn/interrupt uses, else the turn it just aborted reports "completed"
+      if (parsed.data.abortTurn) await requestInterrupt(record);
       ctx.peer.reply(id, { ok: true });
     },
     "turn/start": turnStart,
@@ -141,7 +159,47 @@ export class AppServer {
     "thread/read": threadRead,
   };
 
-  constructor(private opts: { token?: string } = {}, public readonly deps: AppServerDeps = {}) {}
+  private readonly token: string;
+  // PRESENCE of the option — not truthiness — is what turns auth on. `token: ""` means "auth configured
+  // but holding no usable secret", and must fail every client CLOSED; reading it as "no auth configured"
+  // is what turned an empty --token-file into a fully open control plane (C2).
+  private readonly authRequired: boolean;
+
+  constructor(opts: { token?: string } = {}, public readonly deps: AppServerDeps = {}) {
+    this.authRequired = opts.token !== undefined;
+    this.token = opts.token ?? "";
+  }
+
+  /** Tear one thread down: settle its parked decisions, dispose the engine, tell the thread's subscribers,
+   *  drop the record. Shared by thread/close and shutdown().
+   *
+   *  ORDER IS LOAD-BEARING (C1): the real Session.dispose() is `input.close(); await this.done`, and
+   *  `done` is the read loop — which cannot end while a turn sits blocked inside canUseTool awaiting one of
+   *  our parked promises. teardown() is the only thing that settles those promises, so awaiting dispose()
+   *  FIRST is a circular wait: thread/close never replies, the record stays busy, no decision/resolved ever
+   *  goes out, and record.chain stays pending forever so every later request for the thread hangs too.
+   *
+   *  Rethrows a failing dispose() (the caller owes its own reply) but still broadcasts + drops the record
+   *  in `finally` — the engine is gone from the server's point of view either way. thread/closed goes out
+   *  BEFORE the delete, since broadcast() no-ops once the record is out of the registry. */
+  private async closeRecord(record: ThreadRecord): Promise<void> {
+    this.decisions.get(record.id)?.teardown();
+    try {
+      await record.session.dispose();
+    } finally {
+      this.broadcast(record.id, "thread/closed", { threadId: record.id });
+      this.decisions.delete(record.id);
+      this.registry.delete(record.id);
+    }
+  }
+
+  /** Process shutdown (the `ccx serve` SIGINT path): settle every parked decision and dispose every live
+   *  thread. Without it, closing the listener leaves each SDK session — and its `claude` child process —
+   *  running, which also keeps the event loop alive so the first Ctrl-C may not exit at all. One thread's
+   *  failing dispose must not abandon the rest, so each is guarded. */
+  async shutdown(): Promise<void> {
+    await Promise.all(this.registry.list().map((r) => this.closeRecord(r).catch(() => {})));
+  }
 
   /** Mints this thread's decision broker. `unattended` is captured at thread/start time (spec: the
    *  brief's `unattended` field is set once per thread, not renegotiated per-request). Deliberately
@@ -169,7 +227,12 @@ export class AppServer {
   broadcast(threadId: string, method: string, params: Record<string, unknown>): void {
     const record = this.registry.get(threadId);
     if (!record) return;
-    for (const peer of record.subscribers) peer.notify(method, params);
+    // Guarded per subscriber, exactly as session.ts's onFrame loop is: one sink's failure is not another's.
+    // Unguarded, a single throwing sink aborted the fan-out to every remaining subscriber — and inside
+    // turnStart the throw escapes the chain callback's try (which wraps only submit), rejecting
+    // record.chain and wedging the thread the same way C1 did. Not reachable through the `ws` sink today;
+    // the stdio/UDS transports the spec names would inherit it (M2).
+    for (const peer of record.subscribers) { try { peer.notify(method, params); } catch { /* one subscriber's failure is not another's */ } }
   }
 
   /** The parked decisions for one thread — subscribe.ts's replay step (spec §5) reads this to hand a
@@ -179,7 +242,9 @@ export class AppServer {
   }
 
   private broadcastDecision(threadId: string, ev: DecisionEvent): void {
-    if (ev.type === "requested") this.broadcast(threadId, "decision/requested", { threadId, decision: ev.entry });
+    // spec §6's payload is {threadId, turnId, decision} — without turnId a UI cannot attach a park to a
+    // turn row. Legitimately absent when nothing is in flight (JSON.stringify drops the undefined key).
+    if (ev.type === "requested") this.broadcast(threadId, "decision/requested", { threadId, turnId: this.registry.get(threadId)?.currentTurnId, decision: ev.entry });
     else this.broadcast(threadId, "decision/resolved", { threadId, toolUseId: ev.toolUseID, by: ev.by, answer: ev.outcome });
   }
 
@@ -211,8 +276,10 @@ export class AppServer {
     if (ctx.initialized) { ctx.peer.replyError(id, ERR.INVALID_REQUEST, "Already initialized"); return; }
     const parsed = initializeParams.safeParse(params);
     if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
-    if (this.opts.token) {
-      if (parsed.data.authorization !== "Bearer " + this.opts.token) { ctx.peer.replyError(id, ERR.UNAUTHENTICATED, "Invalid token"); return; }
+    if (this.authRequired) {
+      // `!this.token` first: an empty configured token can never be a valid credential, so it rejects every
+      // client rather than matching a bare "Bearer " (C2 — auth on with no secret must fail closed).
+      if (!this.token || parsed.data.authorization !== "Bearer " + this.token) { ctx.peer.replyError(id, ERR.UNAUTHENTICATED, "Invalid token"); return; }
       ctx.authed = true;
     }
     ctx.initialized = true;
@@ -224,7 +291,7 @@ export class AppServer {
   private async dispatch(ctx: ConnCtx, id: RequestId, method: string, params: Record<string, unknown>): Promise<void> {
     if (method === "initialize") { this.handleInitialize(ctx, id, params); return; }
     if (!ctx.initialized) {
-      if (this.opts.token) ctx.peer.replyError(id, ERR.UNAUTHENTICATED, "Not authenticated");
+      if (this.authRequired) ctx.peer.replyError(id, ERR.UNAUTHENTICATED, "Not authenticated");
       else ctx.peer.replyError(id, ERR.INVALID_REQUEST, "Not initialized");
       return;
     }

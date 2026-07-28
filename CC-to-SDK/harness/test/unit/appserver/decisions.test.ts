@@ -154,7 +154,104 @@ describe("appserver decisions (Task 7)", () => {
     await new Promise((r) => setTimeout(r, 0));
     send(connA, { id: 5, method: "decision/respond", params: { threadId: t2, toolUseId: "toolu_2", answer: { kind: "allow_once" }, abortTurn: true } });
     await new Promise((r) => setTimeout(r, 0));
-    expect(session2.interrupted).toBeUndefined(); // non-deny answer with abortTurn:true does NOT interrupt
+    expect(session2.interrupted).toBe(1); // spec §6: abortTurn is honored for EVERY answer variant, not just deny
+    expect(session1.interrupted).toBe(1); // ...and still only for the thread it was addressed to
+  });
+
+  it("abortTurn is honored for a NON-deny answer (plan_reject) — spec §6 puts the optional flag on every variant", async () => {
+    // Pre-fix the condition was `outcome.kind === "deny" && abortTurn`, so a plan_reject+abortTurn never
+    // interrupted anything and the client was still told {ok:true} — a silently ignored abort.
+    let broker: any;
+    const s: any = { submit: async () => ({ result: {} }), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1" };
+    s.interrupt = async () => { s.interrupted = (s.interrupted ?? 0) + 1; return {}; };
+    const srv = new AppServer({}, { sessionFactory: (cfg: any) => { broker = cfg.permissionBroker; return s; } });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    broker.request({ toolName: "ExitPlanMode", input: {}, toolUseID: "toolu_plan", kind: "plan", signal: new AbortController().signal });
+    await new Promise((r) => setTimeout(r, 0));
+    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_plan", answer: { kind: "plan_reject", feedback: "no" }, abortTurn: true } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(parsed(a.lines).find((f) => f.id === 3).result).toEqual({ ok: true });
+    expect(s.interrupted).toBe(1);
+  });
+
+  it("decision/respond with abortTurn makes the turn complete as 'interrupted', not 'completed'", async () => {
+    // Task 8 gave turn/interrupt its interruptRequested flag; the abortTurn caller never got it, so a turn
+    // the client explicitly aborted was broadcast as {status:"completed"} (and its open items finalized as
+    // completed rather than failed). Both callers now share turns.ts's requestInterrupt.
+    let broker: any;
+    const sessionFactory = (cfg: any) => {
+      broker = cfg.permissionBroker;
+      const s: any = {
+        submit: async () => { await broker.request({ toolName: "Bash", input: { command: "ls" }, toolUseID: "toolu_ab", signal: new AbortController().signal }); return { result: {} }; },
+        dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
+      };
+      s.interrupt = async () => { s.interrupted = (s.interrupted ?? 0) + 1; return {}; };
+      return s;
+    };
+    const srv = new AppServer({}, { sessionFactory });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+    send(connA, { id: 3, method: "thread/subscribe", params: { threadId } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    send(connA, { id: 4, method: "turn/start", params: { threadId, input: "go" } });
+    await new Promise((r) => setTimeout(r, 0)); // submit() runs to its parked broker.request
+
+    send(connA, { id: 5, method: "decision/respond", params: { threadId, toolUseId: "toolu_ab", answer: { kind: "deny" }, abortTurn: true } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const completed = parsed(a.lines).find((f) => f.method === "turn/completed");
+    expect(completed.params.turn).toEqual({ id: `turn_${threadId}_1`, status: "interrupted" });
+  });
+
+  it("decision/requested carries the in-flight turnId (spec §6), and omits it when no turn is in flight", async () => {
+    let broker: any;
+    const sessionFactory = (cfg: any) => {
+      broker = cfg.permissionBroker;
+      return {
+        submit: async () => { await broker.request({ toolName: "Bash", input: {}, toolUseID: "toolu_t", signal: new AbortController().signal }); return { result: {} }; },
+        interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
+      };
+    };
+    const srv = new AppServer({}, { sessionFactory });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+    send(connA, { id: 3, method: "thread/subscribe", params: { threadId } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // parked with no turn in flight: turnId is legitimately absent
+    broker.request({ toolName: "Bash", input: {}, toolUseID: "toolu_idle", signal: new AbortController().signal });
+    await new Promise((r) => setTimeout(r, 0));
+    const idle = parsed(a.lines).find((f) => f.method === "decision/requested");
+    expect(idle.params.threadId).toBe(threadId);
+    expect("turnId" in idle.params).toBe(false);
+
+    a.lines.length = 0;
+    send(connA, { id: 4, method: "turn/start", params: { threadId, input: "go" } });
+    await new Promise((r) => setTimeout(r, 0));
+    const inTurn = parsed(a.lines).find((f) => f.method === "decision/requested");
+    expect(inTurn.params.turnId).toBe(`turn_${threadId}_1`);
+    expect(inTurn.params.decision.toolUseID).toBe("toolu_t");
+
+    // the subscribe-time REPLAY carries the same shape — replay and live must not drift
+    const b = mkSink(); const connB = srv.connect(b.sink);
+    init(connB, 1, "B");
+    send(connB, { id: 5, method: "thread/subscribe", params: { threadId } });
+    await new Promise((r) => setTimeout(r, 0));
+    const replayed = parsed(b.lines).filter((f) => f.method === "decision/requested");
+    expect(replayed.map((f) => f.params.turnId)).toEqual([`turn_${threadId}_1`, `turn_${threadId}_1`]);
   });
 
   it("thread/start with an invalid config against the real session factory leaves zero registry threads and zero decision entries (Finding 1 regression)", async () => {

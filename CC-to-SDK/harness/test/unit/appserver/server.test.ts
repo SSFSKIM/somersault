@@ -135,6 +135,19 @@ describe("AppServer dispatch", () => {
     expect(p[2].error.code).toBe(-32600);
     expect(p.filter((f) => f.method === "initialized")).toHaveLength(1); // none from the rejected second initialize
   });
+  it("an EMPTY configured token fails closed — it is auth-configured-with-no-secret, never 'no auth configured'", () => {
+    // `if (this.opts.token)` read "" as falsy, so an empty --token-file silently disabled authentication:
+    // initialize accepted a client sending no authorization at all, and the pre-initialize branch even
+    // downgraded -33003 to -32600. Presence of the option, not its truthiness, is what turns auth on.
+    const { lines, c } = boot("");
+    send(c, { id: 1, method: "thread/start", params: {} });
+    expect(parsed(lines)[0].error.code).toBe(-33003); // not -32600
+    send(c, { id: 2, method: "initialize", params: { clientInfo: { name: "web" } } });
+    expect(parsed(lines)[1].error.code).toBe(-33003);
+    send(c, { id: 3, method: "initialize", params: { clientInfo: { name: "web" }, authorization: "Bearer " } });
+    expect(parsed(lines)[2].error.code).toBe(-33003); // a bare "Bearer " must not match the empty secret either
+    expect(parsed(lines).some((f) => f.method === "initialized")).toBe(false);
+  });
   it("a rejected initialize (bad token) emits no `initialized` notification", () => {
     const { lines, c } = boot("secret");
     send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "web" }, authorization: "Bearer wrong" } });

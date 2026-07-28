@@ -48,7 +48,9 @@ export const threadSubscribe: Handler = (srv, ctx, id, params) => {
     const { method, params: p } = itemEventNotification(record.id, b.turnId, b.event);
     ctx.peer.notify(method, p);
   }
-  for (const entry of srv.pendingDecisions(record.id)) ctx.peer.notify("decision/requested", { threadId: record.id, decision: entry });
+  // Same payload as the live broadcast (server.ts's broadcastDecision), turnId included — replay and live
+  // must never drift on shape; absent when no turn is in flight.
+  for (const entry of srv.pendingDecisions(record.id)) ctx.peer.notify("decision/requested", { threadId: record.id, turnId: record.currentTurnId, decision: entry });
   ctx.peer.notify("thread/status/changed", { threadId: record.id, status: record.busy ? "active" : "idle" });
 };
 
