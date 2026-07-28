@@ -8,8 +8,11 @@
 >
 > **Method:** the reference is read for *exact* glyphs / strings / key-bindings / option labels, so we
 > match fidelity rather than approximate. Each item is scored ✅ have · 🟡 partial · ❌ missing ·
-> 🚫 out-of-scope (bridge-coupled / non-terminal / explicit non-goal). Percentages weight by
-> user-visible impact, excluding 🚫 from the denominator.
+> 🚫 out-of-scope (bridge-coupled / non-terminal / explicit non-goal), with 🚫 excluded from the
+> denominator. **Two scoring eras — do not compare across them.** The `start` and `pre-C5` columns
+> weight rows by user-visible impact; from C5 (2026-07-28) onward the score is a plain
+> ✅=1.0 · 🟡=0.5 · ❌=0 row count, because impact weights were never written down and so could not
+> be reproduced or audited. See the C5 recompute note under the headline table.
 
 ## Headline
 
@@ -30,13 +33,17 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 | 5. Slash commands | ~55% | ~70% | ~88% |
 | 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% |
 | 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~81% (untouched this stage) |
-| **Overall (impact-weighted)** | **~46%** | **~83%** | **~88%** |
+| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* |
 
 **C5 recompute method (2026-07-28), disclosed for auditability:** each row is scored ✅=1.0 ·
 🟡=0.5 · ❌=0, `🚫` rows excluded from the denominator; a category's percentage is that plain
 count over its non-🚫 row total (no hidden per-row impact weights); the headline is the unweighted
 average of the 7 category percentages. Categories 4 and 7 carry no C5 rows and are left at their
-previously-published values rather than re-derived. This lands the honest headline at **~88%**,
+previously-published values rather than re-derived — so they are impact-weighted values averaged in
+alongside five freshly counted ones. **~83% → ~88% is therefore NOT a like-for-like delta**: the
+baseline was computed under the older impact-weighted convention. The C5 movement that is real and
+directly checkable is per-row, in the tables below (26 rows flipped ❌/🟡 → ✅), not in the headline
+arithmetic. Re-derive the earlier columns under the plain count if a true trend line is ever needed. This lands the honest headline at **~88%**,
 short of the spec's ~93–95% aspiration (`docs/superpowers/specs/2026-07-28-c5-tui-closure-design.md`
 § Purpose) — the gap is the residual 🟡/❌ rows this stage deliberately left alone: Bash output's
 missing exit-code framing (no reliable exit code exists in a `tool_result`, so this stays 🟡 rather
