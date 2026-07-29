@@ -11,6 +11,9 @@ import { applyPlanUpgrade } from "./planUpgrade.js";
 import { classifyLimitMessage } from "../limits/classify.js";
 import type { AppServer } from "./server.js";
 
+const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors server.ts's own nowSec — registry.ts's
+// `updatedAt` is documented in unix seconds, not ms
+
 /** Absorbed verbatim from the deleted server.ts `latchSessionId`, INCLUDING ITS ORDER (2026-07-30 review
  *  finding: an earlier draft of this route gated the getter read itself behind `system`/`init`, which
  *  silently defeats the fallback described below for any engine whose id shows up on some other frame).
@@ -73,7 +76,12 @@ function routeStatus(srv: AppServer, record: ThreadRecord, frame: { type?: strin
  *
  *  One broadcast, not one per changed knob ("one shape, all three knobs", spec Wave 1): if a single frame
  *  somehow changes both fields, the mirror still emits ONE `thread/settings/changed` carrying the full
- *  post-update `record.settings`, not two partial ones. */
+ *  post-update `record.settings`, not two partial ones.
+ *
+ *  `updatedAt` is bumped here too (review fix): registry.ts documents it as "bumped on every
+ *  settings/turn mutation", and a genuine (non-echo) mirror write from the engine is exactly that — a
+ *  sort-by-recency thread list must not go stale just because the mutation's origin was the engine
+ *  instead of a client `thread/*\/set` call. */
 function routeSettingsMirror(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string; permissionMode?: unknown; model?: unknown }): void {
   if (frame?.type !== "system" || frame.subtype !== "status") return;
   let changed = false;
@@ -86,6 +94,7 @@ function routeSettingsMirror(srv: AppServer, record: ThreadRecord, frame: { type
     changed = true;
   }
   if (!changed) return; // echo-dedup: the frame's value(s) already equal the mirror — nothing to announce
+  record.updatedAt = nowSec();
   srv.broadcast(record.id, "thread/settings/changed", {
     threadId: record.id,
     source: "engine",
@@ -109,7 +118,15 @@ function routeCompactBoundary(srv: AppServer, record: ThreadRecord, frame: { typ
  *  splits across two: a scalar per-turn tally (`usage`) and a per-model breakdown (`modelUsage`, keyed by
  *  model name — not flattenable into the tally). Bundled under the one field the brief specifies, rather
  *  than inventing a second top-level key it didn't declare: `usage.<token counts>` plus a sibling
- *  `usage.modelUsage` map. */
+ *  `usage.modelUsage` map.
+ *
+ *  NO context-percentage field (review note): the higher-level design spec describes this notification as
+ *  "per-turn usage + context %", but context usage is only reachable via `Session.getContextUsage()` — an
+ *  ASYNC call — and this router is a synchronous `onFrame` callback with no result frame that carries a
+ *  ready-made percentage. Computing it here would mean awaiting inside a sync dispatch loop that every
+ *  other route also runs on, so it is left out; task-8b's own literal payload (`{threadId, usage}`) does
+ *  not call for it either. A context-usage percentage belongs behind its own read/poll seam
+ *  (`thread/contextUsage/read`, already on the Wave 1 method list), not bolted onto this route. */
 function routeTokenUsage(srv: AppServer, record: ThreadRecord, frame: { type?: string; usage?: unknown; modelUsage?: unknown }): void {
   if (frame?.type !== "result") return;
   if (frame.usage === undefined && frame.modelUsage === undefined) return;
@@ -144,9 +161,25 @@ function routeBackgroundTasks(srv: AppServer, record: ThreadRecord, frame: { typ
   srv.broadcast(record.id, "task/changed", { threadId: record.id, tasks: frame.tasks ?? [] });
 }
 
-/** system/task_notification → task/event {threadId, event: frame} — verbatim from the brief's table. */
+/** Task lifecycle frames → task/event {threadId, event: frame}. The brief's table names only
+ *  `task_notification`, but its EXISTING consumer in this codebase — `src/host/host.ts`'s
+ *  `onSessionFrame` — disagrees on two counts, and matching the table alone would have been the 8a
+ *  lesson repeated (a table is a summary, an existing consumer is the ground truth):
+ *
+ *  1. **Shape normalization.** host.ts's own comment: "Task lifecycle frames arrive with either a bare
+ *     type tag or as a system subtype depending on SDK path — match both, deterministically"
+ *     (`const sub = mm?.type === "system" ? mm.subtype : mm?.type;`). A route that only checked
+ *     `frame.type === "system" && frame.subtype === "task_notification"` would silently miss a task
+ *     frame that arrives as `{ type: "task_notification", ... }` with no `system` wrapper at all.
+ *
+ *  2. **The whole family, not one member.** host.ts treats `task_started`, `task_progress`,
+ *     `task_updated`, and `task_notification` as ONE re-emitted event family (`if (sub === "task_started"
+ *     || sub === "task_notification" || sub === "task_progress" || sub === "task_updated") { this.emit(...) }`).
+ *     A client that only ever sees completions (`task_notification`) and never a task's START or its
+ *     PROGRESS cannot render a live task list — it would only ever see tasks appear already finished. */
 function routeTaskNotification(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string }): void {
-  if (frame?.type !== "system" || frame.subtype !== "task_notification") return;
+  const sub = frame?.type === "system" ? frame.subtype : frame?.type;
+  if (sub !== "task_started" && sub !== "task_progress" && sub !== "task_updated" && sub !== "task_notification") return;
   srv.broadcast(record.id, "task/event", { threadId: record.id, event: frame });
 }
 
@@ -172,14 +205,20 @@ function routeCapabilities(srv: AppServer, record: ThreadRecord, frame: { type?:
  *  `if (f?.parent_tool_use_id) return []; // nested/subagent frame: attribution only, not itemized`).
  *  Without it, a subagent's own private TodoWrite call would be relayed as if it were the MAIN turn's
  *  todo list (the payload's `turnId` is `record.currentTurnId`, the top-level turn) — a real
- *  misattribution, not a cosmetic one. */
+ *  misattribution, not a cosmetic one.
+ *
+ *  Presence-guarded (review fix): `b.input?.todos` is skipped, not relayed, when it is not an array. This
+ *  route's semantics are snapshot-REPLACE — a conforming client applies whatever `todos` it receives as
+ *  the new full list — so broadcasting `todos: undefined` for a malformed/incomplete TodoWrite block
+ *  would tell every subscriber to wipe its todo list on garbage input instead of just staying silent. */
 function routeTodo(srv: AppServer, record: ThreadRecord, frame: { type?: string; parent_tool_use_id?: unknown; message?: { content?: unknown } }): void {
   if (frame?.type !== "assistant" || frame.parent_tool_use_id) return;
   const content = Array.isArray(frame.message?.content) ? (frame.message?.content as any[]) : [];
   for (const b of content) {
-    if (b?.type === "tool_use" && b.name === "TodoWrite") {
-      srv.broadcast(record.id, "turn/todo/updated", { threadId: record.id, turnId: record.currentTurnId, todos: b.input?.todos });
-    }
+    if (b?.type !== "tool_use" || b.name !== "TodoWrite") continue;
+    const todos = b.input?.todos;
+    if (!Array.isArray(todos)) continue; // nothing to report — never broadcast an undefined "replace"
+    srv.broadcast(record.id, "turn/todo/updated", { threadId: record.id, turnId: record.currentTurnId, todos });
   }
 }
 

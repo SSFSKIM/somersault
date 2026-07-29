@@ -32,8 +32,6 @@ function mkRecord(session: EngineSession, extra: Partial<ThreadRecord> = {}): Th
   };
 }
 
-const srv = {} as AppServer; // installRouter's `srv` param is unused until Task 8b's new routes need to broadcast
-
 /** A fake `AppServer` whose only live method is `broadcast` — every 8b route calls `srv.broadcast(...)`,
  *  never `Peer.notify` directly, so a plain collector is enough to assert what each route sent without
  *  wiring real Peers/connections (the real `AppServer.broadcast` already fans out through `Peer.notify`,
@@ -43,6 +41,15 @@ function fakeSrv(): { srv: AppServer; calls: { threadId: string; method: string;
   const srv = { broadcast: (threadId: string, method: string, params: Record<string, unknown>) => { calls.push({ threadId, method, params }); } } as unknown as AppServer;
   return { srv, calls };
 }
+
+// Review fix: this MUST be a live `fakeSrv()`, not a bare `{} as AppServer`. routeSettingsMirror (Task 8b)
+// calls `srv.broadcast(...)` on every system/status frame carrying permissionMode/model — including the
+// status frames this describe block's own pre-8b tests push. An unbacked stub let that call throw, and the
+// per-route try/catch in installRouter swallowed it silently: every test below still passed even if
+// routeSettingsMirror were completely broken, and "one route throwing does not starve the others" had a
+// second, UNINTENDED thrower (routeSettingsMirror) muddying its premise of isolating exactly one deliberate
+// fault (routeInit's sabotaged getter). A working broadcast collector removes both problems.
+const { srv } = fakeSrv();
 
 describe("frame router skeleton (spec D-M2-6, D-M2-8)", () => {
   it("latches sessionId from the init frame (absorbed latchSessionId)", () => {
@@ -276,7 +283,7 @@ describe("frame router routes (spec Wave 1, D-M2-6)", () => {
     expect(evt?.params).toEqual({ threadId: "t1", tasks });
   });
 
-  it("task_notification → task/event with the raw frame", () => {
+  it("task_notification as a system-subtype frame → task/event with the raw frame", () => {
     const { session, push } = fakeSession();
     const { srv, calls } = fakeSrv();
     const record = mkRecord(session);
@@ -287,6 +294,44 @@ describe("frame router routes (spec Wave 1, D-M2-6)", () => {
 
     const evt = calls.find((c) => c.method === "task/event");
     expect(evt?.params).toEqual({ threadId: "t1", event: frame });
+  });
+
+  it("task_notification as a BARE type tag (no system wrapper) still → task/event (mirrors host.ts's onSessionFrame normalization: `const sub = mm?.type === \"system\" ? mm.subtype : mm?.type`)", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session);
+    installRouter(srv, record);
+
+    const frame = { type: "task_notification", task_id: "1", status: "completed" }; // no `system` wrapper at all
+    push(frame);
+
+    const evt = calls.find((c) => c.method === "task/event");
+    expect(evt?.params).toEqual({ threadId: "t1", event: frame });
+  });
+
+  it("a sibling task-lifecycle subtype (task_progress) also → task/event (host.ts treats task_started/task_progress/task_updated/task_notification as one family — a client that only sees completions can't render a live task list)", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session);
+    installRouter(srv, record);
+
+    const frame = { type: "system", subtype: "task_progress", task_id: "1", description: "working" };
+    push(frame);
+
+    const evt = calls.find((c) => c.method === "task/event");
+    expect(evt?.params).toEqual({ threadId: "t1", event: frame });
+  });
+
+  it("an UNRELATED system subtype does not fire task/event (the family match is not a bare frame.type !== undefined check)", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session);
+    installRouter(srv, record);
+
+    push({ type: "system", subtype: "status", permissionMode: "plan" });
+    push({ type: "system", subtype: "mirror_error", error: "boom" });
+
+    expect(calls.find((c) => c.method === "task/event")).toBeUndefined();
   });
 
   it("a commands_changed system frame → thread/capabilities/changed (a ping — no command list in the payload)", () => {
@@ -334,5 +379,39 @@ describe("frame router routes (spec Wave 1, D-M2-6)", () => {
     push({ type: "assistant", parent_tool_use_id: "agent-1", message: { content: [{ type: "tool_use", name: "TodoWrite", input: { todos: [] } }] } });
 
     expect(calls.find((c) => c.method === "turn/todo/updated")).toBeUndefined();
+  });
+
+  it("a malformed TodoWrite block (input.todos not an array) is NOT relayed — snapshot-replace semantics mean a client would wipe its todo list on garbage input", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session, { currentTurnId: "turn-5" });
+    installRouter(srv, record);
+
+    push({ type: "assistant", message: { content: [{ type: "tool_use", name: "TodoWrite", input: {} }] } }); // no `todos` key at all
+    push({ type: "assistant", message: { content: [{ type: "tool_use", name: "TodoWrite" }] } }); // no `input` at all
+
+    expect(calls.find((c) => c.method === "turn/todo/updated")).toBeUndefined();
+  });
+
+  it("a genuine (non-echo) settings-mirror write bumps record.updatedAt", () => {
+    const { session, push } = fakeSession();
+    const { srv } = fakeSrv();
+    const record = mkRecord(session, { settings: { permissionMode: "default" }, updatedAt: 0 });
+    installRouter(srv, record);
+
+    push({ type: "system", subtype: "status", permissionMode: "plan" });
+
+    expect(record.updatedAt).toBeGreaterThan(0);
+  });
+
+  it("an echo-deduped settings-mirror frame does NOT bump record.updatedAt", () => {
+    const { session, push } = fakeSession();
+    const { srv } = fakeSrv();
+    const record = mkRecord(session, { settings: { permissionMode: "plan" }, updatedAt: 0 });
+    installRouter(srv, record);
+
+    push({ type: "system", subtype: "status", permissionMode: "plan" }); // same value as the mirror
+
+    expect(record.updatedAt).toBe(0);
   });
 });
