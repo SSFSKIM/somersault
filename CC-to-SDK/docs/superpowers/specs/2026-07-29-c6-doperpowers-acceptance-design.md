@@ -255,6 +255,24 @@ project memory.
   sampled 8s into the park, the session `.jsonl` held 11 lines including an assistant entry whose
   `content` carries a `tool_use` block named `AskUserQuestion` — confirming the renderer can read the
   blocked question straight off disk mid-park (C6 spec scenario ②).
+- (scenario ①, execution) **Two shipped-behavior corrections** folded into rev 3: `ccx rm` on a dirty
+  worktree does NOT refuse — it deregisters the row and *keeps* the worktree with a `kept worktree`
+  notice (deliberate: doperpowers' purge purposely dirties worktrees via a `.daemon-turn-live`
+  sentinel so `rm` preserves the live checkout); and post-resume fork rows carry **no** worktree
+  linkage (`daemon-resume.sh` forks with `--bg --resume` and omits `--worktree`), so `rm` on a fork
+  row never touches the directory. Also confirmed the pre-registered upstream candidate: the
+  retire-purge resume hint prints the **stale stable uuid**, not the post-fork `current`.
+- (scenario ①/②, execution) **The `--permission-mode auto` model auto-gate is load-bearing under the
+  scripts.** `daemon-spawn.sh`/`daemon-resume.sh` hardcode `--permission-mode auto`; ccx's shipped
+  auto-gate (`config/autoModel.ts`, probe-18d) then overrides a non-auto-capable model, so the
+  haiku-5th-arg workers resolve to `claude-sonnet-4-6` inside ccx (the scripts' meta still records the
+  arg verbatim). Not a defect — the shipped incr-10 behavior meeting the scripts' own flag.
+- (scenario ④, execution) **Content-layer trigger is both-negative → vacuous-but-parity.** Even the
+  real `claude` on Opus 5 does not auto-invoke `brainstorming` for "Let's make a react todo list" — it
+  scaffolds directly; ccx matches. The `/`-palette-dropdown check was a **capture artifact** (no
+  dropdown renders under the pty for *any* command, builtin `/model` included); the authoritative
+  catalog layer (`settingSources`→`supportedCommands()`) shows ccx carrying all **15** doperpowers
+  skills incl. `brainstorming` — identical to the real binary. Skill surfacing is at parity.
 
 ## Outcomes & Retrospective
 
