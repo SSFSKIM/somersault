@@ -26,4 +26,9 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "thread/permissionMode/set": { params: permissionModeSetParams },
   "thread/thinking/set": { params: thinkingSetParams },
   "thread/settings/apply": { params: settingsApplyParams },
+  "thread/capabilities/read": { params: threadIdParams },
+  "thread/contextUsage/read": { params: threadIdParams },
+  "thread/usage/read": { params: threadIdParams },
+  "thread/init/read": { params: threadIdParams },
+  "account/read": { params: threadIdParams },
 };

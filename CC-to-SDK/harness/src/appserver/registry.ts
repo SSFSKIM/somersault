@@ -31,6 +31,15 @@ export interface EngineSession {
   setModel?(model?: string): Promise<void>;
   setMaxThinkingTokens?(maxTokens: number | null): Promise<void>;
   applyFlagSettings?(settings: Record<string, unknown>): Promise<void>;
+  /** Optional (the real lib Session has it — src/session/session.ts:155-160,196-202): Task 10's five
+   *  introspection reads. `usage()` wraps the SDK's own EXPERIMENTAL-prefixed method name
+   *  (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`) behind this stable spelling — callers
+   *  here only ever see `usage`. */
+  capabilities?(): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] }>;
+  getContextUsage?(): Promise<unknown>;
+  usage?(): Promise<unknown>;
+  initializationResult?(): Promise<unknown>;
+  accountInfo?(): Promise<unknown>;
   /** Optional (the real lib Session has it): true once the read loop has ended — the engine is gone.
    *  The ONLY dead-engine signal handlers may use (spec Wave 0: no message-matching, ever). */
   isEnded?(): boolean;
