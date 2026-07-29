@@ -23,7 +23,12 @@ export function itemsFromTranscript(messages: unknown[]): Item[] {
   for (const frame of messages) {
     if (PHANTOM_ROW_KINDS.has(rowKind(frame))) continue;
     const f = frame as any;
-    if (f?.type === "user") {
+    // `!f.parent_tool_use_id` mirrors TurnMapper.ingest EXACTLY (it discards every nested/subagent frame
+    // before its own type routing): a persisted `user` row taking this direct path first would surface a
+    // subagent's prompt as an ordinary top-level user message, which the live path never emits — and the
+    // cold-vs-live id stitch rests on the two paths producing identical items. Nested rows fall through to
+    // the mapper, which drops them.
+    if (f?.type === "user" && !f.parent_tool_use_id) {
       const content = f.message?.content;
       const hasToolResult = Array.isArray(content) && content.some((b: any) => b?.type === "tool_result");
       if (!hasToolResult) { items.push(userItem(promptText(content), String(f.uuid ?? ""))); continue; }

@@ -9,6 +9,7 @@ import { TurnMapper } from "./items/mapper.js";
 import type { ItemEvent, ItemDeltaChannel } from "./items/types.js";
 import type { ThreadRecord, BufferedItemEvent } from "./registry.js";
 import type { AppServer, Handler } from "./server.js";
+import { applyPlanUpgrade } from "./planUpgrade.js";
 
 const turnStartParams = z.object({ threadId: z.string().min(1), input: z.string() });
 const turnInterruptParams = z.object({ threadId: z.string().min(1), cancelQueued: z.boolean().optional() });
@@ -26,9 +27,37 @@ function snapshot(ev: ItemEvent): ItemEvent {
   return ev.kind === "delta" ? ev : { kind: ev.kind, item: structuredClone(ev.item) };
 }
 
+/** Drop-oldest, with ONE item-aware exception. A plain shift() can evict an in-flight item's `item/started`
+ *  while its later deltas survive, and a reconnecting subscriber then gets deltas for an itemId it has
+ *  never seen — it cannot reconstruct the output at all. (An `item/completed` needs no start: it carries
+ *  the whole item, so only DELTAS hold a start back.)
+ *
+ *  So a still-deltaed start is FOLDED FORWARD rather than dropped: its retained text/thinking deltas are
+ *  collapsed into the start snapshot's own text and removed from the buffer, and the start is re-seated at
+ *  the head. Replay stays exactly reconstructable — the client sees a start already carrying the
+ *  folded-in prefix, then the deltas that came after. Argument deltas are dropped without folding (they
+ *  are raw partial JSON with nowhere to fold into; item/completed carries the parsed `arguments`).
+ *  Folding always removes at least one entry, so the caller's loop always makes progress. */
+function evictOldest(buf: BufferedItemEvent[]): void {
+  const dropped = buf.shift();
+  if (!dropped || dropped.event.kind !== "started") return;
+  const id = dropped.event.item.id;
+  const item = dropped.event.item as { text?: string };
+  let folded = 0;
+  for (let i = 0; i < buf.length; ) {
+    const e = buf[i].event;
+    if (e.kind === "delta" && e.itemId === id) {
+      if (e.channel !== "arguments" && typeof item.text === "string") item.text += e.delta;
+      buf.splice(i, 1); folded++; continue;
+    }
+    i++;
+  }
+  if (folded) buf.unshift(dropped);
+}
+
 function pushBounded(buf: BufferedItemEvent[], turnId: string, ev: ItemEvent): void {
   buf.push({ turnId, event: snapshot(ev) });
-  if (buf.length > BUFFER_CAP) buf.shift();
+  while (buf.length > BUFFER_CAP) evictOldest(buf);
 }
 
 function deltaMethod(channel: ItemDeltaChannel): string {
@@ -56,6 +85,15 @@ function emitItems(srv: AppServer, record: ThreadRecord, turnId: string, events:
 
 function statusChanged(srv: AppServer, record: ThreadRecord): void {
   srv.broadcast(record.id, "thread/status/changed", { threadId: record.id, status: record.busy ? "active" : "idle" });
+}
+
+/** Turn-end belt for a plan_approve(acceptEdits:true) that settled but never saw the engine's own
+ *  post-approval status frame (the turn ended first) — an approved upgrade must never stay unapplied.
+ *  Fired on EVERY completion path below, a no-op unless one is armed (planUpgrade.ts). */
+function settleTurn(record: ThreadRecord): void {
+  record.busy = false;
+  record.turnStartedBroadcast = false;
+  void applyPlanUpgrade(record);
 }
 
 export const turnStart: Handler = (srv, ctx, id, params) => {
@@ -102,8 +140,7 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
     const mapper = new TurnMapper(); // one instance per turn — dropped at completion, never reused
     const reportFailed = (err: unknown) => {
       emitItems(srv, record, turnId, mapper.finalize(true));
-      record.busy = false;
-      record.turnStartedBroadcast = false;
+      settleTurn(record);
       srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: { id: turnId, status: "failed", error: String(err) } });
       statusChanged(srv, record);
     };
@@ -115,15 +152,13 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
       // genuine interrupt from a genuine completion.
       const interrupted = record.interruptRequested;
       emitItems(srv, record, turnId, mapper.finalize(interrupted));
-      record.busy = false;
-      record.turnStartedBroadcast = false;
+      settleTurn(record);
       srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: { id: turnId, status: interrupted ? "interrupted" : "completed" } });
       statusChanged(srv, record);
     };
     const onFailure = (err: unknown) => {
       emitItems(srv, record, turnId, mapper.finalize(true));
-      record.busy = false;
-      record.turnStartedBroadcast = false;
+      settleTurn(record);
       const status = record.interruptRequested ? "interrupted" : "failed";
       const turn2: Record<string, unknown> = { id: turnId, status };
       if (status === "failed") turn2.error = String(err);

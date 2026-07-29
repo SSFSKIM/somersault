@@ -254,6 +254,100 @@ describe("appserver decisions (Task 7)", () => {
     expect(replayed.map((f) => f.params.turnId)).toEqual([`turn_${threadId}_1`, `turn_${threadId}_1`]);
   });
 
+  it("plan_approve with acceptEdits:true upgrades the SESSION's permission mode when the engine's status frame lands", async () => {
+    // decision/respond settled the broker and stopped there, so the RPC reported {ok:true} while the engine
+    // stayed in the old mode and every later edit prompted again. host/host.ts's answer() is the reference:
+    // arm the upgrade, and let the engine's own post-approval status frame trigger the setter (an eager
+    // setter races the CLI's own flip).
+    const modes: string[] = [];
+    const cbs = new Set<(m: unknown) => void>();
+    let broker: any;
+    const sessionFactory = (cfg: any) => {
+      broker = cfg.permissionBroker;
+      return {
+        submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {},
+        onFrame: (cb: (m: unknown) => void) => { cbs.add(cb); return () => cbs.delete(cb); },
+        setPermissionMode: async (m: string) => { modes.push(m); },
+        sessionId: "sess-1",
+      };
+    };
+    const srv = new AppServer({}, { sessionFactory });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    broker.request({ toolName: "ExitPlanMode", input: {}, toolUseID: "toolu_plan", kind: "plan", signal: new AbortController().signal });
+    await new Promise((r) => setTimeout(r, 0));
+    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_plan", answer: { kind: "plan_approve", acceptEdits: true } } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(parsed(a.lines).find((f) => f.id === 3).result).toEqual({ ok: true });
+    expect(modes).toEqual([]); // not yet — the engine's own flip has not been observed
+
+    for (const cb of [...cbs]) cb({ type: "system", subtype: "status", permissionMode: "plan" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(modes).toEqual(["acceptEdits"]); // pre-fix: never called at all
+
+    // ...and only once: a second status frame must not re-fire the (already applied) upgrade
+    for (const cb of [...cbs]) cb({ type: "system", subtype: "status", permissionMode: "acceptEdits" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(modes).toEqual(["acceptEdits"]);
+  });
+
+  it("a turn that ends before any status frame still applies an approved acceptEdits upgrade (turn-end belt)", async () => {
+    const modes: string[] = [];
+    let broker: any;
+    const sessionFactory = (cfg: any) => {
+      broker = cfg.permissionBroker;
+      return {
+        submit: async () => { await broker.request({ toolName: "ExitPlanMode", input: {}, toolUseID: "toolu_belt", kind: "plan", signal: new AbortController().signal }); return { result: {} }; },
+        interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {},
+        setPermissionMode: async (m: string) => { modes.push(m); },
+        sessionId: "sess-1",
+      };
+    };
+    const srv = new AppServer({}, { sessionFactory });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    send(connA, { id: 3, method: "turn/start", params: { threadId, input: "plan it" } });
+    await new Promise((r) => setTimeout(r, 0)); // submit() runs to its parked ExitPlanMode request
+    send(connA, { id: 4, method: "decision/respond", params: { threadId, toolUseId: "toolu_belt", answer: { kind: "plan_approve", acceptEdits: true } } });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0)); // the turn settles
+
+    expect(modes).toEqual(["acceptEdits"]); // pre-fix: an approved upgrade silently never applied
+  });
+
+  it("plan_approve WITHOUT acceptEdits leaves the permission mode alone", async () => {
+    const modes: string[] = [];
+    const cbs = new Set<(m: unknown) => void>();
+    let broker: any;
+    const srv = new AppServer({}, { sessionFactory: (cfg: any) => {
+      broker = cfg.permissionBroker;
+      return { submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {},
+        onFrame: (cb: (m: unknown) => void) => { cbs.add(cb); return () => cbs.delete(cb); },
+        setPermissionMode: async (m: string) => { modes.push(m); }, sessionId: "sess-1" };
+    } });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    broker.request({ toolName: "ExitPlanMode", input: {}, toolUseID: "toolu_plain", kind: "plan", signal: new AbortController().signal });
+    await new Promise((r) => setTimeout(r, 0));
+    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_plain", answer: { kind: "plan_approve", acceptEdits: false } } });
+    await new Promise((r) => setTimeout(r, 0));
+    for (const cb of [...cbs]) cb({ type: "system", subtype: "status", permissionMode: "plan" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(modes).toEqual([]);
+  });
+
   it("thread/start with an invalid config against the real session factory leaves zero registry threads and zero decision entries (Finding 1 regression)", async () => {
     const srv = new AppServer(); // no DI — exercises the real openSession -> validateHarnessConfig throw path
     const s = mkSink(); const c = srv.connect(s.sink);

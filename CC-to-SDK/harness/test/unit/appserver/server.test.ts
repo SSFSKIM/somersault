@@ -148,6 +148,22 @@ describe("AppServer dispatch", () => {
     expect(parsed(lines)[2].error.code).toBe(-33003); // a bare "Bearer " must not match the empty secret either
     expect(parsed(lines).some((f) => f.method === "initialized")).toBe(false);
   });
+  it("a method named after an Object.prototype member is METHOD_NOT_FOUND, not a silent hang", async () => {
+    // The handler table was a plain object literal, so `handlers["toString"]` answered with the INHERITED
+    // Object.prototype function — truthy, so dispatch awaited it as a handler. It replies to nothing, so
+    // the caller waited forever for a response that was never coming (`constructor`/`valueOf` likewise).
+    const { lines, c } = boot();
+    send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+    for (const [i, method] of ["toString", "constructor", "valueOf", "hasOwnProperty", "__proto__"].entries()) {
+      send(c, { id: 10 + i, method, params: {} });
+    }
+    await new Promise((r) => setTimeout(r, 0));
+    for (let i = 0; i < 5; i++) {
+      const reply = parsed(lines).find((f) => f.id === 10 + i);
+      expect(reply, `no reply at all for id ${10 + i}`).toBeTruthy();
+      expect(reply.error.code).toBe(ERR.METHOD_NOT_FOUND);
+    }
+  });
   it("a rejected initialize (bad token) emits no `initialized` notification", () => {
     const { lines, c } = boot("secret");
     send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "web" }, authorization: "Bearer wrong" } });

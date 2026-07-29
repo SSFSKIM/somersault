@@ -506,6 +506,20 @@ deliberately deferred rather than fixed — each is a *known* debt, not an overs
 10. **`thread/read`'s `limit` has no upper bound** — a large enough page can exceed the outbound cap
     and disconnect the requesting client.
 
+Added by the external review (2026-07-29), after M1 merged:
+
+11. **The `cc-harness/appserver` subpath is not exported.** §2 advertises it; M1 deliberately keeps
+    the module internal (no `src/index.ts` export, no `package.json` `exports` entry) until the wire
+    shapes below settle, so an installed consumer cannot embed the server yet.
+12. **`thread/read` maps the whole transcript per page** — reading a long session page by page
+    reparses all of it each time, which is quadratic and defeats the point of the cursor.
+    `sessions/reader.ts` already accepts `limit`/`offset`, so the missing piece is the cursor→row
+    mapping, not the fetch: rows and items are not 1:1 (phantom rows filtered, tool rows completing
+    earlier items, nested rows dropped), so paging rows does not directly yield a page of items.
+13. **`-32001 overloaded` is reused as the "server is shutting down" refusal.** It is the only
+    existing code about server capacity rather than the request or the thread, but its meaning is
+    "retry later" and retrying a shutdown will not help. M2 should mint a distinct code.
+
 ## Revision Notes
 
 - **Planning (M1, 2026-07-28):** item identity for assistant text/thinking refined from "frame

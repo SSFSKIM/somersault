@@ -68,28 +68,12 @@ for (const s of [["installed", installed], ["npm HEAD", head]]) {
   }
 }
 
-const report = { package: PKG, installed: installedVersion, head: headVersion, drift: diff(installed, head) };
-if (asJson) { console.log(JSON.stringify(report, null, 2)); process.exit(0); }
-
-console.log(`${PKG}: installed ${installedVersion} vs npm HEAD ${headVersion}\n`);
-let any = false;
-for (const [surface, { added, removed }] of Object.entries(report.drift)) {
-  if (!added.length && !removed.length) { console.log(`  ${surface}: no drift`); continue; }
-  any = true;
-  console.log(`  ${surface}:`);
-  for (const n of added) console.log(`    + ${n}`);
-  for (const n of removed) console.log(`    - ${n}`);
-}
-console.log(any
-  ? "\nDrift found → run the ritual: docs/parity/drift-ritual.md"
-  : installedVersion === headVersion
-    ? "\nInstalled IS npm HEAD — nothing to compare beyond identity."
-    : "\nNo name-level drift (bodies/semantics may still have moved — spot-check the changelog).");
-
 // ---- Appserver pass (Task 12, spec D11): docs/parity/appserver.md's generated denominator. Unlike the
 // SDK-vs-npm-HEAD pass above (a report, not a gate), THIS pass IS a gate: a walked token with no
 // scorecard row means the "100% coverage" scorecard's row set has silently diverged from the code it
 // claims to cover, so the whole script exits 1. No network needed — purely local source + doc.
+// Computed BEFORE the --json early exit below: automation is told to use --json, and with the gate sitting
+// after that exit a missing scorecard row always exited 0 there — i.e. the gate never ran where it mattered.
 const installedDtsRaw = readFileSync(installedPath, "utf8"); // reuse the file already read for `installed` above
 const appserverSources = {
   // Both quote styles: a single-quoted literal is still an op, and a walker that only sees double
@@ -123,14 +107,43 @@ const scorecardRows = new Set(
   [...readFileSync(scorecardPath, "utf8").matchAll(/^\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|/gm)]
     .map(([, token, source]) => `${source}::${token}`),
 );
-
-console.log(`\nappserver scorecard drift (docs/parity/appserver.md, spec D11):`);
+const appserverWalked = {};
 const appserverMissing = [];
 for (const [source, walk] of Object.entries(appserverSources)) {
   const tokens = walk();
-  console.log(`  ${source}: ${tokens.length} tokens walked`);
+  // Same false-clean guard the SDK surfaces get above: a walker that parses NOTHING finds no missing rows
+  // and prints "no drift", so a reformatted source silently switches this gate off. Zero tokens is a
+  // script bug, never a clean bill of health.
+  if (!tokens.length) { console.error(`PARSE FAILURE: appserver walker ${source} extracted 0 tokens — fix the regexes in this script before trusting any verdict.`); process.exit(2); }
+  appserverWalked[source] = tokens.length;
   for (const t of tokens) if (!scorecardRows.has(`${source}::${t}`)) appserverMissing.push(`${source}::${t}`);
 }
+
+const report = {
+  package: PKG, installed: installedVersion, head: headVersion, drift: diff(installed, head),
+  appserver: { scorecard: "docs/parity/appserver.md", walked: appserverWalked, missing: appserverMissing },
+};
+// The gate's verdict travels with the JSON too: exit 1 on a missing row, exactly as the text mode does.
+if (asJson) { console.log(JSON.stringify(report, null, 2)); process.exit(appserverMissing.length ? 1 : 0); }
+
+console.log(`${PKG}: installed ${installedVersion} vs npm HEAD ${headVersion}\n`);
+let any = false;
+for (const [surface, { added, removed }] of Object.entries(report.drift)) {
+  if (!added.length && !removed.length) { console.log(`  ${surface}: no drift`); continue; }
+  any = true;
+  console.log(`  ${surface}:`);
+  for (const n of added) console.log(`    + ${n}`);
+  for (const n of removed) console.log(`    - ${n}`);
+}
+console.log(any
+  ? "\nDrift found → run the ritual: docs/parity/drift-ritual.md"
+  : installedVersion === headVersion
+    ? "\nInstalled IS npm HEAD — nothing to compare beyond identity."
+    : "\nNo name-level drift (bodies/semantics may still have moved — spot-check the changelog).");
+
+// ---- Appserver gate: computed above (before the --json exit); text mode only reports it here.
+console.log(`\nappserver scorecard drift (docs/parity/appserver.md, spec D11):`);
+for (const [source, count] of Object.entries(appserverWalked)) console.log(`  ${source}: ${count} tokens walked`);
 if (appserverMissing.length) {
   console.error(`\nFAIL: walked token(s) with no scorecard row: ${appserverMissing.join(", ")}`);
   console.error(`Add a row to docs/parity/appserver.md (or fix the source) — see spec D11.`);

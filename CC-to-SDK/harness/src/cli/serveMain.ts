@@ -34,8 +34,21 @@ export function loadOrMintToken(path: string | undefined, dir: string): { token:
   return { token, tokenFile };
 }
 
-/** Runs until SIGINT closes the listener, then resolves — main.ts awaits this for the whole `serve`
- *  command's lifetime (the process's ordinary Ctrl-C exit, not a crash path). */
+/** The signals that mean "stop serving". SIGINT alone was wrong: a service manager (systemd, launchd), a
+ *  container runtime, and a plain `kill` all send SIGTERM, and an unhandled SIGTERM kills the process
+ *  outright — server.shutdown() never runs, so parked decisions are never settled and no subscriber ever
+ *  gets thread/closed. Both signals route through ONE guarded `stop`: whichever arrives first wins, a
+ *  second (or the other) signal is a no-op rather than a second concurrent shutdown, and BOTH listeners
+ *  are removed so the surviving one cannot go on suppressing the default kill behavior after we are done.
+ *  Exported (with the emitter injected) so the unit suite can drive it without a process or a port. */
+export function onStopSignals(stop: () => void, proc: NodeJS.EventEmitter = process): void {
+  const once = () => { proc.off("SIGINT", once); proc.off("SIGTERM", once); stop(); };
+  proc.on("SIGINT", once);
+  proc.on("SIGTERM", once);
+}
+
+/** Runs until SIGINT/SIGTERM closes the listener, then resolves — main.ts awaits this for the whole
+ *  `serve` command's lifetime (the process's ordinary stop, not a crash path). */
 export async function runServe(inv: CcxInvocation): Promise<void> {
   const dir = runDir();
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -53,6 +66,6 @@ export async function runServe(inv: CcxInvocation): Promise<void> {
   // `claude` child process alive, which also keeps the event loop alive — so a first Ctrl-C on a serve with
   // an open thread might not exit at all (I7).
   await new Promise<void>((resolve) => {
-    process.once("SIGINT", () => { void (async () => { await server.shutdown(); await close().catch(() => {}); resolve(); })(); });
+    onStopSignals(() => { void (async () => { await server.shutdown(); await close().catch(() => {}); resolve(); })(); });
   });
 }
