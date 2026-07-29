@@ -2,7 +2,6 @@
 // method table, per-thread serialization via record.chain, and thread lifecycle (start/resume/
 // list/close). Turn/decision/subscribe/read land in Tasks 7-9 on top of this spine.
 import { createRequire } from "node:module";
-import { z } from "zod/v4";
 import { Peer, type PeerSink } from "./peer.js";
 import { classify, ERR, type RequestId } from "./rpc.js";
 import { Registry, activeTurnId, type ThreadRecord, type EngineSession } from "./registry.js";
@@ -13,6 +12,9 @@ import type { PendingDecision } from "../permissions/pending.js";
 import { turnStart, turnInterrupt, requestInterrupt } from "./turns.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
 import { armPlanUpgrade } from "./planUpgrade.js";
+import { initializeParams, threadIdParams } from "./schema/core.js";
+import { threadStartParams, threadResumeParams } from "./schema/threads.js";
+import { decisionRespondParams } from "./schema/decisions.js";
 
 const require = createRequire(import.meta.url);
 const pkgVersion = (require("../../package.json") as { version: string }).version;
@@ -20,23 +22,6 @@ const USER_AGENT = "cc-harness-appserver";
 
 export interface AppServerDeps { sessionFactory?: (config: Record<string, unknown>) => EngineSession; getSessionMessages?: (sessionId: string) => Promise<unknown[]> }
 export interface ConnCtx { peer: Peer; initialized: boolean; authed: boolean; clientName?: string; connId: number }
-
-const initializeParams = z.object({ clientInfo: z.object({ name: z.string() }), authorization: z.string().optional() });
-const threadStartParams = z.object({ config: z.record(z.string(), z.unknown()).optional(), unattended: z.enum(["park", "deny"]).default("park") });
-const threadResumeParams = z.object({ sessionId: z.string().min(1), config: z.record(z.string(), z.unknown()).optional(), unattended: z.enum(["park", "deny"]).default("park") });
-const threadIdParams = z.object({ threadId: z.string().min(1) });
-
-// Mirrors DecisionOutcome (src/permissions/types.ts) and the real host wire (host/ops.ts's
-// decisionKind + structuredAnswer) — never trust a client-supplied `by` (spec §6, server-stamped only).
-const decisionOutcomeParams = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("allow_once") }),
-  z.object({ kind: z.literal("allow_always") }),
-  z.object({ kind: z.literal("deny") }),
-  z.object({ kind: z.literal("question_answer"), answers: z.record(z.string(), z.string()), response: z.string().optional() }),
-  z.object({ kind: z.literal("plan_approve"), acceptEdits: z.boolean() }),
-  z.object({ kind: z.literal("plan_reject"), feedback: z.string().optional() }),
-]);
-const decisionRespondParams = z.object({ threadId: z.string().min(1), toolUseId: z.string().min(1), answer: decisionOutcomeParams, abortTurn: z.boolean().optional() });
 
 function threadView(r: ThreadRecord): Record<string, unknown> {
   return { id: r.id, origin: r.origin, sessionId: r.sessionId, status: r.busy ? "active" : "idle", createdAt: r.createdAt };

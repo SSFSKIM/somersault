@@ -3,16 +3,13 @@
 // SDK Query.interrupt() is zero-arg at 0.3.220 (Task 1 finding, verified twice against sdk.d.ts) — no
 // public method carries cancel_queued, and M1 has no server-side turn/queue (later milestone) to flush
 // anyway. `cancelQueued` is accepted on the wire and silently unused; Task 12 records the scorecard gap.
-import { z } from "zod/v4";
 import { ERR } from "./rpc.js";
 import { TurnMapper } from "./items/mapper.js";
 import type { ItemEvent, ItemDeltaChannel } from "./items/types.js";
 import type { ThreadRecord, BufferedItemEvent } from "./registry.js";
 import type { AppServer, Handler } from "./server.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
-
-const turnStartParams = z.object({ threadId: z.string().min(1), input: z.string() });
-const turnInterruptParams = z.object({ threadId: z.string().min(1), cancelQueued: z.boolean().optional() });
+import { turnStartParams, turnInterruptParams } from "./schema/turns.js";
 
 const BUFFER_CAP = 500; // Task 9 replays this bound — a bounded PER-TURN buffer (reset every turn/start), drop-oldest
 

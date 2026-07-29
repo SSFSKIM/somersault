@@ -2,19 +2,15 @@
 // replay-first join a client uses to attach to a thread already in progress (spec §5), plus paginated
 // read of the persisted transcript. Split out of server.ts per the plan's "extract before letting a hot
 // file sprawl" rule (turns.ts is the precedent for this split).
-import { z } from "zod/v4";
 import { ERR } from "./rpc.js";
 import { itemEventNotification } from "./turns.js";
 import { itemsFromTranscript } from "./items/replay.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
 import { activeTurnId } from "./registry.js";
 import type { Handler } from "./server.js";
+import { threadIdParams } from "./schema/core.js";
+import { threadReadParams } from "./schema/threads.js";
 
-const threadIdParams = z.object({ threadId: z.string().min(1) });
-// `cursor` is server-minted (an offset-from-end count, see threadRead below) but still crosses the wire
-// from the client on the NEXT call — validate its shape here rather than let a malformed value flow
-// into `Number(...)` and silently produce a NaN-driven garbage page.
-const threadReadParams = z.object({ threadId: z.string().min(1), cursor: z.string().regex(/^\d+$/).optional(), limit: z.number().int().positive().optional() });
 const DEFAULT_LIMIT = 200;
 
 const defaultGetSessionMessages = (sessionId: string): Promise<unknown[]> => sdkGetSessionMessages(sessionId);
