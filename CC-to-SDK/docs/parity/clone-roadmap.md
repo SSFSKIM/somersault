@@ -254,7 +254,8 @@ the 63 fields is either reachable from the CLI or explicitly listed as library-o
 
 **Acceptance (the real test, not a unit test).** Spawn `ccx --bg`, kill the parent shell, confirm the
 session keeps working and that `ccx agents --json` lists it. Then run `daemon-spawn.sh` against our
-binary via the `CLAUDE_BIN` override (C6) and have it succeed with no other script change.
+binary via a **`claude`-on-`PATH` shim** (C6) and have it succeed with no other script change — **not**
+a `CLAUDE_BIN` override, which does not exist in the scripts (see §1's contract table and §7 item 2).
 
 **Risk.** Highest on the roadmap. Detached-process lifecycle, orphan/stale-registry reaping (PID reuse
 is a real hazard — `procStart` exists in the schema precisely to disambiguate it), and crash-safety of
@@ -310,20 +311,57 @@ dialog, code-block syntax highlighting + tables, word-wise cursor movement, `/co
 
 Plus the F4 dividend: a real plan-utilization surface in `/status` and the status bar.
 
-### C6 — doperpowers end-to-end
+### C6 — doperpowers end-to-end — ✅ shipped 2026-07-29
 
 **Goal.** The primary metric, actually run.
 
-**Delivers.** `daemon-spawn.sh` / `daemon-resume.sh` / `daemon-list.sh` / `daemon-reply.sh` /
-`daemon-retire.sh` executed against our binary, unmodified where possible. A worker spawned into a
-worktree, parked, answered, and resumed. Plus the content-layer acceptance test from
-`docs/porting-to-a-new-harness.md`: a clean session, the message *"Let's make a react todo list"*,
-and `brainstorming` auto-triggering.
+**Status.** Design in
+`docs/superpowers/specs/2026-07-29-c6-doperpowers-acceptance-design.md`; four live scenarios, all
+**PASS**, evidence in `.doperpowers/sdd/c6-scenario-{1,2,3,4}-report.md`. The unmodified doperpowers
+scripts (`daemon-spawn.sh`, `daemon-resume.sh`, `daemon-reply.sh`, `daemon-finalize.sh`,
+`daemon-retire.sh`, `daemon-mark.sh`, `daemon-list.sh`, plus `_lib.sh`'s purge path) drove `ccx` end to
+end under the `claude`-on-`PATH` shim, MD5-identical before and after every run — **this is the C2
+acceptance line above, actually executed.**
+
+- **Scenario ①** (real-work lifecycle): spawn into a worktree → the worker commits real file content
+  → `daemon-resume.sh` forks the conversation and the worker commits an edit → `daemon-reply.sh`
+  returns real text → `daemon-finalize.sh` correctly reports `noop` on an already-finalized watcher →
+  `daemon-retire.sh`'s purge path removes the registry row while leaving the transcript and worktree
+  intact → all three `ccx --resume`/`ccx rm` arms (resumable, dirty-keep, clean-delete) behave exactly
+  as designed. PASS.
+- **Scenario ②** (park-and-answer): a `--no-wait` spawn parks on `AskUserQuestion`;
+  `daemon-finalize.sh` walks `live → idle → noop` exactly as predicted; the recorded blocked reply is
+  actionable (names `daemon-resume.sh`, carries the question text — probe-69's FLUSHED arm); **both**
+  answer paths land the same edit on disk — `ccx attach` + the `QuestionDialog` (FORMAL), and the
+  scripts' own `daemon-resume.sh <id> "<answer>"` fork (CASUAL). PASS.
+- **Scenario ③** (retire/mark edges): `daemon-mark.sh` + a note, `daemon-list.sh`'s status filter,
+  retire-keep (still resumable) vs. retire-purge (fully gone) all behave as designed. PASS.
+- **Scenario ④** (content-layer parity): the real `claude` binary (Opus 5) and `ccx` (opus-4-8) were
+  given the identical prompt *"Let's make a react todo list"* in a fresh dir — **neither** auto-triggers
+  `brainstorming` (both go straight to scaffolding), so the content layer is at
+  **both-negative parity**, not a `ccx` gap. The authoritative skill-surfacing check (the SDK command
+  catalog via `supportedCommands()`) shows `ccx`'s catalog carries all 15 doperpowers skills, including
+  `brainstorming` — same set the real `claude` `/` palette surfaces. PASS.
+
+Zero harness defects were found across all four scenarios; the only findings were two upstream
+candidates (a stale-uuid resume hint after a fork; a driver convention mismatch), both recorded in the
+scenario reports, not filed as bugs against `ccx`.
 
 **Note on the content layer.** Skills and plugins already load — the SDK spawns the real CLI with our
 `settingSources`, so doperpowers' skills are present and invokable today (this was settled in the
 command-palette increment: *surfacing, not installing*). C6 is about the **substrate**, not the
-content.
+content, and scenario ④ above confirms the content layer was never actually a gap.
+
+---
+
+**C1–C6, closed out.** C1 (one binary, one grammar) shipped as `ccx`. C2/C3's fleet + fork-resume +
+worktree lifecycle shipped as **A1** (2026-07-26, fleet substrate) and **Goal B** (2026-07-28,
+control-plane fidelity), superseding this file's original "our own registry" plan per the 2026-07-26
+spec referenced at the top of this file. C4 (`attach`) shipped as **A2a**/**A2b** (2026-07-27, attach
+transport + the interactive front door) and was generalized for the human seam in Goal B. C5 (TUI
+closure) shipped 2026-07-28. C6 (doperpowers end-to-end) shipped 2026-07-29, above. **The clone
+roadmap's primary metric — an unmodified doperpowers fleet driving our binary, spawn through
+retire — is met. C1–C6 have all shipped; this roadmap is complete.**
 
 ---
 
