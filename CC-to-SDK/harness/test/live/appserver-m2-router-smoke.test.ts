@@ -152,4 +152,66 @@ live("M2 router smoke: the router's frame conditions against the real engine (D-
       rmSync(cwd, { recursive: true, force: true });
     }
   }, 150_000);
+
+  // The client-set half of D-M2-9, deferred to here because it needs the setters (Task 9). This is the
+  // leg the engine-sourced smoke proved we depend on entirely: the engine volunteers no settings frames,
+  // so the write-back path in settings.ts is the ONLY way a client ever learns a knob changed. Two
+  // clients subscribe; one sets; BOTH must see it (spec acceptance 5, proven rather than assumed).
+  it("a client's set is announced to every subscriber, and auto self-heals the model", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "cc-appserver-m2-setters-"));
+    const server = new AppServer({});
+    const { port, close: closeListener } = await listenWs(server, {});
+    const wsA = await wsOpen(`ws://127.0.0.1:${port}`);
+    const wsB = await wsOpen(`ws://127.0.0.1:${port}`);
+    const a = new RpcClient(wsA);
+    const b = new RpcClient(wsB);
+    let threadId: string | undefined;
+    try {
+      await a.call("initialize", { clientInfo: { name: "m2-setters-a" } });
+      await b.call("initialize", { clientInfo: { name: "m2-setters-b" } });
+
+      const started = await a.call("thread/start", {
+        config: { permissionMode: "default", cwd, settingSources: [], model: "claude-haiku-4-5-20251001" },
+        unattended: "park",
+      });
+      threadId = started.thread.id;
+      await a.call("thread/subscribe", { threadId });
+      await b.call("thread/subscribe", { threadId });
+
+      // (1) A plain model set against the REAL engine: the setter must resolve, not reject, for the
+      // model id we ship as a default — a rejection here would mean the wire accepts values the engine
+      // does not.
+      await a.call("thread/model/set", { threadId, model: "claude-sonnet-4-6" });
+      for (const [name, c] of [["setter's own client", a], ["the OTHER client", b]] as const) {
+        const evt = await c.waitFor(`thread/settings/changed on ${name}`, 15_000, (n) => n.method === "thread/settings/changed" && n.params.threadId === threadId);
+        expect(evt.params.source, `${name} saw source ${evt.params.source}`).toBe("client");
+        expect(evt.params.model).toBe("claude-sonnet-4-6");
+      }
+
+      // (2) The auto self-heal end to end. `auto` is model-gated in this engine, so setting it re-runs
+      // resolveAutoModel; whatever it heals to, the notification must be labelled source:"client" —
+      // the client's request caused it, no engine decided anything (spec Wave 1, unit-pinned in Task 9,
+      // confirmed here against the real setter).
+      const beforeCount = b.notifications.filter((n) => n.method === "thread/settings/changed").length;
+      await a.call("thread/permissionMode/set", { threadId, mode: "auto" });
+      const healed = await b.waitFor("thread/settings/changed (auto)", 15_000, (n) =>
+        n.method === "thread/settings/changed" && n.params.threadId === threadId &&
+        b.notifications.filter((x) => x.method === "thread/settings/changed").length > beforeCount);
+      expect(healed.params.source).toBe("client");
+      expect(healed.params.permissionMode).toBe("auto");
+
+      // (3) The thinking budget resolves through the shared level vocabulary, live.
+      await a.call("thread/thinking/set", { threadId, level: "high" });
+      const think = await b.waitFor("thread/settings/changed (thinking)", 15_000, (n) =>
+        n.method === "thread/settings/changed" && typeof n.params.thinkingTokens === "number" && n.params.thinkingTokens > 0);
+      expect(think.params.source).toBe("client");
+
+      console.log(JSON.stringify({ setterSmokeVerdict: { modelAfterAuto: healed.params.model, permissionMode: healed.params.permissionMode, thinkingTokens: think.params.thinkingTokens } }, null, 2));
+    } finally {
+      if (threadId) { try { await a.call("thread/close", { threadId }, 10_000); } catch { /* best-effort cleanup */ } }
+      wsA.close(); wsB.close();
+      await closeListener();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 120_000);
 });
