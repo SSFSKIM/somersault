@@ -86,30 +86,60 @@ describe("PostgresSessionStore specifics", () => {
     expect(sums[0].data.firstPrompt).toBe("hello"); // b's fold recovered a's stranded row, in id order
   });
 
-  it("a delete racing an append settles consistent: no ghost sidecar, rows-without-summary heals on the next fold", async () => {
+  it("a fold landing after a delete cannot resurrect a ghost session", async () => {
     const prefix = `t${n++}`;
     await ensurePostgresSessionStoreSchema(db, { prefix });
     const plain = createPostgresSessionStore(db, { prefix });
     const key = { projectKey: "p", sessionId: "s" };
     let race = true;
     const racing = wrap(async (text, _params, run) => {
-      if (race && text.startsWith(`DELETE FROM ${prefix}_sessions`)) {
-        race = false; // between the two DELETE statements, "another process" appends
-        await plain.append(key, [{ type: "user", uuid: "u2", message: { role: "user", content: "resurrect?" } }]);
+      if (race && text.startsWith(`SELECT seq`)) {
+        race = false; // the whole (atomic) delete lands between this append's insert and its fold
+        await plain.delete!(key);
       }
       return run();
     });
-    const deleter = createPostgresSessionStore(racing, { prefix });
-    await plain.append(key, [{ type: "user", uuid: "u1", message: { role: "user", content: "original" } }]);
-    await deleter.delete!(key);
-    // The racing append's row survived (it landed after the entries DELETE); its sidecar write was
-    // then removed by the delete — transcript rows without a summary, never a summary without rows.
-    expect((await plain.load(key))!.map((e) => e.uuid)).toEqual(["u2"]);
+    const store = createPostgresSessionStore(racing, { prefix });
+    await store.append(key, [{ type: "user", uuid: "u1", message: { role: "user", content: "gone" } }]);
+    // The delete removed the freshly-inserted row and the (not-yet-created) sidecar; the fold's
+    // empty-and-absent guard must then do nothing rather than materialize a ghost.
+    expect(await plain.load(key)).toBeNull();
     expect(await plain.listSessionSummaries!("p")).toEqual([]);
-    await plain.append(key, [{ type: "user", uuid: "u3" }]); // next fold heals the sidecar from the table
+    expect(await plain.listSessions!("p")).toEqual([]);
+  });
+
+  it("a stale CAS from before a delete+recreate misses the new incarnation (seq generation token)", async () => {
+    const prefix = `t${n++}`;
+    await ensurePostgresSessionStoreSchema(db, { prefix });
+    const plain = createPostgresSessionStore(db, { prefix });
+    const key = { projectKey: "p", sessionId: "s" };
+    await plain.append(key, [{ type: "user", uuid: "u1", message: { role: "user", content: "old world" } }]);
+    let race = true;
+    const racing = wrap(async (text, _params, run) => {
+      if (race && text.startsWith(`UPDATE ${prefix}_sessions`)) {
+        race = false; // between this append's sidecar read and its CAS write: delete + recreate
+        await plain.delete!(key);
+        await plain.append(key, [{ type: "user", uuid: "u3", message: { role: "user", content: "new world" } }]);
+      }
+      return run();
+    });
+    const store = createPostgresSessionStore(racing, { prefix });
+    await store.append(key, [{ type: "user", uuid: "u2", message: { role: "user", content: "stale" } }]);
+    // The stale UPDATE (holding the old generation's seq) must MISS the recreated row; the retry
+    // re-reads and folds the post-recreation transcript.
     const sums = await plain.listSessionSummaries!("p");
     expect(sums.length).toBe(1);
-    expect(sums[0].data.firstPrompt).toBe("resurrect?");
+    expect(sums[0].data.firstPrompt).toBe("new world");
+    expect((await plain.load(key))!.map((e) => e.uuid)).toEqual(["u3"]);
+  });
+
+  it("payloads with NUL escapes and lone surrogates round-trip (TEXT storage, not jsonb)", async () => {
+    const { store } = await makeStoreWith();
+    const key = { projectKey: "p", sessionId: "s" };
+    const nasty = { type: "user", uuid: "u1", message: { role: "user", content: "a" + String.fromCharCode(0) + "b " + String.fromCharCode(0xd800) + " c" } };
+    await store.append(key, [nasty as any]);
+    expect((await store.load(key))![0]).toEqual(nasty);
+    expect((await store.listSessionSummaries!("p")).length).toBe(1); // summary write survived too
   });
 
   it("ensurePostgresSessionStoreSchema is idempotent", async () => {

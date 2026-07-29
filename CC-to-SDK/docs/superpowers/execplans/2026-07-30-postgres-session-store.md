@@ -42,7 +42,7 @@ and get a fully contract-conformant Postgres mirror: ordered append/load round-t
 - Decision: dependency-free DI over a minimal `PgLike` interface — `{ query(text: string, params?: unknown[]): Promise<{ rows: any[] }> }` — instead of depending on `pg` (even as a type-only import, which the official reference uses).
   Rationale: exact mirror of the shipped `RedisLike` pattern; `pg.Pool`, `pg.Client`, and PGlite all satisfy it unmodified; `cc-harness` keeps zero runtime deps beyond the SDK/zod/ink set. The project owner confirmed the consuming side (doperpowers) uses pg-style node-postgres.
   Date/Author: 2026-07-30, grill.
-- Decision: schema management ships BOTH ways — an exported `POSTGRES_SESSION_STORE_DDL` string-building function (for migration tooling) and an idempotent `ensurePostgresSessionStoreSchema(client, opts)` helper (`CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`).
+- Decision: schema management ships BOTH ways — an exported `postgresSessionStoreDDL(prefix)` string-building function (for migration tooling) and an idempotent `ensurePostgresSessionStoreSchema(client, opts)` helper (`CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`).
   Rationale: doperpowers may or may not route DDL through its own migration tool; both cost almost nothing. Chosen over "DDL constant only" (assumes migrations exist) and "auto-create inside the factory" (fails under restricted DB users, hides a network round-trip in a constructor).
   Date/Author: 2026-07-30, grill (user picked "both" explicitly).
 - Decision: uuid idempotency via a partial UNIQUE index (`(project_key, session_id, subpath, uuid) WHERE uuid IS NOT NULL`) + `INSERT ... ON CONFLICT DO NOTHING RETURNING uuid`.
@@ -115,7 +115,7 @@ Schema (two tables per prefix `p`, default prefix `ccs`, validated against `/^[A
       session_id  TEXT NOT NULL,
       subpath     TEXT NOT NULL DEFAULT '',   -- '' = main transcript
       uuid        TEXT,                        -- NULL for uuid-less entries
-      entry       JSONB NOT NULL
+      entry       TEXT NOT NULL     -- JSON.stringify output; TEXT not jsonb (round 3: jsonb rejects U+0000/lone surrogates)
     );
     CREATE UNIQUE INDEX IF NOT EXISTS <p>_entries_uuid_uq
       ON <p>_entries (project_key, session_id, subpath, uuid) WHERE uuid IS NOT NULL;
@@ -125,8 +125,8 @@ Schema (two tables per prefix `p`, default prefix `ccs`, validated against `/^[A
       project_key TEXT NOT NULL,
       session_id  TEXT NOT NULL,
       mtime       BIGINT NOT NULL,
-      seq         BIGINT NOT NULL,   -- CAS version counter (see Decision Log: seq, not mtime)
-      summary     JSONB NOT NULL,
+      seq         BIGINT NOT NULL,   -- CAS version counter; fresh rows seed a random generation token (round 3: ABA)
+      summary     TEXT NOT NULL,     -- JSON.stringify output (same TEXT rationale as entry)
       PRIMARY KEY (project_key, session_id)
     );
 
@@ -215,4 +215,5 @@ New devDependency: `@electric-sql/pglite` (tests only; the published package gai
 - 2026-07-30 (M1): spike results recorded in Surprises & Discoveries; int8 note corrected — PGlite returns number, node-postgres returns string, `Number()` covers both.
 - 2026-07-30 (M2/M3): milestones done (17/17 adapter tests; gates green: typecheck, unit 1190/1190, build). Design deltas from the plan text, both recorded in the Decision Log: CAS moved from mtime to a `seq` column, and the schema in Plan of Work was updated to match; the CAS-exhaustion throw got its own regression test. coverage.md rows + wave3 memory addendum written.
 - 2026-07-30 (M4 round 1): codex review returned 2×P1 + 2×P2, all adjudicated real; the sidecar was redesigned to fold-from-the-table over a `folded_id` watermark, delete order flipped, prefix length capped at 40. The batch-RETURNING/`fresh` machinery was deleted. New recovery regression test; 18/18 adapter tests, unit suite 1191/1191.
+- 2026-07-30 (M4 round 3): the third review found 3 more adapter defects, all adjudicated real and fixed: (a) seq ABA — a delete + recreate reincarnated the sidecar at seq 0, letting a stale CAS (read pre-delete) overwrite the new incarnation; fixed by seeding fresh rows with a random 48-bit generation token instead of 0. (b) jsonb rejects the U+0000 escape and lone surrogates (22P02/22P05), so a valid batch would be retried and then DROPPED; fixed by storing entry/summary as TEXT (JSON.stringify output is control-char-escaped, hence NUL-free) with JSON.parse on read — byte-faithful round-trip, and we never used jsonb operators anyway. (c) main-key delete was two statements, so a mid-delete failure left list APIs showing a session whose load() is empty; fixed with a single data-modifying-CTE statement (one statement = one implicit transaction over any PgLike). Three new regression tests (ghost guard, ABA, NUL/surrogate round-trip); 21/21 adapter tests, unit 1194/1194, typecheck + build clean. The same review also flagged 2 findings in `docs/superpowers/specs/2026-07-30-agent-appserver-m2-design.md` — that spec belongs to a concurrent session's work sharing the diff range, out of this plan's scope; reported to the user, not touched. Tool lesson repeated: writing U+0000/lone surrogates through JSON-encoded tool params injects the literal bytes into the source file (the W3 NUL-byte lesson) — construct such payloads with String.fromCharCode in code instead.
 - 2026-07-30 (M4 round 2): the re-review broke the watermark itself (BIGSERIAL reserve-before-commit + ON CONFLICT-burned gaps → permanent skip; sidecar-first delete → ghost resurrection). Redesigned again per the round-2 Decision Log entry: full re-fold from the committed transcript (no `folded_id` column — schema slimmed back), empty-and-absent fold guard, entries-first delete. New delete-race regression test; 19/19 adapter tests, unit 1192/1192, typecheck + build clean. Schema and sidecar text in Plan of Work updated to the final design.

@@ -5,8 +5,11 @@
 //
 // SDK contract honored (sdk.d.ts SessionStore, @alpha) — and exceeded vs the official
 // examples/session-stores/postgres reference (which ships no uuid dedup and no summaries):
-// - append() is a mirror called AFTER the local write; entries are opaque JSON blobs (JSONB —
-//   key reordering is fine, the contract requires deep-equal, not byte-equal).
+// - append() is a mirror called AFTER the local write; entries are opaque JSON blobs, stored as
+//   TEXT (JSON.stringify output), NOT jsonb: Postgres jsonb rejects the U+0000 escape and lone-surrogate
+//   escapes (22P02/22P05), which would make the SDK retry and then DROP a valid batch — while
+//   JSON.stringify always escapes control characters, so its output is NUL-free and TEXT-safe.
+//   We never query inside the payloads, so jsonb bought nothing; TEXT round-trips byte-faithfully.
 // - `uuid` is an idempotency key: a partial UNIQUE index + ON CONFLICT DO NOTHING dedups atomically
 //   IN the insert statement (first-seen payload wins; cross-process safe, unlike the Redis
 //   adapter's check-then-write which leans on its in-process chain). Entries WITHOUT a uuid
@@ -33,17 +36,20 @@
 //   retry, bounded). CAS-on-seq, not on mtime: two processes appending in the same millisecond
 //   would make an mtime CAS lose an update. BEGIN/COMMIT is unsound here — a pooled client may
 //   serve each query() from a different connection — and CAS is one of the serialization means the
-//   SDK docs explicitly sanction. Exhaustion throws: the SDK retries a rejected append and
+//   SDK docs explicitly sanction. A fresh sidecar row seeds `seq` with a random 48-bit generation
+//   token, not 0: a delete + recreate would otherwise reincarnate at the same seq and let a stale
+//   CAS (read before the delete) overwrite the new incarnation with a summary of deleted rows
+//   (classic ABA). Exhaustion throws: the SDK retries a rejected append and
 //   surfaces persistent failure as a mirror_error message, the designed recovery channel. With
 //   concurrent multi-process writers (outside the SDK's one-subprocess-owns-a-session design)
 //   entry order is id (allocation) order — a consistent total order shared by load() and the fold.
-// - delete() on the main key cascades to all subpaths + the sidecar row, entries FIRST; the fold
-//   refuses to CREATE a sidecar when the transcript is empty and none existed, so a fold landing
-//   after the delete cannot resurrect a ghost session. A delete racing a concurrent append then
-//   settles in one of three consistent states: fully gone, fully present (the append won —
-//   append-after-delete), or transient rows-without-summary that the next fold heals. Full
-//   delete-vs-append serializability is the deployment's call (the SDK's design is
-//   one-writer-per-session), as is retention (TTLs, compliance windows).
+// - delete() on the main key cascades to all subpaths + the sidecar row in ONE data-modifying-CTE
+//   statement — a single statement is a single implicit transaction even over a pooled query(), so
+//   there is no partial-delete state to observe or recover. The fold additionally refuses to
+//   CREATE a sidecar when the transcript is empty and none existed, so a fold landing after the
+//   delete cannot resurrect a ghost session; a delete racing a concurrent append settles fully
+//   gone or fully present (append-after-delete), with transient rows-without-summary healed by the
+//   next fold. Retention (TTLs, compliance windows) stays the deployment's job.
 // Schema management ships both ways: postgresSessionStoreDDL(prefix) for migration tooling, and
 // the idempotent ensurePostgresSessionStoreSchema(client, opts) (CREATE ... IF NOT EXISTS).
 import { foldSessionSummary } from "@anthropic-ai/claude-agent-sdk";
@@ -63,6 +69,10 @@ export interface PostgresSessionStoreOptions {
 
 const CAS_ATTEMPTS = 5;
 
+/** Generation token for a fresh sidecar row — never 0, so a delete + recreate cannot reincarnate
+ *  at a seq a stale CAS already read (ABA). 48-bit: safely inside both BIGINT and JS integers. */
+const newGeneration = () => Math.floor(Math.random() * 2 ** 48) + 1;
+
 /** Identifiers can't be parameterized — refuse anything that isn't a plain SQL identifier. Capped
  *  at 40 chars: Postgres silently truncates identifiers to 63 bytes, and our longest generated name
  *  adds 16 (`_entries_uuid_uq`) — a too-long prefix would collide names into an unusable schema. */
@@ -80,7 +90,7 @@ function ddlStatements(prefix: string): string[] {
       session_id  TEXT NOT NULL,
       subpath     TEXT NOT NULL DEFAULT '',
       uuid        TEXT,
-      entry       JSONB NOT NULL
+      entry       TEXT NOT NULL
     )`,
     `CREATE UNIQUE INDEX IF NOT EXISTS ${p}_entries_uuid_uq
       ON ${p}_entries (project_key, session_id, subpath, uuid) WHERE uuid IS NOT NULL`,
@@ -91,7 +101,7 @@ function ddlStatements(prefix: string): string[] {
       session_id  TEXT NOT NULL,
       mtime       BIGINT NOT NULL,
       seq         BIGINT NOT NULL,
-      summary     JSONB NOT NULL,
+      summary     TEXT NOT NULL,
       PRIMARY KEY (project_key, session_id)
     )`,
   ];
@@ -134,17 +144,17 @@ export function createPostgresSessionStore(client: PgLike, opts: PostgresSession
       );
       if (!prior && all.rows.length === 0) return; // nothing to summarize and no row to refresh — never resurrect a deleted session
       const mtime = prior ? Math.max(Number(prior.mtime), clock) : clock; // never move a newer stamp backwards
-      const summary = foldSessionSummary(undefined, key, all.rows.map((r) => r.entry as SessionStoreEntry), { mtime });
+      const summary = foldSessionSummary(undefined, key, all.rows.map((r) => JSON.parse(r.entry) as SessionStoreEntry), { mtime });
       if (prior) {
         const upd = await client.query(
-          `UPDATE ${S} SET mtime = $3, seq = seq + 1, summary = $4::jsonb WHERE project_key = $1 AND session_id = $2 AND seq = $5 RETURNING 1 AS ok`,
+          `UPDATE ${S} SET mtime = $3, seq = seq + 1, summary = $4 WHERE project_key = $1 AND session_id = $2 AND seq = $5 RETURNING 1 AS ok`,
           [key.projectKey, key.sessionId, mtime, JSON.stringify(summary), prior.seq],
         );
         if (upd.rows.length) return;
       } else {
         const ins = await client.query(
-          `INSERT INTO ${S} (project_key, session_id, mtime, seq, summary) VALUES ($1, $2, $3, 0, $4::jsonb) ON CONFLICT (project_key, session_id) DO NOTHING RETURNING 1 AS ok`,
-          [key.projectKey, key.sessionId, mtime, JSON.stringify(summary)],
+          `INSERT INTO ${S} (project_key, session_id, mtime, seq, summary) VALUES ($1, $2, $3, $5, $4) ON CONFLICT (project_key, session_id) DO NOTHING RETURNING 1 AS ok`,
+          [key.projectKey, key.sessionId, mtime, JSON.stringify(summary), newGeneration()],
         );
         if (ins.rows.length) return;
       }
@@ -160,7 +170,7 @@ export function createPostgresSessionStore(client: PgLike, opts: PostgresSession
         const params: unknown[] = [key.projectKey, key.sessionId, sub];
         const values = entries.map((e) => {
           params.push(e.uuid ?? null, JSON.stringify(e));
-          return `($1,$2,$3,$${params.length - 1},$${params.length}::jsonb)`;
+          return `($1,$2,$3,$${params.length - 1},$${params.length})`;
         });
         // Dedup happens IN the statement: replayed uuids no-op (intra-batch dups collapse to first).
         await client.query(
@@ -178,7 +188,7 @@ export function createPostgresSessionStore(client: PgLike, opts: PostgresSession
         `SELECT entry FROM ${E} WHERE project_key = $1 AND session_id = $2 AND subpath = $3 ORDER BY id`,
         [key.projectKey, key.sessionId, key.subpath ?? ""],
       );
-      return rows.length ? rows.map((r) => r.entry as SessionStoreEntry) : null;
+      return rows.length ? rows.map((r) => JSON.parse(r.entry) as SessionStoreEntry) : null;
     },
 
     async listSessions(projectKey) {
@@ -188,7 +198,7 @@ export function createPostgresSessionStore(client: PgLike, opts: PostgresSession
 
     async listSessionSummaries(projectKey) {
       const { rows } = await client.query(`SELECT summary FROM ${S} WHERE project_key = $1`, [projectKey]);
-      return rows.map((r) => r.summary as SessionSummaryEntry);
+      return rows.map((r) => JSON.parse(r.summary) as SessionSummaryEntry);
     },
 
     async delete(key) {
@@ -196,9 +206,12 @@ export function createPostgresSessionStore(client: PgLike, opts: PostgresSession
         await client.query(`DELETE FROM ${E} WHERE project_key = $1 AND session_id = $2 AND subpath = $3`, [key.projectKey, key.sessionId, key.subpath]);
         return; // deleting a subagent transcript leaves the session rows alone
       }
-      // Entries first (see header): the fold's empty-and-absent guard then makes ghost resurrection impossible.
-      await client.query(`DELETE FROM ${E} WHERE project_key = $1 AND session_id = $2`, [key.projectKey, key.sessionId]);
-      await client.query(`DELETE FROM ${S} WHERE project_key = $1 AND session_id = $2`, [key.projectKey, key.sessionId]);
+      // One data-modifying-CTE statement = one implicit transaction: no partial-delete state exists.
+      await client.query(
+        `WITH del_entries AS (DELETE FROM ${E} WHERE project_key = $1 AND session_id = $2)
+         DELETE FROM ${S} WHERE project_key = $1 AND session_id = $2`,
+        [key.projectKey, key.sessionId],
+      );
     },
 
     async listSubkeys(key) {
