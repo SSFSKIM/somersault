@@ -349,6 +349,31 @@ tests. Its job: a foreign consumer that surfaces protocol awkwardness before a G
   live `userMessage` item id equals the persisted transcript id, the item joins the replay buffer, and the
   D10 stitch holds. The degraded `user_<turnId>` fallback is not needed and is not built.
 
+- **2026-07-30 — the settings mirror has no engine-frame carrier in an ordinary turn** (keyed router
+  smoke, `test/live/appserver-m2-router-smoke.test.ts`, D-M2-9). Wave 1 left this open: "whether
+  `model`/`thinkingTokens` have an engine-frame carrier at all is settled empirically in Wave 1 — if not,
+  the mirror trusts the write-back leg alone for those two." **Settled: zero `thread/settings/changed`
+  fired.** A complete real turn (`bypassPermissions`, haiku, one prompt) produced no `system/status` frame
+  carrying `permissionMode` — the observed notification set was `initialized`, `thread/started`,
+  `thread/status/changed`, `turn/started`, `item/started`, `item/completed`, `thread/tokenUsage/updated`,
+  `thread/limits/updated`, `turn/completed`. Three consequences: (1) the mirror trusts its write-back leg
+  alone for all three knobs, and `source: "engine"` is rare-to-unreachable in ordinary operation — the
+  echo-dedup rule is a correctness guard for the case it does happen, not a hot path; (2) **the
+  plan-upgrade turn-end belt in `turns.ts` is load-bearing, not redundant** — the router's status-frame
+  consult is not reliably reached, which is precisely why M1's belt existed; (3) the acceptance's
+  two-client settings observation is proven by the *client* leg, as written, not by an engine echo.
+  **Scope of the claim:** this run did not exercise a plan-mode approval, which is the one moment the
+  engine is documented to flip permission mode on the message stream — so this says "no carrier in an
+  ordinary turn", not "no carrier ever".
+- **2026-07-30 — three router routes proven against the real engine** (same run): the init latch
+  (`thread/read` returned a non-empty page, so `record.sessionId` really latched), `thread/tokenUsage/
+  updated` (a real result frame reached the route with a non-empty usage payload — the route's field
+  names match what the engine sends), and `thread/limits/updated` (the `classifyLimitMessage` gating
+  fires on a real result frame, confirming the Task-8b decision to reuse `session.ts`'s own classifier
+  over the plan's non-existent "result with limit fields"). The live `userMessage` item's id was found in
+  the transcript page, so **probe 70's ALIVE verdict now holds end to end through the shipped `submit`
+  seam**, not only through the probe's direct SDK call.
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
