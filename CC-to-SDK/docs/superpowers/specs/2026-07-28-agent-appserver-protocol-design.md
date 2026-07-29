@@ -537,6 +537,17 @@ Added by the external review (2026-07-29), after M1 merged:
   and a real session (`harness/test/live/appserver-m1.test.ts`); seam-coverage scorecard at
   `docs/parity/appserver.md`.
 
+- **M2 design (2026-07-30,** [`2026-07-30-agent-appserver-m2-design.md`](2026-07-30-agent-appserver-m2-design.md)**):**
+  three flagged deviations from this spec, revised here rather than silently diverged: (1) §5's
+  Turn status union gains `queued` and `cancelled` (the turn-queue lifecycle); (2) §5's
+  ThreadStatus ships as `{state: "idle"|"active", waitingOn?: "decision"}` — scalar `waitingOn`
+  until a second waiter kind exists, `disconnected` deferred with fleet to M3; (3) D10's
+  userMessage "frame `uuid`" id is unknowable at live-emit time (CLI mints it at persistence) —
+  probe 6 tests caller-supplied-uuid passthrough; if dead, userMessage is the one documented
+  stitch-exempt item kind. Also: the M1-deferred "re-point the TUI reducers onto
+  `appserver/items/`" stays deferred (now to M3) — M2 is server-side work and stays out of
+  `src/tui/`.
+
 Rev 3 incorporates the 2026-07-28 external review: three P1s (origin-scoped reachability, item
 identity/stitch, generated denominator), §6 answer shapes corrected to the real `host/ops.ts`
 schema (`plan_approve{acceptEdits}`, `question_answer{answers, response?}`, deny-on-flat-field),
