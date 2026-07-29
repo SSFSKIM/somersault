@@ -34,9 +34,28 @@ export function loadOrMintToken(path: string | undefined, dir: string): { token:
   return { token, tokenFile };
 }
 
-/** Remove the serve run-file. `force` — a missing file is not an error (a crashed previous serve, or
- *  an operator's manual cleanup, must not turn shutdown into a throw). Exported for the unit suite. */
-export function removeRunFile(path: string): void { rmSync(path, { force: true }); }
+/** Remove the serve run-file — but only if it still describes THIS server. `runDir()`'s run-file path
+ *  has no PID/port/random component, so two `ccx serve` processes can share it: the second to start
+ *  overwrites the first's file. Without an ownership check, a stale first server's shutdown would then
+ *  delete the second, still-live server's run-file, destroying its discoverability. A `port` is already
+ *  unique to one listening process, so comparing the file's recorded `port` to `ownPort` is a sound,
+ *  sufficient ownership token (no separate pid field needed). A missing file, an unparseable file, or a
+ *  file with no numeric `port` all leave the file untouched rather than throw or guess: a crashed
+ *  previous serve, an operator's manual cleanup, or an un-owned file must never turn shutdown into an
+ *  error, and a file we cannot prove we own must never be deleted — a stale record is strictly safer
+ *  than erasing a live one. Exported for the unit suite. */
+export function removeRunFile(path: string, ownPort: number): void {
+  if (!existsSync(path)) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return;
+  }
+  const port = (parsed as { port?: unknown } | null)?.port;
+  if (typeof port !== "number" || port !== ownPort) return;
+  rmSync(path, { force: true });
+}
 
 /** The signals that mean "stop serving". SIGINT alone was wrong: a service manager (systemd, launchd), a
  *  container runtime, and a plain `kill` all send SIGTERM, and an unhandled SIGTERM kills the process
@@ -75,8 +94,8 @@ export async function runServe(inv: CcxInvocation): Promise<void> {
       void (async () => {
         await server.shutdown();
         await close().catch(() => {});
-        removeRunFile(runFile); // gap 9: an operator listing the run dir after shutdown must not see a
-        // stale entry for a server that is no longer listening.
+        removeRunFile(runFile, port); // gap 9: an operator listing the run dir after shutdown must not see a
+        // stale entry for a server that is no longer listening (but only for OUR entry — see removeRunFile).
         resolve();
       })();
     });

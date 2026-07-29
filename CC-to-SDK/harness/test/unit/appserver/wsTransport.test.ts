@@ -149,10 +149,20 @@ describe("ws transport", () => {
     const { port, close } = await listenWs(srv, {});
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);
     await new Promise((r) => ws.once("open", r));
-    const closed = new Promise<number>((r) => ws.once("close", (code) => r(code)));
+    // Race the "connection closed" expectation against a short bounded timer instead of relying on
+    // vitest's own 5000ms test timeout: if the maxPayload guard regresses, the socket never closes, and
+    // an unbounded await would fail only by timing out with no assertion message — reading as
+    // infrastructure flake rather than a semantic regression. With the guard in place the loopback close
+    // lands well inside 300ms; with it reverted the timer wins and the test fails fast on a real assertion.
+    let closeCode: number | undefined;
+    const closed = new Promise<"closed">((r) => ws.once("close", (code) => { closeCode = code; r("closed"); }));
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<"timeout">((r) => { timer = setTimeout(() => r("timeout"), 300); });
     ws.send("x".repeat(300 * 1024)); // > 256 KiB + slack — ws kills the connection below the app layer
-    const code = await closed;
-    expect(code).toBe(1009); // ws's "message too big" close code
+    const outcome = await Promise.race([closed, timeout]);
+    clearTimeout(timer!);
+    expect(outcome).toBe("closed");
+    expect(closeCode).toBe(1009); // ws's "message too big" close code
     await close();
-  }, 5000);
+  });
 });
