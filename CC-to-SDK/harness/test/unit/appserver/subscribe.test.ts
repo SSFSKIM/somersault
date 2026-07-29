@@ -83,8 +83,10 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
 
     const turnId = `turn_${threadId}_1`;
     const notifs = parsed(b.lines).filter((f) => !("id" in f));
-    expect(notifs.map((f) => f.method)).toEqual(["turn/started", "item/started", "item/completed", "thread/status/changed"]);
+    // gap 6: the buffered replay now ALSO carries the turn's live userMessage item/completed, right after turn/started.
+    expect(notifs.map((f) => f.method)).toEqual(["turn/started", "item/completed", "item/started", "item/completed", "thread/status/changed"]);
     expect(notifs[0].params).toEqual({ threadId, turn: { id: turnId, status: "inProgress" } });
+    expect(notifs[1].params).toMatchObject({ threadId, turnId, item: { type: "userMessage", text: "go" } });
   });
   it("(a) replay order: turn/started -> buffered item events -> decision/requested -> thread/status/changed last", async () => {
     let broker: any;
@@ -122,13 +124,15 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     expect(bLines.find((f) => f.id === 4).result).toEqual({ subscribed: true });
 
     const notifs = bLines.filter((f) => !("id" in f));
-    expect(notifs.map((f) => f.method)).toEqual(["turn/started", "item/started", "item/completed", "decision/requested", "thread/status/changed"]);
+    // gap 6: the turn's live userMessage item/completed lands right after turn/started, ahead of the agent's items.
+    expect(notifs.map((f) => f.method)).toEqual(["turn/started", "item/completed", "item/started", "item/completed", "decision/requested", "thread/status/changed"]);
     expect(notifs[0].params).toEqual({ threadId, turn: { id: `turn_${threadId}_1`, status: "inProgress" } });
-    expect(notifs[1].params).toMatchObject({ threadId, turnId: `turn_${threadId}_1`, item: { type: "agentMessage", id: "msg1#0", text: "hi" } });
-    expect(notifs[2].params).toMatchObject({ threadId, turnId: `turn_${threadId}_1`, item: { type: "agentMessage", id: "msg1#0" } });
-    expect(notifs[3].params.threadId).toBe(threadId);
-    expect(notifs[3].params.decision.toolUseID).toBe("toolu_a");
-    expect(notifs[4].params).toEqual({ threadId, status: "active" });
+    expect(notifs[1].params).toMatchObject({ threadId, turnId: `turn_${threadId}_1`, item: { type: "userMessage", text: "go" } });
+    expect(notifs[2].params).toMatchObject({ threadId, turnId: `turn_${threadId}_1`, item: { type: "agentMessage", id: "msg1#0", text: "hi" } });
+    expect(notifs[3].params).toMatchObject({ threadId, turnId: `turn_${threadId}_1`, item: { type: "agentMessage", id: "msg1#0" } });
+    expect(notifs[4].params.threadId).toBe(threadId);
+    expect(notifs[4].params.decision.toolUseID).toBe("toolu_a");
+    expect(notifs[5].params).toEqual({ threadId, status: "active" });
   });
 
   it("(b) an idle thread's subscribe replay carries no turn/started, and ends on thread/status/changed:idle", async () => {
@@ -151,17 +155,21 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
 
   it("(c) stitch contract: buffered-replay ids and thread/read ids overlap, and dedup-by-id collapses the overlap to exactly one entry per id", async () => {
     // Task 5's replay.test.ts fixture — a prompt, an assistant reply with a tool_use, and its tool_result.
-    const frames = [
-      { type: "user", uuid: "u-p", message: { content: "run ls" } },
+    // gap 6 makes this fake uuid-aware (engine-faithful): probe 70 (ALIVE) found the SDK persists exactly
+    // the uuid the server supplies via submit's opts, so a faithful fake echoes THAT SAME uuid back as
+    // the persisted prompt frame's uuid — a hardcoded "u-p" would no longer be the live item's real id.
+    const restFrames = [
       { type: "assistant", uuid: "u-a", message: { id: "msg_A", content: [{ type: "text", text: "sure" }, { type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls" } }] } },
       { type: "user", uuid: "u-r", message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "file.txt" }] } },
     ];
+    let capturedUuid: string | undefined;
     const sessionFactory = () => ({
       // The real engine's onMessage never re-delivers the prompt itself — only assistant/tool_result
-      // frames come through it — so feeding all three frames here still only produces live items for
-      // the assistant text + tool_use (mirrors what a genuine turn would buffer).
-      submit: async (_prompt: string, onMessage: (m: unknown) => void) => {
-        for (const f of frames) onMessage(f);
+      // frames come through it — so feeding these here still only produces live items for the assistant
+      // text + tool_use (mirrors what a genuine turn would buffer); the prompt echo comes from turns.ts.
+      submit: async (_prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }) => {
+        capturedUuid = opts?.uuid;
+        for (const f of restFrames) onMessage(f);
         return { result: {} };
       },
       interrupt: async () => ({}),
@@ -170,7 +178,10 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
       sessionId: "sess-fixture",
     });
     let seenSessionId: string | undefined;
-    const getSessionMessages = async (sessionId: string) => { seenSessionId = sessionId; return frames; };
+    const getSessionMessages = async (sessionId: string) => {
+      seenSessionId = sessionId;
+      return [{ type: "user", uuid: capturedUuid, message: { content: "run ls" } }, ...restFrames];
+    };
     const srv = new AppServer({}, { sessionFactory, getSessionMessages });
     const a = mkSink(); const connA = srv.connect(a.sink);
     init(connA, 1, "A");
@@ -180,29 +191,30 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
 
     send(connA, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
     await tick();
+    expect(capturedUuid).toBeTruthy(); // the server minted and threaded a uuid into submit's opts
 
     a.lines.length = 0;
     send(connA, { id: 4, method: "thread/subscribe", params: { threadId } });
     await tick();
     const liveIds = [...new Set(parsed(a.lines).filter((f) => f.method === "item/started" || f.method === "item/completed").map((f) => f.params.item.id))];
-    expect(liveIds).toEqual(["msg_A#0", "toolu_1"]); // the live buffer never saw the bare prompt frame
+    expect(liveIds).toEqual([capturedUuid, "msg_A#0", "toolu_1"]); // the live-emitted prompt item's id equals the minted uuid (gap 6)
 
     send(connA, { id: 5, method: "thread/read", params: { threadId } });
     await tick();
     const read = parsed(a.lines).find((f) => f.id === 5).result;
     expect(seenSessionId).toBe("sess-fixture");
-    expect(read.data.map((i: any) => i.id)).toEqual(["u-p", "msg_A#0", "toolu_1"]); // the persisted page DOES have the prompt
+    expect(read.data.map((i: any) => i.id)).toEqual([capturedUuid, "msg_A#0", "toolu_1"]); // the persisted page DOES have the prompt, under the SAME id
 
     // The stitch: every live-replayed id also shows up in the persisted page (real overlap, not vacuous).
     for (const id of liveIds) expect(read.data.some((i: any) => i.id === id)).toBe(true);
 
-    const beforeMergeCount = liveIds.length + read.data.length; // 2 + 3 = 5 raw occurrences
+    const beforeMergeCount = liveIds.length + read.data.length; // 3 + 3 = 6 raw occurrences
     const merged = new Map<string, unknown>();
     for (const id of liveIds) merged.set(id, { source: "live" });
     for (const item of read.data) merged.set(item.id, item); // client-side dedup-by-id, read wins last-write
-    expect(merged.size).toBe(3); // u-p, msg_A#0, toolu_1 — each survives exactly once
+    expect(merged.size).toBe(3); // capturedUuid, msg_A#0, toolu_1 — each survives exactly once
     expect(merged.size).toBeLessThan(beforeMergeCount); // proves a real collapse happened, not a no-op union
-    expect([...merged.keys()].sort()).toEqual(["msg_A#0", "toolu_1", "u-p"]);
+    expect([...merged.keys()].sort()).toEqual([capturedUuid, "msg_A#0", "toolu_1"].sort());
   });
 
   it("(d) thread/read pages newest-first with an offset-from-end cursor; last page is shorter with nextCursor:null", async () => {

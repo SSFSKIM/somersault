@@ -3,8 +3,9 @@
 // SDK Query.interrupt() is zero-arg at 0.3.220 (Task 1 finding, verified twice against sdk.d.ts) — no
 // public method carries cancel_queued, and M1 has no server-side turn/queue (later milestone) to flush
 // anyway. `cancelQueued` is accepted on the wire and silently unused; Task 12 records the scorecard gap.
+import { randomUUID } from "node:crypto";
 import { ERR } from "./rpc.js";
-import { TurnMapper } from "./items/mapper.js";
+import { TurnMapper, userItem } from "./items/mapper.js";
 import type { ItemEvent, ItemDeltaChannel } from "./items/types.js";
 import type { ThreadRecord, BufferedItemEvent } from "./registry.js";
 import type { AppServer, Handler } from "./server.js";
@@ -134,6 +135,12 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
     // only delivery that peer needs (Task 9 finding 2).
     record.turnStartedBroadcast = true;
 
+    // gap 6, probe-70 ALIVE branch: the server mints the transcript uuid itself and reuses it as the
+    // live userMessage item's id, so the id equals what the SDK will persist — the item can safely join
+    // the replay buffer (emitItems below) under the normal id-dedup stitch instead of being live-only.
+    const userUuid = randomUUID();
+    emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(parsed.data.input, userUuid) }]);
+
     const mapper = new TurnMapper(); // one instance per turn — dropped at completion, never reused
     const reportFailed = (err: unknown) => {
       emitItems(srv, record, turnId, mapper.finalize(true));
@@ -170,7 +177,7 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
       // rejected chain). The try/catch below is belt-and-suspenders with the .catch(reportFailed): the
       // try/catch covers a throw before submit() ever returns a promise; the .catch covers
       // onSuccess/onFailure themselves throwing after submit() settles.
-      record.session.submit(parsed.data.input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)))
+      record.session.submit(parsed.data.input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid })
         .then(onSuccess, onFailure)
         .catch(reportFailed);
     } catch (err) {

@@ -62,6 +62,20 @@ describe("Session", () => {
     expect((await s.submit("x")).result).toBe("did:x");
     await s.dispose();
   });
+  it("submit threads opts.uuid onto the pushed SDKUserMessage's uuid; omitted opts leaves uuid unset (Task 6/gap 6 appserver-only seam, additive to every other caller)", async () => {
+    const pushed: any[] = [];
+    const captureTurnQuery = ({ prompt }: any) => (async function* () {
+      for await (const t of prompt) { pushed.push(t); yield { type: "result", subtype: "success", result: "did:" + t.message.content }; }
+    })();
+    const s = new Session({ query: captureTurnQuery }, {});
+    await s.submit("with-uuid", () => {}, { uuid: "11111111-1111-4111-8111-111111111111" });
+    await s.submit("no-opts");
+    await s.submit("empty-opts", () => {}, {});
+    await s.dispose();
+    expect(pushed[0].uuid).toBe("11111111-1111-4111-8111-111111111111");
+    expect(pushed[1].uuid).toBeUndefined();
+    expect(pushed[2].uuid).toBeUndefined();
+  });
   it("advances lastActiveAt off an injected clock", async () => {
     let t = 100;
     const s = new Session({ query: fakeQuery }, {}, { now: () => t });

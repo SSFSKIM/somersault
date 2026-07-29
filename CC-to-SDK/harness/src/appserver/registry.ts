@@ -15,7 +15,11 @@ export interface BufferedItemEvent { turnId: string; event: ItemEvent }
 /** The subset of the lib Session the server drives in M1 (structural — the real Session satisfies
  *  this without adapting). */
 export interface EngineSession {
-  submit(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown }>;
+  /** `opts.uuid` (appserver-only seam, Task 6/gap 6): a caller-minted uuid to stamp onto the pushed
+   *  SDKUserMessage. Probe 70 (ALIVE) found the SDK persists exactly the supplied uuid, so the appserver
+   *  mints it BEFORE submit and reuses it as the live userMessage item's id — the live id equals the
+   *  persisted transcript id, so the item can join the replay buffer under the normal id-dedup stitch. */
+  submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown }>;
   interrupt(): Promise<unknown>;
   dispose(): Promise<void>;
   onFrame(cb: (m: unknown) => void): () => void;

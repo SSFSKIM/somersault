@@ -59,6 +59,7 @@ describe("appserver turns (Task 8)", () => {
     expect(order).toEqual([
       "thread/status/changed",
       "turn/started",
+      "item/completed:userMessage", // gap 6: the live prompt echo, minted right after turn/started
       "item/started:agentMessage",
       "item/completed:agentMessage",
       "item/started:toolCall",
@@ -72,6 +73,41 @@ describe("appserver turns (Task 8)", () => {
     expect(completed.params).toEqual({ threadId, turn: { id: `turn_${threadId}_1`, status: "completed" } });
     const itemStarted = notifs.filter((f) => f.method === "item/started");
     for (const ev of itemStarted) expect(ev.params).toMatchObject({ threadId, turnId: `turn_${threadId}_1` });
+  });
+
+  it("turn/start emits a live userMessage item to subscribers (gap 6): item/completed:userMessage lands right after turn/started, before the first agent item, and its id is the SAME uuid threaded into session.submit's opts (probe-70 ALIVE — live id == persisted id)", async () => {
+    let capturedOpts: { uuid?: string } | undefined;
+    const sessionFactory = () => ({
+      submit: async (_prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }) => {
+        capturedOpts = opts;
+        onMessage({ type: "assistant", message: { id: "msg1", content: [{ type: "text", text: "hi" }] } });
+        return { result: {} };
+      },
+      interrupt: async () => ({}),
+      dispose: async () => {},
+      onFrame: () => () => {},
+      sessionId: "sess-1",
+    });
+    const { s, c, threadId } = await bootThread(sessionFactory);
+
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "hello there" } });
+    await tick();
+
+    const notifs = parsed(s.lines).filter((f) => !("id" in f) && f.method !== "initialized");
+    const order = notifs.map((f) => (f.method === "item/started" || f.method === "item/completed" ? `${f.method}:${f.params.item.type}` : f.method));
+    expect(order).toEqual([
+      "thread/status/changed",
+      "turn/started",
+      "item/completed:userMessage",
+      "item/started:agentMessage",
+      "item/completed:agentMessage",
+      "turn/completed",
+      "thread/status/changed",
+    ]);
+    const userItemEvent = notifs.find((f) => f.method === "item/completed" && f.params.item.type === "userMessage");
+    expect(userItemEvent.params.item.text).toBe("hello there");
+    expect(capturedOpts?.uuid).toBeTruthy();
+    expect(userItemEvent.params.item.id).toBe(capturedOpts?.uuid);
   });
 
   it("a rejecting submit yields turn/completed{status:'failed', error} and clears busy for the next turn", async () => {
@@ -288,7 +324,9 @@ describe("appserver turns (Task 8)", () => {
     const notifs = parsed(b.lines).filter((f) => !("id" in f) && f.method !== "initialized");
     const started = notifs.find((f) => f.method === "item/started");
     expect(started.params.item).toEqual({ type: "toolCall", id: "toolu_1", tool: "Bash", view: "command", arguments: { command: "ls" }, status: "inProgress" });
-    const completed = notifs.find((f) => f.method === "item/completed");
+    // gap 6: the replayed buffer now ALSO carries the turn's userMessage item/completed (it was pushed
+    // before the tool call), so narrow to the toolCall's own completed event rather than the first one.
+    const completed = notifs.find((f) => f.method === "item/completed" && f.params.item.type === "toolCall");
     expect(completed.params.item).toMatchObject({ id: "toolu_1", status: "completed", result: "file.txt" });
   });
 
@@ -307,13 +345,14 @@ describe("appserver turns (Task 8)", () => {
     send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
     await tick();
     const record = srv.registry.get(threadId)!;
-    expect(record.buffer).toHaveLength(2); // started + completed for the first turn's one item
+    // gap 6: +1 for the turn's own userMessage item/completed, on top of the agentMessage's started+completed
+    expect(record.buffer).toHaveLength(3);
     expect(record.buffer.every((b) => b.turnId === `turn_${threadId}_1`)).toBe(true);
 
     send(c, { id: 4, method: "turn/start", params: { threadId, input: "again" } });
     await tick();
     // the second turn's buffer must contain ONLY its own events, not the first turn's leftovers
-    expect(record.buffer).toHaveLength(2);
+    expect(record.buffer).toHaveLength(3);
     expect(record.buffer.every((b) => b.turnId === `turn_${threadId}_2`)).toBe(true);
   });
 

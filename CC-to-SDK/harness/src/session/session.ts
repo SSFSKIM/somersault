@@ -17,8 +17,10 @@ export interface MirrorErrorInfo { error: string; key: { projectKey: string; ses
 export interface SessionDeps { query: QueryFn; }
 export interface SessionOpts { contextTool?: boolean; compactTool?: boolean; label?: string; now?: () => number; }
 
-function userTurn(text: string): SDKUserMessage {
-  return { type: "user", message: { role: "user", content: text }, parent_tool_use_id: null } as SDKUserMessage;
+function userTurn(text: string, uuid?: string): SDKUserMessage {
+  const msg = { type: "user", message: { role: "user", content: text }, parent_tool_use_id: null } as SDKUserMessage;
+  if (uuid) msg.uuid = uuid as SDKUserMessage["uuid"];
+  return msg;
 }
 
 interface Waiter { onMessage: (m: unknown) => void; resolve: (r: { result: unknown; structuredOutput?: unknown }) => void; reject: (e: Error) => void; }
@@ -67,17 +69,20 @@ export class Session implements ControllableSession {
   get mirrorErrors(): MirrorErrorInfo[] { return this._mirrorErrors; }
 
   /** Push a turn + its waiter onto the FIFO. Shared by submit() and compact() so every injected turn
-   *  gets its own waiter (its result resolves ITS waiter, never another turn's). */
-  private enqueueTurn(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown; structuredOutput?: unknown }> {
-    return new Promise((resolve, reject) => { this.waiters.push({ onMessage, resolve, reject }); this.input.push(userTurn(prompt)); });
+   *  gets its own waiter (its result resolves ITS waiter, never another turn's). `uuid` is the appserver-only
+   *  seam (Task 6/gap 6, see EngineSession.submit doc): threaded through to the pushed SDKUserMessage
+   *  untouched, undefined for every other caller. */
+  private enqueueTurn(prompt: string, onMessage: (m: unknown) => void, uuid?: string): Promise<{ result: unknown; structuredOutput?: unknown }> {
+    return new Promise((resolve, reject) => { this.waiters.push({ onMessage, resolve, reject }); this.input.push(userTurn(prompt, uuid)); });
   }
 
   /** Run one turn; non-result messages stream to onMessage; resolves with the turn's result (and, when the
    *  SDK's outputFormat produced one, `structuredOutput` — additive, so `{result}`-only callers are unaffected).
-   *  Rejects immediately if the underlying query has already ended (else the waiter would never drain). */
-  submit(prompt: string, onMessage: (m: unknown) => void = () => {}): Promise<{ result: unknown; structuredOutput?: unknown }> {
+   *  Rejects immediately if the underlying query has already ended (else the waiter would never drain).
+   *  `opts.uuid` is optional and additive (Task 6/gap 6) — every existing 1/2-arg caller is unaffected. */
+  submit(prompt: string, onMessage: (m: unknown) => void = () => {}, opts?: { uuid?: string }): Promise<{ result: unknown; structuredOutput?: unknown }> {
     if (this.ended) return Promise.reject(new Error(`${this.label} is not running`));
-    return this.enqueueTurn(prompt, onMessage);
+    return this.enqueueTurn(prompt, onMessage, opts?.uuid);
   }
 
   /** Convenience: run one turn as an async generator. Yields the turn's streamed (non-result) messages,
