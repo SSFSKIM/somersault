@@ -73,7 +73,7 @@ export class AppServer {
       ctx.peer.reply(id, { uptimeMs: Date.now() - srv.startedAt, threads: srv.registry.list().length, listeners: srv.conns.size });
     },
     "thread/start": async (srv, ctx, id, params) => {
-      if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.OVERLOADED, "Server is shutting down"); return; } // see shutdown()
+      if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
       const parsed = threadStartParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
       const threadId = srv.registry.mint();
@@ -88,7 +88,7 @@ export class AppServer {
       ctx.peer.reply(id, { thread: threadView(record) });
     },
     "thread/resume": async (srv, ctx, id, params) => {
-      if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.OVERLOADED, "Server is shutting down"); return; } // see shutdown()
+      if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
       const parsed = threadResumeParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
       const threadId = srv.registry.mint();
@@ -200,13 +200,20 @@ export class AppServer {
    *  LATCHED FIRST, snapshot second: the listener is still accepting frames while this awaits a slow
    *  dispose(), so an admission (thread/start, thread/resume) landing inside that window used to create a
    *  thread that was never in the snapshot and therefore outlived the shutdown — a leaked SDK session and
-   *  its `claude` child. `shuttingDown` makes the snapshot un-staleable. The refusal is OVERLOADED
-   *  (-32001), not INVALID_REQUEST: nothing about the request is malformed, the SERVER is simply no longer
-   *  taking work — the same "try again elsewhere/later" class of answer, and the one existing code whose
-   *  meaning is about server capacity rather than about the caller or a specific thread. */
+   *  its `claude` child. `shuttingDown` makes the snapshot un-staleable. The refusal is SHUTTING_DOWN
+   *  (-33007), not INVALID_REQUEST and not OVERLOADED: nothing about the request is malformed, and
+   *  OVERLOADED (-32001) is reserved for backpressure — there is no backpressure source in M2, so it stays
+   *  N/A-deferred (spec Wave 0).
+   *
+   *  THROUGH each record's chain (gap 7), not a direct closeRecord: a thread/close already queued for this
+   *  record must run first, and closeRecord's registry-delete makes this pass's own close a no-op once it
+   *  does — ordered, never concurrent (a direct call raced the queued close and drove dispose() twice). */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
-    await Promise.all(this.registry.list().map((r) => this.closeRecord(r).catch(() => {})));
+    await Promise.all(this.registry.list().map((r) => {
+      r.chain = r.chain.then(async () => { if (this.registry.get(r.id)) await this.closeRecord(r); });
+      return r.chain.catch(() => {});
+    }));
   }
 
   /** Mints this thread's decision broker. `unattended` is captured at thread/start time (spec: the
@@ -308,12 +315,30 @@ export class AppServer {
     // returned no response at all instead of METHOD_NOT_FOUND, hanging the caller.
     const handler = Object.prototype.hasOwnProperty.call(this.handlers, method) ? this.handlers[method] : undefined;
     if (!handler) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, `Unknown method: ${method}`); return; }
+    const goneBefore = this.engineGoneCode(params);
+    if (goneBefore !== undefined && method !== "thread/close" && method !== "thread/read" && method !== "thread/subscribe" && method !== "thread/unsubscribe" && method !== "decision/list") {
+      // close/read/subscribe/list stay answerable on a dead engine — closing and reading history are
+      // exactly what a client does with a dead thread. Everything else needs a live engine.
+      ctx.peer.replyError(id, goneBefore, "Engine is gone (session ended)"); return;
+    }
     try {
       await handler(this, ctx, id, params);
     } catch (e) {
       // one guard for every current and future handler — a thrown/rejecting handler must still reply,
       // never leave the caller hanging or surface as an unhandled rejection (dispatch is fired `void`)
-      ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+      const gone = this.engineGoneCode(params);
+      if (gone !== undefined) ctx.peer.replyError(id, gone, "Engine is gone (session ended)");
+      else ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
     }
+  }
+
+  /** -33005 mapping (spec Wave 0): a dead read-loop is real on inProcess threads (probe 38). Checked
+   *  via isEnded() ONLY — the lib's errors are untyped strings and message-matching misses half the
+   *  class ("not running" vs "disposed"). `threadId` comes from the request params when present. */
+  private engineGoneCode(params: Record<string, unknown>): number | undefined {
+    const threadId = typeof params.threadId === "string" ? params.threadId : undefined;
+    if (!threadId) return undefined;
+    const record = this.registry.get(threadId);
+    return record?.session.isEnded?.() ? ERR.ENGINE_GONE : undefined;
   }
 }

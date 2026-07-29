@@ -1,6 +1,8 @@
 // appserver/rpc.ts — JSON-RPC "lite" framing (spec §4): no "jsonrpc" field, NDJSON lines, string|number ids.
 export type RequestId = string | number;
-export const ERR = { PARSE: -32700, INVALID_REQUEST: -32600, METHOD_NOT_FOUND: -32601, INVALID_PARAMS: -32602, INTERNAL: -32603, OVERLOADED: -32001, BUSY: -33001, ALREADY_SETTLED: -33002, UNAUTHENTICATED: -33003, THREAD_NOT_FOUND: -33004, ENGINE_GONE: -33005, UNSUPPORTED_FOR_ORIGIN: -33006 } as const;
+// OVERLOADED (-32001) is backpressure-only (spec Wave 0): no backpressure source exists in M2, so it
+// ends this milestone N/A-deferred-with-evidence — never emitted. Shutdown refusals use SHUTTING_DOWN.
+export const ERR = { PARSE: -32700, INVALID_REQUEST: -32600, METHOD_NOT_FOUND: -32601, INVALID_PARAMS: -32602, INTERNAL: -32603, OVERLOADED: -32001, BUSY: -33001, ALREADY_SETTLED: -33002, UNAUTHENTICATED: -33003, THREAD_NOT_FOUND: -33004, ENGINE_GONE: -33005, UNSUPPORTED_FOR_ORIGIN: -33006, SHUTTING_DOWN: -33007 } as const;
 export interface RpcRequest { id: RequestId; method: string; params?: Record<string, unknown> }
 export interface RpcNotification { method: string; params?: Record<string, unknown> }
 export type Classified =

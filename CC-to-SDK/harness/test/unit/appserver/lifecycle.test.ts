@@ -210,8 +210,8 @@ describe("appserver thread teardown (C1/I7)", () => {
     send(c, { id: 3, method: "thread/start", params: {} });
     send(c, { id: 4, method: "thread/resume", params: { sessionId: "sess-old" } });
     await tick();
-    expect(parsed(s.lines).find((f) => f.id === 3).error.code).toBe(-32001);  // OVERLOADED: the SERVER is done taking work
-    expect(parsed(s.lines).find((f) => f.id === 4).error.code).toBe(-32001);
+    expect(parsed(s.lines).find((f) => f.id === 3).error.code).toBe(-33007);  // SHUTTING_DOWN: the SERVER is done taking work
+    expect(parsed(s.lines).find((f) => f.id === 4).error.code).toBe(-33007);
     expect(created).toBe(1);                                                  // no engine was ever opened for them
 
     release();

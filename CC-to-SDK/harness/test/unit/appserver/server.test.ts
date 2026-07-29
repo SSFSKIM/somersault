@@ -3,10 +3,31 @@ import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
-const fakeSession = () => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1" });
+const fakeSession = (overrides: Record<string, unknown> = {}) => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1", ...overrides });
 const boot = (token?: string) => { const s = mkSink(); const srv = new AppServer({ token }, { sessionFactory: () => fakeSession() }); const c = srv.connect(s.sink); return { ...s, srv, c }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
 const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l));
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const req = (id: number, method: string, params: object) => ({ id, method, params });
+/** An already-initialized connection plus its captured NDJSON frames. `feed` accepts a plain
+ *  request/notification object (built by `req`), not a raw string — it stringifies for the caller. */
+function connect(srv: AppServer) {
+  const s = mkSink();
+  const c = srv.connect(s.sink);
+  send(c, { id: 0, method: "initialize", params: { clientInfo: { name: "t" } } });
+  const peer = { lines: s.lines };
+  const feed = (obj: object) => send(c, obj);
+  return { peer, feed };
+}
+async function replyFor(peer: { lines: string[] }, id: number) {
+  await tick();
+  const f = parsed(peer.lines).find((x) => x.id === id);
+  if (!f) throw new Error(`no reply for id ${id}`);
+  return f;
+}
+function threadIdOf(peer: { lines: string[] }, id: number): string {
+  return parsed(peer.lines).find((f) => f.id === id).result.thread.id;
+}
 describe("AppServer dispatch", () => {
   it("gates on initialize; token mismatch is -33003", () => {
     const { lines, c } = boot("secret");
@@ -168,5 +189,48 @@ describe("AppServer dispatch", () => {
     const { lines, c } = boot("secret");
     send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "web" }, authorization: "Bearer wrong" } });
     expect(parsed(lines).some((f) => f.method === "initialized")).toBe(false);
+  });
+});
+
+describe("M2 error codes", () => {
+  it("thread/start during shutdown answers -33007 shuttingDown, not -32001", async () => {
+    const srv = new AppServer({}, { sessionFactory: () => fakeSession() });
+    const { peer, feed } = connect(srv); // the file's existing helper: init'd connection + captured frames
+    void srv.shutdown();
+    feed(req(1, "thread/start", {}));
+    const err = await replyFor(peer, 1);
+    expect(err.error.code).toBe(-33007);
+  });
+
+  it("a method call against a dead engine answers -33005 engineGone", async () => {
+    const session = fakeSession();
+    (session as any).isEnded = () => true; // engine died (read loop ended) — the lib's real signal
+    const srv = new AppServer({}, { sessionFactory: () => session });
+    const { peer, feed } = connect(srv);
+    feed(req(1, "thread/start", {}));
+    await replyFor(peer, 1);
+    const threadId = threadIdOf(peer, 1);
+    feed(req(2, "turn/start", { threadId, input: "hi" }));
+    const err = await replyFor(peer, 2);
+    expect(err.error.code).toBe(-33005);
+  });
+
+  it("shutdown() waits for a queued thread/close on the same record instead of racing it", async () => {
+    // gap 7: shutdown used to bypass record.chain. Engine-faithful fake: dispose resolves on a
+    // controllable promise, and counts calls — the race made dispose run twice concurrently.
+    let release!: () => void;
+    let disposeCalls = 0;
+    const session = fakeSession({ dispose: async () => { disposeCalls++; await new Promise<void>((r) => { release = r; }); } });
+    const srv = new AppServer({}, { sessionFactory: () => session });
+    const { peer, feed } = connect(srv);
+    feed(req(1, "thread/start", {}));
+    await replyFor(peer, 1);
+    const threadId = threadIdOf(peer, 1);
+    feed(req(2, "thread/close", { threadId }));   // queues closeRecord on record.chain
+    const done = srv.shutdown();                   // must chain AFTER the queued close, not race it
+    await Promise.resolve();
+    release();
+    await done;
+    expect(disposeCalls).toBe(1); // memoized-by-ordering, not by luck: the second closer awaited the first
   });
 });
