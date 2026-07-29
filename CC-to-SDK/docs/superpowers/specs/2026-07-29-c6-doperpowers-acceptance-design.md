@@ -240,6 +240,11 @@ project memory.
   (candidate upstream finding); `daemon-list.sh` never rendering notes; the missing
   commit-for-clean-worktree precondition; and the scripts' `daemon-resume.sh <id> "<answer>"` path
   being the roadmap's actual "resumed" (now ② Leg B).
+- (Task 1, probe 69) **Verdict: FLUSHED** — unlike probe 62's ordinary mid-turn tool calls, an
+  `AskUserQuestion` park DOES flush the pending assistant `tool_use` block to the on-disk transcript:
+  sampled 8s into the park, the session `.jsonl` held 11 lines including an assistant entry whose
+  `content` carries a `tool_use` block named `AskUserQuestion` — confirming the renderer can read the
+  blocked question straight off disk mid-park (C6 spec scenario ②).
 
 ## Outcomes & Retrospective
 
