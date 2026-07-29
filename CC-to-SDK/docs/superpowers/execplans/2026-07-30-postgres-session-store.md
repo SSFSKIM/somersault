@@ -22,7 +22,7 @@ and get a fully contract-conformant Postgres mirror: ordered append/load round-t
 - [x] (2026-07-30) Grill completed in-session; all design decisions settled (see Decision Log).
 - [x] (2026-07-30) Official SDK reference adapter read (`examples/session-stores/postgres` from anthropics/claude-agent-sdk-typescript; copy at `$CLAUDE_JOB_DIR/tmp/official-pg-store.ts`).
 - [x] (2026-07-30) ExecPlan authored and committed.
-- [ ] Milestone 1: PGlite spike — install devDependency, verify the five engine facts, record results in Surprises & Discoveries.
+- [x] (2026-07-30) Milestone 1: PGlite spike — @electric-sql/pglite@0.5.4 installed; all five engine facts verified (see Surprises & Discoveries).
 - [ ] Milestone 2: adapter TDD — conformance suite (uuidDedup) + adapter-specific tests green against PGlite.
 - [ ] Milestone 3: exports + docs — index.ts barrel + surface-pin test, coverage.md row, memory refresh, full gates green.
 - [ ] Milestone 4: exit gate — external whole-branch review (codex; argus fallback), fixes, retrospective.
@@ -32,7 +32,8 @@ and get a fully contract-conformant Postgres mirror: ordered append/load round-t
 - Observation: the official SDK reference adapter does NOT deduplicate by `entry.uuid`, even though the same docs page instructs adapter authors to ("Because a retried batch can re-deliver entries that already landed, deduplicate by `entry.uuid`"). It also omits `listSessionSummaries`, so listing falls back to a per-session `load()`.
   Evidence: `$CLAUDE_JOB_DIR/tmp/official-pg-store.ts` — plain `INSERT` with no ON CONFLICT, no summaries table. Our adapter exceeds the reference on both counts.
 - Observation: `node-postgres` returns Postgres `BIGINT` (`int8`) values as JS **strings** by default (precision safety); PGlite may behave likewise.
-  Evidence: node-postgres type-parsing documentation. The Milestone-1 spike must confirm what PGlite returns; the adapter wraps every mtime read in `Number(...)` either way.
+  Evidence: node-postgres type-parsing documentation. The Milestone-1 spike showed PGlite differs: int8 arrives as a JS `number` ("OBS int8 comes back as: number"). The adapter wraps every mtime read in `Number(...)`, which is correct over both drivers.
+- Observation (M1 spike, 2026-07-30, PGlite@0.5.4, `npx tsx` from `harness/`): all five engine facts held. (1) `PGlite` assigns to the planned `PgLike` structurally and `query(text, params)` resolves `{rows}`; startup ~1.3s per in-memory instance — confirming the one-shared-instance + per-store-prefix test topology. (2) Partial UNIQUE + `ON CONFLICT ... WHERE uuid IS NOT NULL DO NOTHING` skips a replayed uuid and keeps the first payload. (3) A single multi-row INSERT with an intra-batch duplicate uuid does not error; the duplicate collapses to one row. (4) `RETURNING uuid` reports only the rows that actually landed (`["u2",null]` for a batch of replayed-u1 + u2 + u2-dup + uuid-less). (5) JSONB round-trips deep-equal under `assert.deepStrictEqual` with key reordering (`{z,a,s}` → `{a,s,z}`) — the docs-blessed behavior. A first-pass "deep-equal=false" was a defect in the spike's own comparison, not the engine; re-verified with a proper deep comparison.
 
 ## Decision Log
 

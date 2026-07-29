@@ -2,9 +2,23 @@
   "name": "cc-harness",
   "version": "0.1.0",
   "description": "Headless TypeScript harness over the Claude Agent SDK with Claude Code-faithful defaults — one-shot runs, interactive sessions, a multi-session daemon, hooks, swarm, and durable tasks.",
-  "keywords": ["claude", "claude-code", "claude-agent-sdk", "anthropic", "agent", "llm", "ai", "harness", "headless"],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "claude-agent-sdk",
+    "anthropic",
+    "agent",
+    "llm",
+    "ai",
+    "harness",
+    "headless"
+  ],
   "homepage": "https://github.com/SSFSKIM/codex_somersault/tree/main/CC-to-SDK/harness#readme",
-  "repository": { "type": "git", "url": "git+https://github.com/SSFSKIM/codex_somersault.git", "directory": "CC-to-SDK/harness" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SSFSKIM/codex_somersault.git",
+    "directory": "CC-to-SDK/harness"
+  },
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
@@ -16,9 +30,16 @@
       "import": "./dist/index.js"
     }
   },
-  "bin": { "cc-harness": "./dist/cli.js", "ccx": "./dist/cli/bin.js" },
-  "files": ["dist"],
-  "engines": { "node": ">=18" },
+  "bin": {
+    "cc-harness": "./dist/cli.js",
+    "ccx": "./dist/cli/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
@@ -35,19 +56,20 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",
-    "zod": "^4.0.0",
     "ink": "^5.0.1",
     "ink-text-input": "^6.0.0",
     "react": "^18.3.1",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/ws": "^8.5.12",
+    "ink-testing-library": "^4.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0",
-    "@types/node": "^22.0.0",
-    "ink-testing-library": "^4.0.0",
-    "@types/react": "^18.3.0",
-    "@types/ws": "^8.5.12"
+    "vitest": "^2.1.0"
   }
 }
