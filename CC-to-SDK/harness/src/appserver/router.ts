@@ -3,10 +3,12 @@
 // each thread gets a single subscription with named routes, run in sequence, each in its own try/catch so
 // one throwing route cannot starve the others on the same frame. Task 8a moves in the two watchers that
 // pre-date this file (the init latch, the planUpgrade status-consult) with no observable behavior change;
-// Task 8b adds the remaining eight routes (settings mirror, usage, rate limits, background tasks, todos,
-// capabilities, compaction boundaries).
+// Task 8b (this file) adds the remaining eight routes: the settings mirror (model/permissionMode, echo-
+// deduped), token usage, rate limits, background tasks, task notifications, capability pushes, todo
+// snapshots, and the compaction-boundary relay.
 import type { ThreadRecord } from "./registry.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
+import { classifyLimitMessage } from "../limits/classify.js";
 import type { AppServer } from "./server.js";
 
 /** Absorbed verbatim from the deleted server.ts `latchSessionId`, INCLUDING ITS ORDER (2026-07-30 review
@@ -20,7 +22,8 @@ import type { AppServer } from "./server.js";
  *  the init-frame value merely fills in when the getter has nothing yet, so whichever resolves first wins.
  *  The outer `record.sessionId` check makes every frame after the first latch a no-op, mirroring the
  *  deleted function's one-shot `off()` self-unsubscribe without needing a second subscription to manage. */
-function routeInit(record: ThreadRecord, frame: { type?: string; subtype?: string; session_id?: unknown }): void {
+function routeInit(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string; session_id?: unknown }): void {
+  void srv;
   if (record.sessionId) return;
   const fromInit = frame?.type === "system" && frame.subtype === "init" && typeof frame.session_id === "string" ? frame.session_id : undefined;
   const sid = record.session.sessionId ?? fromInit;
@@ -37,26 +40,170 @@ function routeInit(record: ThreadRecord, frame: { type?: string; subtype?: strin
  *  races it, so `applyPlanUpgrade` must only fire once we OBSERVE that flip — a system/status frame that
  *  actually carries a `permissionMode`. The engine also emits system/status frames for unrelated reasons
  *  (compaction's `compact_result`, see compaction/server.ts) that carry no `permissionMode` at all; firing
- *  on one of those is firing before the flip has happened, not after. */
-function routeStatus(record: ThreadRecord, frame: { type?: string; subtype?: string; permissionMode?: unknown }): void {
+ *  on one of those is firing before the flip has happened, not after.
+ *
+ *  Task 8b: this consult runs REGARDLESS of routeSettingsMirror's echo-dedup below — dedup governs only
+ *  whether the mirror's `thread/settings/changed` broadcast fires, never this consult (spec Wave 1). Both
+ *  routes read the same frame independently; neither gates the other. */
+function routeStatus(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string; permissionMode?: unknown }): void {
+  void srv;
   if (frame?.type !== "system" || frame.subtype !== "status") return;
   if (typeof frame.permissionMode !== "string") return;
   if (record.planUpgradePending) void applyPlanUpgrade(record);
 }
 
-const ROUTES: ((record: ThreadRecord, frame: any) => void)[] = [routeInit, routeStatus];
+/** The settings mirror (spec Wave 1, D-M2-6). The SDK's model/permissionMode/thinkingTokens setters are
+ *  setters-only — there is no getter for "what is the engine using right now" — so `record.settings`
+ *  mirrors the three knobs, written from two directions: a client's own `thread/*\/set` (a later task,
+ *  which writes the mirror FIRST, before the engine ever echoes back) and here, the engine's own
+ *  system/status frames.
+ *
+ *  Echo-dedup rule (spec Wave 1, verbatim): "the engine-frame leg suppresses its broadcast when the
+ *  frame's value equals the mirror" — a client's set already wrote the mirror before the engine's status
+ *  frame echoes that same change back, so re-broadcasting it here would be noise; a value that DIFFERS
+ *  from the mirror is a genuinely engine-originated change (e.g. the CLI's own post-approval flip, or a
+ *  future `auto`-mode self-heal) and DOES fire, with `source: "engine"`. This governs the BROADCAST only
+ *  — it never gates routeStatus's plan-upgrade consult above, which reads the same frame independently.
+ *
+ *  `model` mirrors the same way even though no observed system/status frame carries one today
+ *  (`SDKStatusMessage` in the vendored sdk.d.ts has only `status`/`permissionMode`/`compact_result`/
+ *  `compact_error` — `model` lives on system/init instead): this branch is written per the brief so the
+ *  route exists and fires harmlessly if a future/unknown build ever adds one, exactly like the brief's own
+ *  "empirical: may not exist" note for this field.
+ *
+ *  One broadcast, not one per changed knob ("one shape, all three knobs", spec Wave 1): if a single frame
+ *  somehow changes both fields, the mirror still emits ONE `thread/settings/changed` carrying the full
+ *  post-update `record.settings`, not two partial ones. */
+function routeSettingsMirror(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string; permissionMode?: unknown; model?: unknown }): void {
+  if (frame?.type !== "system" || frame.subtype !== "status") return;
+  let changed = false;
+  if (typeof frame.permissionMode === "string" && frame.permissionMode !== record.settings.permissionMode) {
+    record.settings.permissionMode = frame.permissionMode;
+    changed = true;
+  }
+  if (typeof frame.model === "string" && frame.model !== record.settings.model) {
+    record.settings.model = frame.model;
+    changed = true;
+  }
+  if (!changed) return; // echo-dedup: the frame's value(s) already equal the mirror — nothing to announce
+  srv.broadcast(record.id, "thread/settings/changed", {
+    threadId: record.id,
+    source: "engine",
+    model: record.settings.model,
+    permissionMode: record.settings.permissionMode,
+    thinkingTokens: record.settings.thinkingTokens,
+  });
+}
+
+/** system/compact_boundary → thread/compacted (spec Wave 1 table, verbatim payload; Task 11 consumes).
+ *  Condition and payload are both given directly by the brief's route table — nothing to infer. */
+function routeCompactBoundary(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string }): void {
+  if (frame?.type !== "system" || frame.subtype !== "compact_boundary") return;
+  srv.broadcast(record.id, "thread/compacted", { threadId: record.id, turnId: record.currentTurnId, outcome: frame });
+}
+
+/** `result` frames carrying `usage`/`modelUsage` → `thread/tokenUsage/updated {threadId, usage}`. Both
+ *  fields are non-optional on the vendored SDK's `SDKResultSuccess`/`SDKResultError` (sdk.d.ts) — a real
+ *  result frame always carries both together; the `undefined` guard below only matters for a
+ *  hand-built/partial test frame. The brief names ONE payload field ("usage") for what the SDK actually
+ *  splits across two: a scalar per-turn tally (`usage`) and a per-model breakdown (`modelUsage`, keyed by
+ *  model name — not flattenable into the tally). Bundled under the one field the brief specifies, rather
+ *  than inventing a second top-level key it didn't declare: `usage.<token counts>` plus a sibling
+ *  `usage.modelUsage` map. */
+function routeTokenUsage(srv: AppServer, record: ThreadRecord, frame: { type?: string; usage?: unknown; modelUsage?: unknown }): void {
+  if (frame?.type !== "result") return;
+  if (frame.usage === undefined && frame.modelUsage === undefined) return;
+  const usage: Record<string, unknown> = { ...(frame.usage as Record<string, unknown> | undefined ?? {}) };
+  if (frame.modelUsage !== undefined) usage.modelUsage = frame.modelUsage;
+  srv.broadcast(record.id, "thread/tokenUsage/updated", { threadId: record.id, usage });
+}
+
+/** `rate_limit_event` / `result` with limit fields → `thread/limits/updated {threadId, limits}` (sparse
+ *  merge is the CLIENT's job; the server relays what `classifyLimitMessage` extracted). Condition comes
+ *  from an EXISTING consumer, not the table alone (the 8a lesson): `src/limits/classify.ts`'s
+ *  `classifyLimitMessage` is already the codebase's one function that reads exactly these two frame types
+ *  for limit info (session.ts's readLoop calls it on both `result` and `rate_limit_event` frames) —
+ *  `result` frames carry no dedicated rate-limit fields in the vendored SDK types today (only
+ *  `rate_limit_event` has `rate_limit_info`), so `classifyLimitMessage`'s TEXT-based classification of a
+ *  result frame's `result` string is the only real "result frame with limit fields" signal this codebase
+ *  has ever recognized. A clean/absent signal (undefined) relays nothing — there are no fields to relay. */
+function routeLimits(srv: AppServer, record: ThreadRecord, frame: unknown): void {
+  const mm = frame as { type?: string } | null | undefined;
+  if (!mm || (mm.type !== "result" && mm.type !== "rate_limit_event")) return;
+  const limits = classifyLimitMessage(frame);
+  if (!limits) return;
+  srv.broadcast(record.id, "thread/limits/updated", { threadId: record.id, limits });
+}
+
+/** system/background_tasks_changed → task/changed (snapshot-REPLACE, never merge). Condition and REPLACE
+ *  semantics both match the vendored SDK's own doc comment on `SDKBackgroundTasksChangedMessage` ("Every
+ *  live background task after the change... swap your set for this payload") and the existing consumer at
+ *  session.ts's readLoop (`this._bgTasks = mm.tasks ?? []; // REPLACE, never merge`). */
+function routeBackgroundTasks(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string; tasks?: unknown }): void {
+  if (frame?.type !== "system" || frame.subtype !== "background_tasks_changed") return;
+  srv.broadcast(record.id, "task/changed", { threadId: record.id, tasks: frame.tasks ?? [] });
+}
+
+/** system/task_notification → task/event {threadId, event: frame} — verbatim from the brief's table. */
+function routeTaskNotification(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string }): void {
+  if (frame?.type !== "system" || frame.subtype !== "task_notification") return;
+  srv.broadcast(record.id, "task/event", { threadId: record.id, event: frame });
+}
+
+/** system frames carrying a `commands`/`slash_commands` list push → thread/capabilities/changed
+ *  {threadId} (a ping; payload never carries the list itself — clients re-read thread/capabilities/read).
+ *  Condition comes from the vendored SDK's own doc comment on `SDKCommandsChangedMessage`
+ *  (subtype `commands_changed`): "Fire-and-forget push of the full slash-command list after a mid-session
+ *  change... Clients should REPLACE their cached command list with this payload" — this is the "list
+ *  push" the brief's row names, as distinct from system/init's initial `slash_commands` snapshot (which
+ *  is not a push and must not re-trigger this route). The `commands`/`slash_commands` field-name check is
+ *  a defensive belt (mirrors the `model`-may-not-exist style elsewhere in this file) alongside the
+ *  subtype gate, not a substitute for it. */
+function routeCapabilities(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string; commands?: unknown; slash_commands?: unknown }): void {
+  if (frame?.type !== "system" || frame.subtype !== "commands_changed") return;
+  if (!Array.isArray(frame.commands) && !Array.isArray(frame.slash_commands)) return;
+  srv.broadcast(record.id, "thread/capabilities/changed", { threadId: record.id });
+}
+
+/** An assistant frame carrying a `tool_use` block named `TodoWrite` → turn/todo/updated {threadId,
+ *  turnId, todos} — `block.input.todos` is the FULL snapshot (replace, never merge), per the brief.
+ *  The `!frame.parent_tool_use_id` guard is not in the brief's table — it comes from the existing
+ *  consumer of assistant frames in THIS server (`appserver/items/mapper.ts`'s `TurnMapper.ingest`:
+ *  `if (f?.parent_tool_use_id) return []; // nested/subagent frame: attribution only, not itemized`).
+ *  Without it, a subagent's own private TodoWrite call would be relayed as if it were the MAIN turn's
+ *  todo list (the payload's `turnId` is `record.currentTurnId`, the top-level turn) — a real
+ *  misattribution, not a cosmetic one. */
+function routeTodo(srv: AppServer, record: ThreadRecord, frame: { type?: string; parent_tool_use_id?: unknown; message?: { content?: unknown } }): void {
+  if (frame?.type !== "assistant" || frame.parent_tool_use_id) return;
+  const content = Array.isArray(frame.message?.content) ? (frame.message?.content as any[]) : [];
+  for (const b of content) {
+    if (b?.type === "tool_use" && b.name === "TodoWrite") {
+      srv.broadcast(record.id, "turn/todo/updated", { threadId: record.id, turnId: record.currentTurnId, todos: b.input?.todos });
+    }
+  }
+}
+
+const ROUTES: ((srv: AppServer, record: ThreadRecord, frame: any) => void)[] = [
+  routeInit,
+  routeStatus,
+  routeSettingsMirror,
+  routeCompactBoundary,
+  routeTokenUsage,
+  routeLimits,
+  routeBackgroundTasks,
+  routeTaskNotification,
+  routeCapabilities,
+  routeTodo,
+];
 
 /** Installs the ONE per-thread frame router. The unsubscribe is stored on `record.routerOff`, called by
- *  `closeRecord` BEFORE the engine is disposed. `srv` is unused in 8a — Task 8b's new routes (usage,
- *  rate limits, background tasks, …) need it to broadcast, so the signature is settled here rather than
- *  changed out from under every call site again next task. */
+ *  `closeRecord` BEFORE the engine is disposed. */
 export function installRouter(srv: AppServer, record: ThreadRecord): void {
-  void srv;
   const epoch = record.epoch; // frames from an engine superseded by a rewind swap must never land
   record.routerOff = record.session.onFrame((frame: any) => {
     if (record.epoch !== epoch) return;
     for (const route of ROUTES) {
-      try { route(record, frame); } catch { /* one route's failure is not another's — same frame */ }
+      try { route(srv, record, frame); } catch { /* one route's failure is not another's — same frame */ }
     }
   });
 }

@@ -34,6 +34,16 @@ function mkRecord(session: EngineSession, extra: Partial<ThreadRecord> = {}): Th
 
 const srv = {} as AppServer; // installRouter's `srv` param is unused until Task 8b's new routes need to broadcast
 
+/** A fake `AppServer` whose only live method is `broadcast` — every 8b route calls `srv.broadcast(...)`,
+ *  never `Peer.notify` directly, so a plain collector is enough to assert what each route sent without
+ *  wiring real Peers/connections (the real `AppServer.broadcast` already fans out through `Peer.notify`,
+ *  which is exercised by server.ts/peer.ts's own tests, not re-proven here). */
+function fakeSrv(): { srv: AppServer; calls: { threadId: string; method: string; params: Record<string, unknown> }[] } {
+  const calls: { threadId: string; method: string; params: Record<string, unknown> }[] = [];
+  const srv = { broadcast: (threadId: string, method: string, params: Record<string, unknown>) => { calls.push({ threadId, method, params }); } } as unknown as AppServer;
+  return { srv, calls };
+}
+
 describe("frame router skeleton (spec D-M2-6, D-M2-8)", () => {
   it("latches sessionId from the init frame (absorbed latchSessionId)", () => {
     const { session, push } = fakeSession();
@@ -139,5 +149,190 @@ describe("frame router skeleton (spec D-M2-6, D-M2-8)", () => {
     push({ type: "system", subtype: "status", permissionMode: "plan" });
     await tick();
     expect(modes).toEqual(["acceptEdits"]); // routeStatus still ran despite routeInit throwing on the same frame
+  });
+});
+
+describe("frame router routes (spec Wave 1, D-M2-6)", () => {
+  it("a status frame with a NEW permissionMode updates the mirror and broadcasts source:'engine'", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session, { settings: { permissionMode: "default" } });
+    installRouter(srv, record);
+
+    push({ type: "system", subtype: "status", permissionMode: "plan" });
+
+    expect(record.settings.permissionMode).toBe("plan");
+    const evt = calls.find((c) => c.method === "thread/settings/changed");
+    expect(evt?.params).toEqual({ threadId: "t1", source: "engine", model: undefined, permissionMode: "plan", thinkingTokens: undefined });
+  });
+
+  it("a status frame echoing the mirror's value broadcasts NOTHING (echo-dedup)", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session, { settings: { permissionMode: "plan" } });
+    installRouter(srv, record);
+
+    push({ type: "system", subtype: "status", permissionMode: "plan" }); // same value as the mirror already holds
+
+    expect(calls.find((c) => c.method === "thread/settings/changed")).toBeUndefined();
+  });
+
+  it("an echo-deduped status frame STILL applies a pending plan upgrade (8a's route is not gated by dedup)", async () => {
+    const modes: string[] = [];
+    const { session, push } = fakeSession({ setPermissionMode: async (m: string) => { modes.push(m); } });
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session, { settings: { permissionMode: "plan" }, planUpgradePending: true });
+    installRouter(srv, record);
+
+    push({ type: "system", subtype: "status", permissionMode: "plan" }); // echoes the mirror exactly
+    await tick();
+
+    expect(calls.find((c) => c.method === "thread/settings/changed")).toBeUndefined(); // dedup still suppresses the broadcast
+    expect(modes).toEqual(["acceptEdits"]); // but routeStatus's plan-upgrade consult still ran, independent of dedup
+    expect(record.planUpgradePending).toBe(false);
+  });
+
+  it("a status frame with a NEW model updates the mirror and broadcasts source:'engine' (empirical: SDK status frames may never carry model; route stays harmless if never hit)", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session, { settings: { model: "claude-a" } });
+    installRouter(srv, record);
+
+    push({ type: "system", subtype: "status", model: "claude-b" });
+
+    expect(record.settings.model).toBe("claude-b");
+    expect(calls.find((c) => c.method === "thread/settings/changed")?.params).toMatchObject({ source: "engine", model: "claude-b" });
+  });
+
+  it("compact_boundary → thread/compacted with the current turnId", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session, { currentTurnId: "turn-9" });
+    installRouter(srv, record);
+
+    const frame = { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto", pre_tokens: 100 } };
+    push(frame);
+
+    const evt = calls.find((c) => c.method === "thread/compacted");
+    expect(evt?.params).toEqual({ threadId: "t1", turnId: "turn-9", outcome: frame });
+  });
+
+  it("a result frame with usage → thread/tokenUsage/updated", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session);
+    installRouter(srv, record);
+
+    push({ type: "result", usage: { input_tokens: 5, output_tokens: 7 }, modelUsage: { "claude-x": { inputTokens: 5 } } });
+
+    const evt = calls.find((c) => c.method === "thread/tokenUsage/updated");
+    expect(evt?.params).toEqual({ threadId: "t1", usage: { input_tokens: 5, output_tokens: 7, modelUsage: { "claude-x": { inputTokens: 5 } } } });
+  });
+
+  it("a result frame with neither usage nor modelUsage does not broadcast tokenUsage", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session);
+    installRouter(srv, record);
+
+    push({ type: "result", result: "ok" });
+
+    expect(calls.find((c) => c.method === "thread/tokenUsage/updated")).toBeUndefined();
+  });
+
+  it("a rejected rate_limit_event → thread/limits/updated (condition + payload from limits/classify.ts's classifyLimitMessage, the existing consumer of exactly these two frame types)", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session);
+    installRouter(srv, record);
+
+    push({ type: "rate_limit_event", rate_limit_info: { status: "rejected", rateLimitType: "five_hour", resetsAt: 1234 } });
+
+    const evt = calls.find((c) => c.method === "thread/limits/updated");
+    expect(evt?.params).toEqual({ threadId: "t1", limits: { kind: "rate-limit", message: "rate limited (five_hour)", resetsAt: 1234 } });
+  });
+
+  it("an allowed rate_limit_event broadcasts nothing (healthy state — no limit fields for classifyLimitMessage to extract)", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session);
+    installRouter(srv, record);
+
+    push({ type: "rate_limit_event", rate_limit_info: { status: "allowed" } });
+
+    expect(calls.find((c) => c.method === "thread/limits/updated")).toBeUndefined();
+  });
+
+  it("background_tasks_changed → task/changed with the full snapshot", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session);
+    installRouter(srv, record);
+
+    const tasks = [{ task_id: "1", task_type: "x", description: "d" }];
+    push({ type: "system", subtype: "background_tasks_changed", tasks });
+
+    const evt = calls.find((c) => c.method === "task/changed");
+    expect(evt?.params).toEqual({ threadId: "t1", tasks });
+  });
+
+  it("task_notification → task/event with the raw frame", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session);
+    installRouter(srv, record);
+
+    const frame = { type: "system", subtype: "task_notification", task_id: "1", status: "completed" };
+    push(frame);
+
+    const evt = calls.find((c) => c.method === "task/event");
+    expect(evt?.params).toEqual({ threadId: "t1", event: frame });
+  });
+
+  it("a commands_changed system frame → thread/capabilities/changed (a ping — no command list in the payload)", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session);
+    installRouter(srv, record);
+
+    push({ type: "system", subtype: "commands_changed", commands: ["/foo"] });
+
+    const evt = calls.find((c) => c.method === "thread/capabilities/changed");
+    expect(evt?.params).toEqual({ threadId: "t1" });
+  });
+
+  it("system/init's own slash_commands snapshot does NOT fire the capabilities push (that is the initial snapshot, not a mid-session push)", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session);
+    installRouter(srv, record);
+
+    push({ type: "system", subtype: "init", session_id: "s1", slash_commands: ["/foo"] });
+
+    expect(calls.find((c) => c.method === "thread/capabilities/changed")).toBeUndefined();
+  });
+
+  it("an assistant frame carrying a TodoWrite tool_use → turn/todo/updated with the todos snapshot", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session, { currentTurnId: "turn-5" });
+    installRouter(srv, record);
+
+    const todos = [{ content: "a", status: "pending" }];
+    push({ type: "assistant", message: { content: [{ type: "tool_use", name: "TodoWrite", input: { todos } }] } });
+
+    const evt = calls.find((c) => c.method === "turn/todo/updated");
+    expect(evt?.params).toEqual({ threadId: "t1", turnId: "turn-5", todos });
+  });
+
+  it("a nested/subagent assistant frame's TodoWrite is NOT relayed as the main turn's todos (mirrors items/mapper.ts's parent_tool_use_id discard)", () => {
+    const { session, push } = fakeSession();
+    const { srv, calls } = fakeSrv();
+    const record = mkRecord(session, { currentTurnId: "turn-5" });
+    installRouter(srv, record);
+
+    push({ type: "assistant", parent_tool_use_id: "agent-1", message: { content: [{ type: "tool_use", name: "TodoWrite", input: { todos: [] } }] } });
+
+    expect(calls.find((c) => c.method === "turn/todo/updated")).toBeUndefined();
   });
 });
