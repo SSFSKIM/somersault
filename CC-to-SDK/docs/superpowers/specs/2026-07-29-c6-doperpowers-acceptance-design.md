@@ -252,9 +252,11 @@ project memory.
   being the roadmap's actual "resumed" (now ② Leg B).
 - (Task 1, probe 69) **Verdict: FLUSHED** — unlike probe 62's ordinary mid-turn tool calls, an
   `AskUserQuestion` park DOES flush the pending assistant `tool_use` block to the on-disk transcript:
-  sampled 8s into the park, the session `.jsonl` held 11 lines including an assistant entry whose
-  `content` carries a `tool_use` block named `AskUserQuestion` — confirming the renderer can read the
-  blocked question straight off disk mid-park (C6 spec scenario ②).
+  sampled ~0.5s into an 8s park hold, the session `.jsonl` held 11 lines; the probe's own check is
+  quote-delimited grep-grade, but the Task 1 report's **manual transcript parse** confirmed an
+  assistant entry (index 9) whose `content` carries a `tool_use` block named `AskUserQuestion`, and
+  scenario ② corroborates it end-to-end (the recorded blocked reply carried the real question text).
+  Nothing built on this is grep-only.
 - (scenario ①, execution) **Two shipped-behavior corrections** folded into rev 3: `ccx rm` on a dirty
   worktree does NOT refuse — it deregisters the row and *keeps* the worktree with a `kept worktree`
   notice (deliberate: doperpowers' purge purposely dirties worktrees via a `.daemon-turn-live`
@@ -272,7 +274,10 @@ project memory.
   scaffolds directly; ccx matches. The `/`-palette-dropdown check was a **capture artifact** (no
   dropdown renders under the pty for *any* command, builtin `/model` included); the authoritative
   catalog layer (`settingSources`→`supportedCommands()`) shows ccx carrying all **15** doperpowers
-  skills incl. `brainstorming` — identical to the real binary. Skill surfacing is at parity.
+  skills incl. `brainstorming`; the real binary was directly observed surfacing `brainstorming` from
+  the *same* `settingSources`, so skill surfacing is at parity (the full 15-count was enumerated on
+  ccx — both binaries draw the catalog from identical `settingSources`, so the set matches by
+  construction).
 
 ## Outcomes & Retrospective
 
@@ -288,7 +293,7 @@ surfaced (the defect loop was empty). Test gate: typecheck clean, `npx vitest ru
 | ① real-work lifecycle | `daemon-spawn` (worktree'd) → worker wrote+committed `hello.txt`=`C6-REAL-WORK` on `worktree-c6wt` → `daemon-resume` forked (stable uuid kept, `current` forked, superseded row purged, `C6-EDITED` committed) → `daemon-reply` real text → `daemon-finalize` `noop` → `daemon-retire purge` (NOTE printed, worktree kept) → `ccx --resume <current>` from the worktree replayed → `ccx rm` three arms (fork-row unlinked / dirty-keep notice / clean-delete) | **PASS** |
 | ② park-and-answer | `--no-wait` worktree'd spawn parked on `AskUserQuestion`; `daemon-finalize` walked `live`→`idle`→`noop` exactly as rev 2 predicted; recorded blocked reply carried the flushed question text (probe 69); **both** answer paths worked — `ccx attach` + QuestionDialog (Enter=FORMAL → `greeting.txt`=`FORMAL` committed) and the scripts' own `daemon-resume <id> "<answer>"` (→ `greeting.txt`=`CASUAL` committed) | **PASS** |
 | ③ retire/mark edges | `daemon-mark awaiting-human "<note>"` (echo + meta), `daemon-list awaiting-human` status filter, `daemon-retire` (keep → meta `retired`, reply kept, `ccx --resume` still loads), `daemon-retire purge` (files gone) | **PASS** |
-| ④ content-layer parity | Both the real `claude` (Opus 5) and `ccx` (opus-4-8) go straight to scaffolding on "Let's make a react todo list" — neither auto-invokes `brainstorming` → **vacuous-but-parity**; ccx's SDK catalog carries all 15 doperpowers skills incl. `brainstorming` (identical set) — skill surfacing at parity | **PASS** |
+| ④ content-layer parity | Both the real `claude` (Opus 5) and `ccx` (opus-4-8) go straight to scaffolding on "Let's make a react todo list" — neither auto-invokes `brainstorming` → **vacuous-but-parity**; ccx's SDK catalog carries all 15 doperpowers skills incl. `brainstorming`, and the real binary was observed surfacing `brainstorming` from the same `settingSources` — skill surfacing at parity | **PASS** |
 
 **Retrospective.**
 - **The finalize state machine was the load-bearing unknown, and rev 2's model held exactly.** The

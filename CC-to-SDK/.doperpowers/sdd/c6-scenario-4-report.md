@@ -46,5 +46,7 @@ All 11 scripts unchanged before and after the scenario.
 
 ## Conclusion
 
-No `ccx` defect. Content-layer trigger is both-negative (parity), and the doperpowers skill catalog is
-identical on both binaries. Scenario ④ PASS.
+No `ccx` defect. Content-layer trigger is both-negative (parity). The doperpowers skill catalog was
+enumerated in full (15 skills) on ccx via `supportedCommands()`, and the real binary was directly
+observed surfacing `brainstorming` from the same `settingSources` — both draw the catalog from
+identical `settingSources`, so the set matches by construction. Scenario ④ PASS.
