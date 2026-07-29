@@ -7,6 +7,12 @@
 //                                   sessionStore mirror pairs with for durable cross-host storage)
 // - per-tenant cwd                — the tenant's working root; sandbox paths resolve against it
 // - sandbox + credentials deny    — probe 48: env var unset + file read kernel-blocked in-sandbox
+// - sandbox fail-closed           — failIfUnavailable pinned true: on a host whose sandbox backend is
+//                                   missing (Linux without bubblewrap/socat) the session REFUSES to
+//                                   start rather than running the tenant unsandboxed with a warning.
+//                                   The SDK already applies that default to a programmatic
+//                                   `enabled: true`, but an explicit `false` in `base` would survive
+//                                   it — so the preset pins the value instead of inheriting it.
 // - baseUrl credential proxy      — tenant traffic egresses via your proxy (ANTHROPIC_BASE_URL)
 // - OTel tenant attribution       — tenant.id stamped into resourceAttributes when telemetry is on
 //
@@ -49,6 +55,7 @@ export function tenantHarnessConfig(tenant: TenantConfig, base: HarnessConfig = 
     sandbox: {
       ...baseSandbox,
       enabled: true,                                           // isolation preset: sandbox is not optional
+      failIfUnavailable: true,                                 // …and neither is it optional that it ENGAGED
       ...(tenant.network ? { network: tenant.network } : {}),
       ...(Object.keys(credentials).length ? { credentials } : {}),
     },

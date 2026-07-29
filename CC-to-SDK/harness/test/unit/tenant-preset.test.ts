@@ -53,6 +53,14 @@ describe("tenantHarnessConfig (W3.4)", () => {
     expect((cfg.sandbox as any).enabled).toBe(true);
   });
 
+  it("a base sandbox cannot weaken the fail-closed guard to run unsandboxed", () => {
+    // The SDK defaults failIfUnavailable to true for a programmatic `enabled: true` sandbox, but an
+    // explicit false survives that default — so on a host without the sandbox backend (Linux missing
+    // bubblewrap) the tenant would run UNSANDBOXED with only a warning. The preset must pin it.
+    const cfg = tenantHarnessConfig(T, { sandbox: { failIfUnavailable: false } });
+    expect((cfg.sandbox as any).failIfUnavailable).toBe(true);
+  });
+
   it("configDir override and network settings pass through", () => {
     const cfg = tenantHarnessConfig({ ...T, configDir: "/var/cc/acme", network: { allowedDomains: ["api.acme.com"] } });
     expect(cfg.env?.CLAUDE_CONFIG_DIR).toBe("/var/cc/acme");
