@@ -18,8 +18,8 @@
 - Settings-changed shape (spec Wave 1, verbatim): `thread/settings/changed {threadId, model, permissionMode, thinkingTokens, source: "client" | "engine"}` — one shape, all three knobs.
 - No `Co-Authored-By` or attribution lines in commit messages.
 - Commit prefix: `feat(as2a):` / `fix(as2a):` / `test(as2a):`.
-- Keyed live tests (`test/live/`) are **controller-run** — implementers run unit tests only. Probe 6 (Task 1) is likewise controller-run.
-- Unit test commands: `pnpm test:unit -- test/unit/appserver/<file>.test.ts` (single file) / `pnpm test:unit` (all unit) / `pnpm typecheck`. From `CC-to-SDK/harness/`.
+- Keyed live tests (`test/live/`) are **controller-run** — implementers run unit tests only. Probe 6 (Task 1, file `probes/probes/70-usermessage-uuid.ts`) is likewise controller-run.
+- Unit test commands: `npm run test:unit -- test/unit/appserver/<file>.test.ts` (single file) / `npm run test:unit` (all unit) / `npm run typecheck`. From `CC-to-SDK/harness/`.
 
 ## File Structure (whole plan)
 
@@ -49,7 +49,7 @@ harness/src/appserver/
 The Wave-0 dependency: Task 6's userMessage item id branches on this verdict.
 
 **Files:**
-- Create: `probes/probe-69-usermessage-uuid.mts`
+- Create: `CC-to-SDK/probes/probes/70-usermessage-uuid.ts` (probe workspace has its own `package.json` + SDK dep; run from `CC-to-SDK/probes`)
 
 **Question:** does a caller-supplied `uuid` on the `SDKUserMessage` pushed into `query()`'s prompt stream survive into the persisted transcript row for that prompt?
 
@@ -58,9 +58,9 @@ The Wave-0 dependency: Task 6's userMessage item id branches on this verdict.
 - [ ] **Step 1: Write the probe**
 
 ```typescript
-// probes/probe-69-usermessage-uuid.mts — does a caller-supplied SDKUserMessage.uuid survive into the
+// probes/70-usermessage-uuid.ts — does a caller-supplied SDKUserMessage.uuid survive into the
 // persisted transcript? (M2 spec probe 6; decides the gap-6 userMessage item id.)
-// Run (controller, keyed): npx tsx probes/probe-69-usermessage-uuid.mts
+// Run (controller, keyed): npx tsx probes/70-usermessage-uuid.ts
 import { randomUUID } from "node:crypto";
 import { query, getSessionMessages } from "@anthropic-ai/claude-agent-sdk";
 
@@ -95,7 +95,7 @@ console.log(JSON.stringify({
 
 - [ ] **Step 2: Run it (controller, keyed)**
 
-Run: `cd CC-to-SDK/harness && set -a && source ../.env && set +a && npx tsx probes/probe-69-usermessage-uuid.mts`
+Run: `cd CC-to-SDK/probes && set -a && source ../.env && set +a && npx tsx probes/70-usermessage-uuid.ts`
 Expected: JSON with a one-word `verdict` — either `ALIVE` or `DEAD`. Either answer is a success; the deliverable is the knowledge.
 
 - [ ] **Step 3: Record the verdict**
@@ -105,8 +105,8 @@ Append to the spec's `## Surprises & Discoveries` (`docs/superpowers/specs/2026-
 - [ ] **Step 4: Commit**
 
 ```bash
-git add probes/probe-69-usermessage-uuid.mts ../docs/superpowers/specs/2026-07-30-agent-appserver-m2-design.md
-git commit -m "probe(as2a): probe 69 — SDKUserMessage.uuid passthrough verdict for the live userMessage item"
+git add CC-to-SDK/probes/probes/70-usermessage-uuid.ts CC-to-SDK/docs/superpowers/specs/2026-07-30-agent-appserver-m2-design.md
+git commit -m "probe(as2a): probe 70 — SDKUserMessage.uuid passthrough verdict for the live userMessage item"
 ```
 
 ---
@@ -147,7 +147,7 @@ describe("appserver schema registry", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `pnpm test:unit -- test/unit/appserver/schema.test.ts` — FAIL (module not found).
+- [ ] **Step 2: Run to verify it fails** — `npm run test:unit -- test/unit/appserver/schema.test.ts` — FAIL (module not found).
 
 - [ ] **Step 3: Create the schema modules**
 
@@ -252,7 +252,7 @@ import { decisionRespondParams } from "./schema/decisions.js";
 In `turns.ts`: delete inline `turnStartParams`/`turnInterruptParams` (lines 14-15), `import { turnStartParams, turnInterruptParams } from "./schema/turns.js";`.
 In `subscribe.ts`: delete inline `threadIdParams`/`threadReadParams` (lines 13-17), `import { threadIdParams } from "./schema/core.js"; import { threadReadParams } from "./schema/threads.js";`.
 
-- [ ] **Step 5: Run tests** — `pnpm test:unit -- test/unit/appserver/schema.test.ts` PASS, then `pnpm test:unit && pnpm typecheck` — all green (pure migration; any failure means the move changed behavior).
+- [ ] **Step 5: Run tests** — `npm run test:unit -- test/unit/appserver/schema.test.ts` PASS, then `npm run test:unit && npm run typecheck` — all green (pure migration; any failure means the move changed behavior).
 
 - [ ] **Step 6: Commit**
 
@@ -319,7 +319,7 @@ describe("M2 error codes", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — `pnpm test:unit -- test/unit/appserver/server.test.ts` — the three new cases FAIL (`-32001` observed; `-32603` observed; `disposeCalls === 2`).
+- [ ] **Step 2: Run to verify failure** — `npm run test:unit -- test/unit/appserver/server.test.ts` — the three new cases FAIL (`-32001` observed; `-32603` observed; `disposeCalls === 2`).
 
 - [ ] **Step 3: Implement**
 
@@ -382,7 +382,7 @@ And immediately before `await handler(...)`:
   }
 ```
 
-- [ ] **Step 4: Run tests** — `pnpm test:unit -- test/unit/appserver/server.test.ts` PASS; `pnpm test:unit` green.
+- [ ] **Step 4: Run tests** — `npm run test:unit -- test/unit/appserver/server.test.ts` PASS; `npm run test:unit` green.
 
 - [ ] **Step 5: Sabotage-verify the chain guard** — temporarily revert `shutdown()` to the old body; the `disposeCalls` test must FAIL; restore. (State the observed failure in the task report.)
 
@@ -417,7 +417,7 @@ it("caps ws payloads at the protocol's own inbound bound (gap 8)", async () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — `pnpm test:unit -- test/unit/appserver/wsTransport.test.ts` — FAIL (default 100 MiB accepts the frame; the connection stays open and the test times out on `closed` — use vitest timeout 5000 on this test).
+- [ ] **Step 2: Run to verify failure** — `npm run test:unit -- test/unit/appserver/wsTransport.test.ts` — FAIL (default 100 MiB accepts the frame; the connection stays open and the test times out on `closed` — use vitest timeout 5000 on this test).
 
 - [ ] **Step 3: Implement** — in `listenWs`, the `WebSocketServer` options gain:
 ```typescript
@@ -435,7 +435,7 @@ export function removeRunFile(path: string): void { rmSync(path, { force: true }
 ```
 Unit test (fs only, tmp dir): write a file, `removeRunFile(path)`, `existsSync` false; and `removeRunFile` on a missing path does not throw. Then call it from the stop closure.
 
-- [ ] **Step 5: Run tests** — targeted files PASS, `pnpm test:unit` green, `pnpm typecheck` green.
+- [ ] **Step 5: Run tests** — targeted files PASS, `npm run test:unit` green, `npm run typecheck` green.
 
 - [ ] **Step 6: Commit**
 
@@ -567,7 +567,7 @@ git commit -m "feat(as2a): watchThreads server-scoped fan-out + optOutNotificati
 - `session.ts`: `submit(prompt, onMessage, opts?: { uuid?: string })` threading `opts.uuid` into `userTurn` → the pushed `SDKUserMessage.uuid`. `enqueueTurn` gains the same pass-through param. Named seam, doc-commented as appserver-only.
 - `turns.ts`, in the chain callback after `record.turnStartedBroadcast = true;`:
 ```typescript
-    const userUuid = randomUUID(); // live id = persisted id (probe 69 ALIVE): the server mints the
+    const userUuid = randomUUID(); // live id = persisted id (probe 70 ALIVE): the server mints the
     // transcript uuid itself, so the D10 stitch (dedup by id across read + replay) holds for prompts too
     emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(parsed.data.input, userUuid) }]);
 ```
@@ -576,7 +576,7 @@ and the `submit` call passes `{ uuid: userUuid }`.
 **Branch DEAD** (CLI re-mints):
 - `turns.ts`, same location — emitted to live subscribers only, **never buffered** (spec Wave 0: excluded from the replay buffer, the one stitch-exempt kind):
 ```typescript
-    { // gap 6 degraded branch (probe 69 DEAD): live-only, deterministic id, NOT pushed into
+    { // gap 6 degraded branch (probe 70 DEAD): live-only, deterministic id, NOT pushed into
       // record.buffer — a mid-turn joiner reads the prompt from thread/read after persistence instead,
       // and the stitch dedup explicitly does not apply to userMessage (spec Wave 0).
       const ev = { kind: "completed" as const, item: userItem(parsed.data.input, `user_${turnId}`) };
@@ -598,9 +598,9 @@ it("the live userMessage is not replayed to a mid-turn joiner", async () => {
 });
 ```
 
-- [ ] **Step 2:** Run — FAIL. **Step 3:** implement the branch Task 1 recorded. **Step 4:** run — PASS; full unit suite green. **Step 5 (ALIVE branch only):** `pnpm typecheck` confirms the widened `submit` stays optional-compatible for every existing caller.
+- [ ] **Step 2:** Run — FAIL. **Step 3:** implement the branch Task 1 recorded. **Step 4:** run — PASS; full unit suite green. **Step 5 (ALIVE branch only):** `npm run typecheck` confirms the widened `submit` stays optional-compatible for every existing caller.
 
-- [ ] **Step 6: Commit** — `git commit -m "feat(as2a): live userMessage item on turn/start (gap 6, probe-69 branch)"` (with the touched files).
+- [ ] **Step 6: Commit** — `git commit -m "feat(as2a): live userMessage item on turn/start (gap 6, probe-70 branch)"` (with the touched files).
 
 ---
 
@@ -869,13 +869,13 @@ No test cycle (spec). Manual check: `node -e "require('node:fs').accessSync('too
 
 - [ ] **Step 1: Full local gates**
 
-Run: `pnpm typecheck && pnpm test:unit` — green. Then `node ../scripts/drift-check.mjs --json` (from `harness/`; the appserver pass must list zero missing rows).
+Run: `npm run typecheck && npm run test:unit` — green. Then `node ../scripts/drift-check.mjs --json` (from `harness/`; the appserver pass must list zero missing rows).
 
 - [ ] **Step 2: Write the live test** — spec acceptance 2's first half (through the reads), plus acceptance 5, as ONE keyed vitest file following `test/live/appserver-m1.test.ts`'s client-helper pattern (`settingSources: []`, `cwd` in a tmp dir, model `claude-sonnet-4-6`):
 
 initialize A `{watchThreads:true}` → initialize B → A `thread/start` → A observes `thread/started` → B `thread/subscribe` → A `thread/model/set {model:"claude-sonnet-4-6"}` → **B** observes `thread/settings/changed {model, source:"client"}` (acceptance 5) → A `thread/thinking/set {level:"low"}` → A `thread/capabilities/read` returns non-empty `models` + `commands` → A `turn/start` (file-write prompt, M1's) → A observes `decision/requested` and `thread/status/changed` with `status.waitingOn === "decision"` → respond allow_once → `turn/completed` → `thread/usage/read` + `thread/contextUsage/read` return objects → `thread/compact/start` → `turn/completed` + `thread/compacted` observed → `thread/fork` yields a distinct thread whose `thread/read` shares ≥1 item id with the parent's `thread/read` → `thread/close` both.
 
-- [ ] **Step 3 (controller): run the live test** — `set -a && source ../.env && set +a && pnpm test:live -- test/live/appserver-m2.test.ts` — PASS.
+- [ ] **Step 3 (controller): run the live test** — `set -a && source ../.env && set +a && npm run test:live -- test/live/appserver-m2.test.ts` — PASS.
 
 - [ ] **Step 4: Scorecard** — flip this plan's rows in `docs/parity/appserver.md` from `planned(M2)` to `shipped(M2)` (settings 4, introspection 5, session wrappers 6, compact, reinitialize, and the bridge/host duplicate seams they cover), each pointing at its handler file. Re-run `node ../scripts/drift-check.mjs` — exit 0.
 

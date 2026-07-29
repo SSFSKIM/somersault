@@ -18,7 +18,7 @@
 - Engine-faithful fakes + sabotage-verify every guard test (M2a Global Constraints carry over verbatim).
 - No `Co-Authored-By` lines. Commit prefix `feat(as2b):` / `probe(as2b):` / `test(as2b):`.
 - Keyed live tests and all five probes are **controller-run**.
-- Test commands: `pnpm test:unit -- test/unit/appserver/<file>.test.ts` / `pnpm test:unit` / `pnpm typecheck`, from `CC-to-SDK/harness/`.
+- Test commands: `npm run test:unit -- test/unit/appserver/<file>.test.ts` / `npm run test:unit` / `npm run typecheck`, from `CC-to-SDK/harness/`.
 
 ## File Structure (whole plan)
 
@@ -31,7 +31,7 @@ harness/src/appserver/
   schema/mcp.ts    # mcp params · schema/rewind.ts · schema/tasks.ts (registered in schema/index.ts)
 harness/scripts/emit-appserver-schema.mjs   # generator (also invoked by `ccx serve --emit-schema`)
 harness/schema/json/{stable,experimental}/  # vendored artifacts (generated, committed)
-harness/probes/probe-70..74-*.mts           # the five spike files
+CC-to-SDK/probes/probes/71..74-*.ts           # the five spike files
 harness/tools/appserver-console.html        # panels 4-5 added
 ```
 
@@ -216,18 +216,18 @@ describe("turn queue (spec Wave 4)", () => {
 
 ---
 
-### Task 5: Probes 1–5 (spikes, controller-run)
+### Task 5: Probes 1–5 = files 71–74 (spikes, controller-run)
 
 **Files:**
-- Create: `probes/probe-70-streaminput-steer.mts`, `probes/probe-71-readfile.mts`, `probes/probe-72-reload-plugins-skills.mts` (probes 3+4 share a file — same shape), `probes/probe-73-register-repo-root.mts`
+- Create: `probes/probes/71-streaminput-steer.ts`, `probes/probes/72-readfile.ts`, `probes/probes/73-reload-plugins-skills.ts` (probes 3+4 share a file — same shape), `probes/probes/74-register-repo-root.ts`
 - Modify (verdict-dependent): spec `## Surprises & Discoveries`
 
-Each probe: build → controller runs keyed → record verdict in the spec → apply the spec's promote-or-discard row. Probe shapes (all follow probe-69's skeleton — `query()` with `settingSources: []`, haiku, `bypassPermissions`):
+Each probe: build → controller runs keyed → record verdict in the spec → apply the spec's promote-or-discard row. Probe shapes (all follow the 69-transcript-at-park skeleton — `query()` with `settingSources: []`, haiku, `bypassPermissions`):
 
-1. **probe-70 (steer):** start a turn with a long multi-step prompt ("count to 30 slowly, one number per line"); 2s in, call `q.streamInput({ type: "user", message: { role: "user", content: "STOP COUNTING and instead reply exactly: steered" }, ... })` if the method exists (log `typeof q.streamInput`); observe whether the assistant's subsequent output reflects the injection. Verdict ALIVE requires: method exists AND the injected text influenced the same turn.
-2. **probe-71 (readFile):** write a tmp file; call `q.readFile(path)` (log existence + result/throw).
-3. **probe-72 (reloads):** call `q.reloadPlugins()` then `q.reloadSkills()` (log existence + result/throw each).
-4. **probe-73 (register_repo_root):** locate the control-request surface on Query (`sdk.d.ts` names it — log `typeof q.registerRepoRoot` and any request-shaped escape hatch); attempt with a second tmp git dir; verdict by result + any `DirectoryAdded` hook frame observed.
+1. **probe-71 (steer):** start a turn with a long multi-step prompt ("count to 30 slowly, one number per line"); 2s in, call `q.streamInput({ type: "user", message: { role: "user", content: "STOP COUNTING and instead reply exactly: steered" }, ... })` if the method exists (log `typeof q.streamInput`); observe whether the assistant's subsequent output reflects the injection. Verdict ALIVE requires: method exists AND the injected text influenced the same turn.
+2. **probe-72 (readFile):** write a tmp file; call `q.readFile(path)` (log existence + result/throw).
+3. **probe-73 (reloads):** call `q.reloadPlugins()` then `q.reloadSkills()` (log existence + result/throw each).
+4. **probe-74 (register_repo_root):** locate the control-request surface on Query (`sdk.d.ts` names it — log `typeof q.registerRepoRoot` and any request-shaped escape hatch); attempt with a second tmp git dir; verdict by result + any `DirectoryAdded` hook frame observed.
 
 **Promotion tasks (write only the ALIVE ones, per recorded verdicts):**
 - Steer ALIVE → lib seam `Session.steer(text: string): void` (push a user message into `this.input` WITHOUT a waiter — doc-comment why: `enqueueTurn` pairs every push with a waiter and a steer must not desync the FIFO), `EngineSession.steer?`, method `turn/steer {threadId, input}` (X) — busy-REQUIRED (`-33001` inverse: steering an idle thread is `-32602 "no turn in flight"`), schema + registry + unit tests (fake asserts no waiter added).
@@ -236,7 +236,7 @@ Each probe: build → controller runs keyed → record verdict in the spec → a
 - Any DEAD → the method is NOT added; `methodSchemas` untouched; scorecard row N/A-dead citing the probe file (Task 9 flips it).
 - readFile — **no method either way** (spec: M3 `fs/read` backing knowledge only).
 
-- [ ] **Step 1:** Write the four probe files. **Step 2 (controller):** run each keyed, capture JSON verdicts. **Step 3:** record all verdicts in the spec's Surprises section. **Step 4:** implement the ALIVE promotions (unit-tested, no live). **Step 5:** `pnpm test:unit` green. **Step 6: Commit** — `git commit -m "probe(as2b): probes 70-73 verdicts + alive-surface promotions (steer/reloads/directory-add per verdict)"`.
+- [ ] **Step 1:** Write the four probe files. **Step 2 (controller):** run each keyed, capture JSON verdicts. **Step 3:** record all verdicts in the spec's Surprises section. **Step 4:** implement the ALIVE promotions (unit-tested, no live). **Step 5:** `npm run test:unit` green. **Step 6: Commit** — `git commit -m "probe(as2b): probes 71-74 verdicts + alive-surface promotions (steer/reloads/directory-add per verdict)"`.
 
 ---
 
@@ -278,7 +278,7 @@ it("every methodSchemas entry lands in exactly one artifact and every artifact i
 - Test: `test/unit/appserver/exports.test.ts`
 
 - [ ] **Step 1: Failing test** — dynamic-import the subpath through the package name (vitest alias or relative dist check; simplest: import `src/appserver/index.js` and assert the exact export set `{ AppServer, listenWs, methodSchemas }` plus type-only re-exports compile via typecheck).
-- [ ] **Step 2:** FAIL. **Step 3:** create `src/appserver/index.ts` exporting `AppServer`, `listenWs`, `methodSchemas`, and types (`ThreadRecord`, `EngineSession`, `WsListenOpts`); add `"./appserver": { "types": "./dist/appserver/index.d.ts", "import": "./dist/appserver/index.js" }` to `package.json` exports. Run `pnpm build && pnpm verify:pack` — green.
+- [ ] **Step 2:** FAIL. **Step 3:** create `src/appserver/index.ts` exporting `AppServer`, `listenWs`, `methodSchemas`, and types (`ThreadRecord`, `EngineSession`, `WsListenOpts`); add `"./appserver": { "types": "./dist/appserver/index.d.ts", "import": "./dist/appserver/index.js" }` to `package.json` exports. Run `npm run build && npm run verify:pack` — green.
 - [ ] **Step 4:** PASS. **Step 5: Commit** — `git commit -m "feat(as2b): cc-harness/appserver subpath export (gap 11 — shapes settled)"`.
 
 ---
@@ -301,7 +301,7 @@ Panel 4 (rewind/MCP/tasks): anchors list with per-anchor dryRun + rewind buttons
 
 The spec's `## Acceptance (behavior-phrased)` section, executed as written:
 
-- [ ] **Step 1 (acceptance 1):** Run `pnpm -C harness test` — green — and `node scripts/drift-check.mjs --json` (repo `CC-to-SDK/`) — "exits 0 with the appserver pass listing zero missing rows and zero schema-less methods."
+- [ ] **Step 1 (acceptance 1):** Run `npm test (from CC-to-SDK/harness)` — green — and `node scripts/drift-check.mjs --json` (repo `CC-to-SDK/`) — "exits 0 with the appserver pass listing zero missing rows and zero schema-less methods."
 - [ ] **Step 2 (acceptance 2, controller):** extend the live script with the waves 3–4 legs so the one keyed run performs the spec's full sequence: "`initialize{watchThreads:true}` → `thread/start` → observe `thread/started` → `thread/model/set` → observe `thread/settings/changed` with `source:"client"` → `thread/thinking/set` → `thread/capabilities/read` returns non-empty models + commands → turn with a file write → decision park shows `status.waitingOn === "decision"` → respond → `thread/usage/read` + `thread/contextUsage/read` return numbers → `thread/rewind/dryRun` against the turn's anchor succeeds → `mcpServer/status/list` returns → `turn/start{queue:true}` while busy returns `{queued: true, turn}` whose id later appears in `turn/started` when it drains → `thread/compact/start` completes and `thread/compacted` carries an outcome → `thread/fork` yields a distinct thread whose `thread/read` shares item ids with the parent → `thread/close`. Each observation is an assertion, not a log line." Run keyed — PASS.
 - [ ] **Step 3 (acceptance 5, controller):** already asserted inside the live script (second client observes the first's model/set as settings/changed) — confirm the assertion exists and passed.
 - [ ] **Step 4 (acceptance 3):** scorecard sweep — "every non-fleet row reads shipped or N/A-with-evidence; the six probe rows cite their probe file by name." Flip the waves 3–4 rows (rewind trio, MCP 5, tasks 3, queue, steer/reloads/directory-add per verdict, probe N/A rows). `node scripts/drift-check.mjs` exit 0.
