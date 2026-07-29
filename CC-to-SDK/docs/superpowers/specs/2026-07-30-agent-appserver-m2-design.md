@@ -155,7 +155,11 @@ trust level as the `ccx` CLI. Notifications: `thread/name/updated`, `thread/dele
 **Rewind:** `thread/rewind/anchors` (user-prompt UUIDs from the transcript — the host op's logic),
 `thread/rewind/dryRun`, `thread/rewind` (`Session.rewind(uuid, {dryRun})`; busy-gated `-33001`;
 in-place rewind is destructive — dryRun is the GUI's preview path). Result carries `skippedLinks`
-(0.3.220).
+(0.3.220). A conversation-scope rewind **swaps the record's engine** (host.ts order: validate,
+file-restore on the live engine, then dispose + re-open at `prevUuid`), so every subscriber and
+watcher is told via a new **`thread/rewound {threadId, sessionId}`** notification (the host's
+`rewound` event is the precedent) — a client must rebuild its transcript view, exactly as the
+TUI does.
 
 **MCP:** `mcpServer/status/list`, `mcpServer/reconnect` (process-based only — SDK-type servers
 throw; surface as `-32602`-class method error with the SDK's message), `mcpServer/toggle`
@@ -298,3 +302,8 @@ Pending — written at finish.
   rule; `engineGone` via an `isEnded()` interface widening; `optOutNotificationMethods` +
   `warning` triggers + `overloaded` N/A-deferred; status-shape and Turn-status deviations flagged
   as parent revisions; steer's lib seam named; read cursor pinned to absolute row offset.
+- 2026-07-30 — planning (M2a/M2b plans written): `thread/rewound {threadId, sessionId}` notification
+  added to Wave 3 (planning surfaced that a conversation-scope rewind swaps the engine, and
+  subscribers must be told to rebuild — the host's `rewound` event is the precedent); flagged as a
+  parent-§8 addition. Plans: `docs/superpowers/plans/2026-07-30-agent-appserver-m2a-spine-controls.md`
+  (Tasks 1–15, waves 0–2), `…-m2b-rewind-queue.md` (Tasks 1–9, waves 3–4).
