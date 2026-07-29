@@ -9,18 +9,20 @@ import type { ThreadRecord } from "./registry.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
 import type { AppServer } from "./server.js";
 
-/** Absorbed verbatim from the deleted server.ts `latchSessionId`. `Session.sessionId` is a GETTER that
- *  stays undefined until the first turn's system/init frame lands, and the read loop invokes frame
- *  callbacks BEFORE it records the id — so a getter-only latch needs a SECOND frame to fire, and a first
- *  turn whose iterator ends (or throws) right after system/init would never deliver one. Reading the id
- *  off the INIT FRAME ITSELF (not only the getter) is what fixes that; the getter stays the primary read
- *  for an engine that latches its id off some other frame. The outer `record.sessionId` check makes every
- *  frame after the first latch a no-op, mirroring the deleted function's one-shot `off()` self-unsubscribe
- *  without needing a second subscription to manage. */
+/** Absorbed verbatim from the deleted server.ts `latchSessionId`, INCLUDING ITS ORDER (2026-07-30 review
+ *  finding: an earlier draft of this route gated the getter read itself behind `system`/`init`, which
+ *  silently defeats the fallback described below for any engine whose id shows up on some other frame).
+ *  `Session.sessionId` is a GETTER that stays undefined until the first turn's system/init frame lands,
+ *  and the read loop invokes frame callbacks BEFORE it records the id — so a getter-only latch needs a
+ *  SECOND frame to fire, and a first turn whose iterator ends (or throws) right after system/init would
+ *  never deliver one. Reading the id off the INIT FRAME ITSELF is the fallback that fixes THAT case — but
+ *  it is only a fallback: the getter is read UNCONDITIONALLY on every frame (not only init frames), and
+ *  the init-frame value merely fills in when the getter has nothing yet, so whichever resolves first wins.
+ *  The outer `record.sessionId` check makes every frame after the first latch a no-op, mirroring the
+ *  deleted function's one-shot `off()` self-unsubscribe without needing a second subscription to manage. */
 function routeInit(record: ThreadRecord, frame: { type?: string; subtype?: string; session_id?: unknown }): void {
   if (record.sessionId) return;
-  if (frame?.type !== "system" || frame.subtype !== "init") return;
-  const fromInit = typeof frame.session_id === "string" ? frame.session_id : undefined;
+  const fromInit = frame?.type === "system" && frame.subtype === "init" && typeof frame.session_id === "string" ? frame.session_id : undefined;
   const sid = record.session.sessionId ?? fromInit;
   if (sid) record.sessionId = sid;
 }

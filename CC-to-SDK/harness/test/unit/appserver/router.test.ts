@@ -44,6 +44,22 @@ describe("frame router skeleton (spec D-M2-6, D-M2-8)", () => {
     expect(record.sessionId).toBe("sess-abc");
   });
 
+  it("latches sessionId off `session.sessionId` on a NON-init frame, when the getter only populates after the init frame (absorbed latchSessionId's unconditional per-frame getter read)", () => {
+    // Engine-faithful: the init frame itself carries no session_id (some engines latch their id off some
+    // other frame entirely), and the getter is still undefined AT the init frame — it only resolves later,
+    // between turns. A router that only reads the getter when frame.subtype === "init" would never see it.
+    const { session, push } = fakeSession();
+    const record = mkRecord(session);
+    installRouter(srv, record);
+
+    push({ type: "system", subtype: "init" }); // no session_id, and the getter has nothing yet either
+    expect(record.sessionId).toBeUndefined();
+
+    (session as { sessionId?: string }).sessionId = "sess-late-getter"; // the getter populates between turns
+    push({ type: "system", subtype: "status", permissionMode: "plan" }); // a NON-init frame
+    expect(record.sessionId).toBe("sess-late-getter");
+  });
+
   it("a status frame while planUpgradePending calls the setter exactly once", async () => {
     const modes: string[] = [];
     const { session, push } = fakeSession({ setPermissionMode: async (m: string) => { modes.push(m); } });
