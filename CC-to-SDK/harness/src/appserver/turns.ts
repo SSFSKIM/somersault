@@ -199,14 +199,22 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-  beginTurn(srv, ctx, id, record, async (turnId, mapper) => {
+  // NOT `async`: a plain function so `record.session.submit(...)` throwing SYNCHRONOUSLY still propagates
+  // synchronously out of this runner call — exactly as it did in the pre-extraction code, where submit()
+  // was called directly inside beginTurn's (then turnStart's) own try. Wrapping this in `async`/`await`
+  // would have the JS engine itself absorb that synchronous throw into a REJECTED promise instead, routing
+  // it through onFailure (which consults interruptRequested) rather than the try/catch's reportFailed
+  // (which always reports "failed") — a real divergence for a turn/interrupt landing the same tick as a
+  // synchronously-throwing submit(). `.then(() => {})` only adapts submit()'s `Promise<{result}>` down to
+  // the runner's `Promise<void>` contract; it never intercepts a synchronous throw.
+  beginTurn(srv, ctx, id, record, (turnId, mapper) => {
     // gap 6, probe-70 ALIVE branch: the server mints the transcript uuid itself and reuses it as the
     // live userMessage item's id, so the id equals what the SDK will persist — the item can safely join
     // the replay buffer (emitItems below) under the normal id-dedup stitch instead of being live-only.
     // Stays inside the runner (not beginTurn): compact has no user prompt to echo.
     const userUuid = randomUUID();
     emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(parsed.data.input, userUuid) }]);
-    await record.session.submit(parsed.data.input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid });
+    return record.session.submit(parsed.data.input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid }).then(() => {});
   });
 };
 

@@ -29,9 +29,10 @@ export const threadCompactStart: Handler = (srv: AppServer, ctx, id, params) => 
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-  beginTurn(srv, ctx, id, record, async () => {
-    await record.session.compact!();
-  });
+  // NOT `async` — same reasoning as turns.ts's turnStart runner: a plain function lets compact()
+  // throwing SYNCHRONOUSLY propagate synchronously into beginTurn's try/catch (reportFailed), rather than
+  // being absorbed into a rejected promise that would route through onFailure instead.
+  beginTurn(srv, ctx, id, record, () => record.session.compact!().then(() => {}));
 };
 
 export const threadReinitialize: Handler = (srv: AppServer, ctx, id, params) => {
