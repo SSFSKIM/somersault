@@ -411,17 +411,26 @@ it("caps ws payloads at the protocol's own inbound bound (gap 8)", async () => {
   await new Promise((r) => ws.once("open", r));
   const closed = new Promise<number>((r) => ws.once("close", (code) => r(code)));
   ws.send("x".repeat(300 * 1024)); // > 256 KiB + slack — ws kills the connection below the app layer
-  const code = await closed;
-  expect(code).toBe(1009); // ws's "message too big" close code
+  // Race the close against a short bounded timer and ASSERT the outcome: a guard test whose only
+  // failure mode is vitest's 5s timeout reads as CI flake, not as a regression. Clear the timer on
+  // both branches so no handle dangles and the output stays pristine.
+  let timer: NodeJS.Timeout;
+  const outcome = await Promise.race([
+    closed.then(() => "closed" as const),
+    new Promise<"timeout">((r) => { timer = setTimeout(() => r("timeout"), 300); }),
+  ]);
+  clearTimeout(timer!);
+  expect(outcome).toBe("closed");
+  expect(await closed).toBe(1009); // ws's "message too big" close code
   await close();
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — `npm run test:unit -- test/unit/appserver/wsTransport.test.ts` — FAIL (default 100 MiB accepts the frame; the connection stays open and the test times out on `closed` — use vitest timeout 5000 on this test).
+- [ ] **Step 2: Run to verify failure** — `npm run test:unit -- test/unit/appserver/wsTransport.test.ts` — FAIL in well under a second with `expected 'timeout' to be 'closed'` (the default 100 MiB accepts the frame, so the connection stays open and the bounded timer wins).
 
-- [ ] **Step 3: Implement** — in `listenWs`, the `WebSocketServer` options gain:
+- [ ] **Step 3: Implement** — in `listenWs`, the `WebSocketServer` options gain (derived from the protocol constant, never a duplicated literal — export `MAX_IN` from `peer.ts` so the two layers cannot drift):
 ```typescript
-      maxPayload: 272 * 1024, // gap 8: the protocol's own inbound cap is 256 KiB (peer.ts MAX_IN) —
+      maxPayload: MAX_IN + 16 * 1024, // gap 8: the protocol's own inbound cap is 256 KiB (peer.ts MAX_IN) —
       // the library default (100 MiB) let a pre-initialize client buffer huge frames below the app
       // layer. 16 KiB of slack covers JSON framing overhead so a legal 256 KiB frame still passes
       // peer.ts's own check (which remains the byte-exact authority).
@@ -429,11 +438,16 @@ it("caps ws payloads at the protocol's own inbound bound (gap 8)", async () => {
 
 - [ ] **Step 4: Run-file cleanup (gap 9).** In `serveMain.ts`, locate where the run-file is written (`runServe`, after `listenWs` — the file records port + tokenFile path). Wrap the stop path: where `onStopSignals(stop)` is wired, the `stop` closure must `rmSync(runFile, { force: true })` after `close()` resolves (and before the process exits). Extract the pure piece for the test:
 ```typescript
-/** Remove the serve run-file. `force` — a missing file is not an error (a crashed previous serve, or
- *  an operator's manual cleanup, must not turn shutdown into a throw). Exported for the unit suite. */
-export function removeRunFile(path: string): void { rmSync(path, { force: true }); }
+/** Remove the serve run-file — but ONLY when this process can prove the file is its own. `runDir()`
+ *  has no pid/port component and there is no singleton lock, so two `ccx serve` processes share one
+ *  run-file path: an unconditional delete lets a stale server erase a LIVE server's discovery record.
+ *  A missing file is a silent no-op (a crashed previous serve, or an operator's manual cleanup, must
+ *  not turn shutdown into a throw); a file that does not parse, or carries no numeric `port`, is left
+ *  intact because ownership is unprovable. Never throws. Exported for the unit suite. */
+export function removeRunFile(path: string, ownPort: number): void
 ```
-Unit test (fs only, tmp dir): write a file, `removeRunFile(path)`, `existsSync` false; and `removeRunFile` on a missing path does not throw. Then call it from the stop closure.
+(A port is unique to one listening process, so it is a sound ownership token — do not add a pid field.)
+Unit tests (fs only, tmp dir): a matching-port file is deleted; a **different**-port file survives untouched; an unparseable file survives and does not throw; a missing path does not throw. Then call it from the stop closure with the port `listenWs` returned.
 
 - [ ] **Step 5: Run tests** — targeted files PASS, `npm run test:unit` green, `npm run typecheck` green.
 
