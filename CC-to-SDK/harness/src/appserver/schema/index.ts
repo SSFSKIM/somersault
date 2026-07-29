@@ -5,6 +5,7 @@ import { threadIdParams, initializeParams, serverStatusParams } from "./core.js"
 import { threadStartParams, threadResumeParams, threadReadParams, threadListParams } from "./threads.js";
 import { turnStartParams, turnInterruptParams } from "./turns.js";
 import { decisionRespondParams, decisionListParams } from "./decisions.js";
+import { modelSetParams, permissionModeSetParams, thinkingSetParams, settingsApplyParams } from "./settings.js";
 
 export interface MethodSchema { params: z.ZodType }
 export const methodSchemas: Record<string, MethodSchema> = {
@@ -21,4 +22,8 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "turn/interrupt": { params: turnInterruptParams },
   "decision/list": { params: decisionListParams },
   "decision/respond": { params: decisionRespondParams },
+  "thread/model/set": { params: modelSetParams },
+  "thread/permissionMode/set": { params: permissionModeSetParams },
+  "thread/thinking/set": { params: thinkingSetParams },
+  "thread/settings/apply": { params: settingsApplyParams },
 };

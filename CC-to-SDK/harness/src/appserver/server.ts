@@ -11,6 +11,7 @@ import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js"
 import type { PendingDecision } from "../permissions/pending.js";
 import { turnStart, turnInterrupt, requestInterrupt } from "./turns.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
+import { modelSet, permissionModeSet, thinkingSet, settingsApply } from "./settings.js";
 import { armPlanUpgrade } from "./planUpgrade.js";
 import { installRouter } from "./router.js";
 import { broadcastToWatchers } from "./fanout.js";
@@ -189,6 +190,10 @@ export class AppServer {
     "thread/subscribe": threadSubscribe,
     "thread/unsubscribe": threadUnsubscribe,
     "thread/read": threadRead,
+    "thread/model/set": modelSet,
+    "thread/permissionMode/set": permissionModeSet,
+    "thread/thinking/set": thinkingSet,
+    "thread/settings/apply": settingsApply,
   };
 
   private readonly token: string;

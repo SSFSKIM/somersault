@@ -26,6 +26,11 @@ export interface EngineSession {
   /** Optional (the real lib Session has it; a DI fake need not): the seam a plan_approve(acceptEdits:true)
    *  upgrades the session's permission mode through — see appserver/planUpgrade.ts. */
   setPermissionMode?(mode: string): Promise<void>;
+  /** Optional (the real lib Session has it — src/session/session.ts:130-161): Task 9's three remaining
+   *  settings setters. `setModel(undefined)` resets to the engine's default model. */
+  setModel?(model?: string): Promise<void>;
+  setMaxThinkingTokens?(maxTokens: number | null): Promise<void>;
+  applyFlagSettings?(settings: Record<string, unknown>): Promise<void>;
   /** Optional (the real lib Session has it): true once the read loop has ended — the engine is gone.
    *  The ONLY dead-engine signal handlers may use (spec Wave 0: no message-matching, ever). */
   isEnded?(): boolean;
