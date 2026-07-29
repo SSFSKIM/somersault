@@ -67,7 +67,7 @@ describe("PostgresSessionStore specifics", () => {
     expect(() => createPostgresSessionStore(db, { prefix: "p".repeat(40) })).not.toThrow();
   });
 
-  it("a sidecar failure after the insert is healed by the next fold (watermark recovery, transcript order)", async () => {
+  it("a sidecar failure after the insert is healed by the next fold (full re-fold recovery, transcript order)", async () => {
     const prefix = `t${n++}`;
     await ensurePostgresSessionStoreSchema(db, { prefix });
     let failSidecar = true;
@@ -84,6 +84,32 @@ describe("PostgresSessionStore specifics", () => {
     const sums = await b.listSessionSummaries!("p");
     expect(sums.length).toBe(1);
     expect(sums[0].data.firstPrompt).toBe("hello"); // b's fold recovered a's stranded row, in id order
+  });
+
+  it("a delete racing an append settles consistent: no ghost sidecar, rows-without-summary heals on the next fold", async () => {
+    const prefix = `t${n++}`;
+    await ensurePostgresSessionStoreSchema(db, { prefix });
+    const plain = createPostgresSessionStore(db, { prefix });
+    const key = { projectKey: "p", sessionId: "s" };
+    let race = true;
+    const racing = wrap(async (text, _params, run) => {
+      if (race && text.startsWith(`DELETE FROM ${prefix}_sessions`)) {
+        race = false; // between the two DELETE statements, "another process" appends
+        await plain.append(key, [{ type: "user", uuid: "u2", message: { role: "user", content: "resurrect?" } }]);
+      }
+      return run();
+    });
+    const deleter = createPostgresSessionStore(racing, { prefix });
+    await plain.append(key, [{ type: "user", uuid: "u1", message: { role: "user", content: "original" } }]);
+    await deleter.delete!(key);
+    // The racing append's row survived (it landed after the entries DELETE); its sidecar write was
+    // then removed by the delete — transcript rows without a summary, never a summary without rows.
+    expect((await plain.load(key))!.map((e) => e.uuid)).toEqual(["u2"]);
+    expect(await plain.listSessionSummaries!("p")).toEqual([]);
+    await plain.append(key, [{ type: "user", uuid: "u3" }]); // next fold heals the sidecar from the table
+    const sums = await plain.listSessionSummaries!("p");
+    expect(sums.length).toBe(1);
+    expect(sums[0].data.firstPrompt).toBe("resurrect?");
   });
 
   it("ensurePostgresSessionStoreSchema is idempotent", async () => {

@@ -18,26 +18,32 @@
 // - listSessions()/listSessionSummaries() read the sessions sidecar table; mtime is stamped at
 //   persist time with the adapter clock (NOT entry timestamps), Number()-wrapped because
 //   node-postgres returns int8 as a string (PGlite returns a number — both covered).
-// - Summaries fold via foldSessionSummary inside append() for MAIN transcripts only. The sidecar is
-//   a PURE FUNCTION OF THE PERSISTED TRANSCRIPT PREFIX: it keeps a `folded_id` watermark and each
-//   fold consumes the entry rows with id > watermark IN id ORDER (not the in-memory batch). That
-//   makes it (a) retry-recoverable — if the insert lands but the sidecar write fails, the SDK's
-//   retry finds the rows still above the watermark and folds them (a batch-fed fold would see only
-//   ON CONFLICT skips and lose set-once fields forever) — and (b) order-correct across processes:
-//   whichever process folds first consumes ALL pending rows in transcript order, and the loser's
-//   fold degrades to an mtime refresh. Guarded twice: the in-process per-session promise chain
-//   (Redis-adapter precedent) plus a cross-process CAS on a dedicated `seq` column (UPDATE ...
-//   WHERE seq = prior; 0 rows back = a concurrent writer won, re-read and retry, bounded).
-//   CAS-on-seq, not on mtime: two processes appending in the same millisecond would make an mtime
-//   CAS lose an update. BEGIN/COMMIT is unsound here — a pooled client may serve each query() from
-//   a different connection — and CAS is one of the serialization means the SDK docs explicitly
-//   sanction. Exhaustion throws: the SDK retries a rejected append and surfaces persistent failure
-//   as a mirror_error message, which is the designed recovery channel.
-// - delete() on the main key cascades to all subpaths + the sidecar row, sidecar FIRST: a delete
-//   racing a cross-process append then worst-cases as rows-without-summary (which the next append
-//   heals from the watermark), never a summary claiming rows that are gone. Full delete-vs-append
-//   serializability is the deployment's call (the SDK's design is one-writer-per-session), as is
-//   retention (TTLs, compliance windows).
+// - Summaries fold via foldSessionSummary inside append() for MAIN transcripts only. Each fold
+//   RECOMPUTES THE SUMMARY FROM THE FULL COMMITTED TRANSCRIPT in id order (fold(undefined, allRows))
+//   — never from the in-memory batch, never from an id watermark. Batch-fed folds lose stranded
+//   rows on retry (the retry's ON CONFLICT skips everything); a watermark can advance PAST a lower
+//   id that another writer reserved but hasn't committed (BIGSERIAL reserves before commit; ON
+//   CONFLICT burns ids, so gaps are permanent and unwaitable) and skip that row forever. Full
+//   re-fold has neither hole: an appender folds after its own insert commits, so its rows are
+//   always in its own read, and any row that a concurrent fold missed is covered by the next fold.
+//   Cost: one indexed SELECT of the session's main rows per append — correctness over throughput.
+//   Writes are guarded twice: the in-process per-session promise chain (Redis-adapter precedent)
+//   plus a cross-process CAS on a dedicated `seq` column (UPDATE ... WHERE seq = prior; 0 rows
+//   back = a concurrent writer won, re-read — the re-read now includes the winner's rows — and
+//   retry, bounded). CAS-on-seq, not on mtime: two processes appending in the same millisecond
+//   would make an mtime CAS lose an update. BEGIN/COMMIT is unsound here — a pooled client may
+//   serve each query() from a different connection — and CAS is one of the serialization means the
+//   SDK docs explicitly sanction. Exhaustion throws: the SDK retries a rejected append and
+//   surfaces persistent failure as a mirror_error message, the designed recovery channel. With
+//   concurrent multi-process writers (outside the SDK's one-subprocess-owns-a-session design)
+//   entry order is id (allocation) order — a consistent total order shared by load() and the fold.
+// - delete() on the main key cascades to all subpaths + the sidecar row, entries FIRST; the fold
+//   refuses to CREATE a sidecar when the transcript is empty and none existed, so a fold landing
+//   after the delete cannot resurrect a ghost session. A delete racing a concurrent append then
+//   settles in one of three consistent states: fully gone, fully present (the append won —
+//   append-after-delete), or transient rows-without-summary that the next fold heals. Full
+//   delete-vs-append serializability is the deployment's call (the SDK's design is
+//   one-writer-per-session), as is retention (TTLs, compliance windows).
 // Schema management ships both ways: postgresSessionStoreDDL(prefix) for migration tooling, and
 // the idempotent ensurePostgresSessionStoreSchema(client, opts) (CREATE ... IF NOT EXISTS).
 import { foldSessionSummary } from "@anthropic-ai/claude-agent-sdk";
@@ -85,7 +91,6 @@ function ddlStatements(prefix: string): string[] {
       session_id  TEXT NOT NULL,
       mtime       BIGINT NOT NULL,
       seq         BIGINT NOT NULL,
-      folded_id   BIGINT NOT NULL,
       summary     JSONB NOT NULL,
       PRIMARY KEY (project_key, session_id)
     )`,
@@ -120,29 +125,26 @@ export function createPostgresSessionStore(client: PgLike, opts: PostgresSession
 
   const foldSidecar = async (key: SessionKey, clock: number): Promise<void> => {
     for (let i = 0; i < CAS_ATTEMPTS; i++) {
-      const prev = await client.query(`SELECT seq, folded_id, mtime, summary FROM ${S} WHERE project_key = $1 AND session_id = $2`, [key.projectKey, key.sessionId]);
+      const prev = await client.query(`SELECT seq, mtime FROM ${S} WHERE project_key = $1 AND session_id = $2`, [key.projectKey, key.sessionId]);
       const prior = prev.rows[0];
-      // Fold from the TABLE, not the batch: everything above the watermark, in transcript (id) order.
-      const pend = await client.query(
-        `SELECT id, entry FROM ${E} WHERE project_key = $1 AND session_id = $2 AND subpath = '' AND id > $3 ORDER BY id`,
-        [key.projectKey, key.sessionId, prior ? prior.folded_id : 0],
+      // Recompute from the full committed transcript in id order (see header: no batch, no watermark).
+      const all = await client.query(
+        `SELECT entry FROM ${E} WHERE project_key = $1 AND session_id = $2 AND subpath = '' ORDER BY id`,
+        [key.projectKey, key.sessionId],
       );
-      const entries = pend.rows.map((r) => r.entry as SessionStoreEntry);
+      if (!prior && all.rows.length === 0) return; // nothing to summarize and no row to refresh — never resurrect a deleted session
       const mtime = prior ? Math.max(Number(prior.mtime), clock) : clock; // never move a newer stamp backwards
+      const summary = foldSessionSummary(undefined, key, all.rows.map((r) => r.entry as SessionStoreEntry), { mtime });
       if (prior) {
-        const foldedId = pend.rows.length ? pend.rows[pend.rows.length - 1].id : prior.folded_id;
-        const summary = foldSessionSummary(prior.summary as SessionSummaryEntry, key, entries, { mtime });
         const upd = await client.query(
-          `UPDATE ${S} SET mtime = $3, seq = seq + 1, folded_id = $4, summary = $5::jsonb WHERE project_key = $1 AND session_id = $2 AND seq = $6 RETURNING 1 AS ok`,
-          [key.projectKey, key.sessionId, mtime, foldedId, JSON.stringify(summary), prior.seq],
+          `UPDATE ${S} SET mtime = $3, seq = seq + 1, summary = $4::jsonb WHERE project_key = $1 AND session_id = $2 AND seq = $5 RETURNING 1 AS ok`,
+          [key.projectKey, key.sessionId, mtime, JSON.stringify(summary), prior.seq],
         );
         if (upd.rows.length) return;
       } else {
-        const foldedId = pend.rows.length ? pend.rows[pend.rows.length - 1].id : 0;
-        const summary = foldSessionSummary(undefined, key, entries, { mtime });
         const ins = await client.query(
-          `INSERT INTO ${S} (project_key, session_id, mtime, seq, folded_id, summary) VALUES ($1, $2, $3, 0, $4, $5::jsonb) ON CONFLICT (project_key, session_id) DO NOTHING RETURNING 1 AS ok`,
-          [key.projectKey, key.sessionId, mtime, foldedId, JSON.stringify(summary)],
+          `INSERT INTO ${S} (project_key, session_id, mtime, seq, summary) VALUES ($1, $2, $3, 0, $4::jsonb) ON CONFLICT (project_key, session_id) DO NOTHING RETURNING 1 AS ok`,
+          [key.projectKey, key.sessionId, mtime, JSON.stringify(summary)],
         );
         if (ins.rows.length) return;
       }
@@ -194,9 +196,9 @@ export function createPostgresSessionStore(client: PgLike, opts: PostgresSession
         await client.query(`DELETE FROM ${E} WHERE project_key = $1 AND session_id = $2 AND subpath = $3`, [key.projectKey, key.sessionId, key.subpath]);
         return; // deleting a subagent transcript leaves the session rows alone
       }
-      // Sidecar first (see header): a racing append then worst-cases as rows-without-summary, self-healing.
-      await client.query(`DELETE FROM ${S} WHERE project_key = $1 AND session_id = $2`, [key.projectKey, key.sessionId]);
+      // Entries first (see header): the fold's empty-and-absent guard then makes ghost resurrection impossible.
       await client.query(`DELETE FROM ${E} WHERE project_key = $1 AND session_id = $2`, [key.projectKey, key.sessionId]);
+      await client.query(`DELETE FROM ${S} WHERE project_key = $1 AND session_id = $2`, [key.projectKey, key.sessionId]);
     },
 
     async listSubkeys(key) {
