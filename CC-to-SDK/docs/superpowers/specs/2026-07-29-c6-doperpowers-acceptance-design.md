@@ -71,8 +71,18 @@ The gap: no prior run ever verified a worker's *work product*.
    never auto-deletes worktrees), and the transcript still resumable — `ccx --resume <current-uuid>`
    run **from the worktree** (resume is cwd-scoped, and the worktree is the daemon's cwd) loads the
    conversation.
-7. Then **our** contract closes the loop: `ccx rm <short>` on the final session deletes the clean
-   worktree (and refuses if dirtied first — assert the refusal on a scratch file, then clean and rm).
+7. Then **our** contract closes the loop, as actually shipped (rev 3). Three arms:
+   **(a) post-resume row:** `daemon-resume.sh` forks with `--bg --resume` and **no `--worktree`**, so
+   the fork's roster row carries no worktree linkage — `ccx rm <fork-short>` exits 0, deregisters the
+   row, and leaves the worktree untouched (worktree cleanup after a resume is manual, agreeing with
+   the script's own "merge or remove its worktree yourself" NOTE).
+   **(b) dirty-keep arm** (on a never-resumed worktree'd worker): dirty the worktree with a scratch
+   file → `ccx rm` exits 0, **deregisters the row, keeps the worktree** and prints the
+   `kept worktree … uncommitted changes` notice — it does NOT refuse; `lifecycle.ts` documents this
+   as deliberate because doperpowers' purge routine *purposely* dirties worktrees
+   (`.daemon-turn-live` sentinel) so `rm` preserves the checkout later turns run in.
+   **(c) clean-delete arm** (on another never-resumed worktree'd worker): retire purge → `ccx rm` →
+   worktree gone.
 
 ### ② Park-and-answer (the roadmap's "spawned into a worktree, parked, answered, and resumed")
 
@@ -258,3 +268,13 @@ Pending — written at finish.
   current-uuid snapshot; ③.1 note assertion corrected; rig gains `DAEMON_HOME`, `DAEMON_TIMEOUT`,
   `ANTHROPIC_BASE_URL`-unset, `CLAUDE_CONFIG_DIR`-default pins; ④ records resolved models; roadmap's
   stale `CLAUDE_BIN` mention flagged for close-out.
+- rev 3 (2026-07-29, during scenario ① execution): ①.7 corrected — the spec asserted `ccx rm`
+  REFUSES on a dirty worktree, but the shipped, deliberate contract (`cli/lifecycle.ts` rmSession)
+  is: deregister the row, KEEP the worktree, print the `kept worktree` notice, exit 0 — because
+  doperpowers' own purge routine purposely dirties the worktree (`.daemon-turn-live` sentinel) so
+  `rm` preserves the checkout later turns run in; a hard refusal would leak the roster row and break
+  the consumer. Spec bent to the shipped consumer-driven semantics; clean-delete arm moved to a
+  second cheap worker. Not a code change. Extended same-day: the dirty/clean arms are only reachable
+  on **never-resumed** rows — daemon-resume's fork argv omits `--worktree`, so post-resume rows have
+  no worktree linkage and `rm` leaves the directory alone (arm (a)); ①.7 is now three arms on three
+  rows.
