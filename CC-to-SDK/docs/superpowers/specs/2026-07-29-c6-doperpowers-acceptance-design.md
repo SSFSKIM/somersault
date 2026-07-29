@@ -276,7 +276,39 @@ project memory.
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**C6 SHIPPED 2026-07-29 — the clone roadmap's primary metric is met and the roadmap is complete.**
+All four scenarios PASS live (keyed via `CLAUDE_CODE_OAUTH_TOKEN`); the eleven doperpowers 7.25.0
+scripts were **md5-identical before and after every scenario** (never edited); zero ccx code defects
+surfaced (the defect loop was empty). Test gate: typecheck clean, `npx vitest run` = 1510 passed /
+64 skipped, 0 failures (up from C5's 1379 only because the app-server M1 merge landed before C6 began
+— C6 added no harness source).
+
+| scenario | what it proved | verdict |
+|---|---|---|
+| ① real-work lifecycle | `daemon-spawn` (worktree'd) → worker wrote+committed `hello.txt`=`C6-REAL-WORK` on `worktree-c6wt` → `daemon-resume` forked (stable uuid kept, `current` forked, superseded row purged, `C6-EDITED` committed) → `daemon-reply` real text → `daemon-finalize` `noop` → `daemon-retire purge` (NOTE printed, worktree kept) → `ccx --resume <current>` from the worktree replayed → `ccx rm` three arms (fork-row unlinked / dirty-keep notice / clean-delete) | **PASS** |
+| ② park-and-answer | `--no-wait` worktree'd spawn parked on `AskUserQuestion`; `daemon-finalize` walked `live`→`idle`→`noop` exactly as rev 2 predicted; recorded blocked reply carried the flushed question text (probe 69); **both** answer paths worked — `ccx attach` + QuestionDialog (Enter=FORMAL → `greeting.txt`=`FORMAL` committed) and the scripts' own `daemon-resume <id> "<answer>"` (→ `greeting.txt`=`CASUAL` committed) | **PASS** |
+| ③ retire/mark edges | `daemon-mark awaiting-human "<note>"` (echo + meta), `daemon-list awaiting-human` status filter, `daemon-retire` (keep → meta `retired`, reply kept, `ccx --resume` still loads), `daemon-retire purge` (files gone) | **PASS** |
+| ④ content-layer parity | Both the real `claude` (Opus 5) and `ccx` (opus-4-8) go straight to scaffolding on "Let's make a react todo list" — neither auto-invokes `brainstorming` → **vacuous-but-parity**; ccx's SDK catalog carries all 15 doperpowers skills incl. `brainstorming` (identical set) — skill surfacing at parity | **PASS** |
+
+**Retrospective.**
+- **The finalize state machine was the load-bearing unknown, and rev 2's model held exactly.** The
+  one Critical the spec review caught (park is reported `blocked+idle`, which `daemon-finalize`
+  normalizes to `done-blocked`→`idle`, so `live` is unobservable on a park) was confirmed verbatim in
+  scenario ②. Designing ② around the real normalization instead of the intuitive "live-on-park" is
+  what made it pass first-run.
+- **Two spec claims bent to shipped consumer-driven behavior at execution time** (rev 3): `ccx rm` on
+  a dirty worktree keeps-and-deregisters (never refuses — doperpowers purposely dirties worktrees),
+  and post-resume fork rows carry no worktree linkage. Both were *our own* shipped semantics the spec
+  had mis-stated; neither was a code change. The lesson repeats C5's: the spec is a hypothesis, and
+  the first live run is its first honest test.
+- **One upstream candidate confirmed** (recorded, not worked around): `daemon-retire.sh`'s
+  resume hint prints the stale stable uuid, not the post-fork `current`.
+- **A pty cross-binary lesson for any future content test:** the real `claude` positions each word
+  with cursor escapes, so stripping ANSI concatenates text *without spaces* — assertions must match a
+  whitespace-removed view. And "Welcome back &lt;name&gt;" is the ordinary logged-in greeting, not
+  session adoption (only the `CLAUDE_CODE_CHILD_SESSION` marker is the real tell).
+- **Process:** the one subagent spike (probe 69) and one subagent close-out flanked four
+  controller-run live scenarios — the C5/Goal-B acceptance shape. No fix tasks were needed.
 
 ## Revision Notes
 
