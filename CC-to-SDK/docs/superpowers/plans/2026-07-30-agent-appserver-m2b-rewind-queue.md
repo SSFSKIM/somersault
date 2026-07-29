@@ -46,7 +46,7 @@ harness/tools/appserver-console.html        # panels 4-5 added
 
 **Interfaces:**
 - `EngineSession` gains `rewind?(userMessageId: string, opts?: { dryRun?: boolean }): Promise<unknown>;` (real: `src/session/session.ts:184`).
-- `ThreadRecord` gains `swapInFlight?: boolean` — true across dryRun + file restore + engine swap; `turn/start` and `thread/compact/start`'s busy gate treats `swapInFlight` as busy (extend `beginTurn`'s gate: `if (record.busy || record.swapInFlight) { -33001 }`).
+- `ThreadRecord.swapInFlight` (already declared by M2a Task 7) is set true across dryRun + file restore + engine swap. **Do not re-assemble the busy gate here:** `beginTurn` gates on `threadBusyReason(record)` (M2a Task 7, spec D-M2-8), which returns `"swapping"` for exactly this state, so setting the field is the entire change — every gate that calls the predicate inherits it.
 - `AppServerDeps` gains `resumeAtFactory?: (sessionId: string, resumeAt: string, config: Record<string, unknown>) => EngineSession` (default: `(sid, at, c) => openSession({ ...c, resume: sid, resumeAt: at } as OpenSessionConfig)` — the same primitive `rewindSession` uses, `src/session/index.ts:30-34`).
 - Schemas:
 ```typescript
@@ -58,12 +58,12 @@ export const rewindParams = z.object({ threadId: z.string().min(1), uuid: z.stri
 - Handlers (mirroring `host/host.ts:442-500` exactly — that code is the proven order):
   - `thread/rewind/anchors` — `getMessages(record.sessionId)` → `rewindAnchorsFrom(rows)` (`src/sessions/rows.ts`) → `{ data: anchors, nextCursor: null }`. No sessionId yet → `{ data: [] }`.
   - `thread/rewind/dryRun` — normalize throw-vs-return like `host.rewindDryRun`: missing `session.rewind` → `{ canRewind: false, error: "rewind unsupported by this engine" }`; a throw → `{ canRewind: false, error }`; else the engine's own result. Read-only, un-chained.
-  - `thread/rewind` — chain-scoped, and in order: (1) busy/park gates: `record.busy || record.swapInFlight` → `-33001`; `srv.pendingDecisions(record.id).length` → `-33001` `"a decision is pending — answer it first"`; no `record.sessionId` → `-33005`. (2) `scope !== "code" && !prevUuid` → `-32602` `"no conversation anchor before the first prompt — code-only rewind is available"`. (3) `record.swapInFlight = true` in a try/finally. (4) `scope !== "conversation"`: dryRun first, refuse on `!canRewind`, then real `session.rewind(uuid)`. (5) `scope !== "code"`: **engine swap** — `record.routerOff?.()`, `await record.session.dispose()` — **wait**: the old engine may hold parked decisions; there are none (gate 1 refused if any) and no turn is in flight (busy gate), so dispose is safe — then `record.session = deps.resumeAtFactory(sessionId, prevUuid, originalConfig)`, `installRouter(srv, record)`, `record.sessionId = undefined` + the router's init latch re-learns it, `record.turnSeq` keeps counting (turn ids stay unique). Store the thread's ORIGINAL config on the record at start/resume time (`ThreadRecord` gains `config?: Record<string, unknown>` — set it in `startThread`) so the swap can rebuild. (6) Broadcast `thread/rewound { threadId, sessionId }` to subscribers AND watchers; reply `{ ok: true, sessionId }`.
+  - `thread/rewind` — chain-scoped, and in order: (1) busy/park gates: `threadBusyReason(record)` non-null → `-33001` (the message names the reason); `srv.pendingDecisions(record.id).length` → `-33001` `"a decision is pending — answer it first"`; no `record.sessionId` → `-33005`. (2) `scope !== "code" && !prevUuid` → `-32602` `"no conversation anchor before the first prompt — code-only rewind is available"`. (3) `record.swapInFlight = true` in a try/finally. (4) `scope !== "conversation"`: dryRun first, refuse on `!canRewind`, then real `session.rewind(uuid)`. (5) `scope !== "code"`: **engine swap** — `record.epoch += 1` FIRST (spec D-M2-8: the bump is what makes the old engine's late frames inert and every outstanding `thread/read` cursor invalid; doing it before dispose means a frame emitted during dispose is already stale), then `record.routerOff?.()`, `await record.session.dispose()` — **wait**: the old engine may hold parked decisions; there are none (gate 1 refused if any) and no turn is in flight (busy gate), so dispose is safe — then `record.session = deps.resumeAtFactory(sessionId, prevUuid, originalConfig)`, `installRouter(srv, record)`, `record.sessionId = undefined` + the router's init latch re-learns it, `record.turnSeq` keeps counting (turn ids stay unique). Store the thread's ORIGINAL config on the record at start/resume time (`ThreadRecord` gains `config?: Record<string, unknown>` — set it in `startThread`) so the swap can rebuild. (6) Broadcast `thread/rewound { threadId, sessionId }` to subscribers AND watchers; reply `{ ok: true, sessionId }`.
 - `thread/rewound` is a NEW notification — add to the parent §8 list via its Revision Notes (one line, flagged — the host's `rewound` event is the precedent).
 
-- [ ] **Step 1: Failing tests** — anchors maps a fake transcript through `rewindAnchorsFrom` (one prompt row + one phantom row → one anchor); dryRun normalizes a THROWING fake to `{canRewind:false}`; rewind refuses while busy (`-33001`), while parked (`-33001`), and `both`-scope with null prevUuid (`-32602`) — each BEFORE the fake's `rewind` was called (assert call count 0); happy-path `both`: fake's rewind called with (uuid, {dryRun:true}) then (uuid), old session disposed, factory called with (sessionId, prevUuid, config), router reinstalled (new fake's onFrame subscribed), `thread/rewound` observed; `turn/start` during a hung swap (factory returns a pending promise — engine-faithful) → `-33001`.
+- [ ] **Step 1: Failing tests** — anchors maps a fake transcript through `rewindAnchorsFrom` (one prompt row + one phantom row → one anchor); dryRun normalizes a THROWING fake to `{canRewind:false}`; rewind refuses while busy (`-33001`), while parked (`-33001`), and `both`-scope with null prevUuid (`-32602`) — each BEFORE the fake's `rewind` was called (assert call count 0); happy-path `both`: fake's rewind called with (uuid, {dryRun:true}) then (uuid), old session disposed, factory called with (sessionId, prevUuid, config), router reinstalled (new fake's onFrame subscribed), `thread/rewound` observed; `turn/start` during a hung swap (factory returns a pending promise — engine-faithful) → `-33001`; **a frame pushed by the OLD fake engine after the swap changes nothing** (its router was installed at the previous epoch — assert no `thread/settings/changed` and no mirror write); **a `thread/read` cursor minted before the rewind now replies `-32602`**.
 - [ ] **Step 2:** Run — FAIL. **Step 3:** implement. **Step 4:** PASS + whole suite green.
-- [ ] **Step 5: Sabotage-verify** the validation-before-side-effects guard: move the prevUuid check after the file restore; the "call count 0" test FAILS; restore.
+- [ ] **Step 5: Sabotage-verify** two guards, reporting the observed failure output for each: (a) the validation-before-side-effects guard — move the prevUuid check after the file restore; the "call count 0" test FAILS; restore. (b) the epoch bump — delete `record.epoch += 1`; the stale-old-engine-frame test FAILS; restore.
 - [ ] **Step 6: Commit** — `git commit -m "feat(as2b): rewind trio — anchors/dryRun/rewind with engine swap, host-order validation (Wave 3)"`.
 
 ---
@@ -164,9 +164,20 @@ import type { ThreadRecord } from "./registry.js";
 export interface QueuedTurn { id: string; input: string }
 
 export function enqueueTurn(record: ThreadRecord, input: string): { id: string; position: number } {
-  const id = `turn_${record.id}_${++record.turnSeq}`; // same mint as beginTurn — FIFO drain preserves seq order
+  const id = mintTurnId(record); // the ONE minting function (M2a Task 11) — all three start paths share it
   record.queue.push({ id, input });
   return { id, position: record.queue.length };
+}
+
+/** turn/interrupt aimed at a QUEUED turn's own id (spec D-M2-10): remove the entry and complete it
+ *  cancelled. Ids are minted at enqueue precisely so a client can address a turn that has not started.
+ *  Returns false when the id is not in the queue (the caller then treats it as the running turn). */
+export function cancelQueued(srv: AppServer, record: ThreadRecord, turnId: string): boolean {
+  const i = record.queue.findIndex((q) => q.id === turnId);
+  if (i === -1) return false;
+  const [entry] = record.queue.splice(i, 1);
+  srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: { id: entry.id, status: "cancelled" } });
+  return true;
 }
 
 export function flushQueue(srv: AppServer, record: ThreadRecord): string[] {
@@ -185,10 +196,11 @@ export function takeNext(record: ThreadRecord): QueuedTurn | undefined {
 }
 ```
 - `turns.ts` changes:
-  - `turnStart`'s busy refusal becomes: `if (record.busy || record.swapInFlight) { if (parsed.data.queue) { const q = enqueueTurn(record, parsed.data.input); ctx.peer.reply(id, { queued: true, turn: { id: q.id, status: "queued" }, position: q.position }); } else { ctx.peer.replyError(id, ERR.BUSY, "Thread is busy"); } return; }`.
-  - `beginTurn` gains an optional `presetTurnId?: string` — when present, uses it instead of minting (the drain path's pre-minted id); the mint line becomes `const turnId = presetTurnId ?? \`turn_${record.id}_${++record.turnSeq}\`;`.
+  - `turnStart`'s busy refusal becomes (gated on the one predicate, never a re-assembled condition — spec D-M2-8): `if (threadBusyReason(record)) { if (parsed.data.queue) { const q = enqueueTurn(record, parsed.data.input); ctx.peer.reply(id, { queued: true, turn: { id: q.id, status: "queued" }, position: q.position }); } else { ctx.peer.replyError(id, ERR.BUSY, "Thread is busy"); } return; }`.
+  - `beginTurn` gains an optional `presetTurnId?: string` — when present, uses it instead of minting (the drain path's pre-minted id); the mint line becomes `const turnId = presetTurnId ?? mintTurnId(record);` (M2a Task 11 extracted `mintTurnId`; nothing else in the codebase composes a turn id).
   - `settleTurn(record)` gains a `srv` param and, after `applyPlanUpgrade`: `const next = takeNext(record); if (next) startQueuedTurn(srv, record, next);` where `startQueuedTurn` re-enters the spine with `presetTurnId: next.id` and a null peer-reply (the enqueue already replied — the chain callback's `ctx.peer.reply` is skipped via an optional ctx; make `beginTurn`'s ctx/id params optional and guard the reply).
   - `turn/interrupt` with `cancelQueued: true`: `const cancelledQueued = flushQueue(srv, record);` BEFORE `requestInterrupt`, reply `{ interrupted: true, cancelledQueued }`.
+  - `turn/interrupt` carrying a `turnId` that names a QUEUED entry (spec D-M2-10): `if (parsed.data.turnId && cancelQueued(srv, record, parsed.data.turnId)) { ctx.peer.reply(id, { interrupted: false, cancelled: [parsed.data.turnId] }); return; }` — checked BEFORE touching the engine, since a queued turn has no engine work to interrupt. `turnInterruptParams` gains `turnId: z.string().min(1).optional()`; an unknown id falls through to the existing running-turn behavior unchanged.
 - `server.ts` changes: `thread/close` handler sets `record.closing = true; flushQueue(srv, record);` synchronously before the chain hop. `shutdown()` does the same per record before awaiting chains.
 
 - [ ] **Step 1: Failing tests** (the spec's transition table, one test per transition):
@@ -206,6 +218,8 @@ describe("turn queue (spec Wave 4)", () => {
     // fake.submitCalls === 1 (the drained turn NEVER submitted), close replied ok.
   });
   it("the drain-vs-close race: a settle racing a close finds the latch up and starts nothing", ...);
+  it("interrupt naming a QUEUED turn's id removes that entry and completes it cancelled, without touching the engine", ...);
+  it("interrupt naming an unknown id still interrupts the running turn (unchanged behavior)", ...);
   it("shutdown cancels queued turns on every record", ...);
 });
 ```
@@ -301,7 +315,7 @@ Panel 4 (rewind/MCP/tasks): anchors list with per-anchor dryRun + rewind buttons
 
 The spec's `## Acceptance (behavior-phrased)` section, executed as written:
 
-- [ ] **Step 1 (acceptance 1):** Run `npm test (from CC-to-SDK/harness)` — green — and `node scripts/drift-check.mjs --json` (repo `CC-to-SDK/`) — "exits 0 with the appserver pass listing zero missing rows and zero schema-less methods."
+- [ ] **Step 1 (acceptance 1):** Run `npm test` from `CC-to-SDK/harness` — green — and `node scripts/drift-check.mjs --json` (repo `CC-to-SDK/`) — "exits 0 with the appserver pass listing zero missing rows and zero schema-less methods."
 - [ ] **Step 2 (acceptance 2, controller):** extend the live script with the waves 3–4 legs so the one keyed run performs the spec's full sequence: "`initialize{watchThreads:true}` → `thread/start` → observe `thread/started` → `thread/model/set` → observe `thread/settings/changed` with `source:"client"` → `thread/thinking/set` → `thread/capabilities/read` returns non-empty models + commands → turn with a file write → decision park shows `status.waitingOn === "decision"` → respond → `thread/usage/read` + `thread/contextUsage/read` return numbers → `thread/rewind/dryRun` against the turn's anchor succeeds → `mcpServer/status/list` returns → `turn/start{queue:true}` while busy returns `{queued: true, turn}` whose id later appears in `turn/started` when it drains → `thread/compact/start` completes and `thread/compacted` carries an outcome → `thread/fork` yields a distinct thread whose `thread/read` shares item ids with the parent → `thread/close`. Each observation is an assertion, not a log line." Run keyed — PASS.
 - [ ] **Step 3 (acceptance 5, controller):** already asserted inside the live script (second client observes the first's model/set as settings/changed) — confirm the assertion exists and passed.
 - [ ] **Step 4 (acceptance 3):** scorecard sweep — "every non-fleet row reads shipped or N/A-with-evidence; the six probe rows cite their probe file by name." Flip the waves 3–4 rows (rewind trio, MCP 5, tasks 3, queue, steer/reloads/directory-add per verdict, probe N/A rows). `node scripts/drift-check.mjs` exit 0.

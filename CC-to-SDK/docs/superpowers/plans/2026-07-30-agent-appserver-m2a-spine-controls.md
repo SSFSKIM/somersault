@@ -612,37 +612,101 @@ it("the live userMessage is not replayed to a mid-turn joiner", async () => {
 
 **Interfaces:**
 - Produces (parent §5's Thread fields, projected): `threadView(r)` returns `{ id, sessionId, title, tags, cwd, model, permissionMode, thinking: { maxTokens }, status: { state: "idle"|"active", waitingOn?: "decision" }, origin, createdAt, updatedAt, preview }`. Registry-only values for `title`/`tags`/`preview` are `undefined` until Wave 2's store merge fills them on the list path. `ThreadRecord` gains `cwd?: string; updatedAt: number; settings: { model?: string; permissionMode?: string; thinkingTokens?: number }` (settings seeded from the start config here; written by Task 8's router/setters).
-- `status(record)` helper exported from `registry.ts`:
+- **One busy predicate + one epoch, both exported from `registry.ts` (spec D-M2-8).** `ThreadRecord` additionally gains `closing?: boolean`, `swapInFlight?: boolean` (declared here, set by later tasks — M2b's queue and rewind) and `epoch: number` (initialized to `0` at thread creation; bumped only by M2b's rewind engine swap). Every later gate — queue drain, close, rewind, compact — calls the predicate instead of re-assembling its terms:
 ```typescript
+/** The ONE answer to "is this thread busy?" (spec D-M2-8). Gates never re-assemble these terms. */
+export function threadBusyReason(r: ThreadRecord): "turn" | "closing" | "swapping" | null {
+  if (r.closing) return "closing";
+  if (r.swapInFlight) return "swapping";
+  return r.busy ? "turn" : null;
+}
+
 export function threadStatus(r: ThreadRecord, waitingOn: boolean): { state: "idle" | "active"; waitingOn?: "decision" } {
-  return r.busy ? (waitingOn ? { state: "active", waitingOn: "decision" } : { state: "active" }) : { state: "idle" };
+  if (!threadBusyReason(r)) return { state: "idle" };
+  return waitingOn ? { state: "active", waitingOn: "decision" } : { state: "active" };
 }
 ```
+(If the record's live-turn flag is named something other than `busy`, use the real field — `threadBusyReason` is the only place that reads it.)
+- **`cursorParam` is extracted into `schema/core.ts`** in this task and reused by `thread/read`, `thread/list`, and `decision/list` — Task 2's review flagged that the cursor shape stayed inlined in `threadReadParams` while the plan's file structure assigns common shapes to `core.ts`. Task 13 changes its regex when the cursor becomes epoch-qualified; one definition means one change.
 - **Every `thread/status/changed` payload site changes shape** from `status: "active"|"idle"` to the object above — `turns.ts:statusChanged`, `subscribe.ts:55`. `statusChanged` moves to taking `srv` so it can ask the decisions map: `waitingOn = srv.pendingDecisions(record.id).length > 0`.
 - `thread/list` params: `{ cursor?: string, limit?: number }` → reply `{ data, nextCursor }` (registry-only in this task; offset-into-array cursor, same decimal-string convention as thread/read). `decision/list` reply gains `nextCursor: null` (a parked set is small and unpaged, but the envelope becomes uniform — spec gap 2).
 
-- [ ] **Step 1: Failing tests** — threadView field assertions (all 13 keys present; `status` is an object; a parked fake turn yields `waitingOn: "decision"`); thread/list with `limit: 1` on two threads returns `nextCursor` that fetches the second.
+- [ ] **Step 1: Failing tests** — threadView field assertions (all 13 keys present; `status` is an object; a parked fake turn yields `waitingOn: "decision"`); thread/list with `limit: 1` on two threads returns `nextCursor` that fetches the second; `threadBusyReason` returns `"closing"` when `closing` is set even while a turn is active (the precedence order is the point — a closing thread is not merely "busy with a turn"), `"swapping"` for `swapInFlight`, `"turn"` for an active turn, `null` for an idle record.
 - [ ] **Step 2:** Run — FAIL. **Step 3:** implement. **Step 4:** run — PASS; whole suite green (existing tests asserting the old flat `status` string get updated in the same commit — they are asserting the old shape on purpose).
 - [ ] **Step 5: Commit** — `git commit -m "feat(as2a): threadView 13 fields + status{state,waitingOn} + cursors on every list (gaps 2,3)"`.
 
 ---
 
-### Task 8: Frame router + settings mirror (`router.ts`)
+### Task 8a: Frame router skeleton — absorb the two existing watchers, behavior-invariant
 
-The load-bearing Wave-1 mechanism. One router per thread, installed at thread creation, absorbing `latchSessionId` and the planUpgrade status-consult.
+The load-bearing Wave-1 mechanism lands in two halves so a reviewer can judge "is the absorption really harmless?" separately from "are the new routes right?" (external review, 2026-07-30). **Task 8a changes no observable behavior**: it introduces `router.ts` with exactly two routes — the init latch and the planUpgrade status-consult — replacing the two single-purpose `onFrame` watchers that exist today. Task 8b then adds the eight new routes and the settings mirror.
 
 **Files:**
 - Create: `src/appserver/router.ts`
-- Modify: `src/appserver/server.ts` (install router in start/resume instead of `latchSessionId`; delete `latchSessionId`), `src/appserver/registry.ts` (record gains `routerOff?: () => void`), `src/appserver/planUpgrade.ts` (drop its own watcher: `armPlanUpgrade` only sets the flag)
+- Modify: `src/appserver/server.ts` (install the router in start/resume instead of `latchSessionId`; delete `latchSessionId`), `src/appserver/registry.ts` (record gains `routerOff?: () => void`), `src/appserver/planUpgrade.ts` (drop its own watcher: `armPlanUpgrade` only sets the flag)
 - Test: `test/unit/appserver/router.test.ts`
 
 **Interfaces:**
-- Produces: `installRouter(srv: AppServer, record: ThreadRecord): void` — subscribes ONE `record.session.onFrame` callback, stores the unsubscribe in `record.routerOff` (called by `closeRecord`). Routes:
+- Produces: `installRouter(srv: AppServer, record: ThreadRecord): void` — subscribes ONE `record.session.onFrame` callback, stores the unsubscribe in `record.routerOff` (called by `closeRecord` before dispose). Each route runs in its own try/catch so one throwing route cannot starve the others on the same frame.
+- **Epoch guard (spec D-M2-8), built in from the first line** — the callback captures `record.epoch` at install time and drops any frame whose captured epoch no longer matches:
+```typescript
+export function installRouter(srv: AppServer, record: ThreadRecord): void {
+  const epoch = record.epoch; // frames from an engine superseded by a rewind swap must never land
+  record.routerOff = record.session.onFrame((frame: any) => {
+    if (record.epoch !== epoch) return;
+    // …routes…
+  });
+}
+```
+- Routes in 8a (both are the existing behavior, moved):
 
 | frame | action |
 |---|---|
 | `system/init` | latch `record.sessionId` (the exact logic of the deleted `latchSessionId`, incl. reading `session_id` off the frame itself) |
-| `system/status` with `permissionMode` | mirror + echo-dedup → maybe `thread/settings/changed{source:"engine"}`; then `if (record.planUpgradePending) void applyPlanUpgrade(record)` |
+| `system/status` | `if (record.planUpgradePending) void applyPlanUpgrade(record)` |
+
+- `armPlanUpgrade(record)` shrinks to:
+```typescript
+export function armPlanUpgrade(record: ThreadRecord): void {
+  record.planUpgradePending = true; // the router's status route applies it (one watcher per thread — D-M2-6)
+}
+```
+`applyPlanUpgrade` unchanged except it no longer touches `planUpgradeOff` (field deleted from the record).
+
+- [ ] **Step 1: Failing tests** (engine-faithful fake: `onFrame` returns an unsubscribe, frames pushed manually between turns):
+
+```typescript
+describe("frame router skeleton (spec D-M2-6, D-M2-8)", () => {
+  it("latches sessionId from the init frame (absorbed latchSessionId)", ...);
+  it("a status frame while planUpgradePending calls the setter exactly once", ...);
+  it("a status frame with planUpgradePending false calls nothing", ...);
+  it("uninstalling the router (routerOff) stops all routing", ...);
+  it("a frame arriving after record.epoch changed is dropped (stale-engine guard)", ...);
+  it("one route throwing does not starve the others on the same frame", ...);
+});
+```
+
+- [ ] **Step 2:** Run — FAIL. **Step 3:** implement. `server.ts`: `latchSessionId(record)` call sites become `installRouter(srv, record)`; delete the function (grep proves it is gone). `closeRecord` calls `record.routerOff?.()` before dispose.
+- [ ] **Step 4:** Run — PASS; whole suite green (planUpgrade tests updated: arming no longer installs a watcher — they now push a status frame through the router's fake and assert the setter fired).
+- [ ] **Step 5: Sabotage-verify** the epoch guard: remove the `record.epoch !== epoch` line; the stale-frame test FAILS; restore. Put the observed failure output in the report.
+- [ ] **Step 6: Commit** — `git commit -m "feat(as2a): per-thread frame router skeleton — absorbs latchSessionId + planUpgrade consult, epoch-guarded (D-M2-6, D-M2-8)"`.
+
+---
+
+### Task 8b: Frame router — the eight new routes + settings mirror
+
+Builds on 8a's skeleton. Every route here is new behavior.
+
+**Files:**
+- Modify: `src/appserver/router.ts` (8a's skeleton gains the routes below)
+- Test: `test/unit/appserver/router.test.ts` (extend)
+
+**Interfaces:**
+- The routes added to 8a's single `onFrame` callback (the epoch guard and the two absorbed routes stay exactly as 8a left them):
+
+| frame | action |
+|---|---|
+| `system/status` with `permissionMode` | mirror + echo-dedup → maybe `thread/settings/changed{source:"engine"}` (8a's planUpgrade consult on this same frame stays, and runs regardless of dedup) |
 | `system/status` with `model` (empirical: may not exist — route written, harmless if never hit) | mirror + echo-dedup, same broadcast |
 | `system/compact_boundary` | `srv.broadcast(record.id, "thread/compacted", { threadId: record.id, turnId: record.currentTurnId, outcome: frame })` (Task 11 consumes) |
 | `result` frames carrying `usage`/`modelUsage` | `thread/tokenUsage/updated {threadId, usage}` |
@@ -653,33 +717,39 @@ The load-bearing Wave-1 mechanism. One router per thread, installed at thread cr
 | assistant frame whose `message.content` has a `tool_use` block with `name === "TodoWrite"` | `turn/todo/updated {threadId, turnId: record.currentTurnId, todos: block.input.todos}` (the spec routes todo through the router; the block's `input.todos` is the full snapshot — replace, never merge) |
 
 - Echo-dedup rule (spec Wave 1, verbatim in a doc comment): "the engine-frame leg suppresses its broadcast when the frame's value equals the mirror".
-- `armPlanUpgrade(record)` shrinks to:
-```typescript
-export function armPlanUpgrade(record: ThreadRecord): void {
-  record.planUpgradePending = true; // the router's status route applies it (one watcher per thread — D-M2-6)
-}
-```
-`applyPlanUpgrade` unchanged except it no longer touches `planUpgradeOff` (field deleted from the record).
 
-- [ ] **Step 1: Failing tests** (engine-faithful fake: `onFrame` returns unsubscribe, frames pushed manually between turns):
+- [ ] **Step 1: Failing tests** (same engine-faithful fake as 8a):
 
 ```typescript
-describe("frame router (spec Wave 1, D-M2-6)", () => {
-  it("latches sessionId from the init frame (absorbed latchSessionId)", ...);
+describe("frame router routes (spec Wave 1, D-M2-6)", () => {
   it("a status frame with a NEW permissionMode updates the mirror and broadcasts source:'engine'", ...);
   it("a status frame echoing the mirror's value broadcasts NOTHING (echo-dedup)", ...);
-  it("a status frame while planUpgradePending calls the setter exactly once", ...);
+  it("an echo-deduped status frame STILL applies a pending plan upgrade (8a's route is not gated by dedup)", ...);
   it("compact_boundary → thread/compacted with the current turnId", ...);
+  it("a result frame with usage → thread/tokenUsage/updated", ...);
   it("background_tasks_changed → task/changed with the full snapshot", ...);
-  it("uninstalling the router (routerOff) stops all routing", ...);
-  it("one route throwing does not starve the others on the same frame", ...);
+  it("an assistant frame carrying a TodoWrite tool_use → turn/todo/updated with the todos snapshot", ...);
 });
 ```
 
-- [ ] **Step 2:** Run — FAIL. **Step 3:** implement `router.ts` (a single `onFrame` callback dispatching over `frame.type`/`subtype`, each route in its own try/catch). `server.ts`: `latchSessionId(record)` call sites become `installRouter(srv, record)`; delete the function; `closeRecord` calls `record.routerOff?.()` before dispose.
-- [ ] **Step 4:** Run — PASS; whole suite green (planUpgrade tests updated: arming no longer installs a watcher — they now push a status frame through the ROUTER'S fake and assert the setter fired).
-- [ ] **Step 5: Sabotage-verify** the echo-dedup test: make the route broadcast unconditionally; test FAILS; restore.
-- [ ] **Step 6: Commit** — `git commit -m "feat(as2a): per-thread frame router — absorbs latchSessionId + planUpgrade consult, settings mirror + engine notifications (D-M2-6)"`.
+- [ ] **Step 2:** Run — FAIL. **Step 3:** implement the routes (dispatch over `frame.type`/`subtype`, each route in its own try/catch).
+- [ ] **Step 4:** Run — PASS; whole suite green.
+- [ ] **Step 5: Sabotage-verify** the echo-dedup test: make the route broadcast unconditionally; test FAILS; restore. Report the observed failure output.
+- [ ] **Step 6: Commit** — `git commit -m "feat(as2a): frame router routes — settings mirror, usage/limits, tasks, capabilities, todos, compact boundary (Wave 1)"`.
+
+---
+
+### Task 8c: Early keyed live smoke of the router + mirror (controller-run, spec D-M2-9)
+
+Not an implementer task. Seven tasks build on the router, and the M1 postmortem's three Criticals were all fakes agreeing with their author — so one thin keyed run lands here, before that stack exists.
+
+**Files:**
+- Create: `test/live/appserver-m2-router-smoke.test.ts` (keyed; the controller writes and runs it, following `test/live/appserver-m1.test.ts`'s pattern with `settingSources: []`)
+
+- [ ] **Step 1:** Write the smoke: `initialize` → `thread/start` → `thread/model/set` → assert a `thread/settings/changed` arrives with `source: "client"` and the new model → `thread/permissionMode/set "auto"` → assert the mirror/notification agree with the self-heal → run one trivial turn → assert at least one router-sourced notification fires against the REAL engine (`thread/tokenUsage/updated` from the result frame) → `thread/close`.
+- [ ] **Step 2 (controller, keyed):** `cd CC-to-SDK/harness && set -a && source ../.env && set +a && npm run test:live -- test/live/appserver-m2-router-smoke.test.ts` — PASS.
+- [ ] **Step 3:** Any mismatch between what the fakes assumed and what the engine sent is recorded in the spec's `## Surprises & Discoveries` and fixed before Task 9 — that is the entire point of running it here.
+- [ ] **Step 4: Commit** — `git commit -m "test(as2a): keyed live smoke — router/mirror against the real engine (D-M2-9)"`.
 
 ---
 
@@ -713,7 +783,7 @@ export const settingsApplyParams = z.object({ threadId: z.string().min(1), setti
   - `thread/settings/apply` — `session.applyFlagSettings(settings)`; no mirror field, no settings-changed broadcast (flag settings are not one of the three mirrored knobs), reply `{ok: true}`. **inProcess-only by nature in M2 (every thread is inProcess) — no origin check needed yet; a comment marks where M3's `-33006` lands.**
 - All four go through `record.chain` (`record.chain = record.chain.then(async () => { ... })`) so a setter never interleaves a turn's submit.
 
-- [ ] **Step 1: Failing tests** — per setter: engine method called with the right arg; mirror updated; one `thread/settings/changed` with `source: "client"` reaches a subscriber; second client sees the first client's change (two peers subscribed, one sets — spec acceptance 5's unit-level shadow); a REJECTING fake setter → error reply, mirror unchanged, no broadcast; auto-heal: fake with `settings.model = "claude-haiku-4-5-20251001"` + `permissionMode/set "auto"` → `setModel` called with the healed model first.
+- [ ] **Step 1: Failing tests** — per setter: engine method called with the right arg; mirror updated; one `thread/settings/changed` with `source: "client"` reaches a subscriber; second client sees the first client's change (two peers subscribed, one sets — spec acceptance 5's unit-level shadow); a REJECTING fake setter → error reply, mirror unchanged, no broadcast; auto-heal: fake with `settings.model = "claude-haiku-4-5-20251001"` + `permissionMode/set "auto"` → `setModel` called with the healed model first, **and the resulting `thread/settings/changed` carries the healed model with `source: "client"`, never `"engine"`** — the client's request caused the model change, so a unit test pins the label here rather than leaving it to the keyed acceptance (spec Wave 1; a rule only a live run can catch dies silently at the first regression).
 - [ ] **Step 2:** FAIL. **Step 3:** implement. **Step 4:** PASS + suite green. **Step 5: Sabotage-verify** the mirror-unchanged-on-reject guard (make the handler write the mirror before awaiting; test fails; restore).
 - [ ] **Step 6: Commit** — `git commit -m "feat(as2a): the four setters — model/permissionMode(auto-heal)/thinking/settings-apply with write-back (Wave 1)"`.
 
@@ -766,9 +836,15 @@ export const settingsApplyParams = z.object({ threadId: z.string().min(1), setti
 export function beginTurn(
   srv: AppServer, ctx: ConnCtx, id: RequestId, record: ThreadRecord,
   runner: (turnId: string, mapper: TurnMapper) => Promise<void>,
+  presetTurnId?: string, // M2b's queue drain passes the id minted at enqueue; otherwise mintTurnId()
 ): boolean
 ```
-`beginTurn` contains, verbatim-moved from `turnStart`: the `record.busy` check + `-33001` reply, the synchronous `busy = true` / `buffer = []` / `interruptRequested = false` / turnId mint block (turns.ts:104-127 today), and the chain callback with reply/broadcasts/onSuccess/onFailure/reportFailed — with `runner(turnId, mapper)` in place of the direct `session.submit(...)` call. `turnStart` becomes a thin wrapper whose runner is:
+- **Turn ids are minted in exactly one function** (spec Wave 4, external review): extract the id
+  expression out of `turnStart` into `export function mintTurnId(record: ThreadRecord): string` in
+  `turns.ts`, and let `beginTurn` be its only caller. All three start paths — `turn/start`, compact,
+  and M2b's queue drain — then produce identical id formats; format drift between them surfaces far
+  downstream in replay and the D10 stitch.
+`beginTurn` contains, verbatim-moved from `turnStart`: the busy check (now `threadBusyReason(record)` from Task 7 — never a re-assembled condition) + `-33001` reply, the synchronous `busy = true` / `buffer = []` / `interruptRequested = false` / turnId mint block (turns.ts:104-127 today), and the chain callback with reply/broadcasts/onSuccess/onFailure/reportFailed — with `runner(turnId, mapper)` in place of the direct `session.submit(...)` call. `turnStart` becomes a thin wrapper whose runner is:
 ```typescript
 (turnId, mapper) => record.session.submit(parsed.data.input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)))
 ```
@@ -831,14 +907,15 @@ export const threadDeleteParams = z.object({ threadId: z.string().min(1) });
 
 **Interfaces:**
 - `AppServerDeps.getSessionMessages` signature becomes `(sessionId: string, opts?: { limit?: number; offset?: number }) => Promise<unknown[]>` (default impl passes opts through to `src/sessions/index.js`'s `getSessionMessages`, which forwards to the SDK's `limit`/`offset`).
-- New cursor semantics (spec Wave 0, verbatim): "the cursor encodes an **absolute row offset from file start**". Page algorithm:
+- New cursor semantics (spec Wave 0, verbatim): "the cursor encodes an **absolute row offset from file start**", **epoch-qualified as `"<epoch>:<rowOffset>"`** — M2b's rewind truncates rows, so a bare offset would silently address different content after a rewind (spec Wave 0, external review). Update `cursorParam` in `schema/core.ts` (Task 7 extracted it) to `/^\d+:\d+$/`. On read: split the cursor; if its epoch `!== record.epoch`, reply `-32602` with message `"cursor invalidated by a rewind; re-read from the start"` (the client was already told to rebuild by `thread/rewound`). `nextCursor` is always minted with the record's current epoch. A thread that never rewinds keeps epoch `0` and behaves exactly as the unqualified design did.
+- Page algorithm:
   1. `limit = min(requested ?? 200, 500)`; if clamped, `srv.warn(ctx.peer, "limitClamped", "thread/read limit clamped to 500")`.
   2. First page (`cursor` absent): fetch ALL rows once (`getMessages(sid)`), map items, return the NEWEST `limit` items, `nextCursor` = the absolute row index where the returned window BEGAN (so the next page reads older rows `[max(0, begin - windowRows), begin)`).
   3. Subsequent pages: fetch rows `[from, cursorRow)` with `offset: from, limit: cursorRow - from` where `from = max(0, cursorRow - 4 * limit)` (the 4× row-per-item lookahead — rows and items are not 1:1), map through `itemsFromTranscript`, return the newest `limit` items of that window, recurse the window start into `nextCursor` (`"0"` boundary → `nextCursor: null`).
   4. To make item↔row accounting possible, `itemsFromTranscript` is NOT modified; instead the row window is chosen so every item in it COMPLETES in it — tool_use/tool_result straddles resolve as `inProgress`-status items exactly as live finalize does, which is acceptable for history paging and doc-commented ("a straddling tool call renders inProgress on an older page; the newer page carried its completed form — the id-dedup stitch keeps one").
 - The mapping cost per page is now `O(window)`, not `O(file)` — the gap-12 fix.
 
-- [ ] **Step 1: Failing tests** — DI fake `getSessionMessages` records `{limit, offset}` per call: second page must NOT fetch the whole file (assert `opts.offset`/`opts.limit` bound the window); limit 9999 → clamped to 500 + `warning` frame observed; paging a 3-page fake transcript returns every item exactly once across pages (dedup by id over the union).
+- [ ] **Step 1: Failing tests** — DI fake `getSessionMessages` records `{limit, offset}` per call: second page must NOT fetch the whole file (assert `opts.offset`/`opts.limit` bound the window); limit 9999 → clamped to 500 + `warning` frame observed; paging a 3-page fake transcript returns every item exactly once across pages (dedup by id over the union); a cursor minted at epoch 0 replayed after `record.epoch` is bumped to 1 replies `-32602` instead of returning rows.
 - [ ] **Step 2:** FAIL. **Step 3:** implement. **Step 4:** PASS + suite green.
 - [ ] **Step 5: Commit** — `git commit -m "feat(as2a): thread/read pages by row window with absolute cursor + 500 clamp (gaps 10,12)"`.
 
@@ -890,7 +967,7 @@ git commit -m "test(as2a): live control-plane acceptance (waves 0-2) + scorecard
 
 ## Execution notes for the controller
 
-- Task order is the dependency order; nothing parallelizes safely except Task 4 (independent of 3) and Task 14 (independent of 12–13).
-- Task 1 and every `test/live` run is controller-executed (keyed). Never let an implementer source `.env`.
-- After Task 8 lands, `latchSessionId` must be GONE (grep for it) — the D-M2-6 absorption is the review lens for that task.
+- Task order is the dependency order; nothing parallelizes safely except Task 4 (independent of 3) and Task 14 (independent of 12–13). Task 8 is split into **8a** (absorption, behavior-invariant), **8b** (new routes), **8c** (controller-run keyed smoke) — 8c gates Task 9.
+- Tasks 1 and 8c and every `test/live` run are controller-executed (keyed). Never let an implementer source `.env`.
+- After Task 8a lands, `latchSessionId` must be GONE (grep for it) — the D-M2-6 absorption is the review lens for that task, and 8a is deliberately behavior-invariant so that lens is the whole review.
 - Plan 2 (`2026-07-30-agent-appserver-m2b-rewind-queue.md`) starts only after Task 15 is green.

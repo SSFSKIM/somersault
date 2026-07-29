@@ -56,6 +56,16 @@ The mechanisms every later wave builds on, plus the named debt:
   per-thread subscribers cannot exist before the thread does), `thread/deleted`, `thread/closed`,
   and a slim `thread/status/changed`. Orthogonal to `record.subscribers`; a GUI sidebar lives on
   this without subscribing to every thread.
+- **One busy predicate, one epoch** (`registry.ts`, D-M2-8): `ThreadRecord` accumulates five state
+  fields across M2 (`activeTurnId`, `closing`, `swapInFlight`, `queue`, `settings`) shared by five
+  modules, so "is this thread busy?" is answered in exactly one place —
+  `threadBusyReason(record): "turn" | "closing" | "swapping" | null` — and every gate calls it
+  rather than re-assembling the three conditions and forgetting one. `threadView`'s status derives
+  from the same predicate. Alongside it, `record.epoch` (monotonic, bumped whenever the record's
+  engine object is replaced) is the generation token two later waves need: the frame router captures
+  its epoch at install and drops frames arriving from a superseded engine (a disposed engine's
+  in-flight frames must never reach the new engine's settings mirror), and `thread/read` cursors
+  carry it (below).
 - **`threadView` completes** to the parent spec §5's 13 Thread fields (gap 3), and status stops
   flattening: `{ state: "idle" | "active", waitingOn?: "decision" }` — a thread blocked on a park is
   distinguishable from one that is thinking. This deviates from parent §5's richer shape
@@ -71,7 +81,13 @@ The mechanisms every later wave builds on, plus the named debt:
   Rows and items are not 1:1 (phantom rows filtered, tool rows completing earlier items, nested
   rows dropped), so the cursor encodes an **absolute row offset from file start** (stable under
   an append-only transcript — unlike M1's offset-from-end replay convention, which shifts under
-  appends) plus enough lookahead to complete items whose opening row falls in-page.
+  appends) plus enough lookahead to complete items whose opening row falls in-page. **The cursor is
+  epoch-qualified — `"<epoch>:<rowOffset>"`** — because Wave 3's rewind truncates rows: an
+  append-only file makes a bare offset stable, a rewind does not, and a client holding a
+  pre-rewind cursor would silently read different content. A `thread/read` whose cursor carries a
+  stale epoch is refused with `-32602` ("cursor invalidated by a rewind; re-read from the start"),
+  which is what `thread/rewound` tells the client to do anyway. Rewind is the only epoch bump, so
+  cursors are stable for every thread that never rewinds.
 - **Error codes:** mint **`-33007 shuttingDown`** (gap 13); `-32001 overloaded` returns to meaning
   backpressure only. **`-33005 engineGone` starts firing** (gap 5, the emittable half): a dead
   read-loop is real on inProcess threads (probe 38), but the lib signals it only via untyped
@@ -124,7 +140,12 @@ creation, so the router consults `record.planUpgradePending` on status frames in
 watcher ever being installed. **Echo-dedup rule:** the engine-frame leg suppresses its broadcast
 when the frame's value equals the mirror (a client set writes the mirror first, so the engine's
 echo of that change is silent; a genuinely engine-originated change differs and fires with
-`source: "engine"`). Known asymmetry, stated not hidden: permissionMode changes ride status frames
+`source: "engine"`). **The `auto` self-heal is a client-sourced change, not an engine one:** when
+`thread/permissionMode/set "auto"` re-runs `resolveAutoModel` and that swaps the model, the
+resulting `thread/settings/changed` carries `source: "client"` — the client's request caused it,
+no engine decided anything. This is pinned by a **unit** test, not only by the live acceptance: a
+rule that only a keyed run can catch dies silently at the first regression. Known asymmetry,
+stated not hidden: permissionMode changes ride status frames
 (which is how `applyPlanUpgrade`'s direct `setPermissionMode` call is still mirrored); whether
 `model`/`thinkingTokens` have an engine-frame carrier at all is settled empirically in Wave 1 —
 if not, the mirror trusts the write-back leg alone for those two.
@@ -159,7 +180,10 @@ in-place rewind is destructive — dryRun is the GUI's preview path). Result car
 file-restore on the live engine, then dispose + re-open at `prevUuid`), so every subscriber and
 watcher is told via a new **`thread/rewound {threadId, sessionId}`** notification (the host's
 `rewound` event is the precedent) — a client must rebuild its transcript view, exactly as the
-TUI does.
+TUI does. The swap **bumps `record.epoch`** (Wave 0): the old engine's late frames are dropped by
+the router's epoch check instead of writing the new engine's settings mirror, and every
+outstanding `thread/read` cursor is invalidated by construction rather than silently re-pointed at
+rewritten rows.
 
 **MCP:** `mcpServer/status/list`, `mcpServer/reconnect` (process-based only — SDK-type servers
 throw; surface as `-32602`-class method error with the SDK's message), `mcpServer/toggle`
@@ -179,8 +203,14 @@ turn is *accepted*, not when it starts — so the enqueue reply, the cancel rece
 eventual `turn/started` all carry the same id a client can correlate on. (FIFO drain preserves
 seq order: a busy thread admits no non-queued turn, so enqueue order is start order.) Drain on
 `settleTurn`: FIFO, one at a time, through the `turnStart` path parameterized by the pre-minted
-id — same broadcasts, same buffer reset. `turn/interrupt {cancelQueued: true}` flushes the queue
-*first*, then interrupts; receipt lists `cancelledQueued[]` (turn ids).
+id — same broadcasts, same buffer reset. All three turn-start paths (`turn/start`, the drain, and
+compact) mint their id through **one function** — format drift between them would surface much
+later, in replay and the D10 stitch. `turn/interrupt {cancelQueued: true}` flushes the queue
+*first*, then interrupts; receipt lists `cancelledQueued[]` (turn ids). **`turn/interrupt` aimed at
+a queued turn's own id removes that entry from the queue and completes it with
+`status: "cancelled"`** — minting ids at enqueue exists precisely so a client can address a turn
+that has not started, and a console offering a cancel button on a queued row needs it immediately.
+Interrupting the *running* turn is unchanged.
 
 **Drain-vs-close is pinned as a mechanism, not an invariant** (the M1 teardown-liveness class:
 `settleTurn` runs in `submit()`'s continuation *outside* `record.chain`, while `thread/close`
@@ -227,11 +257,19 @@ tests. Its job: a foreign consumer that surfaces protocol awkwardness before a G
   with no schema file.
 - **Live (keyed, controller-run):** extends `test/live/appserver-m1.test.ts`'s pattern with
   `settingSources: []`.
+- **One live smoke lands early — immediately after the frame router** (D-M2-9), not only at each
+  plan's final task. M1's three Criticals were all cases of fakes agreeing with their author, and
+  the router plus settings mirror is the single component most able to be internally consistent and
+  wrong about the real engine. The smoke is thin: one real thread, `thread/model/set` and
+  `thread/permissionMode/set` observed as `thread/settings/changed` with the right `source`, one
+  real turn, and the usage/limits routes seen firing. Seven tasks build on the router; finding a
+  mirror-vs-engine mismatch after all seven is the expensive order.
 
 ## Acceptance (behavior-phrased)
 
-1. `pnpm -C harness test` green; `node scripts/drift-check.mjs --json` exits 0 with the appserver
-   pass listing zero missing rows and zero schema-less methods.
+1. `npm test` from `CC-to-SDK/harness` green; `node scripts/drift-check.mjs --json` from
+   `CC-to-SDK/` exits 0 with the appserver pass listing zero missing rows and zero schema-less
+   methods.
 2. **Live control-plane script** (`test/live/appserver-m2.test.ts`, keyed): one WS client against a
    real session performs — `initialize{watchThreads:true}` → `thread/start` → observe
    `thread/started` → `thread/model/set` → observe `thread/settings/changed` with
@@ -282,6 +320,23 @@ tests. Its job: a foreign consumer that surfaces protocol awkwardness before a G
 - **D-M2-7 — `thread/delete` refuses on live, otherwise CLI-trust** (2026-07-30): the server must
   not delete a session out from under its own live engine; beyond that the wire holds the same
   trust as `ccx` itself — inventing a permission model for the local token-holder is speculative.
+- **D-M2-8 — one busy predicate and one epoch on `ThreadRecord`** (2026-07-30, external review):
+  `ThreadRecord` is shared mutable state owned by five modules; the recurring defect in that shape
+  is a new gate assembling the busy condition itself and omitting one term. `threadBusyReason()` is
+  the only answer, and `record.epoch` is the only generation token — reused by the router (drop
+  frames from a superseded engine) and by read cursors (refuse pre-rewind offsets). *Rejected:*
+  per-gate conditions (the M1 shape — survivable at two gates, not at eight); a separate epoch per
+  concern (two counters that must agree is worse than one that cannot disagree).
+- **D-M2-9 — one live smoke immediately after the frame router** (2026-07-30, external review): the
+  verification asymmetry (implementers see only fakes, keyed runs land last) is exactly the setup
+  that cost M1 three Criticals. Engine-faithful fakes reduce that risk but cannot disprove a shared
+  false premise. *Rejected:* live-only-at-the-end (cheapest to schedule, most expensive to be wrong
+  in); live per task (keyed cost and controller serialization for little marginal signal).
+- **D-M2-10 — `turn/interrupt` on a queued id cancels the entry** (2026-07-30, external review):
+  the alternative — `-32602` because no engine work exists to interrupt — would make ids minted at
+  enqueue addressable for correlation but not for control, and a queue UI needs cancel on the row
+  it can already name. *Rejected:* `-32602`; a separate `turn/cancel` method (a second verb for one
+  concept the client already has a verb for).
 
 ## Surprises & Discoveries
 
@@ -314,3 +369,15 @@ Pending — written at finish.
   subscribers must be told to rebuild — the host's `rewound` event is the precedent); flagged as a
   parent-§8 addition. Plans: `docs/superpowers/plans/2026-07-30-agent-appserver-m2a-spine-controls.md`
   (Tasks 1–15, waves 0–2), `…-m2b-rewind-queue.md` (Tasks 1–9, waves 3–4).
+- 2026-07-30 — second independent plan review folded in (mid-execution, after M2a Task 2), all nine
+  findings accepted: (1) `threadBusyReason` single predicate + (2) `record.epoch` for the router's
+  stale-frame drop → new Wave-0 bullet and D-M2-8; (3) the rewind × cursor interaction is now
+  defined — cursors are epoch-qualified `"<epoch>:<rowOffset>"` and a stale one is refused with
+  `-32602`; (4) the frame-router task splits into 8a (absorption, behavior-invariant) and 8b (new
+  routes) in the M2a plan; (5) the `auto` self-heal's `thread/settings/changed` is `source:
+  "client"` and unit-pinned; (6) `turn/interrupt` on a queued id cancels that entry (D-M2-10);
+  (7) one turn-id minting function shared by all three start paths; (8) one thin keyed live smoke
+  moves up to sit right after the router (D-M2-9); (9) toolchain sweep of the plans' command lines
+  (`pnpm` → `npm` everywhere including this spec's acceptance 1, probe files renumbered 70–74 into
+  `CC-to-SDK/probes/probes/`, `drift-check.mjs` confirmed to gate on the appserver pass with a
+  non-zero exit).
