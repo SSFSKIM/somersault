@@ -13,6 +13,7 @@ import { turnStart, turnInterrupt, requestInterrupt } from "./turns.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
 import { modelSet, permissionModeSet, thinkingSet, settingsApply } from "./settings.js";
 import { capabilitiesRead, contextUsageRead, usageRead, initRead, accountRead } from "./introspect.js";
+import { threadCompactStart, threadReinitialize } from "./lifecycle.js";
 import { armPlanUpgrade } from "./planUpgrade.js";
 import { installRouter } from "./router.js";
 import { broadcastToWatchers } from "./fanout.js";
@@ -200,6 +201,8 @@ export class AppServer {
     "thread/usage/read": usageRead,
     "thread/init/read": initRead,
     "account/read": accountRead,
+    "thread/compact/start": threadCompactStart,
+    "thread/reinitialize": threadReinitialize,
   };
 
   private readonly token: string;

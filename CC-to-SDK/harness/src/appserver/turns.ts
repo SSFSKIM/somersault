@@ -9,7 +9,8 @@ import { TurnMapper, userItem } from "./items/mapper.js";
 import type { ItemEvent, ItemDeltaChannel } from "./items/types.js";
 import { threadBusyReason, threadStatus } from "./registry.js";
 import type { ThreadRecord, BufferedItemEvent } from "./registry.js";
-import type { AppServer, Handler } from "./server.js";
+import type { AppServer, ConnCtx, Handler } from "./server.js";
+import type { RequestId } from "./rpc.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
 import { turnStartParams, turnInterruptParams } from "./schema/turns.js";
 
@@ -96,17 +97,29 @@ function settleTurn(record: ThreadRecord): void {
   void applyPlanUpgrade(record);
 }
 
-export const turnStart: Handler = (srv, ctx, id, params) => {
-  const parsed = turnStartParams.safeParse(params);
-  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
-  const record = srv.registry.get(parsed.data.threadId);
-  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+/** The ONE place a turn id is minted (spec Wave 4, external review): `beginTurn` below is its only
+ *  caller, so `turn/start`, compact, and M2b's queue drain all produce identical id formats — format
+ *  drift between them surfaces far downstream in replay and the D10 stitch. */
+export function mintTurnId(record: ThreadRecord): string {
+  return `turn_${record.id}_${++record.turnSeq}`;
+}
+
+/** The busy-gate + mint + chain-callback spine `turnStart` and compact (`lifecycle.ts`'s
+ *  `thread/compact/start`) share (spec Wave 2: "compaction is a turn, not a side call"). `runner` is
+ *  what actually drives the engine once the turn owns the thread: `turnStart` passes a wrapper around
+ *  `session.submit`; compact passes `session.compact`. Returns false when the busy gate refused (the
+ *  caller already got its -33001 reply) — verbatim-moved from `turnStart`, condition for condition. */
+export function beginTurn(
+  srv: AppServer, ctx: ConnCtx, id: RequestId, record: ThreadRecord,
+  runner: (turnId: string, mapper: TurnMapper) => Promise<void>,
+  presetTurnId?: string, // M2b's queue drain passes the id minted at enqueue; otherwise mintTurnId()
+): boolean {
   // Gate synchronously, at request-arrival time — NOT deferred inside the chain callback below. A
   // same-tick second turn/start (two requests dispatched before any microtask runs) must see this
   // thread already claimed even when `submit()` happens to settle within the same microtask batch
   // as the chain callback's return (its completion `.then` would otherwise clear `busy` before the
   // second request's chain-deferred check ever ran — proven by turns.test.ts's busy-gate case).
-  if (threadBusyReason(record)) { ctx.peer.replyError(id, ERR.BUSY, "Thread is busy"); return; }
+  if (threadBusyReason(record)) { ctx.peer.replyError(id, ERR.BUSY, "Thread is busy"); return false; }
   record.busy = true;
   // Both reset synchronously HERE — at request-arrival time, not deferred inside the chain callback
   // below — for the same same-tick reason as the busy gate above:
@@ -122,7 +135,7 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
   // the same transport chunk — Peer.feed() explicitly supports multi-frame chunks) landing before the
   // chain callback's microtask runs would see a STALE turnSeq and emit a bogus turn/started that never
   // gets a matching turn/completed (Task 9 finding 1).
-  const turnId = `turn_${record.id}_${++record.turnSeq}`;
+  const turnId = presetTurnId ?? mintTurnId(record);
   record.currentTurnId = turnId;
   // The chain still gates the submit work below so it stays ordered after any prior thread-scoped chain
   // item (e.g. a queued thread/close finishing its dispose first).
@@ -136,12 +149,6 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
     // correctly skips its own turn/started replay — the live broadcast just above/about to fire is the
     // only delivery that peer needs (Task 9 finding 2).
     record.turnStartedBroadcast = true;
-
-    // gap 6, probe-70 ALIVE branch: the server mints the transcript uuid itself and reuses it as the
-    // live userMessage item's id, so the id equals what the SDK will persist — the item can safely join
-    // the replay buffer (emitItems below) under the normal id-dedup stitch instead of being live-only.
-    const userUuid = randomUUID();
-    emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(parsed.data.input, userUuid) }]);
 
     const mapper = new TurnMapper(); // one instance per turn — dropped at completion, never reused
     const reportFailed = (err: unknown) => {
@@ -172,19 +179,34 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
       statusChanged(srv, record);
     };
     try {
-      // Guarded: session.submit() throwing SYNCHRONOUSLY (rather than returning a rejected promise)
-      // must never leave record.chain rejected — an uncaught rejection here crashes the process AND
-      // wedges the thread forever (busy stays true, and every later chain-scoped request for this
-      // thread — e.g. thread/close — silently never replies because its .then() never runs on a
-      // rejected chain). The try/catch below is belt-and-suspenders with the .catch(reportFailed): the
-      // try/catch covers a throw before submit() ever returns a promise; the .catch covers
-      // onSuccess/onFailure themselves throwing after submit() settles.
-      record.session.submit(parsed.data.input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid })
-        .then(onSuccess, onFailure)
-        .catch(reportFailed);
+      // Guarded: the runner throwing SYNCHRONOUSLY (rather than returning a rejected promise) must
+      // never leave record.chain rejected — an uncaught rejection here crashes the process AND wedges
+      // the thread forever (busy stays true, and every later chain-scoped request for this thread —
+      // e.g. thread/close — silently never replies because its .then() never runs on a rejected chain).
+      // The try/catch below is belt-and-suspenders with the .catch(reportFailed): the try/catch covers
+      // a throw before the runner ever returns a promise; the .catch covers onSuccess/onFailure
+      // themselves throwing after the runner's promise settles.
+      runner(turnId, mapper).then(onSuccess, onFailure).catch(reportFailed);
     } catch (err) {
       reportFailed(err);
     }
+  });
+  return true;
+}
+
+export const turnStart: Handler = (srv, ctx, id, params) => {
+  const parsed = turnStartParams.safeParse(params);
+  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  const record = srv.registry.get(parsed.data.threadId);
+  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  beginTurn(srv, ctx, id, record, async (turnId, mapper) => {
+    // gap 6, probe-70 ALIVE branch: the server mints the transcript uuid itself and reuses it as the
+    // live userMessage item's id, so the id equals what the SDK will persist — the item can safely join
+    // the replay buffer (emitItems below) under the normal id-dedup stitch instead of being live-only.
+    // Stays inside the runner (not beginTurn): compact has no user prompt to echo.
+    const userUuid = randomUUID();
+    emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(parsed.data.input, userUuid) }]);
+    await record.session.submit(parsed.data.input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid });
   });
 };
 

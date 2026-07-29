@@ -40,6 +40,14 @@ export interface EngineSession {
   usage?(): Promise<unknown>;
   initializationResult?(): Promise<unknown>;
   accountInfo?(): Promise<unknown>;
+  /** Optional (the real lib Session has it): Task 11's compact-as-turn. Enqueues a genuine engine turn —
+   *  `lifecycle.ts`'s `thread/compact/start` drives it through the same `beginTurn` spine as `turn/start`,
+   *  never as a side call (spec Wave 2), so the thread reads busy for its whole duration. */
+  compact?(): Promise<unknown>;
+  /** Optional (the real lib Session has it): Task 11's `thread/reinitialize` — returns a fresh init
+   *  payload; the handler also pings `thread/capabilities/changed` since a reinit refreshes that mirror
+   *  too. */
+  reinitialize?(): Promise<unknown>;
   /** Optional (the real lib Session has it): true once the read loop has ended — the engine is gone.
    *  The ONLY dead-engine signal handlers may use (spec Wave 0: no message-matching, ever). */
   isEnded?(): boolean;
