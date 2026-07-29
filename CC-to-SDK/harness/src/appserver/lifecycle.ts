@@ -14,13 +14,27 @@
 // it; `mapper.finalize()` still runs (it is part of the shared spine), which is a no-op on a mapper that
 // never ingested anything.
 //
-// `thread/reinitialize` is NOT a turn (no busy-gate, no turn/started pair) — it is chain-scoped like
-// settings.ts's setters, so it never interleaves with an in-flight turn or another chain-scoped op on the
-// same thread. Its fresh init payload also refreshes the capabilities mirror, so the handler pings
+// `thread/reinitialize` is NOT a turn (no turn/started/turn/completed pair) — but unlike settings.ts's
+// setters it DOES busy-gate synchronously, the same way `beginTurn` gates a turn: reinitializing a
+// session is far heavier than a settings setter and is not safe to run concurrently with a live turn's
+// engine call. (settings.ts's setters deliberately do NOT busy-gate — a live model/permissionMode switch
+// mid-turn is intentional and useful.)
+//
+// The busy-gate here is load-bearing, not redundant with `record.chain`: `record.chain` only serializes
+// handler BODIES against each other (this op against settings.ts's setters, thread/close, etc) — it does
+// NOT, by itself, wait for an in-flight turn's engine call, because `beginTurn` (turns.ts) deliberately
+// does not return the runner's promise into `record.chain` (a turn completes via `settleTurn`, not via
+// the chain resolving). Without an explicit `threadBusyReason` check here, a `turn/start` immediately
+// followed by `thread/reinitialize` would call `reinitialize()` on the same engine session while
+// `submit()` was still in flight (a real bug an external review caught in an earlier draft of this file,
+// whose header used to claim record.chain alone provided this guarantee — it does not).
+//
+// Its fresh init payload also refreshes the capabilities mirror, so the handler pings
 // `thread/capabilities/changed` after replying — the same ping router.ts's routeCapabilities sends for an
 // engine-pushed commands list (spec: "fresh init payload -> also refreshes the capabilities mirror").
 import { ERR } from "./rpc.js";
 import { beginTurn } from "./turns.js";
+import { threadBusyReason } from "./registry.js";
 import type { AppServer, Handler } from "./server.js";
 import { threadCompactStartParams, threadReinitializeParams } from "./schema/threads.js";
 
@@ -40,6 +54,11 @@ export const threadReinitialize: Handler = (srv: AppServer, ctx, id, params) => 
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  // Synchronous, at request-arrival time — same reasoning as beginTurn's own gate (turns.ts): a same-tick
+  // turn/start followed by thread/reinitialize must see the thread already claimed, and record.chain
+  // alone does not provide that (see the module header).
+  const busyReason = threadBusyReason(record);
+  if (busyReason) { ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`); return; }
   record.chain = record.chain.then(async () => {
     try {
       const init = await record.session.reinitialize!();

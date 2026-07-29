@@ -108,6 +108,33 @@ describe("appserver compact-as-turn (Task 11)", () => {
     expect(parsed(s.lines).find((f) => f.id === 2).error.code).toBe(ERR.THREAD_NOT_FOUND);
     expect(parsed(s.lines).find((f) => f.id === 3).error.code).toBe(ERR.INVALID_PARAMS);
   });
+
+  it("a rejecting compact() completes the turn as failed and clears busy — a rejecting compaction must not strand the thread busy forever", async () => {
+    let rejectCompact!: (e: unknown) => void;
+    const sessionFactory = () => ({
+      submit: async () => ({ result: {} }),
+      interrupt: async () => ({}),
+      dispose: async () => {},
+      onFrame: () => () => {},
+      compact: () => new Promise((_resolve, reject) => { rejectCompact = reject; }),
+      sessionId: "sess-1",
+    });
+    const { s, c, threadId } = await bootThread(sessionFactory);
+
+    send(c, { id: 3, method: "thread/compact/start", params: { threadId } });
+    await tick();
+    const turnId = parsed(s.lines).find((f) => f.id === 3).result.turn.id;
+
+    rejectCompact(new Error("compact boom"));
+    await tick();
+    const completed = parsed(s.lines).find((f) => f.method === "turn/completed");
+    expect(completed.params.turn).toEqual({ id: turnId, status: "failed", error: expect.stringMatching(/compact boom/) });
+
+    // busy is cleared — a subsequent turn/start is accepted, not -33001; the thread is not stranded busy
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "go" } });
+    await tick();
+    expect(parsed(s.lines).find((f) => f.id === 4).result.turn.status).toBe("inProgress");
+  });
 });
 
 describe("appserver thread/reinitialize (Task 11)", () => {
@@ -141,6 +168,37 @@ describe("appserver thread/reinitialize (Task 11)", () => {
     send(c, { id: 2, method: "thread/reinitialize", params: { threadId: "thr_missing0000" } });
     await tick();
     expect(parsed(s.lines).find((f) => f.id === 2).error.code).toBe(ERR.THREAD_NOT_FOUND);
+  });
+
+  it("thread/reinitialize is refused with the busy code while a turn is in flight, and the engine's reinitialize() is never called — reinitializing concurrently with a live submit() is not safe", async () => {
+    let resolveSubmit!: (r: { result: unknown }) => void;
+    let reinitCalled = 0;
+    const sessionFactory = () => ({
+      submit: () => new Promise<{ result: unknown }>((resolve) => { resolveSubmit = resolve; }),
+      interrupt: async () => ({}),
+      dispose: async () => {},
+      onFrame: () => () => {},
+      reinitialize: async () => { reinitCalled++; return {}; },
+      sessionId: "sess-1",
+    });
+    const { s, c, threadId } = await bootThread(sessionFactory);
+
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await tick(); // the turn's chain callback runs and calls submit(), which parks on resolveSubmit
+
+    send(c, { id: 4, method: "thread/reinitialize", params: { threadId } });
+    await tick();
+    const reply = parsed(s.lines).find((f) => f.id === 4);
+    expect(reply.error.code).toBe(ERR.BUSY);
+    expect(reinitCalled).toBe(0);
+
+    // the turn finishing afterward clears busy — a subsequent reinitialize is then accepted
+    resolveSubmit({ result: {} });
+    await tick();
+    send(c, { id: 5, method: "thread/reinitialize", params: { threadId } });
+    await tick();
+    expect(parsed(s.lines).find((f) => f.id === 5).result).toEqual({ init: {} });
+    expect(reinitCalled).toBe(1);
   });
 
   it("a rejecting reinitialize() replies -32603 and does not ping capabilities/changed", async () => {

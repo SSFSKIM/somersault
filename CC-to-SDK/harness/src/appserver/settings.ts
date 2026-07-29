@@ -8,8 +8,14 @@
 // the engine call FIRST — a rejected setter must not write record.settings and must not broadcast, since
 // the engine kept its old value and nothing later would correct a lie.
 //
-// All four go through record.chain so a setter never interleaves with a turn's submit (same pattern as
-// turns.ts's turn/start and server.ts's thread/close).
+// All four go through record.chain, which serializes their handler BODIES against each other and against
+// other chain-scoped ops on the same thread (thread/close, Task 11's thread/reinitialize). It does NOT,
+// by itself, wait for an in-flight turn's engine call: turns.ts's beginTurn deliberately does not return
+// the runner's promise into record.chain (a turn completes via settleTurn, not via the chain resolving),
+// so a setter enqueued while a turn is in flight legitimately runs concurrently with that turn's
+// submit() — that is intentional here, since a live model/permissionMode switch mid-turn is a real,
+// useful feature. Contrast Task 11's thread/reinitialize (lifecycle.ts), which DOES busy-gate: its engine
+// call is heavy enough that running it concurrently with a live turn is not safe, unlike these four.
 import { ERR } from "./rpc.js";
 import { resolveAutoModel } from "../config/autoModel.js";
 import { thinkBudget } from "../tui/thinkLevels.js";
