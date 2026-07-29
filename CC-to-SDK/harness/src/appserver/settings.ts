@@ -63,6 +63,7 @@ export const permissionModeSet: Handler = (srv, ctx, id, params) => {
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
   const mode = parsed.data.mode;
   record.chain = record.chain.then(async () => {
+    let healedMirror = false; // true once the self-heal has genuinely written record.settings.model
     try {
       // `auto` re-runs the exact self-heal src/config/resolveOptions.ts:62 applies at session-open time —
       // `auto` is MODEL-GATED (Opus 4.6+/Sonnet 4.6); an unsupported mirrored model would silently fall
@@ -72,6 +73,7 @@ export const permissionModeSet: Handler = (srv, ctx, id, params) => {
         if (healed !== record.settings.model) {
           await record.session.setModel?.(healed);
           record.settings.model = healed;
+          healedMirror = true;
         }
       }
       await record.session.setPermissionMode?.(mode);
@@ -82,6 +84,13 @@ export const permissionModeSet: Handler = (srv, ctx, id, params) => {
       broadcastSettings(srv, record);
       ctx.peer.reply(id, { ok: true });
     } catch (e) {
+      // The heal can have already changed the engine's model — and written the mirror — before
+      // setPermissionMode rejects below it. That model change is real and already reflected in
+      // record.settings; write-back is the mirror's ONLY reliable source (module header), so a change it
+      // fails to announce is a change no subscriber ever learns about. Announce it BEFORE replying the
+      // error: the request as a whole still fails (permissionMode never changed), but the genuine partial
+      // state change must not go silent.
+      if (healedMirror) { record.updatedAt = nowSec(); broadcastSettings(srv, record); }
       replyError(ctx, id, e);
     }
   });

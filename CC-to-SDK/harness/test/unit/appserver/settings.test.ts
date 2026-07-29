@@ -149,6 +149,18 @@ describe("appserver settings setters (Task 9)", () => {
     expect(evt.params.thinkingTokens).toBe(0);
   });
 
+  it("thread/thinking/set with maxTokens:null passes null raw to the engine (its own reset-to-default signal) but mirrors it as undefined (matching seedSettings's 'no thinking config' convention, not a bare number)", async () => {
+    const calls = mkCalls();
+    const { a, connA, threadId } = await bootTwoSubscribers(() => fakeSession(calls));
+
+    send(connA, { id: 3, method: "thread/thinking/set", params: { threadId, maxTokens: null } });
+    await tick();
+
+    expect(calls.setMaxThinkingTokens).toEqual([null]);
+    const evt = parsed(a.lines).find((f) => f.method === "thread/settings/changed");
+    expect(evt.params.thinkingTokens).toBeUndefined();
+  });
+
   it("thread/settings/apply: applyFlagSettings called with the settings, no mirror field, no thread/settings/changed broadcast, reply ok", async () => {
     const calls = mkCalls();
     const { a, b, connA, threadId } = await bootTwoSubscribers(() => fakeSession(calls));
@@ -197,6 +209,32 @@ describe("appserver settings setters (Task 9)", () => {
     await tick();
     const list = parsed(a.lines).find((f) => f.id === 4);
     expect(list.result.data.find((t: any) => t.id === threadId).permissionMode).toBe("default");
+  });
+
+  it("permissionMode/set 'auto' whose heal succeeds but whose setPermissionMode then rejects still announces the genuine model change: mirror model is the healed value, mirror permissionMode is unchanged, a subscriber gets thread/settings/changed{source:'client', model:healed} even though the reply is an error (the heal's setModel really did land on the engine — the write-back-is-the-only-source invariant means that must not go unannounced just because the OVERALL request failed)", async () => {
+    const calls = mkCalls();
+    const { a, b, connA, threadId } = await bootTwoSubscribers(() => fakeSession(calls, { setPermissionMode: "reject" }), { model: "claude-haiku-4-5-20251001", permissionMode: "default" });
+
+    send(connA, { id: 3, method: "thread/permissionMode/set", params: { threadId, mode: "auto" } });
+    await tick();
+
+    expect(calls.setModel).toEqual(["claude-sonnet-4-6"]); // the heal's setModel ran and succeeded
+    expect(calls.setPermissionMode).toEqual(["auto"]); // then setPermissionMode ran and rejected
+
+    const reply = parsed(a.lines).find((f) => f.id === 3);
+    expect(reply.error).toBeTruthy(); // the request as a whole still fails
+
+    for (const lines of [a.lines, b.lines]) {
+      const evt = parsed(lines).find((f) => f.method === "thread/settings/changed");
+      expect(evt).toBeTruthy(); // the genuine model change was NOT silently dropped
+      expect(evt.params).toMatchObject({ threadId, source: "client", model: "claude-sonnet-4-6" });
+    }
+
+    send(connA, { id: 4, method: "thread/list", params: {} });
+    await tick();
+    const view = parsed(a.lines).find((f) => f.id === 4).result.data.find((t: any) => t.id === threadId);
+    expect(view.model).toBe("claude-sonnet-4-6"); // mirror reflects the real (healed) engine model
+    expect(view.permissionMode).toBe("default"); // mirror does NOT reflect the rejected permissionMode change
   });
 
   it("a rejecting setMaxThinkingTokens: error reply, mirror unchanged, no broadcast", async () => {
