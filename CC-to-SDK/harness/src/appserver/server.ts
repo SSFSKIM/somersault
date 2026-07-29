@@ -12,6 +12,7 @@ import type { PendingDecision } from "../permissions/pending.js";
 import { turnStart, turnInterrupt, requestInterrupt } from "./turns.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
 import { armPlanUpgrade } from "./planUpgrade.js";
+import { installRouter } from "./router.js";
 import { broadcastToWatchers } from "./fanout.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStartParams, threadResumeParams, threadListParams } from "./schema/threads.js";
@@ -78,30 +79,6 @@ function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "pa
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
 
-/** `Session.sessionId` is a GETTER that stays undefined until the first turn's system/init frame lands
- *  (session.ts's own doc comment) — the value snapshotted at thread/start is therefore `undefined` for the
- *  whole life of the thread unless something refreshes it, which left thread/read answering an empty page
- *  forever and threadView never reporting an id to resume from. Latch it off the engine's own frame seam
- *  (the one registry.ts declares) rather than at turn boundaries, so a client learns the id mid-first-turn
- *  rather than only after it ends.
- *
- *  Reads the id from the INIT FRAME ITSELF, not only from `session.sessionId`: the read loop invokes frame
- *  callbacks BEFORE it records the id, so a getter-only latch needs a SECOND frame to fire — and a first
- *  turn whose iterator ends (or throws) right after system/init never delivers one, leaving the record's
- *  session id undefined forever (thread/read answers an empty page, and nothing can ever resume it). The
- *  getter stays the primary read, for an engine that latches its id off some other frame. */
-function latchSessionId(record: ThreadRecord): void {
-  if (record.sessionId) return;
-  const off = record.session.onFrame((m) => {
-    const f = m as { type?: string; subtype?: string; session_id?: unknown };
-    const fromInit = f?.type === "system" && f.subtype === "init" && typeof f.session_id === "string" ? f.session_id : undefined;
-    const sid = record.session.sessionId ?? fromInit;
-    if (!sid) return;
-    record.sessionId = sid;
-    off();
-  });
-}
-
 export type Handler = (srv: AppServer, ctx: ConnCtx, id: RequestId, params: Record<string, unknown>) => void | Promise<void>;
 
 export class AppServer {
@@ -128,7 +105,7 @@ export class AppServer {
       const nowS = nowSec();
       const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, createdAt: nowS, updatedAt: nowS, cwd: parsed.data.config?.cwd as string | undefined, settings: seedSettings(parsed.data.config), epoch: 0 };
       srv.registry.add(record);
-      latchSessionId(record); // the snapshot above is undefined until the first turn's init frame (see latchSessionId)
+      installRouter(srv, record); // the snapshot above is undefined until the first turn's init frame (router.ts's routeInit)
       ctx.peer.reply(id, { thread: threadView(srv, record) });
       srv.broadcastServer("thread/started", { thread: threadView(srv, record) });
     },
@@ -145,7 +122,7 @@ export class AppServer {
       const nowS = nowSec();
       const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId ?? parsed.data.sessionId, createdAt: nowS, updatedAt: nowS, cwd: parsed.data.config?.cwd as string | undefined, settings: seedSettings(parsed.data.config), epoch: 0 };
       srv.registry.add(record);
-      latchSessionId(record); // no-op here in practice — resume already knows the id — but keeps one rule for both entry points
+      installRouter(srv, record); // no-op on the init route in practice — resume already knows the id — but keeps one rule for both entry points
       ctx.peer.reply(id, { thread: threadView(srv, record) });
       srv.broadcastServer("thread/started", { thread: threadView(srv, record) });
     },
@@ -239,6 +216,7 @@ export class AppServer {
    *  BEFORE the delete, since broadcast() no-ops once the record is out of the registry. */
   private async closeRecord(record: ThreadRecord): Promise<void> {
     this.decisions.get(record.id)?.teardown();
+    record.routerOff?.(); // stop routing frames from an engine we are about to dispose (Task 8a)
     try {
       await record.session.dispose();
     } finally {

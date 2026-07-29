@@ -57,7 +57,8 @@ export interface ThreadRecord {
   chain: Promise<unknown>;      // serialization scope for thread-scoped methods (record.chain = record.chain.then(...))
   planUpgradePending?: boolean; // set when a plan_approve settled with acceptEdits:true and the engine has
                                 // not been upgraded yet; cleared by planUpgrade.ts's applyPlanUpgrade
-  planUpgradeOff?: () => void;  // unsubscribes the status-frame watcher that arms the upgrade (same file)
+  routerOff?: () => void;       // unsubscribes the ONE per-thread frame router (router.ts, Task 8a,
+                                 // spec D-M2-6) — closeRecord calls this before disposing the engine
   sessionId?: string;
   createdAt: number;            // unix seconds
   updatedAt: number;            // unix seconds — bumped on every settings/turn mutation (Task 8's setters)
