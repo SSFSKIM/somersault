@@ -316,4 +316,49 @@ describe("appserver turns (Task 8)", () => {
     expect(record.buffer).toHaveLength(2);
     expect(record.buffer.every((b) => b.turnId === `turn_${threadId}_2`)).toBe(true);
   });
+
+  it("the bounded buffer never sheds an in-flight item's start while keeping its deltas — a mid-turn joiner can still reconstruct the text", async () => {
+    // Drop-oldest evicted the item/started first, so a client reconnecting into a long streamed message was
+    // replayed deltas for an itemId it had never seen: unreconstructable output. The start is folded
+    // forward instead (its evicted deltas collapse into its own text) and re-seated at the head.
+    const CHUNKS = 600; // > BUFFER_CAP (500), so the start is the first thing a plain shift() would drop
+    let release!: () => void;
+    const inFlight = new Promise<void>((r) => { release = r; });
+    const sessionFactory = () => ({
+      submit: async (_prompt: string, onMessage: (m: unknown) => void) => {
+        onMessage({ type: "stream_event", event: { type: "message_start", message: { id: "msg_long" } } });
+        onMessage({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+        for (let i = 0; i < CHUNKS; i++) onMessage({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: `w${i} ` } } });
+        await inFlight;
+        return { result: {} };
+      },
+      interrupt: async () => ({}),
+      dispose: async () => {},
+      onFrame: () => () => {},
+      sessionId: "sess-1",
+    });
+    const { srv, c, threadId } = await bootThread(sessionFactory);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await tick();
+
+    const b = mkSink(); const connB = srv.connect(b.sink);
+    init(connB, 1, "B");
+    send(connB, { id: 4, method: "thread/subscribe", params: { threadId } });
+    await tick();
+
+    const notifs = parsed(b.lines).filter((f) => !("id" in f) && f.method !== "initialized");
+    const started = notifs.find((f) => f.method === "item/started");
+    expect(started, "replayed deltas for an item the subscriber was never shown starting").toBeTruthy();
+    expect(started.params.item.type).toBe("agentMessage");
+    const itemId = started.params.item.id;
+    const deltas = notifs.filter((f) => f.method === "item/agentMessage/delta");
+    expect(deltas.every((f) => f.params.itemId === itemId)).toBe(true);
+    const full = Array.from({ length: CHUNKS }, (_, i) => `w${i} `).join("");
+    expect(started.params.item.text + deltas.map((f) => f.params.delta).join("")).toBe(full);
+
+    release();
+    await tick();
+    send(c, { id: 5, method: "thread/close", params: { threadId } });
+    await tick(); await tick();
+  });
 });

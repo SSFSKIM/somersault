@@ -2,7 +2,7 @@
 // disconnected, never buffered unboundedly — replay-first subscribe makes reconnect cheap by design.
 import { encode, type RequestId } from "./rpc.js";
 export interface PeerSink { write(line: string): void; buffered(): number; end(): void }
-const MAX_IN = 256 * 1024;          // client→server frame cap (mirrors host/server.ts MAX_FRAME)
+const MAX_IN = 256 * 1024;          // client→server frame cap, in BYTES (mirrors host/server.ts MAX_FRAME)
 const MAX_OUT = 32 * 1024 * 1024;   // server→client pressure cap (mirrors client/remote.ts rationale)
 export class Peer {
   private buf = "";
@@ -22,9 +22,11 @@ export class Peer {
     while ((nl = this.buf.indexOf("\n")) >= 0) {
       const line = this.buf.slice(0, nl); this.buf = this.buf.slice(nl + 1);
       if (!line.trim()) continue;
-      if (line.length > (this.opts.maxIncomingFrame ?? MAX_IN)) { onFrame({ __parseError: true }); continue; }
+      // BYTES, not UTF-16 code units: String.length counts a CJK character as 1 while the wire spends 3,
+      // so a ~240k-character frame is ~720 KiB on the socket yet passed a 256 KiB `.length` cap untouched.
+      if (Buffer.byteLength(line, "utf8") > (this.opts.maxIncomingFrame ?? MAX_IN)) { onFrame({ __parseError: true }); continue; }
       try { onFrame(JSON.parse(line)); } catch { onFrame({ __parseError: true }); }
     }
-    if (this.buf.length > (this.opts.maxIncomingFrame ?? MAX_IN)) { this.buf = ""; onFrame({ __parseError: true }); }
+    if (Buffer.byteLength(this.buf, "utf8") > (this.opts.maxIncomingFrame ?? MAX_IN)) { this.buf = ""; onFrame({ __parseError: true }); }
   }
 }

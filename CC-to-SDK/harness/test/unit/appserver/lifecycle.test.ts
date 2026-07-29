@@ -191,6 +191,34 @@ describe("appserver thread teardown (C1/I7)", () => {
     expect(parsed(s.lines).some((f) => f.method === "thread/closed" && f.params.threadId === t1)).toBe(true);
   });
 
+  it("a thread/start landing WHILE shutdown() awaits a slow dispose is refused, so nothing outlives the shutdown", async () => {
+    // shutdown() snapshots registry.list() once and then awaits disposal — but the listener is still open
+    // the whole time, so a thread admitted inside that window was never in the Promise.all and survived the
+    // shutdown: a leaked SDK session (and its `claude` child) with nothing left to close it.
+    let release!: () => void;
+    const slow = new Promise<void>((r) => { release = r; });
+    let created = 0;
+    const srv = new AppServer({}, { sessionFactory: () => { created++; return { submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => { await slow; }, onFrame: () => () => {}, sessionId: "sess-1" }; } });
+    const s = mkSink(); const c = srv.connect(s.sink);
+    init(c, 1);
+    send(c, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    expect(created).toBe(1);
+
+    const done = srv.shutdown();          // parked on the slow dispose above
+    await tick();
+    send(c, { id: 3, method: "thread/start", params: {} });
+    send(c, { id: 4, method: "thread/resume", params: { sessionId: "sess-old" } });
+    await tick();
+    expect(parsed(s.lines).find((f) => f.id === 3).error.code).toBe(-32001);  // OVERLOADED: the SERVER is done taking work
+    expect(parsed(s.lines).find((f) => f.id === 4).error.code).toBe(-32001);
+    expect(created).toBe(1);                                                  // no engine was ever opened for them
+
+    release();
+    await done;
+    expect(srv.registry.list()).toHaveLength(0);                              // pre-fix: the late thread is still here
+  });
+
   it("shutdown() disposes the remaining threads even when one thread's dispose() rejects", async () => {
     const ok = { parked: [] as Promise<unknown>[], disposed: 0 };
     let first = true;
@@ -251,6 +279,44 @@ describe("appserver record.sessionId (C3)", () => {
     send(c, { id: 5, method: "thread/list", params: {} });
     await tick();
     expect(parsed(s.lines).find((f) => f.id === 5).result.data[0].sessionId).toBe("sess-late");
+  });
+
+  it("latches the id even when system/init is the LAST frame of the turn", async () => {
+    // The getter-only latch needed a SECOND frame to fire, because the read loop invokes frame callbacks
+    // before it records the id. A first turn whose iterator ends right after init therefore never fired the
+    // callback again and the record's sessionId stayed undefined FOREVER — thread/read answered an empty
+    // page and nothing could ever resume the session, even though the engine itself knew the id all along.
+    const cbs = new Set<(m: unknown) => void>();
+    const frames = [{ type: "user", uuid: "u-p", message: { content: "hi" } }];
+    const initOnly: any = {
+      sessionId: undefined,
+      submit: async () => {
+        for (const cb of [...cbs]) cb({ type: "system", subtype: "init", session_id: "sess-initlast" });
+        initOnly.sessionId = "sess-initlast"; // the real read loop records it AFTER the callbacks, then ends
+        return { result: {} };
+      },
+      interrupt: async () => ({}),
+      dispose: async () => {},
+      onFrame: (cb: (m: unknown) => void) => { cbs.add(cb); return () => cbs.delete(cb); },
+    };
+    let seenSessionId: string | undefined;
+    const srv = new AppServer({}, { sessionFactory: () => initOnly, getSessionMessages: async (sid: string) => { seenSessionId = sid; return frames; } });
+    const s = mkSink(); const c = srv.connect(s.sink);
+    init(c, 1);
+    send(c, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(s.lines).find((f) => f.id === 2).result.thread.id;
+
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await tick(); await tick();
+
+    send(c, { id: 4, method: "thread/read", params: { threadId } });
+    await tick();
+    expect(seenSessionId).toBe("sess-initlast");                                    // pre-fix: undefined
+    expect(parsed(s.lines).find((f) => f.id === 4).result.data.map((i: any) => i.id)).toEqual(["u-p"]);
+    send(c, { id: 5, method: "thread/list", params: {} });
+    await tick();
+    expect(parsed(s.lines).find((f) => f.id === 5).result.data[0].sessionId).toBe("sess-initlast");
   });
 });
 

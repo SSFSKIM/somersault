@@ -41,6 +41,24 @@ describe("Peer", () => {
     p.feed('{"method":"toolong"}\n{"method":"ok"}\n', (v) => seen.push(v));
     expect(seen).toEqual([{ __parseError: true }, { method: "ok" }]);
   });
+  it("inbound cap counts BYTES, not UTF-16 code units: a multi-byte line under the .length cap still overflows", () => {
+    // `String.length` counts one CJK character as 1 while the wire spends 3, so a frame of ~240k CJK
+    // characters is ~720 KiB on the socket and sailed through a 256 KiB `.length` cap untouched. Scaled
+    // down here: 21 code units, 37 bytes, against a 32-byte cap.
+    const line = `{"method":"${"가".repeat(8)}"}`;
+    expect(line.length).toBeLessThanOrEqual(32);
+    expect(Buffer.byteLength(line, "utf8")).toBeGreaterThan(32);
+    const s = arraySink(); const p = new Peer(s.sink, { maxIncomingFrame: 32 }); const seen: unknown[] = [];
+    p.feed(line + '\n{"method":"ok"}\n', (v) => seen.push(v));
+    expect(seen).toEqual([{ __parseError: true }, { method: "ok" }]);
+  });
+  it("the unterminated-buffer cap counts bytes too", () => {
+    const s = arraySink(); const p = new Peer(s.sink, { maxIncomingFrame: 32 }); const seen: unknown[] = [];
+    const partial = `{"method":"${"가".repeat(9)}`; // 20 code units, 38 bytes, no newline yet
+    expect(partial.length).toBeLessThanOrEqual(32);
+    p.feed(partial, (v) => seen.push(v));
+    expect(seen).toEqual([{ __parseError: true }]);
+  });
   it("inbound overflow: an unterminated buffer growing past the cap clears the buffer with exactly one parseError", () => {
     const s = arraySink(); const p = new Peer(s.sink, { maxIncomingFrame: 16 }); const seen: unknown[] = [];
     p.feed('{"method":"stillgoing', (v) => seen.push(v));

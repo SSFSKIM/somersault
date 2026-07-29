@@ -12,6 +12,7 @@ import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js"
 import type { PendingDecision } from "../permissions/pending.js";
 import { turnStart, turnInterrupt, requestInterrupt } from "./turns.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
+import { armPlanUpgrade } from "./planUpgrade.js";
 
 const require = createRequire(import.meta.url);
 const pkgVersion = (require("../../package.json") as { version: string }).version;
@@ -54,13 +55,19 @@ const nowSec = (): number => Math.floor(Date.now() / 1000);
  *  whole life of the thread unless something refreshes it, which left thread/read answering an empty page
  *  forever and threadView never reporting an id to resume from. Latch it off the engine's own frame seam
  *  (the one registry.ts declares) rather than at turn boundaries, so a client learns the id mid-first-turn
- *  rather than only after it ends. NB the read loop invokes frame callbacks BEFORE it records the id from
- *  the init frame, so this reads `session.sessionId` on EVERY frame until it appears (latched on the frame
- *  after init, still well inside the first turn) instead of reaching into the frame's own shape. */
+ *  rather than only after it ends.
+ *
+ *  Reads the id from the INIT FRAME ITSELF, not only from `session.sessionId`: the read loop invokes frame
+ *  callbacks BEFORE it records the id, so a getter-only latch needs a SECOND frame to fire — and a first
+ *  turn whose iterator ends (or throws) right after system/init never delivers one, leaving the record's
+ *  session id undefined forever (thread/read answers an empty page, and nothing can ever resume it). The
+ *  getter stays the primary read, for an engine that latches its id off some other frame. */
 function latchSessionId(record: ThreadRecord): void {
   if (record.sessionId) return;
-  const off = record.session.onFrame(() => {
-    const sid = record.session.sessionId;
+  const off = record.session.onFrame((m) => {
+    const f = m as { type?: string; subtype?: string; session_id?: unknown };
+    const fromInit = f?.type === "system" && f.subtype === "init" && typeof f.session_id === "string" ? f.session_id : undefined;
+    const sid = record.session.sessionId ?? fromInit;
     if (!sid) return;
     record.sessionId = sid;
     off();
@@ -75,11 +82,13 @@ export class AppServer {
   private decisions = new Map<string, ThreadDecisions>();
   private connSeq = 0;
   private startedAt = Date.now();
+  private shuttingDown = false; // latched by shutdown(); refuses new thread admission (see shutdown())
   private handlers: Record<string, Handler> = {
     "server/status": (srv, ctx, id) => {
       ctx.peer.reply(id, { uptimeMs: Date.now() - srv.startedAt, threads: srv.registry.list().length, listeners: srv.conns.size });
     },
     "thread/start": async (srv, ctx, id, params) => {
+      if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.OVERLOADED, "Server is shutting down"); return; } // see shutdown()
       const parsed = threadStartParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
       const threadId = srv.registry.mint();
@@ -94,6 +103,7 @@ export class AppServer {
       ctx.peer.reply(id, { thread: threadView(record) });
     },
     "thread/resume": async (srv, ctx, id, params) => {
+      if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.OVERLOADED, "Server is shutting down"); return; } // see shutdown()
       const parsed = threadResumeParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
       const threadId = srv.registry.mint();
@@ -147,6 +157,10 @@ export class AppServer {
         else ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Answer kind does not match the parked decision's kind");
         return;
       }
+      // Settling the broker only releases THIS tool call. `acceptEdits` additionally upgrades the SESSION's
+      // permission mode going forward (mirrors host/host.ts's answer -> planUpgradePending): without it the
+      // RPC reported {ok:true} while every later edit stayed in the old mode and prompted again.
+      if (outcome.kind === "plan_approve" && outcome.acceptEdits) armPlanUpgrade(record);
       // spec §6: EVERY answer variant may carry abortTurn, not just `deny` — and aborting goes through the
       // same flag-then-interrupt path turn/interrupt uses, else the turn it just aborted reports "completed"
       if (parsed.data.abortTurn) await requestInterrupt(record);
@@ -196,8 +210,17 @@ export class AppServer {
   /** Process shutdown (the `ccx serve` SIGINT path): settle every parked decision and dispose every live
    *  thread. Without it, closing the listener leaves each SDK session — and its `claude` child process —
    *  running, which also keeps the event loop alive so the first Ctrl-C may not exit at all. One thread's
-   *  failing dispose must not abandon the rest, so each is guarded. */
+   *  failing dispose must not abandon the rest, so each is guarded.
+   *
+   *  LATCHED FIRST, snapshot second: the listener is still accepting frames while this awaits a slow
+   *  dispose(), so an admission (thread/start, thread/resume) landing inside that window used to create a
+   *  thread that was never in the snapshot and therefore outlived the shutdown — a leaked SDK session and
+   *  its `claude` child. `shuttingDown` makes the snapshot un-staleable. The refusal is OVERLOADED
+   *  (-32001), not INVALID_REQUEST: nothing about the request is malformed, the SERVER is simply no longer
+   *  taking work — the same "try again elsewhere/later" class of answer, and the one existing code whose
+   *  meaning is about server capacity rather than about the caller or a specific thread. */
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
     await Promise.all(this.registry.list().map((r) => this.closeRecord(r).catch(() => {})));
   }
 
@@ -295,7 +318,10 @@ export class AppServer {
       else ctx.peer.replyError(id, ERR.INVALID_REQUEST, "Not initialized");
       return;
     }
-    const handler = this.handlers[method];
+    // OWN-property only: a plain-object lookup answers `toString`/`constructor`/`valueOf` with an INHERITED
+    // Object.prototype function, which dispatch then awaits as if it were a handler — so those method names
+    // returned no response at all instead of METHOD_NOT_FOUND, hanging the caller.
+    const handler = Object.prototype.hasOwnProperty.call(this.handlers, method) ? this.handlers[method] : undefined;
     if (!handler) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, `Unknown method: ${method}`); return; }
     try {
       await handler(this, ctx, id, params);
