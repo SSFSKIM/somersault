@@ -2,7 +2,10 @@
 // disconnected, never buffered unboundedly — replay-first subscribe makes reconnect cheap by design.
 import { encode, type RequestId } from "./rpc.js";
 export interface PeerSink { write(line: string): void; buffered(): number; end(): void }
-const MAX_IN = 256 * 1024;          // client→server frame cap, in BYTES (mirrors host/server.ts MAX_FRAME)
+// Exported so transports that sit below this framing layer (e.g. transport/ws.ts's `maxPayload`) can
+// size their own guard off the SAME constant instead of re-deriving 256 KiB with a second literal that
+// could drift from this one.
+export const MAX_IN = 256 * 1024;   // client→server frame cap, in BYTES (mirrors host/server.ts MAX_FRAME)
 const MAX_OUT = 32 * 1024 * 1024;   // server→client pressure cap (mirrors client/remote.ts rationale)
 export class Peer {
   private buf = "";

@@ -143,4 +143,16 @@ describe("ws transport", () => {
     ws.close();
     await close();
   });
+
+  it("caps ws payloads at the protocol's own inbound bound (gap 8)", async () => {
+    const srv = new AppServer({}, { sessionFactory: () => fakeSession() });
+    const { port, close } = await listenWs(srv, {});
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    await new Promise((r) => ws.once("open", r));
+    const closed = new Promise<number>((r) => ws.once("close", (code) => r(code)));
+    ws.send("x".repeat(300 * 1024)); // > 256 KiB + slack — ws kills the connection below the app layer
+    const code = await closed;
+    expect(code).toBe(1009); // ws's "message too big" close code
+    await close();
+  }, 5000);
 });

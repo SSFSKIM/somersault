@@ -14,7 +14,7 @@
 // socket, so the client sees a genuine upgrade-time 403 rather than a silently-dropped connection.
 import { WebSocketServer, type WebSocket } from "ws";
 import type { AppServer } from "../server.js";
-import type { PeerSink } from "../peer.js";
+import { MAX_IN, type PeerSink } from "../peer.js";
 
 export interface WsListenOpts { host?: string /* default "127.0.0.1" */; port?: number /* default 0 = ephemeral */; allowOrigins?: string[] /* omitted === [] — fails closed; a present Origin header is refused unless explicitly allowlisted */; token?: string }
 
@@ -25,6 +25,10 @@ export function listenWs(server: AppServer, opts: WsListenOpts): Promise<{ port:
     const wss = new WebSocketServer({
       host,
       port,
+      maxPayload: MAX_IN + 16 * 1024, // gap 8: the protocol's own inbound cap is 256 KiB (peer.ts MAX_IN) —
+      // the library default (100 MiB) let a pre-initialize client buffer huge frames below the app
+      // layer. 16 KiB of slack covers JSON framing overhead so a legal 256 KiB frame still passes
+      // peer.ts's own check (which remains the byte-exact authority).
       verifyClient(info, cb) {
         const origin = info.req.headers.origin;
         if (!origin) { cb(true); return; } // absent Origin — non-browser client, always allowed

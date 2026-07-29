@@ -5,7 +5,7 @@
 // this file's own parse-level policy is covered pure in test/unit/cli/serveArgs.test.ts, and the live
 // end-to-end path is Task 13's.
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { AppServer } from "../appserver/server.js";
 import { listenWs } from "../appserver/transport/ws.js";
@@ -34,6 +34,10 @@ export function loadOrMintToken(path: string | undefined, dir: string): { token:
   return { token, tokenFile };
 }
 
+/** Remove the serve run-file. `force` — a missing file is not an error (a crashed previous serve, or
+ *  an operator's manual cleanup, must not turn shutdown into a throw). Exported for the unit suite. */
+export function removeRunFile(path: string): void { rmSync(path, { force: true }); }
+
 /** The signals that mean "stop serving". SIGINT alone was wrong: a service manager (systemd, launchd), a
  *  container runtime, and a plain `kill` all send SIGTERM, and an unhandled SIGTERM kills the process
  *  outright — server.shutdown() never runs, so parked decisions are never settled and no subscriber ever
@@ -61,11 +65,20 @@ export async function runServe(inv: CcxInvocation): Promise<void> {
   console.log(`appserver listening ws://${shown}:${port}`);
   // Run-file deliberately excludes the token itself (global constraint) — a reader gets `tokenFile` and
   // must have filesystem access to that separate, narrower-permissioned (0o600) file to learn the secret.
-  writeFileSync(join(dir, "appserver.json"), JSON.stringify({ port, tokenFile }), { mode: 0o600 });
+  const runFile = join(dir, "appserver.json");
+  writeFileSync(runFile, JSON.stringify({ port, tokenFile }), { mode: 0o600 });
   // Shut the THREADS down before the listener: closing the socket alone leaves every SDK session and its
   // `claude` child process alive, which also keeps the event loop alive — so a first Ctrl-C on a serve with
   // an open thread might not exit at all (I7).
   await new Promise<void>((resolve) => {
-    onStopSignals(() => { void (async () => { await server.shutdown(); await close().catch(() => {}); resolve(); })(); });
+    onStopSignals(() => {
+      void (async () => {
+        await server.shutdown();
+        await close().catch(() => {});
+        removeRunFile(runFile); // gap 9: an operator listing the run dir after shutdown must not see a
+        // stale entry for a server that is no longer listening.
+        resolve();
+      })();
+    });
   });
 }
