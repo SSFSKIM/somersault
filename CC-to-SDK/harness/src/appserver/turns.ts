@@ -27,8 +27,6 @@ function snapshot(ev: ItemEvent): ItemEvent {
   return ev.kind === "delta" ? ev : { kind: ev.kind, item: structuredClone(ev.item) };
 }
 
-const eventItemId = (ev: ItemEvent): string => (ev.kind === "delta" ? ev.itemId : ev.item.id);
-
 /** Drop-oldest, with ONE item-aware exception. A plain shift() can evict an in-flight item's `item/started`
  *  while its later deltas survive, and a reconnecting subscriber then gets deltas for an itemId it has
  *  never seen — it cannot reconstruct the output at all. (An `item/completed` needs no start: it carries
