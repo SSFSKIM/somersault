@@ -23,8 +23,8 @@ and get a fully contract-conformant Postgres mirror: ordered append/load round-t
 - [x] (2026-07-30) Official SDK reference adapter read (`examples/session-stores/postgres` from anthropics/claude-agent-sdk-typescript; copy at `$CLAUDE_JOB_DIR/tmp/official-pg-store.ts`).
 - [x] (2026-07-30) ExecPlan authored and committed.
 - [x] (2026-07-30) Milestone 1: PGlite spike — @electric-sql/pglite@0.5.4 installed; all five engine facts verified (see Surprises & Discoveries).
-- [ ] Milestone 2: adapter TDD — conformance suite (uuidDedup) + adapter-specific tests green against PGlite.
-- [ ] Milestone 3: exports + docs — index.ts barrel + surface-pin test, coverage.md row, memory refresh, full gates green.
+- [x] (2026-07-30) Milestone 2: adapter TDD — red first (module not found), then 17/17 green (10 conformance incl. uuidDedup + 7 specifics, one more than planned: CAS-exhaustion throw).
+- [x] (2026-07-30) Milestone 3: exports + docs — 5 names exported from index.ts, surface pin updated; gates green (typecheck clean, test:unit 1190/1190, build passes); coverage.md rows + wave3 memory addendum.
 - [ ] Milestone 4: exit gate — external whole-branch review (codex; argus fallback), fixes, retrospective.
 
 ## Surprises & Discoveries
@@ -61,6 +61,9 @@ and get a fully contract-conformant Postgres mirror: ordered append/load round-t
 - Decision: factory function `createPostgresSessionStore(client, opts)` (not a class), exported from the `src/index.ts` barrel alongside `PgLike`, options type, DDL, and ensure-helper; the Redis adapter stays untouched.
   Rationale: house style (`createRedisSessionStore` precedent); this is an addition to the adapter family, not a replacement.
   Date/Author: 2026-07-30, grill.
+- Decision (M2): the sidecar CAS guards a dedicated always-incrementing `seq BIGINT` column, not `mtime` as first planned.
+  Rationale: two processes appending in the same millisecond would satisfy `WHERE mtime = $prior` after a competing write with the same stamp, silently losing one summary fold; a version counter has no time-resolution hazard. The schema in Plan of Work carries `seq`; the INSERT arm seeds 0, the UPDATE arm does `seq = seq + 1 ... WHERE seq = $prior`.
+  Date/Author: 2026-07-30, M2 implementation.
 - Decision: work directly on `main` with frequent commits, no worktree, no push.
   Rationale: the repo's standing git rules (commit completed work to the current branch including main; never push without explicit request) override the execplan skill's worktree default; this session is explicitly configured to work in place.
   Date/Author: 2026-07-30, authoring.
@@ -114,6 +117,7 @@ Schema (two tables per prefix `p`, default prefix `ccs`, validated against `/^[A
       project_key TEXT NOT NULL,
       session_id  TEXT NOT NULL,
       mtime       BIGINT NOT NULL,
+      seq         BIGINT NOT NULL,   -- CAS version counter (see Decision Log: seq, not mtime)
       summary     JSONB NOT NULL,
       PRIMARY KEY (project_key, session_id)
     );
@@ -122,7 +126,7 @@ Schema (two tables per prefix `p`, default prefix `ccs`, validated against `/^[A
 
 `createPostgresSessionStore(client: PgLike, opts?: { prefix?: string; now?: () => number })` returns a `SessionStore`:
 
-- `append(key, entries)`: no-op on empty. Under the in-process per-session promise chain (same `serialized` helper shape as the Redis adapter): one multi-row `INSERT INTO <p>_entries (project_key, session_id, subpath, uuid, entry) VALUES ... ON CONFLICT (project_key, session_id, subpath, uuid) WHERE uuid IS NOT NULL DO NOTHING RETURNING uuid`. Compute `fresh` = entries that actually landed (uuid-less entries always land; uuid-ed ones filtered by the RETURNING set — and a batch-internal duplicate uuid lands once). If the key has a subpath, stop there (subkeys are discovered from the entries table; subpath batches never touch the sessions table). Otherwise stamp `mtime = now()` and run the sidecar CAS loop (bounded, ~5 attempts): read `SELECT mtime, summary FROM <p>_sessions WHERE ...`; fold `foldSessionSummary(prevSummary, key, fresh, { mtime })`; if a row existed, `UPDATE <p>_sessions SET mtime=$, summary=$ WHERE project_key=$ AND session_id=$ AND mtime=$prior RETURNING 1` — zero rows back means a concurrent writer moved it, so re-read and retry; if no row existed, `INSERT ... ON CONFLICT (project_key, session_id) DO NOTHING RETURNING 1` — zero rows back likewise retries. If the loop exhausts its attempts, throw: the SDK retries a rejected `append` and surfaces persistent failure as a `mirror_error` message, which is the designed recovery channel — a silent return would drop the summary fold with no signal. Note `fresh` can be empty on a pure replay; the sidecar still updates mtime (Redis-adapter parity: an all-dup append refreshes mtime; `foldSessionSummary(prev, key, [], {mtime})` is a pure restamp).
+- `append(key, entries)`: no-op on empty. Under the in-process per-session promise chain (same `serialized` helper shape as the Redis adapter): one multi-row `INSERT INTO <p>_entries (project_key, session_id, subpath, uuid, entry) VALUES ... ON CONFLICT (project_key, session_id, subpath, uuid) WHERE uuid IS NOT NULL DO NOTHING RETURNING uuid`. Compute `fresh` = entries that actually landed (uuid-less entries always land; uuid-ed ones filtered by the RETURNING set — and a batch-internal duplicate uuid lands once). If the key has a subpath, stop there (subkeys are discovered from the entries table; subpath batches never touch the sessions table). Otherwise stamp `mtime = now()` and run the sidecar CAS loop (bounded, 5 attempts): read `SELECT seq, summary FROM <p>_sessions WHERE ...`; fold `foldSessionSummary(prevSummary, key, fresh, { mtime })`; if a row existed, `UPDATE <p>_sessions SET mtime=$, seq=seq+1, summary=$ WHERE project_key=$ AND session_id=$ AND seq=$prior RETURNING 1` — zero rows back means a concurrent writer moved it, so re-read and retry; if no row existed, `INSERT ... (seq 0) ON CONFLICT (project_key, session_id) DO NOTHING RETURNING 1` — zero rows back likewise retries. If the loop exhausts its attempts, throw: the SDK retries a rejected `append` and surfaces persistent failure as a `mirror_error` message, which is the designed recovery channel — a silent return would drop the summary fold with no signal. Note `fresh` can be empty on a pure replay; the sidecar still updates mtime (Redis-adapter parity: an all-dup append refreshes mtime; `foldSessionSummary(prev, key, [], {mtime})` is a pure restamp).
 - `load(key)`: `SELECT entry FROM <p>_entries WHERE project_key=$ AND session_id=$ AND subpath=$ ORDER BY id`; null iff zero rows; jsonb comes back pre-parsed — return as-is.
 - `listSessions(projectKey)`: `SELECT session_id, mtime FROM <p>_sessions WHERE project_key=$` mapped with `Number(mtime)` (int8 arrives as a string in node-postgres).
 - `listSessionSummaries(projectKey)`: `SELECT summary FROM <p>_sessions WHERE project_key=$`; rows are `SessionSummaryEntry` jsonb, already parsed.
@@ -200,3 +204,5 @@ New devDependency: `@electric-sql/pglite` (tests only; the published package gai
 ## Revision Notes
 
 - 2026-07-30 (authoring): initial plan from the in-session grill; all Decision Log entries seeded from grill answers and the official-reference comparison. (An earlier draft of this file pre-filled milestone results that had not happened; corrected to actual state before the first commit.)
+- 2026-07-30 (M1): spike results recorded in Surprises & Discoveries; int8 note corrected — PGlite returns number, node-postgres returns string, `Number()` covers both.
+- 2026-07-30 (M2/M3): milestones done (17/17 adapter tests; gates green: typecheck, unit 1190/1190, build). Design deltas from the plan text, both recorded in the Decision Log: CAS moved from mtime to a `seq` column, and the schema in Plan of Work was updated to match; the CAS-exhaustion throw got its own regression test. coverage.md rows + wave3 memory addendum written.

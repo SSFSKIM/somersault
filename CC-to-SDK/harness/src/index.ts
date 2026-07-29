@@ -37,6 +37,8 @@ export { createWarmPool } from "./warm/pool.js";
 export type { WarmPool, WarmPoolOpts, WarmPoolStats, WarmLease, WarmHandle, StartupFn } from "./warm/pool.js";
 export { createRedisSessionStore } from "./store/redisSessionStore.js";
 export type { RedisLike, RedisSessionStoreOptions } from "./store/redisSessionStore.js";
+export { createPostgresSessionStore, ensurePostgresSessionStoreSchema, postgresSessionStoreDDL } from "./store/postgresSessionStore.js";
+export type { PgLike, PostgresSessionStoreOptions } from "./store/postgresSessionStore.js";
 export { sessionStoreConformance } from "./store/conformance.js";
 export type { ConformanceOpts } from "./store/conformance.js";
 export type { MirrorErrorInfo } from "./session/session.js";
