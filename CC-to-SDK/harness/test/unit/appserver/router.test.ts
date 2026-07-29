@@ -61,6 +61,24 @@ describe("frame router skeleton (spec D-M2-6, D-M2-8)", () => {
     expect(modes).toEqual(["acceptEdits"]);
   });
 
+  it("a status frame with no permissionMode does not apply an armed upgrade (the CLI's own flip has not been observed yet); a later one carrying permissionMode then applies it exactly once", async () => {
+    const modes: string[] = [];
+    const { session, push } = fakeSession({ setPermissionMode: async (m: string) => { modes.push(m); } });
+    const record = mkRecord(session, { planUpgradePending: true });
+    installRouter(srv, record);
+
+    // e.g. a compaction-only status frame (compact_result, no permissionMode) — see compaction/server.ts
+    push({ type: "system", subtype: "status", compact_result: "success" });
+    await tick();
+    expect(modes).toEqual([]);
+    expect(record.planUpgradePending).toBe(true); // still armed — nothing consumed it
+
+    push({ type: "system", subtype: "status", permissionMode: "plan" });
+    await tick();
+    expect(modes).toEqual(["acceptEdits"]);
+    expect(record.planUpgradePending).toBe(false);
+  });
+
   it("a status frame with planUpgradePending false calls nothing", async () => {
     const modes: string[] = [];
     const { session, push } = fakeSession({ setPermissionMode: async (m: string) => { modes.push(m); } });

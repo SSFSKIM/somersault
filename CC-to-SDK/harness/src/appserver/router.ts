@@ -27,9 +27,18 @@ function routeInit(record: ThreadRecord, frame: { type?: string; subtype?: strin
 
 /** Absorbed from the deleted `armPlanUpgrade`'s own status-frame watcher (planUpgrade.ts, D-M2-6):
  *  `armPlanUpgrade` now only sets `record.planUpgradePending`; this route is what actually applies it,
- *  once, when the engine's own post-approval status frame is observed. */
-function routeStatus(record: ThreadRecord, frame: { type?: string; subtype?: string }): void {
+ *  once, when the engine's own post-approval status frame is observed.
+ *
+ *  The `typeof permissionMode === "string"` qualifier is NOT a redundant type guard — it is the same
+ *  condition the deleted watcher used, and dropping it reintroduces a real race (2026-07-30 review
+ *  finding): the CLI performs its own post-approval mode flip on the message stream, and an eager setter
+ *  races it, so `applyPlanUpgrade` must only fire once we OBSERVE that flip — a system/status frame that
+ *  actually carries a `permissionMode`. The engine also emits system/status frames for unrelated reasons
+ *  (compaction's `compact_result`, see compaction/server.ts) that carry no `permissionMode` at all; firing
+ *  on one of those is firing before the flip has happened, not after. */
+function routeStatus(record: ThreadRecord, frame: { type?: string; subtype?: string; permissionMode?: unknown }): void {
   if (frame?.type !== "system" || frame.subtype !== "status") return;
+  if (typeof frame.permissionMode !== "string") return;
   if (record.planUpgradePending) void applyPlanUpgrade(record);
 }
 
