@@ -132,7 +132,9 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     expect(notifs[3].params).toMatchObject({ threadId, turnId: `turn_${threadId}_1`, item: { type: "agentMessage", id: "msg1#0" } });
     expect(notifs[4].params.threadId).toBe(threadId);
     expect(notifs[4].params.decision.toolUseID).toBe("toolu_a");
-    expect(notifs[5].params).toEqual({ threadId, status: "active" });
+    // status is now the {state,waitingOn} object (Task 7, spec D-M2-8) — a pending decision on this
+    // thread means waitingOn:"decision", not just a bare "active" string.
+    expect(notifs[5].params).toEqual({ threadId, status: { state: "active", waitingOn: "decision" } });
   });
 
   it("(b) an idle thread's subscribe replay carries no turn/started, and ends on thread/status/changed:idle", async () => {
@@ -150,7 +152,8 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     const notifs = parsed(a.lines).filter((f) => !("id" in f));
     expect(notifs.some((f) => f.method === "turn/started")).toBe(false);
     expect(notifs.map((f) => f.method)).toEqual(["thread/status/changed"]);
-    expect(notifs[0].params).toEqual({ threadId, status: "idle" });
+    // status is now the {state} object (Task 7, spec D-M2-8) — idle carries no waitingOn key at all.
+    expect(notifs[0].params).toEqual({ threadId, status: { state: "idle" } });
   });
 
   it("(c) stitch contract: buffered-replay ids and thread/read ids overlap, and dedup-by-id collapses the overlap to exactly one entry per id", async () => {

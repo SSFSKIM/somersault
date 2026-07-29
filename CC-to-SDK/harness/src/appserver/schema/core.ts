@@ -11,3 +11,10 @@ export const initializeParams = z.object({
   optOutNotificationMethods: z.array(z.string()).optional(),
 });
 export const serverStatusParams = z.object({});
+// The one cursor shape, reused (via .extend(cursorParam.shape)) by thread/read, thread/list, and
+// decision/list (Task 2's review: the shape stayed inlined in threadReadParams; Task 13 changes only
+// THIS regex when the cursor becomes epoch-qualified — one definition means one change).
+export const cursorParam = z.object({
+  cursor: z.string().regex(/^\d+$/).optional(),
+  limit: z.number().int().positive().optional(),
+});

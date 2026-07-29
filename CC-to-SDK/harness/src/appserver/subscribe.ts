@@ -6,7 +6,7 @@ import { ERR } from "./rpc.js";
 import { itemEventNotification } from "./turns.js";
 import { itemsFromTranscript } from "./items/replay.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
-import { activeTurnId } from "./registry.js";
+import { activeTurnId, threadStatus } from "./registry.js";
 import type { Handler } from "./server.js";
 import { threadIdParams } from "./schema/core.js";
 import { threadReadParams } from "./schema/threads.js";
@@ -47,8 +47,9 @@ export const threadSubscribe: Handler = (srv, ctx, id, params) => {
   }
   // Same payload as the live broadcast (server.ts's broadcastDecision), turnId included — replay and live
   // must never drift on shape; absent when no turn is in flight.
-  for (const entry of srv.pendingDecisions(record.id)) ctx.peer.notify("decision/requested", { threadId: record.id, turnId: activeTurnId(record), decision: entry });
-  ctx.peer.notify("thread/status/changed", { threadId: record.id, status: record.busy ? "active" : "idle" });
+  const pending = srv.pendingDecisions(record.id);
+  for (const entry of pending) ctx.peer.notify("decision/requested", { threadId: record.id, turnId: activeTurnId(record), decision: entry });
+  ctx.peer.notify("thread/status/changed", { threadId: record.id, status: threadStatus(record, pending.length > 0) });
 };
 
 export const threadUnsubscribe: Handler = (srv, ctx, id, params) => {

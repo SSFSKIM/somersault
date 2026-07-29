@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { AppServer } from "../../../src/appserver/server.js";
+import { AppServer, threadView } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
+import { threadBusyReason, type ThreadRecord } from "../../../src/appserver/registry.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const fakeSession = (overrides: Record<string, unknown> = {}) => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1", ...overrides });
@@ -232,5 +233,105 @@ describe("M2 error codes", () => {
     release();
     await done;
     expect(disposeCalls).toBe(1); // memoized-by-ordering, not by luck: the second closer awaited the first
+  });
+});
+
+describe("threadBusyReason (spec D-M2-8) — the ONE busy predicate", () => {
+  const baseRecord = (overrides: Partial<ThreadRecord> = {}): ThreadRecord => ({
+    id: "thr_x", origin: "inProcess", session: {} as any, unattended: "park", busy: false, turnSeq: 0,
+    interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(),
+    createdAt: 0, updatedAt: 0, settings: {}, epoch: 0, ...overrides,
+  });
+  it("returns null for an idle record (nothing busy)", () => {
+    expect(threadBusyReason(baseRecord())).toBeNull();
+  });
+  it("returns 'turn' for a record with an active turn only", () => {
+    expect(threadBusyReason(baseRecord({ busy: true }))).toBe("turn");
+  });
+  it("returns 'swapping' for swapInFlight", () => {
+    expect(threadBusyReason(baseRecord({ swapInFlight: true }))).toBe("swapping");
+  });
+  it("returns 'closing' when closing is set — even while a turn is ALSO active (precedence is the point: a closing thread is not merely 'busy with a turn')", () => {
+    expect(threadBusyReason(baseRecord({ busy: true, closing: true }))).toBe("closing");
+  });
+  it("'closing' also outranks 'swapping' (closing checked first)", () => {
+    expect(threadBusyReason(baseRecord({ swapInFlight: true, closing: true }))).toBe("closing");
+  });
+});
+
+describe("threadView (parent §5's 13-field Thread projection) + thread/list cursor", () => {
+  it("produces all 13 wire fields; status is an object; a parked decision yields waitingOn:'decision'", async () => {
+    let broker: any;
+    const sessionFactory = (cfg: any) => {
+      broker = cfg.permissionBroker;
+      return {
+        submit: async (_prompt: string, _onMessage: (m: unknown) => void) => {
+          await broker.request({ toolName: "Bash", input: { command: "ls" }, toolUseID: "toolu_a", signal: new AbortController().signal });
+          return { result: {} };
+        },
+        interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
+      };
+    };
+    const srv = new AppServer({}, { sessionFactory });
+    const s = mkSink(); const c = srv.connect(s.sink);
+    send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+    send(c, { id: 2, method: "thread/start", params: { config: { cwd: "/tmp/x", model: "opus", permissionMode: "default", thinking: { type: "enabled", budgetTokens: 4096 } } } });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(s.lines).find((f) => f.id === 2).result.thread.id;
+    const record = srv.registry.get(threadId)!;
+
+    const idleView = threadView(srv, record);
+    expect(Object.keys(idleView).sort()).toEqual(
+      ["cwd", "createdAt", "id", "model", "origin", "permissionMode", "preview", "sessionId", "status", "tags", "thinking", "title", "updatedAt"].sort()
+    );
+    expect(idleView.status).toEqual({ state: "idle" });
+    expect(idleView.cwd).toBe("/tmp/x");
+    expect(idleView.model).toBe("opus");
+    expect(idleView.permissionMode).toBe("default");
+    expect(idleView.thinking).toEqual({ maxTokens: 4096 });
+    expect(idleView.title).toBeUndefined();
+    expect(idleView.tags).toBeUndefined();
+    expect(idleView.preview).toBeUndefined();
+
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await new Promise((r) => setTimeout(r, 0)); // the turn parks on broker.request — record stays busy
+    const busyView = threadView(srv, record);
+    expect(busyView.status).toEqual({ state: "active", waitingOn: "decision" });
+  });
+
+  it("thread/list pages with a decimal-string cursor: limit:1 on two threads returns nextCursor that fetches the second", async () => {
+    const { lines, c } = boot();
+    send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+    send(c, { id: 2, method: "thread/start", params: {} });
+    send(c, { id: 3, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const t1 = threadIdOf({ lines }, 2);
+    const t2 = threadIdOf({ lines }, 3);
+
+    send(c, { id: 4, method: "thread/list", params: { limit: 1 } });
+    await new Promise((r) => setTimeout(r, 0));
+    const page1 = parsed(lines).find((f) => f.id === 4).result;
+    expect(page1.data).toHaveLength(1);
+    expect(page1.data[0].id).toBe(t1);
+    expect(page1.nextCursor).toBe("1");
+
+    send(c, { id: 5, method: "thread/list", params: { limit: 1, cursor: page1.nextCursor } });
+    await new Promise((r) => setTimeout(r, 0));
+    const page2 = parsed(lines).find((f) => f.id === 5).result;
+    expect(page2.data).toHaveLength(1);
+    expect(page2.data[0].id).toBe(t2);
+    expect(page2.nextCursor).toBeNull();
+  });
+
+  it("decision/list reply carries nextCursor: null (unpaged envelope uniformity, spec gap 2)", async () => {
+    const { lines, c } = boot();
+    send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+    send(c, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = threadIdOf({ lines }, 2);
+    send(c, { id: 3, method: "decision/list", params: { threadId } });
+    await new Promise((r) => setTimeout(r, 0));
+    const reply = parsed(lines).find((f) => f.id === 3).result;
+    expect(reply).toEqual({ data: [], nextCursor: null });
   });
 });

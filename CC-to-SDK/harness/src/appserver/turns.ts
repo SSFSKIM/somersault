@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { ERR } from "./rpc.js";
 import { TurnMapper, userItem } from "./items/mapper.js";
 import type { ItemEvent, ItemDeltaChannel } from "./items/types.js";
+import { threadBusyReason, threadStatus } from "./registry.js";
 import type { ThreadRecord, BufferedItemEvent } from "./registry.js";
 import type { AppServer, Handler } from "./server.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
@@ -82,7 +83,8 @@ function emitItems(srv: AppServer, record: ThreadRecord, turnId: string, events:
 }
 
 function statusChanged(srv: AppServer, record: ThreadRecord): void {
-  srv.broadcast(record.id, "thread/status/changed", { threadId: record.id, status: record.busy ? "active" : "idle" });
+  const waitingOn = srv.pendingDecisions(record.id).length > 0;
+  srv.broadcast(record.id, "thread/status/changed", { threadId: record.id, status: threadStatus(record, waitingOn) });
 }
 
 /** Turn-end belt for a plan_approve(acceptEdits:true) that settled but never saw the engine's own
@@ -104,7 +106,7 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
   // thread already claimed even when `submit()` happens to settle within the same microtask batch
   // as the chain callback's return (its completion `.then` would otherwise clear `busy` before the
   // second request's chain-deferred check ever ran — proven by turns.test.ts's busy-gate case).
-  if (record.busy) { ctx.peer.replyError(id, ERR.BUSY, "Thread is busy"); return; }
+  if (threadBusyReason(record)) { ctx.peer.replyError(id, ERR.BUSY, "Thread is busy"); return; }
   record.busy = true;
   // Both reset synchronously HERE — at request-arrival time, not deferred inside the chain callback
   // below — for the same same-tick reason as the busy gate above:

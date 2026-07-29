@@ -1,6 +1,11 @@
 // appserver/schema/decisions.ts — decision params. Mirrors DecisionOutcome (src/permissions/types.ts)
 // and the host wire (host/ops.ts) — never trust a client-supplied `by` (spec §6, server-stamped only).
 import { z } from "zod/v4";
+import { cursorParam, threadIdParams } from "./core.js";
+// A parked set is small and unpaged today (reply always carries nextCursor: null), but the params shape
+// reuses cursorParam so the envelope is uniform across every list method and Task 13 need touch only
+// core.ts's regex if/when this ever pages for real.
+export const decisionListParams = threadIdParams.extend(cursorParam.shape);
 export const decisionOutcomeParams = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("allow_once") }),
   z.object({ kind: z.literal("allow_always") }),

@@ -60,6 +60,34 @@ export interface ThreadRecord {
   planUpgradeOff?: () => void;  // unsubscribes the status-frame watcher that arms the upgrade (same file)
   sessionId?: string;
   createdAt: number;            // unix seconds
+  updatedAt: number;            // unix seconds — bumped on every settings/turn mutation (Task 8's setters)
+  cwd?: string;                 // seeded from the start config; surfaced on threadView
+  settings: { model?: string; permissionMode?: string; thinkingTokens?: number }; // seeded from the
+    // start config at thread/start|resume; written by Task 8's router/setters thereafter
+  closing?: boolean;            // set by M2b's close-drain queue while a close is in flight
+  swapInFlight?: boolean;       // set by M2b's rewind while an engine swap is in flight
+  epoch: number;                // one generation token per thread, initialized to 0 at creation; bumped
+                                 // ONLY by M2b's rewind engine swap (spec D-M2-8) — every later task that
+                                 // needs "am I still talking to the current engine" reads this, not a
+                                 // second counter of its own
+}
+
+/** The ONE answer to "is this thread busy?" (spec D-M2-8). Gates never re-assemble these terms — every
+ *  later gate (queue drain, close, rewind, compact) calls this instead. Precedence is deliberate: a
+ *  closing thread is not merely "busy with a turn" even if one happens to still be in flight, and a
+ *  swap-in-flight likewise outranks a plain turn. */
+export function threadBusyReason(r: ThreadRecord): "turn" | "closing" | "swapping" | null {
+  if (r.closing) return "closing";
+  if (r.swapInFlight) return "swapping";
+  return r.busy ? "turn" : null;
+}
+
+/** The ONE thread-status shape emitted on the wire (spec D-M2-8): every `threadView`/`thread/status/changed`
+ *  site builds its `status` field through this, never by hand. `waitingOn` is the caller's job to compute
+ *  (it needs the decisions map, which this function does not have) — see `srv.pendingDecisions`. */
+export function threadStatus(r: ThreadRecord, waitingOn: boolean): { state: "idle" | "active"; waitingOn?: "decision" } {
+  if (!threadBusyReason(r)) return { state: "idle" };
+  return waitingOn ? { state: "active", waitingOn: "decision" } : { state: "active" };
 }
 
 /** The id of the turn a decision belongs to, or undefined when none is in flight. `currentTurnId` is

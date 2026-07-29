@@ -4,7 +4,7 @@
 import { createRequire } from "node:module";
 import { Peer, type PeerSink } from "./peer.js";
 import { classify, ERR, type RequestId } from "./rpc.js";
-import { Registry, activeTurnId, type ThreadRecord, type EngineSession } from "./registry.js";
+import { Registry, activeTurnId, threadStatus, type ThreadRecord, type EngineSession } from "./registry.js";
 import { openSession, resumeSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, type DecisionEvent } from "./broker.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
@@ -14,8 +14,8 @@ import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
 import { armPlanUpgrade } from "./planUpgrade.js";
 import { broadcastToWatchers } from "./fanout.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
-import { threadStartParams, threadResumeParams } from "./schema/threads.js";
-import { decisionRespondParams } from "./schema/decisions.js";
+import { threadStartParams, threadResumeParams, threadListParams } from "./schema/threads.js";
+import { decisionRespondParams, decisionListParams } from "./schema/decisions.js";
 
 const require = createRequire(import.meta.url);
 const pkgVersion = (require("../../package.json") as { version: string }).version;
@@ -32,8 +32,42 @@ export interface ConnCtx {
   optOut: Set<string>;   // initialize{optOutNotificationMethods} — the SAME instance the Peer was built with (mutable-in-place)
 }
 
-function threadView(r: ThreadRecord): Record<string, unknown> {
-  return { id: r.id, origin: r.origin, sessionId: r.sessionId, status: r.busy ? "active" : "idle", createdAt: r.createdAt };
+const DEFAULT_LIST_LIMIT = 200;
+
+/** parent §5's full Thread projection (13 fields) — a GUI's thread row. `title`/`tags`/`preview` are
+ *  registry-only `undefined` here; Wave 2's store merge fills them on the list path. `status` goes
+ *  through the one predicate+shape pair (registry.ts, spec D-M2-8) — `waitingOn` needs the decisions
+ *  map, which the record itself does not have, hence `srv`. */
+export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unknown> {
+  const waitingOn = srv.pendingDecisions(r.id).length > 0;
+  return {
+    id: r.id,
+    sessionId: r.sessionId,
+    title: undefined,
+    tags: undefined,
+    cwd: r.cwd,
+    model: r.settings.model,
+    permissionMode: r.settings.permissionMode,
+    thinking: { maxTokens: r.settings.thinkingTokens },
+    status: threadStatus(r, waitingOn),
+    origin: r.origin,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    preview: undefined,
+  };
+}
+
+/** `settings` is seeded once, from the start/resume config, here — Task 8's router/setters mutate it
+ *  thereafter. `thinkingTokens` only has a value for the SDK's `{type:'enabled', budgetTokens}` shape;
+ *  adaptive/disabled thinking (or no thinking config at all) leaves it undefined. */
+function seedSettings(config: Record<string, unknown> | undefined): ThreadRecord["settings"] {
+  const c = config as OpenSessionConfig | undefined;
+  const thinking = c?.thinking as { type?: string; budgetTokens?: number } | undefined;
+  return {
+    model: c?.model,
+    permissionMode: c?.permissionMode,
+    thinkingTokens: thinking?.type === "enabled" ? thinking.budgetTokens : undefined,
+  };
 }
 
 /** The one seam thread/start and thread/resume both build their engine config through — extended in
@@ -91,11 +125,12 @@ export class AppServer {
       const factory = srv.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
       const session = factory(config as Record<string, unknown>); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
       srv.decisions.set(threadId, dec);
-      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, createdAt: nowSec() };
+      const nowS = nowSec();
+      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, createdAt: nowS, updatedAt: nowS, cwd: parsed.data.config?.cwd as string | undefined, settings: seedSettings(parsed.data.config), epoch: 0 };
       srv.registry.add(record);
       latchSessionId(record); // the snapshot above is undefined until the first turn's init frame (see latchSessionId)
-      ctx.peer.reply(id, { thread: threadView(record) });
-      srv.broadcastServer("thread/started", { thread: threadView(record) });
+      ctx.peer.reply(id, { thread: threadView(srv, record) });
+      srv.broadcastServer("thread/started", { thread: threadView(srv, record) });
     },
     "thread/resume": async (srv, ctx, id, params) => {
       if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
@@ -107,14 +142,22 @@ export class AppServer {
       const factory = srv.deps.sessionFactory ?? ((c: Record<string, unknown>) => resumeSession(parsed.data.sessionId, c as OpenSessionConfig));
       const session = factory(config as Record<string, unknown>); // same ordering as thread/start: register dec only once the factory hasn't thrown
       srv.decisions.set(threadId, dec);
-      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId ?? parsed.data.sessionId, createdAt: nowSec() };
+      const nowS = nowSec();
+      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId ?? parsed.data.sessionId, createdAt: nowS, updatedAt: nowS, cwd: parsed.data.config?.cwd as string | undefined, settings: seedSettings(parsed.data.config), epoch: 0 };
       srv.registry.add(record);
       latchSessionId(record); // no-op here in practice — resume already knows the id — but keeps one rule for both entry points
-      ctx.peer.reply(id, { thread: threadView(record) });
-      srv.broadcastServer("thread/started", { thread: threadView(record) });
+      ctx.peer.reply(id, { thread: threadView(srv, record) });
+      srv.broadcastServer("thread/started", { thread: threadView(srv, record) });
     },
-    "thread/list": (srv, ctx, id) => {
-      ctx.peer.reply(id, { data: srv.registry.list().map(threadView) });
+    "thread/list": (srv, ctx, id, params) => {
+      const parsed = threadListParams.safeParse(params);
+      if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+      const all = srv.registry.list();
+      const limit = parsed.data.limit ?? DEFAULT_LIST_LIMIT;
+      const offset = parsed.data.cursor ? Number(parsed.data.cursor) : 0;
+      const page = all.slice(offset, offset + limit);
+      const consumed = offset + page.length;
+      ctx.peer.reply(id, { data: page.map((r) => threadView(srv, r)), nextCursor: consumed < all.length ? String(consumed) : null });
     },
     "thread/close": async (srv, ctx, id, params) => {
       const parsed = threadIdParams.safeParse(params);
@@ -133,11 +176,13 @@ export class AppServer {
       });
     },
     "decision/list": (srv, ctx, id, params) => {
-      const parsed = threadIdParams.safeParse(params);
+      const parsed = decisionListParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
       const dec = srv.decisions.get(parsed.data.threadId);
       if (!dec) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-      ctx.peer.reply(id, { data: dec.pending() });
+      // A parked set is small and unpaged (cursor/limit are accepted for envelope uniformity but not
+      // consulted yet) — the reply still carries nextCursor so every list method's shape matches (gap 2).
+      ctx.peer.reply(id, { data: dec.pending(), nextCursor: null });
     },
     "decision/respond": async (srv, ctx, id, params) => {
       const parsed = decisionRespondParams.safeParse(params);
