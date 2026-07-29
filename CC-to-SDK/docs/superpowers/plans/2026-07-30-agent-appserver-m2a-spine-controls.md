@@ -677,7 +677,7 @@ export function installRouter(srv: AppServer, record: ThreadRecord): void {
 | frame | action |
 |---|---|
 | `system/init` | latch `record.sessionId` (the exact logic of the deleted `latchSessionId`, incl. reading `session_id` off the frame itself) |
-| `system/status` | `if (record.planUpgradePending) void applyPlanUpgrade(record)` |
+| `system/status` **carrying a string `permissionMode`** | `if (record.planUpgradePending) void applyPlanUpgrade(record)` — the `permissionMode` qualifier is the deleted watcher's condition and is load-bearing, not a redundant type guard: planUpgrade.ts's header records that the CLI performs its own post-approval flip on the message stream and an eager setter *races* it, so the setter must run only when that flip is observed. A status frame without `permissionMode` (a compaction-only status frame is one) must not trigger it |
 
 - `armPlanUpgrade(record)` shrinks to:
 ```typescript
@@ -692,7 +692,8 @@ export function armPlanUpgrade(record: ThreadRecord): void {
 ```typescript
 describe("frame router skeleton (spec D-M2-6, D-M2-8)", () => {
   it("latches sessionId from the init frame (absorbed latchSessionId)", ...);
-  it("a status frame while planUpgradePending calls the setter exactly once", ...);
+  it("a status frame CARRYING permissionMode while planUpgradePending calls the setter exactly once", ...);
+  it("a status frame WITHOUT permissionMode does not apply the upgrade (the deleted watcher's qualifier — an eager setter races the CLI's own flip)", ...);
   it("a status frame with planUpgradePending false calls nothing", ...);
   it("uninstalling the router (routerOff) stops all routing", ...);
   it("a frame arriving after record.epoch changed is dropped (stale-engine guard)", ...);
