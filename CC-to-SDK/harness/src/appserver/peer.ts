@@ -10,7 +10,7 @@ const MAX_OUT = 32 * 1024 * 1024;   // server→client pressure cap (mirrors cli
 export class Peer {
   private buf = "";
   private dead = false;
-  constructor(private sink: PeerSink, private opts: { maxIncomingFrame?: number; maxBuffered?: number; onOverflow?: () => void } = {}) {}
+  constructor(private sink: PeerSink, private opts: { maxIncomingFrame?: number; maxBuffered?: number; onOverflow?: () => void; optOut?: Set<string> } = {}) {}
   private send(msg: object): void {
     if (this.dead) return;
     if (this.sink.buffered() > (this.opts.maxBuffered ?? MAX_OUT)) { this.dead = true; this.opts.onOverflow?.(); this.sink.end(); return; }
@@ -18,7 +18,11 @@ export class Peer {
   }
   reply(id: RequestId, result: unknown): void { this.send({ id, result }); }
   replyError(id: RequestId, code: number, message: string, data?: unknown): void { this.send({ id, error: { code, message, ...(data !== undefined ? { data } : {}) } }); }
-  notify(method: string, params: Record<string, unknown>): void { this.send({ method, params, emittedAtMs: Date.now() }); }
+  notify(method: string, params: Record<string, unknown>): void {
+    if (this.opts.optOut?.has(method)) return; // initialize's optOutNotificationMethods — filtered at
+    // the LAST hop so every emit path (broadcast, replay, direct) honors it without knowing about it
+    this.send({ method, params, emittedAtMs: Date.now() });
+  }
   feed(chunk: string, onFrame: (v: unknown) => void): void {
     this.buf += chunk;
     let nl: number;

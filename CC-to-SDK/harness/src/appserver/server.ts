@@ -12,6 +12,7 @@ import type { PendingDecision } from "../permissions/pending.js";
 import { turnStart, turnInterrupt, requestInterrupt } from "./turns.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
 import { armPlanUpgrade } from "./planUpgrade.js";
+import { broadcastToWatchers } from "./fanout.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
 import { decisionRespondParams } from "./schema/decisions.js";
@@ -21,7 +22,15 @@ const pkgVersion = (require("../../package.json") as { version: string }).versio
 const USER_AGENT = "cc-harness-appserver";
 
 export interface AppServerDeps { sessionFactory?: (config: Record<string, unknown>) => EngineSession; getSessionMessages?: (sessionId: string) => Promise<unknown[]> }
-export interface ConnCtx { peer: Peer; initialized: boolean; authed: boolean; clientName?: string; connId: number }
+export interface ConnCtx {
+  peer: Peer;
+  initialized: boolean;
+  authed: boolean;
+  clientName?: string;
+  connId: number;
+  watchThreads: boolean; // initialize{watchThreads:true} — this connection wants thread-EXISTENCE fan-out (fanout.ts)
+  optOut: Set<string>;   // initialize{optOutNotificationMethods} — the SAME instance the Peer was built with (mutable-in-place)
+}
 
 function threadView(r: ThreadRecord): Record<string, unknown> {
   return { id: r.id, origin: r.origin, sessionId: r.sessionId, status: r.busy ? "active" : "idle", createdAt: r.createdAt };
@@ -86,6 +95,7 @@ export class AppServer {
       srv.registry.add(record);
       latchSessionId(record); // the snapshot above is undefined until the first turn's init frame (see latchSessionId)
       ctx.peer.reply(id, { thread: threadView(record) });
+      srv.broadcastServer("thread/started", { thread: threadView(record) });
     },
     "thread/resume": async (srv, ctx, id, params) => {
       if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
@@ -101,6 +111,7 @@ export class AppServer {
       srv.registry.add(record);
       latchSessionId(record); // no-op here in practice — resume already knows the id — but keeps one rule for both entry points
       ctx.peer.reply(id, { thread: threadView(record) });
+      srv.broadcastServer("thread/started", { thread: threadView(record) });
     },
     "thread/list": (srv, ctx, id) => {
       ctx.peer.reply(id, { data: srv.registry.list().map(threadView) });
@@ -186,7 +197,13 @@ export class AppServer {
     try {
       await record.session.dispose();
     } finally {
-      this.broadcast(record.id, "thread/closed", { threadId: record.id });
+      // thread/closed reaches BOTH this thread's subscribers and every server-scoped watcher (Task 5) —
+      // deduped by Peer identity, since a connection that is both a subscriber and a watcher must receive
+      // exactly one frame, not two (fanout.ts's orthogonality rule, applied at the one place two fan-out
+      // scopes actually overlap in M2).
+      const targets = new Set<Peer>(record.subscribers);
+      for (const w of this.watchers()) targets.add(w.peer);
+      for (const peer of targets) { try { peer.notify("thread/closed", { threadId: record.id }); } catch { /* one target's failure is not another's */ } }
       this.decisions.delete(record.id);
       this.registry.delete(record.id);
     }
@@ -250,6 +267,24 @@ export class AppServer {
     for (const peer of record.subscribers) { try { peer.notify(method, params); } catch { /* one subscriber's failure is not another's */ } }
   }
 
+  /** Connections that opted into thread-existence fan-out via initialize{watchThreads:true} — orthogonal
+   *  to any thread's `record.subscribers` (fanout.ts's header comment). */
+  watchers(): ConnCtx[] {
+    return [...this.conns.values()].filter((c) => c.watchThreads);
+  }
+
+  /** Server-scoped notification fan-out (Task 5): thread/started, and future server-wide events. Goes
+   *  through Peer.notify like every other emit path, so optOutNotificationMethods still applies. */
+  broadcastServer(method: string, params: Record<string, unknown>): void {
+    broadcastToWatchers(this.conns.values(), method, params);
+  }
+
+  /** A per-peer meta-notification (spec Wave 0) — e.g. "your request was silently adjusted". Exactly one
+   *  peer, never fanned out. */
+  warn(peer: Peer, code: string, message: string): void {
+    peer.notify("warning", { code, message });
+  }
+
   /** The parked decisions for one thread — subscribe.ts's replay step (spec §5) reads this to hand a
    *  newly-attached client every decision still awaiting an answer. */
   pendingDecisions(threadId: string): PendingDecision[] {
@@ -265,8 +300,10 @@ export class AppServer {
 
   connect(sink: PeerSink): { peer: Peer; feed(chunk: string): void; close(): void } {
     const connId = ++this.connSeq;
-    const peer = new Peer(sink);
-    const ctx: ConnCtx = { peer, initialized: false, authed: false, connId };
+    const optOut = new Set<string>();
+    const peer = new Peer(sink, { optOut }); // same Set instance handleInitialize fills in place — Peer is
+    // built before initialize arrives, so the option must be mutable-in-place, not re-passed later.
+    const ctx: ConnCtx = { peer, initialized: false, authed: false, connId, watchThreads: false, optOut };
     this.conns.set(connId, ctx);
     const feed = (chunk: string) => peer.feed(chunk, (frame) => this.onFrame(ctx, frame));
     // A closing connection must not leave a dead Peer in any thread's subscriber set (spec: a browser
@@ -299,6 +336,8 @@ export class AppServer {
     }
     ctx.initialized = true;
     ctx.clientName = parsed.data.clientInfo.name;
+    ctx.watchThreads = parsed.data.watchThreads ?? false;
+    for (const m of parsed.data.optOutNotificationMethods ?? []) ctx.optOut.add(m);
     ctx.peer.reply(id, { userAgent: USER_AGENT, version: pkgVersion, platformOs: process.platform });
     ctx.peer.notify("initialized", {}); // spec §7: identical to Codex — reply first, notification second, no fields specified
   }
