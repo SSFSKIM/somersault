@@ -63,6 +63,27 @@ describe("PostgresSessionStore specifics", () => {
     expect(() => createPostgresSessionStore(db, { prefix: "bad-name" })).toThrow(/prefix/);
     await expect(ensurePostgresSessionStoreSchema(db, { prefix: "1abc" })).rejects.toThrow(/prefix/);
     expect(() => postgresSessionStoreDDL('x"; DROP')).toThrow(/prefix/);
+    expect(() => createPostgresSessionStore(db, { prefix: "p".repeat(41) })).toThrow(/prefix/); // 63-byte identifier truncation would collide generated names
+    expect(() => createPostgresSessionStore(db, { prefix: "p".repeat(40) })).not.toThrow();
+  });
+
+  it("a sidecar failure after the insert is healed by the next fold (watermark recovery, transcript order)", async () => {
+    const prefix = `t${n++}`;
+    await ensurePostgresSessionStoreSchema(db, { prefix });
+    let failSidecar = true;
+    const flaky = wrap(async (text, _params, run) => {
+      if (failSidecar && text.startsWith(`INSERT INTO ${prefix}_sessions`)) { failSidecar = false; throw new Error("sidecar down"); }
+      return run();
+    });
+    const a = createPostgresSessionStore(flaky, { prefix });
+    const b = createPostgresSessionStore(db, { prefix }); // "another process" on the same schema
+    const key = { projectKey: "p", sessionId: "s" };
+    await expect(a.append(key, [{ type: "user", uuid: "u1", message: { role: "user", content: "hello" } }])).rejects.toThrow("sidecar down");
+    expect((await a.load(key))!.length).toBe(1); // the transcript row landed; only the sidecar write failed
+    await b.append(key, [{ type: "user", uuid: "u2", message: { role: "user", content: "later" } }]);
+    const sums = await b.listSessionSummaries!("p");
+    expect(sums.length).toBe(1);
+    expect(sums[0].data.firstPrompt).toBe("hello"); // b's fold recovered a's stranded row, in id order
   });
 
   it("ensurePostgresSessionStoreSchema is idempotent", async () => {
