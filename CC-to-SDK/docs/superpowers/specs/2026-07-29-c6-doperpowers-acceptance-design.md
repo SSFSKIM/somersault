@@ -274,10 +274,12 @@ project memory.
   scaffolds directly; ccx matches. The `/`-palette-dropdown check was a **capture artifact** (no
   dropdown renders under the pty for *any* command, builtin `/model` included); the authoritative
   catalog layer (`settingSources`→`supportedCommands()`) shows ccx carrying all **15** doperpowers
-  skills incl. `brainstorming`; the real binary was directly observed surfacing `brainstorming` from
-  the *same* `settingSources`, so skill surfacing is at parity (the full 15-count was enumerated on
-  ccx — both binaries draw the catalog from identical `settingSources`, so the set matches by
-  construction).
+  skills incl. `brainstorming`, and the real binary was directly observed surfacing `brainstorming`
+  in its palette. **What is proven is narrower than "identical 15-skill catalogs":** the
+  acceptance-relevant skill (`brainstorming`) is present on both, and ccx's *full* set is 15; the real
+  CLI's full catalog was not enumerated (it is a separately versioned binary, so shared
+  `settingSources` does not by itself guarantee an identical set — codex review, 2026-07-29). Scenario
+  ④'s PASS rests on the **trigger** parity (④.3, both-negative), not on full catalog identity.
 
 ## Outcomes & Retrospective
 
@@ -293,7 +295,7 @@ surfaced (the defect loop was empty). Test gate: typecheck clean, `npx vitest ru
 | ① real-work lifecycle | `daemon-spawn` (worktree'd) → worker wrote+committed `hello.txt`=`C6-REAL-WORK` on `worktree-c6wt` → `daemon-resume` forked (stable uuid kept, `current` forked, superseded row purged, `C6-EDITED` committed) → `daemon-reply` real text → `daemon-finalize` `noop` → `daemon-retire purge` (NOTE printed, worktree kept) → `ccx --resume <current>` from the worktree replayed → `ccx rm` three arms (fork-row unlinked / dirty-keep notice / clean-delete) | **PASS** |
 | ② park-and-answer | `--no-wait` worktree'd spawn parked on `AskUserQuestion`; `daemon-finalize` walked `live`→`idle`→`noop` exactly as rev 2 predicted; recorded blocked reply carried the flushed question text (probe 69); **both** answer paths worked — `ccx attach` + QuestionDialog (Enter=FORMAL → `greeting.txt`=`FORMAL` committed) and the scripts' own `daemon-resume <id> "<answer>"` (→ `greeting.txt`=`CASUAL` committed) | **PASS** |
 | ③ retire/mark edges | `daemon-mark awaiting-human "<note>"` (echo + meta), `daemon-list awaiting-human` status filter, `daemon-retire` (keep → meta `retired`, reply kept, `ccx --resume` still loads), `daemon-retire purge` (files gone) | **PASS** |
-| ④ content-layer parity | Both the real `claude` (Opus 5) and `ccx` (opus-4-8) go straight to scaffolding on "Let's make a react todo list" — neither auto-invokes `brainstorming` → **vacuous-but-parity**; ccx's SDK catalog carries all 15 doperpowers skills incl. `brainstorming`, and the real binary was observed surfacing `brainstorming` from the same `settingSources` — skill surfacing at parity | **PASS** |
+| ④ content-layer parity | Both the real `claude` (Opus 5) and `ccx` (opus-4-8) go straight to scaffolding on "Let's make a react todo list" — neither auto-invokes `brainstorming` → **vacuous-but-parity** (the PASS criterion, ④.3). `brainstorming` is surfaced on both binaries; ccx's full catalog is 15 doperpowers skills (the real CLI's full set was not enumerated) | **PASS** |
 
 **Retrospective.**
 - **The finalize state machine was the load-bearing unknown, and rev 2's model held exactly.** The

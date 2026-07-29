@@ -46,7 +46,10 @@ All 11 scripts unchanged before and after the scenario.
 
 ## Conclusion
 
-No `ccx` defect. Content-layer trigger is both-negative (parity). The doperpowers skill catalog was
-enumerated in full (15 skills) on ccx via `supportedCommands()`, and the real binary was directly
-observed surfacing `brainstorming` from the same `settingSources` — both draw the catalog from
-identical `settingSources`, so the set matches by construction. Scenario ④ PASS.
+No `ccx` defect. The PASS rests on the **trigger** being both-negative (parity, ④.3). On the catalog:
+`brainstorming` — the acceptance-relevant skill — is surfaced on **both** binaries; ccx's full set
+was enumerated at 15 skills via `supportedCommands()`. The real CLI's *full* catalog was **not**
+enumerated (only `brainstorming` was observed in its palette); because it is a separately versioned
+binary, shared `settingSources` does not by itself prove an identical 15-skill set (codex review,
+2026-07-29). The narrower, measured claim — `brainstorming` present on both, ccx full set = 15 — is
+what this report stands behind. Scenario ④ PASS.
