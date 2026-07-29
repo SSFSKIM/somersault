@@ -285,7 +285,14 @@ tests. Its job: a foreign consumer that surfaces protocol awkwardness before a G
 
 ## Surprises & Discoveries
 
-*(running log; seeded empty)*
+- **2026-07-30 — probe 6 verdict: ALIVE** (`CC-to-SDK/probes/probes/70-usermessage-uuid.ts`; numbered 70
+  because 69 was taken by the C6 transcript-at-park probe). A caller-supplied `uuid` on the
+  `SDKUserMessage` pushed into `query()`'s prompt stream *is* the uuid persisted for that prompt row — the
+  CLI does not re-mint it (session `e061465f…`, supplied `692b1586-f13b-4717-aae0-55e5ab624c34`, and that
+  was the only persisted user-row uuid). Gap 6 therefore takes the **named-seam branch**: `Session.submit`
+  gains an options bag carrying `uuid`, the app-server mints it with `randomUUID()` at `turn/start`, the
+  live `userMessage` item id equals the persisted transcript id, the item joins the replay buffer, and the
+  D10 stitch holds. The degraded `user_<turnId>` fallback is not needed and is not built.
 
 ## Outcomes & Retrospective
 
