@@ -143,6 +143,19 @@ labels and ordering. Largest and most taste-dependent, so it lands last. `/vim` 
 - A pty driver that writes typed text and its Enter in a single chunk fakes an "Enter does not submit"
   bug: that is a paste, and the editor is right to insert a newline. The Enter must be its own write.
   (2026-07-30 — cost a nearly-filed false defect)
+- `rowKind()` classifies a user row as a *prompt* only when it carries a `uuid` — real persisted rows
+  always do, but hand-written test fixtures don't; two Wave-1 tasks tripped on this. Fixture rule:
+  give user rows a `uuid`. (2026-07-30, W1 Tasks 5–6)
+- The Wave-1 review loop earned its cost twice over: Task 4 shipped an `editExternal` that could
+  **throw into Ink's useInput** instead of honoring its own "return null" contract (caught only by the
+  reviewer's targeted "what if readFileSync throws after a 0-exit" question), and Task 5's
+  last-touch-ordering contract was untestable by its own fixture (touch order coincided with
+  alphabetical). Both fixes were verified by sabotage-checks — the guard test proven against its own
+  regression, per the standing lesson. (2026-07-30)
+- `.doperpowers/sdd/` task-brief/report paths are **shared across concurrent sessions** and
+  gitignored: a Wave-1 implementer overwrote the concurrent app-server session's `task-6-report.md`,
+  unrecoverably. Namespace report files per plan (e.g. `task-N-<plan-slug>-report.md`) when two
+  subagent-driven runs share a repo. (2026-07-30)
 
 ## Outcomes & Retrospective
 

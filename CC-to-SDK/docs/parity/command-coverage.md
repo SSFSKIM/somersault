@@ -21,23 +21,39 @@ implemented **in its own client**, so they never appear in an SDK-reported catal
 
 ## The three classes
 
-### A. In the catalog, not handled locally — 10 commands
+### A. In the catalog, not handled locally — 10 commands — **RESOLVED (Wave 1, 2026-07-30)**
 
 `agents` · `color` · `config` · `doctor` · `effort` · `extra-usage` · `fast` · `heapdump` · `rename` · `review`
 
-Our dispatch sends any catalog name it does not handle to the engine **as a prompt turn** (`runTurn("/config")`,
-verified by probe 31 for skills). That is right for a skill and wrong for a client-side control: `/config`
-and `/color` are UI, so the model receives a prompt it cannot act on. Each of these needs a per-command
-decision — implement locally, or confirm the engine really does handle it.
+Our dispatch used to send any catalog name it did not handle to the engine **as a prompt turn**
+(`runTurn("/config")`, verified by probe 31 for skills). That is right for a skill and wrong for a
+client-side control. Wave 1 settled each name by classifying it in the 2.1.220 bundle:
+
+- **Honest client-side message (7):** `agents` · `color` · `config` · `effort` · `extra-usage` ·
+  `fast` · `heapdump` — all `type: "local"`/`"local-jsx"` upstream, so a prompt turn hands the model a
+  command it cannot act on. `CLIENT_SIDE_NOTES` (`harness/src/tui/commands.ts`) intercepts them ahead
+  of the catalog with a one-line "what it is and why not here". `/config`'s message points at launch
+  flags until Wave 3 (U7) ships the settings UI.
+- **Stay prompt turns (2):** `review` (reference `review.ts`, `type: 'prompt'`) and `doctor` (the
+  bundle's 2.1.220 definition carries `getPromptForCommand` — it became a prompt command) — for these,
+  submit-as-turn IS the upstream behavior.
+- **Implemented (1):** `rename` — the lib already shipped `renameSession()` over the SDK session
+  store; Wave 1 wired `/rename` (and `/tag`, from class B) to it.
 
 ### B. Absent from the catalog AND unhandled — 71 commands
 
 The full list is reproducible with the script at the bottom. What matters is the split:
 
-**Genuinely wanted (the sprint's likely body):** `add-dir` · `export` · `memory` · `permissions` · `plan` ·
-`session` · `skills` · `stats` · `tag` · `tasks` · `theme` · `output-style` · `keybindings` · `vim` ·
-`diff` · `files` · `fork` · `branch` · `summary` · `share` · `hooks` · `login` · `logout` ·
-`terminalSetup` · `statusline` · `release-notes` · `upgrade` · `privacy-settings`
+**Genuinely wanted (the sprint's likely body)** — Wave-1 statuses inline (2026-07-30):
+**shipped:** `export` · `stats` · `tag` · `diff` (terminal stand-in: status + diff --stat) · `files` ·
+`session` (**deliberate divergence** — upstream's is a cloud-URL/QR bridge feature; ours shows local
+session info + resume hint) · `rename` (pulled in from class A).
+**dropped:** `summary` — no such command exists in 2.1.220; the wanted list inherited it from the
+stale February reference (spec Revision Notes, 2026-07-30).
+**still open for later waves:** `add-dir` (U6, probe-gated) · `memory` · `permissions` (U7, required) ·
+`plan` · `skills` · `tasks` · `theme` (U7) · `output-style` · `keybindings` · `vim` (owner-deferred) ·
+`fork` · `branch` · `share` · `hooks` · `login`/`logout` (excluded below) · `terminalSetup` ·
+`statusline` · `release-notes` · `upgrade` · `privacy-settings`
 
 **Out of scope (bridge-coupled, non-terminal, or internal):** `bridge` · `chrome` · `desktop` · `mobile` ·
 `voice` · `teleport` · `ide` · `install-github-app` · `install-slack-app` · `ant-trace` ·

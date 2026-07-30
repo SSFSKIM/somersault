@@ -24,16 +24,23 @@ polish* that makes CC instantly recognizable: **no welcome banner, a non-CC spin
 glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input modes, no queued input, no
 `/cost`, and thin terminal-native editor ergonomics** (Ctrl-A/E/K/U/W, Ctrl-L, Ctrl-C-twice).
 
-| Category | Parity (start) | Parity (pre-C5) | Parity (now, post-C5) |
+| Category | Parity (start) | Parity (pre-C5) | Parity (now, post–sprint-W1) |
 |---|---|---|---|
-| 1. Input / composer ergonomics | ~45% | ~88% | ~89% |
+| 1. Input / composer ergonomics | ~45% | ~88% | ~95% |
 | 2. Transcript / message rendering | ~50% | ~74% | ~83% |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% |
-| 4. Modals / overlays | ~60% | ~88% | ~88% (untouched this stage) |
-| 5. Slash commands | ~55% | ~70% | ~88% |
+| 4. Modals / overlays | ~60% | ~88% | ~93% (first plain recount) |
+| 5. Slash commands | ~55% | ~70% | ~84% (denominator grew — see W1 note) |
 | 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% |
-| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~81% (untouched this stage) |
-| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* |
+| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~81% (untouched) |
+| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~89%**<br>*(plain row count)* |
+
+**W1 recount note (2026-07-30, TUI/UX sprint Wave 1):** §1 21✅/1❌ of 22 non-🚫 rows (Ctrl-L
+converged to clear-input, Ctrl-J/Ctrl-_/Ctrl-S/Shift+Tab/external-editor added); §4 recounted plainly
+for the first time (6✅+1🟡 of 7); §5 **went down 88→84 despite seven commands shipping**, because the
+audit-driven rows (`/config`+`/permissions` settings UI as their own ❌ row, `/diff` honest at 🟡)
+grew the denominator — gaps that were previously invisible are now counted, which is the point of the
+sprint's honesty posture.
 
 **C5 recompute method (2026-07-28), disclosed for auditability:** each row is scored ✅=1.0 ·
 🟡=0.5 · ❌=0, `🚫` rows excluded from the denominator; a category's percentage is that plain
@@ -150,13 +157,17 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 | Ctrl-K / Ctrl-U (kill to end/start) | ✅ | — | **U7** `editor.ts` |
 | Ctrl-W (kill word back) | ✅ | — | **U7** `editor.ts` |
 | Word movement (Alt/Ctrl ←→) | ✅ | — | **C5** `editor.ts` `wordLeft`/`wordRight` (Alt-←→ and Alt-b/f), checked ahead of the ctrl-combo branch so no meta chord falls through to insertion |
-| Ctrl-L (clear screen) | ✅ | — | **U7** clears model + remounts Static + ANSI screen-clear (CC parity) |
+| Ctrl-L (clear **input**) | ✅ | — | **W1** converged on 2.1.220's `chat:clearInput` (the old app-level screen-clear was a divergence); screen clear stays `/clear` — real CC's `cmd+k` never reaches a terminal app (intentional divergence, recorded) |
+| Ctrl-J (newline) | ✅ | — | **W1** `editor.ts` — 2.1.220 `chat:newline`, alongside `\`-continuation |
+| Ctrl-_ / Ctrl-- (undo edit) | ✅ | — | **W1** `editor.ts` snapshot-on-change stack (cap 100) — 2.1.220 `chat:undo`; terminals send 0x1F for both |
+| Ctrl-S (stash / restore input) | ✅ | — | **W1** `editor.ts` — 2.1.220 `chat:stash`: parks a non-empty buffer, restores on the next Ctrl-S from empty |
+| Shift+Tab cycles permission mode (bare Tab popup-only) | ✅ | — | **W1** converged on 2.1.220's `chat:cycleMode` = `shift+tab`; bare Tab now belongs to autocomplete alone (our old bare-Tab cycle was a divergence) |
 | Ctrl-C twice / Ctrl-D to exit | ✅ | — | **U8** Ctrl-C interrupts a turn, else "Press Ctrl-C again to exit"; Ctrl-D on empty = EOF exit |
 | Queued messages while busy | ✅ | — | **U6** turns queue while busy + drain FIFO on turn end; `⋯ queued:` indicator; Esc clears |
 | Placeholder / ghost text ("Ask Claude…") | ✅ | — | **U7** dim placeholder on empty buffer |
 | `?` shortcuts / help menu | ✅ | — | **C5** `ShortcutsOverlay.tsx` — a real bordered overlay listing the keymap, opened by `?` on a genuinely empty composer; the U7 footer hint line stays alongside it |
-| Vim mode (`/vim`) | ❌ | LOW | large; reachable but low ROI |
-| External editor (Ctrl-G / `$EDITOR`) | ❌ | LOW | `PromptInputHelpMenu` |
+| Vim mode (`/vim`) | ❌ | LOW | owner-deferred (the sprint's only deferral) |
+| External editor (Ctrl-X Ctrl-E / Ctrl-G → `$EDITOR`) | ✅ | — | **W1** `externalEditor.ts` — spawnSync terminal handoff (raw mode released/restored), null-safe (editor failure keeps the buffer), popups cleared on applied edit |
 | Image paste (Ctrl-V) | 🚫 | — | non-terminal / out of scope here |
 
 ## 2 — Transcript / message rendering
@@ -206,6 +217,7 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 | Model picker | ✅ | — | `ModelPicker.tsx` |
 | Resume session picker | ✅ | — | `SessionPicker.tsx` |
 | Task/todo panel | ✅ | — | `TaskPanel.tsx` |
+| Ctrl-T todo-panel toggle | ✅ | — | **W1** — 2.1.220 `app:toggleTodos` (default visible) |
 | `/help` overlay | 🟡 | LOW | we print lines; CC has a modal |
 | IDE diff viewer | 🚫 | — | IDE-coupled |
 | MCP elicitation dialog | 🚫 | — | rarely fires headless |
@@ -218,8 +230,15 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 | live skill/plugin/user catalog (105) | ✅ | command palette (Increment D) |
 | `/cost` | ✅ | **U4** — `session.usage()` → cost (or "included in <plan>") + tokens + duration + per-model |
 | `/status` | ✅ | **U4** — model · mode · thinking · context · cwd · session snapshot |
-| `/vim` | ❌ | LOW |
-| `/doctor` `/config` `/theme` `/terminal-setup` | 🚫/LOW | env/IDE-coupled |
+| `/vim` | ❌ | LOW (owner-deferred) |
+| honesty routing of catalogued client-side controls | ✅ | **W1** — `agents`/`color`/`config`/`effort`/`extra-usage`/`fast`/`heapdump` print an explicit "why not here" line instead of silently becoming prompt turns; `/review` + `/doctor` stay prompt turns (prompt-type upstream) |
+| `/config` `/permissions` settings UI · `/theme` | ❌ | Wave 3 (U7) — required by owner decision; today `/config` gets the honest W1 message |
+| `/export` (file or clipboard) | ✅ | **W1** `sessionTools.ts` `exportMarkdown` — prompts as `## ›` headings, tools as one-line markers |
+| `/files` (files touched in conversation) | ✅ | **W1** `filesInContext` — tool-input paths, deduped, last-touch order |
+| `/diff` | 🟡 | **W1** terminal stand-in (`git status --short; git diff --stat` via the `!`-runner) — real CC has a full DiffDialog with per-turn sources (Wave-2+ candidate) |
+| `/stats` | ✅ | **W1** conversation shape (prompts/replies/tool calls) + per-model tokens + cost |
+| `/session` | ✅ | **W1 — deliberate divergence:** upstream's `/session` is a cloud-URL/QR bridge feature (out of scope); ours shows local id/title/tag/branch + `ccx --resume` hint |
+| `/rename` `/tag` | ✅ | **W1** — SDK-native `renameSession`/`tagSession` (tag toggles: same name twice clears) |
 | `/copy` | ✅ | **C5** `copy.ts` (DI'd `pbcopy`/`xclip` spawn) — copies the last assistant reply, live or replayed (`sessions/rows.ts` `lastAssistantText`) |
 | `/usage` | ✅ | **C5** (F4) — `usageFormat.ts` `formatUsage` renders per-window utilization bars from `session.usage()`; honest unavailable-line when `rate_limits_available` is false |
 | `/rewind` | ✅ | **C5** — opens the Esc-Esc picker via command (`useChat.ts`), the same entry point as the gesture |
