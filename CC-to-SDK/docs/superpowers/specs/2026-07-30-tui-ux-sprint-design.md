@@ -134,6 +134,20 @@ labels and ordering. Largest and most taste-dependent, so it lands last. `/vim` 
 
 ## Surprises & Discoveries
 
+- **Probe 74 (2026-07-31) settled U2's whole evidence base in one run:** the backgrounded-Bash
+  tool_result is a parseable sentence carrying BOTH the task id and the output-file path ("Command
+  running in background with ID: <id>. Output is being written to: <path>. …"); `task_started` carries
+  `tool_use_id`, which links the task to the assistant tool_use whose `input.command` +
+  `input.run_in_background` hold the command; `background_tasks_changed` entries are STILL only
+  `{task_id, task_type, description}` on SDK 0.3.211; and the output file is line-flushed and readable
+  mid-run. The probe's own file froze at tick 4 only because disposing the query kills the CLI
+  subprocess (and its children) — in the REPL the session lives on. Net: U2 needed zero host/wire
+  changes.
+- **My own plan's gating-test sketch would have passed vacuously** (W2 Task 5): the Ctrl-T
+  leak check asserted on the todo panel, but an empty `TaskPanel` renders nothing, so the assertion
+  held whether or not the gate existed. The *implementer* caught it, seeded a task, and
+  sabotage-verified; the reviewer independently re-verified by removing the gate. Same lesson class as
+  W1's stash test: a plan-authored test is not exempt from the sabotage-check discipline. (2026-07-31)
 - The SDK's live command catalog is mostly **skills and plugins**; real Claude Code's client-side controls
   live in its own client and never appear in a catalog we can query. So the gap is not discoverable from
   the SDK — it must be read off the reference. (2026-07-30, probe 73)
@@ -181,3 +195,15 @@ Pending — written at finish.
   agents (pairs with U2's background work). `cmd+k` screen-clear is unreachable in most terminals
   (intercepted before the app sees it) — screen clear stays `/clear`, recorded as an intentional
   divergence.
+- 2026-07-31 (Wave-2 planning) — **U2 resolved entirely client-side, no host/wire change**: probe 74
+  proved the event stream the REPL already receives carries the command (tool_use input), the output
+  path (tool_result sentence), and the status (task_notification); U2's "consider a `Stop` hook"
+  alternative is REJECTED — a hook would run engine-side and never reach the `ccx attach` path, while
+  the stream harvest works identically for both. The pager ships as a **bordered overlay, not an
+  alternate screen** (unmounting Ink's append-only `<Static>` replays the whole scrollback on
+  remount); `ctrl+e` toggleShowAll deferred (no collapsed transcript variant exists to expand);
+  history search keeps upstream's exact semantics including Esc = **accept** (`historySearch:accept`),
+  and acceptance #5's "searched" is satisfied by the Ctrl-R prompt-history search (the bundle's
+  Transcript context has no in-pager search binding). Plan:
+  `../plans/2026-07-31-tui-ux-wave2.md`; the independent plan review contributed three fixes
+  (ChatApp deps seam, historyOpen key gating, a `RAW:` no-auto-Enter prefix for the pty driver).

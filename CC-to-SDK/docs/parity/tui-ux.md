@@ -24,15 +24,15 @@ polish* that makes CC instantly recognizable: **no welcome banner, a non-CC spin
 glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input modes, no queued input, no
 `/cost`, and thin terminal-native editor ergonomics** (Ctrl-A/E/K/U/W, Ctrl-L, Ctrl-C-twice).
 
-| Category | Parity (start) | Parity (pre-C5) | Parity (now, post–sprint-W1) |
+| Category | Parity (start) | Parity (pre-C5) | Parity (now, post–sprint-W2) |
 |---|---|---|---|
 | 1. Input / composer ergonomics | ~45% | ~88% | ~95% |
 | 2. Transcript / message rendering | ~50% | ~74% | ~83% |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% |
-| 4. Modals / overlays | ~60% | ~88% | ~93% (first plain recount) |
-| 5. Slash commands | ~55% | ~70% | ~84% (denominator grew — see W1 note) |
+| 4. Modals / overlays | ~60% | ~88% | ~94% (pager + history search added) |
+| 5. Slash commands | ~55% | ~70% | ~84% (unchanged in W2) |
 | 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% |
-| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~81% (untouched) |
+| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~80% (first plain recount — see W2 note) |
 | **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~89%**<br>*(plain row count)* |
 
 **W1 recount note (2026-07-30, TUI/UX sprint Wave 1):** §1 21✅/1❌ of 22 non-🚫 rows (Ctrl-L
@@ -42,14 +42,28 @@ audit-driven rows (`/config`+`/permissions` settings UI as their own ❌ row, `/
 grew the denominator — gaps that were previously invisible are now counted, which is the point of the
 sprint's honesty posture.
 
-**W1 keymap deferrals (documented per sprint acceptance item 3):** three bundle Global/Chat bindings
-neither act nor error today because they belong to Wave-2 surfaces — `ctrl+o` (`app:toggleTranscript`,
-needs U4's transcript pager), `ctrl+r` (`history:search`, needs U4's history search), and
-`ctrl+x ctrl+k` (`chat:killAgents`, pairs with U2's background work). They become scored rows when
-Wave 2 lands them. Standing intentional divergences, restated: our `Ctrl-Z` detach has no upstream
-equivalent (kept); real CC's `cmd+k` screen-clear never reaches a terminal app, so screen clear stays
-`/clear`; `Ctrl-B` here is background-panel/backgrounding rather than upstream's `task:background`
-context binding.
+**W1 keymap deferrals — RESOLVED by Wave 2 (2026-07-31):** the three deferred bindings all shipped
+and are scored rows below — `ctrl+o` (`app:toggleTranscript` → the transcript pager, §4), `ctrl+r`
+(`history:search` → the prompt-history search, §4), and `ctrl+x ctrl+k` (`chat:killAgents` →
+double-press stop-all, §8). Standing intentional divergences, restated: our `Ctrl-Z` detach has no
+upstream equivalent (kept, and it stays live even while W2's overlays are open); real CC's `cmd+k`
+screen-clear never reaches a terminal app, so screen clear stays `/clear`; `Ctrl-B` here is
+background-panel/backgrounding rather than upstream's `task:background` context binding.
+
+**W2 divergences (2026-07-31, TUI/UX sprint Wave 2 — all deliberate, bundle-checked):**
+- The transcript pager is a **bordered overlay in the composer slot, not an alternate-screen view**:
+  unmounting Ink's append-only `<Static>` would replay the entire scrollback on remount (the Wave-1
+  Static lesson), so the transcript stays mounted above the pager. Long wrapped lines can occasionally
+  overrun the pager's window height — the height budget is conservative (`rows - 10`) by design.
+- `ctrl+e` (`transcript:toggleShowAll`) is **deferred**: our transcript has no collapsed/brief variant
+  to expand. `home`/`end` never reach an Ink app as key flags — `g`/`G` are the equivalents.
+- Spec acceptance #5's "searched" is satisfied by the **Ctrl-R prompt-history search**, not an
+  in-pager text search — consistent with U4's own definition and with the bundle's Transcript context
+  having no search binding.
+- History-search semantics match upstream exactly, including the surprising one: **Esc ACCEPTS** the
+  selection into the composer (`historySearch:accept`); Ctrl-C is cancel; Enter executes.
+- A `local_agent` task's `.output` is a symlink to the full subagent transcript JSONL (the bundle's
+  own warning) — the background panel deliberately does not tail it.
 
 **C5 recompute method (2026-07-28), disclosed for auditability:** each row is scored ✅=1.0 ·
 🟡=0.5 · ❌=0, `🚫` rows excluded from the denominator; a category's percentage is that plain
@@ -227,6 +241,8 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 | Resume session picker | ✅ | — | `SessionPicker.tsx` |
 | Task/todo panel | ✅ | — | `TaskPanel.tsx` |
 | Ctrl-T todo-panel toggle | ✅ | — | **W1** — 2.1.220 `app:toggleTodos` (default visible) |
+| Transcript pager (Ctrl-O) | ✅ | — | **W2** `TranscriptPager.tsx` + pure `pager.ts` — the bundle's 18-binding Transcript context (j/k · ctrl-u/d half · ctrl-b/f b/space page · g/G · arrows · q/Esc/ctrl-c exit), opens at bottom; bordered overlay, not alt-screen (see W2 divergences) |
+| History search (Ctrl-R) | ✅ | — | **W2** `HistorySearchOverlay.tsx` + pure `historySearch.ts` — incremental prompt search over session/project/everywhere scopes (Ctrl-S cycles, initial "everywhere"), substring-then-subsequence ranking, Esc/Tab accept into composer · Enter execute · Ctrl-C cancel — the bundle's HistorySearch context key for key |
 | `/help` overlay | 🟡 | LOW | we print lines; CC has a modal |
 | IDE diff viewer | 🚫 | — | IDE-coupled |
 | MCP elicitation dialog | 🚫 | — | rarely fires headless |
@@ -279,12 +295,17 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 | Plan-mode approval dialog (ExitPlanMode) | ✅ | — | **GB9** — moved here from §4 (was ❌). `PlanDialog.tsx` renders the plan as markdown in a 14-line scrollable window (↑↓ scroll), then CC's three choices (`1` approve + auto-accept edits · `2` approve, manual edits · `3`/Esc reject with a one-line feedback prompt); approve lets the CLI flip `permissionMode` itself (probe 66) — the dialog only reports the human's choice |
 | `plan` on the Tab ladder | ✅ | — | **GB7** the ladder is now `default → acceptEdits → plan → auto` (`useChat.ts` `ladderNext`); off-ladder modes (`bypassPermissions`) still re-enter at `default` |
 | Ctrl+B background | 🟡 | — | **GB10** `ChatApp.tsx` — the key and the host `background` op are fully wired (`backgroundNow` → `Session.backgroundAll()`, probe 39) and idle `Ctrl+B` opens the background-task panel; but **live acceptance (2026-07-28)** found the real CLI does not detach an in-flight foreground `Bash` call — the op is accepted and the SDK reports success, yet the command runs to completion in the foreground regardless. The verified surface is **model-initiated** background shells (`run_in_background: true`): `⚙ N` status-bar count, `/bg` panel row, and stop-from-panel all confirmed live |
-| `/bg` panel | 🟡 | — | **GB10** `BgTasksPanel.tsx` — one row per background task (shells/subagents/workflow — one stream) from the live `tasks_changed` snapshot; ↑↓ select, `k`/`x` stop, Esc close. Divergence: the command is **`/bg`**, not `/tasks` — `/tasks` would collide with the existing `TaskPanel.tsx` (the model's todo checklist), a deliberate rename recorded in the spec's Decision Log |
+| `/bg` panel | 🟡 | — | **GB10 + W2** `BgTasksPanel.tsx` — one row per background task with **status glyph + command line** (harvest-enriched `BgTaskRow`), plus up to 5 recently-finished rows (dim, with final status); ↑↓ select, `k`/`x` stop (running rows only), Esc close. Divergence: the command is **`/bg`**, not `/tasks` — `/tasks` would collide with the existing `TaskPanel.tsx` (the model's todo checklist), a deliberate rename recorded in the spec's Decision Log |
+| Background task **output** reachable (Enter-to-tail) | ✅ | — | **W2** probe-74 mechanism: the backgrounded tool_result names the output file ("Output is being written to: <path>"); `bgTaskMeta.ts` harvests path+command+status client-side from frames the REPL already receives (zero host/wire change — works identically over `ccx attach`), and Enter on a panel row tails the file's last 12 lines in-panel (Enter again re-reads; `local_agent` rows deliberately not tailed) |
+| Ctrl-X Ctrl-K kill agents | ✅ | — | **W2** — 2.1.220 `chat:killAgents` flow verbatim: "No background agents running" when idle; first press arms ("Press Ctrl-X Ctrl-K again to stop background agents"), second within 3s stops all |
 | Task lifecycle notices | ✅ | — | **GB7** `task_started`/`task_notification` frames render as one-line transcript notices (`⚙ task started: …` / `✓ task done: …` / `✗ task failed: …` / `◼ task stopped: …`), honoring `skip_transcript` |
 | Subagent attribution on dialogs | 🟡 | — | **GB5** a host-side correlation map (`parentToolUseID` from nested frames → `subagentType` from `task_started` frames) stamps `Subagent (<type>) asks:` on the Question/Plan/Permission dialogs when known; **best-effort** — a miss renders unattributed and never blocks (no per-subagent drill-in transcript view — spec Non-goals) |
 | Status-bar mode truth | ✅ | — | **GB5** the host intercepts the CLI's own `system`/`status` frames and pushes the real `permissionMode` on every `state` event (one field, last-write-wins between the CLI's own flip and the host's setter calls); closes the previously recorded "status bar starts at `default`" quirk — see the `full-use-checklist.md` A1 note, updated alongside this |
 
-**Score: ~81%** — 4 of 8 rows are fully CC-faithful (✅); 4 carry a caveat (🟡). Three are accepted,
+**Score: ~80% (W2 first plain recount: 6✅ + 4🟡 of 10 rows = 8/10).** The previous ~81% was the
+impact-weighted era; the 81→80 movement is a **method change plus two added rows**, not a regression —
+per-row, Wave 2 only added ✅s (output-tail, killAgents) and enriched `/bg`. 4 of the original 8 rows
+were fully CC-faithful (✅); 4 carry a caveat (🟡). Three are accepted,
 spec-recorded divergences from CC's exact form while delivering the same functional/keyboard outcome
 (sequential questions, `/bg` naming, best-effort attribution). The fourth — Ctrl+B background — is a
 **live-acceptance-verified functional gap**, not a form divergence: the key/op path backgrounds nothing
@@ -350,8 +371,8 @@ above: Esc-Esc rewind (U12, the flagship), the usage surface (F4), the `?` overl
 tool-row/diff/bash-error framing, tables, syntax highlight, the compact-boundary divider, and `/copy`.
 
 ### Remaining gaps (all explicit spec non-goals or LOW-priority tail items)
-- Vim mode (`/vim` + its status indicator) and external editor (Ctrl-G / `$EDITOR`) — large,
-  low-ROI, out of scope for C5 (spec Decision Log).
+- Vim mode (`/vim` + its status indicator) — owner-deferred, the sprint's only deferral. (The
+  external editor formerly listed here shipped in W1 — Ctrl-X Ctrl-E / Ctrl-G, `externalEditor.ts`.)
 - Bash output's `$`/exit-code framing — not reachable: a `tool_result` carries no exit code, only
   `is_error` (the error-framing half already landed).
 - Long-output interactive expand, the `›` vs `>` user-echo glyph (intentional divergence), and
