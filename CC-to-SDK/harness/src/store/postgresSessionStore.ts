@@ -13,7 +13,9 @@
 // - `uuid` is an idempotency key: a partial UNIQUE index + ON CONFLICT DO NOTHING dedups atomically
 //   IN the insert statement (first-seen payload wins; cross-process safe, unlike the Redis
 //   adapter's check-then-write which leans on its in-process chain). Entries WITHOUT a uuid
-//   (titles, tags, mode markers) append un-deduped, per the contract.
+//   (titles, tags, mode markers) append un-deduped, per the contract — which is why append() also
+//   recognizes an SDK retry of a batch it already committed (see `inflight`): the index cannot save
+//   those rows from landing twice, so the re-INSERT has to be skipped instead.
 // - subpath is normalized to '' for the main transcript: Postgres UNIQUE treats NULLs as distinct,
 //   which would silently disable dedup for main-transcript rows if subpath were NULL.
 // - load() returns null iff the transcript has no rows — with row-level dedup, "written but
@@ -29,7 +31,14 @@
 //   CONFLICT burns ids, so gaps are permanent and unwaitable) and skip that row forever. Full
 //   re-fold has neither hole: an appender folds after its own insert commits, so its rows are
 //   always in its own read, and any row that a concurrent fold missed is covered by the next fold.
-//   Cost: one indexed SELECT of the session's main rows per append — correctness over throughput.
+//   That full re-fold stays the DEFINITION of a correct fold, but paying it on every append made the
+//   cost of writing a session quadratic in its length, so it is now the fallback rather than the only
+//   path: an in-process cache remembers {count, summary} from the last successful fold, and a fold
+//   takes the incremental path (prior summary + just this batch) only when a live `count(*)` proves the
+//   table moved by exactly the rows we inserted. That is a PROOF that nothing else committed, not a
+//   watermark's assumption that nothing will — so it sidesteps the BIGSERIAL hazard above, and any
+//   mismatch (concurrent writer, dropped duplicate uuid, cold cache, CAS retry) silently re-folds in
+//   full. A wrong or absent cache entry can only cost time.
 //   Writes are guarded twice: the in-process per-session promise chain (Redis-adapter precedent)
 //   plus a cross-process CAS on a dedicated `seq` column (UPDATE ... WHERE seq = prior; 0 rows
 //   back = a concurrent writer won, re-read — the re-read now includes the winner's rows — and
@@ -52,6 +61,7 @@
 //   next fold. Retention (TTLs, compliance windows) stays the deployment's job.
 // Schema management ships both ways: postgresSessionStoreDDL(prefix) for migration tooling, and
 // the idempotent ensurePostgresSessionStoreSchema(client, opts) (CREATE ... IF NOT EXISTS).
+import { createHash } from "node:crypto";
 import { foldSessionSummary } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionKey, SessionStore, SessionStoreEntry, SessionSummaryEntry } from "@anthropic-ai/claude-agent-sdk";
 
@@ -75,9 +85,15 @@ const newGeneration = () => Math.floor(Math.random() * 2 ** 48) + 1;
 
 /** Identifiers can't be parameterized — refuse anything that isn't a plain SQL identifier. Capped
  *  at 40 chars: Postgres silently truncates identifiers to 63 bytes, and our longest generated name
- *  adds 16 (`_entries_uuid_uq`) — a too-long prefix would collide names into an unusable schema. */
+ *  adds 16 (`_entries_uuid_uq`) — a too-long prefix would collide names into an unusable schema.
+ *  LOWERCASE ONLY, and this is a safety rule, not a style one: the prefix is interpolated UNQUOTED, so
+ *  Postgres case-folds it. Two deployments configured "Acme" and "acme" would believe they had separate
+ *  schemas and silently share one set of tables — reading and writing each other's transcripts, with the
+ *  second ensure...Schema() call no-opping via IF NOT EXISTS instead of complaining. Rejecting is the only
+ *  answer that surfaces the collision; quietly lowercasing would keep the two prefixes pointing at the
+ *  same tables while looking like it had handled the problem. */
 function checkPrefix(p: string): string {
-  if (!/^[A-Za-z_][A-Za-z0-9_]{0,39}$/.test(p)) throw new Error(`PostgresSessionStore: invalid table prefix ${JSON.stringify(p)} (SQL identifier, max 40 chars)`);
+  if (!/^[a-z_][a-z0-9_]{0,39}$/.test(p)) throw new Error(`PostgresSessionStore: invalid table prefix ${JSON.stringify(p)} (lowercase SQL identifier, max 40 chars — unquoted identifiers are case-folded, so "Acme" and "acme" would collide)`);
   return p;
 }
 
@@ -133,32 +149,75 @@ export function createPostgresSessionStore(client: PgLike, opts: PostgresSession
     return next;
   };
 
-  const foldSidecar = async (key: SessionKey, clock: number): Promise<void> => {
+  // Per-session fold state, in-process, two distinct jobs:
+  //  - `folds` is what the last SUCCESSFUL fold saw ({count, summary}), so the next fold can CONTINUE from
+  //    it — foldSessionSummary's first parameter is exactly a prior summary — instead of re-reading and
+  //    re-parsing the entire transcript on every append (which made writing a session quadratic in its
+  //    length). Every use is validated against a live row count: unless the table moved by exactly the
+  //    batch we just inserted, we fall back to the full re-fold the header describes. A stale or missing
+  //    cache entry therefore only ever costs time, never correctness, which is what lets this coexist with
+  //    the header's watermark objection — we are not trusting an id, we are proving nothing else committed.
+  //  - `inflight` is the fingerprint of a batch whose INSERT COMMITTED but whose fold then threw. The SDK
+  //    retries the whole batch; uuid-bearing rows are absorbed by ON CONFLICT, but titles/tags/mode markers
+  //    carry no uuid, are not covered by the partial unique index, and would land a SECOND time —
+  //    permanently duplicating them in load() and in every later fold.
+  const folds = new Map<string, { count: number; summary: SessionSummaryEntry }>();
+  const inflight = new Map<string, string>();
+  const FOLD_CACHE_CAP = 500;   // a long-lived daemon touches unboundedly many sessions; evicting just re-folds
+  const fingerprint = (entries: readonly SessionStoreEntry[]) =>
+    createHash("sha1").update(entries.map((e) => e.uuid ?? JSON.stringify(e)).join("\0")).digest("hex");
+
+  const foldSidecar = async (key: SessionKey, clock: number, added: readonly SessionStoreEntry[]): Promise<void> => {
+    const ck = `${key.projectKey}\0${key.sessionId}`;
     for (let i = 0; i < CAS_ATTEMPTS; i++) {
       const prev = await client.query(`SELECT seq, mtime FROM ${S} WHERE project_key = $1 AND session_id = $2`, [key.projectKey, key.sessionId]);
       const prior = prev.rows[0];
-      // Recompute from the full committed transcript in id order (see header: no batch, no watermark).
-      const all = await client.query(
-        `SELECT entry FROM ${E} WHERE project_key = $1 AND session_id = $2 AND subpath = '' ORDER BY id`,
-        [key.projectKey, key.sessionId],
-      );
-      if (!prior && all.rows.length === 0) return; // nothing to summarize and no row to refresh — never resurrect a deleted session
+      const tot = await client.query(`SELECT count(*) AS n FROM ${E} WHERE project_key = $1 AND session_id = $2 AND subpath = ''`, [key.projectKey, key.sessionId]);
+      const total = Number(tot.rows[0].n);
+      if (!prior && total === 0) return; // nothing to summarize and no row to refresh — never resurrect a deleted session
       const mtime = prior ? Math.max(Number(prior.mtime), clock) : clock; // never move a newer stamp backwards
-      const summary = foldSessionSummary(undefined, key, all.rows.map((r) => JSON.parse(r.entry) as SessionStoreEntry), { mtime });
+      // Only the FIRST attempt may go incremental: a CAS loss means another writer committed between our
+      // read and our update, so the cache no longer describes what is in the table.
+      const cached = i === 0 ? folds.get(ck) : undefined;
+      let summary: SessionSummaryEntry;
+      let counted: number;
+      if (cached && total === cached.count + added.length) {
+        // The row count moved by exactly our own batch, so nothing else landed and the cached summary plus
+        // these entries ARE the whole transcript. Fold the JSON round-trip of the caller's objects, not the
+        // objects themselves: that is byte-for-byte what the full re-fold below would have read back out of
+        // the table, so the two paths cannot produce different summaries for the same transcript.
+        summary = foldSessionSummary(cached.summary, key, added.map((e) => JSON.parse(JSON.stringify(e)) as SessionStoreEntry), { mtime });
+        counted = total;
+      } else {
+        // Recompute from the full committed transcript in id order (see header: no batch, no watermark).
+        const all = await client.query(
+          `SELECT entry FROM ${E} WHERE project_key = $1 AND session_id = $2 AND subpath = '' ORDER BY id`,
+          [key.projectKey, key.sessionId],
+        );
+        summary = foldSessionSummary(undefined, key, all.rows.map((r) => JSON.parse(r.entry) as SessionStoreEntry), { mtime });
+        counted = all.rows.length;   // what we actually folded, not the earlier count — never overstate the cache
+      }
+      let won = false;
       if (prior) {
         const upd = await client.query(
           `UPDATE ${S} SET mtime = $3, seq = seq + 1, summary = $4 WHERE project_key = $1 AND session_id = $2 AND seq = $5 RETURNING 1 AS ok`,
           [key.projectKey, key.sessionId, mtime, JSON.stringify(summary), prior.seq],
         );
-        if (upd.rows.length) return;
+        won = upd.rows.length > 0;
       } else {
         const ins = await client.query(
           `INSERT INTO ${S} (project_key, session_id, mtime, seq, summary) VALUES ($1, $2, $3, $5, $4) ON CONFLICT (project_key, session_id) DO NOTHING RETURNING 1 AS ok`,
           [key.projectKey, key.sessionId, mtime, JSON.stringify(summary), newGeneration()],
         );
-        if (ins.rows.length) return;
+        won = ins.rows.length > 0;
+      }
+      if (won) {
+        if (folds.size >= FOLD_CACHE_CAP && !folds.has(ck)) folds.clear();
+        folds.set(ck, { count: counted, summary });
+        return;
       }
     }
+    folds.delete(ck);   // never leave a cached summary claiming to describe a transcript we failed to fold
     throw new Error(`PostgresSessionStore: summary sidecar CAS did not converge after ${CAS_ATTEMPTS} attempts (${key.projectKey}/${key.sessionId})`);
   };
 
@@ -167,19 +226,29 @@ export function createPostgresSessionStore(client: PgLike, opts: PostgresSession
       if (entries.length === 0) return;
       await serialized(`${key.projectKey}\0${key.sessionId}`, async () => {
         const sub = key.subpath ?? "";
-        const params: unknown[] = [key.projectKey, key.sessionId, sub];
-        const values = entries.map((e) => {
-          params.push(e.uuid ?? null, JSON.stringify(e));
-          return `($1,$2,$3,$${params.length - 1},$${params.length})`;
-        });
-        // Dedup happens IN the statement: replayed uuids no-op (intra-batch dups collapse to first).
-        await client.query(
-          `INSERT INTO ${E} (project_key, session_id, subpath, uuid, entry) VALUES ${values.join(",")}
-           ON CONFLICT (project_key, session_id, subpath, uuid) WHERE uuid IS NOT NULL DO NOTHING`,
-          params,
-        );
+        const ck = `${key.projectKey}\0${key.sessionId}`;
+        const fp = key.subpath ? "" : fingerprint(entries);
+        // The INSERT and the fold are two statements, so an append is not atomic: the rows are already
+        // committed when the fold runs. If the fold then throws, the SDK retries THIS BATCH — and re-running
+        // the INSERT would duplicate every uuid-less entry, because ON CONFLICT only covers uuid-bearing
+        // rows. Recognizing our own committed batch lets the retry do what it actually needs to: re-fold.
+        if (key.subpath || inflight.get(ck) !== fp) {
+          const params: unknown[] = [key.projectKey, key.sessionId, sub];
+          const values = entries.map((e) => {
+            params.push(e.uuid ?? null, JSON.stringify(e));
+            return `($1,$2,$3,$${params.length - 1},$${params.length})`;
+          });
+          // Dedup happens IN the statement: replayed uuids no-op (intra-batch dups collapse to first).
+          await client.query(
+            `INSERT INTO ${E} (project_key, session_id, subpath, uuid, entry) VALUES ${values.join(",")}
+             ON CONFLICT (project_key, session_id, subpath, uuid) WHERE uuid IS NOT NULL DO NOTHING`,
+            params,
+          );
+        }
         if (key.subpath) return; // subkeys are discovered from the entries table; no sidecar for subpaths
-        await foldSidecar(key, now());
+        inflight.set(ck, fp);          // set BEFORE the fold: a throw must leave the marker behind
+        await foldSidecar(key, now(), entries);
+        inflight.delete(ck);
       });
     },
 
@@ -206,6 +275,10 @@ export function createPostgresSessionStore(client: PgLike, opts: PostgresSession
         await client.query(`DELETE FROM ${E} WHERE project_key = $1 AND session_id = $2 AND subpath = $3`, [key.projectKey, key.sessionId, key.subpath]);
         return; // deleting a subagent transcript leaves the session rows alone
       }
+      // Drop the in-process fold state with the rows it described, so a session recreated under the same
+      // id cannot be folded against its predecessor's summary.
+      const ck = `${key.projectKey}\0${key.sessionId}`;
+      folds.delete(ck); inflight.delete(ck);
       // One data-modifying-CTE statement = one implicit transaction: no partial-delete state exists.
       await client.query(
         `WITH del_entries AS (DELETE FROM ${E} WHERE project_key = $1 AND session_id = $2)
