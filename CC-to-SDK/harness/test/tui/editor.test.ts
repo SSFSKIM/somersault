@@ -330,6 +330,61 @@ describe("meta co-occurring with escape/backspace (Ink's real key shape)", () =>
   });
 });
 
+describe("Wave-1 keymap: clear input, newline, undo, stash", () => {
+  // Shadows the file's single-shot `type` (one applyKey call for the whole string): undo is snapshot-per-key,
+  // so stepping back "one keystroke at a time" requires one applyKey call per character.
+  const type = (s: EditorState, text: string) => [...text].reduce((st, ch) => applyKey(st, ch, {}).state, s);
+
+  it("Ctrl-L clears the buffer (input, not screen) and Ctrl-_ restores it", () => {
+    let s = type(initialEditorState(), "hello world");
+    s = applyKey(s, "l", { ctrl: true }).state;
+    expect(s.lines).toEqual([""]);
+    s = applyKey(s, "_", { ctrl: true }).state;
+    expect(s.lines).toEqual(["hello world"]);
+    expect(s.cursor).toEqual({ row: 0, col: 11 });
+  });
+
+  it("Ctrl-J inserts a newline at the cursor", () => {
+    let s = type(initialEditorState(), "ab");
+    s = applyKey(s, "", { leftArrow: true }).state;
+    s = applyKey(s, "j", { ctrl: true }).state;
+    expect(s.lines).toEqual(["a", "b"]);
+    expect(s.cursor).toEqual({ row: 1, col: 0 });
+  });
+
+  it("undo steps back one keystroke at a time; Ctrl-- is the same undo", () => {
+    let s = type(initialEditorState(), "abc");
+    s = applyKey(s, "_", { ctrl: true }).state;
+    expect(s.lines).toEqual(["ab"]);
+    s = applyKey(s, "-", { ctrl: true }).state;
+    expect(s.lines).toEqual(["a"]);
+  });
+
+  it("Ctrl-S stashes a non-empty buffer; Ctrl-S on an empty buffer restores it", () => {
+    let s = type(initialEditorState(), "draft prompt");
+    s = applyKey(s, "s", { ctrl: true }).state;
+    expect(s.lines).toEqual([""]);
+    expect(s.stashed).toBe("draft prompt");
+    s = applyKey(s, "s", { ctrl: true }).state;
+    expect(s.lines).toEqual(["draft prompt"]);
+    expect(s.stashed).toBeNull();
+  });
+
+  it("undo snapshots cap at 100", () => {
+    let s = initialEditorState();
+    for (let i = 0; i < 120; i++) s = applyKey(s, "x", {}).state;
+    expect(s.undo.length).toBe(100);
+  });
+
+  it("submit resets the undo stack and stash survives nothing (fresh state)", () => {
+    let s = type(initialEditorState(), "send me");
+    const r = applyKey(s, "", { return: true });
+    expect(r.submit).toBe("send me");
+    expect(r.state.undo).toEqual([]);
+    expect(r.state.stashed).toBeNull();
+  });
+});
+
 describe("inputMode", () => {
   it("a leading ! = bash, # = memory, else normal", () => {
     expect(inputMode(type(initialEditorState(), "!ls -a"))).toBe("bash");

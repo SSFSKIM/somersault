@@ -9,17 +9,20 @@ export interface Candidate { path: string; score: number }
 export interface MentionState { anchor: Cursor; query: string; files: string[]; items: Candidate[]; index: number }
 export interface CommandState { query: string; items: CommandEntry[]; catalog: CommandEntry[]; index: number }
 export interface EditorState {
-  lines: string[]; cursor: Cursor; history: string[]; histIndex: number | null; stash: string | null; mention: MentionState | null; command: CommandState | null;
+  lines: string[]; cursor: Cursor; history: string[]; histIndex: number | null; stash: string | null;
+  stashed: string | null;                                    // Ctrl-S input stash (distinct from history-nav `stash`)
+  undo: { lines: string[]; cursor: Cursor }[];               // snapshot-on-change, capped at 100 (Ctrl-_ pops)
+  mention: MentionState | null; command: CommandState | null;
 }
 export interface EditorResult { state: EditorState; submit?: string }
 /** Minimal structural subset of ink's Key the reducer reads (so editor.ts needs no ink import). */
 export interface KeyFlags {
-  return?: boolean; backspace?: boolean; delete?: boolean; ctrl?: boolean; meta?: boolean;
+  return?: boolean; backspace?: boolean; delete?: boolean; ctrl?: boolean; meta?: boolean; shift?: boolean;
   leftArrow?: boolean; rightArrow?: boolean; upArrow?: boolean; downArrow?: boolean; escape?: boolean; tab?: boolean;
 }
 
 export function initialEditorState(history: string[] = []): EditorState {
-  return { lines: [""], cursor: { row: 0, col: 0 }, history: [...history], histIndex: null, stash: null, mention: null, command: null };
+  return { lines: [""], cursor: { row: 0, col: 0 }, history: [...history], histIndex: null, stash: null, stashed: null, undo: [], mention: null, command: null };
 }
 
 export type InputMode = "bash" | "memory" | "normal";
@@ -200,7 +203,21 @@ function afterInsert(next: EditorState, prev: EditorState, t: string): EditorSta
 function onUp(s: EditorState): EditorState { if (s.command) return moveCommand(s, -1); if (s.mention) return moveMention(s, -1); if (s.cursor.row === 0) return historyPrev(s); return moveCursorVert(s, -1); }
 function onDown(s: EditorState): EditorState { if (s.command) return moveCommand(s, 1); if (s.mention) return moveMention(s, 1); if (s.cursor.row === s.lines.length - 1) return historyNext(s); return moveCursorVert(s, 1); }
 
-export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorResult {
+function clearInput(s: EditorState): EditorState {           // Ctrl-L = CC chat:clearInput (screen clear stays /clear)
+  return { ...s, lines: [""], cursor: { row: 0, col: 0 }, mention: null, command: null };
+}
+function stashToggle(s: EditorState): EditorState {          // Ctrl-S = CC chat:stash: park non-empty input, restore when empty
+  if (!isBlank(s)) return { ...clearInput(s), stashed: bufferText(s) };
+  if (s.stashed != null) return { ...setBuffer(s, s.stashed), stashed: null };
+  return s;
+}
+function undoEdit(s: EditorState): EditorState {             // Ctrl-_ / Ctrl-- = CC chat:undo (terminals send 0x1F for both)
+  const last = s.undo[s.undo.length - 1];
+  if (!last) return s;
+  return { ...s, lines: last.lines, cursor: last.cursor, undo: s.undo.slice(0, -1), mention: null, command: null };
+}
+
+function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResult {
   // Alt/Option word movement (Alt-←→, Alt-b/f) — checked BEFORE key.ctrl so no meta combo ever falls through to
   // insert. Ink also sets key.meta on a BARE Escape and on ESC-prefixed backspace/delete (use-input.js:
   // meta = keypress.meta || keypress.name === "escape" || keypress.option), so those must NOT be swallowed here —
@@ -217,6 +234,10 @@ export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorRe
       case "k": return { state: syncCompletions(killToEnd(s)) };
       case "u": return { state: syncCompletions(killToStart(s)) };
       case "w": return { state: syncCompletions(killWordBack(s)) };
+      case "j": return { state: syncCompletions(insertText(s, "\n")) };
+      case "l": return { state: clearInput(s) };
+      case "s": return { state: stashToggle(s) };
+      case "_": case "-": return { state: undoEdit(s) };
       default: return { state: s };
     }
   }
@@ -235,4 +256,14 @@ export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorRe
   if (key.downArrow) return { state: onDown(s) };
   if (input) { const t = stripPasteMarkers(input); if (!t) return { state: s }; return { state: afterInsert(insertText(s, t), s, t) }; }
   return { state: s };
+}
+
+/** Snapshot-on-change undo: any key that changed the buffer pushes the PRIOR buffer (cap 100). An op
+ *  that managed the stack itself (undoEdit pops it) is recognized by its own `undo` identity change;
+ *  a submit returns a fresh initialEditorState, so its stack is already empty. */
+export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorResult {
+  const r = applyKeyInner(s, input, key);
+  if (r.submit !== undefined || r.state === s) return r;
+  if (r.state.lines === s.lines || r.state.undo !== s.undo) return r;
+  return { ...r, state: { ...r.state, undo: [...s.undo.slice(-99), { lines: s.lines, cursor: s.cursor }] } };
 }
