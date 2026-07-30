@@ -62,6 +62,11 @@
   .limits-banner.clear { opacity: .5; }
   .callout { font-size: .8em; opacity: .75; margin: .15rem 0 .5rem; }
   .wirename { font-family: inherit; opacity: .65; }
+  .decision-box { border: 1px solid color-mix(in srgb, crimson 40%, transparent); padding: .5rem; margin: .4rem 0; }
+  .decision-box .row { margin-top: .4rem; }
+  .decision-box pre { max-height: 8rem; }
+  .stream-pane { height: 10rem; overflow: auto; background: color-mix(in srgb, currentColor 6%, transparent); padding: .4rem .6rem; font-size: .85em; }
+  .stream-pane div { border-bottom: 1px dotted color-mix(in srgb, currentColor 15%, transparent); padding: .1rem 0; }
 </style>
 
 <h1>agent app-server console <span class="sub">waves 0&ndash;2 &middot; foreign consumer &middot; disposable</span></h1>
@@ -216,6 +221,46 @@
     <button id="btnDismissLimits" class="hint">Dismiss</button>
   </div>
   <pre id="usageMeter">(thread/tokenUsage/updated dump for the active thread appears here)</pre>
+</section>
+
+<!-- ======================= Panel D: Turn & decisions ======================= -->
+<section id="panelTurn">
+  <h2>D. Turn &amp; decisions</h2>
+  <div class="callout">
+    Everything panel B's meters display (token usage, rate limits, the settings mirror) and every
+    <code>item/*</code>/<code>turn/*</code> notification are only ever emitted <b>while a turn
+    runs</b> — this panel is what actually exercises them, on the active thread set above. It also
+    depends on a fact worth making visible rather than hiding: <code>item/*</code> and
+    <code>turn/*</code> notifications only reach a connection that has <code>thread/subscribe</code>d
+    that specific thread — <code>initialize {watchThreads:true}</code> alone (panel A) only ever
+    covers thread EXISTENCE, never a thread's turns.
+  </div>
+  <div class="row">
+    <button id="btnSubscribeActive">Subscribe active thread <span class="wirename">(thread/subscribe)</span></button>
+    <button id="btnUnsubscribeActive">Unsubscribe <span class="wirename">(thread/unsubscribe)</span></button>
+    <span id="subscribeStatus">(no active thread)</span>
+  </div>
+  <div class="row">
+    <input type="text" id="turnInput" class="wide" placeholder="turn prompt, e.g. list the files in the current directory" />
+    <button id="btnStartTurn">Start turn <span class="wirename">(turn/start)</span></button>
+    <button id="btnInterruptTurn">Interrupt <span class="wirename">(turn/interrupt)</span></button>
+    <span id="turnStatus">(no turn/started or turn/completed seen yet for the active thread)</span>
+  </div>
+  <div class="callout">
+    <code>#turnStatus</code> above is written ONLY by incoming <code>turn/started</code> /
+    <code>turn/completed</code> notifications for the active thread — never by
+    <code>turn/start</code>'s own reply, even though that reply already carries the identical
+    <code>{id, status}</code> the notification will carry moments later (<code>turns.ts</code>'s
+    <code>beginTurn</code> replies, then broadcasts the same object). Same asymmetry as the settings
+    readout above, applied here too: this is the check that the reply and the fan-out actually agree,
+    not an assumption that they must.
+  </div>
+
+  <h3 style="margin:.6rem 0 .2rem; font-size:.9em; opacity:.8;">pending decisions (active thread)</h3>
+  <div id="decisionList">(no pending decisions for the active thread)</div>
+
+  <h3 style="margin:.6rem 0 .2rem; font-size:.9em; opacity:.8;">item stream (active thread)</h3>
+  <div id="itemStream" class="stream-pane">(item/started and item/completed for the active thread appear here as they arrive)</div>
 </section>
 
 <!-- ======================= Panel C: Session library ======================= -->
@@ -418,12 +463,11 @@ function renderThreadTable() {
   document.getElementById("threadListCount").textContent = `${liveThreads.size} known`;
 }
 
-async function callThreadSubscribe(threadId) {
-  try {
-    const r = await send("thread/subscribe", { threadId });
-    logWire("in", `subscribed ${threadId}`, r);
-  } catch (e) { alert("thread/subscribe failed: " + JSON.stringify(e)); }
-}
+// Routes through Panel D's doSubscribe() (defined below, but function declarations hoist) so a row
+// click in this table and Panel D's explicit "Subscribe active thread" button share the exact same
+// subscribed-set bookkeeping — one entry point for "am I subscribed to this thread", not two that
+// could disagree.
+async function callThreadSubscribe(threadId) { await doSubscribe(threadId); }
 
 async function callSimple(method, params) {
   try {
@@ -458,11 +502,163 @@ function setActiveThread(id) {
   document.getElementById("readDump").textContent = "(read replies are dumped here verbatim)";
   clearLimitsBanner("(active thread changed)");
   document.getElementById("usageMeter").textContent = "(thread/tokenUsage/updated dump for the active thread appears here)";
+  document.getElementById("turnStatus").textContent = "(no turn/started or turn/completed seen yet for the active thread)";
+  document.getElementById("itemStream").textContent = "(item/started and item/completed for the active thread appear here as they arrive)";
+  renderSubscribeStatus();
+  renderDecisions();
 }
 function activeThreadOrAlert() {
   const id = activeThreadInput.value.trim();
   if (!id) alert("set an active thread first (Use→ in panel A/C, or paste a thread id)");
   return id;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Panel D: turn & decisions — the only place item/turn notifications and the decision affordance
+// are exercised; everything here is scoped to the active thread (activeThreadInput, panel B).
+// ---------------------------------------------------------------------------------------------
+const subscribedThreads = new Set(); // threadIds this connection has thread/subscribe'd
+const pendingDecisions = new Map();  // toolUseID -> {threadId, turnId, decision}
+
+function activeId() { return activeThreadInput.value.trim(); }
+
+async function doSubscribe(threadId) {
+  try {
+    const r = await send("thread/subscribe", { threadId });
+    subscribedThreads.add(threadId);
+    logWire("in", `subscribed ${threadId}`, r);
+    renderSubscribeStatus();
+  } catch (e) { alert("thread/subscribe failed: " + JSON.stringify(e)); }
+}
+async function doUnsubscribe(threadId) {
+  try {
+    const r = await send("thread/unsubscribe", { threadId });
+    subscribedThreads.delete(threadId);
+    renderSubscribeStatus();
+  } catch (e) { alert("thread/unsubscribe failed: " + JSON.stringify(e)); }
+}
+function renderSubscribeStatus() {
+  const id = activeId();
+  document.getElementById("subscribeStatus").textContent = id
+    ? (subscribedThreads.has(id) ? "subscribed — item/turn/decision notifications for this thread will arrive" : "not subscribed — item/turn/decision notifications for this thread will NOT arrive")
+    : "(no active thread)";
+}
+document.getElementById("btnSubscribeActive").onclick = () => { const id = activeThreadOrAlert(); if (id) doSubscribe(id); };
+document.getElementById("btnUnsubscribeActive").onclick = () => { const id = activeThreadOrAlert(); if (id) doUnsubscribe(id); };
+
+document.getElementById("btnStartTurn").onclick = async () => {
+  const threadId = activeThreadOrAlert(); if (!threadId) return;
+  const input = document.getElementById("turnInput").value;
+  if (!input.trim()) { alert("enter a turn prompt first"); return; }
+  if (!subscribedThreads.has(threadId)) {
+    if (!confirm("This thread is not subscribed — its turn/item/decision notifications will not reach this console. Start the turn anyway?")) return;
+  }
+  // Deliberately does NOT write #turnStatus from this reply (see the panel's callout) — only the
+  // turn/started notification below does.
+  try { await send("turn/start", { threadId, input }); }
+  catch (e) { alert("turn/start failed: " + JSON.stringify(e)); }
+};
+document.getElementById("btnInterruptTurn").onclick = async () => {
+  const threadId = activeThreadOrAlert(); if (!threadId) return;
+  try { await send("turn/interrupt", { threadId }); }
+  catch (e) { alert("turn/interrupt failed: " + JSON.stringify(e)); }
+};
+
+function fmtItemSummary(item) {
+  if (!item) return "(no item)";
+  if (item.type === "toolCall") {
+    return `toolCall ${item.tool} (${item.view}) [${item.status}]` + (item.result ? ` → ${String(item.result).slice(0, 200)}` : "");
+  }
+  const text = (item.text || "").slice(0, 300);
+  return `${item.type}${item.aborted ? " [aborted]" : ""}: ${text}`;
+}
+function appendItemLine(method, params) {
+  const el = document.getElementById("itemStream");
+  if (!el.querySelector("div")) el.textContent = ""; // first real line clears the placeholder text
+  const div = document.createElement("div");
+  div.textContent = `${method === "item/started" ? "▶" : "■"} [${params.turnId}] ${fmtItemSummary(params.item)}`;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+
+function mkBtn(label, onclick) { const b = document.createElement("button"); b.textContent = label; b.onclick = onclick; return b; }
+
+/** The one place a decision answer is sent — `toolUseId` (lowercase d) is decisionRespondParams's
+ *  own field name (schema/decisions.ts), which is NOT the same spelling as the entry's own
+ *  `toolUseID` (capital ID, PendingDecision — src/permissions/pending.ts) carried on
+ *  `decision/requested`'s payload; `decision/resolved` then reports it back as `toolUseId` again
+ *  (lowercase d, flat — server.ts's broadcastDecision). Spelled out explicitly here rather than via
+ *  a spread of the entry, precisely because copying `{...entry}` into a decision/respond call would
+ *  produce a params object with NO `toolUseId` key at all (only `toolUseID`) and fail
+ *  INVALID_PARAMS — see the report's consumability note. */
+async function respondDecision(entry, answer, abortTurn) {
+  try {
+    const params = { threadId: entry.threadId, toolUseId: entry.decision.toolUseID, answer };
+    if (abortTurn) params.abortTurn = true;
+    await send("decision/respond", params);
+    pendingDecisions.delete(entry.decision.toolUseID);
+    renderDecisions();
+  } catch (e) { alert("decision/respond failed: " + JSON.stringify(e)); }
+}
+
+function renderDecisions() {
+  const container = document.getElementById("decisionList");
+  container.innerHTML = "";
+  const id = activeId();
+  let shown = 0;
+  for (const entry of pendingDecisions.values()) {
+    if (entry.threadId !== id) continue;
+    shown++;
+    const d = entry.decision;
+    const box = document.createElement("div"); box.className = "decision-box";
+    const header = document.createElement("div");
+    header.textContent = `${d.kind} · ${d.toolName} · toolUseID=${d.toolUseID}` + (d.title ? ` · ${d.title}` : "");
+    box.appendChild(header);
+    const pre = document.createElement("pre"); pre.textContent = JSON.stringify(d.input, null, 2);
+    box.appendChild(pre);
+    const abortCk = document.createElement("input"); abortCk.type = "checkbox";
+    const abortLabel = document.createElement("label"); abortLabel.append(abortCk, document.createTextNode(" abort the turn too (abortTurn)"));
+    box.appendChild(abortLabel);
+    const btnRow = document.createElement("div"); btnRow.className = "row";
+    // Answer kinds per decision kind mirror broker.ts's ANSWER_KINDS table (schema/decisions.ts's
+    // discriminated union backs every one of these) — "deny" is the universal escape hatch for all three.
+    if (d.kind === "permission") {
+      btnRow.append(
+        mkBtn("Allow once (allow_once)", () => respondDecision(entry, { kind: "allow_once" }, abortCk.checked)),
+        mkBtn("Allow always (allow_always)", () => respondDecision(entry, { kind: "allow_always" }, abortCk.checked)),
+        mkBtn("Deny", () => respondDecision(entry, { kind: "deny" }, abortCk.checked)),
+      );
+    } else if (d.kind === "question") {
+      const answersInput = document.createElement("input"); answersInput.type = "text"; answersInput.className = "wide";
+      answersInput.placeholder = 'answers JSON, e.g. {"question key from input above":"your answer"}';
+      const responseInput = document.createElement("input"); responseInput.type = "text";
+      responseInput.placeholder = "free-text response (optional \"Other\")";
+      btnRow.append(answersInput, responseInput,
+        mkBtn("Answer (question_answer)", () => {
+          let answers = {};
+          const raw = answersInput.value.trim();
+          if (raw) { try { answers = JSON.parse(raw); } catch { alert('answers must be JSON, e.g. {"key":"value"}'); return; } }
+          const answer = { kind: "question_answer", answers };
+          if (responseInput.value.trim()) answer.response = responseInput.value.trim();
+          respondDecision(entry, answer, abortCk.checked);
+        }),
+        mkBtn("Deny", () => respondDecision(entry, { kind: "deny" }, abortCk.checked)),
+      );
+    } else if (d.kind === "plan") {
+      const acceptCk = document.createElement("input"); acceptCk.type = "checkbox";
+      const acceptLabel = document.createElement("label"); acceptLabel.append(acceptCk, document.createTextNode(" acceptEdits"));
+      const feedbackInput = document.createElement("input"); feedbackInput.type = "text"; feedbackInput.placeholder = "rejection feedback (optional)";
+      btnRow.append(acceptLabel,
+        mkBtn("Approve (plan_approve)", () => respondDecision(entry, { kind: "plan_approve", acceptEdits: acceptCk.checked }, abortCk.checked)),
+        feedbackInput,
+        mkBtn("Reject (plan_reject)", () => respondDecision(entry, { kind: "plan_reject", feedback: feedbackInput.value.trim() || undefined }, abortCk.checked)),
+        mkBtn("Deny", () => respondDecision(entry, { kind: "deny" }, abortCk.checked)),
+      );
+    }
+    box.appendChild(btnRow);
+    container.appendChild(box);
+  }
+  if (!shown) container.textContent = "(no pending decisions for the active thread)";
 }
 
 document.getElementById("btnSetModel").onclick = async () => {
@@ -662,9 +858,35 @@ function handleNotification(method, params) {
         document.getElementById("usageMeter").textContent = JSON.stringify(params.usage, null, 2);
       }
       break;
+    // --- Panel D: the ONLY writers of #turnStatus, the decision list, and the item stream ---
+    case "turn/started":
+    case "turn/completed":
+      if (params.threadId === activeId()) {
+        document.getElementById("turnStatus").textContent = `${params.turn.id}: ${params.turn.status}` + (params.turn.error ? ` (${params.turn.error})` : "");
+      }
+      break;
+    case "item/started":
+    case "item/completed":
+      if (params.threadId === activeId()) appendItemLine(method, params);
+      break;
+    case "decision/requested":
+      // decision/requested's entry is `params.decision`, a PendingDecision — its id field is
+      // `toolUseID` (capital ID). Tracked across every thread (not just the active one) so switching
+      // the active thread doesn't lose a park that arrived while a different thread was active.
+      pendingDecisions.set(params.decision.toolUseID, { threadId: params.threadId, turnId: params.turnId, decision: params.decision });
+      if (params.threadId === activeId()) renderDecisions();
+      break;
+    case "decision/resolved":
+      // NOTE the spelling: this notification's id field is `toolUseId` (lowercase d) — a different
+      // spelling from decision/requested's `decision.toolUseID` above for the SAME identifier. Both
+      // keys happen to be equal in value here, so a single delete-by-either-spelling works, but see
+      // the report for why this asymmetry is a real trap for a naive client.
+      pendingDecisions.delete(params.toolUseId);
+      if (params.threadId === activeId()) renderDecisions();
+      break;
     default:
-      // item/*, turn/*, decision/*, task/*, thread/compacted, thread/capabilities/changed,
-      // thread/name/updated, warning, initialized — no dedicated widget; the wire log above is
+      // task/*, thread/compacted, thread/capabilities/changed, thread/name/updated, warning,
+      // initialized, and every item/* delta channel — no dedicated widget; the wire log above is
       // their display surface, which is the point of a foreign-consumer console.
       break;
   }
