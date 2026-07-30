@@ -162,7 +162,7 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     expect(notifs[2].params).toMatchObject({ threadId, turnId: `turn_${threadId}_1`, item: { type: "agentMessage", id: "msg1#0", text: "hi" } });
     expect(notifs[3].params).toMatchObject({ threadId, turnId: `turn_${threadId}_1`, item: { type: "agentMessage", id: "msg1#0" } });
     expect(notifs[4].params.threadId).toBe(threadId);
-    expect(notifs[4].params.decision.toolUseID).toBe("toolu_a");
+    expect(notifs[4].params.decision.toolUseId).toBe("toolu_a");
     // status is now the {state,waitingOn} object (Task 7, spec D-M2-8) — a pending decision on this
     // thread means waitingOn:"decision", not just a bare "active" string.
     expect(notifs[5].params).toEqual({ threadId, status: { state: "active", waitingOn: "decision" } });

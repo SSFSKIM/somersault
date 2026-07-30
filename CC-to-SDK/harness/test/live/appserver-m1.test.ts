@@ -110,14 +110,16 @@ live("M1 live acceptance: spawn -> subscribe -> turn -> park -> respond -> compl
       const entry = requested.params.decision;
       expect(entry.kind).toBe("permission");
       expect(["Write", "Edit"]).toContain(entry.toolName);
-      expect(typeof entry.toolUseID).toBe("string");
+      expect(typeof entry.toolUseId).toBe("string");
 
-      const respond = await client.call("decision/respond", { threadId, toolUseId: entry.toolUseID, answer: { kind: "allow_once" } });
+      const respond = await client.call("decision/respond", { threadId, toolUseId: entry.toolUseId, answer: { kind: "allow_once" } });
       expect(respond.ok).toBe(true);
 
-      // decision/resolved's notification field is `toolUseId` (server.ts broadcastDecision) — NOT the
-      // `toolUseID` spelling PendingDecision uses; read the shipped code, don't guess the casing.
-      await client.waitFor("decision/resolved", 20_000, (n) => n.method === "decision/resolved" && n.params.toolUseId === entry.toolUseID);
+      // Wire is normalized (as2a, 2026-07-30): `toolUseId` (lowercase d) is the ONE spelling across
+      // decision/requested's `decision`, decision/respond's params, and decision/resolved's notification
+      // — the internal PendingDecision's `toolUseID` never reaches a client. See broker.ts's
+      // toWireDecision, which projects the internal shape at the boundary.
+      await client.waitFor("decision/resolved", 20_000, (n) => n.method === "decision/resolved" && n.params.toolUseId === entry.toolUseId);
 
       const completed = await client.waitFor("turn/completed", 60_000, (n) => n.method === "turn/completed" && n.params.threadId === threadId);
       expect(completed.params.turn.status).toBe("completed");

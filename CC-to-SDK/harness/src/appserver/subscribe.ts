@@ -8,6 +8,7 @@ import { itemsFromTranscript } from "./items/replay.js";
 import type { Item } from "./items/types.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
 import { activeTurnId, threadStatus } from "./registry.js";
+import { toWireDecision } from "./broker.js";
 import type { Handler } from "./server.js";
 import { threadIdParams } from "./schema/core.js";
 import { threadReadParams } from "./schema/threads.js";
@@ -110,9 +111,10 @@ export const threadSubscribe: Handler = (srv, ctx, id, params) => {
     ctx.peer.notify(method, p);
   }
   // Same payload as the live broadcast (server.ts's broadcastDecision), turnId included — replay and live
-  // must never drift on shape; absent when no turn is in flight.
+  // must never drift on shape; absent when no turn is in flight. `decision` is projected to the wire
+  // shape (toolUseId) — see broker.ts's toWireDecision.
   const pending = srv.pendingDecisions(record.id);
-  for (const entry of pending) ctx.peer.notify("decision/requested", { threadId: record.id, turnId: activeTurnId(record), decision: entry });
+  for (const entry of pending) ctx.peer.notify("decision/requested", { threadId: record.id, turnId: activeTurnId(record), decision: toWireDecision(entry) });
   ctx.peer.notify("thread/status/changed", { threadId: record.id, status: threadStatus(record, pending.length > 0) });
 };
 

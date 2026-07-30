@@ -518,7 +518,7 @@ function activeThreadOrAlert() {
 // are exercised; everything here is scoped to the active thread (activeThreadInput, panel B).
 // ---------------------------------------------------------------------------------------------
 const subscribedThreads = new Set(); // threadIds this connection has thread/subscribe'd
-const pendingDecisions = new Map();  // toolUseID -> {threadId, turnId, decision}
+const pendingDecisions = new Map();  // toolUseId -> {threadId, turnId, decision}
 
 function activeId() { return activeThreadInput.value.trim(); }
 
@@ -583,20 +583,20 @@ function appendItemLine(method, params) {
 
 function mkBtn(label, onclick) { const b = document.createElement("button"); b.textContent = label; b.onclick = onclick; return b; }
 
-/** The one place a decision answer is sent — `toolUseId` (lowercase d) is decisionRespondParams's
- *  own field name (schema/decisions.ts), which is NOT the same spelling as the entry's own
- *  `toolUseID` (capital ID, PendingDecision — src/permissions/pending.ts) carried on
- *  `decision/requested`'s payload; `decision/resolved` then reports it back as `toolUseId` again
- *  (lowercase d, flat — server.ts's broadcastDecision). Spelled out explicitly here rather than via
- *  a spread of the entry, precisely because copying `{...entry}` into a decision/respond call would
- *  produce a params object with NO `toolUseId` key at all (only `toolUseID`) and fail
- *  INVALID_PARAMS — see the report's consumability note. */
+/** The one place a decision answer is sent. `toolUseId` (lowercase d) is now the ONE spelling across
+ *  the whole wire (as2a, 2026-07-30): decision/requested's `decision.toolUseId`, decision/respond's
+ *  own params field, and decision/resolved's `toolUseId` all agree — the internal PendingDecision's
+ *  `toolUseID` (capital ID, src/permissions/pending.ts) never reaches a client; the server projects it
+ *  at the boundary (broker.ts's toWireDecision). Before that fix this SAME spread idiom — `{...entry}`
+ *  into a decision/respond call — silently produced a params object with NO `toolUseId` key at all
+ *  (only the leaked `toolUseID`) and failed INVALID_PARAMS at the exact moment a human was waiting on
+ *  a parked tool call; see the report's consumability note. */
 async function respondDecision(entry, answer, abortTurn) {
   try {
-    const params = { threadId: entry.threadId, toolUseId: entry.decision.toolUseID, answer };
+    const params = { threadId: entry.threadId, toolUseId: entry.decision.toolUseId, answer };
     if (abortTurn) params.abortTurn = true;
     await send("decision/respond", params);
-    pendingDecisions.delete(entry.decision.toolUseID);
+    pendingDecisions.delete(entry.decision.toolUseId);
     renderDecisions();
   } catch (e) { alert("decision/respond failed: " + JSON.stringify(e)); }
 }
@@ -612,7 +612,7 @@ function renderDecisions() {
     const d = entry.decision;
     const box = document.createElement("div"); box.className = "decision-box";
     const header = document.createElement("div");
-    header.textContent = `${d.kind} · ${d.toolName} · toolUseID=${d.toolUseID}` + (d.title ? ` · ${d.title}` : "");
+    header.textContent = `${d.kind} · ${d.toolName} · toolUseId=${d.toolUseId}` + (d.title ? ` · ${d.title}` : "");
     box.appendChild(header);
     const pre = document.createElement("pre"); pre.textContent = JSON.stringify(d.input, null, 2);
     box.appendChild(pre);
@@ -870,17 +870,17 @@ function handleNotification(method, params) {
       if (params.threadId === activeId()) appendItemLine(method, params);
       break;
     case "decision/requested":
-      // decision/requested's entry is `params.decision`, a PendingDecision — its id field is
-      // `toolUseID` (capital ID). Tracked across every thread (not just the active one) so switching
-      // the active thread doesn't lose a park that arrived while a different thread was active.
-      pendingDecisions.set(params.decision.toolUseID, { threadId: params.threadId, turnId: params.turnId, decision: params.decision });
+      // decision/requested's entry is `params.decision`, the WIRE projection of the internal
+      // PendingDecision (broker.ts's toWireDecision) — its id field is `toolUseId` (lowercase d), the
+      // same spelling decision/respond and decision/resolved use. Tracked across every thread (not just
+      // the active one) so switching the active thread doesn't lose a park that arrived while a
+      // different thread was active.
+      pendingDecisions.set(params.decision.toolUseId, { threadId: params.threadId, turnId: params.turnId, decision: params.decision });
       if (params.threadId === activeId()) renderDecisions();
       break;
     case "decision/resolved":
-      // NOTE the spelling: this notification's id field is `toolUseId` (lowercase d) — a different
-      // spelling from decision/requested's `decision.toolUseID` above for the SAME identifier. Both
-      // keys happen to be equal in value here, so a single delete-by-either-spelling works, but see
-      // the report for why this asymmetry is a real trap for a naive client.
+      // `toolUseId` (lowercase d) — the ONE spelling across the wire (as2a, 2026-07-30); see
+      // decision/requested above.
       pendingDecisions.delete(params.toolUseId);
       if (params.threadId === activeId()) renderDecisions();
       break;

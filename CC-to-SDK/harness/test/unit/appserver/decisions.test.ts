@@ -41,7 +41,7 @@ describe("appserver decisions (Task 7)", () => {
     expect(reqB).toBeTruthy();
     expect(reqA.params.threadId).toBe(threadId);
     expect(reqA.params.decision.kind).toBe("permission");
-    expect(reqA.params.decision.toolUseID).toBe("toolu_d");
+    expect(reqA.params.decision.toolUseId).toBe("toolu_d");
 
     send(connB, { id: 9, method: "decision/respond", params: { threadId, toolUseId: "toolu_d", answer: { kind: "allow_once" } } });
     await new Promise((r) => setTimeout(r, 0));
@@ -116,7 +116,7 @@ describe("appserver decisions (Task 7)", () => {
     await new Promise((r) => setTimeout(r, 0));
     const listed = parsed(a.lines).find((f) => f.id === 3);
     expect(listed.result.data).toHaveLength(1);
-    expect(listed.result.data[0].toolUseID).toBe("toolu_p");
+    expect(listed.result.data[0].toolUseId).toBe("toolu_p");
 
     send(connA, { id: 4, method: "decision/list", params: { threadId: "thr_unknown0000" } });
     await new Promise((r) => setTimeout(r, 0));
@@ -243,7 +243,7 @@ describe("appserver decisions (Task 7)", () => {
     await new Promise((r) => setTimeout(r, 0));
     const inTurn = parsed(a.lines).find((f) => f.method === "decision/requested");
     expect(inTurn.params.turnId).toBe(`turn_${threadId}_1`);
-    expect(inTurn.params.decision.toolUseID).toBe("toolu_t");
+    expect(inTurn.params.decision.toolUseId).toBe("toolu_t");
 
     // the subscribe-time REPLAY carries the same shape — replay and live must not drift
     const b = mkSink(); const connB = srv.connect(b.sink);
@@ -371,5 +371,36 @@ describe("appserver decisions (Task 7)", () => {
     send(c, { id: 4, method: "decision/list", params: { threadId: mintedId } });
     await new Promise((r) => setTimeout(r, 0));
     expect(parsed(s.lines).find((f) => f.id === 4).error.code).toBe(ERR.THREAD_NOT_FOUND); // decisions map: no orphan entry for the minted id
+  });
+
+  it("wire normalization (as2a): a decision reaching a client carries toolUseId and never the internal toolUseID, on decision/requested AND decision/list", async () => {
+    // Pins the fix: PendingDecision's internal field is `toolUseID` (src/permissions/pending.ts) but the
+    // wire must project it to `toolUseId` everywhere a decision object reaches a client — a naive client
+    // that spreads {...entry, answer} into decision/respond needs `toolUseId` to be there, and must never
+    // be tempted by a leaked `toolUseID` twin. Revert broker.ts's toWireDecision to `decision: ev.entry` /
+    // `dec.pending()` and this test fails on the `expect(... ).not.toHaveProperty("toolUseID")` lines.
+    let broker: any;
+    const srv = new AppServer({}, { sessionFactory: (cfg: any) => { broker = cfg.permissionBroker; return fakeSession(); } });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+    send(connA, { id: 3, method: "thread/subscribe", params: { threadId } });
+    await new Promise((r) => setTimeout(r, 0));
+    a.lines.length = 0;
+
+    broker.request({ toolName: "Bash", input: { command: "ls" }, toolUseID: "toolu_wire", signal: new AbortController().signal });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const requested = parsed(a.lines).find((f) => f.method === "decision/requested");
+    expect(requested.params.decision.toolUseId).toBe("toolu_wire");
+    expect(requested.params.decision).not.toHaveProperty("toolUseID");
+
+    send(connA, { id: 4, method: "decision/list", params: { threadId } });
+    await new Promise((r) => setTimeout(r, 0));
+    const listed = parsed(a.lines).find((f) => f.id === 4).result.data[0];
+    expect(listed.toolUseId).toBe("toolu_wire");
+    expect(listed).not.toHaveProperty("toolUseID");
   });
 });

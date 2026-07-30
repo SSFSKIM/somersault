@@ -146,8 +146,14 @@ connected. Our engine's defining feature is the opposite: a detached host **park
 indefinitely, clients come and go, and the first answer wins. So decisions are modeled as
 **state, not RPC**:
 
-- `decision/requested` notification — `{threadId, turnId, decision: PendingDecision}` (kind
-  `permission | question | plan`, full payload incl. attribution, `expiresAt?`).
+- `decision/requested` notification — `{threadId, turnId, decision}`, where `decision` is
+  PendingDecision's fields projected onto the wire with **`toolUseId`** (lowercase d) as the id
+  field — not the internal `PendingDecision.toolUseID` (capital ID, `src/permissions/pending.ts`)
+  the server holds in memory. The server projects at the boundary (`broker.ts`'s
+  `toWireDecision`) precisely so every surface that carries this identifier — this notification,
+  `decision/respond`'s params below, `decision/resolved`'s notification, and `decision/list`'s
+  reply — agrees on one spelling. Full payload otherwise: kind `permission | question | plan`,
+  incl. attribution, `expiresAt?`.
 - `decision/respond` method — `{threadId, toolUseId, answer}`. `answer` is a kind-validated
   union that maps 1:1 onto the host wire's `KIND_ANSWERS` + structured-answer schema
   (`host/ops.ts`): permission → `allow_once | allow_always | deny`; question →
@@ -555,3 +561,16 @@ client-supplied `by` dropped, §13 additions folded into §7/§8, Stop-button qu
 unattended default + adoption semantics, and the P3 line items (token carrier, `thread/read`
 pagination, `thread/list` dedup, shellCommand-as-item, outbound backpressure, honest closure
 claim).
+
+- **Flagged deviation (2026-07-30, as2a):** §6's `decision/requested` originally described its
+  payload as `{threadId, turnId, decision: PendingDecision}` — publishing the internal type
+  verbatim. That leaked `PendingDecision`'s internal `toolUseID` (capital ID) onto the wire, while
+  `decision/respond`'s params and `decision/resolved`'s notification (both correct per this spec
+  all along) use flat `toolUseId` (lowercase d) — a three-way spelling split on the one identifier
+  a client needs to answer a park. Found by the M2 console (`tools/appserver-console.html`), the
+  first foreign consumer written against this wire: the obvious `{...entry, answer}` idiom silently
+  dropped `toolUseId` and failed `INVALID_PARAMS` at the exact moment a human was waiting on a
+  parked tool call. Fixed by projecting `PendingDecision` onto a wire shape (`broker.ts`'s
+  `toWireDecision`) at every site a decision reaches a client — `decision/requested`'s live
+  broadcast, its subscribe-replay, and `decision/list`'s reply — rather than emitting both
+  spellings. §6 above now describes the wire shape explicitly rather than naming the internal type.

@@ -19,6 +19,19 @@ export type DecisionEvent =
   | { type: "requested"; entry: PendingDecision }
   | { type: "resolved"; toolUseID: string; by: string; outcome: DecisionOutcome };
 
+/** The wire shape of a PendingDecision (protocol spec §5/§6): every field verbatim except the internal
+ *  `toolUseID` (capital ID — src/permissions/pending.ts), which the wire spells `toolUseId` (lowercase
+ *  d) to match decision/respond's params and decision/resolved's notification. This is a projection at
+ *  the client boundary, not a rename — the internal type and every internal caller keep `toolUseID`. */
+export type WireDecision = Omit<PendingDecision, "toolUseID"> & { toolUseId: string };
+
+/** Apply anywhere a PendingDecision reaches a client (spec Testing note: the wire must never leak the
+ *  internal spelling). */
+export function toWireDecision(entry: PendingDecision): WireDecision {
+  const { toolUseID, ...rest } = entry;
+  return { ...rest, toolUseId: toolUseID };
+}
+
 /** One instance per thread. `unattended`/`hasWatchers` are read lazily on every request — the caller's
  *  thread state (unattended mode, live connections) can change between parks. */
 export class ThreadDecisions {

@@ -6,7 +6,7 @@ import { Peer, type PeerSink } from "./peer.js";
 import { classify, ERR, type RequestId } from "./rpc.js";
 import { Registry, activeTurnId, threadStatus, type ThreadRecord, type EngineSession } from "./registry.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
-import { ThreadDecisions, type DecisionEvent } from "./broker.js";
+import { ThreadDecisions, toWireDecision, type DecisionEvent } from "./broker.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import { turnStart, turnInterrupt, requestInterrupt } from "./turns.js";
@@ -162,7 +162,8 @@ export class AppServer {
       if (!dec) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
       // A parked set is small and unpaged (cursor/limit are accepted for envelope uniformity but not
       // consulted yet) — the reply still carries nextCursor so every list method's shape matches (gap 2).
-      ctx.peer.reply(id, { data: dec.pending(), nextCursor: null });
+      // Projected to the wire shape (toolUseId) — see broker.ts's toWireDecision.
+      ctx.peer.reply(id, { data: dec.pending().map(toWireDecision), nextCursor: null });
     },
     "decision/respond": async (srv, ctx, id, params) => {
       const parsed = decisionRespondParams.safeParse(params);
@@ -355,7 +356,8 @@ export class AppServer {
   private broadcastDecision(threadId: string, ev: DecisionEvent): void {
     // spec §6's payload is {threadId, turnId, decision} — without turnId a UI cannot attach a park to a
     // turn row. Legitimately absent when nothing is in flight (JSON.stringify drops the undefined key).
-    if (ev.type === "requested") this.broadcast(threadId, "decision/requested", { threadId, turnId: activeTurnId(this.registry.get(threadId)), decision: ev.entry });
+    // `decision` is projected to the wire shape (toolUseId) — see broker.ts's toWireDecision.
+    if (ev.type === "requested") this.broadcast(threadId, "decision/requested", { threadId, turnId: activeTurnId(this.registry.get(threadId)), decision: toWireDecision(ev.entry) });
     else this.broadcast(threadId, "decision/resolved", { threadId, toolUseId: ev.toolUseID, by: ev.by, answer: ev.outcome });
   }
 
