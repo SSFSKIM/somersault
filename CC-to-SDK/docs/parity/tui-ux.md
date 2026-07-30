@@ -24,16 +24,16 @@ polish* that makes CC instantly recognizable: **no welcome banner, a non-CC spin
 glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input modes, no queued input, no
 `/cost`, and thin terminal-native editor ergonomics** (Ctrl-A/E/K/U/W, Ctrl-L, Ctrl-C-twice).
 
-| Category | Parity (start) | Parity (pre-C5) | Parity (now, post–sprint-W2) |
+| Category | Parity (start) | Parity (pre-C5) | Parity (now, post–sprint-W3) |
 |---|---|---|---|
 | 1. Input / composer ergonomics | ~45% | ~88% | ~95% |
 | 2. Transcript / message rendering | ~50% | ~74% | ~83% |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% |
-| 4. Modals / overlays | ~60% | ~88% | ~94% (pager + history search added) |
-| 5. Slash commands | ~55% | ~70% | ~84% (unchanged in W2) |
+| 4. Modals / overlays | ~60% | ~88% | ~88% (4 new W3 rows — see W3 recount note) |
+| 5. Slash commands | ~55% | ~70% | ~86% (6 new W3 rows — see W3 recount note) |
 | 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% |
-| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~80% (first plain recount — see W2 note) |
-| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~89%**<br>*(plain row count)* |
+| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~80% (untouched in W3) |
+| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* |
 
 **W1 recount note (2026-07-30, TUI/UX sprint Wave 1):** §1 21✅/1❌ of 22 non-🚫 rows (Ctrl-L
 converged to clear-input, Ctrl-J/Ctrl-_/Ctrl-S/Shift+Tab/external-editor added); §4 recounted plainly
@@ -64,6 +64,61 @@ background-panel/backgrounding rather than upstream's `task:background` context 
   selection into the composer (`historySearch:accept`); Ctrl-C is cancel; Enter executes.
 - A `local_agent` task's `.output` is a symlink to the full subagent transcript JSONL (the bundle's
   own warning) — the background panel deliberately does not tail it.
+
+**W3 recount note (2026-07-31, TUI/UX sprint Wave 3):** §4 gains 4 rows for the new dialogs —
+AddDirDialog and PermissionsDialog score ✅ (verbatim upstream copy, full tab/flow parity), SettingsDialog
+and ThemeDialog score 🟡 (real, disclosed scope cuts: 5 of upstream's ~54 Config rows, 5 of its 7+
+themes — see the W3 divergences below) — landing §4 at **10✅+3🟡 of 13 rows (~88%)**, DOWN from ~94%.
+That drop is the honesty posture working as designed, not a regression: nothing that worked before
+stopped working — two of the four newly-assessable rows are honestly 🟡, and 🟡 rows drag a section's
+percentage down by construction (✅=1.0, 🟡=0.5). §5 drops its one placeholder ❌ row (the old combined
+"`/config` `/permissions` settings UI · `/theme`" line) and gains 6 concrete ones (`/add-dir`,
+`/config`+`/settings`, `/permissions`+`/allowed-tools`, `/theme`, `/output-style`, `/keybindings`) — 3✅
+(`/add-dir`, `/permissions`, `/output-style` — the last matches upstream's **own** redirect-into-`/config`
+behavior exactly, a Wave-3 bundle-extraction surprise, not a corner we cut) and 3🟡 (`/config`, `/theme`,
+`/keybindings` — the same disclosed scope cuts as §4, plus `/keybindings` viewing rather than editing) —
+landing §5 at **16✅+4🟡 of 21 rows (~86%)**, up from ~84%. **Overall ~89% → ~88%** is a real, small,
+plainly-computed movement: §5's rise (+2 in the unweighted 7-category average) is outweighed by §4's fall
+(-6) in that same average — one point net, from adding ten honestly-scored rows to a wave that shipped
+seven working features. Not a regression in anything previously counted; a truer denominator.
+
+**W3 divergences (2026-07-31, TUI/UX sprint Wave 3 — from the plan's Global Constraints line 37 unless
+noted otherwise, each with its reason):**
+- **No custom/ANSI themes** — `/theme` ships 5 of upstream's 7+ theme rows (`theme.ts` `THEME_LABELS`);
+  the rest would need theme-authoring UI this harness has no use for yet.
+- **`auto` currently equals `dark`** — terminal-background detection isn't available headlessly, so the
+  "Auto (match terminal)" row picks a fixed default rather than truly detecting anything.
+- **Theme changes apply to NEW output only** — Ink's append-only `<Static>` keeps whatever colors its
+  already-rendered lines were written with; only the live binding (`ACCENT`/`themeTokens()`) that new
+  renders read updates immediately (the same `<Static>` constraint Wave 1 recorded for `/clear`).
+- **SettingsDialog has no header-focus state**, so upstream's `Settings dialog dismissed` string is
+  unused, and only our **5 functional Config rows** ship (Theme/Model/Output style/Default permission
+  mode/Thinking mode) against upstream's ~54, most of which have no ccx equivalent (no real Claude Code
+  client to configure).
+- **`/keybindings` views the keymap rather than opening it for editing** — upstream opens
+  `~/.claude/keybindings.json` in `$EDITOR`; we have no rebinding mechanism to open a file for, so the
+  command opens the existing read-only `?` keymap viewer instead and says so up front.
+- **`/permissions` rule mutations live in the flag layer (session) plus the chosen settings file** (for
+  the next launch) — upstream's own in-session rule engine is CLI-internal and unreachable from the SDK,
+  so this harness owns both halves itself (`applyFlagSettings` for the live effect, `mergeSettingsFile`
+  for persistence).
+- **Permission-rule saves do not fire upstream's shadowing-warning notices** — no signal exists on our
+  side to detect that a new rule shadows an existing one.
+
+Three further divergences surfaced only **during Task 7's implementation** of `/permissions` (not on the
+plan's line-37 list, recorded here per Task 8's brief):
+- **The Recently-denied tab's footer drops upstream's `Enter to approve · r to retry` chords**, shipping
+  `↑/↓ to navigate · Esc to cancel` instead. Reason: nothing in our session interface can replay an
+  already-settled denial, so both keys were no-ops, and a rendered footer advertising dead keys is
+  exactly the false-affordance pattern Wave 1's honesty pass removed. A deliberate controller decision
+  overriding the wave's verbatim-copy rule, not drift.
+- **The `/permissions` add-rule flow reuses one footer across both of its steps** (text entry and the
+  destination picker) — the plan pins only one footer string for the flow and inventing an unpinned
+  second one would be worse than reusing the first.
+- **Upstream's `header` footer variant is unused, as is `Settings dialog dismissed`** — neither of our
+  dialogs implements upstream's header-focus mode, so both header-scoped strings stay dead code by
+  design (consistent with Task 5's SettingsDialog decision above, restated because Task 7 independently
+  hit the same gap).
 
 **C5 recompute method (2026-07-28), disclosed for auditability:** each row is scored ✅=1.0 ·
 🟡=0.5 · ❌=0, `🚫` rows excluded from the denominator; a category's percentage is that plain
@@ -243,6 +298,10 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 | Ctrl-T todo-panel toggle | ✅ | — | **W1** — 2.1.220 `app:toggleTodos` (default visible) |
 | Transcript pager (Ctrl-O) | ✅ | — | **W2** `TranscriptPager.tsx` + pure `pager.ts` — the bundle's 18-binding Transcript context (j/k · ctrl-u/d half · ctrl-b/f b/space page · g/G · arrows · q/Esc/ctrl-c exit), opens at bottom; bordered overlay, not alt-screen (see W2 divergences) |
 | History search (Ctrl-R) | ✅ | — | **W2** `HistorySearchOverlay.tsx` + pure `historySearch.ts` — incremental prompt search over session/project/everywhere scopes (Ctrl-S cycles, initial "everywhere"), substring-then-subsequence ranking, Esc/Tab accept into composer · Enter execute · Ctrl-C cancel — the bundle's HistorySearch context key for key |
+| SettingsDialog (`/config`, `/settings`) | 🟡 | — | **W3** `SettingsDialog.tsx` — four tabs (Status·Config·Usage·Stats, wrapping tab/shift+tab/←→), Config tab live rows + `/` search + Esc-close change summary (`Set {label} to {value}`, bold value); but only **5 of upstream's ~54 Config rows** ship (Theme/Model/Output style/Default permission mode/Thinking mode — the ones this harness's engine can actually apply) and there is no header-focus mode, so upstream's `Settings dialog dismissed` string is unused (W3 divergence) |
+| PermissionsDialog (`/permissions`, `/allowed-tools`) | ✅ | — | **W3** `PermissionsDialog.tsx` — all five upstream tabs (Recently denied/Allow/Ask/Deny/Workspace), provenance-aware rule rows, add-rule flow with the destination picker (project-local/project/user settings, verbatim upstream typo `Saved in at ~/.claude/settings.json` kept), delete confirm, a read-only panel for non-editable rules, workspace directory add/remove. Divergences: rules apply via the flag layer **and** get written to the chosen settings file (upstream's rule engine is CLI-internal, invisible to us) — functionally equivalent but no upstream shadowing warnings fire; the Recently-denied footer intentionally drops two dead key chords (W3 divergences) |
+| ThemeDialog (`/theme`) | 🟡 | — | **W3** `theme.ts` (live-binding token set) + `ThemeDialog.tsx` — picker with the exact `demo.js` live diff preview, Esc-restore; only **5 of upstream's 7+ theme rows** ship (no custom/ANSI themes), `auto` currently just equals `dark` (no headless terminal-background detection), and a theme recolors NEW output only — Ink's `<Static>` scrollback keeps whatever colors it was written with |
+| AddDirDialog (`/add-dir`) | ✅ | — | **W3** `AddDirDialog.tsx` + `addDir.ts` — verbatim 2.1.220 validation copy (not-found / not-a-directory / already-added variants) and confirm dialog (session-only / remember-to-local-settings / cancel), routed by probe 75's two engine doors (`register_repo_root` inside cwd, `applyFlagSettings({additionalDirectories})` outside cwd) |
 | `/help` overlay | 🟡 | LOW | we print lines; CC has a modal |
 | IDE diff viewer | 🚫 | — | IDE-coupled |
 | MCP elicitation dialog | 🚫 | — | rarely fires headless |
@@ -257,7 +316,12 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 | `/status` | ✅ | **U4** — model · mode · thinking · context · cwd · session snapshot |
 | `/vim` | ❌ | LOW (owner-deferred) |
 | honesty routing of catalogued client-side controls | ✅ | **W1** — `agents`/`color`/`config`/`effort`/`extra-usage`/`fast`/`heapdump` print an explicit "why not here" line instead of silently becoming prompt turns; `/review` + `/doctor` stay prompt turns (prompt-type upstream) |
-| `/config` `/permissions` settings UI · `/theme` | ❌ | Wave 3 (U7) — required by owner decision; today `/config` gets the honest W1 message |
+| `/add-dir` | ✅ | **W3** `AddDirDialog.tsx` — routes by path (inside cwd → `register_repo_root` context load, outside cwd → `additionalDirectories` permission grant, per probe 75); "remember" writes `.claude/settings.local.json` |
+| `/config` (alias `/settings`) | 🟡 | **W3** — opens `SettingsDialog`'s Config tab; also `/config key=value` inline parsing with upstream's exact error copy. Only 5 of upstream's ~54 rows are wired — see §4's SettingsDialog row |
+| `/permissions` (alias `/allowed-tools`) | ✅ | **W3** — opens `PermissionsDialog`; five tabs, add/delete rules, workspace directory management — see §4's PermissionsDialog row |
+| `/theme` | 🟡 | **W3** — opens `ThemeDialog`; 5 of upstream's 7+ themes, `auto` currently ≡ `dark` — see §4's ThemeDialog row |
+| `/output-style` | ✅ | **W3** — prints the exact redirect line then opens `/config`'s Output-style row. This matches upstream's **own** 2.1.220 behavior — its standalone picker is itself a hidden redirect into `/config` (bundle-extraction surprise, see the spec) |
+| `/keybindings` | 🟡 | **W3** — upstream opens `~/.claude/keybindings.json` in `$EDITOR` for in-place rebinding; we have no rebinding mechanism, so this opens the existing read-only `?` keymap viewer instead and says so up front (recorded divergence — viewing, not editing) |
 | `/export` (file or clipboard) | ✅ | **W1** `sessionTools.ts` `exportMarkdown` — prompts as `## ›` headings, tools as one-line markers |
 | `/files` (files touched in conversation) | ✅ | **W1** `filesInContext` — tool-input paths, deduped, last-touch order |
 | `/diff` | 🟡 | **W1** terminal stand-in (`git status --short; git diff --stat` via the `!`-runner) — real CC has a full DiffDialog with per-turn sources (Wave-2+ candidate) |

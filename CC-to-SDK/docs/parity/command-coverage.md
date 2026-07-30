@@ -29,29 +29,37 @@ Our dispatch used to send any catalog name it did not handle to the engine **as 
 (`runTurn("/config")`, verified by probe 31 for skills). That is right for a skill and wrong for a
 client-side control. Wave 1 settled each name by classifying it in the 2.1.220 bundle:
 
-- **Honest client-side message (7):** `agents` · `color` · `config` · `effort` · `extra-usage` ·
-  `fast` · `heapdump` — all `type: "local"`/`"local-jsx"` upstream, so a prompt turn hands the model a
+- **Honest client-side message (6):** `agents` · `color` · `effort` · `extra-usage` · `fast` ·
+  `heapdump` — all `type: "local"`/`"local-jsx"` upstream, so a prompt turn hands the model a
   command it cannot act on. `CLIENT_SIDE_NOTES` (`harness/src/tui/commands.ts`) intercepts them ahead
-  of the catalog with a one-line "what it is and why not here". `/config`'s message points at launch
-  flags until Wave 3 (U7) ships the settings UI.
+  of the catalog with a one-line "what it is and why not here".
 - **Stay prompt turns (2):** `review` (reference `review.ts`, `type: 'prompt'`) and `doctor` (the
   bundle's 2.1.220 definition carries `getPromptForCommand` — it became a prompt command) — for these,
   submit-as-turn IS the upstream behavior.
-- **Implemented (1):** `rename` — the lib already shipped `renameSession()` over the SDK session
-  store; Wave 1 wired `/rename` (and `/tag`, from class B) to it.
+- **Implemented (2):** `rename` — the lib already shipped `renameSession()` over the SDK session
+  store; Wave 1 wired `/rename` (and `/tag`, from class B) to it. `config` — **graduated Wave 3
+  (2026-07-31, U7):** the honesty message is gone; `/config` now opens the four-tab `SettingsDialog`
+  (Status/Config/Usage/Stats) with 5 functional Config rows, `/config key=value` inline parsing, and a
+  `/settings` alias. See [`tui-ux.md`](tui-ux.md) §4/§5 for the fidelity detail (5 of upstream's ~54
+  rows — a disclosed, not a hidden, gap).
 
 ### B. Absent from the catalog AND unhandled — 71 commands
 
 The full list is reproducible with the script at the bottom. What matters is the split:
 
-**Genuinely wanted (the sprint's likely body)** — Wave-1 statuses inline (2026-07-30):
+**Genuinely wanted (the sprint's likely body)** — Wave-1/Wave-3 statuses inline (2026-07-30 / 2026-07-31):
 **shipped:** `export` · `stats` · `tag` · `diff` (terminal stand-in: status + diff --stat) · `files` ·
 `session` (**deliberate divergence** — upstream's is a cloud-URL/QR bridge feature; ours shows local
-session info + resume hint) · `rename` (pulled in from class A).
+session info + resume hint) · `rename` (pulled in from class A) · `add-dir` (**Wave 3**, U6 — routes by
+path: `register_repo_root` inside cwd, `additionalDirectories` outside cwd, per probe 75) · `permissions`
+(**Wave 3**, U7 — five tabs, alias `/allowed-tools`) · `theme` (**Wave 3**, U7 — 5 of upstream's 7+
+themes, live `demo.js` diff preview) · `output-style` (**Wave 3**, U7 — redirects into `/config`,
+matching upstream's own 2.1.220 behavior) · `keybindings` (**Wave 3**, U7 — read-only viewer, not
+upstream's `$EDITOR` file-opener; recorded divergence). Fidelity detail for all five Wave-3 rows is in
+[`tui-ux.md`](tui-ux.md) §4/§5, scored honestly (not all ✅).
 **dropped:** `summary` — no such command exists in 2.1.220; the wanted list inherited it from the
 stale February reference (spec Revision Notes, 2026-07-30).
-**still open for later waves:** `add-dir` (U6, probe-gated) · `memory` · `permissions` (U7, required) ·
-`plan` · `skills` · `tasks` · `theme` (U7) · `output-style` · `keybindings` · `vim` (owner-deferred) ·
+**still open for later waves:** `memory` · `plan` · `skills` · `tasks` · `vim` (owner-deferred) ·
 `fork` · `branch` · `share` · `hooks` · `login`/`logout` (excluded below) · `terminalSetup` ·
 `statusline` · `release-notes` · `upgrade` · `privacy-settings`
 

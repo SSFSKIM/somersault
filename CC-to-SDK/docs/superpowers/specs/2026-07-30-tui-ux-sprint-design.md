@@ -193,6 +193,23 @@ labels and ordering. Largest and most taste-dependent, so it lands last. `/vim` 
   gitignored: a Wave-1 implementer overwrote the concurrent app-server session's `task-6-report.md`,
   unrecoverably. Namespace report files per plan (e.g. `task-N-<plan-slug>-report.md`) when two
   subagent-driven runs share a repo. (2026-07-30)
+- **Reading the 2.1.220 extraction (not just the SDK) flipped three U7 premises during Wave-3
+  execution:** (a) `/output-style` is itself a **hidden redirect into `/config`** upstream — the
+  standalone picker described in the plan's Global Constraints is `/config`'s own Output-style row, not
+  something the bare `/output-style` command opens directly, so shipping ours as a redirect-then-open
+  matches upstream's real behavior exactly rather than being a corner cut; (b) `/keybindings` opens
+  `~/.claude/keybindings.json` in `$EDITOR` — a file opener with **no in-app UI at all**, so there is no
+  "real" keymap dialog to fall short of, only a file-edit affordance we don't have a mechanism for; (c)
+  real `/add-dir` **rejects** a path that is already a subdirectory of cwd ("already accessible"), which
+  is exactly `register_repo_root`'s only usable domain (probe 75) — so that door is the complement of
+  what `/add-dir` will ever ask for, and stays permanently unused by this command even though it is
+  reachable. (2026-07-31, W3 Task 6/Task 3)
+- Upstream `/add-dir` loads the added directory's `CLAUDE.md` only when
+  `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD` is set, and an added directory surfaces **only in
+  `/permissions` → Workspace**, never in `/status` — confirmed against our own `formatStatus()` (no
+  directories field) and `listDirs()` (feeds only the Workspace tab), so shipping status un-augmented
+  and Workspace as the sole directory-listing surface matches upstream rather than omitting something.
+  (2026-07-31, W3 Task 3/Task 7)
 
 ## Outcomes & Retrospective
 
@@ -230,3 +247,10 @@ Pending — written at finish.
   Transcript context has no in-pager search binding). Plan:
   `../plans/2026-07-31-tui-ux-wave2.md`; the independent plan review contributed three fixes
   (ChatApp deps seam, historyOpen key gating, a `RAW:` no-auto-Enter prefix for the pty driver).
+- 2026-07-31 (Wave-3 planning) — scope decided with the owner ahead of the plan: `/config`'s Settings
+  dialog ships only the **5 rows this harness's engine can actually apply** (Theme/Model/Output
+  style/Default permission mode/Thinking mode), not upstream's ~54, most of which have no ccx
+  equivalent; `/theme` ships **no custom/ANSI themes** (5 of upstream's 7+ rows); `/permissions` rule
+  mutations use a **flag-layer + settings-file dual write** (apply live via `applyFlagSettings`, persist
+  to the chosen `.claude/settings*.json` for the next launch), since upstream's own in-session rule
+  engine is CLI-internal and unreachable from the SDK. Plan: `../plans/2026-07-31-tui-ux-wave3.md`.
