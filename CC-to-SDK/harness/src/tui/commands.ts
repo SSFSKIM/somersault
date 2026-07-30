@@ -37,6 +37,8 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "theme", summary: "change the theme" },
   { name: "config", summary: "open the Settings dialog (Status · Config · Usage · Stats)" },
   { name: "settings", summary: "alias of /config" },
+  { name: "permissions", summary: "manage allow and deny tool permission rules" },
+  { name: "allowed-tools", summary: "alias of /permissions" },
   { name: "output-style", summary: "output style moved to /config" },
   { name: "keybindings", summary: "open your keyboard shortcuts file" },
   { name: "usage", summary: "show plan usage / rate-limit windows" },

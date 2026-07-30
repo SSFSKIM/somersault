@@ -35,10 +35,16 @@ function fakeRewindRemote(rewindOpts: RewindFakeOpts, remoteOpts: FakeRemoteOpts
 // A fakeRemote() extended onto the SettingsOps surface (fakeRemote() alone has none, so hasSettingsOps() is
 // false on it as-is — same shape as fakeRewindRemote above). Default listDirs() reports only cwd (no
 // additional dirs yet), matching a freshly-launched host.
+// W3 T7: removeDir/addRule/removeRule are now override-able too (default no-ops previously) — the
+// /permissions tests below need to observe calls into them and, for addRule, need a session-tab rule to
+// remove/inspect via a scripted getSettings().
 type SettingsFakeOpts = {
   listDirs?: () => Promise<{ path: string; source: "cwd" | "launch" | "session" }[]>;
   addDir?: (path: string) => Promise<void>;
   getSettings?: () => Promise<unknown>;
+  removeDir?: (path: string) => Promise<void>;
+  addRule?: (behavior: "allow" | "ask" | "deny", rule: string) => Promise<void>;
+  removeRule?: (behavior: "allow" | "ask" | "deny", rule: string) => Promise<void>;
 };
 function fakeSettingsRemote(settingsOpts: SettingsFakeOpts = {}, remoteOpts: FakeRemoteOpts = {}) {
   const base = fakeRemote(remoteOpts);
@@ -47,10 +53,10 @@ function fakeSettingsRemote(settingsOpts: SettingsFakeOpts = {}, remoteOpts: Fak
     getSettings: settingsOpts.getSettings ?? (async () => ({})),
     listDirs: settingsOpts.listDirs ?? (async () => [{ path: process.cwd(), source: "cwd" as const }]),
     addDir: settingsOpts.addDir ?? (async () => {}),
-    removeDir: async () => {},
+    removeDir: settingsOpts.removeDir ?? (async () => {}),
     setOutputStyle: async () => {},
-    addRule: async () => {},
-    removeRule: async () => {},
+    addRule: settingsOpts.addRule ?? (async () => {}),
+    removeRule: settingsOpts.removeRule ?? (async () => {}),
   };
 }
 
@@ -968,5 +974,144 @@ describe("<ChatApp>", () => {
     // whitespace runs to one space — confirmed by dumping the raw frame while diagnosing this test.
     const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
     expect(stripAnsi(frame(lastFrame)).replace(/\s+/g, " ")).toContain("keybinding customization isn't supported yet — showing the built-in keymap (upstream opens ~/.claude/keybindings.json in your editor)");
+  });
+
+  // ---- W3 T7: /permissions — five-tab dialog ----
+
+  it("/permissions opens with all 5 tabs, defaulting to Allow (with its intro + 'Add a new rule…') when there are no recent denials", async () => {
+    const fake = fakeSettingsRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Permissions"));
+    const f = frame(lastFrame);
+    expect(f).toContain("Recently denied");
+    expect(f).toContain("Allow");
+    expect(f).toContain("Ask");
+    expect(f).toContain("Deny");
+    expect(f).toContain("Workspace");
+    expect(f).toContain("Claude Code won't ask before using allowed tools.");   // Allow's own intro → proves it's the ACTIVE tab, not just listed
+    expect(f).toContain("Add a new rule…");
+    expect(f).not.toContain("Commands recently denied by the auto mode classifier.");
+  });
+
+  // Step 6's REQUIRED sabotage check (see task report for the observed fail/pass): openPermissions()'s
+  // ternary was temporarily forced to always "Allow", this exact test re-run and confirmed to FAIL, then
+  // reverted — proving this assertion genuinely exercises the denials.length-driven default, not just
+  // "some tab renders".
+  it("/permissions defaults to the Recently-denied tab (with the just-denied entry) when a denial already happened this session", async () => {
+    const fake = fakeSettingsRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    fake.parkPermission({ sessionId: "s", toolUseID: "t1", toolName: "Bash", kind: "permission", input: { command: "rm -rf /" }, createdAt: Date.now() });
+    await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
+    fake.settlePermission("t1", "auto", "deny");                    // the auto-mode classifier denying it — dropPending records the ledger entry
+    await waitFor(() => !frame(lastFrame).includes("Allow Claude to use"));
+    stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Permissions"));
+    const f = frame(lastFrame);
+    expect(f).toContain("Commands recently denied by the auto mode classifier.");
+    expect(f).toContain("Bash(rm -rf /)");
+    expect(f).not.toContain("Claude Code won't ask before using allowed tools.");   // proves Allow is NOT the active tab here
+  });
+
+  it("/permissions Allow tab: 'Add a new rule…' walks entry → destination and calls addRule + persists to the chosen settings file", async () => {
+    const addRuleCalls: { behavior: string; rule: string }[] = [];
+    const writes: { path: string; content: string }[] = [];
+    const settingsFileDeps = {
+      read: (_p: string): string => { const e: any = new Error("ENOENT"); e.code = "ENOENT"; throw e; },
+      write: (p: string, s: string) => { writes.push({ path: p, content: s }); },
+    };
+    const fake = fakeSettingsRemote({ addRule: async (behavior, rule) => { addRuleCalls.push({ behavior, rule }); } });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ settingsFileDeps }} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Add a new rule…"));
+    stdin.write("\r");                                              // Enter on "Add a new rule…" (idx 0, already highlighted)
+    await waitFor(() => frame(lastFrame).includes("Add allow permission rule"));
+    expect(frame(lastFrame)).toContain("Enter permission rule…");
+    stdin.write("WebFetch");
+    await waitFor(() => frame(lastFrame).includes("WebFetch"));
+    stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE, not typing-then-Enter — write separately
+    await waitFor(() => frame(lastFrame).includes("Where should this rule be saved?"));
+    expect(frame(lastFrame)).toContain("Project settings (local)");
+    expect(frame(lastFrame)).toContain("Project settings");
+    expect(frame(lastFrame)).toContain("User settings");
+    expect(frame(lastFrame)).toContain("Saved in at ~/.claude/settings.json");   // the verbatim upstream typo, reproduced exactly
+    stdin.write("\r");                                              // idx 0 default = "Project settings (local)" → localSettings
+    await waitFor(() => addRuleCalls.length === 1);
+    expect(addRuleCalls[0]).toEqual({ behavior: "allow", rule: "WebFetch" });
+    await waitFor(() => writes.length === 1);
+    expect(writes[0].path).toBe(`${process.cwd()}/.claude/settings.local.json`);
+    expect(JSON.parse(writes[0].content)).toEqual({ permissions: { allow: ["WebFetch"] } });
+    await waitFor(() => frame(lastFrame).includes("Add a new rule…"));   // back on the Allow row list, dialog still open
+  });
+
+  it("/permissions: a rule sourced from an actual settings file is read-only — Enter shows the Rule-details panel, never a delete confirm", async () => {
+    const removeRuleCalls: unknown[] = [];
+    const fake = fakeSettingsRemote({
+      getSettings: async () => ({ sources: [{ source: "userSettings", settings: { permissions: { allow: ["Read"] } } }] }),
+      removeRule: async (behavior, rule) => { removeRuleCalls.push({ behavior, rule }); },
+    });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Read"));           // the fetched read-only row rendered
+    stdin.write("\x1b[B");                                            // ↓ from "Add a new rule…" (idx 0) to the "Read" row (idx 1)
+    await waitFor(() => frame(lastFrame).includes("❯ Read"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Rule details"));
+    expect(frame(lastFrame)).toContain("This rule comes from a read-only source and cannot be modified here.");
+    expect(frame(lastFrame)).toContain("From user settings");
+    expect(frame(lastFrame)).not.toContain("Delete allowed tool?");
+    expect(frame(lastFrame)).not.toContain("Are you sure you want to delete this permission rule?");
+    expect(removeRuleCalls).toHaveLength(0);                          // Enter on a read-only row must never reach removeRule
+  });
+
+  it("/permissions Workspace tab: Enter on a session directory opens the remove confirm, and Enter there calls removeDir", async () => {
+    const removeDirCalls: string[] = [];
+    const sessionDir = tmpdir();
+    const fake = fakeSettingsRemote({
+      listDirs: async () => [{ path: process.cwd(), source: "cwd" as const }, { path: sessionDir, source: "session" as const }],
+      removeDir: async (p) => { removeDirCalls.push(p); },
+    });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Permissions"));
+    // Each cycleTab computes the next tab from the CURRENT `tab` prop (not a functional state update), so
+    // three '\x1b[C' writes fired back-to-back with no render in between would all compute "next tab from
+    // Allow" and collapse onto the same target (a real terminal never delivers keys this fast) — space them
+    // out one render apart, exactly like every other multi-hop navigation in this file already does via
+    // pressUntil/explicit waits, so each press sees the PREVIOUS press's committed state.
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always ask for confirmation before using these tools."));
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always reject requests to use denied tools."));
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Add directory…"));
+    await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes(sessionDir));
+    stdin.write("\x1b[B"); stdin.write("\x1b[B");                     // ↓ ↓ : Add directory…(0) → cwd row(1) → session dir row(2)
+    await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes(`❯ ${sessionDir}`));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Remove directory from workspace?"));
+    expect(frame(lastFrame)).toContain("Claude Code will no longer have access to files in this directory.");
+    stdin.write("\r");
+    await waitFor(() => removeDirCalls.length === 1);
+    expect(removeDirCalls[0]).toBe(sessionDir);
+  });
+
+  it("/permissions: Esc at the top level dismisses with the exact upstream line, and /allowed-tools is a full alias", async () => {
+    const fake = fakeSettingsRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/allowed-tools"); await waitFor(() => frame(lastFrame).includes("/allowed-tools"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Permissions"));
+    stdin.write("\x1b");
+    await waitFor(() => frame(lastFrame).includes("Permissions dialog dismissed"));
+    expect(frame(lastFrame)).not.toContain("Claude Code won't ask before using allowed tools.");   // dialog really closed
   });
 });

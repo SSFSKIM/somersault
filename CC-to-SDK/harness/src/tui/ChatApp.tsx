@@ -33,6 +33,7 @@ import { HistorySearchOverlay } from "./HistorySearchOverlay.js";
 import { AddDirDialog } from "./AddDirDialog.js";
 import { ThemeDialog } from "./ThemeDialog.js";
 import { SettingsDialog } from "./SettingsDialog.js";
+import { PermissionsDialog } from "./PermissionsDialog.js";
 
 export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialLines, deps }: {
   makeSession: (resume?: string) => ChatSession;
@@ -46,7 +47,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   deps?: Parameters<typeof useChat>[2];
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
-  const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit }, deps);
+  const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit }, deps);
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
@@ -93,6 +94,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     }
     if (state.historyOpen) return;   // the overlay owns Ctrl-C (cancel) / Ctrl-R (next) / Ctrl-S (scope); only Ctrl-Z above stays live
     if (state.settings.open) return;   // W3 T5: the /config dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
+    if (state.permissions.open) return;   // W3 T7: the /permissions dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
     if (state.themeDialog.open) return;   // W3 T4: the /theme dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
     if (state.addDir.open) return;   // W3 T3: the /add-dir dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
     // Both open arms are gated on !rewinding (F3, final review): a confirmed rewind is a multi-second
@@ -142,17 +144,27 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
             ? <BgTasksPanel tasks={state.bgRows} onStop={stopBgTask} onClose={closeBgPanel} />
             : state.modelPicker.open
               ? <ModelPicker models={state.modelPicker.models} onPick={pickModel} onCancel={closeModelPicker} />
-              // W3 T4/T5: the four new settings-surface dialogs slot HERE, between modelPicker and picker,
-              // in the order settings → permissions → theme → addDir (Task 7 adds permissions later; settings
-              // goes immediately after this modelPicker arm — plan Global Constraints line 38 — precisely so
-              // its Model row can reuse THIS SAME modelPicker overlay: opening it hides SettingsDialog behind
-              // it, closing it falls back through to state.settings.open still being true).
+              // W3 T4/T5/T7: the four new settings-surface dialogs slot HERE, between modelPicker and picker,
+              // in the order settings → permissions → theme → addDir (plan Global Constraints line 38);
+              // settings goes immediately after this modelPicker arm precisely so its Model row can reuse
+              // THIS SAME modelPicker overlay: opening it hides SettingsDialog behind it, closing it falls
+              // back through to state.settings.open still being true. PermissionsDialog needs no such
+              // handoff — its own "Add directory…" row EMBEDS AddDirDialog directly (PermissionsDialog.tsx's
+              // own header comment) rather than reaching for the top-level state.addDir slot below, which
+              // sits AFTER this arm and so would otherwise be unreachable while permissions stays open.
               : state.settings.open
                 ? <SettingsDialog tab={state.settings.tab ?? "Config"} onTabChange={setSettingsTab}
                     model={state.model} mode={state.mode} thinkLevel={state.thinkLevel} outputStyle={state.outputStyle}
                     onDone={closeSettings} applyMode={applyMode} setThink={setThink} applyOutputStyle={applyOutputStyle}
                     fetchStatus={fetchSettingsStatus} fetchUsage={fetchSettingsUsage} fetchStats={fetchSettingsStats}
                     onOpenModelPicker={openModelPicker} savePrefs={deps?.savePrefs} />
+                : state.permissions.open
+                ? <PermissionsDialog tab={state.permissions.tab ?? "Allow"} onTabChange={setPermissionsTab}
+                    denials={state.denials} cwd={cwd}
+                    fetchSettings={fetchPermSettings} fetchDirs={fetchPermDirs}
+                    addRule={addPermRule} removeRule={removePermRule} removeDir={removeWorkspaceDir}
+                    addDirValidate={addDirValidate} confirmAddDir={confirmAddDir} cancelAddDir={cancelAddDir}
+                    onDone={closePermissions} />
                 : state.themeDialog.open
                 ? <ThemeDialog onDone={closeThemeDialog} savePrefs={deps?.savePrefs} />
                 : state.addDir.open

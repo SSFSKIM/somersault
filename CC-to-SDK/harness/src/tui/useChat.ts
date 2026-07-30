@@ -10,7 +10,8 @@ import type { ChatSession } from "../session/chatSession.js";
 import { hasDecisionFeed, hasBgTasks, hasSessionEvents, hasRewind, hasSettingsOps } from "../session/chatSession.js";
 import type { RewindAnchor, RewindScope, RewindDryRun } from "../session/chatSession.js";
 import { validateAddDir, formatAddDirVerdict, formatAddDirResult, type AddDirVerdict } from "./addDir.js";
-import { mergeSettingsFile, appendToArray, type SettingsFileDeps } from "./settingsFile.js";
+import { mergeSettingsFile, appendToArray, type SettingsFileDeps, type SettingsTarget } from "./settingsFile.js";
+import { appendDenial, removeFromArray, type DenialEntry } from "./permissionsModel.js";
 import type { CcxPrefs } from "./prefs.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
 import { currentTheme, setTheme, type ThemeId } from "./theme.js";
@@ -43,7 +44,7 @@ import { promptEntries, mergeEntries, type HistEntry, type HistoryScope } from "
 // adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
 export type { ChatSession };
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[]; }
 
 // Tab cycles these; bypassPermissions stays off-cycle (/yolo). Single source with settingsRows.ts's own
 // permissionMode row (review finding 3) — importing it here instead of a second literal array means the
@@ -96,6 +97,13 @@ export function useChat(
   // it's up — anything the dialog itself tried to remember incrementally would be lost on that round-trip.
   const settingsBaselineRef = useRef<SettingsRowCtx | null>(null);
   const [outputStyle, setOutputStyleState] = useState<string>(opts.initialOutputStyle ?? "default");   // W3 T5: seeded from loadPrefs() by the caller (chatMain.tsx), like theme
+  const [permissions, setPermissions] = useState<{ open: boolean; tab?: string }>({ open: false });   // W3 T7: /permissions overlay
+  const [denials, setDenials] = useState<DenialEntry[]>([]);   // recent-denials ledger — dropPending appends via appendDenial (pure, permissionsModel.ts)
+  // (behavior:rule) → the settings-file target addPermRule ALSO persisted it to (every add-rule choice
+  // writes BOTH the flag layer and one of the three files — the destination picker has no "session only"
+  // option), so a later removePermRule of the SAME rule knows which single file to strip it from too,
+  // never a blind sweep of files we don't know contain it.
+  const ruleFileTargets = useRef<Map<string, SettingsTarget>>(new Map());
   const [commandCatalog, setCommandCatalog] = useState<CommandEntry[]>(LOCAL_COMMAND_ENTRIES);   // local-only until the live fetch resolves
   const catalogNames = useRef<Set<string>>(new Set());                                            // catalog (non-local) names → routed to submit-as-prompt
   const taskListRef = useRef(new TaskList());
@@ -253,6 +261,12 @@ export function useChat(
   function dropPending(toolUseID: string, by: string, decision: string) {
     const wasMine = answeredIds.current.has(toolUseID);
     answeredIds.current.delete(toolUseID);
+    // W3 T7: the recent-denials ledger. The settling entry may be the HEAD (pendingRef) or still only
+    // QUEUED (pendingQueueRef) — either way its toolName/input is needed for the ledger's display string,
+    // so look it up before either branch below drops it from state. appendDenial itself is the no-op gate
+    // (non-deny decisions return the same array reference, so this setDenials call is a harmless no-op).
+    const entry = pendingRef.current?.toolUseID === toolUseID ? pendingRef.current : pendingQueueRef.current.find((e) => e.toolUseID === toolUseID);
+    if (entry) setDenials((d) => appendDenial(d, decision, entry.toolName, entry.input, by, Date.now()));
     if (pendingRef.current?.toolUseID === toolUseID) {
       if (!wasMine) {
         const verb = decision === "deny" ? "denied" : decision === "question_answer" ? "answered" : decision === "plan_approve" ? "approved" : decision === "plan_reject" ? "sent back" : "allowed";
@@ -411,6 +425,14 @@ export function useChat(
           if (!disposed.current) append(result.lines);
           break;
         }
+        // /permissions (W3 T7, alias /allowed-tools — upstream's own name for the same surface): the five-
+        // tab Recently-denied/Allow/Ask/Deny/Workspace dialog. Needs SettingsOps the same way /add-dir does
+        // (getSettings/listDirs/addRule/removeRule/addDir/removeDir all live behind that guard).
+        case "permissions":
+        case "allowed-tools":
+          if (!hasSettingsOps(session)) { notice("permissions unsupported on this session"); break; }
+          openPermissions();
+          break;
         // /output-style (W3 T6): upstream folded the standalone picker into /config's Output-style row —
         // print the exact redirect line, then open Settings AT Config (openSettings always does), never the
         // picker directly (Global Constraints line 33).
@@ -598,6 +620,55 @@ export function useChat(
     const u = (await session.usage().catch(() => ({}))) as SessionUsage;
     const msgs = session.sessionId ? await getSessionMessages(session.sessionId).catch(() => [] as any[]) : [];
     return formatStats(u, msgs);
+  }
+
+  // W3 T7: /permissions. Default tab is decided HERE (not in the component), mirroring openSettings's own
+  // "always Config" simplicity — "Recently denied" if there's anything to show there, else "Allow" (the
+  // upstream default-tab rule, Global Constraints line 34). Computed once at open time, not re-evaluated
+  // live while the dialog is already up (a denial arriving mid-session doesn't yank focus to a new tab).
+  function openPermissions() {
+    if (disposed.current) return;
+    setPermissions({ open: true, tab: denials.length ? "Recently denied" : "Allow" });
+  }
+  function setPermissionsTab(tab: string) { if (!disposed.current) setPermissions((p) => ({ ...p, tab })); }
+  function closePermissions() { if (!disposed.current) { setPermissions({ open: false }); notice("Permissions dialog dismissed"); } }
+  async function fetchPermSettings(): Promise<unknown> { return hasSettingsOps(session) ? session.getSettings() : {}; }
+  async function fetchPermDirs(): Promise<{ path: string; source: "cwd" | "launch" | "session" }[]> { return hasSettingsOps(session) ? session.listDirs() : []; }
+  // Add: the flag-layer grant (immediate, this session, via SettingsOps.addRule) AND a persisted write to
+  // the CHOSEN file — every add-rule choice persists (the destination picker has no "session only" option,
+  // unlike /add-dir's own three-way menu). Tracks which file so a LATER delete of this exact rule can undo
+  // both halves, not just the flag layer (see removePermRule below). A file-write failure does not roll
+  // back the already-succeeded flag-layer grant, mirroring /add-dir's own save-failure tolerance.
+  async function addPermRule(behavior: "allow" | "ask" | "deny", rule: string, target: SettingsTarget): Promise<void> {
+    if (disposed.current || !hasSettingsOps(session)) return;
+    await session.addRule(behavior, rule).catch(() => {});
+    if (disposed.current) return;
+    try {
+      mergeSettingsFile(target, cwd, appendToArray(["permissions", behavior], rule), deps.settingsFileDeps);
+      ruleFileTargets.current.set(`${behavior}:${rule}`, target);
+    } catch { /* best-effort persistence — the flag-layer grant above already succeeded */ }
+  }
+  // Remove: the flag-layer revoke (always, via SettingsOps.removeRule) + the file strip ONLY when this
+  // EXACT rule was added through addPermRule above and we therefore know which of the three files to touch
+  // — never a blind sweep of files we don't know contain it (a rule whose row came from an ACTUAL settings
+  // file, not the flag layer, is readOnly and never reaches this function at all — the dialog routes it to
+  // the read-only panel instead).
+  async function removePermRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void> {
+    if (disposed.current || !hasSettingsOps(session)) return;
+    await session.removeRule(behavior, rule).catch(() => {});
+    if (disposed.current) return;
+    const key = `${behavior}:${rule}`;
+    const target = ruleFileTargets.current.get(key);
+    if (target) {
+      try { mergeSettingsFile(target, cwd, removeFromArray(["permissions", behavior], rule), deps.settingsFileDeps); } catch { /* best-effort, same tolerance as addPermRule */ }
+      ruleFileTargets.current.delete(key);
+    }
+  }
+  // Workspace tab's session-dir remove: flag-layer revoke only — a /add-dir "remember" write is never
+  // un-written on removeDir (no un-remember mechanism this wave; recorded divergence, Global Constraints).
+  async function removeWorkspaceDir(path: string): Promise<void> {
+    if (disposed.current || !hasSettingsOps(session)) return;
+    await session.removeDir(path).catch(() => {});
   }
 
   // Esc-Esc rewind (Stage C5 flagship). Anchors are ALWAYS re-fetched, never patched locally — the persisted
@@ -820,5 +891,5 @@ export function useChat(
   function interrupt() { drainGen.current++; setQueue([]); void session.interrupt().catch(() => {}); }   // Esc stops everything: queue + any scheduled drain
   function clear() { if (!disposed.current) { clearScreen(); setLines([]); setStreaming([]); setClearToken((t) => t + 1); } }   // /clear: wipe screen + model (session context kept)
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
 }
