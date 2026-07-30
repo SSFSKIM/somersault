@@ -1,0 +1,33 @@
+// tui/test/externalEditor.test.ts — editExternal round-trips the buffer through a fake $EDITOR.
+import { describe, it, expect } from "vitest";
+import { readFileSync, writeFileSync } from "node:fs";
+import { editExternal } from "../../src/tui/externalEditor.js";
+
+describe("editExternal", () => {
+  it("writes the buffer to the temp file, runs the editor, returns the edited text, restores raw mode", () => {
+    const rawCalls: boolean[] = [];
+    const out = editExternal("original text", {
+      spawn: ((cmd: string, args: string[]) => {
+        expect(cmd).toBe("myeditor");
+        const file = args[args.length - 1];
+        expect(readFileSync(file, "utf8")).toBe("original text");
+        writeFileSync(file, "edited text\n");
+        return { status: 0 } as any;
+      }) as any,
+      setRaw: (on) => rawCalls.push(on),
+      editorCmd: "myeditor",
+    });
+    expect(out).toBe("edited text");                        // trailing newline stripped
+    expect(rawCalls).toEqual([false, true]);                // released before, restored after
+  });
+  it("returns null (buffer kept) when the editor exits non-zero or errors", () => {
+    expect(editExternal("keep me", { spawn: (() => ({ status: 1 })) as any, setRaw: () => {}, editorCmd: "e" })).toBeNull();
+    expect(editExternal("keep me", { spawn: (() => ({ error: new Error("ENOENT"), status: null })) as any, setRaw: () => {}, editorCmd: "e" })).toBeNull();
+  });
+  it("splits an editor command with arguments", () => {
+    let seen: [string, string[]] | undefined;
+    editExternal("x", { spawn: ((c: string, a: string[]) => { seen = [c, a]; return { status: 0 } as any; }) as any, setRaw: () => {}, editorCmd: "code --wait" });
+    expect(seen![0]).toBe("code");
+    expect(seen![1][0]).toBe("--wait");
+  });
+});

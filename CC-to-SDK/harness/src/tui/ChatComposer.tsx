@@ -6,6 +6,7 @@ import { readdirSync } from "node:fs";
 import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, withBufferText, type EditorState } from "./editor.js";
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
+import { editExternal as realEditExternal } from "./externalEditor.js";
 
 const realReaddir = (dir: string): DirEnt[] => {
   try { return readdirSync(dir, { withFileTypes: true }).map((d) => ({ name: d.name, isDir: d.isDirectory() })); }
@@ -59,12 +60,14 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number } | null; onPrefillApplied?: () => void }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
   const disposed = useRef(false);
   useEffect(() => () => { disposed.current = true; }, []);
+  const editExt = editExternal ?? realEditExternal;
+  const ctrlX = useRef(0);
 
   // Rewind's edit-and-resend: a NEW prefill (token bump) replaces the buffer wholesale; a re-render with the
   // same token (or none) is a no-op — this must fire exactly once per rewind, not on every parent re-render.
@@ -95,6 +98,16 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // Shift+Tab cycles the permission ladder (CC chat:cycleMode). Bare Tab belongs to the autocomplete
     // popups alone (CC's Autocomplete context) — with no popup open it does nothing.
     if (key.tab && key.shift) { onCycleMode?.(); return; }
+    // Ctrl-X Ctrl-E chord (2s window) or Ctrl-G: round-trip the buffer through $EDITOR. Ctrl-E alone
+    // must stay line-end, so the chord prefix gates it.
+    if (key.ctrl && input === "x") { ctrlX.current = Date.now(); return; }
+    if (key.ctrl && (input === "g" || (input === "e" && Date.now() - ctrlX.current < 2000))) {
+      ctrlX.current = 0;
+      const edited = editExt(s.lines.join("\n"));
+      if (edited !== null && !disposed.current) setState((st) => withBufferText(st, edited));
+      return;
+    }
+    ctrlX.current = 0;                                       // any other key breaks the chord
     // Esc is global ONLY when no autocomplete popup is open; with a popup, applyKey owns it (closes the
     // popup). This single owner prevents the ChatApp+composer double-handling.
     if (!s.command && !s.mention) {

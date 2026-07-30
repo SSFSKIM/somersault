@@ -366,4 +366,31 @@ describe("Wave-1 keymap wiring", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(cycles).toBe(1);
   });
+  it("Ctrl-X Ctrl-E routes the buffer through the injected external editor; Ctrl-G does too", async () => {
+    const edits: string[] = [];
+    const fakeEdit = (t: string) => { edits.push(t); return "from-editor"; };
+    const submitted: string[] = [];
+    const { stdin } = render(<ChatComposer onSubmit={(t) => submitted.push(t)} cwd="/" commandCatalog={[]} editExternal={fakeEdit} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("hi");
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x18");                                     // Ctrl-X
+    stdin.write("\x05");                                     // Ctrl-E (within the chord window)
+    await new Promise((r) => setTimeout(r, 20));
+    expect(edits).toEqual(["hi"]);
+    stdin.write("\r");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(submitted).toEqual(["from-editor"]);
+    stdin.write("\x07");                                     // Ctrl-G — no chord needed
+    await new Promise((r) => setTimeout(r, 20));
+    expect(edits).toEqual(["hi", ""]);
+  });
+  it("Ctrl-E alone (no recent Ctrl-X) is still line-end, not the editor", async () => {
+    const edits: string[] = [];
+    const { stdin } = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} editExternal={(t) => { edits.push(t); return null; }} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x05");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(edits).toEqual([]);
+  });
 });
