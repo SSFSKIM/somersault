@@ -220,9 +220,22 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     expect([...merged.keys()].sort()).toEqual([capturedUuid, "msg_A#0", "toolu_1"].sort());
   });
 
-  it("(d) thread/read pages newest-first with an offset-from-end cursor; last page is shorter with nextCursor:null", async () => {
+  it("(d) thread/read pages newest-first with an epoch-qualified row cursor; last page is shorter with nextCursor:null", async () => {
+    // Task 13: the cursor is now "<epoch>:<rowOffset>", not a plain item-consumed count — a thread
+    // that never rewinds keeps epoch 0 throughout. This fixture is 1 row : 1 item (no tool calls), so
+    // the row offset in each nextCursor is the exact item-count boundary too; the PAGE DATA below is
+    // therefore identical to what the pre-Task-13 offset-from-end cursor produced — only the cursor
+    // STRING format changed, which is the whole point of this task, so the literal values here are a
+    // deliberately-edited pre-existing assertion (Task 13 brief, verbatim cursor format).
     const bigFixture = Array.from({ length: 450 }, (_, i) => ({ type: "assistant", message: { id: `msg${i}`, content: [{ type: "text", text: `t${i}` }] } }));
-    const getSessionMessages = async () => bigFixture;
+    // Task 13: a subsequent page's fetch is a real bounded row window now, not the whole file every
+    // time — this fake must honor offset/limit like the real reader does, or it can't tell the two
+    // apart (a fake that always returns the full 450 rows would silently mask the gap-12 fix).
+    const getSessionMessages = async (_sid: string, opts?: { limit?: number; offset?: number }) => {
+      if (!opts) return bigFixture;
+      const { offset = 0, limit } = opts;
+      return bigFixture.slice(offset, limit === undefined ? undefined : offset + limit);
+    };
     const srv = new AppServer({}, { sessionFactory: () => fakeSession(), getSessionMessages });
     const a = mkSink(); const connA = srv.connect(a.sink);
     init(connA, 1, "A");
@@ -234,7 +247,7 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     await tick();
     const page1 = parsed(a.lines).find((f) => f.id === 3).result;
     expect(page1.data).toHaveLength(200);
-    expect(page1.nextCursor).toBe("200");
+    expect(page1.nextCursor).toBe("0:250");
     expect(page1.data[0].id).toBe("msg250#0");
     expect(page1.data[199].id).toBe("msg449#0");
 
@@ -242,7 +255,7 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     await tick();
     const page2 = parsed(a.lines).find((f) => f.id === 4).result;
     expect(page2.data).toHaveLength(200);
-    expect(page2.nextCursor).toBe("400");
+    expect(page2.nextCursor).toBe("0:50");
     expect(page2.data[0].id).toBe("msg50#0");
     expect(page2.data[199].id).toBe("msg249#0");
 
@@ -253,6 +266,125 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     expect(page3.nextCursor).toBeNull();
     expect(page3.data[0].id).toBe("msg0#0");
     expect(page3.data[49].id).toBe("msg49#0");
+  });
+
+  it("(e) gap 12: a second page's fetch is a bounded row window, not the whole file", async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => ({ type: "assistant", message: { id: `m${i}`, content: [{ type: "text", text: `t${i}` }] } }));
+    const calls: Array<{ limit?: number; offset?: number } | undefined> = [];
+    const getSessionMessages = async (_sid: string, opts?: { limit?: number; offset?: number }) => {
+      calls.push(opts);
+      if (!opts) return rows;
+      const { offset = 0, limit } = opts;
+      return rows.slice(offset, limit === undefined ? undefined : offset + limit);
+    };
+    const srv = new AppServer({}, { sessionFactory: () => fakeSession(), getSessionMessages });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    send(connA, { id: 3, method: "thread/read", params: { threadId, limit: 10 } });
+    await tick();
+    const page1 = parsed(a.lines).find((f) => f.id === 3).result;
+    expect(calls[0]).toBeUndefined(); // page 1: the reader is called with NO opts at all — one whole-file fetch
+
+    send(connA, { id: 4, method: "thread/read", params: { threadId, limit: 10, cursor: page1.nextCursor } });
+    await tick();
+    // page 2's fetch is bounded: offset/limit are both present and the window is smaller than the file
+    expect(calls[1]).toBeDefined();
+    expect(calls[1]!.offset).toBeGreaterThanOrEqual(0);
+    expect(calls[1]!.limit).toBeLessThan(rows.length);
+  });
+
+  it("(f) gap 10: a limit above 500 clamps to 500 and emits a limitClamped warning to the requesting peer", async () => {
+    const getSessionMessages = async () => [{ type: "user", uuid: "u1", message: { content: "hi" } }];
+    const srv = new AppServer({}, { sessionFactory: () => fakeSession(), getSessionMessages });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    a.lines.length = 0;
+    send(connA, { id: 3, method: "thread/read", params: { threadId, limit: 9999 } });
+    await tick();
+    expect(parsed(a.lines).find((f) => f.id === 3).result.data).toHaveLength(1);
+    const warnings = parsed(a.lines).filter((f) => f.method === "warning");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].params).toEqual({ code: "limitClamped", message: "thread/read limit clamped to 500" });
+  });
+
+  it("(g) gap 12 losslessness: paging a transcript with a straddling tool call across every page returns each item exactly once, deduped by id over the union", async () => {
+    // A prompt, then a tool_use whose tool_result lands 20 filler rows later — with limit:5 the
+    // straddle spans several page boundaries, so this fixture exercises the id-presence boundary
+    // search (not just the item-count-per-row-happy-path (d) and (e) already cover).
+    const rows: unknown[] = [{ type: "user", uuid: "p", message: { content: "start" } }];
+    rows.push({ type: "assistant", message: { id: "mtool", content: [{ type: "tool_use", id: "toolu_x", name: "Bash", input: { command: "ls" } }] } });
+    for (let i = 0; i < 20; i++) rows.push({ type: "assistant", message: { id: `mf${i}`, content: [{ type: "text", text: `filler${i}` }] } });
+    rows.push({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_x", content: "done" }] } });
+    const getSessionMessages = async (_sid: string, opts?: { limit?: number; offset?: number }) => {
+      if (!opts) return rows;
+      const { offset = 0, limit } = opts;
+      return rows.slice(offset, limit === undefined ? undefined : offset + limit);
+    };
+    const srv = new AppServer({}, { sessionFactory: () => fakeSession(), getSessionMessages });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    const merged = new Map<string, unknown>();
+    let cursor: string | null | undefined;
+    let reqId = 3;
+    let pages = 0;
+    do {
+      send(connA, { id: reqId, method: "thread/read", params: { threadId, limit: 5, ...(cursor ? { cursor } : {}) } });
+      await tick();
+      const page = parsed(a.lines).find((f) => f.id === reqId).result;
+      for (const item of page.data) merged.set(item.id as string, item);
+      cursor = page.nextCursor;
+      reqId += 1;
+      pages += 1;
+      expect(pages).toBeLessThan(20); // guard against an infinite loop if nextCursor never reaches null
+    } while (cursor);
+
+    // 1 prompt + 20 filler + 1 tool call = 22 distinct items, each surviving exactly once in the union.
+    expect(merged.size).toBe(22);
+    const expectedIds = new Set<string>(["p", "toolu_x", ...Array.from({ length: 20 }, (_, i) => `mf${i}#0`)]);
+    expect(new Set(merged.keys())).toEqual(expectedIds);
+    expect(pages).toBeGreaterThan(1); // proves this actually walked multiple pages, not a vacuous one-page read
+  });
+
+  it("(h) gap 12: a cursor minted at epoch 0 is refused once the thread's epoch is bumped (rewind), instead of returning rows", async () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({ type: "assistant", message: { id: `m${i}`, content: [{ type: "text", text: `t${i}` }] } }));
+    const getSessionMessages = async (_sid: string, opts?: { limit?: number; offset?: number }) => {
+      if (!opts) return rows;
+      const { offset = 0, limit } = opts;
+      return rows.slice(offset, limit === undefined ? undefined : offset + limit);
+    };
+    const srv = new AppServer({}, { sessionFactory: () => fakeSession(), getSessionMessages });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    send(connA, { id: 3, method: "thread/read", params: { threadId, limit: 5 } });
+    await tick();
+    const page1 = parsed(a.lines).find((f) => f.id === 3).result;
+    expect(page1.nextCursor).toBe("0:5"); // epoch 0, minted against the un-rewound thread
+
+    // Simulate M2b's rewind bumping the generation counter (router.test.ts's own precedent for
+    // mutating `record.epoch` directly, since the rewind handler itself is a later milestone's task).
+    srv.registry.get(threadId)!.epoch = 1;
+
+    send(connA, { id: 4, method: "thread/read", params: { threadId, cursor: page1.nextCursor } });
+    await tick();
+    const err = parsed(a.lines).find((f) => f.id === 4).error;
+    expect(err.code).toBe(-32602);
+    expect(err.message).toBe("cursor invalidated by a rewind; re-read from the start");
   });
 
   it("thread/read on a thread with no persisted sessionId returns an empty page, not an error", async () => {

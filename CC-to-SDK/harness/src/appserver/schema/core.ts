@@ -11,10 +11,22 @@ export const initializeParams = z.object({
   optOutNotificationMethods: z.array(z.string()).optional(),
 });
 export const serverStatusParams = z.object({});
-// The one cursor shape, reused (via .extend(cursorParam.shape)) by thread/read, thread/list, and
-// decision/list (Task 2's review: the shape stayed inlined in threadReadParams; Task 13 changes only
-// THIS regex when the cursor becomes epoch-qualified — one definition means one change).
+// The one cursor shape, reused (via .extend(cursorParam.shape)) by thread/list and decision/list.
+// Both page a plain in-memory array (the merged thread view, a parked-decision set) that a rewind
+// never truncates, so a bare decimal offset stays valid for their whole lifetime — no epoch to
+// qualify it against. thread/read used to reuse this shape too (Task 7); Task 13 below splits it off.
 export const cursorParam = z.object({
   cursor: z.string().regex(/^\d+$/).optional(),
+  limit: z.number().int().positive().optional(),
+});
+// Task 13: thread/read pages the persisted transcript by ROW, and M2b's rewind truncates rows — a
+// bare row offset would silently address different content after a rewind. This cursor carries the
+// thread's generation counter (record.epoch) as "<epoch>:<rowOffset>"; threadRead refuses one whose
+// epoch no longer matches. Kept as its OWN shape rather than widening cursorParam above: thread/list
+// and decision/list have no per-thread epoch to qualify against (thread/list, in fact, has no single
+// thread at all — it lists across every thread), so forcing them onto this format would only break
+// their existing plain-decimal mint/parse convention for no benefit.
+export const epochCursorParam = z.object({
+  cursor: z.string().regex(/^\d+:\d+$/).optional(),
   limit: z.number().int().positive().optional(),
 });
