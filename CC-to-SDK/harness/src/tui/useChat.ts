@@ -14,7 +14,7 @@ import { mergeSettingsFile, appendToArray, type SettingsFileDeps } from "./setti
 import type { CcxPrefs } from "./prefs.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
 import { currentTheme } from "./theme.js";
-import { buildRows, summarizeChanges, type SettingsRowCtx } from "./settingsRows.js";
+import { buildRows, summarizeChanges, PERMISSION_MODE_OPTIONS, type SettingsRowCtx } from "./settingsRows.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
@@ -44,9 +44,12 @@ export type { ChatSession };
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
 export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; }
 
-const LADDER = ["default", "acceptEdits", "plan", "auto"] as const;   // Tab cycles these; bypassPermissions stays off-cycle (/yolo)
+// Tab cycles these; bypassPermissions stays off-cycle (/yolo). Single source with settingsRows.ts's own
+// permissionMode row (review finding 3) — importing it here instead of a second literal array means the
+// Tab ladder and the /config cycle order can never independently drift.
+const LADDER = PERMISSION_MODE_OPTIONS;
 /** Next mode on the Tab ladder; any off-ladder mode (e.g. bypassPermissions/dontAsk) re-enters at "default". */
-function ladderNext(mode: string): string { const i = (LADDER as readonly string[]).indexOf(mode); return i >= 0 ? LADDER[(i + 1) % LADDER.length] : "default"; }
+function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); return i >= 0 ? LADDER[(i + 1) % LADDER.length] : "default"; }
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
@@ -451,7 +454,15 @@ export function useChat(
     // The picker's rows come straight from supportedModels(), whose values are TIER ALIASES ("opus"), so the
     // same translation the /model command does applies here — otherwise picking "Opus" selects Opus 4.8.
     const v = resolveModelAlias(m.value)!;
-    void (async () => { await session.setModel(v).catch(() => {}); if (!disposed.current) { setModel(v); append(formatModel(v)); } })();
+    // This same picker is shared by the standalone /model command AND the Settings Model row (ChatApp's
+    // overlay-chain comment on the settings arm) — `settings.open` stays true the whole time the Settings
+    // route has this picker up (only the picker's OWN arm outranks it in that ternary; Settings itself never
+    // closes), so it's the one signal that tells the two callers apart here. Reached via Settings, the
+    // close-time change summary already reports this row's change — printing the immediate notice too would
+    // report the same fact twice (review finding 1). The standalone /model path (settings closed) keeps it,
+    // exactly like every other /model invocation.
+    const fromSettings = settings.open;
+    void (async () => { await session.setModel(v).catch(() => {}); if (!disposed.current) { setModel(v); if (!fromSettings) append(formatModel(v)); } })();
   }
 
   // W3 T3: /add-dir. `addDirValidate` is the ONE place that turns a typed path into a verdict — both the

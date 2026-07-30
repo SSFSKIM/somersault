@@ -21,8 +21,10 @@ export interface SettingsRow {
 }
 
 // bypassPermissions is deliberately excluded — matches upstream's own /config row (it's reached only via
-// /yolo here, same divergence upstream itself makes for this specific row).
-const PERMISSION_MODE_OPTIONS = ["default", "acceptEdits", "plan", "auto"];
+// /yolo here, same divergence upstream itself makes for this specific row). Exported: useChat.ts's Tab
+// ladder cycles this SAME sequence (review finding 3, Wave 3 task 5 fix pass) — a single source so the
+// ladder and this row's cycle order can never quietly drift apart.
+export const PERMISSION_MODE_OPTIONS = ["default", "acceptEdits", "plan", "auto"];
 const MODEL_UNSET = "Default (recommended)";
 export const THINKING_WARNING = "Changing thinking mode mid-conversation will increase latency and may reduce quality.";
 

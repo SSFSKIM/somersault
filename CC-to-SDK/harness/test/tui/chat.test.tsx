@@ -774,4 +774,99 @@ describe("<ChatApp>", () => {
     expect(f).not.toContain("Default permission mode");             // Config's rows are gone
     expect(f).toContain("Tab/←/→ to switch tabs · Esc to close");
   });
+
+  // W3.5 fix pass — finding 1 regression guard: the Model row reuses the SAME top-level ModelPicker the
+  // standalone /model command does (ChatApp's overlay-chain comment), so pickModel's own immediate
+  // "model → X" notice used to fire whichever way the picker was reached — reported once live in the
+  // transcript AND again by the close-time summary when reached via Settings. Only the summary should say
+  // it in that case; this test failed red against the unfixed pickModel (see the task report).
+  it("Config: the Model row round trip through the shared ModelPicker reports the change exactly once, and Settings reappears afterward", async () => {
+    const fake = fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
+    stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));
+    stdin.write("\x1b[B");                                          // Theme(0) → Model(1)
+    await waitFor(() => frame(lastFrame).includes("❯ Model"));
+    stdin.write("\r");                                              // Enter on the Model row → onOpenModelPicker → the SHARED top-level ModelPicker
+    await waitFor(() => frame(lastFrame).includes("switch model"));
+    stdin.write("\r");                                              // pick the only model — resolveModelAlias("opus") → "claude-opus-5"
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));   // Settings dialog reliably reappears (remounted fresh on Config)
+    stdin.write("\x1b");                                            // close Settings — the diff-based close summary is the ONE place this should report
+    await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes("Set Model to"));
+    const flat = frame(lastFrame).replace(/\n/g, " ");
+    // Match on the SENTENCE forms, not a raw "claude-opus-5" substring count: the status bar ALSO shows the
+    // live model id ("model claude-opus-5") permanently — that's an unrelated, always-on UI element, not a
+    // notice, and would otherwise make this assertion count a legitimate second occurrence.
+    expect(flat).not.toMatch(/model → claude-opus-5/);              // no immediate notice from pickModel while reached via Settings
+    expect((flat.match(/Set Model to/g) ?? []).length).toBe(1);     // the close-time summary reported the change exactly once
+  });
+
+  // W3.5 fix pass — finding 2 coverage gap: nothing previously opened the Theme row's embedded ThemeDialog
+  // sub-flow (hideEsc + live preview + "discard the sub-dialog's own notice, let the close summary report
+  // it instead" — the contract the Model-row bug above shows what happens when it breaks).
+  it("Config: the Theme row opens the embedded ThemeDialog (hideEsc footer), previews live, returns to the row list on Enter, and the close-time summary — not the dialog's own line — reports it", async () => {
+    const before = currentTheme();
+    const savePrefsCalls: unknown[] = [];
+    const { stdin, lastFrame } = render(
+      <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
+        deps={{ savePrefs: (patch: unknown) => { savePrefsCalls.push(patch); } }} />,   // never the real ~/.claude/ccx/prefs.json
+    );
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));
+    stdin.write("\r");                                              // Enter on the Theme row (idx 0, already highlighted)
+    await waitFor(() => frame(lastFrame).includes("Choose the text style that looks best with your terminal"));
+    expect(frame(lastFrame)).not.toContain("Enter to select · Esc to cancel");   // hideEsc — no redundant footer nested inside Settings
+    stdin.write("\x1b[B");                                          // ↓ previews the next row's theme live (same mechanism the standalone /theme test pins)
+    await waitFor(() => currentTheme() !== before);
+    stdin.write("\r");                                              // Enter persists + returns to the Config row list (onDone → setSub("none"))
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));
+    expect(frame(lastFrame)).not.toContain("Choose the text style");   // really back on the row list, not still in the sub-dialog
+    expect(frame(lastFrame)).not.toContain("Theme set to");           // the embedded dialog's OWN notice is discarded (sibling to Output-style)
+    stdin.write("\x1b");                                              // close Settings
+    await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes("Set Theme to"));
+    expect(savePrefsCalls).toEqual([{ theme: "dark" }]);              // persisted through the injected seam, exactly once — never the real file
+  });
+
+  // W3.5 fix pass — finding 2 coverage gap: OutputStylePicker.tsx had zero tests anywhere in the repo.
+  it("Config: the Output-style row opens the embedded OutputStylePicker; picking a style updates the row live and the close-time summary reports it exactly once, without touching real settings files", async () => {
+    const savePrefsCalls: unknown[] = [];
+    const writes: { path: string; content: string }[] = [];
+    // ENOENT read (mirrors the /add-dir "remember" test above) → the merge patch applies fresh, and the
+    // write lands only in `writes`, never `${cwd}/.claude/settings.local.json` under the real repo checkout.
+    const settingsFileDeps = {
+      read: (_p: string): string => { const e: any = new Error("ENOENT"); e.code = "ENOENT"; throw e; },
+      write: (p: string, s: string) => { writes.push({ path: p, content: s }); },
+    };
+    const fake = fakeSettingsRemote();   // hasSettingsOps(session) → true, so applyOutputStyle's session.setOutputStyle leg runs
+    const { stdin, lastFrame } = render(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()}
+        deps={{ savePrefs: (patch: unknown) => { savePrefsCalls.push(patch); }, settingsFileDeps }} />,
+    );
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));
+    stdin.write("\x1b[B"); stdin.write("\x1b[B");                    // Theme(0) → Model(1) → Output style(2)
+    await waitFor(() => frame(lastFrame).includes("❯ Output style"));
+    stdin.write("\r");                                                // Enter opens the embedded OutputStylePicker
+    await waitFor(() => frame(lastFrame).includes("Preferred output style"));
+    stdin.write("\x1b[B");                                            // ↓ to "Proactive" (index 1)
+    await waitFor(() => frame(lastFrame).includes("❯ Proactive"));
+    stdin.write("\r");                                                // Enter picks it → applyOutputStyle("proactive"), returns to the row list
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));
+    expect(frame(lastFrame)).not.toContain("Preferred output style");             // really back on the row list, not the picker
+    expect(frame(lastFrame).replace(/\n/g, " ")).toContain("Output style  proactive");   // the row reflects the live pick
+    stdin.write("\x1b");                                              // close Settings
+    await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes("Set Output style to"));
+    const flat = frame(lastFrame).replace(/\n/g, " ");
+    expect((flat.match(/proactive/g) ?? []).length).toBe(1);          // the close-time summary is the ONLY place it's reported (applyOutputStyle itself never appends/notices)
+    expect(savePrefsCalls).toEqual([{ outputStyle: "proactive" }]);
+    expect(writes).toHaveLength(1);                                   // wrote through the injected fake only, never the real fs
+    expect(writes[0].path).toBe(`${process.cwd()}/.claude/settings.local.json`);
+    expect(JSON.parse(writes[0].content)).toEqual({ outputStyle: "proactive" });
+  });
 });
