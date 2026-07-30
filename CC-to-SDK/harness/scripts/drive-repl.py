@@ -77,6 +77,16 @@ try:
         captured.append("\n<<pty closed during boot>>\n")
     else:
         for line in lines:
+            # A "RAW:" argument writes its bytes verbatim with NO trailing Enter — required for
+            # driving overlays where Enter has meaning (history search would EXECUTE the selection,
+            # the bg panel would open a tail). Wave 1 tolerated the auto-Enter only because a stray
+            # Enter on an empty composer is a no-op; Wave 2's surfaces do not.
+            if line.startswith("RAW:"):
+                os.write(fd, line[4:].encode())
+                if not pump(LINE_WAIT):
+                    captured.append(f"\n<<pty closed after {line!r}>>\n")
+                    break
+                continue
             os.write(fd, line.encode())
             pump(TYPE_SETTLE)
             os.write(fd, b"\r")
