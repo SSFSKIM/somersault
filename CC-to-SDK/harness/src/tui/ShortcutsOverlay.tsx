@@ -23,6 +23,7 @@ const ROWS: [string, string][] = [
   ["Esc Esc", "rewind"],
   ["Ctrl-T", "todo panel"],
   ["Ctrl-B", "background"],
+  ["Ctrl-X Ctrl-K", "stop background agents (×2)"],
   ["Ctrl-C ×2", "exit"],
   ["Ctrl-D", "EOF"],
   ["Ctrl-Z", "detach"],

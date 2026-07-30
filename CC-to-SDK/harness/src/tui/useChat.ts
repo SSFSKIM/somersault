@@ -15,6 +15,7 @@ import type { BackgroundTaskInfo } from "../session/session.js";
 import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import { TaskList, type TaskItem } from "./taskList.js";
+import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
@@ -34,7 +35,7 @@ import type { RawContextUsage } from "../index.js";
 // adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
 export type { ChatSession };
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; }
 
 const LADDER = ["default", "acceptEdits", "plan", "auto"] as const;   // Tab cycles these; bypassPermissions stays off-cycle (/yolo)
 /** Next mode on the Tab ladder; any off-ladder mode (e.g. bypassPermissions/dontAsk) re-enters at "default". */
@@ -75,6 +76,9 @@ export function useChat(
   const taskListRef = useRef(new TaskList());
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [bgTasks, setBgTasks] = useState<BackgroundTaskInfo[]>([]);
+  const bgTasksRef = useRef<typeof bgTasks>([]); bgTasksRef.current = bgTasks;
+  const bgHarvest = useRef(new BgMetaHarvest());
+  const killArmAt = useRef(0);
   const [bgPanelOpen, setBgPanelOpen] = useState(false);
   const [turnTokens, setTurnTokens] = useState(0);    // live output-token count for the in-flight turn (spinner)
   const [queue, setQueue] = useState<string[]>([]);   // prompts/turns submitted while busy; drained FIFO on turn end
@@ -113,6 +117,9 @@ export function useChat(
       if (disposed.current) return;
       if (ev.kind === "turn" && ev.phase === "start") { liveTurnRef.current = new LiveTurn(); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]); }
       else if (ev.kind === "message") {
+        // Harvest bg-task metadata (command/output-file) BEFORE the no-live-turn guard: reconnect-buffer
+        // replays carry no live turn but still need to reach the (idempotent) harvest.
+        bgHarvest.current.ingestMessage(ev.data);
         // Same no-live-turn guard as everything else in this arm (F5/GHOST): a message with no owning
         // turn is a disk/buffer replay dup, not something the user is watching — so /copy must not
         // capture text from it either, or it could copy a reply that was never actually rendered.
@@ -135,6 +142,7 @@ export function useChat(
       }
       else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);
       else if (ev.kind === "task") {
+        bgHarvest.current.ingestTask(ev.data);
         const t = ev.data as any;
         const sub = t?.type === "system" ? t.subtype : t?.type;
         if (!t?.skip_transcript) {
@@ -339,6 +347,7 @@ export function useChat(
     lastAssistant.current = lastAssistantText(msgs);            // /copy follows what is ON SCREEN, not just live turns
     setClearToken((t) => t + 1);                                   // remount the append-only <Static> so the full replay shows (not sliced)
     taskListRef.current.reset(); setTasks([]);
+    bgHarvest.current.reset();
   }
   async function doContinue() {
     try {
@@ -401,6 +410,7 @@ export function useChat(
     lastAssistant.current = lastAssistantText(msgs);        // /copy follows what is on screen
     setClearToken((t) => t + 1);
     taskListRef.current.reset(); setTasks([]);
+    bgHarvest.current.reset();
     if (prefill !== undefined) setComposerPrefill({ text: prefill, token: Date.now() });
   }
 
@@ -524,6 +534,21 @@ export function useChat(
   function openShortcuts() { if (!disposed.current) setShortcutsOpen(true); }
   function closeShortcuts() { if (!disposed.current) setShortcutsOpen(false); }
   function stopBgTask(id: string) { if (hasBgTasks(session)) void session.stopBgTask(id).catch((e) => append([{ text: `✗ ${(e as Error).message}`, color: "red" }])); }
+  // Ctrl-X Ctrl-K (CC chat:killAgents): double-press confirm within 3s, exactly the 2.1.220 flow —
+  // "No background agents running" when idle, arm notice on the first press, stop-all on the second.
+  function killAgents() {
+    const tasks = bgTasksRef.current;
+    if (tasks.length === 0) { notice("No background agents running"); return; }
+    const now = Date.now();
+    if (now - killArmAt.current <= 3000) {
+      killArmAt.current = 0;
+      for (const t of tasks) stopBgTask(t.task_id);
+      notice(`◼ stopping ${tasks.length} background task${tasks.length === 1 ? "" : "s"}`);
+      return;
+    }
+    killArmAt.current = now;
+    notice("Press Ctrl-X Ctrl-K again to stop background agents");
+  }
   function backgroundNow() {
     if (!hasBgTasks(session)) { notice("background unsupported on this session"); return; }
     void session.background().then((b) => { if (!b) notice("nothing to background"); }).catch((e) => append([{ text: `✗ ${(e as Error).message}`, color: "red" }]));
@@ -552,5 +577,5 @@ export function useChat(
   function interrupt() { drainGen.current++; setQueue([]); void session.interrupt().catch(() => {}); }   // Esc stops everything: queue + any scheduled drain
   function clear() { if (!disposed.current) { clearScreen(); setLines([]); setStreaming([]); setClearToken((t) => t + 1); } }   // /clear: wipe screen + model (session context kept)
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill };
 }

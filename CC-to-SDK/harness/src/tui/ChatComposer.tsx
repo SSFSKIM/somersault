@@ -60,7 +60,7 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -101,6 +101,8 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // Ctrl-X Ctrl-E chord (2s window) or Ctrl-G: round-trip the buffer through $EDITOR. Ctrl-E alone
     // must stay line-end, so the chord prefix gates it.
     if (key.ctrl && input === "x") { ctrlX.current = Date.now(); return; }
+    // Ctrl-X Ctrl-K (CC chat:killAgents) — only when chorded; a bare Ctrl-K stays the editor's kill-to-end.
+    if (key.ctrl && input === "k" && Date.now() - ctrlX.current < 2000) { ctrlX.current = 0; onKillAgents?.(); return; }
     if (key.ctrl && (input === "g" || (input === "e" && Date.now() - ctrlX.current < 2000))) {
       ctrlX.current = 0;
       const edited = editExt(s.lines.join("\n"));

@@ -772,6 +772,53 @@ describe("useChat: decisions, mode sync, bg tasks (Goal B task 7)", () => {
   });
 });
 
+// Wave 2 U2: killAgents double-press confirm + harvest-enriched bgRows.
+describe("useChat: killAgents (Ctrl-X Ctrl-K) + bgRows", () => {
+  it("killAgents with no bg tasks notices 'No background agents running'", async () => {
+    const fake = fakeRemote();
+    const api: { kill?: () => void } = {};
+    function H() { const c = useChat(() => fake); api.kill = c.killAgents; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.kill!();
+    await waitFor(() => frame(lastFrame).includes("No background agents running"));
+  });
+
+  it("killAgents arms on first press and stops ALL bg tasks on the second within 3s", async () => {
+    const stopped: string[] = [];
+    const fake = fakeRemote({ stopBgTask: async (id: string) => { stopped.push(id); } });
+    const api: { kill?: () => void } = {};
+    function H() { const c = useChat(() => fake); api.kill = c.killAgents; return <Text>bg:{c.state.bgTasks.length} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "t1", task_type: "bash", description: "d1" }, { task_id: "t2", task_type: "bash", description: "d2" }] });
+    await waitFor(() => frame(lastFrame).includes("bg:2"));
+    api.kill!();
+    await waitFor(() => frame(lastFrame).includes("Press Ctrl-X Ctrl-K again to stop background agents"));
+    expect(stopped).toEqual([]);                    // armed, nothing stopped yet
+    api.kill!();
+    await waitFor(() => stopped.length === 2);
+    expect(stopped).toEqual(["t1", "t2"]);
+  });
+
+  it("bgRows carries command/outputFile harvested from message+task events", async () => {
+    const fake = fakeRemote();
+    let state: any;
+    function H() { const c = useChat(() => fake); state = c.state; return <Text>{allText(c)}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", input: { command: "echo hi", run_in_background: true } }] } } });
+    fake.pushEvent({ kind: "task", data: { type: "system", subtype: "task_started", task_id: "b1", tool_use_id: "tu1", description: "d", task_type: "local_bash" } });
+    fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", content: "Command running in background with ID: b1. Output is being written to: /tmp/x.output. Use BashOutput to check progress." }] } } });
+    fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "b1", task_type: "local_bash", description: "d" }] });
+    await waitFor(() => state.bgRows.length === 1);
+    expect(state.bgRows).toHaveLength(1);
+    expect(state.bgRows[0]).toMatchObject({ task_id: "b1", command: expect.stringContaining("echo"), outputFile: "/tmp/x.output", status: "running" });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+  });
+});
+
 describe("model picker", () => {
   it("/model with no arg opens the model picker from capabilities()", async () => {
     const fake = fakeRemote({ capabilities: () => ({ models: [{ value: "claude-opus-4-8", displayName: "Opus 4.8" }], commands: [], mcpServers: [] }) });

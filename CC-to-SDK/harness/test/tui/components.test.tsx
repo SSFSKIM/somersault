@@ -406,4 +406,24 @@ describe("Wave-1 keymap wiring", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(edits).toEqual([]);
   });
+
+  it("Ctrl-X Ctrl-K fires onKillAgents; bare Ctrl-K still kills to end of line", async () => {
+    let killed = 0;
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={[]} onKillAgents={() => { killed++; }} />);
+    await new Promise((r) => setTimeout(r, 20));                // useInput subscribes in a passive effect
+    stdin.write("abcd");
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x18");                                        // Ctrl-X arms the chord
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x0b");                                        // Ctrl-K within the window → killAgents, NOT kill-to-end
+    await new Promise((r) => setTimeout(r, 20));
+    expect(killed).toBe(1);
+    expect(lastFrame()).toContain("abcd");                      // buffer untouched by the chorded Ctrl-K
+    stdin.write("\x01");                                        // Ctrl-A → line start
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x0b");                                        // bare Ctrl-K (no chord) → kill to end
+    await new Promise((r) => setTimeout(r, 20));
+    expect(lastFrame()).not.toContain("abcd");
+    expect(killed).toBe(1);                                     // the bare Ctrl-K did not also fire onKillAgents
+  });
 });
