@@ -3,6 +3,7 @@
 // RemoteChat wire contract (spec A2b Task 6).
 import { describe, it, expect } from "vitest";
 import React from "react";
+import { tmpdir } from "node:os";
 import { render } from "ink-testing-library";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
@@ -24,6 +25,27 @@ type RewindFakeOpts = { rewindAnchors?: () => Promise<RewindAnchor[]>; rewindDry
 function fakeRewindRemote(rewindOpts: RewindFakeOpts, remoteOpts: FakeRemoteOpts = {}) {
   const base = fakeRemote(remoteOpts);
   return { ...base, rewindAnchors: rewindOpts.rewindAnchors ?? (async () => []), rewindDryRun: rewindOpts.rewindDryRun ?? (async () => ({ canRewind: true }) as RewindDryRun), rewind: rewindOpts.rewind ?? (async () => {}) };
+}
+// A fakeRemote() extended onto the SettingsOps surface (fakeRemote() alone has none, so hasSettingsOps() is
+// false on it as-is — same shape as fakeRewindRemote above). Default listDirs() reports only cwd (no
+// additional dirs yet), matching a freshly-launched host.
+type SettingsFakeOpts = {
+  listDirs?: () => Promise<{ path: string; source: "cwd" | "launch" | "session" }[]>;
+  addDir?: (path: string) => Promise<void>;
+  getSettings?: () => Promise<unknown>;
+};
+function fakeSettingsRemote(settingsOpts: SettingsFakeOpts = {}, remoteOpts: FakeRemoteOpts = {}) {
+  const base = fakeRemote(remoteOpts);
+  return {
+    ...base,
+    getSettings: settingsOpts.getSettings ?? (async () => ({})),
+    listDirs: settingsOpts.listDirs ?? (async () => [{ path: process.cwd(), source: "cwd" as const }]),
+    addDir: settingsOpts.addDir ?? (async () => {}),
+    removeDir: async () => {},
+    setOutputStyle: async () => {},
+    addRule: async () => {},
+    removeRule: async () => {},
+  };
 }
 
 describe("<ChatApp>", () => {
@@ -473,5 +495,81 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).toContain("☐ todo-item-one");            // task panel unaffected throughout
     stdin.write("\x14");                                              // now (pager closed) Ctrl-T DOES toggle — proves the gate isn't a permanent lock
     await waitFor(() => !frame(lastFrame).includes("☐ todo-item-one"));
+  });
+
+  // W3 T3: /add-dir
+  it("/add-dir with no arg opens the entry phase; Esc with no path cancels with the no-path message", async () => {
+    const fake = fakeSettingsRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/add-dir"); await waitFor(() => frame(lastFrame).includes("/add-dir"));
+    stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
+    await waitFor(() => frame(lastFrame).includes("Enter the path to the directory:"));
+    expect(frame(lastFrame)).toContain("Add directory to workspace");
+    stdin.write("\x1b");
+    await waitFor(() => frame(lastFrame).includes("Did not add a working directory."));
+  });
+
+  it("/add-dir <path> opens the confirm phase with the three options; accepting 'for this session' calls addDir with the abs path and prints the success line", async () => {
+    const calls: string[] = [];
+    const fake = fakeSettingsRemote({ addDir: async (p) => { calls.push(p); } });
+    const target = tmpdir();   // a real, existing directory outside process.cwd()
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write(`/add-dir ${target}`); await waitFor(() => frame(lastFrame).includes(target));
+    stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
+    await waitFor(() => frame(lastFrame).includes("Add directory to workspace"));
+    expect(frame(lastFrame)).toContain("Yes, for this session");
+    expect(frame(lastFrame)).toContain("Yes, and remember this directory");
+    expect(frame(lastFrame)).toContain("No");
+    stdin.write("\r");                                                // idx 0 default = "Yes, for this session"
+    await waitFor(() => calls.length === 1);
+    expect(calls[0]).toBe(target);
+    await waitFor(() => frame(lastFrame).includes("as a working directory for this session"));
+    expect(frame(lastFrame)).toContain("/permissions to manage");
+  });
+
+  it("W3-F gate: a late listDirs() resolution during an in-flight rewind must not leak the addDir dialog above the restoring modal (sabotage-checked — see task report)", async () => {
+    let releaseListDirs: () => void = () => {};
+    const heldListDirs = new Promise<void>((r) => { releaseListDirs = r; });
+    let releaseRewind: () => void = () => {};
+    const heldRewind = new Promise<void>((r) => { releaseRewind = r; });
+    const ANCHOR: RewindAnchor = { uuid: "u1", prevUuid: "u0", text: "add outside dir", index: 1 };
+    const target = tmpdir();
+    const fake = {
+      ...fakeSettingsRemote({ listDirs: async () => { await heldListDirs; return [{ path: process.cwd(), source: "cwd" as const }]; } }),
+      rewindAnchors: async () => [ANCHOR],
+      rewindDryRun: async () => ({ canRewind: true }) as RewindDryRun,
+      rewind: async () => { await heldRewind; },
+    };
+    const fakeDeps = { getSessionMessages: async () => [] as any[] };
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={fakeDeps} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+
+    // Start /add-dir — it suspends on listDirs() (composer stays mounted: local commands don't set busy).
+    stdin.write(`/add-dir ${target}`); await waitFor(() => frame(lastFrame).includes(target));
+    stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
+    await new Promise((r) => setTimeout(r, 30));
+
+    // While it's suspended, arm + open + confirm a rewind (mirrors the Wave-2 F3 test's exact key sequence).
+    stdin.write("\x1b");
+    await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
+    stdin.write("\x1b");
+    await waitFor(() => frame(lastFrame).includes("Rewind to a previous message"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Restore conversation only"));
+    stdin.write("2");
+    await waitFor(() => frame(lastFrame).includes("restoring"));
+
+    // Now let /add-dir's listDirs() resolve — it tries to open the dialog while rewinding is still true.
+    releaseListDirs();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).toContain("restoring");                  // the modal, not the dialog, must still be showing
+    expect(frame(lastFrame)).not.toContain("Add directory to workspace");
+
+    // Once the rewind itself settles, the dialog (still open in state) surfaces normally.
+    releaseRewind();
+    await waitFor(() => !frame(lastFrame).includes("restoring"));
+    await waitFor(() => frame(lastFrame).includes("Add directory to workspace"));
   });
 });

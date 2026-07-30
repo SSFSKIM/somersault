@@ -31,6 +31,7 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "mcp", summary: "[reconnect <name> | toggle <name> on|off] — MCP server status / controls" },
   { name: "bg", summary: "list background tasks (k/x stops one)" },
   { name: "rewind", summary: "rewind to a previous message (Esc Esc)" },
+  { name: "add-dir", summary: "<path> — add a new working directory" },
   { name: "usage", summary: "show plan usage / rate-limit windows" },
   { name: "copy", summary: "copy the last response to the clipboard" },
   { name: "export", summary: "[file|clipboard] — export the conversation as markdown" },
