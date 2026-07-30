@@ -23,16 +23,20 @@ if the banner has not appeared before the first line is typed.
 Exit: Ctrl-D is sent after the last line. Output is raw, escape sequences included;
 pipe through scripts/clean-pty.py (or the inline recipe in its docstring) to read it.
 """
+import fcntl
 import os
 import pty
 import select
 import signal
+import struct
 import sys
+import termios
 import time
 
 BOOT_WAIT = 12.0      # seconds to let the REPL paint its banner before typing
 TYPE_SETTLE = 1.0     # seconds between the typed text and its Enter
 LINE_WAIT = 8.0       # seconds to collect output after each Enter
+COLS, ROWS = 100, 40  # see set_winsize: the env vars alone do NOT reach Ink
 
 if len(sys.argv) < 3:
     sys.exit(__doc__)
@@ -50,9 +54,16 @@ if pid == 0:
     # The child must inherit this cwd for node module resolution (tsx lives in
     # harness/node_modules); the REPL's own working directory is passed with --cwd.
     os.environ["TERM"] = "xterm-256color"
-    os.environ["COLUMNS"] = "100"
-    os.environ["LINES"] = "40"
+    os.environ["COLUMNS"] = str(COLS)
+    os.environ["LINES"] = str(ROWS)
     os.execvp("node", ["node", "--import", "tsx", entry, "--cwd", workdir])
+
+# Node does NOT read COLUMNS/LINES for a TTY — process.stdout.columns comes from the terminal-size
+# ioctl, which pty.fork() leaves at its 80x24 default. Without this the env vars above are decorative
+# and every capture is an 80-column frame while the script claims 100, so any width-sensitive
+# assertion is measuring a wrap that the observer never advertised. Set it on the master fd (the
+# kernel propagates to the slave) before the child paints anything.
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
 
 
 def pump(seconds: float) -> bool:
