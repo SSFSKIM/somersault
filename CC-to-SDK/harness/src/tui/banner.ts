@@ -29,7 +29,7 @@ export function welcomeBanner(info: BannerInfo): RenderLine[] {
     { text: "" },
     { text: "  Tips for getting started" },
     { text: "  • Ask Claude to edit files, run commands, or explain code", dim: true },
-    { text: "  • /help for commands · @ to reference files · Tab to change mode", dim: true },
+    { text: "  • /help for commands · @ to reference files · ⇧Tab to change mode", dim: true },
     { text: "  • Esc to interrupt a response", dim: true },
     { text: "" },
   ];
