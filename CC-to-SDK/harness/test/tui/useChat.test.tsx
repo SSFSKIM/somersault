@@ -489,6 +489,37 @@ describe("useChat", () => {
     expect(token).toBeGreaterThanOrEqual(1);                   // clearToken bumped by resumeInto
   });
 
+  it("Wave 2 final-review F2: a /resume swap clears stale bgTasks from the OLD engine (no ghost ⟳ running rows)", async () => {
+    // The old session's bg tasks died with its engine; no `tasks_changed:[]` correction can ever arrive
+    // post-swap (the old subscription is detached, and the new host's follow() only replays a NON-EMPTY
+    // snapshot) — so resumeInto itself must clear bgTasks, or the panel/killAgents keep pointing at a
+    // dead engine's task ids forever.
+    const oldSession = fakeRemote();
+    const newSession = fakeRemote();
+    const makeSession = (resume?: string) => (resume ? newSession : oldSession);
+    const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
+    let pick: ((s: any) => void) | undefined;
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(makeSession, {}, deps);
+      pick = (c as any).pickSession;
+      api.run = c.submit;
+      return <Text>{c.state.picker.open ? `PICKER:${c.state.picker.sessions.length}` : "NOPICK"} bg:{c.state.bgTasks.length}:{c.state.bgRows.length} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => frame(lastFrame).includes("NOPICK"));
+    oldSession.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "t1", task_type: "bash", description: "sleep 99" }] });
+    await waitFor(() => frame(lastFrame).includes("bg:1:1"));
+
+    api.run!("/resume");
+    await waitFor(() => frame(lastFrame).includes("PICKER:1"));
+    pick!({ sessionId: "old1234567890", summary: "prior", lastModified: 1 });
+    await waitFor(() => frame(lastFrame).includes("› prior prompt"));   // the swap landed
+
+    expect(frame(lastFrame)).toContain("bg:0:0");   // no ghost ⟳ running row survives the swap
+  });
+
   it("interrupt clears the queue; local commands run immediately even while busy", async () => {
     let release = () => {}; let submits = 0, modelSet = "";
     let fake!: FakeRemote;
@@ -1162,5 +1193,68 @@ describe("U5b: /rename /tag /session /stats", () => {
     api.run!("/stats");
     await waitFor(() => frame(lastFrame).includes("claude-opus-5"));
     expect(frame(lastFrame)).toContain("prompts");
+  });
+});
+
+describe("Wave 2 final-review F1: loadHistory's scope-aware reader (out-of-project sessions)", () => {
+  const entryFor = (id: string) => [{ type: "user", uuid: `u-${id}`, message: { content: [{ type: "text", text: `prompt-${id}` }] }, timestamp: "2026-07-28T08:00:00.000Z" }];
+
+  it("scope 'session' reads the CURRENT session via the pinned getSessionMessages (never getSessionMessagesIn)", async () => {
+    const fake = fakeRemote({ sessionId: "sess-1" });
+    const pinnedCalls: string[] = [];
+    const inCalls: unknown[] = [];
+    let load!: (s: any) => Promise<any[]>;
+    function H() {
+      const c = useChat(() => fake, {}, {
+        getSessionMessages: async (id: string) => { pinnedCalls.push(id); return entryFor(id); },
+        getSessionMessagesIn: async (id: string, cwd?: string) => { inCalls.push({ id, cwd }); return entryFor(id); },
+      });
+      load = c.loadHistory; return <Text />;
+    }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    const entries = await load("session");
+    expect(pinnedCalls).toEqual(["sess-1"]);
+    expect(inCalls).toEqual([]);                 // scope "session" never touches the scope-aware reader
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries[0].text).toBe("prompt-sess-1");
+  });
+
+  it("scope 'project' reads each listed session with the PROJECT cwd via getSessionMessagesIn", async () => {
+    const fake = fakeRemote();
+    const inCalls: { id: string; cwd: string | undefined }[] = [];
+    let load!: (s: any) => Promise<any[]>;
+    function H() {
+      const c = useChat(() => fake, { cwd: "/proj" }, {
+        listHistorySessions: async () => [{ sessionId: "a", summary: "", lastModified: 2 }, { sessionId: "b", summary: "", lastModified: 1 }],
+        getSessionMessagesIn: async (id: string, cwd?: string) => { inCalls.push({ id, cwd }); return entryFor(id); },
+      });
+      load = c.loadHistory; return <Text />;
+    }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    const entries = await load("project");
+    expect(inCalls).toEqual([{ id: "a", cwd: "/proj" }, { id: "b", cwd: "/proj" }]);
+    expect(entries.length).toBe(2);               // both sessions' entries actually flowed back
+  });
+
+  it("scope 'everywhere' reads each listed session with an UNDEFINED cwd via getSessionMessagesIn — including an out-of-project session", async () => {
+    const fake = fakeRemote();
+    const inCalls: { id: string; cwd: string | undefined }[] = [];
+    let load!: (s: any) => Promise<any[]>;
+    function H() {
+      const c = useChat(() => fake, { cwd: "/proj" }, {
+        // "outside" stands in for a session from a DIFFERENT project — everywhere scope must still read it.
+        listHistorySessions: async () => [{ sessionId: "outside", summary: "", lastModified: 5 }, { sessionId: "a", summary: "", lastModified: 2 }],
+        getSessionMessagesIn: async (id: string, cwd?: string) => { inCalls.push({ id, cwd }); return entryFor(id); },
+      });
+      load = c.loadHistory; return <Text />;
+    }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    const entries = await load("everywhere");
+    expect(inCalls).toEqual([{ id: "outside", cwd: undefined }, { id: "a", cwd: undefined }]);
+    expect(entries.length).toBe(2);                // the out-of-project session's prompt actually came back
+    expect(entries.map((e) => e.text)).toContain("prompt-outside");
   });
 });

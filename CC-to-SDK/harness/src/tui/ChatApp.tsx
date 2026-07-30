@@ -89,8 +89,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       return;
     }
     if (state.historyOpen) return;   // the overlay owns Ctrl-C (cancel) / Ctrl-R (next) / Ctrl-S (scope); only Ctrl-Z above stays live
-    if (key.ctrl && input === "o") { setTranscriptOpen(true); disarm(); return; }   // CC app:toggleTranscript
-    if (key.ctrl && input === "r") { openHistorySearch(); disarm(); return; }   // CC history:search (Global)
+    // Both open arms are gated on !rewinding (F3, final review): a confirmed rewind is a multi-second
+    // engine swap held behind the "⏪ restoring…" modal so a mid-rewind prompt isn't lost — Ctrl-R/Ctrl-O
+    // opening another overlay (or, for history, Enter-executing straight into the busy host) would
+    // reintroduce exactly the loss mode that modal exists to prevent.
+    if (key.ctrl && input === "o" && !state.rewinding) { setTranscriptOpen(true); disarm(); return; }   // CC app:toggleTranscript
+    if (key.ctrl && input === "r" && !state.rewinding) { openHistorySearch(); disarm(); return; }   // CC history:search (Global)
     if (key.ctrl && input === "t") { setTodosOpen((v) => !v); disarm(); return; }   // CC app:toggleTodos
     if (key.ctrl && input === "c") {                                // interrupt a turn, else arm/confirm exit (CC)
       if (state.busy) { interrupt(); disarm(); return; }
@@ -118,6 +122,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         // A confirmed rewind takes seconds (file restore + engine swap). Hold a modal until it settles:
         // if the composer came back first, a prompt typed in that window would be cleared from the editor,
         // sent, and refused by the host as busy — the user's text lost rather than queued.
+        //
+        // NB (F3, final review): every arm ABOVE this one — shortcuts/pager/history — still renders over a
+        // pending decision dialog too (state.pending is checked further below in this chain). That is an
+        // accepted oddity, not a new gap this fix introduces: the park is state-owned on the host, not
+        // reachable/answerable through the overlay, and closing the overlay remounts the dialog fresh via
+        // its `key={state.pending.toolUseID}` — so no answer can be lost, only its rendering briefly hidden.
         : state.rewinding
         ? <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>
         : state.rewindPicker.open

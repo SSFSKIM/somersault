@@ -45,7 +45,7 @@ function ladderNext(mode: string): string { const i = (LADDER as readonly string
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
   opts: { initialMode?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialLines?: RenderLine[]; initialPrompt?: string; onExit?: () => void } = {},
-  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]> } = {},
+  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; getSessionMessagesIn?: (id: string, cwd?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]> } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   // Seed the scrollback with the welcome banner — unless we're launching straight into a resume (the
@@ -90,6 +90,10 @@ export function useChat(
   const disposed = useRef(false);
   const listSessions = deps.listSessions ?? (() => realListSessions({ cwd: opts.cwd, limit: 30 }) as Promise<SessionInfo[]>);
   const getSessionMessages = deps.getSessionMessages ?? ((id: string) => realGetSessionMessages(id, { cwd: opts.cwd }) as Promise<any[]>);
+  // Scope-aware reader for loadHistory's project/everywhere passes (F1, final review): getSessionMessages
+  // above always pins `opts.cwd`, so a session from a DIFFERENT project (everywhere scope) reads back 0
+  // messages under it — an undefined cwd is what makes the SDK reader search across all projects.
+  const getSessionMessagesIn = deps.getSessionMessagesIn ?? ((id: string, c?: string) => realGetSessionMessages(id, c ? { cwd: c } : {}) as Promise<any[]>);
   const runBash = deps.runBash ?? realRunBash;
   const appendMemory = deps.appendMemory ?? realAppendMemory;
   const copyText = deps.copyText ?? realCopyToClipboard;
@@ -351,6 +355,11 @@ export function useChat(
     setClearToken((t) => t + 1);                                   // remount the append-only <Static> so the full replay shows (not sliced)
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
+    // The old session's bg tasks died with its engine — the old subscription is already detached, and no
+    // `tasks_changed:[]` correction can ever arrive to clear them (the new host's follow() only replays a
+    // NON-EMPTY snapshot). Without this, stale ⟳ running rows linger forever and killAgents targets ids
+    // the new engine never had (F2, final review).
+    setBgTasks([]);
   }
   async function doContinue() {
     try {
@@ -549,7 +558,10 @@ export function useChat(
       return promptEntries(msgs, Date.now());
     }
     const sessions = await listHistorySessions(scope === "project" ? cwd : undefined).catch(() => [] as SessionInfo[]);
-    const lists = await Promise.all(sessions.slice(0, 15).map(async (s) => promptEntries(await getSessionMessages(s.sessionId).catch(() => [] as any[]), s.lastModified)));
+    // getSessionMessagesIn, not the pinned getSessionMessages: "everywhere" must read sessions OUTSIDE
+    // this project too, and the pinned reader always scopes to opts.cwd (F1, final review).
+    const readCwd = scope === "project" ? cwd : undefined;
+    const lists = await Promise.all(sessions.slice(0, 15).map(async (s) => promptEntries(await getSessionMessagesIn(s.sessionId, readCwd).catch(() => [] as any[]), s.lastModified)));
     return mergeEntries(lists);
   }
   function stopBgTask(id: string) { if (hasBgTasks(session)) void session.stopBgTask(id).catch((e) => append([{ text: `✗ ${(e as Error).message}`, color: "red" }])); }

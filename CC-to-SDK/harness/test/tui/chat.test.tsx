@@ -356,6 +356,42 @@ describe("<ChatApp>", () => {
     release();
   });
 
+  it("Wave 2 final-review F3: Ctrl-R and Ctrl-O do not open their overlays while a rewind is in flight", async () => {
+    // A confirmed rewind is a multi-second engine operation held behind the "⏪ restoring…" modal
+    // (state.rewinding) precisely so a prompt typed in that window isn't lost. Before the fix, Ctrl-R/
+    // Ctrl-O were reachable during that window too — opening the history/pager overlay ABOVE the modal,
+    // and (for history) Enter-executing a prompt straight into the busy host, refusing and losing it.
+    let release = () => {};
+    const held = new Promise<void>((r) => { release = r; });
+    const ANCHOR: RewindAnchor = { uuid: "u1", prevUuid: "u0", text: "fix the parser", index: 2 };
+    const fake = fakeRewindRemote({ rewindAnchors: async () => [ANCHOR], rewind: async () => { await held; } });
+    const fakeDeps = { getSessionMessages: async () => [] as any[] };
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={fakeDeps} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+
+    stdin.write("\x1b");                                              // Esc: arm
+    await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
+    stdin.write("\x1b");                                              // Esc: open the picker
+    await waitFor(() => frame(lastFrame).includes("Rewind to a previous message"));
+    stdin.write("\r");                                                // select the anchor → scope stage
+    await waitFor(() => frame(lastFrame).includes("Restore conversation only"));
+    stdin.write("2");                                                 // conversation-only → confirmRewind → rewind() hangs
+    await waitFor(() => frame(lastFrame).includes("restoring"));
+
+    stdin.write("\x12");                                              // Ctrl-R must NOT open history search here
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).not.toContain("Search prompts");
+    expect(frame(lastFrame)).toContain("restoring");                  // the rewinding modal is still the one showing
+
+    stdin.write("\x0f");                                              // Ctrl-O must NOT open the transcript pager here
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).not.toContain("Transcript");             // the pager's own header text (see the Ctrl-O test above)
+    expect(frame(lastFrame)).toContain("restoring");
+
+    release();
+    await waitFor(() => !frame(lastFrame).includes("restoring"));
+  });
+
   it("? on an empty idle composer opens the shortcuts overlay; any keypress closes it back to the composer", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
@@ -379,6 +415,9 @@ describe("<ChatApp>", () => {
   it("Ctrl-R opens history search; Esc accepts the top entry into the composer", async () => {
     const fakeDeps = {
       getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
+      // HistorySearchOverlay opens on scope "everywhere" by default, which reads via getSessionMessagesIn
+      // (F1, final review) rather than the pinned getSessionMessages above — both need to agree here.
+      getSessionMessagesIn: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
       listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
     };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
@@ -393,6 +432,9 @@ describe("<ChatApp>", () => {
   it("app-level keys are gated while the history overlay is open (its Ctrl-C is cancel, not exit-arm)", async () => {
     const fakeDeps = {
       getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
+      // HistorySearchOverlay opens on scope "everywhere" by default, which reads via getSessionMessagesIn
+      // (F1, final review) rather than the pinned getSessionMessages above — both need to agree here.
+      getSessionMessagesIn: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
       listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
     };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
