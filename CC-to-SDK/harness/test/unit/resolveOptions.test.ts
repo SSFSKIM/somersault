@@ -11,9 +11,9 @@ describe("resolveOptions", () => {
     expect(o.enableFileCheckpointing).toBe(true);
     expect(o.agents["Explore"].disallowedTools).toContain("Write");
   });
-  it("applies harness-wide defaults (opus-4-8 / auto / xhigh) when omitted", () => {
+  it("applies harness-wide defaults (opus-5 / auto / xhigh) when omitted", () => {
     const o: any = resolveOptions({});
-    expect(o.model).toBe("claude-opus-4-8");
+    expect(o.model).toBe("claude-opus-5");
     expect(o.permissionMode).toBe("auto");
     expect(o.effort).toBe("xhigh");
   });
@@ -140,9 +140,10 @@ describe("resolveOptions", () => {
     expect(resolveOptions({})).not.toHaveProperty("outputFormat");
   });
   it("forces a supported model when permissionMode is auto (model-gated)", () => {
-    expect((resolveOptions({ permissionMode: "auto", model: "claude-haiku-4-5" }) as any).model).toBe("claude-sonnet-4-6");
-    expect((resolveOptions({ permissionMode: "auto", model: "claude-opus-4-8" }) as any).model).toBe("claude-opus-4-8");
-    expect((resolveOptions({ permissionMode: "auto" }) as any).model).toBe("claude-opus-4-8");
+    expect((resolveOptions({ permissionMode: "auto", model: "claude-haiku-4-5" }) as any).model).toBe("claude-sonnet-5");
+    expect((resolveOptions({ permissionMode: "auto", model: "claude-opus-4-8" }) as any).model).toBe("claude-opus-4-8");   // still auto-capable
+    expect((resolveOptions({ permissionMode: "auto", model: "claude-fable-5" }) as any).model).toBe("claude-fable-5");    // probe 72
+    expect((resolveOptions({ permissionMode: "auto" }) as any).model).toBe("claude-opus-5");
   });
   it("does not touch the model for non-auto modes", () => {
     expect((resolveOptions({ permissionMode: "default", model: "claude-haiku-4-5" }) as any).model).toBe("claude-haiku-4-5");

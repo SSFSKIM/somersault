@@ -8,6 +8,7 @@ export type { TelemetryConfig } from "./config/telemetry.js";
 export { tenantHarnessConfig } from "./config/tenantPreset.js";
 export type { TenantConfig } from "./config/tenantPreset.js";
 export { resolveAutoModel, isAutoSupportedModel } from "./config/autoModel.js";
+export { resolveModelAlias, MODEL_ALIASES } from "./config/models.js";
 export { BUILTIN_AGENTS } from "./config/agents.js";
 export { BUILTIN_OUTPUT_STYLES } from "./config/outputStyle.js";
 export { TaskStore, TaskError, createTaskMcpServer } from "./tasks/index.js";

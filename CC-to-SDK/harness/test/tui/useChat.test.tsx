@@ -353,13 +353,13 @@ describe("useChat", () => {
     const api: { run?: (s: string) => void } = {};
     const { lastFrame } = render(<CmdHost makeSession={() => fake} api={api} />);
     await waitFor(() => frame(lastFrame).includes("IDLE"));
-    api.run!("/model opus");   await waitFor(() => frame(lastFrame).includes("model → opus"));
+    api.run!("/model opus");   await waitFor(() => frame(lastFrame).includes("model → claude-opus-5"));
     api.run!("/compact");      await waitFor(() => frame(lastFrame).includes("✦ compacted 9k → 2k"));
     api.run!("/context");      await waitFor(() => frame(lastFrame).includes("ctx 25%"));
     api.run!("/help");         await waitFor(() => frame(lastFrame).includes("/model"));
     api.run!("/zzz");          await waitFor(() => frame(lastFrame).includes("Unknown command: /zzz"));
     api.run!("/clear");        await waitFor(() => !frame(lastFrame).includes("Unknown command"));
-    expect(modelSet).toBe("opus");
+    expect(modelSet).toBe("claude-opus-5");     // tier alias resolved before setModel
     expect(submitted).toBe(0);     // no slash command ever reached session.submit
   });
 
@@ -511,8 +511,8 @@ describe("useChat", () => {
     await new Promise((r) => setTimeout(r, 10));
     api.run!("turn");          await waitFor(() => frame(lastFrame).includes("BUSY"));
     api.run!("queued");        await waitFor(() => frame(lastFrame).includes("q:queued"));
-    api.run!("/model opus");   await waitFor(() => frame(lastFrame).includes("m:opus"));   // local cmd runs mid-turn
-    expect(modelSet).toBe("opus");
+    api.run!("/model opus");   await waitFor(() => frame(lastFrame).includes("m:claude-opus-5"));  // local cmd runs mid-turn
+    expect(modelSet).toBe("claude-opus-5");                                                      // tier alias → id
     api.stop!();               await waitFor(() => !frame(lastFrame).includes("q:queued")); // interrupt clears queue
     release();
     expect(submits).toBe(1);   // the queued turn never ran (cleared on interrupt)
@@ -638,8 +638,10 @@ describe("permission ladder", () => {
     api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:acceptEdits"));
     api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:plan"));
     api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:auto"));
-    expect(setModelCalls).toContain("claude-sonnet-4-6");
-    expect(frame(lastFrame)).toContain("switched model to claude-sonnet-4-6");
+    expect(setModelCalls).toContain("claude-sonnet-5");
+    // Collapse whitespace: `frame` turns Ink's 80-col wrap into a space, and where that wrap lands
+    // depends on the model-id LENGTH — this assertion used to pass only by accident of column width.
+    expect(frame(lastFrame).replace(/\s+/g, " ")).toContain("switched model to claude-sonnet-5");
   });
   it("entering auto on a supported model does not swap the model", async () => {
     const setModelCalls: (string | undefined)[] = [];
@@ -775,7 +777,8 @@ describe("model picker", () => {
     await new Promise((r) => setTimeout(r, 0));
     api.run!("/model sonnet");
     await new Promise((r) => setTimeout(r, 0));
-    expect(set).toBe("sonnet");
+    expect(set).toBe("claude-sonnet-5");        // the tier word never reaches the engine
+
     expect(api.state.modelPicker.open).toBe(false);
   });
 });

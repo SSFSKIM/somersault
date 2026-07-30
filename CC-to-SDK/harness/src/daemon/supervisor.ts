@@ -11,6 +11,7 @@ import { createPermissionGate } from "../permissions/gate.js";
 import type { PermissionDecision } from "../permissions/types.js";
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { resolveAutoModel } from "../config/autoModel.js";
+import { resolveModelAlias } from "../config/models.js";
 import { resolveOptions } from "../config/resolveOptions.js";
 import { DEFAULTS } from "../config/types.js";
 import { validateDaemonOptions } from "../config/validate.js";
@@ -124,7 +125,10 @@ export class DaemonSupervisor {
   spawn(opts: { model?: string; restart?: RestartPolicy; resume?: string; permissionMode?: string; rewind?: { resumeAt: string; forkSession?: boolean } } = {}): string {
     if (this.pool.size >= this.maxSessions) throw new DaemonError(`max sessions (${this.maxSessions}) reached`);
     const id = `sess-${++this.seq}`;
-    const model = opts.permissionMode === "auto" ? resolveAutoModel(opts.model ?? DEFAULTS.model) : (opts.model ?? DEFAULTS.model); // explicit-auto gate; opus-4-8 default keeps the registry consistent with resolveOptions
+    // Alias-resolve before the gate, exactly as resolveOptions does — otherwise a spawn({model:"opus"})
+    // records a tier word on the roster and, under auto, fails the gate and gets silently downgraded.
+    const asked = resolveModelAlias(opts.model) ?? DEFAULTS.model;
+    const model = opts.permissionMode === "auto" ? resolveAutoModel(asked) : asked;      // explicit-auto gate
     const cfg: SpawnConfig = { model, restart: opts.restart ?? this.restartPolicy, permissionMode: opts.permissionMode, ...(opts.rewind ? { rewind: opts.rewind } : {}) };
     this.configs.set(id, cfg);
     this.pool.set(id, this.makeSession(id, cfg, opts.resume));

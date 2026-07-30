@@ -24,7 +24,7 @@ import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bas
 import { copyToClipboard as realCopyToClipboard } from "./copy.js";
 import { appendMemory as realAppendMemory } from "./memory.js";
 import { shortCwd } from "./banner.js";
-import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel } from "../index.js";
+import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias } from "../index.js";
 import type { RawContextUsage } from "../index.js";
 
 // ChatSession is promoted to ../session/chatSession.ts (spec A2b §2) so the lib Session and the remote
@@ -213,7 +213,8 @@ export function useChat(
     try {
       switch (cmd.name) {
         case "model":
-          if (cmd.args) { await session.setModel(cmd.args); if (!disposed.current) setModel(cmd.args); append(formatModel(cmd.args)); }
+          // `/model opus` must reach the engine as an id: the SDK's own `opus` alias still means Opus 4.8 (probe 72).
+          if (cmd.args) { const m = resolveModelAlias(cmd.args)!; await session.setModel(m); if (!disposed.current) setModel(m); append(formatModel(m)); }
           else { await openModelPicker(); }
           break;
         case "compact": append(formatCompact(await session.compact())); break;
@@ -307,7 +308,10 @@ export function useChat(
   function pickModel(m: ModelInfo) {
     if (disposed.current) return;
     setModelPicker({ open: false, models: [] });
-    void (async () => { await session.setModel(m.value).catch(() => {}); if (!disposed.current) { setModel(m.value); append(formatModel(m.value)); } })();
+    // The picker's rows come straight from supportedModels(), whose values are TIER ALIASES ("opus"), so the
+    // same translation the /model command does applies here — otherwise picking "Opus" selects Opus 4.8.
+    const v = resolveModelAlias(m.value)!;
+    void (async () => { await session.setModel(v).catch(() => {}); if (!disposed.current) { setModel(v); append(formatModel(v)); } })();
   }
 
   // Esc-Esc rewind (Stage C5 flagship). Anchors are ALWAYS re-fetched, never patched locally — the persisted
