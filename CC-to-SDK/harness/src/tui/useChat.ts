@@ -420,8 +420,9 @@ export function useChat(
     const cmd = parseCommand(prompt);
     if (cmd) {
       if (LOCAL_NAMES.has(cmd.name)) { void handleCommand(cmd); return false; }   // local → engine switch
-      // U1: a catalogued client-side control gets an honest message, never a prompt the model can't act on.
-      if (cmd.name in CLIENT_SIDE_NOTES) { append([{ text: `› /${cmd.name}`, dim: true }, ...formatClientSide(cmd.name)]); return false; }
+      // U1: a catalogued client-side control gets an honest message, never a prompt the model can't act
+      // on. hasOwn, not `in`: a bare object's prototype chain would match "/toString" etc.
+      if (Object.hasOwn(CLIENT_SIDE_NOTES, cmd.name)) { append([{ text: `› /${cmd.name}${cmd.args ? " " + cmd.args : ""}`, dim: true }, ...formatClientSide(cmd.name)]); return false; }
       if (catalogNames.current.has(cmd.name)) { runTurn(prompt); return true; }   // catalog → run "/name …" as a turn (probe 31)
       void handleCommand(cmd); return false;                                       // unknown → formatUnknown (switch default)
     }
