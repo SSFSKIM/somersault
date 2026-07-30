@@ -23,11 +23,13 @@ function renderBuffer(state: EditorState): React.ReactNode {
   });
 }
 
+const COMMAND_ROWS = 8;                            // visible rows; the selection scrolls through the full list
+
 function CommandPopup({ state }: { state: EditorState }) {
   const c = state.command!;
   if (c.items.length === 0) return <Box paddingX={1}><Text dimColor>/{c.query} — no matches</Text></Box>;
-  const start = Math.max(0, Math.min(c.index - 3, Math.max(0, c.items.length - 8)));
-  const visible = c.items.slice(start, start + 8);
+  const start = Math.max(0, Math.min(c.index - 3, Math.max(0, c.items.length - COMMAND_ROWS)));
+  const visible = c.items.slice(start, start + COMMAND_ROWS);
   return (
     <Box flexDirection="column" paddingX={1}>
       {visible.map((e, i) => (
@@ -37,6 +39,10 @@ function CommandPopup({ state }: { state: EditorState }) {
           {e.description ? <Text dimColor>{"  " + e.description.split("\n")[0].slice(0, 48)}</Text> : null}
         </Box>
       ))}
+      {/* Without this the window is indistinguishable from a complete list — the catalog runs to ~105 entries. */}
+      {c.items.length > COMMAND_ROWS
+        ? <Text dimColor>{`↑/↓ ${c.index + 1}/${c.items.length} · Tab completes · Esc closes`}</Text>
+        : null}
     </Box>
   );
 }

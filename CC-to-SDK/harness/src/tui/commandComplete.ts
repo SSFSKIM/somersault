@@ -18,8 +18,11 @@ export function mergeCommands(local: CommandEntry[], catalog: CommandEntry[]): C
   return [...local, ...catalog.filter((c) => !seen.has(c.name))];
 }
 
-/** Fuzzy-rank entries by query on the name; empty query → catalog order capped; reuses fileComplete's scorer. */
-export function rankCommands(entries: CommandEntry[], query: string, cap = 8): CommandEntry[] {
+/** Fuzzy-rank entries by query on the name; empty query → catalog order; reuses fileComplete's scorer.
+ *  `cap` defaults to NO truncation on purpose. The popup renders a scrolling 8-row window and arrow
+ *  selection is clamped to `items.length`, so a cap here does not merely shorten the view — it makes the
+ *  tail of the catalog UNREACHABLE. With ~105 live commands, the old cap of 8 hid 90+ of them. */
+export function rankCommands(entries: CommandEntry[], query: string, cap = entries.length): CommandEntry[] {
   if (!query) return entries.slice(0, cap);
   const byName = new Map(entries.map((e) => [e.name, e]));
   return rankCandidates(entries.map((e) => e.name), query, cap).map((c) => byName.get(c.path)).filter((e): e is CommandEntry => !!e);

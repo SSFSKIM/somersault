@@ -189,6 +189,19 @@ describe("editor / command palette", () => {
     let s = open(); s = press(s, { downArrow: true });
     expect(s.command!.index).toBe(1);
   });
+  it("the whole catalog is reachable by arrow keys — not just the visible window", () => {
+    // The popup renders a scrolling 8-row window, but the SELECTION is clamped to items.length. Ranking
+    // the catalog down to 8 entries therefore made everything past the 8th unreachable: the real catalog
+    // is ~105 commands and users could only ever see the top few.
+    const big: CommandEntry[] = Array.from({ length: 20 }, (_, i) => ({ name: `cmd${String(i).padStart(2, "0")}`, description: "", source: "catalog" }));
+    let s = setCommandCatalog(type(initialEditorState(), "/"), big);
+    expect(s.command!.items.length).toBe(20);
+    for (let i = 0; i < 19; i++) s = press(s, { downArrow: true });
+    expect(s.command!.index).toBe(19);
+    expect(s.command!.items[s.command!.index].name).toBe("cmd19");
+    s = press(s, { tab: true });
+    expect(text(s)).toBe("/cmd19 ");                                  // the last entry is selectable, not just visible
+  });
   it("the @-mention path still works (regression)", () => {
     let s = type(initialEditorState(), "@"); s = setMentionFiles(s, ["a.ts", "b.ts"]);
     expect(s.mention!.items.length).toBe(2);
