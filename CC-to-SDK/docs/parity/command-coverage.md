@@ -87,10 +87,20 @@ were green the whole time.
 | **U1 — stop lying about the surface** | route class-A client-side controls away from the model; make an unhandled-but-catalogued command say what it is rather than silently becoming a prompt; `/help` reflects reality | pure honesty work, no new SDK questions, removes the worst class of surprise |
 | **U2 — session & context controls** | `/export` · `/summary` · `/diff` · `/files` · `/session` · `/tag` · `/rename` · `/stats` | all read or format state we already hold; no SDK gaps |
 | **U3 — the directory question** | probe `register_repo_root`, then `/add-dir` (and a decision on `/cd`) on whatever the probe permits | one probe gates the whole slice; do not design before it runs |
-| **U4 — settings surfaces** | `/config` · `/permissions` · `/theme` · `/output-style` · `/keybindings` · `/vim` | genuinely new UI; largest and most taste-dependent, so it goes last |
+| **U4 — settings surfaces** | `/config` · `/permissions` · `/theme` · `/output-style` · `/keybindings` | genuinely new UI; largest and most taste-dependent, so it goes last |
 
 Deliberately excluded: everything in class B's out-of-scope list, and `/login` / `/logout` (auth is
 `.env`-driven here and a REPL login flow would fight the OAuth-token model this project depends on).
+
+## Owner decisions (2026-07-30)
+
+- **`/config` and `/permissions` are required** — U4 is in scope, not optional.
+- **`/vim` is the only deferral.** Everything else in the wanted list above stays in.
+- **The sprint runs as an observe→fix loop**, not one design pass. The full plan, its slices, and the
+  method now live in [`../superpowers/specs/2026-07-30-tui-ux-sprint-design.md`](../superpowers/specs/2026-07-30-tui-ux-sprint-design.md);
+  this file remains the command-surface evidence it draws on.
+- Commands are no longer the whole story: the same session surfaced a background-work visibility gap and
+  two keymap divergences from real Claude Code, both now slices in that spec.
 
 ## Reproducing the audit
 
