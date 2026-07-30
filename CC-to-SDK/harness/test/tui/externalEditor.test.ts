@@ -1,6 +1,6 @@
 // tui/test/externalEditor.test.ts — editExternal round-trips the buffer through a fake $EDITOR.
 import { describe, it, expect } from "vitest";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync } from "node:fs";
 import { editExternal } from "../../src/tui/externalEditor.js";
 
 describe("editExternal", () => {
@@ -23,6 +23,20 @@ describe("editExternal", () => {
   it("returns null (buffer kept) when the editor exits non-zero or errors", () => {
     expect(editExternal("keep me", { spawn: (() => ({ status: 1 })) as any, setRaw: () => {}, editorCmd: "e" })).toBeNull();
     expect(editExternal("keep me", { spawn: (() => ({ error: new Error("ENOENT"), status: null })) as any, setRaw: () => {}, editorCmd: "e" })).toBeNull();
+  });
+  it("returns null (buffer kept) when the file is deleted after a 0-exit (atomic-rename / editor quirk)", () => {
+    const rawCalls: boolean[] = [];
+    const out = editExternal("keep me", {
+      spawn: ((_cmd: string, args: string[]) => {
+        const file = args[args.length - 1];
+        rmSync(file);                                     // simulate the editor deleting/moving the file away
+        return { status: 0 } as any;
+      }) as any,
+      setRaw: (on) => rawCalls.push(on),
+      editorCmd: "e",
+    });
+    expect(out).toBeNull();
+    expect(rawCalls).toEqual([false, true]);                // raw mode still restored
   });
   it("splits an editor command with arguments", () => {
     let seen: [string, string[]] | undefined;

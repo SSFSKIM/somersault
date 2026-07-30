@@ -385,6 +385,19 @@ describe("Wave-1 keymap wiring", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(edits).toEqual(["hi", ""]);
   });
+  it("chord completes but editExternal returns null → the ORIGINAL buffer is preserved (not cleared)", async () => {
+    const submitted: string[] = [];
+    const { stdin } = render(<ChatComposer onSubmit={(t) => submitted.push(t)} cwd="/" commandCatalog={[]} editExternal={() => null} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("keep me");
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x18");                                     // Ctrl-X
+    stdin.write("\x05");                                     // Ctrl-E (within the chord window) — editExternal() returns null
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\r");                                        // submit
+    await new Promise((r) => setTimeout(r, 20));
+    expect(submitted).toEqual(["keep me"]);
+  });
   it("Ctrl-E alone (no recent Ctrl-X) is still line-end, not the editor", async () => {
     const edits: string[] = [];
     const { stdin } = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} editExternal={(t) => { edits.push(t); return null; }} />);

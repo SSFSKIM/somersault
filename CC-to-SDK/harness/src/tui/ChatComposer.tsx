@@ -104,7 +104,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     if (key.ctrl && (input === "g" || (input === "e" && Date.now() - ctrlX.current < 2000))) {
       ctrlX.current = 0;
       const edited = editExt(s.lines.join("\n"));
-      if (edited !== null && !disposed.current) setState((st) => withBufferText(st, edited));
+      // Clear any open mention/command popup too — it was filtered against the pre-edit buffer and would
+      // otherwise show stale items against the freshly-applied text.
+      if (edited !== null && !disposed.current) setState((st) => withBufferText({ ...st, mention: null, command: null }, edited));
       return;
     }
     ctrlX.current = 0;                                       // any other key breaks the chord

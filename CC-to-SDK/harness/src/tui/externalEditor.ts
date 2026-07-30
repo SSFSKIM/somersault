@@ -22,7 +22,7 @@ export function editExternal(text: string, io: EditorIO = {}): string | null {
     setRaw(false);
     const r = spawn(cmd, [...args, file], { stdio: "inherit" });
     if (r.error || r.status !== 0) return null;
-    return readFileSync(file, "utf8").replace(/\n$/, "");
+    try { return readFileSync(file, "utf8").replace(/\n$/, ""); } catch { return null; }   // file deleted / atomic-rename quirk — keep original buffer
   } finally {
     setRaw(true);
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* tmp cleanup */ }
