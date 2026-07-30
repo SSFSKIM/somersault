@@ -154,6 +154,12 @@ export class Session implements ControllableSession {
   async usage(): Promise<unknown> { this.assertRunning(); return this.callQValue("usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET"); }
   async initializationResult(): Promise<unknown> { this.assertRunning(); return this.callQValue("initializationResult"); }
   async applyFlagSettings(settings: Record<string, unknown>): Promise<void> { this.assertRunning(); await this.callQ("applyFlagSettings", settings); }
+  /** Untyped control door (probe 75): every declared subtype rides the same funnel the typed methods use. */
+  async getSettings(): Promise<unknown> {
+    this.assertRunning();
+    const res = (await this.callQ("request", { subtype: "get_settings" })) as { response?: unknown };
+    return res?.response ?? res;
+  }
 
   // ---- runtime MCP topology (W3.5; probes 52/52b) ----
   /** Replace the session's DYNAMIC MCP server set mid-session (stdio/sse/http and SDK-type both work).

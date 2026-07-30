@@ -61,6 +61,13 @@ const handlers = (over: Partial<HostHandlers> = {}): HostHandlers => ({
   rewindAnchors: async () => [],
   rewindDryRun: async () => ({ canRewind: false }),
   rewind: async () => {},
+  getSettings: async () => ({}),
+  listDirs: () => [],
+  addDir: async () => {},
+  removeDir: async () => {},
+  setOutputStyle: async () => {},
+  addRule: async () => {},
+  removeRule: async () => {},
   ...over,
 });
 

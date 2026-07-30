@@ -44,6 +44,7 @@ function methodQuery(rec: any) {
     it.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET = async () => ({ session: { total_cost_usd: 2 } });
     it.initializationResult = async () => ({ models: ["m"], account: {} });
     it.applyFlagSettings = async (s: any) => { rec.applied = s; };
+    it.request = async (payload: any) => { rec.requested = payload; return { response: { effective: {}, sources: [], applied: [] } }; };
     return it;
   };
 }
@@ -188,6 +189,22 @@ describe("Session", () => {
     expect(await s.initializationResult()).toEqual({ models: ["m"], account: {} });
     await s.applyFlagSettings({ outputStyle: "explanatory" });
     expect(rec.applied).toEqual({ outputStyle: "explanatory" });
+    await s.dispose();
+  });
+  it("getSettings rides the untyped request door with subtype:get_settings and unwraps .response", async () => {
+    const rec: any = {};
+    const s = new Session({ query: methodQuery(rec) }, {});
+    expect(await s.getSettings()).toEqual({ effective: {}, sources: [], applied: [] });
+    expect(rec.requested).toEqual({ subtype: "get_settings" });
+    await s.dispose();
+  });
+  it("getSettings falls back to the raw response when there is no .response wrapper", async () => {
+    const s = new Session({ query: ({ prompt }: any) => {
+      const it: any = (async function* () { for await (const t of prompt) yield { type: "result", subtype: "success", result: "did:" + t.message.content }; })();
+      it.request = async () => ({ effective: { x: 1 } });   // no .response key
+      return it;
+    } }, {});
+    expect(await s.getSettings()).toEqual({ effective: { x: 1 } });
     await s.dispose();
   });
   it("usage() rejects once the session has ended", async () => {

@@ -44,6 +44,16 @@ export const hostOp = z.discriminatedUnion("op", [
   z.object({ op: z.literal("rewind_anchors"), ...withId }),
   z.object({ op: z.literal("rewind_dryrun"), uuid: z.string().min(1), ...withId }),
   z.object({ op: z.literal("rewind"), uuid: z.string().min(1), prevUuid: z.string().min(1).nullable(), scope: z.enum(["both", "conversation", "code"]), ...withId }),
+  // W3 T1: settings/dirs ops. get_settings/list_dirs are read-only passthroughs; the rest mutate the
+  // host's flag-state accumulator (see host.ts) and are never busy-gated — they don't touch the engine
+  // conversation, only its dynamic flag layer.
+  z.object({ op: z.literal("get_settings"), ...withId }),
+  z.object({ op: z.literal("list_dirs"), ...withId }),
+  z.object({ op: z.literal("add_dir"), path: z.string().min(1), ...withId }),
+  z.object({ op: z.literal("remove_dir"), path: z.string().min(1), ...withId }),
+  z.object({ op: z.literal("set_output_style"), style: z.string().min(1), ...withId }),
+  z.object({ op: z.literal("add_rule"), behavior: z.enum(["allow", "ask", "deny"]), rule: z.string().min(1), ...withId }),
+  z.object({ op: z.literal("remove_rule"), behavior: z.enum(["allow", "ask", "deny"]), rule: z.string().min(1), ...withId }),
 ]);
 export type HostOp = z.infer<typeof hostOp>;
 export type ControlOp = Extract<HostOp, { op: "set_model" | "set_permission_mode" | "set_thinking" | "capabilities" | "compact" | "usage" | "context_usage" | "mcp_status" | "mcp_reconnect" | "mcp_toggle" }>;

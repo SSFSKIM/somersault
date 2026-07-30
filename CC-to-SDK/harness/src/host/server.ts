@@ -47,6 +47,16 @@ export interface HostHandlers {
   rewindDryRun(uuid: string): Promise<RewindDryRun>;
   /** Gated like `resume` (see the dispatch arm) — busy must refuse, not race. */
   rewind(anchor: { uuid: string; prevUuid: string | null }, scope: RewindScope): Promise<void>;
+  // W3 T1: the settings/dirs surface. get_settings/list_dirs are read-only; the rest mutate the host's
+  // flag-state accumulator. None of these are busy-gated — they touch only the dynamic flag layer, not
+  // the engine conversation, so they are safe to run mid-turn (unlike resume/rewind).
+  getSettings(): Promise<unknown>;
+  listDirs(): { path: string; source: "cwd" | "launch" | "session" }[];
+  addDir(path: string): Promise<void>;
+  removeDir(path: string): Promise<void>;
+  setOutputStyle(style: string): Promise<void>;
+  addRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void>;
+  removeRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void>;
 }
 
 /** A frame with no newline in sight past this is a runaway peer, not an op. Same-user only (the socket
@@ -186,6 +196,13 @@ export class HostServer {
         await this.handlers.rewind({ uuid: op.data.uuid, prevUuid: op.data.prevUuid }, op.data.scope);
         return { ok: true };
       }
+      case "get_settings": return { ok: true, settings: await this.handlers.getSettings() };
+      case "list_dirs": return { ok: true, dirs: this.handlers.listDirs() };
+      case "add_dir": await this.handlers.addDir(op.data.path); return { ok: true };
+      case "remove_dir": await this.handlers.removeDir(op.data.path); return { ok: true };
+      case "set_output_style": await this.handlers.setOutputStyle(op.data.style); return { ok: true };
+      case "add_rule": await this.handlers.addRule(op.data.behavior, op.data.rule); return { ok: true };
+      case "remove_rule": await this.handlers.removeRule(op.data.behavior, op.data.rule); return { ok: true };
     }
   }
 

@@ -63,6 +63,10 @@ export interface HostSession {
   stopTask?(taskId: string): Promise<void>;
   // C5 T2: the real Session.rewind (src/session/session.ts:184) already matches this signature.
   rewind?(userMessageId: string, opts?: { dryRun?: boolean }): Promise<unknown>;
+  // W3 T1: the settings/dirs surface. applyFlagSettings replaces whole top-level keys per call
+  // (probe 75) — the host never sends a partial object. getSettings is the untyped get_settings door.
+  applyFlagSettings?(settings: Record<string, unknown>): Promise<void>;
+  getSettings?(): Promise<unknown>;
 }
 
 /** Owns one SDK session, its UDS socket, and its roster row. Live truth is answered over the socket;
@@ -132,6 +136,11 @@ export class SessionHost {
   // Unsubscribe from the CURRENT session's onFrame — re-pointed at the fresh session on resumeSession
   // (see there for why: the swap replaces `this.session` with a subscriber set of zero).
   private offFrame?: () => void;
+  // W3 T1: the host OWNS the dynamic flag-settings state. applyFlagSettings replaces whole top-level
+  // keys per call (probe 75), and a resumed session is a NEW CLI process with an empty flag layer —
+  // both make a client-side "just call the engine" design wrong. Single accumulator, always sent whole.
+  private flagPerms = { allow: [] as string[], ask: [] as string[], deny: [] as string[], additionalDirectories: [] as string[] };
+  private flagOutputStyle?: string;
 
   private finishedResolve!: () => void;
   /** Resolves when teardown completes (server closed). runHostMain awaits this for interactive hosts. */
@@ -206,6 +215,13 @@ export class SessionHost {
         rewindAnchors: () => this.rewindAnchors(),
         rewindDryRun: (uuid) => this.rewindDryRun(uuid),
         rewind: (anchor, scope) => this.rewind(anchor, scope),
+        getSettings: () => this.getSettings(),
+        listDirs: () => this.listDirs(),
+        addDir: (path) => this.addDir(path),
+        removeDir: (path) => this.removeDir(path),
+        setOutputStyle: (style) => this.setOutputStyle(style),
+        addRule: (behavior, rule) => this.addRule(behavior, rule),
+        removeRule: (behavior, rule) => this.removeRule(behavior, rule),
       }, hostSocketPath(process.pid, this.env));
       await this.server.listen();
     } catch (e) {
@@ -318,6 +334,10 @@ export class SessionHost {
     // silently die after a /resume, a shipped surface.
     this.offFrame?.();
     this.offFrame = this.session.onFrame?.((m) => this.onSessionFrame(m));
+    // W3 T1: the new CLI process starts with an empty flag layer — re-push whatever this host has
+    // accumulated (dirs/rules/output-style) BEFORE the old session's dispose, so a fresh attach or a
+    // turn on the new engine never observes a mid-swap window with the grants silently dropped.
+    await this.replayFlagState();
     this.bgTasks = []; this.emit({ kind: "tasks_changed", tasks: [] });   // the old session's tasks are gone
     this.planUpgradePending = false;                                       // (field exists from T3)
     this.emit({ kind: "state", status: this.status() });
@@ -326,6 +346,58 @@ export class SessionHost {
     const deadline = new Promise<void>((r) => { timer = setTimeout(r, graceMs); (timer as { unref?: () => void }).unref?.(); });
     await Promise.race([old?.dispose().catch(() => {}) ?? Promise.resolve(), deadline]);
     clearTimeout(timer);
+  }
+
+  /** Re-send whatever the host has accumulated to a NEW engine process (a resumed/rewound session
+   *  starts with an empty flag layer — see swapEngine). Called from INSIDE swapEngine, after the new
+   *  engine session is live; swapEngine is the single seam both resumeSession and rewind go through. */
+  private async replayFlagState(): Promise<void> {
+    const hasPerms = Object.values(this.flagPerms).some((a) => a.length);
+    if (hasPerms) await this.session?.applyFlagSettings?.({ permissions: { ...this.flagPerms } });
+    if (this.flagOutputStyle) await this.session?.applyFlagSettings?.({ outputStyle: this.flagOutputStyle });
+  }
+
+  /** Apply + commit one whole permissions object. Commit ONLY after the engine accepts it — a rejected
+   *  grant (a denied add_dir, say) must not leave a phantom row in the accumulator that a later replay
+   *  would then re-push as if it had succeeded (retry-safety). */
+  private async pushFlagPerms(next: typeof this.flagPerms): Promise<void> {
+    await this.session?.applyFlagSettings?.({ permissions: { ...next } });
+    this.flagPerms = next;
+  }
+  async addDir(path: string): Promise<void> {
+    if (this.flagPerms.additionalDirectories.includes(path)) return;
+    await this.pushFlagPerms({ ...this.flagPerms, additionalDirectories: [...this.flagPerms.additionalDirectories, path] });
+  }
+  async removeDir(path: string): Promise<void> {
+    await this.pushFlagPerms({ ...this.flagPerms, additionalDirectories: this.flagPerms.additionalDirectories.filter((d) => d !== path) });
+  }
+  async addRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void> {
+    if (this.flagPerms[behavior].includes(rule)) return;
+    await this.pushFlagPerms({ ...this.flagPerms, [behavior]: [...this.flagPerms[behavior], rule] });
+  }
+  async removeRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void> {
+    await this.pushFlagPerms({ ...this.flagPerms, [behavior]: this.flagPerms[behavior].filter((r) => r !== rule) });
+  }
+  async setOutputStyle(style: string): Promise<void> {
+    await this.session?.applyFlagSettings?.({ outputStyle: style });
+    this.flagOutputStyle = style;
+  }
+  /** cwd first (it is implicit, always granted), then the launch config's static list, then this
+   *  host's own session-scoped grants — the three sources /add-dir's UI needs to tell apart. */
+  listDirs(): { path: string; source: "cwd" | "launch" | "session" }[] {
+    return [
+      { path: this.opts.cwd, source: "cwd" as const },
+      ...(this.opts.config.additionalDirectories ?? []).map((d) => ({ path: d, source: "launch" as const })),
+      ...this.flagPerms.additionalDirectories.map((d) => ({ path: d, source: "session" as const })),
+    ];
+  }
+  /** Untyped get_settings passthrough (probe 75 Q5). Throws a named error when unsupported, same as
+   *  the other session-member passthroughs (background/stopBgTask) — dispatch's catch turns it into
+   *  `{ok:false, error:…}`. */
+  async getSettings(): Promise<unknown> {
+    const fn = this.session?.getSettings?.bind(this.session);
+    if (!fn) throw new Error("get_settings unsupported by this host");
+    return fn();
   }
 
   /** Swap the underlying SDK session for a resume of `sessionId`. Interactive /resume path — refused
