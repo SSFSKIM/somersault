@@ -173,6 +173,17 @@ export class RemoteChatSession {
   rewindDryRunOp(uuid: string) { return this.send<{ ok: boolean; error?: string; dryRun?: RewindDryRun }>({ op: "rewind_dryrun", uuid }, REWIND_TIMEOUT_MS); }
   rewindOp(uuid: string, prevUuid: string | null, scope: RewindScope) { return this.send<{ ok: boolean; error?: string }>({ op: "rewind", uuid, prevUuid, scope }, NO_TIMEOUT); }
 
+  // W3 T2: settings/dirs wire ops, same `…Op` shape as the control ops above. get_settings/list_dirs are
+  // read-only passthroughs; the rest mutate the host's flag-state accumulator (server.ts's dispatch never
+  // busy-gates any of these, unlike resume/rewind, so the default timeout is fine).
+  getSettingsOp() { return this.send<{ ok: boolean; error?: string; settings?: unknown }>({ op: "get_settings" }); }
+  listDirsOp() { return this.send<{ ok: boolean; error?: string; dirs?: { path: string; source: "cwd" | "launch" | "session" }[] }>({ op: "list_dirs" }); }
+  addDirOp(path: string) { return this.send<{ ok: boolean; error?: string }>({ op: "add_dir", path }); }
+  removeDirOp(path: string) { return this.send<{ ok: boolean; error?: string }>({ op: "remove_dir", path }); }
+  setOutputStyleOp(style: string) { return this.send<{ ok: boolean; error?: string }>({ op: "set_output_style", style }); }
+  addRuleOp(behavior: "allow" | "ask" | "deny", rule: string) { return this.send<{ ok: boolean; error?: string }>({ op: "add_rule", behavior, rule }); }
+  removeRuleOp(behavior: "allow" | "ask" | "deny", rule: string) { return this.send<{ ok: boolean; error?: string }>({ op: "remove_rule", behavior, rule }); }
+
   /** Subscribe to the host's pushed events. The first live subscription sends `follow`; the last one
    *  leaving sends `unfollow`. Followers are keyed by a per-call token, not by the callback reference,
    *  so subscribing the same function twice creates two independent subscriptions (dropping one leaves

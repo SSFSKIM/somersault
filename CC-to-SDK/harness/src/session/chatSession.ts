@@ -58,6 +58,20 @@ export interface RewindOps {
   rewind(anchor: RewindAnchor, scope: RewindScope): Promise<void>;
 }
 
+/** Settings/dirs surface (host path only — W3 T1's flag-state accumulator). Mirrors `HostHandlers`'
+ *  getSettings/listDirs/addDir/removeDir/setOutputStyle/addRule/removeRule exactly; the in-process lib
+ *  Session does not implement this (its config is fixed at construction, like DecisionFeed's broker seam
+ *  predating it) — consumers feature-test with `hasSettingsOps`. */
+export interface SettingsOps {
+  getSettings(): Promise<unknown>;
+  listDirs(): Promise<{ path: string; source: "cwd" | "launch" | "session" }[]>;
+  addDir(path: string): Promise<void>;
+  removeDir(path: string): Promise<void>;
+  setOutputStyle(style: string): Promise<void>;
+  addRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void>;
+  removeRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void>;
+}
+
 export function hasDecisionFeed(s: ChatSession): s is ChatSession & DecisionFeed {
   return typeof (s as Partial<DecisionFeed>).answerDecision === "function";
 }
@@ -69,4 +83,7 @@ export function hasSessionEvents(s: ChatSession): s is ChatSession & SessionEven
 }
 export function hasRewind(s: ChatSession): s is ChatSession & RewindOps {
   return typeof (s as Partial<RewindOps>).rewind === "function" && typeof (s as Partial<RewindOps>).rewindAnchors === "function";
+}
+export function hasSettingsOps(s: ChatSession): s is ChatSession & SettingsOps {
+  return typeof (s as Partial<SettingsOps>).getSettings === "function" && typeof (s as Partial<SettingsOps>).addDir === "function";
 }
