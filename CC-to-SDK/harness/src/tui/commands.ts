@@ -4,6 +4,8 @@ import type { RenderLine } from "./render.js";
 import { THINK_LEVELS } from "./thinkLevels.js";
 import type { CommandEntry } from "./commandComplete.js";
 import { formatElapsed } from "./spinner.js";
+import type { SettingsRow } from "./settingsRows.js";
+import { THEME_LABELS } from "./theme.js";   // leaf module, no React — safe to import into this pure file
 
 export interface ParsedCommand { name: string; args: string }
 
@@ -34,6 +36,9 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "add-dir", summary: "<path> — add a new working directory" },
   { name: "theme", summary: "change the theme" },
   { name: "config", summary: "open the Settings dialog (Status · Config · Usage · Stats)" },
+  { name: "settings", summary: "alias of /config" },
+  { name: "output-style", summary: "output style moved to /config" },
+  { name: "keybindings", summary: "open your keyboard shortcuts file" },
   { name: "usage", summary: "show plan usage / rate-limit windows" },
   { name: "copy", summary: "copy the last response to the clipboard" },
   { name: "export", summary: "[file|clipboard] — export the conversation as markdown" },
@@ -191,4 +196,43 @@ export function parseLaunchThink(args: string[]): string | undefined {
   const i = args.indexOf("--think");
   const v = i >= 0 ? args[i + 1] : undefined;
   return v && (THINK_LEVELS as readonly string[]).includes(v) ? v : undefined;
+}
+
+// ---- /config key=value (W3.6) ----
+// theme.ts's own id list — theme's setter (setTheme) mutates its module-level `current`/`ACCENT` state
+// BEFORE it would fail on a bad id (it indexes THEMES[id].accent only after assigning `current = id`), so
+// an unvalidated bad id would corrupt currentTheme() for the rest of the process, not just this one call.
+// permissionMode needs no such list here — its row already carries `options` (settingsRows.ts's single
+// source, exported as PERMISSION_MODE_OPTIONS); model/outputStyle have no fixed domain to check (same as
+// how /model and the Output-style picker never client-side-validate an id either).
+const THEME_IDS = THEME_LABELS.map(([id]) => id);
+
+export type ConfigArgResult =
+  | { kind: "open" }
+  | { kind: "error"; lines: RenderLine[] }
+  | { kind: "set"; id: SettingsRow["id"]; value: string; lines: RenderLine[] };
+
+/** `/config` (bare) → open; `/config key=value` → validated against `rows` — the SAME model
+ *  SettingsDialog renders (`buildRows(...)`, passed in by the caller) — so this can never drift from what
+ *  the dialog itself considers a real row/value. Only decides WHAT to set, never HOW: the caller applies
+ *  `{id, value}` through the same functions the dialog uses (applyMode/setThink/applyOutputStyle) or the
+ *  direct theme/model mechanism their own standalone commands use, so a rejected parse can never partially
+ *  mutate state. Every error string here is Global Constraints' verbatim `/config key=value` copy. */
+export function parseConfigArg(arg: string, rows: SettingsRow[]): ConfigArgResult {
+  const s = arg.trim();
+  if (!s) return { kind: "open" };
+  const eq = s.indexOf("=");
+  if (eq < 0) return { kind: "error", lines: [{ text: `Expected key=value, got "${s}". Run /config to see what's available.`, color: "red" }] };
+  const key = s.slice(0, eq).trim();
+  const value = s.slice(eq + 1).trim();
+  const row = rows.find((r) => r.id === key);
+  if (!row) return { kind: "error", lines: [{ text: `${key} isn't a /config setting. Run /config to see what's available.`, color: "red" }] };
+  if (row.type === "boolean") {
+    if (value !== "true" && value !== "false") return { kind: "error", lines: [{ text: `${key} takes true or false, not "${value}".`, color: "red" }] };
+    if (value === "false" && row.value === "false") return { kind: "error", lines: [{ text: `${key} is already off.`, dim: true }] };
+    return { kind: "set", id: row.id, value, lines: [{ text: `Set ${key} to ${value}` }] };
+  }
+  const domain = row.type === "enum" ? (row.options ?? []) : row.id === "theme" ? THEME_IDS : undefined;
+  if (domain && !domain.includes(value)) return { kind: "error", lines: [{ text: `${key} takes one of: ${domain.join(", ")}.`, color: "red" }] };
+  return { kind: "set", id: row.id, value, lines: [{ text: `Set ${key} to ${value}` }] };
 }

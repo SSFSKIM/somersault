@@ -2,6 +2,8 @@
 import { describe, it, expect } from "vitest";
 import { parseCommand, COMMANDS, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, parseResumeIntent, parseLaunchMode, parseLaunchThink, LOCAL_NAMES, LOCAL_COMMAND_ENTRIES } from "../../src/tui/commands.js";
 import { CLIENT_SIDE_NOTES, formatClientSide } from "../../src/tui/commands.js";
+import { parseConfigArg } from "../../src/tui/commands.js";
+import { buildRows, type SettingsRowCtx } from "../../src/tui/settingsRows.js";
 
 describe("parseCommand", () => {
   it("splits a slash command into name + args", () => {
@@ -139,6 +141,90 @@ describe("/bg (Goal B task 7)", () => {
     expect(COMMANDS.some((c) => c.name === "bg")).toBe(true);
     expect(LOCAL_NAMES.has("bg")).toBe(true);
     expect(LOCAL_COMMAND_ENTRIES.some((e) => e.name === "bg")).toBe(true);
+  });
+});
+
+describe("/config key=value (W3 T6)", () => {
+  const FRESH_CTX: SettingsRowCtx = { theme: "dark", model: undefined, outputStyle: "default", mode: "default", thinkLevel: "default" };
+  const freshRows = () => buildRows(FRESH_CTX);
+
+  it("no arg → open", () => {
+    expect(parseConfigArg("", freshRows())).toEqual({ kind: "open" });
+    expect(parseConfigArg("   ", freshRows())).toEqual({ kind: "open" });
+  });
+
+  it("malformed (no '=') → the exact usage error", () => {
+    const r = parseConfigArg("nonsense", freshRows());
+    expect(r.kind).toBe("error");
+    expect((r as any).lines[0].text).toBe(`Expected key=value, got "nonsense". Run /config to see what's available.`);
+  });
+
+  it("unknown key → the exact 'isn't a /config setting' error", () => {
+    const r = parseConfigArg("bogus=1", freshRows());
+    expect(r.kind).toBe("error");
+    expect((r as any).lines[0].text).toBe(`bogus isn't a /config setting. Run /config to see what's available.`);
+  });
+
+  it("thinking (boolean) rejects a non-true/false value", () => {
+    const r = parseConfigArg("thinking=maybe", freshRows());
+    expect(r.kind).toBe("error");
+    expect((r as any).lines[0].text).toBe(`thinking takes true or false, not "maybe".`);
+  });
+
+  it("thinking=false against a row already off → the 'already off' notice, not a set", () => {
+    const offRows = buildRows({ ...FRESH_CTX, thinkLevel: "off" });   // row.value === "false" already
+    const r = parseConfigArg("thinking=false", offRows);
+    expect(r).toEqual({ kind: "error", lines: [{ text: "thinking is already off.", dim: true }] });
+  });
+
+  it("thinking=false against a row currently on → a validated set", () => {
+    const r = parseConfigArg("thinking=false", freshRows());   // FRESH_CTX.thinkLevel is "default" → row.value "true"
+    expect(r.kind).toBe("set");
+    expect((r as any).id).toBe("thinking");
+    expect((r as any).value).toBe("false");
+    expect((r as any).lines).toEqual([{ text: "Set thinking to false" }]);
+  });
+
+  it("permissionMode (enum) rejects an out-of-domain value, listing the exact 4 options", () => {
+    const r = parseConfigArg("permissionMode=weird", freshRows());
+    expect(r.kind).toBe("error");
+    expect((r as any).lines[0].text).toBe("permissionMode takes one of: default, acceptEdits, plan, auto.");
+  });
+
+  it("permissionMode accepts a valid option", () => {
+    const r = parseConfigArg("permissionMode=acceptEdits", freshRows());
+    expect(r).toEqual({ kind: "set", id: "permissionMode", value: "acceptEdits", lines: [{ text: "Set permissionMode to acceptEdits" }] });
+  });
+
+  it("theme (managedEnum) rejects an id outside theme.ts's own THEME_LABELS domain", () => {
+    const r = parseConfigArg("theme=bogus", freshRows());
+    expect(r.kind).toBe("error");
+    expect((r as any).lines[0].text).toBe("theme takes one of: auto, dark, light, dark-daltonized, light-daltonized.");
+  });
+
+  it("theme accepts a valid id — 'Set theme to dark'", () => {
+    const r = parseConfigArg("theme=dark", freshRows());
+    expect(r).toEqual({ kind: "set", id: "theme", value: "dark", lines: [{ text: "Set theme to dark" }] });
+  });
+
+  it("model and outputStyle are free-form (no fixed domain to check against)", () => {
+    expect(parseConfigArg("model=claude-opus-4-8", freshRows())).toEqual({ kind: "set", id: "model", value: "claude-opus-4-8", lines: [{ text: "Set model to claude-opus-4-8" }] });
+    expect(parseConfigArg("outputStyle=proactive", freshRows())).toEqual({ kind: "set", id: "outputStyle", value: "proactive", lines: [{ text: "Set outputStyle to proactive" }] });
+  });
+
+  it("tolerates spaces around '=' and trims the value", () => {
+    const r = parseConfigArg("theme = dark ", freshRows());
+    expect(r).toEqual({ kind: "set", id: "theme", value: "dark", lines: [{ text: "Set theme to dark" }] });
+  });
+
+  it("settings/output-style/keybindings are registered commands with the pinned summaries", () => {
+    const byName = Object.fromEntries(COMMANDS.map((c) => [c.name, c.summary]));
+    expect(byName.settings).toBe("alias of /config");
+    expect(byName["output-style"]).toBe("output style moved to /config");
+    expect(byName.keybindings).toBe("open your keyboard shortcuts file");
+    expect(LOCAL_NAMES.has("settings")).toBe(true);
+    expect(LOCAL_NAMES.has("output-style")).toBe(true);
+    expect(LOCAL_NAMES.has("keybindings")).toBe(true);
   });
 });
 

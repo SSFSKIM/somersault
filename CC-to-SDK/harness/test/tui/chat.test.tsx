@@ -869,4 +869,104 @@ describe("<ChatApp>", () => {
     expect(writes[0].path).toBe(`${process.cwd()}/.claude/settings.local.json`);
     expect(JSON.parse(writes[0].content)).toEqual({ outputStyle: "proactive" });
   });
+
+  // ---- W3 T6: /config key=value, /settings alias, /output-style redirect, /keybindings viewer ----
+  // The exhaustive input/output matrix for parseConfigArg lives in commands.test.ts (pure unit tests);
+  // these are end-to-end wiring checks — the composer really dispatches through parseConfigArg AND the
+  // right apply function actually runs (theme really switches, the dialog really opens), not just that the
+  // right string gets printed.
+
+  it("Config: '/config bogus=1' prints the unknown-key error and never opens the dialog", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config bogus=1");
+    await waitFor(() => frame(lastFrame).includes("/config bogus=1"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("isn't a /config setting"));
+    expect(frame(lastFrame)).toContain(`bogus isn't a /config setting. Run /config to see what's available.`);
+    expect(frame(lastFrame)).not.toContain("Enter/Space to change · / to search · Esc to close");   // the Config-tab footer never rendered — no dialog opened
+  });
+
+  it("Config: '/config thinking=maybe' prints the boolean-domain error", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config thinking=maybe");
+    await waitFor(() => frame(lastFrame).includes("/config thinking=maybe"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes(`thinking takes true or false, not "maybe".`));
+  });
+
+  it("Config: '/config permissionMode=weird' prints the enum-domain error", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config permissionMode=weird");
+    await waitFor(() => frame(lastFrame).includes("/config permissionMode=weird"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("permissionMode takes one of: default, acceptEdits, plan, auto."));
+  });
+
+  // Brief requirement: drive "already off" through TWO REAL invocations, not an isolated string assertion —
+  // the first call must actually turn thinking off before the second call can correctly find it already off.
+  it("Config: '/config thinking=false' twice — the first turns it off, the second reports it's already off", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config thinking=false");
+    await waitFor(() => frame(lastFrame).includes("/config thinking=false"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Set thinking to false"));   // invocation 1: a real change
+    expect(frame(lastFrame)).not.toContain("already off");
+    stdin.write("/config thinking=false");
+    await new Promise((r) => setTimeout(r, 30));                              // settle tick, mirrors other repeated-invocation tests in this file
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("thinking is already off."));   // invocation 2: reads the state invocation 1 actually left behind
+    expect((frame(lastFrame).match(/Set thinking to false/g) ?? []).length).toBe(1);   // only ONE real set happened across both calls
+  });
+
+  it("Config: '/config theme=dark' prints 'Set theme to dark' and the theme actually switches", async () => {
+    expect(currentTheme()).toBe("auto");   // afterEach resets it — confirms this test starts from a real baseline, not already "dark"
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config theme=dark");
+    await waitFor(() => frame(lastFrame).includes("/config theme=dark"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Set theme to dark"));
+    expect(currentTheme()).toBe("dark");   // the engine-level effect, not just the printed line
+  });
+
+  it("/settings aliases /config — opens the same Settings dialog at the Config tab", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/settings"); await waitFor(() => frame(lastFrame).includes("/settings"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Settings"));
+    const f = frame(lastFrame);
+    expect(f).toContain("Default permission mode");                             // Config tab's rows, same as /config
+    expect(f).toContain("Enter/Space to change · / to search · Esc to close");
+  });
+
+  it("/output-style prints the redirect line then opens Settings at the Config tab (not the picker directly)", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/output-style"); await waitFor(() => frame(lastFrame).includes("/output-style"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("/output-style moved → Output style in /config"));
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));   // Settings opened, Config tab — not OutputStylePicker's own "Preferred output style" title
+    expect(frame(lastFrame)).not.toContain("Preferred output style");
+  });
+
+  it("/keybindings opens the shortcuts overlay and prints the honesty line disclosing the file-opener divergence", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/keybindings"); await waitFor(() => frame(lastFrame).includes("/keybindings"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));   // ShortcutsOverlay is up
+    // Ink word-wraps this long single dim <Text> at the terminal width AND re-opens/closes the dim escape
+    // codes around EACH wrapped physical line (not just once around the whole logical line), and the wrap
+    // happens to land right after the line's own trailing space ("...opens ") — so a naive "\n"→" " swap
+    // leaves a DOUBLE space at the boundary on top of the (harmless, but real) dim-code bytes in between.
+    // Strip all SGR escapes (mirroring ShortcutsOverlay.test.tsx's own stripAnsi helper) and collapse all
+    // whitespace runs to one space — confirmed by dumping the raw frame while diagnosing this test.
+    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+    expect(stripAnsi(frame(lastFrame)).replace(/\s+/g, " ")).toContain("keybinding customization isn't supported yet — showing the built-in keymap (upstream opens ~/.claude/keybindings.json in your editor)");
+  });
 });

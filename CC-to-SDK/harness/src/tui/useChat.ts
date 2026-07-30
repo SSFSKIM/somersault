@@ -13,8 +13,9 @@ import { validateAddDir, formatAddDirVerdict, formatAddDirResult, type AddDirVer
 import { mergeSettingsFile, appendToArray, type SettingsFileDeps } from "./settingsFile.js";
 import type { CcxPrefs } from "./prefs.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
-import { currentTheme } from "./theme.js";
+import { currentTheme, setTheme, type ThemeId } from "./theme.js";
 import { buildRows, summarizeChanges, PERMISSION_MODE_OPTIONS, type SettingsRowCtx } from "./settingsRows.js";
+import { OUTPUT_STYLE_REDIRECT } from "./OutputStylePicker.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
@@ -22,7 +23,7 @@ import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
-import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
@@ -383,9 +384,45 @@ export function useChat(
         // (theme.ts's setTheme has "no persistence — caller's job", and the dialog IS that caller); this
         // just opens/closes it and prints whatever result line it hands back via closeThemeDialog.
         case "theme": setThemeDialog({ open: true }); break;
-        // /config: the Settings shell (W3 T5). No args handling yet — Task 6 layers `/config key=value`
-        // on top of this same dialog; today `/config` (with or without stray args) always just opens it.
-        case "config": openSettings(); break;
+        // /config [key=value] (W3 T6): bare → open the Settings shell at Config (openSettings always seeds
+        // tab:"Config"). With a key=value arg, parseConfigArg validates it against the SAME row model
+        // SettingsDialog renders (buildRows(currentSettingsCtx()) — never a second copy of the row/
+        // permission-mode/theme-id lists) and returns either an error to print or a validated {id,value} to
+        // apply. parseConfigArg only decided WHAT to set, never HOW — that's this switch, so a rejected
+        // parse can never partially mutate state. /settings is upstream's literal alias (Task 6 brief),
+        // sharing this exact case body including its own args.
+        case "settings":
+        case "config": {
+          const result = parseConfigArg(cmd.args, buildRows(currentSettingsCtx()));
+          if (result.kind === "open") { openSettings(); break; }
+          if (result.kind === "error") { append(result.lines); break; }
+          switch (result.id) {
+            // theme applies exactly like ThemeDialog's own Enter handler (setTheme + savePrefs) — the SAME
+            // primitive, no session round-trip, matching /theme's own no-engine-touch design.
+            case "theme": setTheme(result.value as ThemeId); savePrefsFn({ theme: result.value as ThemeId }); break;
+            // model applies exactly like /model's own arg path — resolveModelAlias is the SAME tier-alias
+            // translation ("opus" must still resolve to the real id, probe 72).
+            case "model": { const m = resolveModelAlias(result.value)!; await session.setModel(m); if (!disposed.current) setModel(m); break; }
+            case "outputStyle": await applyOutputStyle(result.value); break;
+            case "permissionMode": await applyMode(result.value); break;
+            // Boolean row vocabulary ("true"/"false") → setThink's own off/default vocabulary (its doc comment).
+            case "thinking": await setThink(result.value === "false" ? "off" : "default"); break;
+          }
+          if (!disposed.current) append(result.lines);
+          break;
+        }
+        // /output-style (W3 T6): upstream folded the standalone picker into /config's Output-style row —
+        // print the exact redirect line, then open Settings AT Config (openSettings always does), never the
+        // picker directly (Global Constraints line 33).
+        case "output-style": notice(OUTPUT_STYLE_REDIRECT); openSettings(); break;
+        // /keybindings (W3 T6): upstream opens ~/.claude/keybindings.json in $EDITOR — a file opener, no
+        // in-app UI. We have no keybinding-CUSTOMIZATION mechanism to open a file for, so this opens the
+        // existing read-only `?` keymap viewer instead and says so up front (recorded divergence, Global
+        // Constraints line 35 — a viewer standing in for an editor-opener, not a bug).
+        case "keybindings":
+          notice("keybinding customization isn't supported yet — showing the built-in keymap (upstream opens ~/.claude/keybindings.json in your editor)");
+          openShortcuts();
+          break;
         // Same exit the Ctrl-D / Ctrl-C-twice keys use — the host owns the actual unmount (opts.onExit).
         case "exit": case "quit": opts.onExit?.(); break;
         default: append(formatUnknown(cmd.name));
