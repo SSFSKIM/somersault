@@ -62,8 +62,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const onCycleMode = () => { cycleMode(); disarm(); };   // Shift+Tab cycles the permission ladder (default → acceptEdits → plan → auto)
   // Only Ctrl-C / Ctrl-Z / Ctrl-B / Ctrl-T live here — they conflict with nothing (composer/dialog/pickers never act
   // on them), so this stays active even during a pending dialog (so Ctrl-C can still quit, Ctrl-Z can still
-  // detach). Shift+Tab/Esc are owned by whatever input is focused (the composer routes them to
-  // onCycleMode/onInterrupt only when no popup is open — no double-handling; dialogs/pickers own their own Esc).
+  // detach). Shift+Tab/Esc are owned by whatever input is focused: the composer fires onCycleMode on
+  // Shift+Tab even with a `/`/`@` popup open (matches 2.1.220 — the Autocomplete context binds only
+  // tab/esc/↑/↓, so shift+tab falls through to Chat's cycleMode), and routes Esc to onInterrupt only
+  // when no popup is open; dialogs/pickers own their own Esc.
   // Ctrl-L lives in the editor now (Task 2), not here.
   useInput((input, key) => {
     if (key.ctrl && input === "t") { setTodosOpen((v) => !v); disarm(); return; }   // CC app:toggleTodos

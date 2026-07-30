@@ -111,7 +111,9 @@ function submitTurn(s: EditorState): EditorResult {
   if (isBlank(s)) return { state: s };
   const t = bufferText(s);
   const history = s.history.length && s.history[s.history.length - 1] === t ? s.history : [...s.history, t];   // dedup consecutive
-  return { state: initialEditorState(history), submit: t };
+  // The stash SURVIVES a send (2.1.220 chat:stash keeps it in state separate from the buffer) — park a
+  // draft, fire a quick question, Ctrl-S restores the draft. The undo stack does reset with the buffer.
+  return { state: { ...initialEditorState(history), stashed: s.stashed }, submit: t };
 }
 
 function setBuffer(s: EditorState, t: string): EditorState {

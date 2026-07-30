@@ -42,6 +42,15 @@ audit-driven rows (`/config`+`/permissions` settings UI as their own ❌ row, `/
 grew the denominator — gaps that were previously invisible are now counted, which is the point of the
 sprint's honesty posture.
 
+**W1 keymap deferrals (documented per sprint acceptance item 3):** three bundle Global/Chat bindings
+neither act nor error today because they belong to Wave-2 surfaces — `ctrl+o` (`app:toggleTranscript`,
+needs U4's transcript pager), `ctrl+r` (`history:search`, needs U4's history search), and
+`ctrl+x ctrl+k` (`chat:killAgents`, pairs with U2's background work). They become scored rows when
+Wave 2 lands them. Standing intentional divergences, restated: our `Ctrl-Z` detach has no upstream
+equivalent (kept); real CC's `cmd+k` screen-clear never reaches a terminal app, so screen clear stays
+`/clear`; `Ctrl-B` here is background-panel/backgrounding rather than upstream's `task:background`
+context binding.
+
 **C5 recompute method (2026-07-28), disclosed for auditability:** each row is scored ✅=1.0 ·
 🟡=0.5 · ❌=0, `🚫` rows excluded from the denominator; a category's percentage is that plain
 count over its non-🚫 row total (no hidden per-row impact weights); the headline is the unweighted

@@ -376,12 +376,17 @@ describe("Wave-1 keymap: clear input, newline, undo, stash", () => {
     expect(s.undo.length).toBe(100);
   });
 
-  it("submit resets the undo stack and stash survives nothing (fresh state)", () => {
-    let s = type(initialEditorState(), "send me");
+  it("submit resets the undo stack but the STASH SURVIVES the send (2.1.220 chat:stash — park a draft, fire a question, restore)", () => {
+    let s = type(initialEditorState(), "long draft I want to keep");
+    s = applyKey(s, "s", { ctrl: true }).state;              // park the draft
+    s = type(s, "quick question");
     const r = applyKey(s, "", { return: true });
-    expect(r.submit).toBe("send me");
-    expect(r.state.undo).toEqual([]);
-    expect(r.state.stashed).toBeNull();
+    expect(r.submit).toBe("quick question");
+    expect(r.state.undo).toEqual([]);                        // undo dies with the buffer
+    expect(r.state.stashed).toBe("long draft I want to keep");
+    const restored = applyKey(r.state, "s", { ctrl: true }).state;   // Ctrl-S on the fresh empty buffer
+    expect(restored.lines).toEqual(["long draft I want to keep"]);
+    expect(restored.stashed).toBeNull();
   });
 });
 
