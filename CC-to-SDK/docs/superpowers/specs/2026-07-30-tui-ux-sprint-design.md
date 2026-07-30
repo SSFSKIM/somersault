@@ -148,6 +148,12 @@ labels and ordering. Largest and most taste-dependent, so it lands last. `/vim` 
   the generator's `return()` and kills the transport (probe bug, cost one false "not ready for
   writing" run). Bonus: untyped `get_settings` works — `{effective, sources[], applied{model,
   effort, advisor, ultracode}}` — a real backing store for U7's `/config`.
+- **Probe 76 (2026-07-31): output styles are fully alive mid-session.** Init declares
+  `available_output_styles: ["default","Proactive","Explanatory","Learning"]`;
+  `applyFlagSettings({outputStyle})` is accepted, `get_settings.effective` reflects it, and the very
+  next turn sees the style's injected "…output style is active" system reminder (clean before/after
+  flip on haiku). U7's `/output-style` is a typed-lever feature: picker from init's list, apply via
+  the flag layer — remembering the top-level-key replacement rule when other flag settings coexist.
 - **Probe 74 (2026-07-31) settled U2's whole evidence base in one run:** the backgrounded-Bash
   tool_result is a parseable sentence carrying BOTH the task id and the output-file path ("Command
   running in background with ID: <id>. Output is being written to: <path>. …"); `task_started` carries
