@@ -93,8 +93,9 @@ bottom, `g`/`G`, `j`/`k`, `q` to exit) and `HistorySearch` is a `ctrl+r` increme
 cycleable scope. We have neither. This is the largest single UX absence in our REPL.
 
 ### U5 — session and context commands
-`/export` · `/summary` · `/diff` · `/files` · `/session` · `/tag` · `/stats`. All read or format state we
-already hold; grouped because none needs an SDK answer.
+`/export` · `/diff` · `/files` · `/session` · `/tag` · `/stats` · `/rename`. All read or format state we
+already hold; grouped because none needs an SDK answer. (`/summary` was dropped and `/rename` pulled in
+at planning time — see Revision Notes.)
 
 ### U6 — the directory question
 Probe whether `register_repo_root` is reachable untyped before designing anything (it is a declared
@@ -151,3 +152,19 @@ Pending — written at finish.
 
 - 2026-07-30 — created after a live-testing session produced three defects and the owner's call for an
   extensive UI sprint; grounded in the freshly extracted 2.1.220 bundle.
+- 2026-07-30 (Wave-1 planning) — **execution shape decided with the owner: controlled track, three
+  waves** (Wave 1 = U1+U3+U5 · Wave 2 = U2+U4 · Wave 3 = U6+U7), one plan per wave, the owner
+  live-testing between waves. Wave 1 plan: `../plans/2026-07-30-tui-ux-wave1.md`.
+- 2026-07-30 (Wave-1 planning) — planning's hostile read corrected four U-slice premises:
+  **`/summary` is dropped** (no such command exists in 2.1.220 — the wanted list inherited it from the
+  stale February reference); **`/session` ships as a deliberate divergence** (upstream's `/session`
+  shows a cloud-session URL/QR — bridge-coupled and out of scope — ours shows local session info +
+  resume hint); **`/rename` and `/tag` moved from "honesty message" to implemented** (the lib already
+  ships `renameSession`/`tagSession`/`getSessionInfo` over the SDK's native session store); and of U1's
+  ten class-A names, **`review` and `doctor` stay prompt turns** (both are prompt-type upstream —
+  reference `review.ts` + the bundle's `doctor` `getPromptForCommand`), leaving seven honesty messages.
+- 2026-07-30 (Wave-1 planning) — U3 keymap items that depend on Wave-2 surfaces are deferred with them:
+  `ctrl+o` (needs U4's transcript pager), `ctrl+r` (needs U4's history search), `ctrl+x ctrl+k` kill
+  agents (pairs with U2's background work). `cmd+k` screen-clear is unreachable in most terminals
+  (intercepted before the app sees it) — screen clear stays `/clear`, recorded as an intentional
+  divergence.
