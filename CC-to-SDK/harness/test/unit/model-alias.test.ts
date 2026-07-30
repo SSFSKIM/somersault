@@ -18,10 +18,12 @@ describe("tier-alias → explicit model id (probe 72)", () => {
     expect(resolveModelAlias("claude-fable-5[1m]")).toBe("claude-fable-5[1m]");   // the catalog's 1M variant
     expect(resolveModelAlias(undefined)).toBeUndefined();
   });
-  it("leaves `default` and `haiku` to the SDK — its targets there are already current", () => {
-    expect(MODEL_ALIASES.default).toBeUndefined();
+  it("`default` is OUR default (opus 5), not the SDK's recommendation (which is sonnet 5)", () => {
+    expect(resolveModelAlias("default")).toBe("claude-opus-5");
+  });
+  it("leaves `haiku` to the SDK — its target is already current and has no 5-gen successor", () => {
     expect(MODEL_ALIASES.haiku).toBeUndefined();
-    expect(resolveModelAlias("default")).toBe("default");
+    expect(resolveModelAlias("haiku")).toBe("haiku");
   });
   it("resolveOptions translates a tier alias before the auto gate sees it", () => {
     // Order matters: unresolved, "opus" fails isAutoSupportedModel and would be DOWNGRADED to the auto default.

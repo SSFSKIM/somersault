@@ -34,6 +34,8 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "usage", summary: "show plan usage / rate-limit windows" },
   { name: "copy", summary: "copy the last response to the clipboard" },
   { name: "help", summary: "list commands" },
+  { name: "exit", summary: "leave the REPL (alias: /quit · same as Ctrl-D)" },
+  { name: "quit", summary: "leave the REPL (alias: /exit)" },
 ];
 
 /** The 9 local engine-driving commands as CommandEntry[] (the palette merges these with the live catalog). */

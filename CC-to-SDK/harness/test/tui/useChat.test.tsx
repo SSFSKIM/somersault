@@ -518,6 +518,22 @@ describe("useChat", () => {
     expect(submits).toBe(1);   // the queued turn never ran (cleared on interrupt)
   });
 
+  it("/exit and /quit leave the REPL through the host's exit hook, never the model", async () => {
+    // Real Claude Code has /exit and /quit; ours answered "Unknown command: /exit" (pty-verified), so the
+    // only way out was Ctrl-D / Ctrl-C twice. The command must reach the SAME exit the keys use.
+    let submitted = 0, exits = 0;
+    const fake = fakeRemote({ submit: async () => { submitted++; return { result: "x" }; } });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, { cwd: "/proj", onExit: () => { exits++; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("/exit");
+    await waitFor(() => exits === 1);
+    api.run!("/quit");
+    await waitFor(() => exits === 2);
+    expect(submitted).toBe(0);
+  });
+
   it("! runs bash locally (injected) and # appends to memory — neither reaches the model", async () => {
     let submitted = 0, bashCmd = "", memNote = "", memCwd = "";
     const fake = fakeRemote({ submit: async () => { submitted++; return { result: "x" }; } });
