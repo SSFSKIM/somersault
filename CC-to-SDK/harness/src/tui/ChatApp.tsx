@@ -103,7 +103,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         : state.rewindPicker.open
           ? <RewindPicker anchors={state.rewindPicker.anchors} onDryRun={rewindDryRun} onConfirm={confirmRewind} onClose={closeRewindPicker} />
           : state.bgPanelOpen
-            ? <BgTasksPanel tasks={state.bgTasks} onStop={stopBgTask} onClose={closeBgPanel} />
+            ? <BgTasksPanel tasks={state.bgRows} onStop={stopBgTask} onClose={closeBgPanel} />
             : state.modelPicker.open
               ? <ModelPicker models={state.modelPicker.models} onPick={pickModel} onCancel={closeModelPicker} />
               : state.picker.open
