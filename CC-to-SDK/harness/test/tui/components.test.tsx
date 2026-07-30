@@ -257,11 +257,13 @@ describe("ChatComposer", () => {
     await waitFor(() => got.length === 1);
     expect(got[0]).toBe("a\nb");
   });
-  it("routes Tab→onCycleMode and Esc→onInterrupt when no popup is open", async () => {
+  it("routes ⇧Tab→onCycleMode and Esc→onInterrupt when no popup is open; bare Tab does not cycle", async () => {
     let cycles = 0, interrupts = 0;
     const { stdin } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onCycleMode={() => cycles++} onInterrupt={() => interrupts++} />);
     await new Promise((r) => setTimeout(r, 20));
-    stdin.write("\t");   await waitFor(() => cycles === 1);
+    stdin.write("\t");   await new Promise((r) => setTimeout(r, 20));   // bare Tab: no popup → no-op
+    expect(cycles).toBe(0);
+    stdin.write("\x1b[Z"); await waitFor(() => cycles === 1);           // Shift+Tab (backtab) cycles
     stdin.write("\x1b"); await waitFor(() => interrupts === 1);
     expect([cycles, interrupts]).toEqual([1, 1]);
   });
@@ -349,5 +351,19 @@ describe("ChatComposer", () => {
     expect(lastFrame()).toContain("/review");
     expect(lastFrame()).toContain("<pr>");
     await new Promise((r) => setTimeout(r, 0));
+  });
+});
+
+describe("Wave-1 keymap wiring", () => {
+  it("Shift+Tab cycles mode; bare Tab does not (no popup open)", async () => {
+    let cycles = 0;
+    const { stdin } = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} onCycleMode={() => { cycles++; }} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\t");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(cycles).toBe(0);
+    stdin.write("\x1b[Z");                                   // shift+tab (backtab)
+    await new Promise((r) => setTimeout(r, 20));
+    expect(cycles).toBe(1);
   });
 });

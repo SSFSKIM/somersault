@@ -1,7 +1,10 @@
 // tui/src/ChatApp.tsx — composes the transcript, the composer (or the permission dialog when one is
-// pending), and the status bar. Esc interrupt / Tab cycle mode are owned by the composer and inactive
-// while a dialog is up; Ctrl-C / Ctrl-L / Ctrl-Z stay active even during a dialog (Ctrl-Z can still
-// detach — detach ≠ deny). Renders increment 8's multiline <ChatComposer>.
+// pending), and the status bar. Esc interrupt / Shift+Tab cycle mode are owned by the composer and
+// inactive while a dialog is up; Ctrl-C / Ctrl-Z / Ctrl-T stay active even during a dialog (Ctrl-Z can
+// still detach — detach ≠ deny). Ctrl-L moved into the editor (Task 2) — it used to live here as an
+// app-level screen-clear that fired ALONGSIDE the editor's own input-clear on every Ctrl-L (a transient
+// double-handling); removing this arm leaves the editor as Ctrl-L's sole owner. Renders increment 8's
+// multiline <ChatComposer>.
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
@@ -32,8 +35,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   initialLines?: RenderLine[];
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
-  const { state, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit });
+  const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit });
   const [exitArmed, setExitArmed] = useState(false);
+  const [todosOpen, setTodosOpen] = useState(true);
   const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disarm = () => { setExitArmed(false); if (disarmTimer.current) { clearTimeout(disarmTimer.current); disarmTimer.current = null; } };
   useEffect(() => () => { if (disarmTimer.current) clearTimeout(disarmTimer.current); }, []);
@@ -55,13 +59,14 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     if (escTimer.current) clearTimeout(escTimer.current);
     escTimer.current = setTimeout(() => setEscArmed(false), 1500);
   };
-  const onCycleMode = () => { cycleMode(); disarm(); };   // Tab cycles the permission ladder (default → acceptEdits → plan → auto)
-  // Only Ctrl-C / Ctrl-L / Ctrl-Z live here — they conflict with nothing (composer/dialog/pickers never act
+  const onCycleMode = () => { cycleMode(); disarm(); };   // Shift+Tab cycles the permission ladder (default → acceptEdits → plan → auto)
+  // Only Ctrl-C / Ctrl-Z / Ctrl-T live here — they conflict with nothing (composer/dialog/pickers never act
   // on them), so this stays active even during a pending dialog (so Ctrl-C can still quit, Ctrl-Z can still
-  // detach). Tab/Esc are owned by whatever input is focused (the composer routes them to
+  // detach). Shift+Tab/Esc are owned by whatever input is focused (the composer routes them to
   // onCycleMode/onInterrupt only when no popup is open — no double-handling; dialogs/pickers own their own Esc).
+  // Ctrl-L lives in the editor now (Task 2), not here.
   useInput((input, key) => {
-    if (key.ctrl && input === "l") { clear(); disarm(); return; }
+    if (key.ctrl && input === "t") { setTodosOpen((v) => !v); disarm(); return; }   // CC app:toggleTodos
     if (key.ctrl && input === "z") {
       // Detach ≠ deny (spec A2b §5): a pending remote permission stays parked either way — useChat's
       // unmount sentinel never resolves it. Loopback has nobody else to hand the session to, so it refuses.
@@ -79,7 +84,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   return (
     <Box flexDirection="column">
       <Transcript key={state.clearToken} lines={state.lines} streaming={state.streaming} />
-      <TaskPanel tasks={state.tasks} />
+      {todosOpen ? <TaskPanel tasks={state.tasks} /> : null}
       {state.busy ? <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} /> : null}
       {state.queue.length > 0 ? (
         <Box flexDirection="column" paddingX={1}>

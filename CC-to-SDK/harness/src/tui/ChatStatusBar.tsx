@@ -17,7 +17,7 @@ export function ChatStatusBar({ model, mode, busy, ctxPct, hasPending, thinkLeve
       {usageWarn ? <Text color="red">{"  " + usageWarn}</Text> : null}
       <Text>{busy ? "  ⟳ streaming" : ""}</Text>
       <Text>{bgCount ? `  ⚙ ${bgCount} bg` : ""}</Text>
-      <Text dimColor>{hasPending ? "   [↑↓·1/2/3·esc]" : "   Tab mode · Esc interrupt · ? help"}</Text>
+      <Text dimColor>{hasPending ? "   [↑↓·1/2/3·esc]" : "   ⇧Tab mode · Esc interrupt · ? help"}</Text>
     </Box>
   );
 }

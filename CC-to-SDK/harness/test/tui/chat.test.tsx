@@ -113,13 +113,15 @@ describe("<ChatApp>", () => {
     expect(fake.answeredCalls[0]).toEqual({ toolUseID: "t2", decision: { kind: "deny" } });
   });
 
-  it("Ctrl-L is wired and keeps input flowing (clear-screen is an ANSI escape Static can't un-draw)", async () => {
+  it("Ctrl-L now clears the composer input (the editor owns it), not the app-level screen", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
     stdin.write("hi");   await waitFor(() => frame(lastFrame).includes("hi"));
     stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("ok"));
-    stdin.write("\x0c"); await new Promise((r) => setTimeout(r, 30));       // Ctrl-L — must not crash
-    stdin.write("more"); await waitFor(() => frame(lastFrame).includes("more"));  // composer still responsive after clear
+    stdin.write("typed"); await waitFor(() => frame(lastFrame).includes("typed"));
+    stdin.write("\x0c"); await waitFor(() => !frame(lastFrame).includes("typed"));   // Ctrl-L clears the buffer, not the screen
+    expect(frame(lastFrame)).toContain("ok");                                        // transcript survives — no screen wipe
+    stdin.write("more"); await waitFor(() => frame(lastFrame).includes("more"));      // composer still responsive after clear
     expect(frame(lastFrame)).toContain("more");
   });
 
@@ -151,15 +153,35 @@ describe("<ChatApp>", () => {
     expect(interrupts).toBe(1);
   });
 
-  it("Tab cycles the permission ladder default → acceptEdits → plan → auto", async () => {
+  it("Shift+Tab cycles the permission ladder default → acceptEdits → plan → auto; bare Tab does not", async () => {
     const modes: string[] = [];
     const session = fakeRemote({ setPermissionMode: (m: string) => { modes.push(m); } });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("mode"));
-    await pressUntil(stdin, "\t", () => modes.includes("auto"));   // Tab cycles default→acceptEdits→plan→auto
+    stdin.write("\t"); await new Promise((r) => setTimeout(r, 30));   // bare Tab: no popup open → no-op
+    expect(modes).toEqual([]);
+    await pressUntil(stdin, "\x1b[Z", () => modes.includes("auto"));   // Shift+Tab cycles default→acceptEdits→plan→auto
     expect(modes[0]).toBe("acceptEdits");
     expect(modes).toContain("plan");
     expect(modes).toContain("auto");
+  });
+
+  it("Ctrl-T hides and re-shows the task panel", async () => {
+    const fake = fakeRemote();
+    const { lastFrame, stdin } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/" />);
+    await new Promise((r) => setTimeout(r, 30));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "Task #1 created successfully: todo-item-one" }] } } });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    // "todo-item-one" alone is ambiguous: the transcript ALSO prints the TaskCreate tool_use + its result
+    // text permanently, so a bare substring check never goes false. "☐ todo-item-one" (TaskPanel's pending
+    // glyph + subject) is unique to the panel row and is what actually toggles.
+    await waitFor(() => (lastFrame() ?? "").includes("☐ todo-item-one"));
+    stdin.write("\x14");                                       // Ctrl-T
+    await waitFor(() => !(lastFrame() ?? "").includes("☐ todo-item-one"));
+    stdin.write("\x14");
+    await waitFor(() => (lastFrame() ?? "").includes("☐ todo-item-one"));
   });
 
   it("initialPrompt submits once on mount", async () => {

@@ -30,8 +30,9 @@ describe("<ShortcutsOverlay>", () => {
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
     const f = frame(lastFrame);
     expect(rowFor(f, "Esc Esc")).toContain("rewind");
-    expect(rowFor(f, "Tab")).toContain("mode ladder");
-    expect(rowFor(f, "Ctrl+B")).toContain("background");
+    expect(rowFor(f, "⇧Tab")).toContain("mode ladder");
+    expect(rowFor(f, "Ctrl-T")).toContain("todo panel");
+    expect(rowFor(f, "Ctrl-B")).toContain("background");
     expect(rowFor(f, "!")).toContain("bash");
     expect(rowFor(f, "#")).toContain("memory");
     expect(rowFor(f, "?")).toContain("this help");

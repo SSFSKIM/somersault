@@ -92,10 +92,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // '?' on a genuinely empty composer (no buffer text, no open '/' or '@' popup) opens the shortcuts
     // overlay; typed anywhere else it must fall through to applyKey and insert a literal '?'.
     if (input === "?" && !s.command && !s.mention && s.lines.length === 1 && s.lines[0] === "") { onHelp?.(); return; }
-    // Tab/Esc are global ONLY when no autocomplete popup is open; with a popup, applyKey owns them
-    // (Tab completes / Esc closes). This single owner prevents the ChatApp+composer double-handling.
+    // Shift+Tab cycles the permission ladder (CC chat:cycleMode). Bare Tab belongs to the autocomplete
+    // popups alone (CC's Autocomplete context) — with no popup open it does nothing.
+    if (key.tab && key.shift) { onCycleMode?.(); return; }
+    // Esc is global ONLY when no autocomplete popup is open; with a popup, applyKey owns it (closes the
+    // popup). This single owner prevents the ChatApp+composer double-handling.
     if (!s.command && !s.mention) {
-      if (key.tab) { onCycleMode?.(); return; }
       if (key.escape) { onInterrupt?.(); return; }
     }
     const r = applyKey(s, input, key); if (r.submit != null) onSubmit(r.submit); setState(r.state);
@@ -130,7 +132,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       </Box>
       {mode === "bash" ? <Box paddingX={1}><Text color="magenta" dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
       {mode === "memory" ? <Box paddingX={1}><Text color="blue" dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
-      {showFooter ? <Box paddingX={1}><Text dimColor>⏎ send · \⏎ newline · @ files · / commands · ! bash · Tab mode</Text></Box> : null}
+      {showFooter ? <Box paddingX={1}><Text dimColor>⏎ send · \⏎ newline · @ files · / commands · ! bash · ⇧Tab mode</Text></Box> : null}
       {state.mention ? <MentionPopup state={state} /> : null}
       {state.command ? <CommandPopup state={state} /> : null}
     </Box>
