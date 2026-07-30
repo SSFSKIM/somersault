@@ -134,6 +134,20 @@ labels and ordering. Largest and most taste-dependent, so it lands last. `/vim` 
 
 ## Surprises & Discoveries
 
+- **Probe 75 (2026-07-31) settled U6's directory question in one run — BOTH doors are open:**
+  the untyped funnel `(q as any).request({subtype})` is reachable (every typed Query method routes
+  through it), and `register_repo_root` on a subdirectory of cwd succeeds with
+  `reload_claude_md:true` genuinely injecting that directory's CLAUDE.md (magic-word-verified).
+  Out-of-cwd it fails with exactly `"register_repo_root: <dir> is not a subdirectory of cwd"` — but
+  the TYPED `applyFlagSettings({permissions:{additionalDirectories:[dir]}})` covers that case: an
+  outside-cwd Read consulted canUseTool before the grant and was auto-allowed (zero consults) after.
+  So `/add-dir` routes by path: inside cwd → register_repo_root (context load), outside →
+  additionalDirectories (permission scope only). Two traps for the plan: applyFlagSettings
+  **replaces** whole top-level keys per call (the harness must own and re-send the complete
+  `permissions` object on every mutation), and breaking out of a `for await` over the Query calls
+  the generator's `return()` and kills the transport (probe bug, cost one false "not ready for
+  writing" run). Bonus: untyped `get_settings` works — `{effective, sources[], applied{model,
+  effort, advisor, ultracode}}` — a real backing store for U7's `/config`.
 - **Probe 74 (2026-07-31) settled U2's whole evidence base in one run:** the backgrounded-Bash
   tool_result is a parseable sentence carrying BOTH the task id and the output-file path ("Command
   running in background with ID: <id>. Output is being written to: <path>. …"); `task_started` carries
