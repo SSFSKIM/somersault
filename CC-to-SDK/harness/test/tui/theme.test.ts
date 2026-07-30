@@ -104,6 +104,19 @@ describe("prefs.ts", () => {
     expect(currentTheme()).toBe("auto"); // untouched — dropped, not silently coerced to some fallback
   });
 
+  // Controller follow-up to the same finding: the first guard used `in`, which walks the prototype
+  // chain — "constructor"/"toString" would have passed it, and setTheme would then read `.accent` off
+  // an Object.prototype member: no throw, but ACCENT and every token become undefined (colorless UI).
+  it("loadPrefs drops a prototype-chain name like \"constructor\", not just an unknown word", () => {
+    const root = tmpRoot();
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ theme: "constructor" }));
+    const prefs = loadPrefs({ CCX_FLEET_ROOT: root });
+    expect(prefs.theme).toBeUndefined();
+    expect(() => { if (prefs.theme) setTheme(prefs.theme); }).not.toThrow();
+    expect(themeTokens().accent).toBe(THEMES.auto.accent);  // still a REAL token, not undefined
+  });
+
   it("loadPrefs still round-trips a valid theme id untouched", () => {
     const root = tmpRoot();
     mkdirSync(root, { recursive: true });

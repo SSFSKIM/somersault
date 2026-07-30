@@ -25,7 +25,10 @@ export function loadPrefs(env?: NodeJS.ProcessEnv): CcxPrefs {
     const parsed = JSON.parse(readFileSync(prefsPath(env), "utf8"));
     if (!parsed || typeof parsed !== "object") return {};
     const prefs = parsed as CcxPrefs;
-    if (prefs.theme !== undefined && !(prefs.theme in THEMES)) delete prefs.theme;
+    // hasOwnProperty, NOT `in`: `in` walks the prototype chain, so a file naming "constructor" (or
+    // "toString") passes the guard and setTheme then reads `.accent` off Object.prototype's member —
+    // no throw, but ACCENT and every token silently become undefined and the UI loses its colors.
+    if (prefs.theme !== undefined && !Object.prototype.hasOwnProperty.call(THEMES, prefs.theme)) delete prefs.theme;
     return prefs;
   } catch { return {}; }
 }
