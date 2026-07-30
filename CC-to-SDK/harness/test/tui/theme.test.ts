@@ -85,4 +85,29 @@ describe("prefs.ts", () => {
     const raw = JSON.parse(readFileSync(join(root, "prefs.json"), "utf8"));
     expect(raw).toEqual({ theme: "light", futureField: 42, outputStyle: "Learning" });
   });
+
+  // Review finding (Task 4, Important): a hand-edited or drifted-forward `theme` id must not reach
+  // setTheme() unchecked — THEMES[id] there throws on a miss, which would crash boot (chatMain.tsx calls
+  // setTheme(prefs.theme) before the first render). loadPrefs is the one tolerant-loader choke point every
+  // caller goes through, so the drop belongs here, not at each call site.
+  it("loadPrefs drops an unrecognized theme id, so chatMain's boot guard skips setTheme() instead of crashing", () => {
+    const root = tmpRoot();
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ theme: "purple-not-a-real-theme" }));
+    const prefs = loadPrefs({ CCX_FLEET_ROOT: root });
+    expect(prefs.theme).toBeUndefined();
+    // Mirrors chatMain.tsx's boot line verbatim: `if (prefs.theme) setTheme(prefs.theme)`. An
+    // un-validated loader would leave "purple-not-a-real-theme" on prefs.theme, the guard would be
+    // truthy, and setTheme would do THEMES[id].accent and throw `Cannot read properties of undefined
+    // (reading 'accent')` — this is the exact crash the reviewer reproduced, reproduced at the boot site.
+    expect(() => { if (prefs.theme) setTheme(prefs.theme); }).not.toThrow();
+    expect(currentTheme()).toBe("auto"); // untouched — dropped, not silently coerced to some fallback
+  });
+
+  it("loadPrefs still round-trips a valid theme id untouched", () => {
+    const root = tmpRoot();
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ theme: "dark-daltonized" }));
+    expect(loadPrefs({ CCX_FLEET_ROOT: root })).toEqual({ theme: "dark-daltonized" });
+  });
 });

@@ -7,18 +7,26 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fleetRoot } from "../fleet/paths.js";
-import type { ThemeId } from "./theme.js";
+import { THEMES, type ThemeId } from "./theme.js";
 
 export interface CcxPrefs { theme?: ThemeId; outputStyle?: string }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 
 /** Missing file (ENOENT) or corrupt JSON → `{}`, never a throw — a first run or a hand-edited garbage
- *  file must not crash boot. */
+ *  file must not crash boot. Values are validated too, not just JSON-shape: a `theme` that isn't one of
+ *  THEMES's keys (hand-edited, or a future release renaming/dropping an id) is dropped rather than handed
+ *  to chatMain's `setTheme()`, which indexes `THEMES[id]` unchecked and throws on a miss — this is the
+ *  one field that feeds a lookup table, so it's the one that needs the check. `outputStyle` isn't indexed
+ *  anywhere (config/outputStyle.ts falls back to treating an unrecognized string as a literal persona), so
+ *  it has no equivalent crash to guard against and is left as-is. */
 export function loadPrefs(env?: NodeJS.ProcessEnv): CcxPrefs {
   try {
     const parsed = JSON.parse(readFileSync(prefsPath(env), "utf8"));
-    return parsed && typeof parsed === "object" ? (parsed as CcxPrefs) : {};
+    if (!parsed || typeof parsed !== "object") return {};
+    const prefs = parsed as CcxPrefs;
+    if (prefs.theme !== undefined && !(prefs.theme in THEMES)) delete prefs.theme;
+    return prefs;
   } catch { return {}; }
 }
 
