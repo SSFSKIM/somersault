@@ -1,7 +1,7 @@
 // tui/test/chat.test.tsx — reworked onto the adapter surface: `broker` prop is gone; ChatApp takes
 // `client: { kind, short? }` + `onDetach?`. fakeRemote() (test/tui/helpers/fakeRemote.ts) mirrors the real
 // RemoteChat wire contract (spec A2b Task 6).
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import React from "react";
 import { tmpdir } from "node:os";
 import { render } from "ink-testing-library";
@@ -9,6 +9,12 @@ import { ChatApp } from "../../src/tui/ChatApp.js";
 import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
+import { currentTheme, setTheme } from "../../src/tui/theme.js";
+
+// W3 T4: theme.ts's ACCENT/current live binding is module-scoped and vitest isolates per FILE, not per
+// test, so a /theme test that previews or persists a theme must not leak it into a later test in this
+// file — reset after every test, not just the theme-specific ones.
+afterEach(() => setTheme("auto"));
 
 const frame = (f: () => string | undefined) => f() ?? "";
 async function waitFor(cond: () => boolean, timeout = 2000) {
@@ -608,5 +614,74 @@ describe("<ChatApp>", () => {
     releaseRewind();
     await waitFor(() => !frame(lastFrame).includes("restoring"));
     await waitFor(() => frame(lastFrame).includes("Add directory to workspace"));
+  });
+
+  // W3 T4: /theme
+  it("/theme opens the picker with the exact prompt, all 5 rows, and the demo.js preview", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/theme"); await waitFor(() => frame(lastFrame).includes("/theme"));
+    stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
+    await waitFor(() => frame(lastFrame).includes("Choose the text style that looks best with your terminal"));
+    const f = frame(lastFrame);
+    expect(f).toContain("Auto (match terminal)");
+    expect(f).toContain("Dark mode");
+    expect(f).toContain("Light mode");
+    expect(f).toContain("Dark mode (colorblind-friendly)");
+    expect(f).toContain("Light mode (colorblind-friendly)");
+    expect(f).toContain("demo.js");
+    expect(f).toContain("function greet() {");
+    expect(f).toContain('console.log("Hello, World!");');
+    expect(f).toContain('console.log("Hello, Claude!");');
+    expect(f).toContain("Enter to select · Esc to cancel");
+  });
+
+  it("/theme Esc restores the theme that was live when the dialog opened, after navigating away from it (sabotage-checked — see task report)", async () => {
+    const before = currentTheme();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/theme"); await waitFor(() => frame(lastFrame).includes("/theme"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Choose the text style"));
+    stdin.write("\x1b[B");                                          // ↓ previews the next row's theme live
+    await waitFor(() => currentTheme() !== before);                 // the live preview really applied
+    stdin.write("\x1b");                                            // Esc
+    await waitFor(() => frame(lastFrame).includes("Theme picker dismissed"));
+    expect(currentTheme()).toBe(before);
+  });
+
+  it("/theme Enter persists the highlighted row via the injected savePrefs seam (never the real ~/.claude/ccx/prefs.json)", async () => {
+    const calls: unknown[] = [];
+    const { stdin, lastFrame } = render(
+      <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
+        deps={{ savePrefs: (patch: unknown) => { calls.push(patch); } }} />,
+    );
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/theme"); await waitFor(() => frame(lastFrame).includes("/theme"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Choose the text style"));
+    stdin.write("\x1b[B");                                          // ↓ to "Dark mode" (row 1)
+    await waitFor(() => frame(lastFrame).includes("❯ Dark mode"));
+    stdin.write("\r");
+    await waitFor(() => calls.length === 1);
+    expect(calls[0]).toEqual({ theme: "dark" });
+    expect(currentTheme()).toBe("dark");                            // Enter KEEPS the already-previewed theme
+    await waitFor(() => frame(lastFrame).includes("Theme set to dark"));
+  });
+
+  it("/theme j/k and ctrl+n/ctrl+p navigate the same as ↓/↑ (Select-context keymap parity)", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/theme"); await waitFor(() => frame(lastFrame).includes("/theme"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Choose the text style"));
+    stdin.write("j");
+    await waitFor(() => frame(lastFrame).includes("❯ Dark mode"));
+    stdin.write("\x0e");                                            // ctrl+n → next row
+    await waitFor(() => frame(lastFrame).includes("❯ Light mode"));
+    stdin.write("k");
+    await waitFor(() => frame(lastFrame).includes("❯ Dark mode"));
+    stdin.write("\x10");                                            // ctrl+p → previous row
+    await waitFor(() => frame(lastFrame).includes("❯ Auto (match terminal)"));
   });
 });

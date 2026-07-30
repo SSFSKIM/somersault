@@ -7,6 +7,8 @@ import type { ChatSession } from "../session/chatSession.js";
 import { ChatApp } from "./ChatApp.js";
 import type { RenderLine } from "./render.js";
 import type { InitialResume } from "./commands.js";
+import { loadPrefs } from "./prefs.js";
+import { setTheme } from "./theme.js";
 
 export interface ChatClientOpts {
   socketPath: string;
@@ -25,6 +27,8 @@ export interface ChatClientOpts {
 }
 
 export async function runChatClient(opts: ChatClientOpts): Promise<void> {
+  const prefs = loadPrefs();                             // W3 T4: apply a saved theme BEFORE the first render
+  if (prefs.theme) setTheme(prefs.theme);
   const makeSession = opts.makeSession ?? ((resume?: string) => remoteChatSession(opts.socketPath, { ...(resume ? { resume } : {}) }));
   const app = render(
     <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}

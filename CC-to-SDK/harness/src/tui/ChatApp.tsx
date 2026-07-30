@@ -31,6 +31,7 @@ import { ShortcutsOverlay } from "./ShortcutsOverlay.js";
 import { TranscriptPager } from "./TranscriptPager.js";
 import { HistorySearchOverlay } from "./HistorySearchOverlay.js";
 import { AddDirDialog } from "./AddDirDialog.js";
+import { ThemeDialog } from "./ThemeDialog.js";
 
 export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialLines, deps }: {
   makeSession: (resume?: string) => ChatSession;
@@ -44,7 +45,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   deps?: Parameters<typeof useChat>[2];
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
-  const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit }, deps);
+  const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit }, deps);
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
@@ -90,6 +91,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       return;
     }
     if (state.historyOpen) return;   // the overlay owns Ctrl-C (cancel) / Ctrl-R (next) / Ctrl-S (scope); only Ctrl-Z above stays live
+    if (state.themeDialog.open) return;   // W3 T4: the /theme dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
     if (state.addDir.open) return;   // W3 T3: the /add-dir dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
     // Both open arms are gated on !rewinding (F3, final review): a confirmed rewind is a multi-second
     // engine swap held behind the "⏪ restoring…" modal so a mid-rewind prompt isn't lost — Ctrl-R/Ctrl-O
@@ -138,9 +140,14 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
             ? <BgTasksPanel tasks={state.bgRows} onStop={stopBgTask} onClose={closeBgPanel} />
             : state.modelPicker.open
               ? <ModelPicker models={state.modelPicker.models} onPick={pickModel} onCancel={closeModelPicker} />
-              : state.addDir.open
-                ? <AddDirDialog prefill={state.addDir.prefill} onValidate={addDirValidate} onConfirm={confirmAddDir} onCancel={cancelAddDir} />
-                : state.picker.open
+              // W3 T4: the four new settings-surface dialogs slot HERE, between modelPicker and picker, in
+              // the order settings → permissions → theme → addDir (Tasks 5/7 add the first two later; theme
+              // goes immediately before the existing addDir arm — plan Global Constraints line 38).
+              : state.themeDialog.open
+                ? <ThemeDialog onDone={closeThemeDialog} savePrefs={deps?.savePrefs} />
+                : state.addDir.open
+                  ? <AddDirDialog prefill={state.addDir.prefill} onValidate={addDirValidate} onConfirm={confirmAddDir} onCancel={cancelAddDir} />
+                  : state.picker.open
                   ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
                   : state.pending
                   ? state.pending.kind === "question"
