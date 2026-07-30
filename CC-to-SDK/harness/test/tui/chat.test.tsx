@@ -375,4 +375,32 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("hi?"));
     expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");
   });
+
+  it("Ctrl-O opens the transcript pager, gates the app keys, and Ctrl-O again closes it", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    // Seed a task so the panel actually renders something — with an empty task list TaskPanel renders
+    // null regardless of todosOpen, which would make the Ctrl-T-while-open check below pass vacuously
+    // even if the gate leaked (the "still contains Transcript" check alone can't tell the difference).
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "Task #1 created successfully: todo-item-one" }] } } });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("☐ todo-item-one"));
+    stdin.write("\x0f");                                              // Ctrl-O opens
+    await waitFor(() => frame(lastFrame).includes("Transcript"));
+    expect(frame(lastFrame)).toContain("☐ todo-item-one");            // task panel still visible under the pager
+    stdin.write("\x14");                                              // Ctrl-T must NOT toggle todos while pager open
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).toContain("Transcript");                 // still the pager, no crash
+    expect(frame(lastFrame)).toContain("☐ todo-item-one");            // proves Ctrl-T did NOT reach setTodosOpen
+    stdin.write("\x0f");                                              // Ctrl-O closes
+    // Only the pager header prints the word "Transcript" — its absence proves the pager actually
+    // unmounted (an "of 0" assertion would be vacuous: an empty pager renders "(empty)").
+    await waitFor(() => !frame(lastFrame).includes("Transcript"));
+    expect(frame(lastFrame)).toContain("☐ todo-item-one");            // task panel unaffected throughout
+    stdin.write("\x14");                                              // now (pager closed) Ctrl-T DOES toggle — proves the gate isn't a permanent lock
+    await waitFor(() => !frame(lastFrame).includes("☐ todo-item-one"));
+  });
 });

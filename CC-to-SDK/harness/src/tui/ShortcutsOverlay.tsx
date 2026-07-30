@@ -1,6 +1,6 @@
 // tui/src/ShortcutsOverlay.tsx — the `?` help overlay (Stage C5 task 7): a pure-display bordered keymap
 // panel that dismisses on any keypress. Every row here corresponds to a binding that ACTUALLY exists —
-// checked against ChatApp.tsx (Ctrl-C/Ctrl-Z/Ctrl-T/Esc), editor.ts (Ctrl-L/Ctrl-_/Ctrl-S + the readline
+// checked against ChatApp.tsx (Ctrl-C/Ctrl-Z/Ctrl-T/Ctrl-O/Esc), editor.ts (Ctrl-L/Ctrl-_/Ctrl-S + the readline
 // and word-movement keys), and ChatComposer.tsx (⇧Tab/!/#/@// prefixes, Ctrl-D, Ctrl-X Ctrl-E / Ctrl-G
 // external editor). A help row for a binding we don't implement would be a false promise, so nothing is
 // listed here that isn't wired elsewhere in this package.
@@ -22,6 +22,7 @@ const ROWS: [string, string][] = [
   ["Esc", "interrupt"],
   ["Esc Esc", "rewind"],
   ["Ctrl-T", "todo panel"],
+  ["Ctrl-O", "transcript pager"],
   ["Ctrl-B", "background"],
   ["Ctrl-X Ctrl-K", "stop background agents (×2)"],
   ["Ctrl-C ×2", "exit"],

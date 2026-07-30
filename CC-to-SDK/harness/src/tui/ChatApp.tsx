@@ -1,10 +1,13 @@
 // tui/src/ChatApp.tsx — composes the transcript, the composer (or the permission dialog when one is
 // pending), and the status bar. Esc interrupt / Shift+Tab cycle mode are owned by the composer and
-// inactive while a dialog is up; Ctrl-C / Ctrl-Z / Ctrl-B / Ctrl-T stay active even during a dialog (Ctrl-Z can
-// still detach — detach ≠ deny). Ctrl-L moved into the editor (Task 2) — it used to live here as an
-// app-level screen-clear that fired ALONGSIDE the editor's own input-clear on every Ctrl-L (a transient
-// double-handling); removing this arm leaves the editor as Ctrl-L's sole owner. Renders increment 8's
-// multiline <ChatComposer>.
+// inactive while a dialog is up; Ctrl-C / Ctrl-Z / Ctrl-B / Ctrl-T / Ctrl-O stay active even during a
+// dialog (Ctrl-Z can still detach — detach ≠ deny). Ctrl-L moved into the editor (Task 2) — it used to
+// live here as an app-level screen-clear that fired ALONGSIDE the editor's own input-clear on every
+// Ctrl-L (a transient double-handling); removing this arm leaves the editor as Ctrl-L's sole owner.
+// Ctrl-O (Task 5) opens the transcript pager; Ctrl-Z is checked ABOVE that gate (detach stays reachable
+// even under the pager overlay) but every OTHER app arm is gated while the pager is open — the pager
+// owns the keys, including its own ctrl+c as transcript:exit (per the bundle), so the app's Ctrl-C
+// exit-arm must not also fire underneath it. Renders increment 8's multiline <ChatComposer>.
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
@@ -23,6 +26,7 @@ import { TurnSpinner } from "./TurnSpinner.js";
 import { BgTasksPanel } from "./BgTasksPanel.js";
 import { RewindPicker } from "./RewindPicker.js";
 import { ShortcutsOverlay } from "./ShortcutsOverlay.js";
+import { TranscriptPager } from "./TranscriptPager.js";
 
 export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialLines }: {
   makeSession: (resume?: string) => ChatSession;
@@ -38,6 +42,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit });
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
   const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disarm = () => { setExitArmed(false); if (disarmTimer.current) { clearTimeout(disarmTimer.current); disarmTimer.current = null; } };
   useEffect(() => () => { if (disarmTimer.current) clearTimeout(disarmTimer.current); }, []);
@@ -68,7 +73,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // when no popup is open; dialogs/pickers own their own Esc.
   // Ctrl-L lives in the editor now (Task 2), not here.
   useInput((input, key) => {
-    if (key.ctrl && input === "t") { setTodosOpen((v) => !v); disarm(); return; }   // CC app:toggleTodos
     if (key.ctrl && input === "z") {
       // Detach ≠ deny (spec A2b §5): a pending remote permission stays parked either way — useChat's
       // unmount sentinel never resolves it. Loopback has nobody else to hand the session to, so it refuses.
@@ -76,6 +80,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       else notice("not detachable — run with --detachable, or ccx attach from another terminal");
       return;
     }
+    if (transcriptOpen) {                                   // pager owns the keys (its ctrl+c = transcript:exit, per bundle)
+      if (key.ctrl && input === "o") { setTranscriptOpen(false); disarm(); }
+      return;
+    }
+    if (key.ctrl && input === "o") { setTranscriptOpen(true); disarm(); return; }   // CC app:toggleTranscript
+    if (key.ctrl && input === "t") { setTodosOpen((v) => !v); disarm(); return; }   // CC app:toggleTodos
     if (key.ctrl && input === "c") {                                // interrupt a turn, else arm/confirm exit (CC)
       if (state.busy) { interrupt(); disarm(); return; }
       if (exitArmed) { exit(); return; }
@@ -95,6 +105,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       ) : null}
       {state.shortcutsOpen
         ? <ShortcutsOverlay onClose={closeShortcuts} />
+        : transcriptOpen
+        ? <TranscriptPager lines={state.lines} onClose={() => setTranscriptOpen(false)} />
         // A confirmed rewind takes seconds (file restore + engine swap). Hold a modal until it settles:
         // if the composer came back first, a prompt typed in that window would be cleared from the editor,
         // sent, and refused by the host as busy — the user's text lost rather than queued.
