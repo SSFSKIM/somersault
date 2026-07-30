@@ -684,4 +684,94 @@ describe("<ChatApp>", () => {
     stdin.write("\x10");                                            // ctrl+p → previous row
     await waitFor(() => frame(lastFrame).includes("❯ Auto (match terminal)"));
   });
+
+  // W3 T5: /config
+  it("/config opens the Settings dialog at the Config tab, showing all 5 rows and the normal-mode footer", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
+    stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
+    await waitFor(() => frame(lastFrame).includes("Settings"));
+    const f = frame(lastFrame);
+    expect(f).toContain("Status");
+    expect(f).toContain("Config");
+    expect(f).toContain("Usage");
+    expect(f).toContain("Stats");
+    expect(f).toContain("Theme");
+    expect(f).toContain("Model");
+    expect(f).toContain("Output style");
+    expect(f).toContain("Default permission mode");
+    expect(f).toContain("Thinking mode");
+    expect(f).toContain("Enter/Space to change · / to search · Esc to close");
+  });
+
+  it("Config: toggling the Thinking-mode row shows the warning and Esc summarizes 'Set Thinking mode to false' (sabotage-checked — see task report)", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Thinking mode"));
+    // Row order is theme, model, outputStyle, permissionMode, thinking — 4 downs from the theme (default) row.
+    for (let i = 0; i < 4; i++) stdin.write("\x1b[B");
+    await waitFor(() => frame(lastFrame).includes("❯ Thinking mode"));
+    stdin.write("\r");                                              // enter/space toggles: initial value is "true" (thinkLevel defaults to "default", not "off")
+    await waitFor(() => frame(lastFrame).includes("Changing thinking mode mid-conversation will increase latency and may reduce quality."));
+    stdin.write("\x1b");                                            // Esc closes with the change summary
+    // The value segment renders bold (its own ANSI span), so "…to " and "false" are NOT one contiguous
+    // substring in the raw frame (an ESC[1m sits between them) — assert the two pieces separately rather
+    // than the combined sentence (verified against the raw frame while diagnosing this test).
+    await waitFor(() => frame(lastFrame).includes("Set Thinking mode to") && frame(lastFrame).includes("false"));
+  });
+
+  it("Config: Esc with no changes prints 'Config dialog dismissed'", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Settings"));
+    stdin.write("\x1b");
+    await waitFor(() => frame(lastFrame).includes("Config dialog dismissed"));
+  });
+
+  it("Config: / enters search and filters the row list to the query (case-insensitive label match)", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));
+    stdin.write("/");
+    await waitFor(() => frame(lastFrame).includes("Search settings…"));
+    stdin.write("THEME");
+    await waitFor(() => frame(lastFrame).includes("Type to filter · Enter/↓ to select · ↑ to tabs · Esc to clear"));
+    const f = frame(lastFrame);
+    expect(f).toContain("Theme");
+    expect(f).not.toContain("Output style");
+    expect(f).not.toContain("Default permission mode");
+    expect(f).not.toContain("Thinking mode");
+  });
+
+  it("Config: an unmatched search shows the empty state", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));
+    stdin.write("/");
+    await waitFor(() => frame(lastFrame).includes("Search settings…"));
+    stdin.write("zzz");
+    await waitFor(() => frame(lastFrame).includes(`No settings match "zzz"`));
+  });
+
+  it("Config: shift+Tab reaches the Status tab, rendering the live status rows (Global Constraints line 34: tab/shift+tab/left/right switch tabs, wrapping)", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));   // confirms we're on Config first
+    stdin.write("\x1b[Z");                                          // shift+Tab: Status·Config·Usage·Stats, Config(1) → Status(0)
+    await waitFor(() => frame(lastFrame).includes("sess-1"));       // formatStatus's session-id row — unique to the Status tab
+    const f = frame(lastFrame);
+    expect(f).not.toContain("Default permission mode");             // Config's rows are gone
+    expect(f).toContain("Tab/←/→ to switch tabs · Esc to close");
+  });
 });

@@ -12,6 +12,9 @@ import type { RewindAnchor, RewindScope, RewindDryRun } from "../session/chatSes
 import { validateAddDir, formatAddDirVerdict, formatAddDirResult, type AddDirVerdict } from "./addDir.js";
 import { mergeSettingsFile, appendToArray, type SettingsFileDeps } from "./settingsFile.js";
 import type { CcxPrefs } from "./prefs.js";
+import { savePrefs as realSavePrefs } from "./prefs.js";
+import { currentTheme } from "./theme.js";
+import { buildRows, summarizeChanges, type SettingsRowCtx } from "./settingsRows.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
@@ -39,7 +42,7 @@ import { promptEntries, mergeEntries, type HistEntry, type HistoryScope } from "
 // adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
 export type { ChatSession };
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; }
 
 const LADDER = ["default", "acceptEdits", "plan", "auto"] as const;   // Tab cycles these; bypassPermissions stays off-cycle (/yolo)
 /** Next mode on the Tab ladder; any off-ladder mode (e.g. bypassPermissions/dontAsk) re-enters at "default". */
@@ -47,7 +50,7 @@ function ladderNext(mode: string): string { const i = (LADDER as readonly string
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
-  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialLines?: RenderLine[]; initialPrompt?: string; onExit?: () => void } = {},
+  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialLines?: RenderLine[]; initialPrompt?: string; onExit?: () => void } = {},
   deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; getSessionMessagesIn?: (id: string, cwd?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
@@ -82,6 +85,13 @@ export function useChat(
   const [historyOpen, setHistoryOpen] = useState(false);       // the Ctrl-R history-search overlay
   const [addDir, setAddDir] = useState<{ open: boolean; prefill?: string }>({ open: false });   // W3 T3: /add-dir overlay
   const [themeDialog, setThemeDialog] = useState<{ open: boolean }>({ open: false });   // W3 T4: /theme overlay
+  const [settings, setSettings] = useState<{ open: boolean; tab?: string }>({ open: false });   // W3 T5: /config overlay
+  // Baseline SettingsRowCtx captured the moment /config opens, diffed against a fresh snapshot when it
+  // closes (closeSettings). A ref, not a local ref inside SettingsDialog: the Model row reuses the
+  // EXISTING top-level modelPicker overlay (chain order, ChatApp.tsx), which UNMOUNTS SettingsDialog while
+  // it's up — anything the dialog itself tried to remember incrementally would be lost on that round-trip.
+  const settingsBaselineRef = useRef<SettingsRowCtx | null>(null);
+  const [outputStyle, setOutputStyleState] = useState<string>(opts.initialOutputStyle ?? "default");   // W3 T5: seeded from loadPrefs() by the caller (chatMain.tsx), like theme
   const [commandCatalog, setCommandCatalog] = useState<CommandEntry[]>(LOCAL_COMMAND_ENTRIES);   // local-only until the live fetch resolves
   const catalogNames = useRef<Set<string>>(new Set());                                            // catalog (non-local) names → routed to submit-as-prompt
   const taskListRef = useRef(new TaskList());
@@ -104,6 +114,7 @@ export function useChat(
   // messages under it — an undefined cwd is what makes the SDK reader search across all projects.
   const getSessionMessagesIn = deps.getSessionMessagesIn ?? ((id: string, c?: string) => realGetSessionMessages(id, c ? { cwd: c } : {}) as Promise<any[]>);
   const runBash = deps.runBash ?? realRunBash;
+  const savePrefsFn = deps.savePrefs ?? realSavePrefs;   // W3 T5: applyOutputStyle is useChat's first ACTUAL reader of this dep (Task 4 only threaded it through to ThemeDialog)
   const appendMemory = deps.appendMemory ?? realAppendMemory;
   const copyText = deps.copyText ?? realCopyToClipboard;
   const writeFile = deps.writeFile ?? ((p: string, t: string) => realWriteFileSync(p, t));
@@ -369,6 +380,9 @@ export function useChat(
         // (theme.ts's setTheme has "no persistence — caller's job", and the dialog IS that caller); this
         // just opens/closes it and prints whatever result line it hands back via closeThemeDialog.
         case "theme": setThemeDialog({ open: true }); break;
+        // /config: the Settings shell (W3 T5). No args handling yet — Task 6 layers `/config key=value`
+        // on top of this same dialog; today `/config` (with or without stray args) always just opens it.
+        case "config": openSettings(); break;
         // Same exit the Ctrl-D / Ctrl-C-twice keys use — the host owns the actual unmount (opts.onExit).
         case "exit": case "quit": opts.onExit?.(); break;
         default: append(formatUnknown(cmd.name));
@@ -476,6 +490,67 @@ export function useChat(
   // (this dialog needs no session access) — `line` is the exact verbatim result string ("Theme set to
   // {id}" / "Theme picker dismissed"), just close + print it.
   function closeThemeDialog(line: string) { if (!disposed.current) { setThemeDialog({ open: false }); notice(line); } }
+
+  // W3 T5: /config. A snapshot-diff design, not incremental change-tracking (see the settingsBaselineRef
+  // comment above) — currentSettingsCtx() reads currentTheme() FRESH each call (theme.ts's own contract:
+  // never cache it) alongside whatever this hook's own state currently holds for model/outputStyle/mode/
+  // thinkLevel, so both the open-time baseline and the close-time snapshot are always accurate regardless
+  // of how many times the Model/Theme/Output-style sub-flows ran in between.
+  function currentSettingsCtx(): SettingsRowCtx { return { theme: currentTheme(), model, outputStyle, mode, thinkLevel }; }
+  function openSettings() {
+    if (disposed.current) return;
+    settingsBaselineRef.current = currentSettingsCtx();
+    setSettings({ open: true, tab: "Config" });
+  }
+  function setSettingsTab(tab: string) { if (!disposed.current) setSettings((s) => ({ ...s, tab })); }
+  function closeSettings() {
+    if (disposed.current) return;
+    const baseline = settingsBaselineRef.current;
+    settingsBaselineRef.current = null;
+    setSettings({ open: false });
+    if (!baseline) { notice("Config dialog dismissed"); return; }
+    const before = buildRows(baseline), after = buildRows(currentSettingsCtx());
+    const changes = new Map<string, string>();
+    before.forEach((row, i) => { if (row.value !== after[i]?.value) changes.set(row.label, after[i].value); });
+    const lines = summarizeChanges(changes);
+    if (lines.length) append(lines); else notice("Config dialog dismissed");
+  }
+  // The Thinking-mode row's boolean toggle: "off" (budget 0, disabled) or anything else canonicalized to
+  // "default" (budget null — the SDK's own default thinking behavior, i.e. exactly the state before any
+  // /think call ever ran). Deliberately NOT /think's off/low/medium/high/xhigh/max/<N> vocabulary — the
+  // typed /think command is untouched by this, so neither can regress the other.
+  async function setThink(level: string): Promise<void> {
+    if (disposed.current) return;
+    const next = level === "off" ? "off" : "default";
+    await session.setMaxThinkingTokens(next === "off" ? 0 : null).catch(() => {});
+    if (!disposed.current) setThinkLevel(next);
+  }
+  // The Output-style row: apply the live engine style (best-effort, like every other flag-state op — a
+  // session without SettingsOps just skips this leg), remember it in ccx's own prefs (the seed for next
+  // boot's SettingsRowCtx.outputStyle), and write it into Claude Code's OWN local settings file so the
+  // engine picks it back up natively at next launch — the same "remember" write /add-dir uses, just a
+  // scalar patch instead of appendToArray.
+  async function applyOutputStyle(id: string): Promise<void> {
+    if (disposed.current) return;
+    if (hasSettingsOps(session)) await session.setOutputStyle(id).catch(() => {});
+    if (disposed.current) return;
+    setOutputStyleState(id);
+    savePrefsFn({ outputStyle: id });
+    try { mergeSettingsFile("localSettings", cwd, (current) => ({ ...(current && typeof current === "object" ? current : {}), outputStyle: id }), deps.settingsFileDeps); } catch { /* best-effort — no visible error line, mirrors theme's own silent persistence */ }
+  }
+  // The Settings dialog's Status/Usage/Stats tabs — mirror the /status, /usage, /stats cases exactly
+  // (formatStatus/formatUsage/formatStats), just returning lines instead of appending them: the dialog
+  // renders them itself, read-only.
+  async function fetchSettingsStatus(): Promise<RenderLine[]> {
+    const u = await session.usage().catch(() => undefined);
+    return formatStatus({ model, mode, thinkLevel, ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined });
+  }
+  async function fetchSettingsUsage(): Promise<RenderLine[]> { return formatUsage(await session.usage()); }
+  async function fetchSettingsStats(): Promise<RenderLine[]> {
+    const u = (await session.usage().catch(() => ({}))) as SessionUsage;
+    const msgs = session.sessionId ? await getSessionMessages(session.sessionId).catch(() => [] as any[]) : [];
+    return formatStats(u, msgs);
+  }
 
   // Esc-Esc rewind (Stage C5 flagship). Anchors are ALWAYS re-fetched, never patched locally — the persisted
   // transcript's row arithmetic after a rewind doesn't match naive local bookkeeping (live probe 68 Q4).
@@ -697,5 +772,5 @@ export function useChat(
   function interrupt() { drainGen.current++; setQueue([]); void session.interrupt().catch(() => {}); }   // Esc stops everything: queue + any scheduled drain
   function clear() { if (!disposed.current) { clearScreen(); setLines([]); setStreaming([]); setClearToken((t) => t + 1); } }   // /clear: wipe screen + model (session context kept)
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog };
+  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats };
 }

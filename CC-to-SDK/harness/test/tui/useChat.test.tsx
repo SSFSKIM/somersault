@@ -967,13 +967,17 @@ describe("thinking control", () => {
 });
 
 describe("U1: catalogued client-side controls never become prompt turns", () => {
-  it("/config prints the honest message and never submits; /review still submits as a turn", async () => {
+  // "config" used to be this test's client-side example; Wave 3 task 5 made /config a real LOCAL_NAME (a
+  // dispatch-routable command, not a catalogued-but-client-side one), so it now takes the LOCAL_NAMES branch
+  // of dispatch() instead of this one — "color" is still an honest-message-only control, so it now plays
+  // the representative role "config" used to.
+  it("/color prints the honest message and never submits; /review still submits as a turn", async () => {
     const submitted: string[] = [];
     const fake = fakeRemote({
       async submit(prompt: string) { submitted.push(prompt); return { result: "done" }; },
       async capabilities() {
         return { models: [], mcpServers: [], commands: [
-          { name: "config", description: "Open settings" },
+          { name: "color", description: "Set prompt-bar color" },
           { name: "review", description: "Review a pull request" },
         ] };
       },
@@ -982,8 +986,8 @@ describe("U1: catalogued client-side controls never become prompt turns", () => 
     function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 30));            // let the capabilities fetch land
-    api.run!("/config");
-    await waitFor(() => frame(lastFrame).includes("/config:"));
+    api.run!("/color");
+    await waitFor(() => frame(lastFrame).includes("/color:"));
     expect(submitted).toHaveLength(0);                       // the model never saw it
     api.run!("/review my PR");
     await waitFor(() => submitted.length === 1);

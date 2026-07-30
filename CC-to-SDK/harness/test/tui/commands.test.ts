@@ -143,9 +143,11 @@ describe("/bg (Goal B task 7)", () => {
 });
 
 describe("U1 client-side honesty (Wave 1)", () => {
-  it("covers exactly the seven client-side controls", () => {
+  // "config" left this list in Wave 3 task 5: /config now opens a real Settings dialog instead of printing
+  // an honesty note (the note's own text said as much: "it arrives with the settings slice").
+  it("covers exactly the six remaining client-side controls", () => {
     expect(Object.keys(CLIENT_SIDE_NOTES).sort()).toEqual(
-      ["agents", "color", "config", "effort", "extra-usage", "fast", "heapdump"]);
+      ["agents", "color", "effort", "extra-usage", "fast", "heapdump"]);
   });
   it("every note names the command and explains itself", () => {
     for (const name of Object.keys(CLIENT_SIDE_NOTES)) {

@@ -33,6 +33,7 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "rewind", summary: "rewind to a previous message (Esc Esc)" },
   { name: "add-dir", summary: "<path> — add a new working directory" },
   { name: "theme", summary: "change the theme" },
+  { name: "config", summary: "open the Settings dialog (Status · Config · Usage · Stats)" },
   { name: "usage", summary: "show plan usage / rate-limit windows" },
   { name: "copy", summary: "copy the last response to the clipboard" },
   { name: "export", summary: "[file|clipboard] — export the conversation as markdown" },
@@ -124,7 +125,6 @@ export function formatUnknown(name: string): RenderLine[] {
 export const CLIENT_SIDE_NOTES: Record<string, string> = {
   agents: "removed upstream — ask Claude to create/manage subagents, or edit .claude/agents/",
   color: "prompt-bar color is a Claude Code UI setting with no equivalent here",
-  config: "the settings UI isn't built yet (it arrives with the settings slice) — use launch flags for now",
   effort: "effort maps to the thinking budget here — use /think <off|low|medium|high|xhigh|max|N>",
   "extra-usage": "renamed /usage-credits upstream; for plan usage here use /usage",
   fast: "fast mode is a Claude Code client toggle the Agent SDK doesn't expose",

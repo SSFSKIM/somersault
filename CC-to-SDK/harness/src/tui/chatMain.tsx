@@ -20,7 +20,7 @@ export interface ChatClientOpts {
   // Pre-rendered transcript replay (attach, Task 8) or the banner.
   initialLines?: RenderLine[];
   // --permission-mode / --think, threaded so the status bar and Tab ladder start on the REAL mode.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialOutputStyle?: string };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;
@@ -29,11 +29,14 @@ export interface ChatClientOpts {
 export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   const prefs = loadPrefs();                             // W3 T4: apply a saved theme BEFORE the first render
   if (prefs.theme) setTheme(prefs.theme);
+  // W3 T5: seed the Settings dialog's Output-style row from the same saved prefs (defaulting like useChat's
+  // own opts.initialOutputStyle fallback does) — client-tracked, no engine round-trip needed just to boot.
+  const hookOpts = { ...(opts.hookOpts ?? {}), initialOutputStyle: opts.hookOpts?.initialOutputStyle ?? prefs.outputStyle ?? "default" };
   const makeSession = opts.makeSession ?? ((resume?: string) => remoteChatSession(opts.socketPath, { ...(resume ? { resume } : {}) }));
   const app = render(
     <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}
       initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialLines={opts.initialLines}
-      hookOpts={opts.hookOpts} onDetach={opts.onDetach} />,
+      hookOpts={hookOpts} onDetach={opts.onDetach} />,
     { exitOnCtrlC: false },
   );
   await app.waitUntilExit();

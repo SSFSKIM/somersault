@@ -11,6 +11,11 @@
 // the injected `savePrefs` (defaults to the real ~/.claude/ccx/prefs.json writer — a test supplies its own
 // so it never touches that real file, mirroring AddDirDialog's settingsFileDeps seam). Callback-only, no
 // session access — this is a pure client feature, same convention as every other dialog in this package.
+// `hideEsc` (Wave 3 task 5): the /config Settings dialog embeds this component directly for its Theme row
+// (Global Constraints line 34) — Esc/Enter keep doing exactly what they already do (revert-and-return /
+// persist-and-return), this only suppresses the standalone footer's "Esc to cancel" hint, which would be
+// redundant/confusing nested inside Settings' own chrome. Nothing else about the standalone /theme path
+// changes — the prop defaults to false there.
 import React, { useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { THEME_LABELS, currentTheme, themeTokens, setTheme } from "./theme.js";
@@ -22,9 +27,10 @@ const FOOTER = "Enter to select · Esc to cancel";
 // (" " context / "-" removed / "+" added), so it must stay part of the literal text, not just styling.
 const DEMO_LINES = [" function greet() {", '-  console.log("Hello, World!");', '+  console.log("Hello, Claude!");', " }"];
 
-export function ThemeDialog({ onDone, savePrefs = realSavePrefs }: {
+export function ThemeDialog({ onDone, savePrefs = realSavePrefs, hideEsc = false }: {
   onDone: (line: string) => void;
   savePrefs?: typeof realSavePrefs;
+  hideEsc?: boolean;
 }) {
   const original = useRef(currentTheme());
   const [idx, setIdx] = useState(() => THEME_LABELS.findIndex(([id]) => id === original.current));
@@ -58,7 +64,7 @@ export function ThemeDialog({ onDone, savePrefs = realSavePrefs }: {
       {DEMO_LINES.map((line, i) => (
         <Text key={i} color={line[0] === "-" ? tokens.diffRemove : line[0] === "+" ? tokens.diffAdd : undefined}>{line}</Text>
       ))}
-      <Text dimColor>{FOOTER}</Text>
+      {hideEsc ? null : <Text dimColor>{FOOTER}</Text>}
     </Box>
   );
 }
