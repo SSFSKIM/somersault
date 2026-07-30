@@ -32,7 +32,7 @@ describe("appserver thread teardown (C1/I7)", () => {
   it("thread/close settles the parked decisions BEFORE awaiting dispose(), so a dispose that waits on the parked turn still replies", async () => {
     const state = { parked: [] as Promise<unknown>[], disposed: 0 };
     let broker: any;
-    const srv = new AppServer({}, { sessionFactory: (cfg: any) => { broker = cfg.permissionBroker; return blockingSession(state); } });
+    const srv = new AppServer({}, { listSessions: async () => [], sessionFactory: (cfg: any) => { broker = cfg.permissionBroker; return blockingSession(state); } });
     const s = mkSink(); const c = srv.connect(s.sink);
     init(c, 1);
     send(c, { id: 2, method: "thread/start", params: {} });
@@ -257,7 +257,7 @@ describe("appserver record.sessionId (C3)", () => {
       onFrame: (cb: (m: unknown) => void) => { cbs.add(cb); return () => cbs.delete(cb); },
     };
     let seenSessionId: string | undefined;
-    const srv = new AppServer({}, { sessionFactory: () => late, getSessionMessages: async (sid: string) => { seenSessionId = sid; return frames; } });
+    const srv = new AppServer({}, { listSessions: async () => [], sessionFactory: () => late, getSessionMessages: async (sid: string) => { seenSessionId = sid; return frames; } });
     const s = mkSink(); const c = srv.connect(s.sink);
     init(c, 1);
     send(c, { id: 2, method: "thread/start", params: {} });
@@ -300,7 +300,7 @@ describe("appserver record.sessionId (C3)", () => {
       onFrame: (cb: (m: unknown) => void) => { cbs.add(cb); return () => cbs.delete(cb); },
     };
     let seenSessionId: string | undefined;
-    const srv = new AppServer({}, { sessionFactory: () => initOnly, getSessionMessages: async (sid: string) => { seenSessionId = sid; return frames; } });
+    const srv = new AppServer({}, { listSessions: async () => [], sessionFactory: () => initOnly, getSessionMessages: async (sid: string) => { seenSessionId = sid; return frames; } });
     const s = mkSink(); const c = srv.connect(s.sink);
     init(c, 1);
     send(c, { id: 2, method: "thread/start", params: {} });

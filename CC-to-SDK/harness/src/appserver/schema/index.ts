@@ -2,7 +2,7 @@
 // record: a shipped method missing here is a build failure, so wire and artifact cannot drift (spec §9).
 import type { z } from "zod/v4";
 import { threadIdParams, initializeParams, serverStatusParams } from "./core.js";
-import { threadStartParams, threadResumeParams, threadReadParams, threadListParams, threadCompactStartParams, threadReinitializeParams } from "./threads.js";
+import { threadStartParams, threadResumeParams, threadReadParams, threadListParams, threadCompactStartParams, threadReinitializeParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./threads.js";
 import { turnStartParams, turnInterruptParams } from "./turns.js";
 import { decisionRespondParams, decisionListParams } from "./decisions.js";
 import { modelSetParams, permissionModeSetParams, thinkingSetParams, settingsApplyParams } from "./settings.js";
@@ -33,4 +33,8 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "account/read": { params: threadIdParams },
   "thread/compact/start": { params: threadCompactStartParams },
   "thread/reinitialize": { params: threadReinitializeParams },
+  "thread/fork": { params: threadForkParams },
+  "thread/name/set": { params: threadNameSetParams },
+  "thread/tag/set": { params: threadTagSetParams },
+  "thread/delete": { params: threadDeleteParams },
 };

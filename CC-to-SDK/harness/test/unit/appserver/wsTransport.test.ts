@@ -70,7 +70,9 @@ describe("ws transport", () => {
   });
 
   it("two rapid requests over one connection get two distinct, correctly-ordered replies (frames not concatenated or split)", async () => {
-    const srv = new AppServer({}, { sessionFactory: () => fakeSession() });
+    // listSessions IS DI'd (Task 12): this test asserts thread/list's data is exactly [], and the real
+    // store wrapper would otherwise hit this machine's actual ~/.claude/projects (thousands of real sessions).
+    const srv = new AppServer({}, { sessionFactory: () => fakeSession(), listSessions: async () => [] });
     const { port, close } = await listenWs(srv, {});
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);
     await opened(ws);

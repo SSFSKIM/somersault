@@ -349,7 +349,10 @@ describe("appserver decisions (Task 7)", () => {
   });
 
   it("thread/start with an invalid config against the real session factory leaves zero registry threads and zero decision entries (Finding 1 regression)", async () => {
-    const srv = new AppServer(); // no DI — exercises the real openSession -> validateHarnessConfig throw path
+    // no sessionFactory DI — exercises the real openSession -> validateHarnessConfig throw path. listSessions
+    // IS DI'd (Task 12): this test's thread/list assertion counts registry rows only, and the real store
+    // wrapper would otherwise hit this machine's actual ~/.claude/projects (thousands of real sessions).
+    const srv = new AppServer({}, { listSessions: async () => [] });
     const s = mkSink(); const c = srv.connect(s.sink);
     const originalMint = srv.registry.mint.bind(srv.registry);
     let mintedId: string | undefined;

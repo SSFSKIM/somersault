@@ -87,6 +87,12 @@ export interface ThreadRecord {
   cwd?: string;                 // seeded from the start config; surfaced on threadView
   settings: { model?: string; permissionMode?: string; thinkingTokens?: number }; // seeded from the
     // start config at thread/start|resume; written by Task 8's router/setters thereafter
+  title?: string;                // Task 12: set only by thread/name/set patching a live match — never
+                                  // seeded at start/resume time (a fresh/resumed thread's title, if any,
+                                  // is store-only data; the merged thread/list fills it in from there)
+  tags?: string[];                // Task 12: set only by thread/tag/set patching a live match (same as
+                                  // `title` — the SDK's store model is a single nullable `tag`, wrapped
+                                  // here as a one-element array to match parent §5's plural wire field)
   closing?: boolean;            // set by M2b's close-drain queue while a close is in flight
   swapInFlight?: boolean;       // set by M2b's rewind while an engine swap is in flight
   epoch: number;                // one generation token per thread, initialized to 0 at creation; bumped

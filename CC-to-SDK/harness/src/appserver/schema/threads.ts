@@ -11,9 +11,22 @@ export const threadResumeParams = z.object({
   unattended: z.enum(["park", "deny"]).default("park"),
 });
 export const threadReadParams = threadIdParams.extend(cursorParam.shape);
-export const threadListParams = cursorParam;
+// Task 12: extends cursorParam's shape with `cwd` (rather than reusing the alias directly) — the merged
+// thread/list forwards `cwd` to deps.listSessions to scope the store side of the merge to one project.
+export const threadListParams = cursorParam.extend({ cwd: z.string().optional() });
 // Task 11: both `{ threadId }`-only — named here (rather than inlining threadIdParams at the index.ts
 // registration site) so the method->schema table reads self-documenting, matching this file's other
 // thread-lifecycle params.
 export const threadCompactStartParams = threadIdParams;
 export const threadReinitializeParams = threadIdParams;
+// Task 12 (session library): `threadId` on all four accepts EITHER a registry id (`thr_…`) or a bare
+// store sessionId — see sessionLib.ts's resolveThreadId, the one place that rule is implemented.
+export const threadForkParams = z.object({
+  threadId: z.string().min(1),
+  upToMessageId: z.string().optional(),
+  title: z.string().optional(),
+  unattended: z.enum(["park", "deny"]).default("park"),
+});
+export const threadNameSetParams = z.object({ threadId: z.string().min(1), title: z.string().min(1) });
+export const threadTagSetParams = z.object({ threadId: z.string().min(1), tag: z.string().nullable() });
+export const threadDeleteParams = z.object({ threadId: z.string().min(1) });

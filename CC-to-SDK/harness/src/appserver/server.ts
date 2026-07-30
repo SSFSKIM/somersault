@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { Peer, type PeerSink } from "./peer.js";
 import { classify, ERR, type RequestId } from "./rpc.js";
 import { Registry, activeTurnId, threadStatus, type ThreadRecord, type EngineSession } from "./registry.js";
-import { openSession, resumeSession, type OpenSessionConfig } from "../session/index.js";
+import { openSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, type DecisionEvent } from "./broker.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
 import type { PendingDecision } from "../permissions/pending.js";
@@ -14,18 +14,31 @@ import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
 import { modelSet, permissionModeSet, thinkingSet, settingsApply } from "./settings.js";
 import { capabilitiesRead, contextUsageRead, usageRead, initRead, accountRead } from "./introspect.js";
 import { threadCompactStart, threadReinitialize } from "./lifecycle.js";
+import { threadList, threadFork, threadNameSet, threadTagSet, threadDelete } from "./sessionLib.js";
 import { armPlanUpgrade } from "./planUpgrade.js";
 import { installRouter } from "./router.js";
 import { broadcastToWatchers } from "./fanout.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
-import { threadStartParams, threadResumeParams, threadListParams } from "./schema/threads.js";
+import { threadStartParams, threadResumeParams } from "./schema/threads.js";
 import { decisionRespondParams, decisionListParams } from "./schema/decisions.js";
 
 const require = createRequire(import.meta.url);
 const pkgVersion = (require("../../package.json") as { version: string }).version;
 const USER_AGENT = "cc-harness-appserver";
 
-export interface AppServerDeps { sessionFactory?: (config: Record<string, unknown>) => EngineSession; getSessionMessages?: (sessionId: string) => Promise<unknown[]> }
+export interface AppServerDeps {
+  sessionFactory?: (config: Record<string, unknown>) => EngineSession;
+  getSessionMessages?: (sessionId: string) => Promise<unknown[]>;
+  // Task 12 (session library): DI-defaulted, at each call site, to the real src/sessions/index.js
+  // exports — mirrors getSessionMessages above. `unknown[]`/void return shapes (rather than the real
+  // wrappers' typed SDKSessionInfo[]/ForkSessionResult) keep this interface decoupled from the SDK's
+  // exported types; the real functions' richer return types are assignable to these narrower ones.
+  listSessions?: (opts: { cwd?: string; limit?: number; offset?: number }) => Promise<unknown[]>;
+  forkSession?: (id: string, opts: { cwd?: string; upToMessageId?: string; title?: string }) => Promise<{ sessionId: string }>;
+  renameSession?: (id: string, title: string) => Promise<void>;
+  tagSession?: (id: string, tag: string | null) => Promise<void>;
+  deleteSession?: (id: string) => Promise<void>;
+}
 export interface ConnCtx {
   peer: Peer;
   initialized: boolean;
@@ -36,19 +49,20 @@ export interface ConnCtx {
   optOut: Set<string>;   // initialize{optOutNotificationMethods} — the SAME instance the Peer was built with (mutable-in-place)
 }
 
-const DEFAULT_LIST_LIMIT = 200;
-
-/** parent §5's full Thread projection (13 fields) — a GUI's thread row. `title`/`tags`/`preview` are
- *  registry-only `undefined` here; Wave 2's store merge fills them on the list path. `status` goes
- *  through the one predicate+shape pair (registry.ts, spec D-M2-8) — `waitingOn` needs the decisions
- *  map, which the record itself does not have, hence `srv`. */
+/** parent §5's full Thread projection (13 fields) — a GUI's thread row. `title`/`tags` reflect only
+ *  what thread/name/set or thread/tag/set have explicitly patched onto this record (registry.ts) — a
+ *  thread that was never renamed/tagged in-process reads `undefined` here even if the store has a title
+ *  for it; sessionLib.ts's merged thread/list is what fills that gap from a store match, on the VIEW it
+ *  builds, without mutating the record. `preview` stays store-only (no registry equivalent exists) and is
+ *  always `undefined` off this function. `status` goes through the one predicate+shape pair (registry.ts,
+ *  spec D-M2-8) — `waitingOn` needs the decisions map, which the record itself does not have, hence `srv`. */
 export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unknown> {
   const waitingOn = srv.pendingDecisions(r.id).length > 0;
   return {
     id: r.id,
     sessionId: r.sessionId,
-    title: undefined,
-    tags: undefined,
+    title: r.title,
+    tags: r.tags,
     cwd: r.cwd,
     model: r.settings.model,
     permissionMode: r.settings.permissionMode,
@@ -113,32 +127,15 @@ export class AppServer {
       srv.broadcastServer("thread/started", { thread: threadView(srv, record) });
     },
     "thread/resume": async (srv, ctx, id, params) => {
-      if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
       const parsed = threadResumeParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
-      const threadId = srv.registry.mint();
-      const dec = srv.makeDecisions(threadId, parsed.data.unattended);
-      const config = buildConfig(parsed.data, dec.broker(threadId));
-      const factory = srv.deps.sessionFactory ?? ((c: Record<string, unknown>) => resumeSession(parsed.data.sessionId, c as OpenSessionConfig));
-      const session = factory(config as Record<string, unknown>); // same ordering as thread/start: register dec only once the factory hasn't thrown
-      srv.decisions.set(threadId, dec);
-      const nowS = nowSec();
-      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId ?? parsed.data.sessionId, createdAt: nowS, updatedAt: nowS, cwd: parsed.data.config?.cwd as string | undefined, settings: seedSettings(parsed.data.config), epoch: 0 };
-      srv.registry.add(record);
-      installRouter(srv, record); // no-op on the init route in practice — resume already knows the id — but keeps one rule for both entry points
-      ctx.peer.reply(id, { thread: threadView(srv, record) });
-      srv.broadcastServer("thread/started", { thread: threadView(srv, record) });
+      srv.startThread(ctx, id, { resume: parsed.data.sessionId, config: parsed.data.config, unattended: parsed.data.unattended });
     },
-    "thread/list": (srv, ctx, id, params) => {
-      const parsed = threadListParams.safeParse(params);
-      if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
-      const all = srv.registry.list();
-      const limit = parsed.data.limit ?? DEFAULT_LIST_LIMIT;
-      const offset = parsed.data.cursor ? Number(parsed.data.cursor) : 0;
-      const page = all.slice(offset, offset + limit);
-      const consumed = offset + page.length;
-      ctx.peer.reply(id, { data: page.map((r) => threadView(srv, r)), nextCursor: consumed < all.length ? String(consumed) : null });
-    },
+    "thread/list": threadList,
+    "thread/fork": threadFork,
+    "thread/name/set": threadNameSet,
+    "thread/tag/set": threadTagSet,
+    "thread/delete": threadDelete,
     "thread/close": async (srv, ctx, id, params) => {
       const parsed = threadIdParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
@@ -214,6 +211,30 @@ export class AppServer {
   constructor(opts: { token?: string } = {}, public readonly deps: AppServerDeps = {}) {
     this.authRequired = opts.token !== undefined;
     this.token = opts.token ?? "";
+  }
+
+  /** The one thread-admission spine shared by thread/resume and Task 12's thread/fork (sessionLib.ts) —
+   *  "start a new thread in this server resuming a given session id". Verbatim-extracted from the
+   *  pre-Task-12 thread/resume handler body, with one change: `resume` is folded into the config object
+   *  handed to the factory (`{...config, resume}`) rather than threaded via a resumeSession(id, config)
+   *  closure — mirroring what the real src/session/index.ts resumeSession already does internally
+   *  (`openSession({...config, resume: id})`) one level up, so a DI'd `sessionFactory` (every test in this
+   *  suite overrides it) can observe `resume` on the config it receives, exactly like any other flag,
+   *  instead of it being invisible to anything but the real default factory. */
+  startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny" }): void {
+    if (this.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
+    const threadId = this.registry.mint();
+    const dec = this.makeDecisions(threadId, opts.unattended);
+    const config = { ...buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId)), resume: opts.resume };
+    const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
+    const session = factory(config as Record<string, unknown>); // same ordering as thread/start: register dec only once the factory hasn't thrown
+    this.decisions.set(threadId, dec);
+    const nowS = nowSec();
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId ?? opts.resume, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), epoch: 0 };
+    this.registry.add(record);
+    installRouter(this, record); // no-op on the init route in practice — resume already knows the id — but keeps one rule for both entry points
+    ctx.peer.reply(id, { thread: threadView(this, record) });
+    this.broadcastServer("thread/started", { thread: threadView(this, record) });
   }
 
   /** Tear one thread down: settle its parked decisions, dispose the engine, tell the thread's subscribers,

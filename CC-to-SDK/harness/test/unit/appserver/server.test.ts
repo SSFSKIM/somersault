@@ -5,7 +5,10 @@ import { threadBusyReason, type ThreadRecord } from "../../../src/appserver/regi
 import type { PeerSink } from "../../../src/appserver/peer.js";
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const fakeSession = (overrides: Record<string, unknown> = {}) => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1", ...overrides });
-const boot = (token?: string) => { const s = mkSink(); const srv = new AppServer({ token }, { sessionFactory: () => fakeSession() }); const c = srv.connect(s.sink); return { ...s, srv, c }; };
+// listSessions IS DI'd (Task 12): thread/list now merges in the store, and this machine's real
+// ~/.claude/projects has thousands of real sessions on it — every boot() caller that asserts an exact
+// thread/list count needs a hermetic, empty store, not the real one.
+const boot = (token?: string) => { const s = mkSink(); const srv = new AppServer({ token }, { sessionFactory: () => fakeSession(), listSessions: async () => [] }); const c = srv.connect(s.sink); return { ...s, srv, c }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
 const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l));
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -131,7 +134,7 @@ describe("AppServer dispatch", () => {
   it("thread/close removes the record from the registry even when dispose() rejects (no leak on a failing close)", async () => {
     const s = mkSink();
     const failingSession = () => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => { throw new Error("dispose boom"); }, onFrame: () => () => {}, sessionId: "sess-2" });
-    const srv = new AppServer({}, { sessionFactory: failingSession });
+    const srv = new AppServer({}, { sessionFactory: failingSession, listSessions: async () => [] });
     const c = srv.connect(s.sink);
     send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
     send(c, { id: 2, method: "thread/start", params: {} });

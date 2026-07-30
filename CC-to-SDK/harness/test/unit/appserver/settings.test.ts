@@ -53,7 +53,9 @@ function fakeSession(calls: Calls, modes: Partial<Record<keyof Calls, Mode>> = {
  *  seed config, and subscribes both. Returns { srv, a, b, connA, connB, threadId }; both sinks are
  *  cleared after boot so callers' assertions start clean. */
 async function bootTwoSubscribers(sessionFactory: () => any, config?: Record<string, unknown>) {
-  const srv = new AppServer({}, { sessionFactory });
+  // listSessions IS DI'd (Task 12): several callers below assert on a thread/list mirror row, and the real
+  // store wrapper would otherwise hit this machine's actual ~/.claude/projects (thousands of real sessions).
+  const srv = new AppServer({}, { sessionFactory, listSessions: async () => [] });
   const a = mkSink(); const connA = srv.connect(a.sink);
   const b = mkSink(); const connB = srv.connect(b.sink);
   init(connA, 1, "A"); init(connB, 1, "B");
