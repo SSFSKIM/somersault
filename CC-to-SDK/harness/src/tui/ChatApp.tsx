@@ -36,7 +36,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
   initialPrompt?: string;
-  hookOpts?: { initialMode?: string; initialThink?: string };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string };
   cwd: string;
   initialResume?: InitialResume;
   initialLines?: RenderLine[];

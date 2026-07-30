@@ -50,7 +50,9 @@ export const LOCAL_COMMAND_ENTRIES: CommandEntry[] = COMMANDS.map((c) => ({ name
 /** Local command names — dispatch routes these to the engine switch (never submit-as-prompt). */
 export const LOCAL_NAMES = new Set(COMMANDS.map((c) => c.name));
 
-const k = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : `${n}`);   // 31000→"31k", 18500→"18.5k"
+/** 31000→"31k", 18500→"18.5k". Exported because /stats renders the same counts (sessionTools.ts) — two
+ *  copies would let /cost and /stats disagree about the same number the first time the rule changes. */
+export const tokenCount = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : `${n}`);
 
 export function formatHelp(): RenderLine[] {
   return [{ text: "commands:", dim: true }, ...COMMANDS.map((c) => ({ text: `  /${c.name}  ${c.summary}`, dim: true }))];
@@ -62,11 +64,11 @@ export function formatThink(next?: string, current?: string): RenderLine[] {
   return next ? [{ text: `thinking → ${next}` }] : [{ text: `thinking: ${current ?? "default"}`, dim: true }];
 }
 export function formatCompact(o: CompactOutcome): RenderLine[] {
-  return o.ok ? [{ text: `✦ compacted ${k(o.preTokens ?? 0)} → ${k(o.postTokens ?? 0)}` }]
+  return o.ok ? [{ text: `✦ compacted ${tokenCount(o.preTokens ?? 0)} → ${tokenCount(o.postTokens ?? 0)}` }]
               : [{ text: `compact: ${o.error ?? "nothing to compact"}`, dim: true }];
 }
 export function formatContext(s: ContextUsageSummary): RenderLine[] {
-  return [{ text: `ctx ${s.percentUsed}% · ${k(s.tokensUsed)} / ${k(s.maxTokens)} · ${s.status}`, dim: true }];
+  return [{ text: `ctx ${s.percentUsed}% · ${tokenCount(s.tokensUsed)} / ${tokenCount(s.maxTokens)} · ${s.status}`, dim: true }];
 }
 
 /** The session-cumulative usage shape from Session.usage() (SDKControlGetUsageResponse subset). */
@@ -85,11 +87,11 @@ export function formatCost(u: SessionUsage): RenderLine[] {
   const out: RenderLine[] = [
     { text: "Session cost", bold: true },
     { text: `  total      ${costText}` },
-    { text: `  tokens     ${k(sum(models, "inputTokens"))} in · ${k(sum(models, "outputTokens"))} out`, dim: true },
+    { text: `  tokens     ${tokenCount(sum(models, "inputTokens"))} in · ${tokenCount(sum(models, "outputTokens"))} out`, dim: true },
     { text: `  duration   ${formatElapsed(s.total_duration_ms ?? 0)}`, dim: true },
   ];
   for (const [name, m] of Object.entries(models))
-    out.push({ text: `  ${name}  ${k(m.inputTokens ?? 0)} in · ${k(m.outputTokens ?? 0)} out${m.costUSD ? ` · $${m.costUSD.toFixed(4)}` : ""}`, dim: true });
+    out.push({ text: `  ${name}  ${tokenCount(m.inputTokens ?? 0)} in · ${tokenCount(m.outputTokens ?? 0)} out${m.costUSD ? ` · $${m.costUSD.toFixed(4)}` : ""}`, dim: true });
   return out;
 }
 

@@ -1258,3 +1258,117 @@ describe("Wave 2 final-review F1: loadHistory's scope-aware reader (out-of-proje
     expect(entries.map((e) => e.text)).toContain("prompt-outside");
   });
 });
+
+describe("U5a: /export path safety", () => {
+  const msgs = async () => [{ type: "user", uuid: "u1", message: { content: [{ type: "text", text: "hello" }] } }];
+  function mount(deps: Parameters<typeof useChat>[2]) {
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fakeRemote(), { cwd: "/repo" }, { getSessionMessages: msgs, ...deps });
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    return { api, ...render(<H />) };
+  }
+
+  it("writes an absolute path where the user typed it, not re-rooted under cwd", async () => {
+    const writes: [string, string][] = [];
+    const { api } = mount({ writeFile: (p, t) => writes.push([p, t]), readFile: () => null });
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/export /tmp/notes.md");
+    await waitFor(() => writes.length === 1);
+    expect(writes[0][0]).toBe("/tmp/notes.md");        // join() silently produced "/repo/tmp/notes.md"
+  });
+
+  it("refuses to truncate a file that is not one of our exports", async () => {
+    const writes: [string, string][] = [];
+    // writeFile TRUNCATES, so `/export package.json` used to destroy it with no prompt at all.
+    const { api, lastFrame } = mount({ writeFile: (p, t) => writes.push([p, t]), readFile: () => '{\n  "name": "cc-harness"\n}' });
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/export package.json");
+    await waitFor(() => frame(lastFrame).includes("refusing to overwrite"));
+    expect(writes).toEqual([]);
+  });
+
+  it("still overwrites a previous export, so re-exporting a growing conversation keeps working", async () => {
+    const writes: [string, string][] = [];
+    const { api } = mount({ writeFile: (p, t) => writes.push([p, t]), readFile: () => "# ccx conversation (abcd1234)\n\n## › older\n" });
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/export");
+    await waitFor(() => writes.length === 1);
+  });
+});
+
+describe("U3: the Tab ladder's `auto` rung only ever switches a model it knows", () => {
+  async function cycleToAuto(api: { cycle?: () => void }, lastFrame: () => string | undefined) {
+    for (const want of ["acceptEdits", "plan", "auto"]) {
+      api.cycle!();
+      await waitFor(() => frame(lastFrame).includes(`mode:${want}`));
+    }
+  }
+  function mount(initialModel?: string) {
+    const models: (string | undefined)[] = [];
+    const api: { cycle?: () => void } = {};
+    function H() {
+      const c = useChat(() => fakeRemote({ setModel: (m) => { models.push(m); } }), initialModel ? { initialModel } : {});
+      api.cycle = c.cycleMode;
+      return <Text>mode:{c.state.mode} model:{c.state.model ?? "-"} {allText(c)}</Text>;
+    }
+    return { models, api, ...render(<H />) };
+  }
+
+  it("leaves a seeded auto-capable launch model alone", async () => {
+    const { models, api, lastFrame } = mount("claude-opus-5");
+    await new Promise((r) => setTimeout(r, 20));
+    await cycleToAuto(api, lastFrame);
+    expect(models).toEqual([]);                                    // opus-5 supports auto — nothing to repair
+    expect(frame(lastFrame)).toContain("model:claude-opus-5");
+  });
+
+  it("still repairs a seeded model that genuinely cannot run auto", async () => {
+    const { models, api, lastFrame } = mount("claude-haiku-4-5-20251001");
+    await new Promise((r) => setTimeout(r, 20));
+    await cycleToAuto(api, lastFrame);
+    expect(models).toEqual(["claude-sonnet-5"]);
+    expect(frame(lastFrame)).toContain("doesn't support auto");
+  });
+
+  it("switches NOTHING when the model is unknown — an attach client must not downgrade the host's session", async () => {
+    // `model` is undefined until a turn ENDS. Reaching the auto rung before that used to resolve the
+    // unknown to DEFAULT_AUTO_MODEL and call setModel, quietly turning `ccx --model opus` into sonnet.
+    const { models, api, lastFrame } = mount(undefined);
+    await new Promise((r) => setTimeout(r, 20));
+    await cycleToAuto(api, lastFrame);
+    expect(models).toEqual([]);
+    expect(frame(lastFrame)).toContain("can't check this client's model");
+  });
+});
+
+describe("U5b: transcript-reading commands admit when a turn is still open", () => {
+  it("/stats says the in-flight turn is missing (the SDK does not write the transcript mid-turn)", async () => {
+    const fake = fakeRemote({ sessionId: "s1" });
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, {}, { getSessionMessages: async () => [] });
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start" } as any);       // a turn is now streaming
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/stats");
+    await waitFor(() => frame(lastFrame).includes("in-flight turn isn't included"));
+  });
+
+  it("stays quiet when no turn is open", async () => {
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fakeRemote({ sessionId: "s1" }), {}, { getSessionMessages: async () => [] });
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/stats");
+    await waitFor(() => frame(lastFrame).includes("Session stats"));
+    expect(frame(lastFrame)).not.toContain("in-flight turn");
+  });
+});

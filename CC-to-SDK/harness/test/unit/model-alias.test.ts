@@ -32,3 +32,17 @@ describe("tier-alias → explicit model id (probe 72)", () => {
     expect((resolveOptions({ model: "fable", permissionMode: "auto" }) as any).model).toBe("claude-fable-5");
   });
 });
+
+describe("resolveModelAlias prototype safety", () => {
+  it("treats inherited Object keys as ordinary unknown models, not as alias hits", () => {
+    // MODEL_ALIASES is an object literal, so a bare index would resolve these off the prototype chain and
+    // hand a FUNCTION (or Object.prototype) to session.setModel while TypeScript still believed it a string.
+    for (const k of ["constructor", "__proto__", "toString", "valueOf", "hasOwnProperty"]) {
+      expect(typeof resolveModelAlias(k)).toBe("string");
+      expect(resolveModelAlias(k)).toBe(k);   // unknown → passes through unchanged, per the contract
+    }
+  });
+  it("keeps a prototype key a string all the way through resolveOptions", () => {
+    expect(typeof (resolveOptions({ model: "constructor" }) as any).model).toBe("string");
+  });
+});

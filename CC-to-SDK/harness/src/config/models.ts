@@ -23,5 +23,8 @@ export const MODEL_ALIASES: Record<string, string> = {
  *  because the user-facing name is capitalized ("Opus" in the picker, "Sonnet" in the docs). */
 export function resolveModelAlias(model?: string): string | undefined {
   if (model === undefined) return undefined;
-  return MODEL_ALIASES[model.trim().toLowerCase()] ?? model;
+  // hasOwn, not a bare index: MODEL_ALIASES is an object literal, so "constructor"/"__proto__" would
+  // otherwise resolve off the prototype chain and hand a function/object to setModel as a "model id".
+  const k = model.trim().toLowerCase();
+  return Object.hasOwn(MODEL_ALIASES, k) ? MODEL_ALIASES[k] : model;
 }

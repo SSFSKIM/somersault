@@ -4,8 +4,8 @@
 // only. Owns the transcript, the streaming turn, the decision queue, mode switching (Tab ladder + host
 // truth via state events), the bg-task panel, and idempotent teardown.
 import { useEffect, useRef, useState } from "react";
-import { writeFileSync as realWriteFileSync } from "node:fs";
-import { join } from "node:path";
+import { writeFileSync as realWriteFileSync, readFileSync as realReadFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import type { ChatSession } from "../session/chatSession.js";
 import { hasDecisionFeed, hasBgTasks, hasSessionEvents, hasRewind } from "../session/chatSession.js";
 import type { RewindAnchor, RewindScope, RewindDryRun } from "../session/chatSession.js";
@@ -20,7 +20,7 @@ import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, form
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
-import { exportMarkdown, defaultExportName, filesInContext, formatFiles, formatStats, formatSessionInfo } from "./sessionTools.js";
+import { exportMarkdown, defaultExportName, filesInContext, formatFiles, formatStats, formatSessionInfo, EXPORT_HEADER } from "./sessionTools.js";
 import { lastAssistantText } from "../sessions/rows.js";
 import type { ModelInfo } from "./ModelPicker.js";
 import { replayLines } from "./replay.js";
@@ -44,8 +44,8 @@ function ladderNext(mode: string): string { const i = (LADDER as readonly string
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
-  opts: { initialMode?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialLines?: RenderLine[]; initialPrompt?: string; onExit?: () => void } = {},
-  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; getSessionMessagesIn?: (id: string, cwd?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]> } = {},
+  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialLines?: RenderLine[]; initialPrompt?: string; onExit?: () => void } = {},
+  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; getSessionMessagesIn?: (id: string, cwd?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]> } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   // Seed the scrollback with the welcome banner — unless we're launching straight into a resume (the
@@ -64,7 +64,11 @@ export function useChat(
   const [turnStartedAt, setTurnStartedAt] = useState(0);
   const [ctxPct, setCtxPct] = useState<number | undefined>(undefined);
   const [usageWarn, setUsageWarn] = useState<string | undefined>(undefined);
-  const [model, setModel] = useState<string | undefined>(undefined);
+  // Seeded from the launch config, NOT left undefined until the first turn ends: the Tab ladder's `auto`
+  // rung consults this to decide whether the live model supports auto, and an unknown model there used to
+  // resolve to the DEFAULT and silently downgrade a `--model opus` session to sonnet before the user had
+  // typed anything. Stays undefined for `ccx attach` (that client never saw the host's launch config).
+  const [model, setModel] = useState<string | undefined>(opts.initialModel);
   const [thinkLevel, setThinkLevel] = useState(opts.initialThink ?? "default");
   const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[] }>({ open: false, sessions: [] });
   const [modelPicker, setModelPicker] = useState<{ open: boolean; models: ModelInfo[] }>({ open: false, models: [] });
@@ -98,6 +102,13 @@ export function useChat(
   const appendMemory = deps.appendMemory ?? realAppendMemory;
   const copyText = deps.copyText ?? realCopyToClipboard;
   const writeFile = deps.writeFile ?? ((p: string, t: string) => realWriteFileSync(p, t));
+  // null means "nothing there, safe to create". ENOENT is the ONLY error that earns it: a target we
+  // cannot read (a directory, EACCES, a binary blob) comes back as "" so the header check below fails
+  // and /export refuses — we could not prove the file is ours, so we must not truncate it.
+  const readFile = deps.readFile ?? ((p: string) => {
+    try { return realReadFileSync(p, "utf8"); }
+    catch (e) { return (e as NodeJS.ErrnoException).code === "ENOENT" ? null : ""; }
+  });
   const renameSessionFn = deps.renameSession ?? ((id: string, t: string) => realRenameSession(id, t, { cwd: opts.cwd }));
   const tagSessionFn = deps.tagSession ?? ((id: string, t: string | null) => realTagSession(id, t, { cwd: opts.cwd }));
   const getSessionInfoFn = deps.getSessionInfo ?? ((id: string) => realGetSessionInfo(id, { cwd: opts.cwd }));
@@ -207,6 +218,11 @@ export function useChat(
 
   function append(ls: RenderLine[]) { if (!disposed.current && ls.length) setLines((l) => [...l, ...ls]); }
   function notice(text: string) { append([{ text, dim: true }]); }
+  /** /export, /files and /stats all read the PERSISTED transcript, which the SDK does not write mid-turn
+   *  (probes 62-64). Local commands dispatch immediately even while busy, so running one during a turn
+   *  answers from the last COMPLETED turn — an export that ends before the reply on screen, a token count
+   *  that omits it. Nothing else on screen says so, so this does. */
+  function staleTurnNote() { if (liveTurnRef.current) notice("  (the in-flight turn isn't included — the transcript is written at turn end)"); }
 
   // Decision FIFO: the dialog shows the head; extras queue behind it. `pushPending`/`dropPending` are
   // driven by the DecisionFeed subscription above — never optimistically from resolveDecision.
@@ -279,16 +295,24 @@ export function useChat(
           const msgs = await getSessionMessages(id).catch(() => [] as any[]);
           if (!msgs.length) { notice("no conversation to export yet"); break; }
           const md = exportMarkdown(msgs, { id });
-          if (cmd.args === "clipboard") { await copyText(md); notice(`✓ copied ${md.length} chars of markdown`); break; }
-          const path = join(cwd, cmd.args || defaultExportName(id));
+          if (cmd.args === "clipboard") { await copyText(md); notice(`✓ copied ${md.length} chars of markdown`); staleTurnNote(); break; }
+          // resolve, not join: `join(cwd, "/tmp/x.md")` silently yields "<cwd>/tmp/x.md" and then reports
+          // that surprising path as success. resolve() honors an absolute path as typed.
+          const path = resolvePath(cwd, cmd.args || defaultExportName(id));
+          // writeFile TRUNCATES. `/export package.json` would destroy it with no prompt, so overwrite only
+          // a file we can prove is a previous export of ours; anything else is the user's to lose, not ours.
+          const existing = readFile(path);
+          if (existing !== null && !existing.startsWith(EXPORT_HEADER)) { append([{ text: `✗ refusing to overwrite ${path} — not a previous ccx export`, color: "red" }]); break; }
           writeFile(path, md);
           notice(`✓ exported to ${path}`);
+          staleTurnNote();
           break;
         }
         case "files": {
           const id = session.sessionId;
           const msgs = id ? await getSessionMessages(id).catch(() => [] as any[]) : [];
           append(formatFiles(filesInContext(msgs)));
+          staleTurnNote();
           break;
         }
         // Terminal stand-in for CC's diff dialog: status for the shape, stat for the sizes.
@@ -297,6 +321,7 @@ export function useChat(
           const u = (await session.usage().catch(() => ({}))) as SessionUsage;
           const msgs = session.sessionId ? await getSessionMessages(session.sessionId).catch(() => [] as any[]) : [];
           append(formatStats(u, msgs));
+          staleTurnNote();
           break;
         }
         case "session": {
@@ -591,12 +616,18 @@ export function useChat(
   async function applyMode(next: string) {
     if (disposed.current) return;
     if (next === "auto") {
-      const target = resolveAutoModel(model);
-      if (model !== target) {
-        await session.setModel(target).catch(() => {});
-        if (disposed.current) return;
-        setModel(target);
-        append([{ text: model ? `↻ auto — switched model to ${target} (${model} doesn't support auto)` : `↻ auto — using ${target} (auto needs Opus 4.6+/Sonnet 4.6)`, dim: true }]);
+      // Only ever switch a model we actually KNOW. When `model` is undefined (an `attach` client that has
+      // not seen a turn end) the old code resolved it to DEFAULT_AUTO_MODEL and switched — downgrading a
+      // session whose model the user deliberately chose. Say what we can't determine instead of guessing.
+      if (model === undefined) notice("auto — can't check this client's model; if it doesn't support auto the engine falls back to default");
+      else {
+        const target = resolveAutoModel(model);
+        if (model !== target) {
+          await session.setModel(target).catch(() => {});
+          if (disposed.current) return;
+          setModel(target);
+          append([{ text: `↻ auto — switched model to ${target} (${model} doesn't support auto)`, dim: true }]);
+        }
       }
     }
     await new Promise<void>((r) => setTimeout(r, 0));

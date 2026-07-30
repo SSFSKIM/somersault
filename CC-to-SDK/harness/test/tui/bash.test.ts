@@ -34,3 +34,13 @@ describe("formatBashLines", () => {
     expect(out[1]).toEqual({ text: "  x", dim: true });
   });
 });
+
+describe("formatBashOutput: timeout suppresses the synthetic exit line", () => {
+  it("reports only the timeout, never an `exit 1` the command did not return", () => {
+    // A timeout kills by signal, so runBash's `code` is its own fallback 1 — printing it under the timeout
+    // line would tell the user the command exited 1, which it never did.
+    const out = formatBashOutput({ code: 1, output: "", timedOut: true });
+    expect(out).toContainEqual({ text: "  timed out — killed after 30s", color: "red" });
+    expect(out.some((l) => l.text.includes("exit"))).toBe(false);
+  });
+});

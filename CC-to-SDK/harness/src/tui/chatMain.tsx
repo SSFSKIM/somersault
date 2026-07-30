@@ -18,7 +18,7 @@ export interface ChatClientOpts {
   // Pre-rendered transcript replay (attach, Task 8) or the banner.
   initialLines?: RenderLine[];
   // --permission-mode / --think, threaded so the status bar and Tab ladder start on the REAL mode.
-  hookOpts?: { initialMode?: string; initialThink?: string };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;

@@ -14,7 +14,11 @@ export interface EditorIO { spawn?: typeof spawnSync; setRaw?: (on: boolean) => 
 export function editExternal(text: string, io: EditorIO = {}): string | null {
   const spawn = io.spawn ?? spawnSync;
   const setRaw = io.setRaw ?? ((on: boolean) => { try { if (process.stdin.isTTY) process.stdin.setRawMode(on); } catch { /* no tty */ } });
-  const [cmd, ...args] = (io.editorCmd ?? process.env.VISUAL ?? process.env.EDITOR ?? "vi").split(/\s+/).filter(Boolean);
+  // `||`, not `??`: an exported-but-EMPTY VISUAL/EDITOR means "unset" in every shell, and `??` would
+  // accept it — leaving `cmd` undefined so spawnSync throws ERR_INVALID_ARG_TYPE straight into ink's
+  // useInput handler (ChatComposer calls this with no try/catch, so that crashes the whole REPL).
+  // The destructuring default catches the residue: a whitespace-only value splits to no tokens at all.
+  const [cmd = "vi", ...args] = (io.editorCmd || process.env.VISUAL || process.env.EDITOR || "vi").split(/\s+/).filter(Boolean);
   const dir = mkdtempSync(join(tmpdir(), "ccx-edit-"));
   const file = join(dir, "PROMPT.md");
   writeFileSync(file, text);

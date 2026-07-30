@@ -33,8 +33,10 @@ export function formatBashOutput(r: BashResult, cap = 40): RenderLine[] {
   const lines = r.output ? r.output.split("\n") : [];
   const out: RenderLine[] = lines.slice(0, cap).map((l) => ({ text: `  ${l}`, dim: true }));
   if (lines.length > cap) out.push({ text: `  … ${lines.length - cap} more lines`, dim: true });
+  // A timeout kills by SIGNAL, so `code` is our own synthetic 1 — a status the command never returned.
+  // The timeout line is the true story; printing `exit 1` under it would just contradict it.
   if (r.timedOut) out.push({ text: "  timed out — killed after 30s", color: "red" });
-  if (r.code !== 0) out.push({ text: `  exit ${r.code}`, color: "red" });
+  else if (r.code !== 0) out.push({ text: `  exit ${r.code}`, color: "red" });
   else if (!lines.length) out.push({ text: "  (no output)", dim: true });
   return out;
 }

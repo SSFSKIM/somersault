@@ -2,7 +2,7 @@
 // 6's /stats /session). No fs/SDK effects: callers fetch messages and inject writers.
 import type { RenderLine } from "./render.js";
 import { rowKind, promptText } from "../sessions/rows.js";
-import type { SessionUsage } from "./commands.js";
+import { tokenCount as kk, type SessionUsage } from "./commands.js";
 
 const FILE_KEYS = ["file_path", "path", "notebook_path"] as const;
 const toolFile = (b: any): string | undefined => {
@@ -10,10 +10,15 @@ const toolFile = (b: any): string | undefined => {
   return undefined;
 };
 
+/** First line of every export. `/export` refuses to overwrite a file that does NOT start with this —
+ *  the marker is what separates "re-exporting this conversation" from "about to truncate package.json".
+ *  Shared with the writer below so the check and the format cannot drift apart. */
+export const EXPORT_HEADER = "# ccx conversation";
+
 /** The conversation as portable markdown: prompts as `## ›` headings, assistant text as body, tool
  *  calls as one-line emphasized markers. Tool results and system rows are noise — skipped. */
 export function exportMarkdown(msgs: any[], meta: { id?: string }): string {
-  const out: string[] = [`# ccx conversation${meta.id ? ` (${meta.id.slice(0, 8)})` : ""}`, ""];
+  const out: string[] = [`${EXPORT_HEADER}${meta.id ? ` (${meta.id.slice(0, 8)})` : ""}`, ""];
   for (const m of msgs) {
     if (rowKind(m) === "prompt") { out.push(`## › ${promptText(m)}`, ""); continue; }
     if (m?.type !== "assistant") continue;
@@ -45,8 +50,7 @@ export function formatFiles(paths: string[]): RenderLine[] {
   return [{ text: `Files in context (${paths.length})`, bold: true }, ...paths.map((p) => ({ text: `  ${p}`, dim: true }))];
 }
 
-const kk = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : `${n}`);
-const sumTok = (ms: Record<string, { inputTokens?: number; outputTokens?: number }>, key: "inputTokens" | "outputTokens") =>
+const sumTok =(ms: Record<string, { inputTokens?: number; outputTokens?: number }>, key: "inputTokens" | "outputTokens") =>
   Object.values(ms).reduce((a, m) => a + (m[key] ?? 0), 0);
 
 /** `/stats` — conversation shape (prompts/replies/tool calls) + cumulative usage in one glance. */

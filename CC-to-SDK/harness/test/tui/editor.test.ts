@@ -402,3 +402,27 @@ describe("inputMode", () => {
     expect(inputMode(cmd)).toBe("normal");
   });
 });
+
+describe("undo snapshots track CONTENT, not array identity", () => {
+  // killToEnd/killToStart/clearInput all allocate a fresh `lines` array unconditionally, so an identity
+  // check called these no-ops "changes" and snapshotted the buffer onto itself — Ctrl-_ then restored
+  // identical text and looked broken.
+  it("Ctrl-K at end of line pushes no undo entry", () => {
+    const s = type(initialEditorState(), "hello");        // cursor already at end
+    expect(applyKey(s, "k", { ctrl: true }).state.undo.length).toBe(s.undo.length);
+  });
+  it("Ctrl-U at column 0 pushes no undo entry", () => {
+    let s = type(initialEditorState(), "hello");
+    s = applyKey(s, "a", { ctrl: true }).state;            // Ctrl-A → column 0
+    expect(applyKey(s, "u", { ctrl: true }).state.undo.length).toBe(s.undo.length);
+  });
+  it("Ctrl-L on an already-empty buffer pushes no undo entry", () => {
+    expect(applyKey(initialEditorState(), "l", { ctrl: true }).state.undo.length).toBe(0);
+  });
+  it("still snapshots when the keypress genuinely changes the text", () => {
+    const s = type(initialEditorState(), "hello");
+    const killed = applyKey(applyKey(s, "a", { ctrl: true }).state, "k", { ctrl: true }).state;
+    expect(killed.lines).toEqual([""]);
+    expect(killed.undo.length).toBe(s.undo.length + 1);   // a real edit is still undoable
+  });
+});

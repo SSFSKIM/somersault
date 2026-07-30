@@ -260,12 +260,18 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResu
   return { state: s };
 }
 
+/** Buffer equality by CONTENT, not array identity. killToEnd/killToStart/clearInput all allocate a
+ *  fresh `lines` array unconditionally, so an identity check calls Ctrl-K-at-end-of-line (or Ctrl-U at
+ *  column 0, or Ctrl-L on an empty buffer) a change and snapshots the buffer onto itself — the next
+ *  Ctrl-_ then restores identical text and undo looks broken. */
+const sameText = (a: string[], b: string[]) => a === b || (a.length === b.length && a.every((l, i) => l === b[i]));
+
 /** Snapshot-on-change undo: any key that changed the buffer pushes the PRIOR buffer (cap 100). An op
  *  that managed the stack itself (undoEdit pops it) is recognized by its own `undo` identity change;
  *  a submit returns a fresh initialEditorState, so its stack is already empty. */
 export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorResult {
   const r = applyKeyInner(s, input, key);
   if (r.submit !== undefined || r.state === s) return r;
-  if (r.state.lines === s.lines || r.state.undo !== s.undo) return r;
+  if (sameText(r.state.lines, s.lines) || r.state.undo !== s.undo) return r;
   return { ...r, state: { ...r.state, undo: [...s.undo.slice(-99), { lines: s.lines, cursor: s.cursor }] } };
 }

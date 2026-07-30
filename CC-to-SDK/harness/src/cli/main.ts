@@ -11,6 +11,8 @@ import { SessionHost } from "../host/host.js";
 import type { SessionHostOpts } from "../host/host.js";
 import { mintShortId, hostSocketPath } from "../fleet/paths.js";
 import { welcomeBanner } from "../tui/banner.js";
+import { resolveModelAlias } from "../config/models.js";
+import { DEFAULTS } from "../config/types.js";
 import { parseThinkArg, thinkingConfigFrom } from "../tui/thinkLevels.js";
 import { prepareAttach as realPrepareAttach } from "./attach.js";
 import { socketAnswers as realSocketAnswers } from "../fleet/liveness.js";
@@ -217,7 +219,11 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
       socketPath: hostSocketPath(process.pid), client: { kind: "loopback" }, cwd,
       ...(inv.prompt ? { initialPrompt: inv.prompt } : {}),
       ...(resume ? { initialResume: { kind: "id" as const, id: resume } } : { initialLines: welcomeBanner({ cwd, model: inv.config.model, mode: inv.config.permissionMode ?? "default" }) }),
-      hookOpts: { initialMode: inv.config.permissionMode ?? "default", ...(parsedThink ? { initialThink: parsedThink.level } : {}) },
+      // initialModel mirrors resolveOptions.ts's rule (alias first, then default) so the REPL knows what the
+      // engine is actually running BEFORE the first turn ends. Without it the Tab ladder's `auto` rung reads
+      // an undefined model and silently downgrades the session the user asked for. `ccx attach` (above) has
+      // no launch config to pass, and useChat handles that unknown by declining to switch at all.
+      hookOpts: { initialMode: inv.config.permissionMode ?? "default", initialModel: resolveModelAlias(inv.config.model) ?? DEFAULTS.model, ...(parsedThink ? { initialThink: parsedThink.level } : {}) },
     });
   } finally {
     process.off("SIGHUP", onSignal); process.off("SIGTERM", onSignal);
