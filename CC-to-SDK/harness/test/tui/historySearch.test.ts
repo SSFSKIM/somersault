@@ -55,6 +55,21 @@ describe("rankHistory — substring class before subsequence class (bundle oDb)"
     expect(rankHistory(es, "TYPECHECK").map((e) => e.text)).toEqual(["run typecheck"]);
     expect(rankHistory(es, "zzz")).toEqual([]);
   });
+  it("stable order WITHIN each class when ≥2 entries land in each (scrambled input order)", () => {
+    // Query "tes": substring hits are "fix the tests" and "best testing"; subsequence-only hits (t…e…s,
+    // no literal "tes") are "tweak espresso settings" and "the eastern silo". Input order is scrambled
+    // across classes on purpose — rankHistory must preserve EACH class's relative input order, not sort
+    // by anything else (e.g. recency/ts), and a single-entry-per-class fixture can't pin that.
+    const scrambled = [
+      { text: "tweak espresso settings", ts: 1 },   // subsequence
+      { text: "fix the tests", ts: 2 },              // substring
+      { text: "the eastern silo", ts: 3 },           // subsequence
+      { text: "best testing", ts: 4 },               // substring
+    ];
+    expect(rankHistory(scrambled, "tes").map((e) => e.text)).toEqual([
+      "fix the tests", "best testing", "tweak espresso settings", "the eastern silo",
+    ]);
+  });
 });
 
 describe("ageLabel", () => {

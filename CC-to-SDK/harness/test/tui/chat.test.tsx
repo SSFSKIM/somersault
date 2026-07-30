@@ -376,6 +376,35 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");
   });
 
+  it("Ctrl-R opens history search; Esc accepts the top entry into the composer", async () => {
+    const fakeDeps = {
+      getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
+      listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
+    };
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("\x12");                                   // Ctrl-R
+    await waitFor(() => frame(lastFrame).includes("Search prompts"));
+    stdin.write("\x1b");                                   // Esc = accept
+    await waitFor(() => frame(lastFrame).includes("redo the build"));
+    expect(frame(lastFrame)).toContain("redo the build");   // prefilled into the composer buffer
+  });
+
+  it("app-level keys are gated while the history overlay is open (its Ctrl-C is cancel, not exit-arm)", async () => {
+    const fakeDeps = {
+      getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
+      listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
+    };
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("\x12");                                   // Ctrl-R opens
+    await waitFor(() => frame(lastFrame).includes("Search prompts"));
+    stdin.write("\x03");                                   // Ctrl-C → overlay cancels; app exit-arm must NOT fire
+    await waitFor(() => !frame(lastFrame).includes("Search prompts"));
+    expect(frame(lastFrame)).not.toContain("Press Ctrl-C again to exit");
+    expect(frame(lastFrame)).not.toContain("Search prompts");   // overlay closed by its own cancel
+  });
+
   it("Ctrl-O opens the transcript pager, gates the app keys, and Ctrl-O again closes it", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);

@@ -7,7 +7,9 @@
 // Ctrl-O (Task 5) opens the transcript pager; Ctrl-Z is checked ABOVE that gate (detach stays reachable
 // even under the pager overlay) but every OTHER app arm is gated while the pager is open — the pager
 // owns the keys, including its own ctrl+c as transcript:exit (per the bundle), so the app's Ctrl-C
-// exit-arm must not also fire underneath it. Renders increment 8's multiline <ChatComposer>.
+// exit-arm must not also fire underneath it. Ctrl-R (Wave 2 task 7) opens the history-search overlay —
+// same gating pattern: Ctrl-Z stays live, every other app arm is gated while it's open (its own Ctrl-C/
+// Ctrl-R/Ctrl-S own those keys). Renders increment 8's multiline <ChatComposer>.
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
@@ -27,8 +29,9 @@ import { BgTasksPanel } from "./BgTasksPanel.js";
 import { RewindPicker } from "./RewindPicker.js";
 import { ShortcutsOverlay } from "./ShortcutsOverlay.js";
 import { TranscriptPager } from "./TranscriptPager.js";
+import { HistorySearchOverlay } from "./HistorySearchOverlay.js";
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialLines }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialLines, deps }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -37,9 +40,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   cwd: string;
   initialResume?: InitialResume;
   initialLines?: RenderLine[];
+  deps?: Parameters<typeof useChat>[2];
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
-  const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit });
+  const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit }, deps);
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
@@ -84,7 +88,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       if (key.ctrl && input === "o") { setTranscriptOpen(false); disarm(); }
       return;
     }
+    if (state.historyOpen) return;   // the overlay owns Ctrl-C (cancel) / Ctrl-R (next) / Ctrl-S (scope); only Ctrl-Z above stays live
     if (key.ctrl && input === "o") { setTranscriptOpen(true); disarm(); return; }   // CC app:toggleTranscript
+    if (key.ctrl && input === "r") { openHistorySearch(); disarm(); return; }   // CC history:search (Global)
     if (key.ctrl && input === "t") { setTodosOpen((v) => !v); disarm(); return; }   // CC app:toggleTodos
     if (key.ctrl && input === "c") {                                // interrupt a turn, else arm/confirm exit (CC)
       if (state.busy) { interrupt(); disarm(); return; }
@@ -107,6 +113,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         ? <ShortcutsOverlay onClose={closeShortcuts} />
         : transcriptOpen
         ? <TranscriptPager lines={state.lines} onClose={() => setTranscriptOpen(false)} />
+        : state.historyOpen
+        ? <HistorySearchOverlay load={loadHistory} onAccept={acceptHistory} onExecute={executeHistory} onCancel={closeHistorySearch} />
         // A confirmed rewind takes seconds (file restore + engine swap). Hold a modal until it settles:
         // if the composer came back first, a prompt typed in that window would be cleared from the editor,
         // sent, and refused by the host as busy — the user's text lost rather than queued.
