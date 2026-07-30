@@ -1,6 +1,6 @@
-// tui/test/sessionTools.test.ts — pure U5 helpers: export markdown, files-in-context.
+// tui/test/sessionTools.test.ts — pure U5 helpers: export markdown, files-in-context, stats, session info.
 import { describe, it, expect } from "vitest";
-import { exportMarkdown, defaultExportName, filesInContext, formatFiles } from "../../src/tui/sessionTools.js";
+import { exportMarkdown, defaultExportName, filesInContext, formatFiles, formatStats, formatSessionInfo } from "../../src/tui/sessionTools.js";
 
 const msgs = [
   // uuid mirrors a real persisted transcript row — rowKind only classifies a user row as "prompt" when
@@ -61,5 +61,25 @@ describe("filesInContext", () => {
       { type: "assistant", message: { content: [{ type: "tool_use", id: "t3", name: "Edit", input: { file_path: "/repo/a2.ts", old_string: "x", new_string: "y" } }] } },
     ];
     expect(filesInContext(reTouchA2 as any[])).toEqual(["/repo/z2.ts", "/repo/a2.ts"]);
+  });
+});
+
+describe("formatStats / formatSessionInfo", () => {
+  it("counts prompts and tool calls and folds per-model usage", () => {
+    const u = { session: { total_cost_usd: 0.5, total_duration_ms: 65000, model_usage: {
+      "claude-opus-5": { inputTokens: 1000, outputTokens: 200, costUSD: 0.5 } } } };
+    const lines = formatStats(u as any, msgs as any[]).map((l) => l.text).join("\n");
+    expect(lines).toContain("prompts");
+    expect(lines).toContain("2");                            // two tool calls in the fixture
+    expect(lines).toContain("claude-opus-5");
+  });
+  it("session info shows the full id, title/tag when set, and the resume hint", () => {
+    const lines = formatSessionInfo({ id: "abcd1234-5678", cwd: "/w",
+      info: { summary: "fix bug", customTitle: "bugfix", tag: "sprint", gitBranch: "main", lastModified: 1753858800000 } })
+      .map((l) => l.text).join("\n");
+    expect(lines).toContain("abcd1234-5678");
+    expect(lines).toContain("bugfix");
+    expect(lines).toContain("#sprint");
+    expect(lines).toContain("ccx --resume abcd1234-5678");
   });
 });

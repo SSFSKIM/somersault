@@ -1000,3 +1000,120 @@ describe("U5a: /export /files /diff", () => {
     await waitFor(() => frame(lastFrame).includes("no files touched in this conversation yet"));
   });
 });
+
+describe("U5b: /rename /tag /session /stats", () => {
+  it("/rename calls the lib and confirms; /tag toggles (same tag twice clears)", async () => {
+    const renames: [string, string][] = []; const tags: [string, string | null][] = [];
+    let currentTag: string | undefined;
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, {}, {
+        renameSession: async (id: string, t: string) => { renames.push([id, t]); },
+        tagSession: async (id: string, t: string | null) => { tags.push([id, t]); currentTag = t ?? undefined; },
+        getSessionInfo: async () => ({ summary: "s", tag: currentTag }) as any,
+      });
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/rename my session");
+    await waitFor(() => renames.length === 1);
+    expect(renames[0][1]).toBe("my session");
+    api.run!("/tag sprint");
+    await waitFor(() => tags.length === 1);
+    expect(tags[0][1]).toBe("sprint");
+    api.run!("/tag sprint");                                 // same tag again = clear (CC "toggle")
+    await waitFor(() => tags.length === 2);
+    expect(tags[1][1]).toBeNull();
+    await waitFor(() => frame(lastFrame).includes("tag cleared"));
+  });
+
+  it("/rename with no args shows the current title without throwing", async () => {
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, {}, { getSessionInfo: async () => ({ customTitle: "existing title" }) as any });
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(() => api.run!("/rename")).not.toThrow();
+    await waitFor(() => frame(lastFrame).includes("existing title"));
+  });
+
+  it("/tag with no args shows the current tag without throwing", async () => {
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, {}, { getSessionInfo: async () => ({ tag: "sprint" }) as any });
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(() => api.run!("/tag")).not.toThrow();
+    await waitFor(() => frame(lastFrame).includes("#sprint"));
+  });
+
+  it("/rename and /tag with no session notice instead of throwing", async () => {
+    const fake = fakeRemote({ sessionId: undefined });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(() => api.run!("/rename x")).not.toThrow();
+    await waitFor(() => frame(lastFrame).includes("no session yet"));
+    expect(() => api.run!("/tag x")).not.toThrow();
+    await waitFor(() => frame(lastFrame).match(/no session yet/g)!.length >= 2);
+  });
+
+  it("/session shows the id, title, tag and resume hint; notices with no session", async () => {
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, {}, {
+        getSessionInfo: async () => ({ summary: "s", customTitle: "bugfix", tag: "sprint" }) as any,
+      });
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/session");
+    await waitFor(() => frame(lastFrame).includes("bugfix"));
+    expect(frame(lastFrame)).toContain("#sprint");
+    expect(frame(lastFrame)).toContain("ccx --resume");
+
+    const fakeNoSession = fakeRemote({ sessionId: undefined });
+    const api2: { run?: (s: string) => void } = {};
+    function H2() { const c = useChat(() => fakeNoSession); api2.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame: lastFrame2 } = render(<H2 />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(() => api2.run!("/session")).not.toThrow();
+    await waitFor(() => frame(lastFrame2).includes("no session yet"));
+  });
+
+  it("/stats reports prompt/reply/tool-call counts and per-model token usage", async () => {
+    const fake = fakeRemote({
+      usage: () => ({ session: { total_cost_usd: 0.5, total_duration_ms: 65000, model_usage: {
+        "claude-opus-5": { inputTokens: 1000, outputTokens: 200, costUSD: 0.5 } } } }),
+    });
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, {}, {
+        getSessionMessages: async () => [
+          { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "fix it" }] } },
+          { type: "assistant", message: { content: [
+            { type: "text", text: "ok" },
+            { type: "tool_use", id: "t1", name: "Read", input: { file_path: "/a.ts" } },
+          ] } },
+        ],
+      });
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/stats");
+    await waitFor(() => frame(lastFrame).includes("claude-opus-5"));
+    expect(frame(lastFrame)).toContain("prompts");
+  });
+});

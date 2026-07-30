@@ -19,7 +19,7 @@ import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, form
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
-import { exportMarkdown, defaultExportName, filesInContext, formatFiles } from "./sessionTools.js";
+import { exportMarkdown, defaultExportName, filesInContext, formatFiles, formatStats, formatSessionInfo } from "./sessionTools.js";
 import { lastAssistantText } from "../sessions/rows.js";
 import type { ModelInfo } from "./ModelPicker.js";
 import { replayLines } from "./replay.js";
@@ -27,7 +27,7 @@ import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bas
 import { copyToClipboard as realCopyToClipboard } from "./copy.js";
 import { appendMemory as realAppendMemory } from "./memory.js";
 import { shortCwd } from "./banner.js";
-import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias } from "../index.js";
+import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
 import type { RawContextUsage } from "../index.js";
 
 // ChatSession is promoted to ../session/chatSession.ts (spec A2b §2) so the lib Session and the remote
@@ -43,7 +43,7 @@ function ladderNext(mode: string): string { const i = (LADDER as readonly string
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
   opts: { initialMode?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialLines?: RenderLine[]; initialPrompt?: string; onExit?: () => void } = {},
-  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void } = {},
+  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any> } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   // Seed the scrollback with the welcome banner — unless we're launching straight into a resume (the
@@ -88,6 +88,9 @@ export function useChat(
   const appendMemory = deps.appendMemory ?? realAppendMemory;
   const copyText = deps.copyText ?? realCopyToClipboard;
   const writeFile = deps.writeFile ?? ((p: string, t: string) => realWriteFileSync(p, t));
+  const renameSessionFn = deps.renameSession ?? ((id: string, t: string) => realRenameSession(id, t, { cwd: opts.cwd }));
+  const tagSessionFn = deps.tagSession ?? ((id: string, t: string | null) => realTagSession(id, t, { cwd: opts.cwd }));
+  const getSessionInfoFn = deps.getSessionInfo ?? ((id: string) => realGetSessionInfo(id, { cwd: opts.cwd }));
   const lastAssistant = useRef("");    // the last assistant reply's text, for /copy
   // Real terminal clear: wipe screen + scrollback + home cursor (Static is append-only — a model reset alone
   // can't erase already-printed lines, so we also clear the terminal, exactly like CC's /clear).
@@ -275,6 +278,36 @@ export function useChat(
         }
         // Terminal stand-in for CC's diff dialog: status for the shape, stat for the sizes.
         case "diff": append(formatBashOutput(await runBash("git status --short; git diff --stat", cwd))); break;
+        case "stats": {
+          const u = (await session.usage().catch(() => ({}))) as SessionUsage;
+          const msgs = session.sessionId ? await getSessionMessages(session.sessionId).catch(() => [] as any[]) : [];
+          append(formatStats(u, msgs));
+          break;
+        }
+        case "session": {
+          const id = session.sessionId;
+          if (!id) { notice("no session yet — send a first prompt"); break; }
+          append(formatSessionInfo({ id, cwd: opts.cwd, info: await getSessionInfoFn(id).catch(() => undefined) }));
+          break;
+        }
+        case "rename": {
+          const id = session.sessionId;
+          if (!id) { notice("no session yet — send a first prompt"); break; }
+          if (!cmd.args) { const i = await getSessionInfoFn(id).catch(() => undefined); notice(`title: ${(i as any)?.customTitle ?? "(auto)"} — /rename <new title> to change`); break; }
+          await renameSessionFn(id, cmd.args);
+          notice(`✓ renamed to "${cmd.args}"`);
+          break;
+        }
+        case "tag": {
+          const id = session.sessionId;
+          if (!id) { notice("no session yet — send a first prompt"); break; }
+          const i = (await getSessionInfoFn(id).catch(() => undefined)) as { tag?: string } | undefined;
+          if (!cmd.args) { notice(i?.tag ? `tag: #${i.tag} — /tag ${i.tag} to clear` : "no tag — /tag <name> to set"); break; }
+          const next = i?.tag === cmd.args ? null : cmd.args;   // CC semantics: toggling the same tag clears it
+          await tagSessionFn(id, next);
+          notice(next ? `✓ tagged #${next}` : "✓ tag cleared");
+          break;
+        }
         // Same exit the Ctrl-D / Ctrl-C-twice keys use — the host owns the actual unmount (opts.onExit).
         case "exit": case "quit": opts.onExit?.(); break;
         default: append(formatUnknown(cmd.name));
