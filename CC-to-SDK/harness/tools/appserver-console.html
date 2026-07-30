@@ -1,0 +1,584 @@
+<!doctype html>
+<!--
+  appserver-console.html — a disposable, single-file, zero-dependency foreign consumer of the
+  agent app-server's JSON-RPC-lite WebSocket wire (CC-to-SDK/harness/src/appserver). Open it
+  directly via file://; it speaks raw WebSocket + DOM only, no build step, no framework, no CDN.
+
+  Why this exists: every other client against this server (test/live/appserver-*.test.ts, the
+  unit-test fakes) was written by the same people who wrote the server, so it can only catch bugs
+  its author already imagined. This console is written against the WIRE — the schema registry
+  (src/appserver/schema/index.ts) and the handler modules — not against the implementation, so it
+  can surface consumability defects a self-written test cannot. It dies the day a real GUI exists.
+
+  Framing: request frames are `{id, method, params}` with NO "jsonrpc" field ("JSON-RPC lite").
+  One JSON message per WebSocket text frame. Replies are `{id, result}` or `{id, error:{code,
+  message, data?}}`. Notifications are `{method, params, emittedAtMs}` (no id).
+
+  Panels (waves 0-2, per the M2 design spec's "one panel per wave"):
+    A. Connect & threads   — initialize, thread/list, thread-existence notifications, subscribe.
+    B. Settings & meters    — the four setters, the notification-only settings readout, the five
+                              introspection reads, token-usage/rate-limit meters.
+    C. Session library      — the store-merged thread/list with cursor paging, rename/tag/delete/
+                              fork, compact/reinitialize.
+    Z. Wire log             — every request, reply, and notification, chronological, for the whole
+                              session — this is where protocol awkwardness becomes visible.
+-->
+<title>appserver console</title>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 0; padding: 1rem 1.25rem 3rem; }
+  h1 { font-size: 1.1rem; margin: 0 0 .25rem; }
+  h1 .sub { font-weight: normal; opacity: .6; font-size: .85em; }
+  h2 { font-size: .95rem; margin: 1.5rem 0 .4rem; border-bottom: 1px solid currentColor; padding-bottom: .2rem; opacity: .9; }
+  section { margin-bottom: .5rem; }
+  .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: .3rem 0; }
+  .row label { display: flex; gap: .3rem; align-items: center; }
+  input[type=text], input[type=password], select { font: inherit; padding: .15rem .3rem; }
+  input[type=text].wide { width: 22rem; }
+  button { font: inherit; cursor: pointer; padding: .15rem .5rem; }
+  button.hint { font-size: .8em; opacity: .75; }
+  table { border-collapse: collapse; width: 100%; margin: .3rem 0; }
+  th, td { border: 1px solid currentColor; border-color: color-mix(in srgb, currentColor 25%, transparent); padding: .2rem .4rem; text-align: left; font-size: .85em; vertical-align: top; }
+  th { opacity: .7; font-weight: normal; }
+  pre { background: color-mix(in srgb, currentColor 6%, transparent); padding: .5rem; margin: .3rem 0; max-height: 12rem; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  #wireLog { height: 16rem; overflow: auto; background: color-mix(in srgb, currentColor 6%, transparent); padding: .4rem .6rem; font-size: .8em; }
+  #wireLog div { white-space: pre-wrap; word-break: break-word; border-bottom: 1px dotted color-mix(in srgb, currentColor 15%, transparent); padding: .1rem 0; }
+  .dir-out { opacity: .95; }
+  .dir-out::before { content: "→ "; }
+  .dir-in-ok::before { content: "← "; }
+  .dir-in-err { color: #c33; }
+  .dir-in-err::before { content: "✗ "; }
+  .dir-notify { opacity: .8; }
+  .dir-notify::before { content: "● "; }
+  .badge { display: inline-block; padding: 0 .35rem; border-radius: .6em; font-size: .8em; }
+  .badge.idle { background: color-mix(in srgb, gray 25%, transparent); }
+  .badge.active { background: color-mix(in srgb, orange 35%, transparent); }
+  .badge.waiting { background: color-mix(in srgb, crimson 35%, transparent); }
+  .status-line { padding: .1rem 0; }
+  .conn-ok { color: #2a2; }
+  .conn-bad { color: #c33; }
+  .limits-banner { padding: .4rem .6rem; border: 1px solid; margin: .3rem 0; }
+  .limits-banner.clear { opacity: .5; }
+  .callout { font-size: .8em; opacity: .75; margin: .15rem 0 .5rem; }
+  .wirename { font-family: inherit; opacity: .65; }
+</style>
+
+<h1>agent app-server console <span class="sub">waves 0&ndash;2 &middot; foreign consumer &middot; disposable</span></h1>
+<div class="row status-line">
+  status: <span id="connStatus" class="conn-bad">disconnected</span>
+  <span id="activeThreadLine"></span>
+</div>
+
+<!-- ======================= Panel A: Connect & threads ======================= -->
+<section id="panelConnect">
+  <h2>A. Connect &amp; threads</h2>
+  <div class="row">
+    <label>url <input type="text" id="wsUrl" class="wide" placeholder="ws://127.0.0.1:PORT" /></label>
+    <label>token <input type="password" id="wsToken" placeholder="(optional bearer token)" /></label>
+    <button id="btnConnect">Connect <span class="wirename">(initialize {watchThreads:true})</span></button>
+    <button id="btnDisconnect" disabled>Disconnect</button>
+  </div>
+  <div class="callout">
+    Connect sends <code>initialize</code> with <code>watchThreads: true</code> — this connection then
+    receives <code>thread/started</code> / <code>thread/closed</code> / <code>thread/deleted</code> /
+    <code>thread/status/changed</code> for every thread on the server, without subscribing to any one
+    of them individually.
+  </div>
+
+  <div class="row">
+    <button id="btnListThreads" disabled>List threads <span class="wirename">(thread/list)</span></button>
+    <button id="btnMoreThreads" disabled style="display:none">More&hellip;</button>
+    <span id="threadListCount"></span>
+  </div>
+  <table id="threadTable">
+    <thead><tr>
+      <th>id</th><th>title</th><th>status</th><th>model</th><th>permissionMode</th><th>cwd</th><th>updatedAt</th><th>actions</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="callout">
+    Each row's <b>Subscribe</b> button calls <code>thread/subscribe {threadId}</code> — from then on
+    that thread's raw notifications (turn/item/decision/etc.) stream into the wire log below, exactly
+    as the server emits them. <b>Use&nbsp;&rarr;</b> sets this thread as the "active thread" panels B
+    and C act on. <b>Close</b> calls <code>thread/close {threadId}</code>.
+  </div>
+</section>
+
+<!-- ======================= Panel B: Settings & meters ======================= -->
+<section id="panelSettings">
+  <h2>B. Settings &amp; meters</h2>
+  <div class="row">
+    <label>active thread <input type="text" id="activeThreadId" class="wide" placeholder="thr_&hellip; (click Use&rarr; in panel A/C, or paste one)" /></label>
+  </div>
+
+  <div class="row">
+    <label>model <input type="text" id="modelInput" placeholder="claude-sonnet-4-6 (blank = reset to default)" /></label>
+    <button id="btnSetModel">Set model <span class="wirename">(thread/model/set)</span></button>
+  </div>
+  <div class="row">
+    <label>permission mode
+      <select id="permInput">
+        <option value="default">default</option>
+        <option value="acceptEdits">acceptEdits</option>
+        <option value="auto">auto</option>
+        <option value="plan">plan</option>
+        <option value="bypassPermissions">bypassPermissions</option>
+        <option value="dontAsk">dontAsk</option>
+      </select>
+    </label>
+    <button id="btnSetPerm">Set permission mode <span class="wirename">(thread/permissionMode/set)</span></button>
+  </div>
+  <div class="row">
+    <label>thinking
+      <select id="thinkInput">
+        <option value="off">off</option>
+        <option value="low">low</option>
+        <option value="medium" selected>medium</option>
+        <option value="high">high</option>
+        <option value="xhigh">xhigh</option>
+        <option value="max">max</option>
+      </select>
+    </label>
+    <button id="btnSetThink">Set thinking <span class="wirename">(thread/thinking/set {level})</span></button>
+  </div>
+
+  <h3 style="margin:.6rem 0 .2rem; font-size:.9em; opacity:.8;">settings readout — notification-driven only</h3>
+  <div class="callout">
+    This box is written <b>exclusively</b> by an incoming <code>thread/settings/changed</code>
+    notification for the active thread. The three set buttons above never touch it, even off their
+    own successful reply — that asymmetry is deliberate: it is the foreign-consumer test of whether
+    the server's write-back fan-out actually works, and a console that painted its own optimistic
+    guess here would hide exactly the defect this exists to catch.
+  </div>
+  <pre id="settingsReadout">(nothing received yet for the active thread)</pre>
+
+  <div class="row">
+    <button id="btnReadUsage">Read usage <span class="wirename">(thread/usage/read)</span></button>
+    <button id="btnReadContext">Read contextUsage <span class="wirename">(thread/contextUsage/read)</span></button>
+    <button id="btnReadCaps">Read capabilities <span class="wirename">(thread/capabilities/read)</span></button>
+    <button id="btnReadInit">Read init <span class="wirename">(thread/init/read)</span></button>
+    <button id="btnReadAccount">Read account <span class="wirename">(account/read)</span></button>
+  </div>
+  <pre id="readDump">(read replies are dumped here verbatim)</pre>
+
+  <h3 style="margin:.6rem 0 .2rem; font-size:.9em; opacity:.8;">meters</h3>
+  <div id="limitsBanner" class="limits-banner clear">no rate-limit signal seen yet for the active thread</div>
+  <div class="callout">
+    <b>Known wire characteristic:</b> <code>thread/limits/updated</code> only fires when the engine's
+    frame carries a limit condition — there is no explicit "limit cleared" notification on this wire
+    (routeLimits in router.ts simply never broadcasts when the classifier returns nothing). A client
+    that merges limit state and never clears it shows a stale "rate limited" banner forever. This
+    console auto-fades the banner once the reported <code>resetsAt</code> elapses (if the frame carried
+    one) and always offers a manual <b>Dismiss</b> button for kinds with no resetsAt at all
+    (usage-limit / org-policy / credits-exhausted) — it never invents a synthetic "cleared" event, it
+    just stops trusting a stale one locally.
+    <button id="btnDismissLimits" class="hint">Dismiss</button>
+  </div>
+  <pre id="usageMeter">(thread/tokenUsage/updated dump for the active thread appears here)</pre>
+</section>
+
+<!-- ======================= Panel C: Session library ======================= -->
+<section id="panelLibrary">
+  <h2>C. Session library</h2>
+  <div class="row">
+    <label>cwd filter <input type="text" id="libCwd" class="wide" placeholder="(optional — narrows thread/list)" /></label>
+    <button id="btnLibRefresh">Refresh <span class="wirename">(thread/list)</span></button>
+    <button id="btnLibMore" style="display:none">More&hellip; <span class="wirename">(thread/list {cursor})</span></button>
+  </div>
+  <table id="libTable">
+    <thead><tr>
+      <th>id / sessionId</th><th>title</th><th>tags</th><th>cwd</th><th>status</th><th>actions</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="callout">
+    Rows include both live threads and cold (store-only) sessions this server never opened — the
+    same merge <code>thread/list</code> performs server-side (sessionLib.ts). Rename/Tag/Delete/Fork
+    address either kind by id (a bare store sessionId or a <code>thr_&hellip;</code> registry id both
+    work). Compact and Reinitialize only succeed against a <b>live</b> thread.
+  </div>
+</section>
+
+<!-- ======================= Panel Z: Wire log ======================= -->
+<section>
+  <h2>Wire log</h2>
+  <div class="row">
+    <button id="btnClearLog">Clear log</button>
+    <label><input type="checkbox" id="autoscroll" checked /> autoscroll</label>
+  </div>
+  <div id="wireLog"></div>
+</section>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------------------------
+// Wire plumbing: one WebSocket, one send() helper with an incrementing id + pending-reply map,
+// one dispatch point for notifications. Nothing here is framework — just enough bookkeeping that
+// every panel below can `await send(method, params)`.
+// ---------------------------------------------------------------------------------------------
+let ws = null;
+let seq = 0;
+const pending = new Map(); // id -> {resolve, reject}
+
+function send(method, params) {
+  return new Promise((resolve, reject) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) { reject(new Error("not connected")); return; }
+    const id = ++seq;
+    pending.set(id, { resolve, reject });
+    const frame = { id, method, params: params || {} };
+    logWire("out", `${method} #${id}`, frame);
+    ws.send(JSON.stringify(frame)); // one JSON message per WS text frame; no "jsonrpc" field (spec §4 "lite")
+  });
+}
+
+function onWsMessage(evt) {
+  let msg;
+  try { msg = JSON.parse(evt.data); } catch (e) { logWire("err", "unparseable frame", evt.data); return; }
+  if (typeof msg.method === "string") { handleNotification(msg.method, msg.params || {}); return; }
+  if (msg.id !== undefined) {
+    const p = pending.get(msg.id);
+    pending.delete(msg.id);
+    if (msg.error) {
+      logWire("err", `#${msg.id} error ${msg.error.code}`, msg.error);
+      if (p) p.reject(msg.error);
+    } else {
+      logWire("in", `#${msg.id} ok`, msg.result);
+      if (p) p.resolve(msg.result);
+    }
+    return;
+  }
+  logWire("err", "frame with neither method nor id", msg);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Wire log (panel Z) — every request/reply/notification, chronological.
+// ---------------------------------------------------------------------------------------------
+const wireLogEl = document.getElementById("wireLog");
+function logWire(dir, label, payload) {
+  const div = document.createElement("div");
+  const cls = dir === "out" ? "dir-out" : dir === "in" ? "dir-in-ok" : dir === "err" ? "dir-in-err" : "dir-notify";
+  div.className = cls;
+  const time = new Date().toLocaleTimeString();
+  let body;
+  try { body = typeof payload === "string" ? payload : JSON.stringify(payload); } catch (e) { body = String(payload); }
+  div.textContent = `[${time}] ${label} ${body}`;
+  wireLogEl.appendChild(div);
+  if (document.getElementById("autoscroll").checked) wireLogEl.scrollTop = wireLogEl.scrollHeight;
+}
+document.getElementById("btnClearLog").onclick = () => { wireLogEl.innerHTML = ""; };
+
+// ---------------------------------------------------------------------------------------------
+// Connection state (panel A)
+// ---------------------------------------------------------------------------------------------
+const connStatusEl = document.getElementById("connStatus");
+function setConnected(on) {
+  connStatusEl.textContent = on ? "connected" : "disconnected";
+  connStatusEl.className = on ? "conn-ok" : "conn-bad";
+  document.getElementById("btnConnect").disabled = on;
+  document.getElementById("btnDisconnect").disabled = !on;
+  document.getElementById("btnListThreads").disabled = !on;
+}
+
+document.getElementById("btnConnect").onclick = () => {
+  const url = document.getElementById("wsUrl").value.trim();
+  if (!url) { alert("enter the server's ws:// url first"); return; }
+  ws = new WebSocket(url);
+  ws.onmessage = onWsMessage;
+  ws.onclose = () => { setConnected(false); logWire("err", "socket closed", ""); };
+  ws.onerror = () => logWire("err", "socket error", "");
+  ws.onopen = async () => {
+    setConnected(true);
+    const token = document.getElementById("wsToken").value;
+    const params = { clientInfo: { name: "appserver-console" }, watchThreads: true };
+    if (token) params.authorization = "Bearer " + token;
+    try {
+      const result = await send("initialize", params);
+      logWire("in", "initialized", result);
+      refreshThreadList();
+    } catch (e) { alert("initialize failed: " + JSON.stringify(e)); }
+  };
+};
+document.getElementById("btnDisconnect").onclick = () => { if (ws) ws.close(); };
+
+// ---------------------------------------------------------------------------------------------
+// Panel A: live thread table, kept current purely from thread/list + the thread-existence /
+// status notifications this connection receives because it initialized with watchThreads:true.
+// ---------------------------------------------------------------------------------------------
+const liveThreads = new Map(); // id -> view (server.ts's threadView / sessionLib.ts's storeOnlyView shape)
+let threadListCursor = null;
+
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+function fmtStatus(status) {
+  if (!status) return "";
+  const cls = status.waitingOn ? "waiting" : status.state === "active" ? "active" : "idle";
+  return `<span class="badge ${cls}">${status.state}${status.waitingOn ? " / " + status.waitingOn : ""}</span>`;
+}
+
+function upsertLiveThread(view) { if (view && view.id) liveThreads.set(view.id, { ...(liveThreads.get(view.id) || {}), ...view }); }
+
+function renderThreadTable() {
+  const tbody = document.querySelector("#threadTable tbody");
+  tbody.innerHTML = "";
+  for (const t of liveThreads.values()) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${esc(t.id)}</td>
+      <td>${esc(t.title)}</td>
+      <td>${fmtStatus(t.status)}</td>
+      <td>${esc(t.model)}</td>
+      <td>${esc(t.permissionMode)}</td>
+      <td>${esc(t.cwd)}</td>
+      <td>${esc(t.updatedAt)}</td>
+      <td></td>`;
+    const actions = tr.lastElementChild;
+    const bSub = document.createElement("button"); bSub.textContent = "Subscribe";
+    bSub.onclick = () => callThreadSubscribe(t.id);
+    const bUse = document.createElement("button"); bUse.textContent = "Use →";
+    bUse.onclick = () => setActiveThread(t.id);
+    const bClose = document.createElement("button"); bClose.textContent = "Close";
+    bClose.onclick = () => callSimple("thread/close", { threadId: t.id });
+    actions.append(bSub, bUse, bClose);
+    tbody.appendChild(tr);
+  }
+  document.getElementById("threadListCount").textContent = `${liveThreads.size} known`;
+}
+
+async function callThreadSubscribe(threadId) {
+  try {
+    const r = await send("thread/subscribe", { threadId });
+    logWire("in", `subscribed ${threadId}`, r);
+  } catch (e) { alert("thread/subscribe failed: " + JSON.stringify(e)); }
+}
+
+async function callSimple(method, params) {
+  try {
+    await send(method, params);
+    if (method === "thread/close") { liveThreads.delete(params.threadId); renderThreadTable(); }
+  } catch (e) { alert(`${method} failed: ` + JSON.stringify(e)); }
+}
+
+async function refreshThreadList(more) {
+  const params = {};
+  if (more && threadListCursor) params.cursor = threadListCursor;
+  try {
+    const r = await send("thread/list", params);
+    for (const row of r.data) upsertLiveThread(row);
+    threadListCursor = r.nextCursor;
+    document.getElementById("btnMoreThreads").style.display = threadListCursor ? "" : "none";
+    document.getElementById("btnMoreThreads").disabled = false;
+    renderThreadTable();
+  } catch (e) { alert("thread/list failed: " + JSON.stringify(e)); }
+}
+document.getElementById("btnListThreads").onclick = () => { threadListCursor = null; liveThreads.clear(); refreshThreadList(false); };
+document.getElementById("btnMoreThreads").onclick = () => refreshThreadList(true);
+
+// ---------------------------------------------------------------------------------------------
+// Panel B: active thread + settings/meters
+// ---------------------------------------------------------------------------------------------
+const activeThreadInput = document.getElementById("activeThreadId");
+function setActiveThread(id) {
+  activeThreadInput.value = id;
+  document.getElementById("activeThreadLine").textContent = `· active thread: ${id}`;
+  document.getElementById("settingsReadout").textContent = "(nothing received yet for the active thread)";
+  document.getElementById("readDump").textContent = "(read replies are dumped here verbatim)";
+  clearLimitsBanner("(active thread changed)");
+  document.getElementById("usageMeter").textContent = "(thread/tokenUsage/updated dump for the active thread appears here)";
+}
+function activeThreadOrAlert() {
+  const id = activeThreadInput.value.trim();
+  if (!id) alert("set an active thread first (Use→ in panel A/C, or paste a thread id)");
+  return id;
+}
+
+document.getElementById("btnSetModel").onclick = async () => {
+  const threadId = activeThreadOrAlert(); if (!threadId) return;
+  const raw = document.getElementById("modelInput").value.trim();
+  try { await send("thread/model/set", { threadId, model: raw || null }); }
+  catch (e) { alert("thread/model/set failed: " + JSON.stringify(e)); }
+  // deliberately does NOT touch settingsReadout — see the panel's callout
+};
+document.getElementById("btnSetPerm").onclick = async () => {
+  const threadId = activeThreadOrAlert(); if (!threadId) return;
+  const mode = document.getElementById("permInput").value;
+  try { await send("thread/permissionMode/set", { threadId, mode }); }
+  catch (e) { alert("thread/permissionMode/set failed: " + JSON.stringify(e)); }
+};
+document.getElementById("btnSetThink").onclick = async () => {
+  const threadId = activeThreadOrAlert(); if (!threadId) return;
+  const level = document.getElementById("thinkInput").value;
+  try { await send("thread/thinking/set", { threadId, level }); }
+  catch (e) { alert("thread/thinking/set failed: " + JSON.stringify(e)); }
+};
+
+function makeReadButton(id, method) {
+  document.getElementById(id).onclick = async () => {
+    const threadId = activeThreadOrAlert(); if (!threadId) return;
+    try {
+      const r = await send(method, { threadId });
+      document.getElementById("readDump").textContent = `${method} →\n` + JSON.stringify(r, null, 2);
+    } catch (e) { document.getElementById("readDump").textContent = `${method} failed:\n` + JSON.stringify(e, null, 2); }
+  };
+}
+makeReadButton("btnReadUsage", "thread/usage/read");
+makeReadButton("btnReadContext", "thread/contextUsage/read");
+makeReadButton("btnReadCaps", "thread/capabilities/read");
+makeReadButton("btnReadInit", "thread/init/read");
+makeReadButton("btnReadAccount", "account/read");
+
+// --- limits meter: no server-side "cleared" signal exists (see the panel callout), so clearing
+// is entirely a local, honest-about-itself heuristic: auto-fade past resetsAt, manual Dismiss
+// otherwise. Never synthesizes a fake "cleared" wire event.
+let limitsClearTimer = null;
+function clearLimitsBanner(note) {
+  if (limitsClearTimer) { clearTimeout(limitsClearTimer); limitsClearTimer = null; }
+  const el = document.getElementById("limitsBanner");
+  el.className = "limits-banner clear";
+  el.textContent = note || "no rate-limit signal seen yet for the active thread";
+}
+function setLimits(limits) {
+  if (limitsClearTimer) { clearTimeout(limitsClearTimer); limitsClearTimer = null; }
+  const el = document.getElementById("limitsBanner");
+  el.className = "limits-banner";
+  el.textContent = `${limits.kind}: ${limits.message}` + (limits.resetsAt ? ` (resetsAt=${limits.resetsAt})` : "");
+  // resetsAt's unit is not documented on SDKRateLimitInfo; treated as epoch-ms (consistent with
+  // every other *At field this codebase treats as ms) — see the report's consumability note.
+  if (limits.resetsAt) {
+    const delayMs = limits.resetsAt - Date.now();
+    if (delayMs > 0) limitsClearTimer = setTimeout(() => clearLimitsBanner("cleared locally: reported resetsAt elapsed (no server signal)"), delayMs);
+  }
+}
+document.getElementById("btnDismissLimits").onclick = () => clearLimitsBanner("dismissed locally (no server signal)");
+
+// ---------------------------------------------------------------------------------------------
+// Panel C: session library (store-merged thread/list, paged; CRUD row actions)
+// ---------------------------------------------------------------------------------------------
+let libRows = [];
+let libCursor = null;
+
+function renderLibTable() {
+  const tbody = document.querySelector("#libTable tbody");
+  tbody.innerHTML = "";
+  for (const row of libRows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${esc(row.id)}</td>
+      <td>${esc(row.title)}</td>
+      <td>${esc((row.tags || []).join(", "))}</td>
+      <td>${esc(row.cwd)}</td>
+      <td>${fmtStatus(row.status)}</td>
+      <td></td>`;
+    const actions = tr.lastElementChild;
+    const bRename = document.createElement("button"); bRename.textContent = "Rename";
+    bRename.onclick = async () => {
+      const title = prompt("new title", row.title || ""); if (title === null) return;
+      try { await send("thread/name/set", { threadId: row.id, title }); refreshLibrary(false); }
+      catch (e) { alert("thread/name/set failed: " + JSON.stringify(e)); }
+    };
+    const bTag = document.createElement("button"); bTag.textContent = "Tag";
+    bTag.onclick = async () => {
+      const tag = prompt("tag (blank clears it)", (row.tags && row.tags[0]) || "");
+      if (tag === null) return;
+      try { await send("thread/tag/set", { threadId: row.id, tag: tag === "" ? null : tag }); refreshLibrary(false); }
+      catch (e) { alert("thread/tag/set failed: " + JSON.stringify(e)); }
+    };
+    const bDelete = document.createElement("button"); bDelete.textContent = "Delete";
+    bDelete.onclick = async () => {
+      if (!confirm(`delete session ${row.id}?`)) return;
+      try { await send("thread/delete", { threadId: row.id }); refreshLibrary(false); }
+      catch (e) { alert("thread/delete failed (a live session refuses with BUSY): " + JSON.stringify(e)); }
+    };
+    const bFork = document.createElement("button"); bFork.textContent = "Fork";
+    bFork.onclick = async () => {
+      const title = prompt("title for the fork (optional)", "") || undefined;
+      try {
+        const r = await send("thread/fork", { threadId: row.id, title, unattended: "park" });
+        alert("forked into new live thread " + r.thread.id);
+        upsertLiveThread(r.thread); renderThreadTable();
+        refreshLibrary(false);
+      } catch (e) { alert("thread/fork failed: " + JSON.stringify(e)); }
+    };
+    const bCompact = document.createElement("button"); bCompact.textContent = "Compact";
+    bCompact.onclick = async () => {
+      try { await send("thread/compact/start", { threadId: row.id }); }
+      catch (e) { alert("thread/compact/start failed (needs a LIVE thread): " + JSON.stringify(e)); }
+    };
+    const bReinit = document.createElement("button"); bReinit.textContent = "Reinitialize";
+    bReinit.onclick = async () => {
+      try { const r = await send("thread/reinitialize", { threadId: row.id }); logWire("in", "reinitialize", r); }
+      catch (e) { alert("thread/reinitialize failed (needs a LIVE thread): " + JSON.stringify(e)); }
+    };
+    const bUse = document.createElement("button"); bUse.textContent = "Use →";
+    bUse.onclick = () => setActiveThread(row.id);
+    actions.append(bRename, bTag, bDelete, bFork, bCompact, bReinit, bUse);
+    tbody.appendChild(tr);
+  }
+}
+
+async function refreshLibrary(more) {
+  const params = {};
+  const cwd = document.getElementById("libCwd").value.trim();
+  if (cwd) params.cwd = cwd;
+  if (more && libCursor) params.cursor = libCursor;
+  try {
+    const r = await send("thread/list", params);
+    libRows = more ? libRows.concat(r.data) : r.data;
+    libCursor = r.nextCursor;
+    document.getElementById("btnLibMore").style.display = libCursor ? "" : "none";
+    renderLibTable();
+  } catch (e) { alert("thread/list failed: " + JSON.stringify(e)); }
+}
+document.getElementById("btnLibRefresh").onclick = () => { libCursor = null; refreshLibrary(false); };
+document.getElementById("btnLibMore").onclick = () => refreshLibrary(true);
+
+// ---------------------------------------------------------------------------------------------
+// Notification dispatch — this is where the "settings readout is notification-only" rule and the
+// "no explicit limit-clear" characteristic actually get honored. Every notification, matched or
+// not, was already written to the wire log by onWsMessage's caller before this runs (see below).
+// ---------------------------------------------------------------------------------------------
+function handleNotification(method, params) {
+  logWire("notify", method, params);
+  switch (method) {
+    case "thread/started":
+      upsertLiveThread(params.thread); renderThreadTable();
+      break;
+    case "thread/closed":
+      liveThreads.delete(params.threadId); renderThreadTable();
+      break;
+    case "thread/deleted":
+      for (const [id, v] of liveThreads) if (id === params.sessionId || v.sessionId === params.sessionId) liveThreads.delete(id);
+      renderThreadTable();
+      break;
+    case "thread/status/changed": {
+      const t = liveThreads.get(params.threadId);
+      if (t) { t.status = params.status; renderThreadTable(); }
+      break;
+    }
+    case "thread/settings/changed": {
+      // The one and only writer of #settingsReadout — never the set calls' own replies (see panel B).
+      if (params.threadId === activeThreadInput.value.trim()) {
+        document.getElementById("settingsReadout").textContent = JSON.stringify(params, null, 2);
+      }
+      // Also keeps panel A's/C's row in sync — still notification-driven, just a second reader of it.
+      const t = liveThreads.get(params.threadId);
+      if (t) { t.model = params.model; t.permissionMode = params.permissionMode; renderThreadTable(); }
+      break;
+    }
+    case "thread/limits/updated":
+      if (params.threadId === activeThreadInput.value.trim()) setLimits(params.limits);
+      break;
+    case "thread/tokenUsage/updated":
+      if (params.threadId === activeThreadInput.value.trim()) {
+        document.getElementById("usageMeter").textContent = JSON.stringify(params.usage, null, 2);
+      }
+      break;
+    default:
+      // item/*, turn/*, decision/*, task/*, thread/compacted, thread/capabilities/changed,
+      // thread/name/updated, warning, initialized — no dedicated widget; the wire log above is
+      // their display surface, which is the point of a foreign-consumer console.
+      break;
+  }
+}
+</script>
