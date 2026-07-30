@@ -172,10 +172,21 @@ export const threadRead: Handler = async (srv, ctx, id, params) => {
   // own contents. Detected as `begin >= cursorRow` (the fetch made no headway at all). Retry with a
   // wider window; `from` monotonically shrinks toward 0 as the multiplier grows, so this always
   // terminates. At `from === 0` the window already covers everything back to the start of the
-  // transcript, so if it STILL can't progress (only reachable via several tool_use calls opened in
-  // the very same row, all still dangling, outnumbering `limit` — see boundaryRow's doc comment),
-  // there is nowhere earlier to send the client: return everything this window holds rather than
-  // loop forever or drop it.
+  // transcript — if it STILL can't progress there is nowhere earlier to send the client, so this
+  // returns everything the window holds (bypassing `limit` for this one page) rather than loop or
+  // drop data. This is NOT a rare path gated behind an exotic fixture: reaching `from === 0` without
+  // progress is exactly what an ORDINARY transcript with two-plus concurrently-open tool calls hits
+  // whenever `limit` is small relative to how much history is still owed (subscribe.test.ts's test
+  // (j), an ordinary two-concurrent-tool fixture with no batching at all, triggers this branch at
+  // `limit: 1` and `limit: 2`, and does not at `limit: 3` — see that test for the exact boundary).
+  // It stays correctness-safe every time it fires: `cursorRow` is always a valid boundary carried
+  // forward from the PRIOR page's own computation, so the `[0, cursorRow)` dump necessarily contains
+  // everything not yet returned, nothing more and nothing less. It also self-limits — this branch
+  // always replies `nextCursor: null`, so it can fire at most once per client walk and ends the
+  // walk when it does. What it costs: for that one page, the fetch is bounded by `[0, cursorRow)`
+  // rather than by the lookahead window, so the `O(window)` mapping-cost guarantee this task exists
+  // to deliver degrades to `O(rows not yet returned)` for that single page — a real, bounded,
+  // self-limiting cost, not a correctness bug.
   let multiplier = LOOKAHEAD_MULTIPLIER;
   for (;;) {
     const from = Math.max(0, cursorRow - multiplier * limit);

@@ -17,9 +17,15 @@ const init = (c: { feed(ch: string): void }, id: number, name = "t") => send(c, 
  *  equals the full set of item ids in the transcript, no more, no less). `guard` throws instead of
  *  looping forever if `nextCursor` never reaches null. Shared by every losslessness test in this file
  *  (Task 13's (g), and the follow-up (i)/(j) regression tests) so each only states its fixture and its
- *  expected id set, not the walking mechanics. */
-async function readAllPages(connA: { feed(ch: string): void }, a: { lines: string[] }, threadId: string, limit: number, startId: number, guard = 20): Promise<{ merged: Map<string, unknown>; pages: number }> {
+ *  expected id set, not the walking mechanics. `pageLengths` (one entry per page, in order) lets a
+ *  caller assert on the shape of individual pages — in particular, whether threadRead's `from === 0`
+ *  fallback (subscribe.ts) fired: that branch is the ONLY path that can return more than `limit`
+ *  items on one page (it deliberately bypasses the clamp), so `pageLengths.some(n => n > limit)` is
+ *  a reliable, purely black-box signal that it was exercised, with no instrumentation of production
+ *  code required. */
+async function readAllPages(connA: { feed(ch: string): void }, a: { lines: string[] }, threadId: string, limit: number, startId: number, guard = 20): Promise<{ merged: Map<string, unknown>; pages: number; pageLengths: number[] }> {
   const merged = new Map<string, unknown>();
+  const pageLengths: number[] = [];
   let cursor: string | null | undefined;
   let reqId = startId;
   let pages = 0;
@@ -28,12 +34,13 @@ async function readAllPages(connA: { feed(ch: string): void }, a: { lines: strin
     await tick();
     const page = parsed(a.lines).find((f) => f.id === reqId).result;
     for (const item of page.data as Array<{ id: string }>) merged.set(item.id, item);
+    pageLengths.push((page.data as unknown[]).length);
     cursor = page.nextCursor;
     reqId += 1;
     pages += 1;
     if (pages >= guard) throw new Error(`readAllPages: exceeded guard of ${guard} pages — nextCursor never reached null`);
   } while (cursor);
-  return { merged, pages };
+  return { merged, pages, pageLengths };
 }
 
 describe("appserver subscribe + thread/read (Task 9)", () => {
@@ -450,14 +457,29 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
       { type: "assistant", message: { id: "mF2", content: [{ type: "text", text: "filler2" }] } },
       { type: "assistant", message: { id: "mD", content: [{ type: "tool_use", id: "toolD", name: "Bash", input: { command: "sleep 300" } }] } },
     ];
-    const getSessionMessages = async (_sid: string, opts?: { limit?: number; offset?: number }) => {
-      if (!opts) return rows;
-      const { offset = 0, limit } = opts;
-      return rows.slice(offset, limit === undefined ? undefined : offset + limit);
-    };
     const expectedIds = new Set(["p", "toolA", "toolB", "toolC", "toolD", "mF1#0", "mF2#0"]);
 
+    // Which limits actually drive threadRead's `from === 0` fallback (subscribe.ts) — hand-traced
+    // against the real mapper/replay logic, then confirmed by running this exact fixture: at
+    // limit:1 and limit:2 the fixed `4*limit` lookahead window undershoots (the same two-
+    // concurrently-open-tool shape the (i) counterexample exercises, no batching involved) and the
+    // retry loop bottoms out at `from === 0` without the window ever making progress, so the
+    // fallback fires and dumps everything remaining in one oversized page. At limit:3 the window
+    // (coincidentally also starting at `from === 0` on its first try, since `4*limit` already
+    // exceeds the remaining row count) DOES make progress each time, so every page stays within
+    // `limit` and the fallback never fires. This is deliberately asserted per limit, not left as an
+    // accident of the fixture — a future refactor that stops exercising the fallback here would
+    // otherwise lose this coverage silently.
+    const expectFallback: Record<number, boolean> = { 1: true, 2: true, 3: false };
+
     for (const limit of [1, 2, 3]) {
+      const calls: Array<{ limit?: number; offset?: number } | undefined> = [];
+      const getSessionMessages = async (_sid: string, opts?: { limit?: number; offset?: number }) => {
+        calls.push(opts);
+        if (!opts) return rows;
+        const { offset = 0, limit: l } = opts;
+        return rows.slice(offset, l === undefined ? undefined : offset + l);
+      };
       const srv = new AppServer({}, { sessionFactory: () => fakeSession(), getSessionMessages });
       const a = mkSink(); const connA = srv.connect(a.sink);
       init(connA, 1, "A");
@@ -465,10 +487,21 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
       await tick();
       const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
 
-      const { merged, pages } = await readAllPages(connA, a, threadId, limit, 3);
+      const { merged, pages, pageLengths } = await readAllPages(connA, a, threadId, limit, 3);
       expect(new Set(merged.keys())).toEqual(expectedIds); // same union at EVERY page size
       expect(merged.size).toBe(7);
       expect(pages).toBeGreaterThanOrEqual(1);
+
+      // The fallback is the ONLY path that can return more items than `limit` on one page (it
+      // deliberately bypasses the clamp to dump everything remaining) — a page longer than `limit`
+      // is therefore conclusive, purely black-box proof that it fired, with no need to instrument
+      // production code. Supplementary evidence: a call reaching `offset: 0` is necessary for the
+      // fallback (it can only fire once the window covers the true start) but is NOT sufficient on
+      // its own — limit:3 also reaches `offset: 0` on its very first attempt below, without ever
+      // triggering the fallback, since that window still makes progress.
+      const fallbackFired = pageLengths.some((n) => n > limit);
+      expect(fallbackFired).toBe(expectFallback[limit]);
+      expect(calls.some((c) => c?.offset === 0)).toBe(true); // every limit here reaches the true start eventually
     }
   });
 
