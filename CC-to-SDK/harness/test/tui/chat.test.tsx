@@ -529,6 +529,43 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).toContain("/permissions to manage");
   });
 
+  it("/add-dir <path> 'remember' branch (idx 1) writes to local settings via the injected settingsFileDeps, never the real filesystem", async () => {
+    const calls: string[] = [];
+    const fake = fakeSettingsRemote({ addDir: async (p) => { calls.push(p); } });
+    const target = tmpdir();   // a real, existing directory outside process.cwd()
+    // A fake read/write pair standing in for settingsFile.ts's fs seam — an ENOENT read means the patch
+    // applies fresh, mirroring settingsFile.test.ts's "missing file" case. If this test omitted
+    // settingsFileDeps, confirmAddDir's remember branch would fall through to the REAL readFileSync/
+    // writeFileSync/mkdirSync against `${cwd}/.claude/settings.local.json` under process.cwd() (the repo
+    // itself) — the exact gap Finding 1 flagged.
+    const writes: { path: string; content: string }[] = [];
+    const settingsFileDeps = {
+      read: (_p: string): string => { const e: any = new Error("ENOENT"); e.code = "ENOENT"; throw e; },
+      write: (p: string, s: string) => { writes.push({ path: p, content: s }); },
+    };
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ settingsFileDeps }} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write(`/add-dir ${target}`); await waitFor(() => frame(lastFrame).includes(target));
+    stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
+    await waitFor(() => frame(lastFrame).includes("Add directory to workspace"));
+    stdin.write("\x1b[B");                                          // ↓ to idx 1 "Yes, and remember this directory"
+    await waitFor(() => frame(lastFrame).includes("❯ Yes, and remember this directory"));
+    stdin.write("\r");
+    await waitFor(() => calls.length === 1);
+    expect(calls[0]).toBe(target);
+    // The long tmpdir() path can push "and saved to local settings" across Ink's word-wrap boundary
+    // (e.g. "...local\nsettings"), so match against the frame with newlines flattened to spaces rather
+    // than a raw substring — the same trick useChat.test.tsx's own `frame` helper uses.
+    const flat = () => frame(lastFrame).replace(/\n/g, " ");
+    await waitFor(() => flat().includes("saved to local settings"));
+    expect(flat()).toContain("/permissions to manage");
+    // The write went through the injected fake, at the path settingsFile.ts derives for "localSettings",
+    // with the merged patch applied (appendToArray under permissions.additionalDirectories).
+    expect(writes).toHaveLength(1);
+    expect(writes[0].path).toBe(`${process.cwd()}/.claude/settings.local.json`);
+    expect(JSON.parse(writes[0].content)).toEqual({ permissions: { additionalDirectories: [target] } });
+  });
+
   it("W3-F gate: a late listDirs() resolution during an in-flight rewind must not leak the addDir dialog above the restoring modal (sabotage-checked — see task report)", async () => {
     let releaseListDirs: () => void = () => {};
     const heldListDirs = new Promise<void>((r) => { releaseListDirs = r; });

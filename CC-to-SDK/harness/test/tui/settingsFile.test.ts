@@ -63,11 +63,23 @@ describe("mergeSettingsFile", () => {
   });
 
   it("does not mutate the object the patch function received (sibling arrays untouched)", () => {
+    // Exercise appendToArray directly against a captured `current` — mergeSettingsFile's own
+    // JSON.parse(read(path)) call always hands the patch a freshly-parsed object, so routing through the
+    // full merge (as the previous version of this test did) can only ever prove something about the
+    // WRITTEN json, never about whether appendToArray mutated the object it was actually given. Calling it
+    // here directly, then re-inspecting `original` afterwards, is what makes an in-place mutation fail.
     const original = { permissions: { additionalDirectories: ["/keep"] } };
-    const { files, deps } = fakeFiles({ "/repo/.claude/settings.local.json": JSON.stringify(original) });
-    mergeSettingsFile("localSettings", "/repo", appendToArray(["permissions", "additionalDirectories"], "/new"), deps);
-    const written = JSON.parse(files["/repo/.claude/settings.local.json"]);
-    expect(written.permissions.additionalDirectories).toEqual(["/keep", "/new"]);
+    const originalDirs = original.permissions.additionalDirectories;
+    const patch = appendToArray(["permissions", "additionalDirectories"], "/new");
+    const next = patch(original);
+    // The input object (and its nested array) are untouched — appendToArray shallow-clones at every level
+    // instead of writing through.
+    expect(original).toEqual({ permissions: { additionalDirectories: ["/keep"] } });
+    expect(original.permissions.additionalDirectories).toBe(originalDirs);   // same array reference, not just equal contents
+    // The returned object is a genuinely different value carrying the merged result.
+    expect(next).not.toBe(original);
+    expect(next.permissions).not.toBe(original.permissions);
+    expect(next.permissions.additionalDirectories).toEqual(["/keep", "/new"]);
   });
 });
 
