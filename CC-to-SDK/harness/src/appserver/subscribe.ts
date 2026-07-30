@@ -23,37 +23,60 @@ const defaultGetSessionMessages = (sessionId: string, opts?: { limit?: number; o
   sdkGetSessionMessages(sessionId, opts);
 
 /** Binary search for the smallest prefix of `windowMessages` whose `itemsFromTranscript` mapping
- *  already contains `targetId` — NOT a search by item COUNT (item counts are not safe to bisect on
- *  here): a truncated prefix's own `itemsFromTranscript` call runs its own `finalize(false)` at that
- *  prefix's end, which force-completes any tool still dangling there. That forced completion is
- *  counted in a SHORTER prefix even though the tool's true (or forced) completion in a LONGER prefix
- *  lands at a different position — so two prefixes can disagree on WHICH items make up a given count,
- *  and cutting on count risks stranding a row-range between two pages that neither page's fetch ever
- *  covers again (a real data-loss bug, caught by hand-tracing a straddling-tool-call fixture before
- *  this landed). An id's PRESENCE has no such issue: once some row registers or emits an id, every
- *  longer prefix still contains it, forced or genuine — a stable, monotonic property to bisect on. */
-function boundaryRow(windowMessages: unknown[], targetId: string): number {
+ *  contains EVERY id in `targetIds` — NOT a single anchor id, and NOT a search by item COUNT.
+ *  Both of those are unsafe to bisect on here, for the same underlying reason: `itemsFromTranscript`
+ *  pushes items in SCAN-COMPLETION order (a row's normal processing order), then appends
+ *  `finalize(false)`'s still-open tools at the very END — so an item's position in the returned array
+ *  does not track its OPENING row's position. A tool that opens early but is still dangling when the
+ *  window ends lands at the array's tail even though an earlier-completing tool that opened LATER
+ *  sits ahead of it. Bisecting on raw item count was the first bug caught here (a shorter prefix's
+ *  own forced-tail completion can inflate its count past where a longer prefix's TRUE completion
+ *  order would place that same id — proven by hand-trace, see subscribe.test.ts). Bisecting on a
+ *  single anchor id's presence was the SECOND, subtler bug (an external review caught it): picking
+ *  only `windowItems[discardCount - 1]` as the anchor assumes the discarded set's opening-row order
+ *  matches its completion order, which a forced-tail completion breaks — a concurrently-open tool
+ *  that opened EARLIER than the anchor but is still dangling can sit AFTER the anchor in the array,
+ *  so including only the anchor's opening row can permanently strand rows the anchor never touched.
+ *
+ *  What IS safe: for any single item, "its id appears in `itemsFromTranscript(rows[0,w))`" is true
+ *  exactly when `w` exceeds that item's OPENING row (a tool registers as soon as its `tool_use` row
+ *  is seen, and is then either genuinely completed or force-completed by that prefix's own finalize —
+ *  present either way; a non-tool item completes immediately at its own single row). That is
+ *  monotonic in `w`, and so is the CONJUNCTION "prefix contains every id in `targetIds`" — its
+ *  transition point is simply the max of each id's own transition point. Bisecting on that
+ *  conjunction, over the FULL discarded set (not one representative), is what actually guarantees no
+ *  discarded item's opening row is ever excluded from every future window. */
+function boundaryRow(windowMessages: unknown[], targetIds: Set<string>): number {
   let lo = 0, hi = windowMessages.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (itemsFromTranscript(windowMessages.slice(0, mid)).some((it) => it.id === targetId)) hi = mid; else lo = mid + 1;
+    const ids = new Set(itemsFromTranscript(windowMessages.slice(0, mid)).map((it) => it.id));
+    let hasAll = true;
+    for (const t of targetIds) if (!ids.has(t)) { hasAll = false; break; }
+    if (hasAll) hi = mid; else lo = mid + 1;
   }
   return lo;
 }
 
-/** Maps one fetched row window to a page: the newest `limit` items of it, plus where the NEXT
- *  (older) page's fetch should end. `base` is this window's own absolute row offset (0 for the
- *  first page's whole-file fetch, `from` for a subsequent page's bounded fetch) — `boundaryRow`
- *  only knows the window-relative index, so the caller's absolute position has to be added back in.
- *  When nothing in this window is discarded (it already fit within `limit`), the next cursor is
- *  simply this window's own start ("recurse the window start", spec Wave 0) — every earlier row is
- *  still unfetched and untouched, so paging can resume exactly there. */
-function pageFromWindow(windowMessages: unknown[], limit: number, epoch: number, base: number): { data: Item[]; nextCursor: string | null } {
+/** Maps one fetched row window to a page: the newest `limit` items of it, plus `begin` — the
+ *  absolute row where the NEXT (older) page's fetch should end. `base` is this window's own
+ *  absolute row offset (0 for the first page's whole-file fetch, `from` for a subsequent page's
+ *  bounded fetch) — `boundaryRow` only knows the window-relative index, so the caller's absolute
+ *  position has to be added back in. When nothing in this window is discarded (it already fit
+ *  within `limit`), `begin` is simply this window's own start ("recurse the window start", spec
+ *  Wave 0) — every earlier row is still unfetched and untouched, so paging can resume exactly
+ *  there. Returns the raw `begin` (not yet a cursor string) so the caller can detect a window that
+ *  made NO progress (`begin >= cursorRow`, the fetch's own exclusive upper bound) — see threadRead's
+ *  retry loop for why that can legitimately happen and how it's handled. Also returns the window's
+ *  full item mapping (`all`) so a caller falling back to "return everything this window has" (the
+ *  retry loop's last resort) doesn't need to re-parse it. */
+function pageFromWindow(windowMessages: unknown[], limit: number, base: number): { data: Item[]; begin: number; all: Item[] } {
   const windowItems = itemsFromTranscript(windowMessages);
   const discardCount = Math.max(0, windowItems.length - limit);
   const page = windowItems.slice(discardCount);
-  const begin = discardCount > 0 ? base + boundaryRow(windowMessages, windowItems[discardCount - 1].id) : base;
-  return { data: page, nextCursor: begin > 0 ? `${epoch}:${begin}` : null };
+  const discardedIds = new Set(windowItems.slice(0, discardCount).map((it) => it.id));
+  const begin = discardCount > 0 ? base + boundaryRow(windowMessages, discardedIds) : base;
+  return { data: page, begin, all: windowItems };
 }
 
 export const threadSubscribe: Handler = (srv, ctx, id, params) => {
@@ -129,7 +152,8 @@ export const threadRead: Handler = async (srv, ctx, id, params) => {
 
   if (!parsed.data.cursor) {
     const messages = await getMessages(record.sessionId);
-    ctx.peer.reply(id, pageFromWindow(messages, limit, record.epoch, 0));
+    const { data, begin } = pageFromWindow(messages, limit, 0);
+    ctx.peer.reply(id, { data, nextCursor: begin > 0 ? `${record.epoch}:${begin}` : null });
     return;
   }
 
@@ -140,7 +164,25 @@ export const threadRead: Handler = async (srv, ctx, id, params) => {
   }
   const cursorRow = Number(rowStr);
   if (cursorRow <= 0) { ctx.peer.reply(id, { data: [], nextCursor: null }); return; }
-  const from = Math.max(0, cursorRow - LOOKAHEAD_MULTIPLIER * limit);
-  const windowMessages = await getMessages(record.sessionId, { offset: from, limit: cursorRow - from });
-  ctx.peer.reply(id, pageFromWindow(windowMessages, limit, record.epoch, from));
+
+  // The `4*limit` lookahead is a guess, and a guess can undershoot: two (or more) tools can be open
+  // at once, and the window's blind start can land AFTER one of them opened but still include a row
+  // that references it (its tool_result) — that reference is then silently dropped (the mapper has
+  // no record of a tool it never saw open), and no further progress is possible from THIS window's
+  // own contents. Detected as `begin >= cursorRow` (the fetch made no headway at all). Retry with a
+  // wider window; `from` monotonically shrinks toward 0 as the multiplier grows, so this always
+  // terminates. At `from === 0` the window already covers everything back to the start of the
+  // transcript, so if it STILL can't progress (only reachable via several tool_use calls opened in
+  // the very same row, all still dangling, outnumbering `limit` — see boundaryRow's doc comment),
+  // there is nowhere earlier to send the client: return everything this window holds rather than
+  // loop forever or drop it.
+  let multiplier = LOOKAHEAD_MULTIPLIER;
+  for (;;) {
+    const from = Math.max(0, cursorRow - multiplier * limit);
+    const windowMessages = await getMessages(record.sessionId, { offset: from, limit: cursorRow - from });
+    const { data, begin, all } = pageFromWindow(windowMessages, limit, from);
+    if (begin < cursorRow) { ctx.peer.reply(id, { data, nextCursor: begin > 0 ? `${record.epoch}:${begin}` : null }); return; }
+    if (from === 0) { ctx.peer.reply(id, { data: all, nextCursor: null }); return; }
+    multiplier *= 2;
+  }
 };

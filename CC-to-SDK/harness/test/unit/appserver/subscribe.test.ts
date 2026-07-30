@@ -12,6 +12,30 @@ const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l));
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const init = (c: { feed(ch: string): void }, id: number, name = "t") => send(c, { id, method: "initialize", params: { clientInfo: { name } } });
 
+/** Walks `thread/read` pages via `nextCursor` until it comes back null, merging every page's `data`
+ *  into a Map keyed by item id (dedup-by-id over the union — losslessness means this map's key set
+ *  equals the full set of item ids in the transcript, no more, no less). `guard` throws instead of
+ *  looping forever if `nextCursor` never reaches null. Shared by every losslessness test in this file
+ *  (Task 13's (g), and the follow-up (i)/(j) regression tests) so each only states its fixture and its
+ *  expected id set, not the walking mechanics. */
+async function readAllPages(connA: { feed(ch: string): void }, a: { lines: string[] }, threadId: string, limit: number, startId: number, guard = 20): Promise<{ merged: Map<string, unknown>; pages: number }> {
+  const merged = new Map<string, unknown>();
+  let cursor: string | null | undefined;
+  let reqId = startId;
+  let pages = 0;
+  do {
+    send(connA, { id: reqId, method: "thread/read", params: { threadId, limit, ...(cursor ? { cursor } : {}) } });
+    await tick();
+    const page = parsed(a.lines).find((f) => f.id === reqId).result;
+    for (const item of page.data as Array<{ id: string }>) merged.set(item.id, item);
+    cursor = page.nextCursor;
+    reqId += 1;
+    pages += 1;
+    if (pages >= guard) throw new Error(`readAllPages: exceeded guard of ${guard} pages — nextCursor never reached null`);
+  } while (cursor);
+  return { merged, pages };
+}
+
 describe("appserver subscribe + thread/read (Task 9)", () => {
   it("a pipelined turn/start + thread/subscribe (no tick between, same synchronous step) delivers EXACTLY ONE turn/started, from the live broadcast, with the correct turn id (Task 9 finding 1 + finding 2 regression guard)", async () => {
     // Finding 1 (fixed in round 1): turn/start's synchronous gate set busy/reset the buffer but only
@@ -335,20 +359,7 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     await tick();
     const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
 
-    const merged = new Map<string, unknown>();
-    let cursor: string | null | undefined;
-    let reqId = 3;
-    let pages = 0;
-    do {
-      send(connA, { id: reqId, method: "thread/read", params: { threadId, limit: 5, ...(cursor ? { cursor } : {}) } });
-      await tick();
-      const page = parsed(a.lines).find((f) => f.id === reqId).result;
-      for (const item of page.data) merged.set(item.id as string, item);
-      cursor = page.nextCursor;
-      reqId += 1;
-      pages += 1;
-      expect(pages).toBeLessThan(20); // guard against an infinite loop if nextCursor never reaches null
-    } while (cursor);
+    const { merged, pages } = await readAllPages(connA, a, threadId, 5, 3);
 
     // 1 prompt + 20 filler + 1 tool call = 22 distinct items, each surviving exactly once in the union.
     expect(merged.size).toBe(22);
@@ -385,6 +396,80 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     const err = parsed(a.lines).find((f) => f.id === 4).error;
     expect(err.code).toBe(-32602);
     expect(err.message).toBe("cursor invalidated by a rewind; re-read from the start");
+  });
+
+  it("(i) gap 12 losslessness regression: a dangling tool call that opened BEFORE a genuinely-completed one must not strand the genuine one's rows (external review counterexample)", async () => {
+    // r0 prompt; r1 opens toolA (never resolves); r2 opens toolB; r3 delivers toolB's real result;
+    // r4 opens toolC (never resolves). Full-parse item order is [p, toolB(genuine), toolA(forced),
+    // toolC(forced)] — toolB completes in SCAN order (at r3) even though it opened AFTER toolA (r1),
+    // because itemsFromTranscript's finalize(false) appends still-dangling tools at the very TAIL,
+    // in REGISTRATION order, not completion order. A boundary search that anchors on a single
+    // representative discarded id (windowItems[discardCount-1], here toolA at r1) only guarantees
+    // rows before r2 are re-fetchable — toolB's opening (r2) and completion (r3) rows are never
+    // fetched again by any later page, and toolB is silently dropped from the whole-history union.
+    const rows: unknown[] = [
+      { type: "user", uuid: "p", message: { content: "start" } },
+      { type: "assistant", message: { id: "mA", content: [{ type: "tool_use", id: "toolA", name: "Bash", input: { command: "sleep 100" } }] } },
+      { type: "assistant", message: { id: "mB", content: [{ type: "tool_use", id: "toolB", name: "Bash", input: { command: "echo hi" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolB", content: "hi" }] } },
+      { type: "assistant", message: { id: "mC", content: [{ type: "tool_use", id: "toolC", name: "Bash", input: { command: "sleep 200" } }] } },
+    ];
+    const getSessionMessages = async (_sid: string, opts?: { limit?: number; offset?: number }) => {
+      if (!opts) return rows;
+      const { offset = 0, limit } = opts;
+      return rows.slice(offset, limit === undefined ? undefined : offset + limit);
+    };
+    const srv = new AppServer({}, { sessionFactory: () => fakeSession(), getSessionMessages });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    const { merged, pages } = await readAllPages(connA, a, threadId, 1, 3);
+
+    expect(new Set(merged.keys())).toEqual(new Set(["p", "toolA", "toolB", "toolC"]));
+    expect(merged.size).toBe(4); // every item exactly once — toolB in particular must survive
+    expect(pages).toBeGreaterThan(1);
+  });
+
+  it("(j) gap 12 losslessness, harder: two concurrently-open tool calls with a genuine completion interleaved between them, walked at more than one page size", async () => {
+    // r0 prompt; r1 opens toolA (never resolves); r2 opens toolB; r3 opens toolC (never resolves) —
+    // toolA AND toolC are both still open when r3 lands; r4 delivers toolB's real result (interleaved
+    // between two still-open tools, not merely adjacent to one); r5/r6 plain filler text; r7 opens
+    // toolD (never resolves). 7 distinct items total. Walked at three different limits so the
+    // property under test — union-by-id equals every item, at every page size — isn't tied to one
+    // particular row/limit alignment.
+    const rows: unknown[] = [
+      { type: "user", uuid: "p", message: { content: "start" } },
+      { type: "assistant", message: { id: "mA", content: [{ type: "tool_use", id: "toolA", name: "Bash", input: { command: "sleep 100" } }] } },
+      { type: "assistant", message: { id: "mB", content: [{ type: "tool_use", id: "toolB", name: "Bash", input: { command: "echo hi" } }] } },
+      { type: "assistant", message: { id: "mC", content: [{ type: "tool_use", id: "toolC", name: "Bash", input: { command: "sleep 200" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolB", content: "hi" }] } },
+      { type: "assistant", message: { id: "mF1", content: [{ type: "text", text: "filler1" }] } },
+      { type: "assistant", message: { id: "mF2", content: [{ type: "text", text: "filler2" }] } },
+      { type: "assistant", message: { id: "mD", content: [{ type: "tool_use", id: "toolD", name: "Bash", input: { command: "sleep 300" } }] } },
+    ];
+    const getSessionMessages = async (_sid: string, opts?: { limit?: number; offset?: number }) => {
+      if (!opts) return rows;
+      const { offset = 0, limit } = opts;
+      return rows.slice(offset, limit === undefined ? undefined : offset + limit);
+    };
+    const expectedIds = new Set(["p", "toolA", "toolB", "toolC", "toolD", "mF1#0", "mF2#0"]);
+
+    for (const limit of [1, 2, 3]) {
+      const srv = new AppServer({}, { sessionFactory: () => fakeSession(), getSessionMessages });
+      const a = mkSink(); const connA = srv.connect(a.sink);
+      init(connA, 1, "A");
+      send(connA, { id: 2, method: "thread/start", params: {} });
+      await tick();
+      const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+      const { merged, pages } = await readAllPages(connA, a, threadId, limit, 3);
+      expect(new Set(merged.keys())).toEqual(expectedIds); // same union at EVERY page size
+      expect(merged.size).toBe(7);
+      expect(pages).toBeGreaterThanOrEqual(1);
+    }
   });
 
   it("thread/read on a thread with no persisted sessionId returns an empty page, not an error", async () => {
