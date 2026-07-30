@@ -142,7 +142,10 @@ labels and ordering. Largest and most taste-dependent, so it lands last. `/vim` 
   the TYPED `applyFlagSettings({permissions:{additionalDirectories:[dir]}})` covers that case: an
   outside-cwd Read consulted canUseTool before the grant and was auto-allowed (zero consults) after.
   So `/add-dir` routes by path: inside cwd → register_repo_root (context load), outside →
-  additionalDirectories (permission scope only). Two traps for the plan: applyFlagSettings
+  additionalDirectories (permission scope only). **Probe 75b (same day, plan-review finding 5):**
+  the REMOVAL half verified live — re-sending a SHORTER `additionalDirectories` array really
+  revokes (the next outside-cwd Read consulted canUseTool again; `get_settings.effective` shows the
+  empty array). Replacement, not union; `/permissions` rule deletion and workspace removal are safe. Two traps for the plan: applyFlagSettings
   **replaces** whole top-level keys per call (the harness must own and re-send the complete
   `permissions` object on every mutation), and breaking out of a `for await` over the Query calls
   the generator's `return()` and kills the transport (probe bug, cost one false "not ready for
