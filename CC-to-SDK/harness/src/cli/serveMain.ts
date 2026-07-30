@@ -62,10 +62,30 @@ export function removeRunFile(path: string, ownPort: number): void {
  *  outright — server.shutdown() never runs, so parked decisions are never settled and no subscriber ever
  *  gets thread/closed. Both signals route through ONE guarded `stop`: whichever arrives first wins, a
  *  second (or the other) signal is a no-op rather than a second concurrent shutdown, and BOTH listeners
- *  are removed so the surviving one cannot go on suppressing the default kill behavior after we are done.
+ *  are removed once `stop`'s work is done so the surviving one cannot go on suppressing the default kill
+ *  behavior afterwards.
+ *
+ *  Re-entrancy is guarded with a flag, NOT by removing the listeners up front — that ordering was tried
+ *  and is a live bug, not a style preference. A signal handler that removes the last listener for the
+ *  signal it is handling restores Node's default disposition for that signal *before returning*, and the
+ *  process is then killed by the very signal already in flight — mid-teardown. Confirmed by a live A/B
+ *  against a real `ccx serve` + real SIGTERM: removing the listeners first printed "stop closure ENTERED"
+ *  and then the process died, so server.shutdown()/close()/removeRunFile never ran and the run-file
+ *  survived a clean-looking shutdown; guarding with a flag and removing the listeners only after `stop`'s
+ *  returned promise settles printed "stop closure ENTERED" followed by "reached the removeRunFile line" and
+ *  returned normally. Do not "clean this up" back to eager removal.
+ *
  *  Exported (with the emitter injected) so the unit suite can drive it without a process or a port. */
-export function onStopSignals(stop: () => void, proc: NodeJS.EventEmitter = process): void {
-  const once = () => { proc.off("SIGINT", once); proc.off("SIGTERM", once); stop(); };
+export function onStopSignals(stop: () => void | Promise<void>, proc: NodeJS.EventEmitter = process): void {
+  let started = false;
+  const once = () => {
+    if (started) return; // a second (or the other) signal mid-teardown is a no-op, not a second shutdown
+    started = true;
+    void Promise.resolve(stop()).finally(() => {
+      proc.off("SIGINT", once);
+      proc.off("SIGTERM", once);
+    });
+  };
   proc.on("SIGINT", once);
   proc.on("SIGTERM", once);
 }
@@ -90,14 +110,12 @@ export async function runServe(inv: CcxInvocation): Promise<void> {
   // `claude` child process alive, which also keeps the event loop alive — so a first Ctrl-C on a serve with
   // an open thread might not exit at all (I7).
   await new Promise<void>((resolve) => {
-    onStopSignals(() => {
-      void (async () => {
-        await server.shutdown();
-        await close().catch(() => {});
-        removeRunFile(runFile, port); // gap 9: an operator listing the run dir after shutdown must not see a
-        // stale entry for a server that is no longer listening (but only for OUR entry — see removeRunFile).
-        resolve();
-      })();
+    onStopSignals(async () => {
+      await server.shutdown();
+      await close().catch(() => {});
+      removeRunFile(runFile, port); // gap 9: an operator listing the run dir after shutdown must not see a
+      // stale entry for a server that is no longer listening (but only for OUR entry — see removeRunFile).
+      resolve();
     });
   });
 }
