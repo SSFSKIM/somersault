@@ -78,7 +78,7 @@ export function fakeRemote(opts: FakeRemoteOpts = {}): FakeRemote {
   };
 
   const fake: FakeRemote = {
-    sessionId: opts.sessionId ?? "sess-1",
+    sessionId: "sessionId" in opts ? opts.sessionId : "sess-1",   // explicit undefined opts out (no-session tests)
     disposed: 0,
     answeredCalls,
     submit: opts.submit ?? defaultSubmit,

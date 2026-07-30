@@ -912,3 +912,58 @@ describe("U1: catalogued client-side controls never become prompt turns", () => 
     expect(submitted[0]).toBe("/review my PR");
   });
 });
+
+describe("U5a: /export /files /diff", () => {
+  it("/export writes the markdown via the injected writer and reports the path", async () => {
+    const writes: [string, string][] = [];
+    const fake = fakeRemote();                               // fake's sessionId — check helper; set if settable
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, {}, {
+        getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: [{ type: "text", text: "hello" }] } }],
+        writeFile: (p, t) => writes.push([p, t]),
+      });
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/export");
+    await waitFor(() => writes.length === 1);
+    expect(writes[0][0]).toMatch(/conversation-.*\.md$/);
+    expect(writes[0][1]).toContain("## › hello");
+    await waitFor(() => frame(lastFrame).includes("exported"));
+  });
+  it("/files lists tool-touched paths; /diff shells out to git via runBash", async () => {
+    const fake = fakeRemote();
+    const bashCalls: string[] = [];
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, {}, {
+        getSessionMessages: async () => [{ type: "assistant", message: { content: [{ type: "tool_use", id: "t", name: "Edit", input: { file_path: "/repo/z.ts" } }] } }],
+        runBash: async (cmd) => { bashCalls.push(cmd); return { code: 0, output: " M z.ts" }; },   // BashResult shape (bash.ts:7)
+      });
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/files");
+    await waitFor(() => frame(lastFrame).includes("/repo/z.ts"));
+    api.run!("/diff");
+    await waitFor(() => frame(lastFrame).includes("M z.ts"));
+    expect(bashCalls[0]).toContain("git");
+  });
+  it("/export with no session notices instead of writing (no-session guard)", async () => {
+    const fake = fakeRemote({ sessionId: undefined as unknown as string });
+    const writes: [string, string][] = [];
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, {}, { writeFile: (p, t) => writes.push([p, t]) });
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/export");
+    await waitFor(() => frame(lastFrame).includes("no conversation to export"));
+    expect(writes).toHaveLength(0);
+  });
+});

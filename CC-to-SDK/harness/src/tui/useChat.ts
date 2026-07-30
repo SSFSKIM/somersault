@@ -4,6 +4,8 @@
 // only. Owns the transcript, the streaming turn, the decision queue, mode switching (Tab ladder + host
 // truth via state events), the bg-task panel, and idempotent teardown.
 import { useEffect, useRef, useState } from "react";
+import { writeFileSync as realWriteFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ChatSession } from "../session/chatSession.js";
 import { hasDecisionFeed, hasBgTasks, hasSessionEvents, hasRewind } from "../session/chatSession.js";
 import type { RewindAnchor, RewindScope, RewindDryRun } from "../session/chatSession.js";
@@ -17,6 +19,7 @@ import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, form
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
+import { exportMarkdown, defaultExportName, filesInContext, formatFiles } from "./sessionTools.js";
 import { lastAssistantText } from "../sessions/rows.js";
 import type { ModelInfo } from "./ModelPicker.js";
 import { replayLines } from "./replay.js";
@@ -40,7 +43,7 @@ function ladderNext(mode: string): string { const i = (LADDER as readonly string
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
   opts: { initialMode?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialLines?: RenderLine[]; initialPrompt?: string; onExit?: () => void } = {},
-  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void> } = {},
+  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   // Seed the scrollback with the welcome banner — unless we're launching straight into a resume (the
@@ -84,6 +87,7 @@ export function useChat(
   const runBash = deps.runBash ?? realRunBash;
   const appendMemory = deps.appendMemory ?? realAppendMemory;
   const copyText = deps.copyText ?? realCopyToClipboard;
+  const writeFile = deps.writeFile ?? ((p: string, t: string) => realWriteFileSync(p, t));
   const lastAssistant = useRef("");    // the last assistant reply's text, for /copy
   // Real terminal clear: wipe screen + scrollback + home cursor (Static is append-only — a model reset alone
   // can't erase already-printed lines, so we also clear the terminal, exactly like CC's /clear).
@@ -251,6 +255,26 @@ export function useChat(
         case "bg": openBgPanel(); break;
         case "rewind": void openRewind(); break;
         case "copy": { const t = lastAssistant.current; if (!t) { notice("nothing to copy"); break; } await copyText(t); notice(`✓ copied ${t.length} chars`); break; }
+        case "export": {
+          const id = session.sessionId;
+          if (!id) { notice("no conversation to export yet"); break; }
+          const msgs = await getSessionMessages(id).catch(() => [] as any[]);
+          if (!msgs.length) { notice("no conversation to export yet"); break; }
+          const md = exportMarkdown(msgs, { id });
+          if (cmd.args === "clipboard") { await copyText(md); notice(`✓ copied ${md.length} chars of markdown`); break; }
+          const path = join(cwd, cmd.args || defaultExportName(id));
+          writeFile(path, md);
+          notice(`✓ exported to ${path}`);
+          break;
+        }
+        case "files": {
+          const id = session.sessionId;
+          const msgs = id ? await getSessionMessages(id).catch(() => [] as any[]) : [];
+          append(formatFiles(filesInContext(msgs)));
+          break;
+        }
+        // Terminal stand-in for CC's diff dialog: status for the shape, stat for the sizes.
+        case "diff": append(formatBashOutput(await runBash("git status --short; git diff --stat", cwd))); break;
         // Same exit the Ctrl-D / Ctrl-C-twice keys use — the host owns the actual unmount (opts.onExit).
         case "exit": case "quit": opts.onExit?.(); break;
         default: append(formatUnknown(cmd.name));
