@@ -45,7 +45,14 @@ const DEST_OPTIONS: { label: string; desc: (cwd: string) => string; target: Sett
   { label: "User settings", desc: () => "Saved in at ~/.claude/settings.json", target: "userSettings" },   // verbatim upstream typo — keep it
 ];
 const RULE_FLOW_FOOTER = "Enter to submit · Esc to cancel";     // covers BOTH add-rule steps (text entry + destination) — Global Constraints gives one footer for "the add-rule dialog"
-const RECENT_FOOTER = "Enter to approve · r to retry · ↑/↓ to navigate · Esc to cancel";
+// DELIBERATE DIVERGENCE from the pinned upstream string (recorded by the controller after review, W3 T7
+// Finding 2 — not a drift, don't "fix" this back to the verbatim copy). Upstream's footer reads
+// "Enter to approve · r to retry · ↑/↓ to navigate · Esc to cancel", but this tab is READ-ONLY here (see
+// the useInput denial-branch comment below): there is no live park left once a decision has settled, so
+// Enter/r are no-ops. A rendered, user-visible footer advertising two keys that do nothing is a false
+// affordance — worse than an unused string, because the user SEES it and tries the keys. Dropped the two
+// dead chords; kept the two that work.
+const RECENT_FOOTER = "↑/↓ to navigate · Esc to cancel";
 const DEFAULT_FOOTER = "↑/↓ to navigate · Enter to select · ←/→ to switch · Esc to cancel";
 // Not pinned by Global Constraints (which gives only "header"/"recent"/"default" — "header" belongs to an
 // upstream header-focus mode this wave deliberately doesn't ship, same recorded divergence as Task 5's own
@@ -170,8 +177,9 @@ export function PermissionsDialog({
       if (item.kind === "addDir") { setSub("addDir"); return; }
       if (item.kind === "rule") { setSelectedRule(item.row); setSub(item.row.readOnly ? "ruleDetails" : "deleteConfirm"); return; }
       if (item.kind === "dir") { if (item.d.source === "session") { setSelectedDir(item.d.path); setSub("removeDirConfirm"); } return; }
-      // denial: the footer promises Enter/r, but there is no live park left to act on once a decision has
-      // already settled — this tab is a READ-ONLY log (recorded divergence, Task 8).
+      // denial: no live park is left to act on once a decision has already settled — this tab is a READ-
+      // ONLY log. Enter intentionally falls through to a no-op here (↑/↓ still moves the cursor above);
+      // the footer no longer claims otherwise (RECENT_FOOTER, Finding 2 divergence note).
     }
   });
 

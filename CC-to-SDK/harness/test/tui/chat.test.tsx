@@ -1072,6 +1072,64 @@ describe("<ChatApp>", () => {
     expect(removeRuleCalls).toHaveLength(0);                          // Enter on a read-only row must never reach removeRule
   });
 
+  // Finding 1 (review, W3 T7): the add-rule and remove-directory flows were both covered, but the delete-a-
+  // rule path (removePermRule, useChat.ts) never ran end to end anywhere — its only prior mention in this
+  // file was the negative assertion above (read-only rows never reach it). Drive a REMOVABLE rule (source
+  // "flagSettings", so readOnly:false) through the full add → delete-confirm → delete round trip, the same
+  // way the add-rule test above builds it, then continue past add into the delete sub-view. Two file writes
+  // are expected through the injected settingsFileDeps fake: the add (appendToArray) and the delete
+  // (removeFromArray) — proving BOTH the flag-layer revoke (removeRule fake) AND the file-strip land.
+  it("/permissions: deleting a flagSettings-sourced (removable) rule calls removeRule and strips it from the persisted file", async () => {
+    const addRuleCalls: { behavior: string; rule: string }[] = [];
+    const removeRuleCalls: { behavior: string; rule: string }[] = [];
+    const writes: { path: string; content: string }[] = [];
+    const settingsFileDeps = {
+      read: (_p: string): string => { const e: any = new Error("ENOENT"); e.code = "ENOENT"; throw e; },
+      write: (p: string, s: string) => { writes.push({ path: p, content: s }); },
+    };
+    // A minimal in-memory mirror of the flag layer: addRule appends, removeRule filters — so the SECOND
+    // getSettings() fetch (after delete) reflects the revoke, same as the real engine would.
+    let rules: string[] = [];
+    const fake = fakeSettingsRemote({
+      addRule: async (behavior, rule) => { addRuleCalls.push({ behavior, rule }); rules.push(rule); },
+      removeRule: async (behavior, rule) => { removeRuleCalls.push({ behavior, rule }); rules = rules.filter((r) => r !== rule); },
+      getSettings: async () => (rules.length ? { sources: [{ source: "flagSettings", settings: { permissions: { allow: rules } } }] } : {}),
+    });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ settingsFileDeps }} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Add a new rule…"));
+    stdin.write("\r");                                              // Enter on "Add a new rule…" (idx 0, already highlighted)
+    await waitFor(() => frame(lastFrame).includes("Add allow permission rule"));
+    stdin.write("WebFetch");
+    await waitFor(() => frame(lastFrame).includes("WebFetch"));
+    stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE, not typing-then-Enter — write separately
+    await waitFor(() => frame(lastFrame).includes("Where should this rule be saved?"));
+    stdin.write("\r");                                              // idx 0 default = "Project settings (local)" → localSettings
+    await waitFor(() => addRuleCalls.length === 1);
+    expect(addRuleCalls[0]).toEqual({ behavior: "allow", rule: "WebFetch" });
+    await waitFor(() => writes.length === 1);                       // the ADD write landed
+    expect(writes[0].path).toBe(`${process.cwd()}/.claude/settings.local.json`);
+    expect(JSON.parse(writes[0].content)).toEqual({ permissions: { allow: ["WebFetch"] } });
+    await waitFor(() => frame(lastFrame).includes("❯ Add a new rule…"));   // back on the row list, cursor still at idx 0
+    // Refetched settings now report the rule as flagSettings-sourced (readOnly:false) — move down from
+    // "Add a new rule…" (idx 0) onto it and confirm it opens the DELETE sub-view, not Rule details.
+    stdin.write("\x1b[B");
+    await waitFor(() => frame(lastFrame).includes("❯ WebFetch"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Delete allowed tool?"));
+    expect(frame(lastFrame)).toContain("Are you sure you want to delete this permission rule?");
+    stdin.write("\r");
+    await waitFor(() => removeRuleCalls.length === 1);
+    expect(removeRuleCalls[0]).toEqual({ behavior: "allow", rule: "WebFetch" });
+    await waitFor(() => writes.length === 2);                       // the DELETE (strip) write landed
+    expect(writes[1].path).toBe(`${process.cwd()}/.claude/settings.local.json`);
+    expect(JSON.parse(writes[1].content)).toEqual({ permissions: { allow: [] } });
+    await waitFor(() => frame(lastFrame).includes("Add a new rule…"));   // back on the Allow row list, dialog still open
+    expect(frame(lastFrame)).not.toContain("WebFetch");               // the deleted rule no longer renders as a row
+  });
+
   it("/permissions Workspace tab: Enter on a session directory opens the remove confirm, and Enter there calls removeDir", async () => {
     const removeDirCalls: string[] = [];
     const sessionDir = tmpdir();
