@@ -92,7 +92,10 @@ admin-controlled managed settings** — you cannot set them per-session through 
 ### Evidence status
 
 Probe 48 verified credential `deny` (env var unset, file read kernel-blocked) under **macOS
-`sandbox-exec` only**. The same settings are structurally passed through on Linux, but nothing in this
+`sandbox-exec` only**. `test/live/tenant.live.test.ts` adds the end-to-end case on the same backend: one
+session authors and runs a file inside the tenant root, then fails to read a host credential file and
+fails to write outside the root — that last one asserted with `existsSync` on the test side, so a model
+merely *claiming* the write was blocked cannot pass it. The same settings are structurally passed through on Linux, but nothing in this
 repo has yet exercised them under bubblewrap — treat Linux credential denial as expected-but-unproven
 until a probe runs on a Linux host.
 
