@@ -81,9 +81,14 @@ try:
             # driving overlays where Enter has meaning (history search would EXECUTE the selection,
             # the bg panel would open a tail). Wave 1 tolerated the auto-Enter only because a stray
             # Enter on an empty composer is a no-op; Wave 2's surfaces do not.
-            if line.startswith("RAW:"):
-                os.write(fd, line[4:].encode())
-                if not pump(LINE_WAIT):
+            if line.startswith("RAW:") or line.startswith("RAWQ:"):
+                # RAWQ: is the quick variant (0.6s pump instead of LINE_WAIT) for chorded keys —
+                # ink's useInput parses each pty chunk as ONE keypress, so Ctrl-X Ctrl-K must be two
+                # separate writes, and the chord window (2s) / double-press window (3s) can't survive
+                # a full LINE_WAIT between them.
+                payload, wait = (line[5:], 0.6) if line.startswith("RAWQ:") else (line[4:], LINE_WAIT)
+                os.write(fd, payload.encode())
+                if not pump(wait):
                     captured.append(f"\n<<pty closed after {line!r}>>\n")
                     break
                 continue
