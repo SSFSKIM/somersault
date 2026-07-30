@@ -1,6 +1,6 @@
 // tui/src/ChatApp.tsx — composes the transcript, the composer (or the permission dialog when one is
 // pending), and the status bar. Esc interrupt / Shift+Tab cycle mode are owned by the composer and
-// inactive while a dialog is up; Ctrl-C / Ctrl-Z / Ctrl-T stay active even during a dialog (Ctrl-Z can
+// inactive while a dialog is up; Ctrl-C / Ctrl-Z / Ctrl-B / Ctrl-T stay active even during a dialog (Ctrl-Z can
 // still detach — detach ≠ deny). Ctrl-L moved into the editor (Task 2) — it used to live here as an
 // app-level screen-clear that fired ALONGSIDE the editor's own input-clear on every Ctrl-L (a transient
 // double-handling); removing this arm leaves the editor as Ctrl-L's sole owner. Renders increment 8's
@@ -60,7 +60,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     escTimer.current = setTimeout(() => setEscArmed(false), 1500);
   };
   const onCycleMode = () => { cycleMode(); disarm(); };   // Shift+Tab cycles the permission ladder (default → acceptEdits → plan → auto)
-  // Only Ctrl-C / Ctrl-Z / Ctrl-T live here — they conflict with nothing (composer/dialog/pickers never act
+  // Only Ctrl-C / Ctrl-Z / Ctrl-B / Ctrl-T live here — they conflict with nothing (composer/dialog/pickers never act
   // on them), so this stays active even during a pending dialog (so Ctrl-C can still quit, Ctrl-Z can still
   // detach). Shift+Tab/Esc are owned by whatever input is focused (the composer routes them to
   // onCycleMode/onInterrupt only when no popup is open — no double-handling; dialogs/pickers own their own Esc).
