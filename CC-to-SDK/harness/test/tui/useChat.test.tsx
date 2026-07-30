@@ -953,7 +953,7 @@ describe("U5a: /export /files /diff", () => {
     expect(bashCalls[0]).toContain("git");
   });
   it("/export with no session notices instead of writing (no-session guard)", async () => {
-    const fake = fakeRemote({ sessionId: undefined as unknown as string });
+    const fake = fakeRemote({ sessionId: undefined });
     const writes: [string, string][] = [];
     const api: { run?: (s: string) => void } = {};
     function H() {
@@ -965,5 +965,38 @@ describe("U5a: /export /files /diff", () => {
     api.run!("/export");
     await waitFor(() => frame(lastFrame).includes("no conversation to export"));
     expect(writes).toHaveLength(0);
+  });
+  it("/export clipboard copies the markdown via copyText and does not touch writeFile", async () => {
+    const writes: [string, string][] = [];
+    const copies: string[] = [];
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, {}, {
+        getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: [{ type: "text", text: "hello" }] } }],
+        writeFile: (p, t) => writes.push([p, t]),
+        copyText: async (t) => { copies.push(t); },
+      });
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/export clipboard");
+    await waitFor(() => copies.length === 1);
+    expect(copies[0]).toContain("## › hello");
+    expect(writes).toHaveLength(0);
+    await waitFor(() => frame(lastFrame).includes("copied"));
+  });
+  it("/files with no session renders the honest empty line and does not throw", async () => {
+    const fake = fakeRemote({ sessionId: undefined });
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake);
+      api.run = c.submit; return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(() => api.run!("/files")).not.toThrow();
+    await waitFor(() => frame(lastFrame).includes("no files touched in this conversation yet"));
   });
 });

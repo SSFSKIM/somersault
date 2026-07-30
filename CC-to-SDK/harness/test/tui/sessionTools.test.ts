@@ -41,4 +41,25 @@ describe("filesInContext", () => {
     expect(formatFiles([])[0].text).toContain("no files");
     expect(formatFiles(["/x"]).map((l) => l.text).join("\n")).toContain("/x");
   });
+  it("orders by LAST touch, not first touch and not alphabetical — a re-touch moves a file later", () => {
+    // /repo/z.ts then /repo/a.ts then /repo/z.ts again: alphabetical would give a before z (matches
+    // first-touch order here too, so it can't discriminate); last-touch instead puts z LAST because it
+    // was re-touched after a.
+    const reTouchZ = [
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/repo/z.ts" } }] } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t2", name: "Read", input: { file_path: "/repo/a.ts" } }] } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t3", name: "Edit", input: { file_path: "/repo/z.ts", old_string: "x", new_string: "y" } }] } },
+    ];
+    expect(filesInContext(reTouchZ as any[])).toEqual(["/repo/a.ts", "/repo/z.ts"]);
+
+    // Decisive case: a2 then z2 then a2 again. First-touch order would be [a2, z2]; alphabetical order
+    // would also be [a2, z2]. Last-touch is the ONLY ordering that puts z2 before a2 (a2 was re-touched
+    // last), so this discriminates last-touch from both other orderings at once.
+    const reTouchA2 = [
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/repo/a2.ts" } }] } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t2", name: "Read", input: { file_path: "/repo/z2.ts" } }] } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t3", name: "Edit", input: { file_path: "/repo/a2.ts", old_string: "x", new_string: "y" } }] } },
+    ];
+    expect(filesInContext(reTouchA2 as any[])).toEqual(["/repo/z2.ts", "/repo/a2.ts"]);
+  });
 });
