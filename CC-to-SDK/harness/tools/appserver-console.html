@@ -86,6 +86,45 @@
     of them individually.
   </div>
 
+  <h3 style="margin:.6rem 0 .2rem; font-size:.9em; opacity:.8;">start a thread</h3>
+  <div class="row">
+    <label>cwd <input type="text" id="startCwd" class="wide" placeholder="(blank = server process's own cwd)" /></label>
+    <label>model <input type="text" id="startModel" placeholder="claude-sonnet-4-6" value="claude-sonnet-4-6" /></label>
+  </div>
+  <div class="row">
+    <label>permission mode
+      <select id="startPermMode">
+        <option value="default" selected>default</option>
+        <option value="acceptEdits">acceptEdits</option>
+        <option value="auto">auto</option>
+        <option value="plan">plan</option>
+        <option value="bypassPermissions">bypassPermissions</option>
+        <option value="dontAsk">dontAsk</option>
+      </select>
+    </label>
+    <label>unattended
+      <select id="startUnattended">
+        <option value="park" selected>park</option>
+        <option value="deny">deny</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="startEmptySettingSources" checked />
+      empty <code>settingSources</code></label>
+    <button id="btnStartThread" disabled>Start thread <span class="wirename">(thread/start)</span></button>
+  </div>
+  <div class="callout">
+    <code>settingSources: []</code> is checked by default and folded into <code>config</code> below —
+    it keeps a developer's own <code>~/.claude/settings.json</code> (permissions.allow rules,
+    defaultMode, etc.) from silently changing what the engine does, the same way
+    <code>test/live/appserver-m1.test.ts</code> pins it for its own smoke run. Unchecking it lets the
+    server fall back to loading user + project + local settings as normal — every field this form
+    sends goes into the ONE free-form <code>config</code> object <code>thread/start {config,
+    unattended}</code> accepts (<code>schema/threads.ts</code>'s <code>threadStartParams</code>:
+    <code>config</code> is <code>z.record(string, unknown()).optional()</code>, forwarded verbatim
+    to <code>openSession</code> — cwd/model/permissionMode/settingSources are flat sibling keys on
+    it, not nested under a sub-object).
+  </div>
+
   <div class="row">
     <button id="btnListThreads" disabled>List threads <span class="wirename">(thread/list)</span></button>
     <button id="btnMoreThreads" disabled style="display:none">More&hellip;</button>
@@ -101,7 +140,8 @@
     Each row's <b>Subscribe</b> button calls <code>thread/subscribe {threadId}</code> — from then on
     that thread's raw notifications (turn/item/decision/etc.) stream into the wire log below, exactly
     as the server emits them. <b>Use&nbsp;&rarr;</b> sets this thread as the "active thread" panels B
-    and C act on. <b>Close</b> calls <code>thread/close {threadId}</code>.
+    and C act on. <b>Close</b> calls <code>thread/close {threadId}</code>. Every row button below also
+    carries its own wire method as a hover tooltip.
   </div>
 </section>
 
@@ -196,7 +236,11 @@
     Rows include both live threads and cold (store-only) sessions this server never opened — the
     same merge <code>thread/list</code> performs server-side (sessionLib.ts). Rename/Tag/Delete/Fork
     address either kind by id (a bare store sessionId or a <code>thr_&hellip;</code> registry id both
-    work). Compact and Reinitialize only succeed against a <b>live</b> thread.
+    work). <b>Resume</b> calls <code>thread/resume {sessionId}</code> to bring a cold row back to
+    life as a new live thread, reusing panel A's "start a thread" cwd/model/permission-mode/
+    settingSources fields as its <code>config</code> — the natural next action on a stored session
+    row, and the reason this panel doesn't need its own duplicate form. Compact and Reinitialize
+    only succeed against a <b>live</b> thread.
   </div>
 </section>
 
@@ -279,6 +323,7 @@ function setConnected(on) {
   document.getElementById("btnConnect").disabled = on;
   document.getElementById("btnDisconnect").disabled = !on;
   document.getElementById("btnListThreads").disabled = !on;
+  document.getElementById("btnStartThread").disabled = !on;
 }
 
 document.getElementById("btnConnect").onclick = () => {
@@ -301,6 +346,33 @@ document.getElementById("btnConnect").onclick = () => {
   };
 };
 document.getElementById("btnDisconnect").onclick = () => { if (ws) ws.close(); };
+
+// The ONE reader of the "start a thread" form fields — thread/start's runner below AND panel C's
+// per-row Resume button both call this, so the two never drift on what a "config" object looks
+// like. `config` is entirely flat (schema/threads.ts's threadStartParams: `z.record(string,
+// unknown()).optional()`, forwarded verbatim to openSession) — cwd/model/permissionMode/
+// settingSources are sibling keys on it, never nested under a sub-object.
+function readThreadConfigForm() {
+  const cwd = document.getElementById("startCwd").value.trim();
+  const model = document.getElementById("startModel").value.trim();
+  const config = { permissionMode: document.getElementById("startPermMode").value };
+  if (cwd) config.cwd = cwd;
+  if (model) config.model = model;
+  // Checked by default (see the panel's callout): keeps the operator's own ~/.claude/settings.json
+  // from silently changing engine behavior, exactly like test/live/appserver-m1.test.ts pins it.
+  if (document.getElementById("startEmptySettingSources").checked) config.settingSources = [];
+  return config;
+}
+
+document.getElementById("btnStartThread").onclick = async () => {
+  const config = readThreadConfigForm();
+  const unattended = document.getElementById("startUnattended").value;
+  try {
+    const r = await send("thread/start", { config, unattended });
+    upsertLiveThread(r.thread); renderThreadTable();
+    setActiveThread(r.thread.id);
+  } catch (e) { alert("thread/start failed: " + JSON.stringify(e)); }
+};
 
 // ---------------------------------------------------------------------------------------------
 // Panel A: live thread table, kept current purely from thread/list + the thread-existence /
@@ -334,11 +406,11 @@ function renderThreadTable() {
       <td>${esc(t.updatedAt)}</td>
       <td></td>`;
     const actions = tr.lastElementChild;
-    const bSub = document.createElement("button"); bSub.textContent = "Subscribe";
+    const bSub = document.createElement("button"); bSub.textContent = "Subscribe"; bSub.title = "thread/subscribe";
     bSub.onclick = () => callThreadSubscribe(t.id);
     const bUse = document.createElement("button"); bUse.textContent = "Use →";
     bUse.onclick = () => setActiveThread(t.id);
-    const bClose = document.createElement("button"); bClose.textContent = "Close";
+    const bClose = document.createElement("button"); bClose.textContent = "Close"; bClose.title = "thread/close";
     bClose.onclick = () => callSimple("thread/close", { threadId: t.id });
     actions.append(bSub, bUse, bClose);
     tbody.appendChild(tr);
@@ -471,26 +543,26 @@ function renderLibTable() {
       <td>${fmtStatus(row.status)}</td>
       <td></td>`;
     const actions = tr.lastElementChild;
-    const bRename = document.createElement("button"); bRename.textContent = "Rename";
+    const bRename = document.createElement("button"); bRename.textContent = "Rename"; bRename.title = "thread/name/set";
     bRename.onclick = async () => {
       const title = prompt("new title", row.title || ""); if (title === null) return;
       try { await send("thread/name/set", { threadId: row.id, title }); refreshLibrary(false); }
       catch (e) { alert("thread/name/set failed: " + JSON.stringify(e)); }
     };
-    const bTag = document.createElement("button"); bTag.textContent = "Tag";
+    const bTag = document.createElement("button"); bTag.textContent = "Tag"; bTag.title = "thread/tag/set";
     bTag.onclick = async () => {
       const tag = prompt("tag (blank clears it)", (row.tags && row.tags[0]) || "");
       if (tag === null) return;
       try { await send("thread/tag/set", { threadId: row.id, tag: tag === "" ? null : tag }); refreshLibrary(false); }
       catch (e) { alert("thread/tag/set failed: " + JSON.stringify(e)); }
     };
-    const bDelete = document.createElement("button"); bDelete.textContent = "Delete";
+    const bDelete = document.createElement("button"); bDelete.textContent = "Delete"; bDelete.title = "thread/delete";
     bDelete.onclick = async () => {
       if (!confirm(`delete session ${row.id}?`)) return;
       try { await send("thread/delete", { threadId: row.id }); refreshLibrary(false); }
       catch (e) { alert("thread/delete failed (a live session refuses with BUSY): " + JSON.stringify(e)); }
     };
-    const bFork = document.createElement("button"); bFork.textContent = "Fork";
+    const bFork = document.createElement("button"); bFork.textContent = "Fork"; bFork.title = "thread/fork";
     bFork.onclick = async () => {
       const title = prompt("title for the fork (optional)", "") || undefined;
       try {
@@ -500,19 +572,35 @@ function renderLibTable() {
         refreshLibrary(false);
       } catch (e) { alert("thread/fork failed: " + JSON.stringify(e)); }
     };
-    const bCompact = document.createElement("button"); bCompact.textContent = "Compact";
+    // Resume brings a store-only (cold) row back to life as a new live thread — the natural next
+    // action on a session library row, and the reason panel C exists alongside panel A's Start.
+    // Reuses panel A's "start a thread" form fields via readThreadConfigForm() so the two controls
+    // never disagree on what `config` means, rather than duplicating a whole second form per row.
+    const bResume = document.createElement("button"); bResume.textContent = "Resume"; bResume.title = "thread/resume — uses the “start a thread” config fields in panel A";
+    bResume.onclick = async () => {
+      const config = readThreadConfigForm();
+      const unattended = document.getElementById("startUnattended").value;
+      try {
+        const r = await send("thread/resume", { sessionId: row.id, config, unattended });
+        alert("resumed into live thread " + r.thread.id);
+        upsertLiveThread(r.thread); renderThreadTable();
+        setActiveThread(r.thread.id);
+        refreshLibrary(false);
+      } catch (e) { alert("thread/resume failed: " + JSON.stringify(e)); }
+    };
+    const bCompact = document.createElement("button"); bCompact.textContent = "Compact"; bCompact.title = "thread/compact/start";
     bCompact.onclick = async () => {
       try { await send("thread/compact/start", { threadId: row.id }); }
       catch (e) { alert("thread/compact/start failed (needs a LIVE thread): " + JSON.stringify(e)); }
     };
-    const bReinit = document.createElement("button"); bReinit.textContent = "Reinitialize";
+    const bReinit = document.createElement("button"); bReinit.textContent = "Reinitialize"; bReinit.title = "thread/reinitialize";
     bReinit.onclick = async () => {
       try { const r = await send("thread/reinitialize", { threadId: row.id }); logWire("in", "reinitialize", r); }
       catch (e) { alert("thread/reinitialize failed (needs a LIVE thread): " + JSON.stringify(e)); }
     };
     const bUse = document.createElement("button"); bUse.textContent = "Use →";
     bUse.onclick = () => setActiveThread(row.id);
-    actions.append(bRename, bTag, bDelete, bFork, bCompact, bReinit, bUse);
+    actions.append(bRename, bTag, bDelete, bFork, bResume, bCompact, bReinit, bUse);
     tbody.appendChild(tr);
   }
 }
