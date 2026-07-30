@@ -104,6 +104,26 @@ export function formatUnknown(name: string): RenderLine[] {
   return [{ text: `Unknown command: /${name} · try /help`, color: "red" }];
 }
 
+// ---- U1: catalogued client-side controls (TUI/UX sprint Wave 1) ----
+// The live SDK catalog carries names that are CLIENT features in real Claude Code (2.1.220 bundle:
+// type "local"/"local-jsx"), so running them as a prompt turn hands the model a command it cannot act
+// on. Each gets an explicit message instead. /review and /doctor are DELIBERATELY absent: both are
+// prompt-type upstream, so submit-as-turn is exactly how they work. /rename and /tag are implemented
+// locally (Task 6), so they are absent too.
+export const CLIENT_SIDE_NOTES: Record<string, string> = {
+  agents: "removed upstream — ask Claude to create/manage subagents, or edit .claude/agents/",
+  color: "prompt-bar color is a Claude Code UI setting with no equivalent here",
+  config: "the settings UI isn't built yet (it arrives with the settings slice) — use launch flags for now",
+  effort: "effort maps to the thinking budget here — use /think <off|low|medium|high|xhigh|max|N>",
+  "extra-usage": "renamed /usage-credits upstream; for plan usage here use /usage",
+  fast: "fast mode is a Claude Code client toggle the Agent SDK doesn't expose",
+  heapdump: "dumps the Claude Code CLI's own JS heap — not applicable to ccx",
+};
+/** U1 honesty line: name the feature, say why it can't run here, never forward it to the model. */
+export function formatClientSide(name: string): RenderLine[] {
+  return [{ text: `/${name}: ${CLIENT_SIDE_NOTES[name]}`, dim: true }];
+}
+
 // ---- /mcp (W3.5) ----
 export type McpAction = { kind: "status" } | { kind: "reconnect"; name: string } | { kind: "toggle"; name: string; enabled: boolean };
 

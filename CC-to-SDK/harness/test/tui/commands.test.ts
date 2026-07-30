@@ -1,6 +1,7 @@
 // tui/test/commands.test.ts — pure parser + formatters.
 import { describe, it, expect } from "vitest";
 import { parseCommand, COMMANDS, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, parseResumeIntent, parseLaunchMode, parseLaunchThink, LOCAL_NAMES, LOCAL_COMMAND_ENTRIES } from "../../src/tui/commands.js";
+import { CLIENT_SIDE_NOTES, formatClientSide } from "../../src/tui/commands.js";
 
 describe("parseCommand", () => {
   it("splits a slash command into name + args", () => {
@@ -138,5 +139,24 @@ describe("/bg (Goal B task 7)", () => {
     expect(COMMANDS.some((c) => c.name === "bg")).toBe(true);
     expect(LOCAL_NAMES.has("bg")).toBe(true);
     expect(LOCAL_COMMAND_ENTRIES.some((e) => e.name === "bg")).toBe(true);
+  });
+});
+
+describe("U1 client-side honesty (Wave 1)", () => {
+  it("covers exactly the seven client-side controls", () => {
+    expect(Object.keys(CLIENT_SIDE_NOTES).sort()).toEqual(
+      ["agents", "color", "config", "effort", "extra-usage", "fast", "heapdump"]);
+  });
+  it("every note names the command and explains itself", () => {
+    for (const name of Object.keys(CLIENT_SIDE_NOTES)) {
+      const lines = formatClientSide(name);
+      expect(lines).toHaveLength(1);
+      expect(lines[0].text.startsWith(`/${name}: `)).toBe(true);
+      expect(lines[0].text.length).toBeGreaterThan(`/${name}: `.length + 10);
+    }
+  });
+  it("review and doctor are NOT client-side — they are prompt-type engine commands", () => {
+    expect(CLIENT_SIDE_NOTES).not.toHaveProperty("review");
+    expect(CLIENT_SIDE_NOTES).not.toHaveProperty("doctor");
   });
 });

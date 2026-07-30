@@ -13,7 +13,7 @@ import type { BackgroundTaskInfo } from "../session/session.js";
 import type { RenderLine } from "./render.js";
 import { LiveTurn } from "./liveTurn.js";
 import { TaskList, type TaskItem } from "./taskList.js";
-import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
@@ -420,6 +420,8 @@ export function useChat(
     const cmd = parseCommand(prompt);
     if (cmd) {
       if (LOCAL_NAMES.has(cmd.name)) { void handleCommand(cmd); return false; }   // local → engine switch
+      // U1: a catalogued client-side control gets an honest message, never a prompt the model can't act on.
+      if (cmd.name in CLIENT_SIDE_NOTES) { append([{ text: `› /${cmd.name}`, dim: true }, ...formatClientSide(cmd.name)]); return false; }
       if (catalogNames.current.has(cmd.name)) { runTurn(prompt); return true; }   // catalog → run "/name …" as a turn (probe 31)
       void handleCommand(cmd); return false;                                       // unknown → formatUnknown (switch default)
     }

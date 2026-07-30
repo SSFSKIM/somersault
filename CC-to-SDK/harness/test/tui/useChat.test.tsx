@@ -887,3 +887,28 @@ describe("thinking control", () => {
     api.run!("/think bogus"); await waitFor(() => frame(lastFrame).includes("unknown level"));
   });
 });
+
+describe("U1: catalogued client-side controls never become prompt turns", () => {
+  it("/config prints the honest message and never submits; /review still submits as a turn", async () => {
+    const submitted: string[] = [];
+    const fake = fakeRemote({
+      async submit(prompt: string) { submitted.push(prompt); return { result: "done" }; },
+      async capabilities() {
+        return { models: [], mcpServers: [], commands: [
+          { name: "config", description: "Open settings" },
+          { name: "review", description: "Review a pull request" },
+        ] };
+      },
+    } as any);
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 30));            // let the capabilities fetch land
+    api.run!("/config");
+    await waitFor(() => frame(lastFrame).includes("/config:"));
+    expect(submitted).toHaveLength(0);                       // the model never saw it
+    api.run!("/review my PR");
+    await waitFor(() => submitted.length === 1);
+    expect(submitted[0]).toBe("/review my PR");
+  });
+});
