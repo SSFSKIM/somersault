@@ -85,7 +85,8 @@ Reconcile against the extracted table. Known divergences to settle first: our `C
 mode on `Tab` where real Claude Code uses `shift+tab`. Then the missing actions: `ctrl+o` transcript
 toggle, `ctrl+t` todo toggle, `ctrl+r` history search, `ctrl+j` newline, `ctrl+_` undo,
 `ctrl+x ctrl+e` external editor, `ctrl+s` stash, `ctrl+x ctrl+k` kill agents. Divergences we keep (our
-`Ctrl-Z` detach has no upstream equivalent) get recorded as such.
+the pre-F0 `Ctrl-Z` detach had no upstream equivalent) were recorded as such. **F0 superseded that
+binding:** Ctrl-Z now suspends and `/detach` carries the addition.
 
 ### U4 — the transcript pager and history search
 The `Transcript` context in the bundle is a less-style pager (18 bindings: half/full page, line, top,

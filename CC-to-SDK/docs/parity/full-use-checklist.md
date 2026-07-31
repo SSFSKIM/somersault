@@ -251,16 +251,15 @@ ccx --bg --permission-mode default --settings '{"permissions":{"ask":["Bash(*)"]
 - [ ] **Answering resumes the session** — press `1` (allow) → the turn completes to `done` in the
   attached view.
 
-### C2. Ctrl-Z detaches without denying
+### C2. Ctrl-Z suspends; `/detach` detaches from the composer
 
-Repeat C1 (a fresh `--bg` + park), attach, and **before answering**, press `Ctrl-Z`:
-
-- [ ] You're back at the shell with `detached — session <short> keeps running · reattach: ccx attach
-  <short>` on stderr — no deny was sent.
-- [ ] `ccx agents --json --all` still shows the row **`blocked`** (the pending permission is
-  untouched).
-- [ ] Re-attach (`ccx attach <short>`) → the same dialog is still there. Answer allow → the session
-  runs to `done`.
+- [ ] **Ctrl-Z suspends, never detaches** — press it while attached, return with `fg`, and verify the
+  session remains attached and no pending decision was answered. This is the upstream-compatible terminal
+  suspend binding.
+- [ ] **`/detach` is the detach command** — from an attached session while the composer is visible, type
+  `/detach` ↵ → stderr prints `detached — session <short> keeps running · reattach: ccx attach <short>`.
+  `ccx agents --json --all` retains the live row, and `ccx attach <short>` reattaches it. A pending
+  decision occupies the composer, so answer or deny it before issuing this command.
 
 ### C3. `--detachable` — spawn then auto-attach
 
@@ -270,8 +269,8 @@ ccx --detachable -n qa-det "Reply with exactly: OK"
 
 - [ ] Prints the `backgrounded · <short>` banner, then **immediately** attaches in the same
   terminal (no second command needed) and the prompt you gave streams in.
-- [ ] `Ctrl-Z` here detaches (this session is attached, not loopback) — `ccx agents` still shows it
-  running; `ccx attach qa-det` reattaches.
+- [ ] Type `/detach` ↵ here to detach (this session is attached, not loopback) — `ccx agents` still
+  shows it running; `ccx attach qa-det` reattaches. `Ctrl-Z` only suspends the terminal process.
 
 ### C4. `--idle-timeout` (only valid with `--detachable`)
 

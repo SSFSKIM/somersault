@@ -49,7 +49,7 @@ glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input mode
 
 | Category | Parity (start) | Parity (pre-C5) | Parity (pre-F0, post–sprint-W3) | Parity (now, post-F0 correction) |
 |---|---|---|---|---|
-| 1. Input / composer ergonomics | ~45% | ~88% | ~95% | **~79%** |
+| 1. Input / composer ergonomics | ~45% | ~88% | ~95% | **~78%** |
 | 2. Transcript / message rendering | ~50% | ~74% | ~83% | **~57%** |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% | **~36%** |
 | 4. Modals / overlays | ~60% | ~88% | ~88% (4 new W3 rows — see W3 recount note) | **~50%** |
@@ -76,9 +76,9 @@ drop is entirely a measurement correction, made of three additive effects:
    status, reduced motion, resize/`SIGCONT` handling, the `Select`/`Tabs` primitives, `DiffDialog`,
    `EnterPlanMode`, and the background-dialog detail sub-dialogs. These are real, previously invisible
    gaps — not manufactured to hit a target number.
-3. **One over-ship leaves the numerator.** The rate-limit usage warning chip was scored ✅ for a
-   feature upstream does not have at all; it moves to the "Recorded additions" table below the
-   headline, out of the denominator entirely. Image paste flips `🚫` → `❌`-pending-P87 (its `🚫`
+3. **Two over-ships leave the numerator.** The rate-limit usage warning chip and `#` memory mode
+   were scored ✅ for features upstream does not have at all; both move to the "Recorded additions"
+   table below the headline, out of the denominator entirely. Image paste flips `🚫` → `❌`-pending-P87 (its `🚫`
    rationale was wrong — reading the system clipboard is terminal-native, not "non-terminal / out of
    scope" — so it now counts against the denominator instead of being excluded from it).
 
@@ -97,14 +97,14 @@ category percentages, per the C5 recompute method below):
 
 | Category | ✅ | 🟡 | ❌ | non-🚫 rows | Score |
 |---|---|---|---|---|---|
-| 1. Input / composer | 19 | 3 | 4 | 26 | 20.5/26 = 78.8% |
+| 1. Input / composer | 18 | 3 | 4 | 25 | 19.5/25 = 78.0% |
 | 2. Transcript | 3 | 11 | 1 | 15 | 8.5/15 = 56.7% |
 | 3. Status / chrome | 3 | 7 | 8 | 18 | 6.5/18 = 36.1% |
 | 4. Modals / overlays | 4 | 9 | 4 | 17 | 8.5/17 = 50.0% |
 | 5. Slash commands | 16 | 4 | 1 | 21 | 18/21 = 85.7% |
 | 6. Polish | 3 | 5 | 1 | 9 | 5.5/9 = 61.1% |
 | 7. Control plane (§8) | 5 | 5 | 0 | 10 | 7.5/10 = 75.0% |
-| **Overall (unweighted avg of the 7 rows above)** | | | | | **≈ 63.3% → ~63%** |
+| **Overall (unweighted avg of the 7 rows above)** | | | | | **≈ 63.2% → ~63%** |
 
 The spec that ordered this correction estimated the fall would land "into the low 70s"; the computed
 number lands lower, at ~63%. That is not a contradiction to paper over: the spec's figure was a
@@ -293,7 +293,7 @@ or LOW-priority tail items, never rows tuned to hit the target number.
   false (OAuth-token auth, probe 55).
 - **`?` shortcuts overlay** (`tui/ShortcutsOverlay.tsx`, opened by `?` on a genuinely empty composer —
   `ChatComposer.tsx`) lists every binding this package actually wires (readline keys, word movement,
-  Tab ladder, Esc-Esc, Ctrl+B, `!`/`#` modes); any key closes it.
+  Tab ladder, Esc-Esc, Ctrl+B, `!`/`#` modes); Escape alone closes it.
 - **Alt/Ctrl word movement** (`tui/editor.ts` `wordLeft`/`wordRight`, checked ahead of the ctrl-combo
   branch so no meta chord falls through to insertion).
 - **Transcript fidelity.** Tool-invocation rows adopt CC's `● Name(target)` bullet (`render.ts`
@@ -325,19 +325,11 @@ non-🚫 row count and out of the headline arithmetic above.
 |---|---|---|
 | plan-usage warning chip (≥80% rate-limit utilization) | **C5** (F4) `usageFormat.ts` `usageWarning` → `ChatStatusBar.tsx` — a red chip in the footer once any rate-limit window crosses 80% | **F0 correction.** Upstream has no such chip at all — rate limits surface only via `/usage` and `statusLine`. Was scored ✅ in §3 pre-F0; that was the category error this table exists to fix. `/usage` itself (§5) is real upstream-equivalent functionality and stays a normal scored row |
 | `/detach` (leave the session running, reattach with `ccx attach`) | Detaches this client from a live session without ending it — a multi-client capability of our `ccx attach` architecture | Upstream has no detach concept at all — a genuine addition from our client/session split, not a divergent form of an existing upstream feature. **F0 (t6, KB5):** previously bound to `Ctrl-Z`, which collided with upstream's real reservation of that key for `SIGTSTP`; moved to the `/detach` command so the capability survives while `Ctrl-Z` itself becomes a real parity row (§1) |
+| `#` memory-mode composer input | **U5** `memory.ts` appends a leading-`#` note under `## Memories` in `CLAUDE.md` | Upstream's mode detector recognises only `!`; this is a genuine local addition, retained and disclosed but excluded from the cloning denominator. Its start-of-buffer gate prevents it from swallowing a `#` mid-prompt. |
 
-Two further additions are **kept but not counted**, per the spec's Exceptions to fidelity-first (owner
-decisions, not oversights) — recorded here rather than silently carried:
-
-- **`#` memory-mode composer input** (§1) — upstream's mode detector recognises only `!`; `#` is a
-  genuine addition, gated by the same start-of-buffer rule so it can never swallow a `#` mid-prompt
-  (spec Decision Log E6). Left scored ✅ in its §1 row rather than moved here, since the row itself
-  measures "does our composer support a fast local-command mode," which is genuinely delivered — the
-  divergence is disclosed in the row's note instead.
-- **Real `message_delta` output-token counts** (§3, "Live token counter during turn") over upstream's
-  animated `responseLength/4` estimate — deliberately kept as the more truthful number (spec Decision
-  Log E4), not counted as an over-ship since upstream has the same *concept* (a live token counter), just
-  computed differently.
+The real `message_delta` output-token count (§3, "Live token counter during turn") is deliberately kept
+over upstream's animated `responseLength/4` estimate (spec Decision Log E4). It remains a parity row
+because upstream has the same live-token-counter concept, even though the computation differs.
 
 ---
 
@@ -360,6 +352,13 @@ routing now owns the visible help race with synchronously-current refs; whitespa
 prepend preserve the intended bytes without polluting history; line-boundary Ctrl-W restores multiline
 structure through the kill ring; and the frame emulator/masks are mutation-safe and scenario-scoped.
 
+**Third re-review boundary pass (2026-08-01, commit `181470a918`).** Permission confirmation now accepts
+only bare `y`/`n`; composer keyboard affordances render with the editor state rather than lagging through a
+parent effect; a Ctrl-D arm is hidden whenever exit is impossible; and capture rejects an immediately-dead
+child. Frame comparison now separates write-time, dashboard-anchored identity redaction from scoped quota
+and status masks; the original capture round-trips byte-for-byte; continuation-cell wide-glyph overwrites
+clear both real pyte cells and styles; and no frame-diff documentation example can become an allowlist row.
+
 | # | Fix | Commit | Where scored above |
 |---|---|---|---|
 | 1 | Kill-ring: `Ctrl-K`/`Ctrl-U`/`Ctrl-W` used to discard killed text; now a real ring (cap 10) with `Ctrl-Y` yank / `Alt-Y` yank-pop | `a853e8dbc8` (+ fix-up `cc2a42282f`) | §1 "Ctrl-K / Ctrl-U", "Ctrl-W" |
@@ -380,10 +379,12 @@ own method note above points to, and are recorded here so a reader of the scorec
   of the audit's *own* checks that were comparing hand-copied literal strings instead of rendered
   output — both were proven inert by sabotage before the fix and caught by it after.
 - **The frame instrument** (`harness/scripts/capture-frames.py` + `harness/scripts/frame-diff.py`,
-  commit `31c7528c80`) captures a pyte-emulated screen state of a running TUI at named checkpoints and
-  diffs two capture directories with nondeterminism masked out. SGR 2 dim is stored as a first-class
-  cell attribute through pyte scroll/erase/insert/delete mutations, and dashboard masks are scoped by
-  scenario/frame rather than applied to arbitrary transcript text. First goldens against the real,
+  commits `31c7528c80` + `181470a918`) captures a pyte-emulated screen state of a running TUI at named
+  checkpoints and diffs two capture directories with dashboard-only nondeterminism masked out. SGR 2
+  dim is a first-class cell attribute through pyte scroll/erase/insert/delete and wide-cell continuation
+  overwrites. Tracked-golden writes require the same narrowly scoped identity redaction contract that
+  byte-for-byte maps the original captures to their stored fixtures; arbitrary transcript identity,
+  quota, cost, duration, token, timestamp and UUID text remains distinguishable. First goldens against the real,
   installed `claude` 2.1.220 binary are committed under `harness/test/fixtures/upstream-frames/`
   (`help-overlay/`, `composer-basics/`). Running it against our own `ccx` today reports both sets
   DIVERGENT (expected — the boot-frame gap is real and large; the composer-editing semantics matched
@@ -401,7 +402,6 @@ own method note above points to, and are recorded here so a reader of the scorec
 | `@`-file mention fuzzy autocomplete | ✅ | — | `editor.ts` + `fileComplete.ts` |
 | `/`-slash command autocomplete | ✅ | — | `editor.ts` command state + `commandComplete.ts` |
 | `!` bash mode (run shell directly, no model) | ✅ | — | **U5** `bash.ts` local exec in cwd, echoed `! cmd` + `⎿`-style output (local-only by design; no model context injection) |
-| `#` memory mode (append to CLAUDE.md) | ✅ | — | **U5** `memory.ts` appends under `## Memories`. **F0 note (E6):** upstream's mode detector recognises only `!` — `#` is a genuine addition with no upstream equivalent, gated by the same start-of-buffer rule so it can never swallow a `#` mid-prompt. Kept as a recorded divergence, not carried silently (spec Decision Log E6) |
 | Input mode indicator (bash/memory/command) | ✅ | — | **U5** `inputMode()` → magenta bash / blue memory border + hint |
 | Ctrl-A / Ctrl-E (line start/end) | ✅ | — | **U7** `editor.ts` readline keys |
 | Ctrl-K / Ctrl-U (kill to end/start) | ✅ | — | **U7** `editor.ts`. **fixed 2026-07-31 (F0, t1, CM10/CM11):** killed text used to be discarded — the correction had this at 🟡. It now feeds a real kill ring (cap 10, coalescing runs), with `Ctrl+Y` yank / `Alt+Y` yank-pop and a `Ctrl+Y to paste deleted text` hint after a ≥3-char Ctrl-U kill, matching upstream |

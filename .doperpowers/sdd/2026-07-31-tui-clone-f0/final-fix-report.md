@@ -162,3 +162,80 @@ The corrected capture/diff instrument wrote the expected **3 help-overlay** and 
 - Composer basics: `0 clean, 0 allowlisted, 5 DIVERGENT`; exit code `1`.
 
 The mutation suite also proves style survives dim scroll/erase/insert/delete/wide-cell cases and that missing/empty/partial/missing-counterpart inputs cannot become clean.
+
+## Third re-review pass
+
+Implementation is committed on `main` as `181470a918` (`f0: close third rereview boundary cases`). No
+push was performed. The protected concurrent untracked probe files were not staged or edited.
+
+### TDD red proofs and implementation decisions
+
+1. **Permission safety.** The raw Ctrl-Y/Ctrl-N/Alt-Y/Alt-N regression test initially collected four
+   decisions. `PermissionDialog` now requires a bare printable key before accepting `y` or `n`; arrows,
+   Enter, numeric selection, and legacy aliases are unchanged.
+2. **Immediate-dead capture.** A zero-wait `frame:boot` against `true` initially exited zero and wrote an
+   ANSI blank frame. Each frame now performs a 20 ms bounded pty/readiness settle, observes `waitpid`, and
+   requires at least one visible screen cell before writing. Ten immediate-dead attempts fail; a zero-wait
+   live child that renders `ready` succeeds.
+3. **One-frame composer lag.** The emitted-frame test initially captured `sentinel-draft` alongside stale
+   `Esc rewind · ? help`. Editor keyboard affordances now render in `ChatComposer`, with the same state
+   that renders drafts and autocomplete. `ChatStatusBar` carries metadata only; a synchronous draft-start
+   callback remains solely to disarm ChatApp's unrelated rewind arm.
+4. **Mask semantics and identity.** The old scoped-mask test collapsed arbitrary transcript cost/duration/
+   token text. A shared `frame_masks.py` contract separates dashboard-anchored write-time identity
+   redactions from scoped quota/status comparison masks. The test matrix preserves transcript email, UUID,
+   path, count, percentage, cost, duration, token and timestamp differences; all eight original frames from
+   `d6b2b6d849` redact byte-identically to stored fixtures.
+5. **Wide continuation overwrite.** Overwriting the trailing half of a dim `界` initially retained the
+   leading glyph. `DimScreen` now clears both actual pyte cells before a write targets either half; centre
+   and row-edge continuation cases prove both glyph and dim style disappear.
+6. **Ctrl-D affordance.** The old arm hint stayed visible after typing although Ctrl-D could not exit.
+   The arm still follows upstream's intervening-key behavior, but its hint renders only when the composer
+   is empty. Clearing text inside the live arm window restores the hint and makes the second press exit.
+7. **Scorecard and operating docs.** The help-overlay C5 note now says Escape-only. `#` memory mode moved
+   out of the cloning denominator into Recorded additions; parsed tables recompute input/composer to
+   `19.5/25 = 78.0%` and the unweighted headline to `63.2%` (still `~63%`). The full-use checklist and
+   capability coverage now identify Ctrl-Z as suspend and `/detach` as detach.
+8. **Capture documentation.** `VERSION` records the exact 2.1.220, 100x40, `/tmp/frame-scratch`,
+   redaction-required capture commands. The script refuses a tracked-fixture-shaped destination without
+   `--redact-masks`; the test proves a safe run stores no raw identity. The allowlist parser now ignores
+   prose/examples, restoring the required 3/3 help baseline.
+
+### Final verification
+
+Commands were run from `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness` unless noted.
+
+- `npm run typecheck`: **PASS**.
+- `npx vitest run test/tui --exclude 'test/tui/tmp-probe-rescue-popup.test.tsx'`: **PASS; 39 files,
+  648 tests; 9 gated live tests skipped**.
+- `npm run test:unit`: **PASS; 135 files, 1,227 tests**.
+- `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`: **PASS; 19 tests**.
+- `git diff --check`: **PASS** before the implementation commit.
+- The scorecard table parser reported: 18 complete, 3 partial and 4 missing of 25 input/composer rows,
+  yielding 78.0%; the six other category percentages remain 56.7, 36.1, 50.0, 85.7, 61.1 and 75.0.
+
+### F0 acceptance 1–8
+
+1. **Queue rescue: PASS.** Existing ChatApp rescue coverage remained green in the complete TUI suite.
+2. **Escape clear/history restore: PASS.** The complete TUI suite includes the existing clear/restore and
+   rewind-arm regression tests.
+3. **Kill ring/yank-pop: PASS.** The complete TUI suite includes the editor ring and multiline Ctrl-W tests.
+4. **Raw Ctrl-_ undo: PASS.** The complete TUI suite includes the bare `0x1f` behavior proof.
+5. **Help ownership: PASS.** The complete TUI suite includes overlay routing and Escape-only ownership.
+6. **Ctrl-D/Ctrl-Z: PASS with the existing manual `fg` concern.** New coverage proves the Ctrl-D hint is
+   absent for nonempty text, reappears only when its exit is executable, and exits on the second empty
+   press. Existing suspend unit coverage remains green.
+7. **Permission y/n: PASS.** Bare `y`/`n` still decide; raw Ctrl-Y, Ctrl-N, Alt-Y, and Alt-N decide nothing.
+8. **Scorecard honesty: PASS.** The parsed table totals, corrected help statement, Recorded-additions move,
+   detach wording and current frame/mask contract were checked as above.
+
+### Frame baseline
+
+A fresh capture at 100x40 with `/tmp/frame-scratch` wrote all expected files and no tracked fixture:
+
+- Help overlay: **3 frames written; `0 clean, 0 allowlisted, 3 DIVERGENT`; exit 1**.
+- Composer basics: **5 frames written; `0 clean, 0 allowlisted, 5 DIVERGENT`; exit 1**.
+
+The divergence is the known fidelity baseline, not an instrument false-success. The only remaining concern
+is the pre-existing manual shell `Ctrl-Z` → `fg` acceptance, which the automated pty driver cannot safely
+perform; raw-mode ordering and restoration remain unit-covered.

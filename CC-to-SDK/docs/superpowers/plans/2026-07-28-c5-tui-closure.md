@@ -1106,8 +1106,9 @@ if (key.meta) {                                        // Alt/Option: word movem
 
 `ShortcutsOverlay.tsx` — a bordered static panel listing the keymap (⏎ send · \⏎ newline · ↑↓
 history · Ctrl-A/E/K/U/W · Alt-←→ words · Tab mode ladder · Esc interrupt · Esc Esc rewind ·
-Ctrl+B background · Ctrl-C ×2 exit · Ctrl-D EOF · Ctrl-L clear · Ctrl-Z detach · `!` bash · `#`
-memory · `@` files · `/` commands · `?` this help); `useInput(() => onClose())`.
+Ctrl+B background · Ctrl-C ×2 exit · Ctrl-D ×2 exit · Ctrl-L clear · Ctrl-Z suspend · `!` bash · `#`
+memory · `@` files · `/` commands · `?` this help); Escape alone closes it. **F0 correction:** this
+supersedes the original `useInput(() => onClose())` plan text.
 
 `ChatComposer.tsx`: prop `onHelp?: () => void`; in `useInput`, before `applyKey`:
 `if (input === "?" && !s.command && !s.mention && s.lines.length === 1 && s.lines[0] === "") { onHelp?.(); return; }`
