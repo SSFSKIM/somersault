@@ -40,6 +40,7 @@ import sys
 import tempfile
 import termios
 import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 from frame_masks import RedactionContract, load_redaction_contract, redact_text
@@ -141,19 +142,29 @@ class DimScreen(pyte.Screen):
 
     def draw(self, data: str) -> None:
         # pyte represents a wide glyph as a leading character plus an empty continuation cell. Clear that
-        # pair in the real buffer BEFORE a write lands on either half, so a narrow overwrite cannot leave a
-        # styled leading glyph behind and a wide overwrite starts from two ordinary cells.
-        if pyte_modes.IRM not in self.mode:
-            x, y = self.cursor.x, self.cursor.y
-            for char in data:
-                width = wcwidth(char)
-                if x == self.columns and width > 0:
-                    x = 0
-                    y = min(y + 1, self.lines - 1)
-                if width > 0:
+        # pair immediately before each overwrite, after pyte has applied any prior character's wrap/scroll.
+        # Processing a full PTY chunk in one speculative prepass is wrong at a bottom-row pending wrap: the
+        # first next character scrolls the old row away, so its wide cells are not overwrite destinations.
+        if pyte_modes.IRM in self.mode:
+            super().draw(data)
+            return
+        for char in data:
+            width = wcwidth(char)
+            if width > 0:
+                x, y = self.cursor.x, self.cursor.y
+                if x == self.columns:
+                    if pyte_modes.DECAWM in self.mode:
+                        # pyte's next draw first wraps. At the bottom margin it also scrolls, yielding a
+                        # blank destination, whereas above it the next row is an overwrite destination.
+                        bottom = self.margins.bottom if self.margins is not None else self.lines - 1
+                        if y < bottom:
+                            self._clear_wide_cell_at(y + 1, 0)
+                    else:
+                        # With autowrap disabled, pyte backs up by the incoming character width instead.
+                        self._clear_wide_cell_at(y, x - width)
+                else:
                     self._clear_wide_cell_at(y, x)
-                    x = min(x + width, self.columns)
-        super().draw(data)
+            super().draw(char)
 
     def dim_at(self, row: int, column: int) -> bool:
         return self.buffer[row][column].dim
@@ -260,18 +271,55 @@ def parse_args():
     return p.parse_args()
 
 
+FIXTURE_MARKER = ("test", "fixtures", "upstream-frames")
+
+
+def canonical_path(path: str) -> Path:
+    try:
+        return Path(path).resolve(strict=False)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise ValueError(f"cannot resolve output path {path!r}: {error}") from error
+
+
 def tracked_fixture_relative(path: str) -> str | None:
-    parts = os.path.abspath(path).split(os.sep)
-    marker = ("test", "fixtures", "upstream-frames")
-    for index in range(len(parts) - len(marker), -1, -1):
-        if tuple(parts[index:index + len(marker)]) == marker:
-            return "/".join(parts[index + len(marker):])
+    """Return a scenario path only when the canonical target is inside an upstream-fixtures root."""
+    target = canonical_path(path)
+    parts = target.parts
+    marker_norm = tuple(os.path.normcase(part) for part in FIXTURE_MARKER)
+    for index in range(len(parts) - len(FIXTURE_MARKER), -1, -1):
+        candidate = Path(*parts[:index + len(FIXTURE_MARKER)])
+        component_match = tuple(os.path.normcase(part) for part in parts[index:index + len(FIXTURE_MARKER)]) == marker_norm
+        expected = Path(*parts[:index]).joinpath(*FIXTURE_MARKER)
+        try:
+            case_alias = candidate.exists() and expected.exists() and candidate.samefile(expected)
+        except OSError:
+            case_alias = False
+        if not (component_match or case_alias):
+            continue
+        try:
+            relative = target.relative_to(candidate)
+        except ValueError:
+            continue
+        return "" if relative == Path(".") else relative.as_posix()
     return None
 
 
+def nearest_existing_canonical_ancestor(path: str) -> Path:
+    candidate = canonical_path(path).parent
+    while not candidate.exists():
+        parent = candidate.parent
+        if parent == candidate:
+            raise ValueError(f"no existing ancestor for output path {path!r}")
+        candidate = parent
+    if not candidate.is_dir():
+        raise ValueError(f"output ancestor is not a directory: {candidate}")
+    return candidate
+
+
 def frame_key(out_dir: str, name: str) -> str:
-    scenario = tracked_fixture_relative(out_dir) or os.path.basename(os.path.normpath(out_dir))
-    return f"{scenario}/{name}"
+    tracked_relative = tracked_fixture_relative(out_dir)
+    scenario = tracked_relative if tracked_relative is not None else os.path.basename(os.path.normpath(out_dir))
+    return f"{scenario}/{name}" if scenario else name
 
 
 def main() -> int:
@@ -285,7 +333,11 @@ def main() -> int:
         script_lines = [ln.rstrip("\n") for ln in f if ln.strip() and not ln.strip().startswith("#")]
 
     expected_frames = [line for line in script_lines if line.startswith("frame:")]
-    tracked_relative = tracked_fixture_relative(args.out)
+    try:
+        tracked_relative = tracked_fixture_relative(args.out)
+    except ValueError as error:
+        sys.stderr.write(f"capture-frames: {error}\n")
+        return 2
     if tracked_relative is not None and args.redact_masks is None:
         sys.stderr.write("capture-frames: tracked golden output requires --redact-masks\n")
         return 2
@@ -304,8 +356,14 @@ def main() -> int:
             sys.stderr.write(f"capture-frames: tracked golden output has no redaction contract for: {', '.join(missing)}\n")
             return 2
 
-    stage_dir = tempfile.mkdtemp(prefix=".capture-", dir=os.path.dirname(os.path.abspath(args.out))) if tracked_relative is not None else args.out
-    if tracked_relative is None:
+    if tracked_relative is not None:
+        try:
+            stage_dir = tempfile.mkdtemp(prefix=".capture-", dir=nearest_existing_canonical_ancestor(args.out))
+        except (OSError, ValueError) as error:
+            sys.stderr.write(f"capture-frames: cannot stage tracked golden output: {error}\n")
+            return 2
+    else:
+        stage_dir = args.out
         os.makedirs(stage_dir, exist_ok=True)
 
     screen = DimScreen(args.cols, args.rows)

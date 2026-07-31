@@ -377,3 +377,41 @@ Fresh 100x40 captures at `/tmp/frame-scratch` wrote all expected frames and left
 The expected divergence remains the known layout/chrome fidelity gap, not a capture or diff false success.
 The only outstanding manual concern is still the owner-run terminal `Ctrl-Z` → `fg` round trip; injected
 suspend tests cover raw-mode and signal ordering, but an automated pty cannot safely execute `fg`.
+
+## Seventh plugin review pass
+
+Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/2026-07-31-tui-clone-f0/final-rereview7-findings.md`.
+
+1. **Important — chunk-invariant bottom-row autowrap.** The red `4×2` reproduction fed `1234界ab`
+   and `Z` as separate stream chunks. The old speculative prepass cleared the bottom row’s `界` before pyte
+   scrolled it, producing `  ab` where the one-chunk stream correctly produced `界ab`. `DimScreen.draw()` now
+   repairs one printable character at a time immediately before pyte writes it: DECAWM pending-wrap above the
+   bottom margin targets next-row column zero; bottom-margin wrap performs no preclear because pyte scrolls to
+   a blank destination; DECAWM-off backs up by incoming width. The regressions compare every byte split against
+   the one-chunk rendered frame, preserve dim/plain attributes, retain non-bottom destination repair, and cover
+   no-autowrap right-edge overwrite. Insert-mode and prior ordinary lead/stub overwrite coverage remain green.
+2. **Important — canonical tracked-fixture containment and staging.** Red proofs showed that symlink-root,
+   symlink-ancestor, and case aliases bypassed the redaction gate and wrote raw identity; a tracked symlink
+   with a nonexistent `new/scenario` tail then failed before the child because staging used the lexical parent.
+   Detection now resolves with `Path.resolve(strict=False)`, uses root-safe `Path.parts` and `relative_to`,
+   recognizes exact native-normalized marker components (including a wholly nonexistent marker path), and uses
+   `samefile` only for existing case aliases. Resolution failures return exit 2 before a child starts. A
+   tracked root produces the bare frame key without a leading slash. Staging now uses the nearest existing
+   canonical ancestor, retains atomic promotion after complete redaction coverage, and leaves physical symlink
+   escapes and nearby lookalikes untracked. Tests prove direct, `..`, symlinked-root/ancestor, case-gated,
+   nonexistent-tail, escape, lookalike, no-spawn/no-write, and redacted missing-tail behavior.
+
+### Seventh-pass verification
+
+- Focused TDD: both frame-boundary reproducers failed before correction and pass afterward.
+- `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`: **PASS; 33 tests
+  passed**.
+- `npm run typecheck`: **PASS**.
+- Committed TUI suite excluding the protected concurrent probe: **PASS; 39 files, 659 tests passed; 9
+  credential-gated live tests skipped**.
+- `npm run test:unit`: **PASS; 135 files, 1,227 tests passed**.
+- Fresh 100x40 captures wrote 3 help and 5 composer frames without changing tracked fixtures. The expected
+  baselines remain help **`0 clean, 0 allowlisted, 3 DIVERGENT`** and composer **`0 clean, 0 allowlisted,
+  5 DIVERGENT`**, with exit code 1 from each diff.
+- No credentials or raw tracked identity were printed or committed. The protected concurrent untracked files
+  remain untouched. The existing manual `Ctrl-Z` → `fg` concern is unchanged.

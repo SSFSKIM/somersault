@@ -32,11 +32,11 @@ class FrameScriptsTest(unittest.TestCase):
     def child_command(self, code: str) -> str:
         return f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
 
-    def run_capture(self, script: str, binary: str, out: Path, redact_masks: Path | None = None):
-        script_path = out.parent / "case.keys"
+    def run_capture(self, script: str, binary: str, out: Path, redact_masks: Path | None = None, script_parent: Path | None = None, cwd: Path | None = None):
+        script_path = (script_parent or out.parent) / "case.keys"
         script_path.parent.mkdir(parents=True, exist_ok=True)
         script_path.write_text(textwrap.dedent(script), encoding="utf-8")
-        args = [sys.executable, str(CAPTURE_PATH), "--script", str(script_path), "--out", str(out), "--bin", binary, "--cwd", str(out.parent)]
+        args = [sys.executable, str(CAPTURE_PATH), "--script", str(script_path), "--out", str(out), "--bin", binary, "--cwd", str(cwd or out.parent)]
         if redact_masks is not None:
             args += ["--redact-masks", str(redact_masks)]
         return subprocess.run(args, text=True, capture_output=True)
@@ -154,6 +154,115 @@ class FrameScriptsTest(unittest.TestCase):
             frame = (out / "01-boot.ansi").read_text(encoding="utf-8")
             self.assertIn("▒", frame)
             self.assertNotIn("Test Identity", frame)
+
+    def test_tracked_fixture_relative_uses_canonical_containment(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fixture_root = root / "test" / "fixtures" / "upstream-frames"
+            fixture_root.mkdir(parents=True)
+            linked_root = root / "linked-root"
+            linked_root.symlink_to(fixture_root, target_is_directory=True)
+            self.assertEqual(capture.tracked_fixture_relative(str(fixture_root)), "")
+            self.assertEqual(capture.frame_key(str(fixture_root), "01-boot.ansi"), "01-boot.ansi")
+            self.assertEqual(capture.tracked_fixture_relative(str(linked_root / "new" / "nested")), "new/nested")
+            self.assertFalse(capture.tracked_fixture_relative(str(linked_root / "new" / "nested")).startswith("/"))
+            nonexistent = root / "unmade" / "test" / "fixtures" / "upstream-frames" / "new" / "scenario"
+            self.assertEqual(capture.tracked_fixture_relative(str(nonexistent)), "new/scenario")
+
+            outside = root / "outside"
+            outside.mkdir()
+            escape = fixture_root / "escape"
+            escape.symlink_to(outside, target_is_directory=True)
+            self.assertIsNone(capture.tracked_fixture_relative(str(escape / "scenario")))
+            self.assertIsNone(capture.tracked_fixture_relative(str(root / "test" / "fixtures" / "upstream-frames-extra" / ".." / "evil")))
+
+            case_alias = fixture_root.parent / "UPSTREAM-FRAMES"
+            if case_alias.exists() and os.path.samefile(case_alias, fixture_root):
+                self.assertEqual(capture.tracked_fixture_relative(str(case_alias / "scenario")), "scenario")
+
+    def test_capture_treats_canonical_tracked_fixture_aliases_as_redaction_required_before_spawning(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fixture_root = root / "test" / "fixtures" / "upstream-frames"
+            fixture_root.mkdir(parents=True)
+            aliases = {
+                "direct": fixture_root / "direct",
+                "dotdot": fixture_root / "nested" / ".." / "dotdot",
+            }
+            linked_root = root / "linked-root"
+            linked_root.symlink_to(fixture_root, target_is_directory=True)
+            aliases["linked-root"] = linked_root / "scenario"
+            linked_ancestor = root / "linked-ancestor"
+            linked_ancestor.symlink_to(fixture_root.parent, target_is_directory=True)
+            aliases["linked-ancestor"] = linked_ancestor / "upstream-frames" / "scenario"
+            case_alias = fixture_root.parent / "UPSTREAM-FRAMES"
+            if case_alias.exists() and os.path.samefile(case_alias, fixture_root):
+                aliases["case-alias"] = case_alias / "scenario"
+
+            for label, out in aliases.items():
+                with self.subTest(label=label):
+                    marker = f"spawned-{label}"
+                    child = self.child_command(
+                        f"from pathlib import Path; import sys,time; Path({marker!r}).write_text('yes'); "
+                        "sys.stdout.write('RAW-IDENTITY'); sys.stdout.flush(); time.sleep(0.3)"
+                    )
+                    refused = self.run_capture("frame:boot\n", child, out)
+                    self.assertNotEqual(refused.returncode, 0, refused.stderr)
+                    self.assertIn("--redact-masks", refused.stderr)
+                    self.assertFalse((out.parent / marker).exists())
+                    self.assertFalse(list(out.glob("*.ansi")))
+
+            nearby = root / "test" / "fixtures" / "upstream-frames-lookalike" / "scenario"
+            captured = self.run_capture(
+                "wait:0.05\nframe:boot\n",
+                self.child_command("import sys,time; sys.stdout.write('RAW-IDENTITY'); sys.stdout.flush(); time.sleep(0.3)"),
+                nearby,
+            )
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            self.assertIn("RAW-IDENTITY", (nearby / "01-boot.ansi").read_text(encoding="utf-8"))
+
+    def test_capture_stages_a_redacted_symlinked_fixture_tail_and_allows_an_escape(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fixture_root = root / "test" / "fixtures" / "upstream-frames"
+            fixture_root.mkdir(parents=True)
+            linked_root = root / "linked-root"
+            linked_root.symlink_to(fixture_root, target_is_directory=True)
+            tracked = linked_root / "new" / "scenario"
+            self.assertFalse(tracked.parent.exists())
+            masks = root / "masks.json"
+            masks.write_text(json.dumps({"redactions_by_frame": {
+                "new/scenario/01-boot.ansi": {
+                    "patterns": [{"name": "identity", "pattern": "FAKE-IDENTITY", "minimum_matches": 1}],
+                    "minimum_matches": 1,
+                },
+            }}), encoding="utf-8")
+            captured = self.run_capture(
+                "wait:0.05\nframe:boot\n",
+                self.child_command("import sys,time; sys.stdout.write('FAKE-IDENTITY'); sys.stdout.flush(); time.sleep(0.3)"),
+                tracked,
+                masks,
+                script_parent=root,
+                cwd=root,
+            )
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            frame = (tracked / "01-boot.ansi").read_text(encoding="utf-8")
+            self.assertNotIn("FAKE-IDENTITY", frame)
+            self.assertIn("▒", frame)
+
+            outside = root / "outside"
+            outside.mkdir()
+            escape = fixture_root / "escape"
+            escape.symlink_to(outside, target_is_directory=True)
+            escaped = self.run_capture(
+                "wait:0.05\nframe:boot\n",
+                self.child_command("import sys,time; sys.stdout.write('RAW-OUTSIDE'); sys.stdout.flush(); time.sleep(0.3)"),
+                escape / "scenario",
+                script_parent=root,
+                cwd=root,
+            )
+            self.assertEqual(escaped.returncode, 0, escaped.stderr)
+            self.assertIn("RAW-OUTSIDE", (escape / "scenario" / "01-boot.ansi").read_text(encoding="utf-8"))
 
     def test_capture_refuses_tracked_scenarios_without_complete_redaction_rules_before_spawning(self):
         with tempfile.TemporaryDirectory() as td:
@@ -346,6 +455,41 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertEqual(screen.buffer[0][glyph_column].data, "界")
             self.assertEqual(screen.dim_at(0, glyph_column), glyph_dim)
             self.assertIn(expected, re.sub(r"\x1b\[[0-9;]*m", "", capture.render_screen(screen)))
+
+    def test_dim_bottom_autowrap_wide_repair_is_invariant_to_stream_chunks(self):
+        for prefix, dim in ((b"1234", False), (b"1234\x1b[2m", True)):
+            payload = prefix + "界".encode() + (b"\x1b[0m" if dim else b"") + b"abZ"
+            whole = capture.DimScreen(4, 2)
+            capture.pyte.ByteStream(whole).feed(payload)
+            self.assertEqual(whole.buffer[0][0].data, "界")
+            self.assertEqual(whole.buffer[0][2].data, "a")
+            self.assertEqual(whole.buffer[0][3].data, "b")
+            self.assertEqual(whole.dim_at(0, 0), dim)
+
+            for split_at in range(1, len(payload)):
+                split = capture.DimScreen(4, 2)
+                stream = capture.pyte.ByteStream(split)
+                stream.feed(payload[:split_at])
+                stream.feed(payload[split_at:])
+                self.assertEqual(capture.render_screen(split), capture.render_screen(whole), split_at)
+
+    def test_dim_nonbottom_autowrap_still_repairs_an_existing_wide_destination(self):
+        screen = capture.DimScreen(4, 3)
+        stream = capture.pyte.ByteStream(screen)
+        stream.feed("\x1b[2;1H\x1b[2m界\x1b[1;1H\x1b[0m1234".encode())
+        stream.feed(b"Z")
+        self.assertEqual(screen.buffer[1][0].data, "Z")
+        self.assertEqual(screen.buffer[1][1].data, " ")
+        self.assertFalse(screen.dim_at(1, 0))
+        self.assertFalse(screen.dim_at(1, 1))
+
+    def test_dim_no_autowrap_repairs_the_actual_right_edge_overwrite_destination(self):
+        screen = capture.DimScreen(4, 2)
+        capture.pyte.ByteStream(screen).feed("ab\x1b[2m界\x1b[0m\x1b[?7lZ".encode())
+        self.assertEqual(screen.buffer[0][2].data, " ")
+        self.assertEqual(screen.buffer[0][3].data, "Z")
+        self.assertFalse(screen.dim_at(0, 2))
+        self.assertFalse(screen.dim_at(0, 3))
 
     def test_dim_wide_continuation_overwrite_clears_the_entire_glyph_and_style_at_row_edges(self):
         for payload, leading, trailing in (
