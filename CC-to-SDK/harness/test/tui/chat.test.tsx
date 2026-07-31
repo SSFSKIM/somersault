@@ -450,7 +450,8 @@ describe("<ChatApp>", () => {
     await new Promise((r) => setTimeout(r, 30)); await new Promise((r) => setTimeout(r, 30));
     expect(frame(lastFrame)).toContain("Keyboard shortcuts");         // still open
     stdin.write("\x1b");
-    await waitFor(() => !frame(lastFrame).includes("Keyboard shortcuts"));
+    await waitFor(() => frame(lastFrame).includes("›"));              // back at the composer, not a leaked pager
+    expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");
   });
 
   it("? mid-buffer inserts a literal '?' instead of opening the overlay", async () => {
