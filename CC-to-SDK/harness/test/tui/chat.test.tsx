@@ -1,7 +1,7 @@
 // tui/test/chat.test.tsx — reworked onto the adapter surface: `broker` prop is gone; ChatApp takes
 // `client: { kind, short? }` + `onDetach?`. fakeRemote() (test/tui/helpers/fakeRemote.ts) mirrors the real
 // RemoteChat wire contract (spec A2b Task 6).
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import React from "react";
 import { tmpdir } from "node:os";
 import { render } from "ink-testing-library";
@@ -246,6 +246,42 @@ describe("<ChatApp>", () => {
     stdin.write("\x1a");                                     // Ctrl-Z — same gating tier as Ctrl-C/Ctrl-B, above every dialog gate
     await waitFor(() => suspended === 1);
     expect(fake.answeredCalls).toEqual([]);                  // unanswered — stays parked, never denied
+  });
+
+  // Finding-1 red-proof (F0 t6 review fix): the two tests above only prove ChatApp CALLS an injected
+  // `suspend` — they say nothing about what the REAL suspendProcess does to the terminal. This test renders
+  // ChatApp with NO `suspend` prop (so Ctrl-Z runs the real suspendProcess), and neuters only the two
+  // process-level effects that would otherwise actually stop the test runner (`process.kill`/`process.once`)
+  // via global spies — everything else, including raw-mode toggling, runs for real. Under the OLD
+  // implementation (ChatApp calling Ink's ref-counted `useStdin().setRawMode`, verified: with ChatApp AND
+  // ChatComposer both holding a raw-mode count of >=2, a single decrement never reaches 0) the real
+  // `stdin.setRawMode` spy below is NEVER invoked by Ctrl-Z, so `toHaveBeenLastCalledWith(false)` fails
+  // cleanly — captured live by temporarily reverting suspend.ts/ChatApp.tsx and rerunning this exact test
+  // (see the task-6 fix report for the captured failure output). Under the fix it passes for real.
+  it("Ctrl-Z genuinely drops raw mode on the real tty (not just Ink's ref count) and a real SIGCONT restores + repaints", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true as never);
+    let onResume: (() => void) | undefined;
+    const onceSpy = vi.spyOn(process, "once").mockImplementation(((event: string, handler: () => void) => {
+      if (event === "SIGCONT") onResume = handler;
+      return process;
+    }) as typeof process.once);
+    try {
+      const fake = fakeRemote();
+      const { stdin, stdout, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+      await waitFor(() => frame(lastFrame).includes("›"));
+      const rawModeSpy = vi.spyOn(stdin, "setRawMode");
+      stdin.write("\x1a");                                     // Ctrl-Z, through the REAL suspendProcess
+      await waitFor(() => killSpy.mock.calls.length > 0);       // suspend fired (kill is faked — nothing actually stops us)
+      expect(rawModeSpy).toHaveBeenLastCalledWith(false);       // the REAL tty left raw mode, not just Ink's internal count
+      expect(killSpy).toHaveBeenCalledWith(0, "SIGTSTP");
+      expect(onResume).toBeTypeOf("function");
+      const framesBefore = stdout.frames.length;
+      onResume?.();                                             // simulate the shell delivering SIGCONT on `fg`
+      expect(rawModeSpy).toHaveBeenLastCalledWith(true);        // raw mode genuinely restored
+      await waitFor(() => stdout.frames.length > framesBefore); // a real repaint was forced, not a dead setState
+    } finally {
+      killSpy.mockRestore(); onceSpy.mockRestore();
+    }
   });
 
   // "detach ≠ deny — a pending permission survives detaching" is proven in useChat.test.tsx ("/detach

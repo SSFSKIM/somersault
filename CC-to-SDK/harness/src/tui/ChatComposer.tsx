@@ -60,7 +60,7 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 2000, onEmptyChange }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number; onEmptyChange?: (empty: boolean) => void }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800, onEmptyChange }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number; onEmptyChange?: (empty: boolean) => void }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -80,6 +80,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   useEffect(() => () => { if (clearTimer.current) clearTimeout(clearTimer.current); }, []);
   // KB3: Ctrl-D on an empty composer needs two presses (mirrors the Esc-Esc clear arm above) — a first
   // press within exitArmMs just hints, a second exits; letting the arm expire re-arms rather than exiting.
+  // exitArmMs default is 800, not a round 2000: upstream's double-press helper (Pee, cli.pretty.js:183445)
+  // defaults its window to `fpy = 800` when the caller passes no override, and the Ctrl-D exit chord's
+  // caller (cli.pretty.js:183476) is exactly that two-arg no-override call — so 800ms is the SAME constant
+  // this file already uses for the Esc-Esc clear arm above (escClearMs), not a coincidence.
   const [dArmed, setDArmed] = useState(false);
   const dArm = useRef(0);
   const dTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -116,6 +120,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // flushes after commit, so a closure read lags one render and would submit stale text. The ref updates every render.
   useInput((input, key) => {
     const s = stateRef.current;
+    // KB3: EOF needs two presses. Unlike the Esc-Esc clearArm below, NO other keystroke disarms this one —
+    // that asymmetry is deliberate, not an oversight: upstream's Pee (cli.pretty.js:183445) clears its
+    // armed state ONLY on timeout or on the second press; reading an intervening key never resets it. Since
+    // upstream wins on fidelity questions, this stays un-disarmed on other input even though it reads as
+    // inconsistent with the Esc arm right below.
     if (key.ctrl && input === "d" && s.lines.length === 1 && s.lines[0] === "") {   // KB3: EOF needs two presses
       if (dArm.current && Date.now() - dArm.current < exitArmMs) { onExit?.(); return; }
       dArm.current = Date.now(); setDArmed(true);

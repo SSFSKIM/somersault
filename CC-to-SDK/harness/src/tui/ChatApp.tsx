@@ -15,7 +15,7 @@
 // useInput, so e.g. Ctrl-O no longer both closes the overlay AND opens the pager in one keystroke.
 // Renders increment 8's multiline <ChatComposer>.
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useApp, useInput, useStdin } from "ink";
+import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import { suspendProcess } from "./suspend.js";
 import type { InitialResume } from "./commands.js";
@@ -55,8 +55,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   suspend?: typeof suspendProcess;
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
-  const { setRawMode } = useStdin();
-  const [, setRepaint] = useState(0);
+  // suspend.ts needs the REAL tty object, not Ink's ref-counted `setRawMode` function — see that module's
+  // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
+  const { stdin } = useStdin();
+  const { write } = useStdout();
   const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined }, deps);
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
@@ -92,7 +94,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // Ctrl-L lives in the editor now (Task 2), not here.
   useInput((input, key) => {
     if (key.ctrl && input === "z") {                          // KB5: suspend like every terminal app; detach is /detach now
-      (suspend ?? suspendProcess)(setRawMode, () => setRepaint((n) => n + 1));
+      (suspend ?? suspendProcess)({ stdin, repaint: () => write("") });
       return;
     }
     if (state.shortcutsOpen) return;   // KB6: Help owns every key; its own useInput closes on Esc only
