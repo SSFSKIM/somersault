@@ -1,0 +1,22 @@
+# 2.1.220 shows a first-run "trust this folder?" prompt for any new workspace, with the
+# safe default already selected; accept it (Enter) before typing, observed 2026-07-31.
+wait:4
+enter
+wait:8
+type:hello world
+wait:1
+frame:typed
+key:esc
+wait:0.4
+frame:esc-armed
+key:esc
+wait:0.6
+frame:cleared
+type:kill me please
+wait:1
+key:ctrl-u
+wait:0.4
+frame:killed
+key:ctrl-y
+wait:0.4
+frame:yanked

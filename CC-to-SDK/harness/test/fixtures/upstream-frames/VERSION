@@ -1,0 +1,27 @@
+2.1.220 (Claude Code) — captured 2026-07-31, 100x40, TERM=xterm-256color
+
+Identity redacted at rest. Three things a real session prints identify the person who captured it:
+the display name in the boot frame's greeting ("Welcome back <name>!"), an organization derived from
+their email address, and the `user@host` segment of the status line. None carries any fidelity signal
+— what we measure is that each line exists at that position with that shape — so all three are
+replaced in the stored goldens with the same fixed token the masks produce (▒), and the matching
+patterns lead `scripts/frames/masks.json`. Masking the frames exactly as captured yields byte-
+identical output to what is stored here (verified across all eight), so the redaction costs no
+comparison power and no identity enters git history.
+
+The `user@host` mask earns its place twice over: without it, a capture taken on any other machine or
+in CI would diverge permanently at that position no matter how faithful the clone became. It requires
+the segment to be followed by a colon AND a slash, so that an SSH git remote (`git@github.com:owner/
+repo.git`) — routine content for a coding agent to print — is not swallowed along with it.
+
+What is deliberately NOT redacted at rest: the quota line's percentage, its reset timestamp and
+timezone, and the model-tier label. The first three are neutralised at diff time by the ordinary
+nondeterminism masks, and the model label is a real fidelity signal we want to keep seeing (our
+footer does not print one, and that gap should show up as a divergence rather than be masked away).
+Baking every diff-time mask into the stored frames would also destroy what makes a golden useful —
+that a human can read it and see what upstream actually renders.
+
+Note for whoever edits those two patterns: an SGR escape sits flush against the text it colours, and
+its trailing "m" and digits are inside [A-Za-z0-9]. A naive address pattern therefore starts matching
+inside the escape and leaves a truncated sequence behind, so the email pattern consumes the optional
+SGR run ahead of the address deliberately.
