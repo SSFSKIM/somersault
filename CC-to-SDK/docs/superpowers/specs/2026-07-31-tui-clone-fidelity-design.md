@@ -818,6 +818,23 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
   produced wrong strings repeatedly. Every score in it was taken against that reference. This is the
   twenty-first correction and arguably the one that explains the other twenty. (2026-07-31)
 
+- **Ink's `setRawMode` is a reference count, so the obvious suspend implementation is a silent no-op —
+  and upstream's own code is the proof.** `useStdin()`'s `setRawMode` is shared by every mounted
+  `useInput` consumer and only reaches the tty when the count falls to zero
+  (`ink/build/components/App.js:104-131`); our app always holds it at two or more, so F0's
+  plan-authored `setRawMode(false)` never left raw mode. Upstream hit the same wall and solved it from
+  *inside* their patched Ink — `handleSuspend` (`cli.pretty.js:177985`) drains the count in a `while`
+  loop and restores it with a counted loop. The same read settled two more values we had guessed: it
+  signals `kill(0, …)`, the whole process group rather than its own pid, and its double-press-to-exit
+  helper `Pee` (`:183445`) defaults to `fpy = 800` ms — the *same* constant as the Esc chord — where our
+  plan had specified 2000 ms for Ctrl-D. `Pee` also never disarms on an intervening keystroke, so the
+  asymmetry with our Esc arm is upstream-faithful, not an inconsistency to fix. **The general lesson:
+  when a plan-authored premise about a dependency turns out to be wrong, the reference implementation
+  has usually already hit the same wall — read its solution before designing your own.** A second,
+  narrower trap rode along: a repaint forced by bumping unread state writes nothing, because Ink skips
+  the terminal write when rendered output is unchanged (`ink/build/ink.js:132`) — invisible in tests
+  because `ink-testing-library` renders with `debug: true`, which bypasses that gate. (2026-07-31)
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
@@ -825,6 +842,10 @@ Pending — written at finish.
 ## Revision Notes
 
 - 2026-07-31 — created from the six-report research inventory
+- 2026-07-31 — Task 6 review corrected three plan-authored values against upstream: the suspend
+  implementation (Ink's ref-counted `setRawMode` and the dead repaint counter), the Ctrl-D double-press
+  window (2000 ms → upstream's 800 ms), and the suspend signal target (own pid → process group). Recorded
+  under Surprises & Discoveries; the plan's Global Constraints and Task 6 code were corrected to match.
   (`../research/2026-07-31-tui-clone/00-INVENTORY.md`, 271 gaps) under the owner's fidelity-first brief,
   with four architecture decisions settled in advance (statusLine and the default footer; diff line
   numbers from disk; the keybinding architecture as its own wave; `marked` as a dependency) and two
