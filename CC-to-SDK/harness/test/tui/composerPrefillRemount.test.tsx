@@ -84,6 +84,21 @@ describe("composer prefill: consumed at most once across a popup remount (Import
 // and drives `prefill` via rerender — the narrowest harness that can pin the merge contract in ChatComposer's
 // own effect, independent of useChat's interrupt() wiring (covered end-to-end by chat.test.tsx instead).
 describe("composer prefill: prepend mode merges with an existing draft (Task 3, CM49)", () => {
+  it("a prepend-mode prefill retains a whitespace-only draft and submits exact bytes", async () => {
+    const submitted: string[] = [];
+    const { stdin, lastFrame, rerender } = render(
+      <ChatComposer onSubmit={(value) => submitted.push(value)} cwd={process.cwd()} commandCatalog={[]} prefill={null} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("   ");
+    await waitFor(() => frame(lastFrame).includes("›"));
+    rerender(<ChatComposer onSubmit={(value) => submitted.push(value)} cwd={process.cwd()} commandCatalog={[]} prefill={{ text: "queued", token: 1, mode: "prepend" }} />);
+    await waitFor(() => frame(lastFrame).includes("queued"));
+    stdin.write("\r");
+    await waitFor(() => submitted.length === 1);
+    expect(submitted[0]).toBe("queued\n   ");
+  });
+
   it("a prepend-mode prefill lands ABOVE an existing draft instead of replacing it; a replace/modeless prefill still replaces wholesale", async () => {
     const { stdin, lastFrame, rerender } = render(
       <ChatComposer onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} prefill={null} />,

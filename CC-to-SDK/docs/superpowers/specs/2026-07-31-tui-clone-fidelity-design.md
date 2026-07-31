@@ -892,3 +892,9 @@ Pending — written at finish.
   while preserving durable state; status hints are focus-owner/kind aware; Windows no longer advertises or
   attempts POSIX suspend; pyte dim/faint and retained SGR attributes are preserved; capture/diff and mask
   tests fail closed rather than certifying incomplete or semantically different frames.
+- 2026-08-01 — second re-review boundary hardening: the visible help overlay now has a root-owned Escape
+  route across Ink's passive-effect race; whitespace-only clear/prepend behavior is byte-preserving but
+  history-neutral; Ctrl-W follows upstream's preceding-word-plus-line-break kill at line boundaries; and
+  SGR 2 is an extended cell attribute that follows pyte's own scroll/erase/insert/delete pipeline rather
+  than a parallel grid. Dashboard nondeterminism masks are scoped by scenario/frame, so transcript values
+  such as arbitrary email, percentage, cost, duration, and token counts remain comparable.

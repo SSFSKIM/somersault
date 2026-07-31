@@ -259,7 +259,8 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 - **U6 — Queued input while busy** (`useChat` queue + `ChatApp` indicator). Submitting a prompt while a
   turn runs enqueues it (shown as `⋯ queued: …`) and it dispatches FIFO when the turn ends — each drained
   turn's `finally` re-drains, self-chaining. Only turns queue; local commands + `!`/`#` run immediately
-  (control-channel / local, safe mid-turn). `Esc` (interrupt) clears the queue — a clean "stop everything".
+  (control-channel / local, safe mid-turn). `Esc` (interrupt) rescues queued text into the composer before
+  clearing the queue — a clean stop that does not destroy typed work.
   4 tests.
 - **U7 — Editor ergonomics** (`editor.ts` readline keys + `ChatComposer` chrome + `useChat.clear`). Adds
   the terminal-native muscle-memory keys: **Ctrl-A/E** (line start/end), **Ctrl-K/U** (kill to end/start),
@@ -375,7 +376,9 @@ own method note above points to, and are recorded here so a reader of the scorec
   output — both were proven inert by sabotage before the fix and caught by it after.
 - **The frame instrument** (`harness/scripts/capture-frames.py` + `harness/scripts/frame-diff.py`,
   commit `31c7528c80`) captures a pyte-emulated screen state of a running TUI at named checkpoints and
-  diffs two capture directories with nondeterminism masked out. First goldens against the real,
+  diffs two capture directories with nondeterminism masked out. SGR 2 dim is stored as a first-class
+  cell attribute through pyte scroll/erase/insert/delete mutations, and dashboard masks are scoped by
+  scenario/frame rather than applied to arbitrary transcript text. First goldens against the real,
   installed `claude` 2.1.220 binary are committed under `harness/test/fixtures/upstream-frames/`
   (`help-overlay/`, `composer-basics/`). Running it against our own `ccx` today reports both sets
   DIVERGENT (expected — the boot-frame gap is real and large; the composer-editing semantics matched
@@ -463,7 +466,7 @@ own method note above points to, and are recorded here so a reader of the scorec
 
 | Feature | Status | Priority | Notes / CC reference |
 |---|---|---|---|
-| Permission approval dialog | 🟡 | — | **U9** numbered arrow-selectable Yes / Yes-don't-ask-again / No (↑↓·Enter·1/2/3·Esc; legacy a/A/d kept). **F0 correction:** upstream has **13 dialog kinds** behind a per-tool matcher; ours is one shape for all tools. Missing: per-tool titles, question lines, real inline diffs in the body, destructive-command warnings, symlink warnings, session/prefix/domain persist rows; our `allow_always` is an in-memory `Set<toolName>` that never persists and never emits `updatedPermissions`. **fixed 2026-07-31 (F0, t7, KB1):** `y`/`n` are now bound (`y`=accept once, `n`=reject) alongside the existing ↑↓·Enter·1/2/3·Esc and legacy a/A/d — upstream's two most reflexive confirmation keys were dead before this; the status-bar pending hint now reads `[y/n·↑↓·1/2/3·esc]` |
+| Permission approval dialog | 🟡 | — | **U9** numbered arrow-selectable Yes / Yes-don't-ask-again / No (↑↓·Enter·1/2/3·Esc; legacy a/A/d kept). **F0 correction:** upstream has **13 dialog kinds** behind a per-tool matcher; ours is one shape for all tools. Missing: per-tool titles, question lines, real inline diffs in the body, destructive-command warnings, symlink warnings, session/prefix/domain persist rows; our `allow_always` is an in-memory `Set<toolName>` that never persists and never emits `updatedPermissions`. **fixed 2026-07-31 (F0, t7, KB1):** `y`/`n` are now bound (`y`=accept once, `n`=reject) alongside the existing ↑↓·Enter·1/2/3·Esc and legacy a/A/d — upstream's two most reflexive confirmation keys were dead before this. The global composer status hint is hidden while the decision owns input, so Question/Plan surfaces do not advertise permission-only chords. |
 | Bash permission shows full command | 🟡 | — | **U9** `$ <command>` shown in full; file tools show the path. **F0 correction:** we clip to 140 chars; upstream shows the rendered command **plus** the description **plus** a destructive-pattern warning |
 | Model picker | 🟡 | — | `ModelPicker.tsx`. **F0 correction:** no effort axis, no `s` session-only toggle, no pricing/entitlement metadata, no overflow counter or row window, different header and subtitle |
 | Resume session picker | 🟡 | — | `SessionPicker.tsx`. **F0 correction:** upstream has a search bar, expandable groups, `Space` preview, `Ctrl+R` rename, `Ctrl+A/B/W` scope toggles and an `(N of M)` header; ours is a flat list |

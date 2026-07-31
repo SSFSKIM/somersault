@@ -41,6 +41,7 @@ import time
 try:
     import pyte
     from pyte import graphics as pyte_graphics
+    from pyte import modes as pyte_modes
     from wcwidth import wcwidth
 except ImportError:
     sys.exit(
@@ -69,132 +70,80 @@ def clean_child_env() -> None:
         if name.startswith("CLAUDE") or name == "AI_AGENT":
             del os.environ[name]
 
-class DimScreen(pyte.Screen):
-    """pyte Screen plus the SGR 2 state that pyte intentionally omits from Char."""
+class DimChar(tuple):
+    """A pyte-compatible character tuple with SGR 2 stored as a real cell attribute."""
 
-    def __init__(self, columns: int, lines: int):
-        super().__init__(columns, lines)
-        self.dim_buffer = [[False for _ in range(columns)] for _ in range(lines)]
-        self._dim = False
+    __slots__ = ()
+    _fields = pyte.screens.Char._fields + ("dim",)
+
+    def __new__(cls, data=" ", fg="default", bg="default", bold=False, italics=False,
+                underscore=False, strikethrough=False, reverse=False, blink=False, dim=False):
+        return tuple.__new__(cls, (data, fg, bg, bold, italics, underscore, strikethrough, reverse, blink, dim))
+
+    def __getattr__(self, name):
+        try:
+            return self[self._fields.index(name)]
+        except ValueError as error:
+            raise AttributeError(name) from error
+
+    def _replace(self, **changes):
+        values = dict(zip(self._fields, self))
+        unknown = set(changes) - set(self._fields)
+        if unknown:
+            raise TypeError(f"Got unexpected field names: {sorted(unknown)!r}")
+        values.update(changes)
+        return type(self)(**values)
+
+    def _asdict(self):
+        return dict(zip(self._fields, self))
+
+
+class DimScreen(pyte.Screen):
+    """pyte Screen whose cell records carry SGR 2 through every pyte mutation."""
+
+    @property
+    def default_char(self):
+        return DimChar(reverse=pyte_modes.DECSCNM in self.mode)
+
+    def reset(self) -> None:
+        super().reset()
+        self.cursor.attrs = self.default_char
 
     def select_graphic_rendition(self, *attrs: int) -> None:
-        if not attrs or attrs == (0,):
-            self._dim = False
-        else:
-            for attr in attrs:
-                if attr == 0:
-                    self._dim = False
-                elif attr == 2:
-                    self._dim = True
-                elif attr == 22:
-                    self._dim = False
         super().select_graphic_rendition(*attrs)
+        dim = getattr(self.cursor.attrs, "dim", False)
+        for attr in attrs:
+            if attr == 0:
+                dim = False
+            elif attr == 2:
+                dim = True
+            elif attr == 22:
+                dim = False
+        self.cursor.attrs = self.cursor.attrs._replace(dim=dim)
 
     def draw(self, data: str) -> None:
+        # pyte correctly writes the replacement character but leaves the trailing stub of an overwritten
+        # wide cell in place. Clear only those stale stubs after pyte has completed its normal mutation;
+        # insert mode or a wide replacement naturally changes the cell away from the empty stub first.
+        stale_stubs = []
         x, y = self.cursor.x, self.cursor.y
         for char in data:
             width = wcwidth(char)
             if x == self.columns and width > 0:
                 x = 0
                 y = min(y + 1, self.lines - 1)
-            if width == 1 and 0 <= y < self.lines and 0 <= x < self.columns:
-                self.dim_buffer[y][x] = self._dim
-            elif width == 2 and 0 <= y < self.lines and 0 <= x < self.columns:
-                self.dim_buffer[y][x] = self._dim
-                if x + 1 < self.columns:
-                    self.dim_buffer[y][x + 1] = self._dim
+            if width == 1 and 0 <= y < self.lines and 0 <= x + 1 < self.columns:
+                if self.buffer[y][x].data and self.buffer[y][x + 1].data == "":
+                    stale_stubs.append((y, x + 1))
             if width > 0:
                 x = min(x + width, self.columns)
         super().draw(data)
+        for row, column in stale_stubs:
+            if self.buffer[row][column].data == "":
+                self.buffer[row][column] = self.default_char
 
     def dim_at(self, row: int, column: int) -> bool:
-        return self.dim_buffer[row][column]
-
-    def _blank(self) -> list[bool]:
-        return [False for _ in range(self.columns)]
-
-    def index(self) -> None:
-        top, bottom = self.margins or (0, self.lines - 1)
-        if self.cursor.y == bottom:
-            for row in range(top, bottom):
-                self.dim_buffer[row] = self.dim_buffer[row + 1]
-            self.dim_buffer[bottom] = self._blank()
-        super().index()
-
-    def reverse_index(self) -> None:
-        top, bottom = self.margins or (0, self.lines - 1)
-        if self.cursor.y == top:
-            for row in range(bottom, top, -1):
-                self.dim_buffer[row] = self.dim_buffer[row - 1]
-            self.dim_buffer[top] = self._blank()
-        super().reverse_index()
-
-    def erase_in_display(self, how: int = 0, *args, **kwargs) -> None:
-        super().erase_in_display(how, *args, **kwargs)
-        if how == 0:
-            for row in range(self.cursor.y + 1, self.lines):
-                self.dim_buffer[row] = self._blank()
-            for column in range(self.cursor.x, self.columns):
-                self.dim_buffer[self.cursor.y][column] = False
-        elif how == 1:
-            for row in range(self.cursor.y):
-                self.dim_buffer[row] = self._blank()
-            for column in range(self.cursor.x + 1):
-                self.dim_buffer[self.cursor.y][column] = False
-        elif how in (2, 3):
-            self.dim_buffer = [self._blank() for _ in range(self.lines)]
-
-    def erase_in_line(self, how: int = 0, private: bool = False) -> None:
-        super().erase_in_line(how, private)
-        if how == 0:
-            interval = range(self.cursor.x, self.columns)
-        elif how == 1:
-            interval = range(self.cursor.x + 1)
-        else:
-            interval = range(self.columns)
-        for column in interval:
-            self.dim_buffer[self.cursor.y][column] = False
-
-    def delete_characters(self, count: int | None = None) -> None:
-        count = count or 1
-        row, start = self.cursor.y, self.cursor.x
-        super().delete_characters(count)
-        dim = self.dim_buffer[row]
-        for column in range(start, self.columns):
-            dim[column] = dim[column + count] if column + count < self.columns else False
-
-    def insert_characters(self, count: int | None = None) -> None:
-        count = count or 1
-        row, start = self.cursor.y, self.cursor.x
-        super().insert_characters(count)
-        dim = self.dim_buffer[row]
-        for column in range(self.columns - 1, start - 1, -1):
-            dim[column] = dim[column - count] if column - count >= start else False
-
-    def delete_lines(self, count: int | None = None) -> None:
-        count = count or 1
-        top, bottom = self.margins or (0, self.lines - 1)
-        row = self.cursor.y
-        super().delete_lines(count)
-        if top <= row <= bottom:
-            dim = self.dim_buffer
-            for y in range(row, bottom + 1):
-                dim[y] = dim[y + count] if y + count <= bottom else self._blank()
-
-    def insert_lines(self, count: int | None = None) -> None:
-        count = count or 1
-        top, bottom = self.margins or (0, self.lines - 1)
-        row = self.cursor.y
-        super().insert_lines(count)
-        if top <= row <= bottom:
-            dim = self.dim_buffer
-            for y in range(bottom, row - 1, -1):
-                dim[y] = dim[y - count] if y - count >= row else self._blank()
-
-    def reset(self) -> None:
-        super().reset()
-        self.dim_buffer = [self._blank() for _ in range(self.lines)]
-        self._dim = False
+        return self.buffer[row][column].dim
 
 
 # Reverse pyte's code->name color tables into name->code, once. Built from pyte's own tables (not

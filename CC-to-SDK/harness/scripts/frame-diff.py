@@ -5,9 +5,11 @@ Run with the same interpreter used to capture (no third-party imports here, but 
     scripts/frames/.venv/bin/python3 scripts/frame-diff.py GOLDEN_DIR OUR_DIR \
         --masks scripts/frames/masks.json [--allowlist test/fixtures/upstream-frames/allowlist.md]
 
-masks.json: {"patterns": ["regex", ...]} — every match (applied per line, on the text with SGR
-sequences intact) is replaced with the FIXED token '▒' on BOTH sides before comparison. Fixed, not
-equal-length: a 3s duration versus a 12s one must mask to the same string, or the mask is useless.
+masks.json: {"patterns": ["regex", ...], "by_frame": {"glob": ["regex", ...]}}. Global
+patterns are restricted to identity prefixes and other truly run-invariant values; frame-scoped patterns
+are selected by `<scenario>/<frame>.ansi`. Every match (applied per line, on text with SGR sequences
+intact) is replaced with the FIXED token '▒' on BOTH sides before comparison. Fixed, not equal-length:
+a 3s duration versus a 12s one must mask to the same string, or the mask is useless.
 (Column alignment after the mask point differs from the on-screen frame; comparison is masked-text
 to masked-text, so that is fine.)
 
@@ -18,6 +20,7 @@ files (in either direction) are divergences too.
 """
 import argparse
 import difflib
+import fnmatch
 import json
 import os
 import re
@@ -26,10 +29,15 @@ import sys
 MASK_TOKEN = "▒"  # ▒
 
 
-def load_masks(path: str) -> list[re.Pattern]:
+def load_masks(path: str, frame_key: str | None = None) -> list[re.Pattern]:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
-    return [re.compile(p) for p in data.get("patterns", [])]
+    patterns = list(data.get("patterns", []))
+    if frame_key is not None:
+        for glob, scoped in data.get("by_frame", {}).items():
+            if fnmatch.fnmatch(frame_key, glob):
+                patterns.extend(scoped)
+    return [re.compile(p) for p in patterns]
 
 
 def mask_text(text: str, patterns: list[re.Pattern]) -> str:
@@ -73,7 +81,6 @@ def main() -> int:
         print("ERROR: frame input directory is empty")
         return 1
 
-    patterns = load_masks(args.masks)
     allowlist = load_allowlist(args.allowlist)
     script_name = os.path.basename(os.path.normpath(args.golden_dir))
 
@@ -100,6 +107,7 @@ def main() -> int:
             rows.append((key, "DIVERGENT", "empty frame"))
             print(f"--- {key}: empty frame (DIVERGENT)")
             continue
+        patterns = load_masks(args.masks, key)
         golden_lines = [mask_text(l, patterns) for l in golden_raw]
         our_lines = [mask_text(l, patterns) for l in our_raw]
 

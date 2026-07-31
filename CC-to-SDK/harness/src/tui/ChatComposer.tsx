@@ -89,6 +89,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const clearArm = useRef(0);
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disarmClear = () => { clearArm.current = 0; setClearArmed(false); if (clearTimer.current) { clearTimeout(clearTimer.current); clearTimer.current = null; } };
+  // Invalidate the ref/timer during the first busy render so the old hint cannot paint for one frame while
+  // the passive cleanup effect is still pending. This mutates only refs during render; state cleanup stays in the effect.
+  if (busy && (clearArm.current || clearTimer.current)) {
+    clearArm.current = 0;
+    if (clearTimer.current) { clearTimeout(clearTimer.current); clearTimer.current = null; }
+  }
   useEffect(() => () => { if (clearTimer.current) clearTimeout(clearTimer.current); }, []);
   useEffect(() => { if (busy) disarmClear(); }, [busy]);
   // KB3: Ctrl-D on an empty composer needs two presses (mirrors the Esc-Esc clear arm above) — a first
@@ -123,7 +129,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     lastPrefill.current = prefill.token;
     setState((s) => {
       const draft = s.lines.join("\n");
-      const text = prefill.mode === "prepend" && draft.trim().length ? prefill.text + "\n" + draft : prefill.text;
+      const text = prefill.mode === "prepend" && draft.length > 0 ? prefill.text + "\n" + draft : prefill.text;
       return replaceBufferFromOutside(s, text);
     });
     onPrefillAppliedRef.current?.();
@@ -219,6 +225,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const mode = inputMode(state);
   const border = mode === "bash" ? "magenta" : mode === "memory" ? "blue" : undefined;
   const showFooter = mode === "normal" && !state.mention && !state.command;
+  const clearVisible = clearArmed && clearArm.current !== 0 && !busy;
   return (
     <Box flexDirection="column">
       <Box borderStyle="round" borderColor={border} paddingX={1}>
@@ -230,7 +237,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       {mode === "bash" ? <Box paddingX={1}><Text color="magenta" dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
       {mode === "memory" ? <Box paddingX={1}><Text color="blue" dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
       {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
-      {clearArmed ? <Box paddingX={1}><Text dimColor>Esc again to clear</Text></Box> : null}
+      {clearVisible ? <Box paddingX={1}><Text dimColor>Esc again to clear</Text></Box> : null}
       {dArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-D again to exit</Text></Box> : null}
       {showFooter ? <Box paddingX={1}><Text dimColor>{isEmptyNow ? "⏎ send · \\⏎ newline · @ files · / commands · ! bash · ⇧Tab mode · ? help" : "⏎ send · \\⏎ newline · @ files · / commands · ! bash · ⇧Tab mode"}</Text></Box> : null}
       {state.mention ? <MentionPopup state={state} /> : null}

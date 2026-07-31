@@ -11,8 +11,8 @@
 // exit-arm must not also fire underneath it. Ctrl-R (Wave 2 task 7) opens the history-search overlay —
 // same gating pattern: Ctrl-Z stays live, every other app arm is gated while it's open (its own Ctrl-C/
 // Ctrl-R/Ctrl-S own those keys). The `?` shortcuts overlay (F0 KB6) is gated the same way, checked FIRST
-// (right after Ctrl-Z) so it wins even over Ctrl-O/Ctrl-R below — it closes on Esc only, via its own
-// useInput, so e.g. Ctrl-O no longer both closes the overlay AND opens the pager in one keystroke.
+// (right after Ctrl-Z) so it wins even over Ctrl-O/Ctrl-R below. ChatApp owns Escape while help is
+// visible, including the passive-effect mount race; the overlay is presentational in this tree.
 // Renders increment 8's multiline <ChatComposer>.
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
@@ -65,6 +65,18 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [composerEmpty, setComposerEmpty] = useState(true);
   const [composerOwner, setComposerOwner] = useState<InputOwner>("composer");
+  // Ink's useInput subscription is passive, so a root handler can receive a key after a newer render has
+  // already painted. Keep every state/callback value consumed by this handler current synchronously.
+  const rootStateRef = useRef(state); rootStateRef.current = state;
+  const transcriptOpenRef = useRef(transcriptOpen); transcriptOpenRef.current = transcriptOpen;
+  const exitArmedRef = useRef(exitArmed); exitArmedRef.current = exitArmed;
+  const suspendRef = useRef(suspend); suspendRef.current = suspend;
+  const closeShortcutsRef = useRef(closeShortcuts); closeShortcutsRef.current = closeShortcuts;
+  const openHistorySearchRef = useRef(openHistorySearch); openHistorySearchRef.current = openHistorySearch;
+  const interruptRef = useRef(interrupt); interruptRef.current = interrupt;
+  const backgroundNowRef = useRef(backgroundNow); backgroundNowRef.current = backgroundNow;
+  const openBgPanelRef = useRef(openBgPanel); openBgPanelRef.current = openBgPanel;
+  const exitRef = useRef(exit); exitRef.current = exit;
   const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disarm = () => { setExitArmed(false); if (disarmTimer.current) { clearTimeout(disarmTimer.current); disarmTimer.current = null; } };
   useEffect(() => () => { if (disarmTimer.current) clearTimeout(disarmTimer.current); }, []);
@@ -95,33 +107,37 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // when no popup is open; dialogs/pickers own their own Esc.
   // Ctrl-L lives in the editor now (Task 2), not here.
   useInput((input, key) => {
+    const current = rootStateRef.current;
     if (key.ctrl && input === "z") {                          // KB5: suspend like every terminal app; detach is /detach now
-      (suspend ?? suspendProcess)({ stdin, repaint: () => write("") });
+      (suspendRef.current ?? suspendProcess)({ stdin, repaint: () => write("") });
       return;
     }
-    if (state.shortcutsOpen) return;   // KB6: Help owns every key; its own useInput closes on Esc only
-    if (transcriptOpen) {                                   // pager owns the keys (its ctrl+c = transcript:exit, per bundle)
+    if (current.shortcutsOpen) {                              // KB6: root owns the visible overlay race window
+      if (key.escape) closeShortcutsRef.current();
+      return;
+    }
+    if (transcriptOpenRef.current) {                          // pager owns the keys (its ctrl+c = transcript:exit, per bundle)
       if (key.ctrl && input === "o") { setTranscriptOpen(false); disarm(); }
       return;
     }
-    if (state.historyOpen) return;   // the overlay owns Ctrl-C (cancel) / Ctrl-R (next) / Ctrl-S (scope); only Ctrl-Z above stays live
-    if (state.settings.open) return;   // W3 T5: the /config dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
-    if (state.permissions.open) return;   // W3 T7: the /permissions dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
-    if (state.themeDialog.open) return;   // W3 T4: the /theme dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
-    if (state.addDir.open) return;   // W3 T3: the /add-dir dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
+    if (current.historyOpen) return;   // the overlay owns Ctrl-C (cancel) / Ctrl-R (next) / Ctrl-S (scope); only Ctrl-Z above stays live
+    if (current.settings.open) return;   // W3 T5: the /config dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
+    if (current.permissions.open) return;   // W3 T7: the /permissions dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
+    if (current.themeDialog.open) return;   // W3 T4: the /theme dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
+    if (current.addDir.open) return;   // W3 T3: the /add-dir dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
     // Both open arms are gated on !rewinding (F3, final review): a confirmed rewind is a multi-second
-    // engine swap held behind the "⏪ restoring…" modal so a mid-rewind prompt isn't lost — Ctrl-R/Ctrl-O
+    // engine swap held behind the “⏪ restoring…” modal so a mid-rewind prompt isn't lost — Ctrl-R/Ctrl-O
     // opening another overlay (or, for history, Enter-executing straight into the busy host) would
     // reintroduce exactly the loss mode that modal exists to prevent.
-    if (key.ctrl && input === "o" && !state.rewinding) { setTranscriptOpen(true); disarm(); return; }   // CC app:toggleTranscript
-    if (key.ctrl && input === "r" && !state.rewinding) { openHistorySearch(); disarm(); return; }   // CC history:search (Global)
+    if (key.ctrl && input === "o" && !current.rewinding) { setTranscriptOpen(true); disarm(); return; }   // CC app:toggleTranscript
+    if (key.ctrl && input === "r" && !current.rewinding) { openHistorySearchRef.current(); disarm(); return; }   // CC history:search (Global)
     if (key.ctrl && input === "t") { setTodosOpen((v) => !v); disarm(); return; }   // CC app:toggleTodos
     if (key.ctrl && input === "c") {                                // interrupt a turn, else arm/confirm exit (CC)
-      if (state.busy) { interrupt(); disarm(); return; }
-      if (exitArmed) { exit(); return; }
+      if (current.busy) { interruptRef.current(); disarm(); return; }
+      if (exitArmedRef.current) { exitRef.current(); return; }
       setExitArmed(true); if (disarmTimer.current) clearTimeout(disarmTimer.current); disarmTimer.current = setTimeout(() => setExitArmed(false), 2000);
     }
-    if (key.ctrl && input === "b") { state.busy ? backgroundNow() : openBgPanel(); disarm(); return; }
+    if (key.ctrl && input === "b") { current.busy ? backgroundNowRef.current() : openBgPanelRef.current(); disarm(); return; }
   });
   const overlayOwnsInput = state.shortcutsOpen || transcriptOpen || state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open;
   const activeInputOwner: InputOwner = overlayOwnsInput ? "overlay" : state.pending ? "decision" : composerOwner;
@@ -136,7 +152,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         </Box>
       ) : null}
       {state.shortcutsOpen
-        ? <ShortcutsOverlay onClose={closeShortcuts} />
+        ? <ShortcutsOverlay onClose={closeShortcuts} interactive={false} />
         : transcriptOpen
         ? <TranscriptPager lines={state.lines} onClose={() => setTranscriptOpen(false)} />
         : state.historyOpen

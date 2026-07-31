@@ -1,5 +1,5 @@
 // tui/src/ChatStatusBar.tsx — bottom bar: model · permission mode (color-coded) · ctx% · live streaming ·
-// hints (pending-decision hint advertises y/n·↑↓·1/2/3·esc, KB1).
+// composer-owned hints. Decision and overlay surfaces own their input and suppress this global hint.
 import React from "react";
 import { Box, Text } from "ink";
 

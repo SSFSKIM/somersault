@@ -6,7 +6,7 @@
 // and ChatComposer.tsx (⇧Tab/!/#/@// prefixes, Ctrl-D, Ctrl-X Ctrl-E / Ctrl-G external editor). A help row
 // for a binding we don't implement would be a false promise, so nothing is listed here that isn't wired
 // elsewhere in this package.
-import React from "react";
+import React, { useRef } from "react";
 import { Box, Text, useInput } from "ink";
 import { ACCENT } from "./theme.js";
 
@@ -41,8 +41,9 @@ const BASE_ROWS: [string, string][] = [
 
 export const ROWS: [string, string][] = process.platform === "win32" ? BASE_ROWS.filter(([key]) => key !== "Ctrl-Z") : BASE_ROWS;
 
-export function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
-  useInput((_input, key) => { if (key.escape) onClose(); });   // KB6: Escape only — every other key is swallowed here, not left to leak into a chord underneath
+export function ShortcutsOverlay({ onClose, interactive = true }: { onClose: () => void; interactive?: boolean }) {
+  const onCloseRef = useRef(onClose); onCloseRef.current = onClose;
+  useInput((_input, key) => { if (interactive && key.escape) onCloseRef.current(); });   // KB6: standalone overlay owns Escape; ChatApp owns it during the mount race
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>Keyboard shortcuts  <Text dimColor>(esc closes)</Text></Text>

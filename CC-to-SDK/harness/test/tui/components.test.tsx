@@ -363,6 +363,19 @@ describe("ChatComposer", () => {
     expect(lastFrame() ?? "").not.toContain("Ask Claude anything…");   // placeholder gone once typing
     expect(lastFrame() ?? "").not.toContain("? help");                 // '?' inserts in a non-empty draft
   });
+  it("hides the Esc-clear hint on the first busy render and does not resurrect after idle", async () => {
+    const view = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} busy={false} />);
+    await new Promise((r) => setTimeout(r, 20));
+    view.stdin.write("draft"); await waitFor(() => (view.lastFrame() ?? "").includes("draft"));
+    view.stdin.write("\x1b"); await waitFor(() => (view.lastFrame() ?? "").includes("Esc again to clear"));
+    view.rerender(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} busy />);
+    expect(view.lastFrame() ?? "").not.toContain("Esc again to clear");
+    view.rerender(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} busy={false} />);
+    expect(view.lastFrame() ?? "").not.toContain("Esc again to clear");
+    view.stdin.write("\x1b"); await waitFor(() => (view.lastFrame() ?? "").includes("Esc again to clear"));
+    expect(view.lastFrame() ?? "").toContain("draft");
+  });
+
   it("clears an Esc-clear arm when busy starts and before early-return chords", async () => {
     const busyView = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} busy={false} />);
     await new Promise((r) => setTimeout(r, 20));

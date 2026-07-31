@@ -13,7 +13,7 @@ export interface EditorState {
   stashed: string | null;                                    // Ctrl-S input stash (distinct from history-nav `stash`)
   undo: { lines: string[]; cursor: Cursor }[];               // snapshot-on-change, capped at 100 (Ctrl-_ pops)
   mention: MentionState | null; command: CommandState | null;
-  killRing: string[];                                        // newest LAST, cap 10; entries are newline-free (kills are line-scoped)
+  killRing: string[];                                        // newest LAST, cap 10; entries may include killed line breaks
   killRun: boolean;                                          // an unbroken run of kill keystrokes coalesces into the newest entry
   yankSite: { start: Cursor; end: Cursor; index: number } | null;   // set by yank; alt+y pops only while it holds
 }
@@ -53,6 +53,12 @@ function insertText(s: EditorState, t: string): EditorState {
   lines.splice(row, 1, before + parts[0], ...mid, last + after);
   return { ...s, lines, cursor: { row: row + parts.length - 1, col: last.length } };
 }
+function removeRange(s: EditorState, start: Cursor, end: Cursor): EditorState {
+  const lines = [...s.lines];
+  const merged = lines[start.row].slice(0, start.col) + lines[end.row].slice(end.col);
+  lines.splice(start.row, end.row - start.row + 1, merged);
+  return { ...s, lines, cursor: { ...start } };
+}
 function deleteLeft(s: EditorState): EditorState {
   const lines = [...s.lines]; const { row, col } = s.cursor;
   if (col > 0) { lines[row] = lines[row].slice(0, col - 1) + lines[row].slice(col); return { ...s, lines, cursor: { row, col: col - 1 } }; }
@@ -83,7 +89,18 @@ function killToStart(s: EditorState): { state: EditorState; text: string } {   /
   lines[row] = lines[row].slice(col); return { state: { ...s, lines, cursor: { row, col: 0 } }, text };
 }
 function killWordBack(s: EditorState): { state: EditorState; text: string } {  // Ctrl-W → ring, prepend
-  const { row, col } = s.cursor; if (col === 0) return { state: deleteLeft(s), text: "" };
+  const { row, col } = s.cursor;
+  if (col === 0) {
+    if (row === 0) return { state: s, text: "" };
+    const previous = s.lines[row - 1];
+    let i = previous.length;
+    while (i > 0 && /\s/.test(previous[i - 1])) i--;
+    while (i > 0 && !/\s/.test(previous[i - 1])) i--;
+    const lines = [...s.lines];
+    lines[row - 1] = previous.slice(0, i) + lines[row];
+    lines.splice(row, 1);
+    return { state: { ...s, lines, cursor: { row: row - 1, col: i } }, text: previous.slice(i) + "\n" };
+  }
   const line = s.lines[row];
   let i = col; while (i > 0 && /\s/.test(line[i - 1])) i--; while (i > 0 && !/\s/.test(line[i - 1])) i--;
   const lines = [...s.lines]; lines[row] = line.slice(0, i) + line.slice(col);
@@ -99,9 +116,8 @@ function yank(s: EditorState): EditorState {                 // Ctrl-Y: insert t
 function yankPop(s: EditorState): EditorState {              // Alt-Y right after a yank: cycle the ring at the yank site
   const site = s.yankSite; if (!site || s.killRing.length === 0) return s;
   const index = (site.index - 1 + s.killRing.length) % s.killRing.length;
-  const lines = [...s.lines];                                // same-row splice: ring entries are newline-free by construction
-  lines[site.start.row] = lines[site.start.row].slice(0, site.start.col) + lines[site.end.row].slice(site.end.col);
-  const ins = insertText({ ...s, lines, cursor: { ...site.start } }, s.killRing[index]);
+  const base = removeRange(s, site.start, site.end);
+  const ins = insertText(base, s.killRing[index]);
   return { ...ins, killRun: false, yankSite: { start: { ...site.start }, end: { ...ins.cursor }, index } };
 }
 function wordLeft(s: EditorState): EditorState {         // Alt/Option-Left (and Alt-b): jump back a word
@@ -139,11 +155,13 @@ function submitTurn(s: EditorState): EditorResult {
   return { state: { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing }, submit: t };
 }
 
-/** Esc-Esc's second press (CC `cgr`): push the buffer to prompt history, then clear. Blank buffer = no-op. */
+/** Esc-Esc's second press (CC `cgr`): push nonblank text to history, then clear. Blank buffer = clear-only. */
 export function clearToHistory(s: EditorState): EditorState {
-  if (isBlank(s)) return s;
   const t = bufferText(s);
-  const history = s.history.length && s.history[s.history.length - 1] === t ? s.history : [...s.history, t];
+  if (t.length === 0) return s;
+  const history = t.trim().length === 0 || (s.history.length && s.history[s.history.length - 1] === t)
+    ? s.history
+    : [...s.history, t];
   return { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing };
 }
 

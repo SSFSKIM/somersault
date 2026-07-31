@@ -1187,6 +1187,28 @@ describe("<ChatApp>", () => {
     expect(stripAnsi(frame(lastFrame)).replace(/\s+/g, " ")).toContain("keybinding customization isn't supported yet — showing the built-in keymap (upstream opens ~/.claude/keybindings.json in your editor)");
   });
 
+  it("help owns immediate keys before its passive handler mounts, and Escape closes without opening pager", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("?");
+    await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
+    stdin.write("\x0f");                         // Ctrl-O immediately after the help frame appears
+    expect(frame(lastFrame)).not.toContain("Transcript");
+    stdin.write("\x1b");                         // immediate Escape must be handled by the root owner
+    await waitFor(() => !frame(lastFrame).includes("Keyboard shortcuts"));
+    expect(frame(lastFrame)).not.toContain("Transcript");
+  });
+
+  it("ChatApp root handler reads the current suspend callback immediately after rerender", async () => {
+    let oldCalls = 0, currentCalls = 0;
+    const view = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} suspend={() => { oldCalls++; }} />);
+    await waitFor(() => frame(view.lastFrame).includes("›"));
+    view.rerender(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} suspend={() => { currentCalls++; }} />);
+    view.stdin.write("\x1a");
+    await waitFor(() => currentCalls === 1);
+    expect(oldCalls).toBe(0);
+  });
+
   // ---- W3 T7: /permissions — five-tab dialog ----
 
   it("/permissions opens with all 5 tabs, defaulting to Allow (with its intro + 'Add a new rule…') when there are no recent denials", async () => {

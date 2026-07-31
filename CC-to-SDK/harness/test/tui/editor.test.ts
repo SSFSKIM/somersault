@@ -263,6 +263,18 @@ describe("readline keys (ctrl)", () => {
     expect(text(s)).toBe("foo bar "); expect(s.cursor.col).toBe(8);
     s = ctrl(s, "w"); expect(text(s)).toBe("foo ");
   });
+  it("Ctrl-W at column zero kills the line boundary into the ring and Ctrl-Y restores exact lines", () => {
+    let s = { ...initialEditorState(), killRing: ["prior"], killRun: false };
+    s = type(s, "old\nnew");
+    s = press(s, { leftArrow: true }); s = press(s, { leftArrow: true }); s = press(s, { leftArrow: true });
+    const killed = applyKey(s, "w", { ctrl: true });
+    expect(killed.state.lines).toEqual(["new"]);
+    expect(killed.state.cursor).toEqual({ row: 0, col: 0 });
+    expect(killed.state.killRing).toEqual(["prior", "old\n"]);
+    const restored = applyKey(killed.state, "y", { ctrl: true }).state;
+    expect(restored.lines).toEqual(["old", "new"]);
+    expect(restored.cursor).toEqual({ row: 1, col: 0 });
+  });
   it("an unhandled ctrl combo (e.g. Ctrl-L) never inserts a character", () => {
     const s = ctrl(initialEditorState(), "l");
     expect(text(s)).toBe("");
@@ -553,6 +565,18 @@ describe("Escape semantics — clearToHistory (CM15)", () => {
     expect(c.history).toEqual(["old", "new text"]);
     expect(c.stashed).toBe("parked");
     expect(c.killRing).toEqual(["killed"]);
-    expect(clearToHistory(initialEditorState())).toEqual(initialEditorState());  // blank = no-op
+    expect(clearToHistory(initialEditorState())).toEqual(initialEditorState());  // truly empty = no-op
+  });
+
+  it("clearToHistory clears whitespace-only buffers without adding them to history", () => {
+    const spaces = clearToHistory(type(initialEditorState(["old"]), "   "));
+    expect(spaces.lines).toEqual([""]);
+    expect(spaces.history).toEqual(["old"]);
+    expect(press(spaces, { upArrow: true }).lines).toEqual(["old"]);
+
+    const blankLines = clearToHistory(type(initialEditorState(["old"]), " \n  \n "));
+    expect(blankLines.lines).toEqual([""]);
+    expect(blankLines.history).toEqual(["old"]);
+    expect(press(blankLines, { upArrow: true }).lines).toEqual(["old"]);
   });
 });
