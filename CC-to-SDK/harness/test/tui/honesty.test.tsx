@@ -21,6 +21,7 @@ import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
+const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");   // ShortcutsOverlay.test.tsx's own idiom
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await new Promise((r) => setTimeout(r, 0)); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
@@ -297,26 +298,47 @@ it("every advertised chord has a proof", () => {
 });
 for (const [k] of ROWS) it(`"${k}" is live`, async () => { await PROOFS[k](); });
 
-it("the composer footer and status-bar hints only advertise chords that ROWS carries (explicit mapping)", () => {
+it("the composer footer and status-bar hints only advertise chords that ROWS carries (explicit mapping)", async () => {
   // The footer prints short tokens; ROWS uses fuller labels. This mapping IS the contract — a footer
-  // token missing from it, or mapping to a ROWS key that no longer exists, fails the test. The two
-  // strings below are copied VERBATIM from source (ChatComposer.tsx:219, ChatStatusBar.tsx:21's idle
-  // branch) — if either source string changes, these copies must be updated in the same commit. That's
-  // deliberate: the audit owns the advertised strings, not a paraphrase of them.
+  // token missing from it, or mapping to a ROWS key that no longer exists, fails the test. Unlike the
+  // hand-copied literals this test used to diff against ROWS (Task 8 review Finding 1 — a source edit to
+  // either footer left it green because nothing ever rendered), both hints below are read straight off a
+  // REAL <ChatComposer>/<ChatStatusBar> via lastFrame(), so a source edit changes what this test actually sees.
   const FOOTER_TOKEN_TO_ROW: Record<string, string> = {
     "⏎ send": "⏎", "\\⏎ newline": "\\⏎ / Ctrl-J", "@ files": "@", "/ commands": "/",
     "! bash": "!", "⇧Tab mode": "⇧Tab",
     "Esc interrupt": "Esc", "? help": "?",
   };
   const rowKeys = new Set(ROWS.map(([k]) => k));
-  const footers = [
-    "⏎ send · \\⏎ newline · @ files · / commands · ! bash · ⇧Tab mode",   // ChatComposer.tsx:219 footer
-    "   ⇧Tab mode · Esc interrupt · ? help",                              // ChatStatusBar.tsx:21 idle hint
-  ];
-  for (const f of footers) for (const token of f.trim().split(" · ")) {
+
+  // ChatComposer.tsx:219 — the footer is its own line, printed only when idle/empty with no popup open
+  // (the fresh initial render already qualifies), so no keys need to be sent first.
+  const composer = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} />);
+  await settle();
+  const composerLine = stripAnsi(frame(composer.lastFrame)).split("\n").find((l) => l.includes("·"));
+  expect(composerLine, "ChatComposer never rendered a footer hint containing '·'").toBeDefined();
+  const composerTokens = composerLine!.trim().split(" · ");
+
+  // ChatStatusBar.tsx:21 idle branch — same line as "mode <mode>", so isolate the hint by splitting on
+  // the widest whitespace run: the hint's own literal carries 3 leading spaces, and none of the other
+  // segments (mode/ctx/busy/bg, all empty/short here) ever produce a run that wide. This locates the hint
+  // by structure, not by hardcoding what it says.
+  const statusLine = stripAnsi(frame(render(<ChatStatusBar mode="default" busy={false} hasPending={false} />).lastFrame));
+  const statusHint = statusLine.split(/ {2,}/).pop() ?? "";
+  const statusTokens = statusHint.trim().split(" · ");
+
+  const liveTokens = new Set([...composerTokens, ...statusTokens]);
+  // Forward: every token either surface actually prints must have a live ROWS row behind it.
+  for (const token of liveTokens) {
     const row = FOOTER_TOKEN_TO_ROW[token];
     expect(row, `footer token "${token}" has no ROWS mapping`).toBeDefined();
     expect(rowKeys.has(row), `footer token "${token}" maps to missing row "${row}"`).toBe(true);
+  }
+  // Reverse/completeness: every token the mapping claims is advertised must still be live somewhere —
+  // this is what catches a silently DELETED token (e.g. dropping "@ files ·" from the composer footer),
+  // which the forward-only check above would miss (fewer live tokens still all pass the forward check).
+  for (const token of Object.keys(FOOTER_TOKEN_TO_ROW)) {
+    expect(liveTokens.has(token), `"${token}" is in the mapping but no live footer/hint advertises it`).toBe(true);
   }
 });
 
@@ -327,8 +349,12 @@ it("the composer footer and status-bar hints only advertise chords that ROWS car
 // own chords are proven elsewhere instead, referenced by name below rather than duplicated here.
 it("the pending-decision status-bar hint pins the exact advertised string (Task 7's y/n addition), and every chord it names is proven elsewhere", () => {
   const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} hasPending={true} />);
-  // ChatStatusBar.tsx:21's pending branch, copied verbatim.
-  expect(lastFrame()).toContain("[y/n·↑↓·1/2/3·esc]");
+  // ChatStatusBar.tsx:21's pending branch, copied verbatim — INCLUDING its 3 leading spaces (Task 8
+  // review Finding 2: the old assertion dropped them, so stripping the source's own leading spaces left
+  // this green). ink-testing-library's lastFrame() preserves literal spaces exactly as Ink renders them —
+  // confirmed live: rendering this component prints the ANSI dim-open code immediately followed by the
+  // three spaces then "[y/n...", with nothing in between, so this substring check genuinely observes them.
+  expect(lastFrame()).toContain("   [y/n·↑↓·1/2/3·esc]");
   // y/n: components.test.tsx "y accepts and n rejects (KB1, F0 acceptance 7)".
   // 1/2/3: components.test.tsx "number keys 1/2/3 and legacy a/A/d both map to allow_once/allow_always/deny".
   // ↑↓ and esc: components.test.tsx "↓ then Enter selects 'No' (deny); Esc denies directly".
