@@ -55,7 +55,7 @@ function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); retu
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
-  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialLines?: RenderLine[]; initialPrompt?: string; onExit?: () => void } = {},
+  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialLines?: RenderLine[]; initialPrompt?: string; onExit?: () => void; detach?: () => void } = {},
   deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; getSessionMessagesIn?: (id: string, cwd?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
@@ -447,6 +447,11 @@ export function useChat(
           break;
         // Same exit the Ctrl-D / Ctrl-C-twice keys use — the host owns the actual unmount (opts.onExit).
         case "exit": case "quit": opts.onExit?.(); break;
+        // F0 KB5: detach moved off the Ctrl-Z chord onto this command. opts.detach is only set for an
+        // attached client (ChatApp.tsx); a loopback client has nobody else to hand the session to, so it
+        // refuses with the same notice Ctrl-Z used to print. Never touches a pending decision either way —
+        // detach ≠ deny, the park stays host-owned regardless of how this client leaves.
+        case "detach": if (opts.detach) opts.detach(); else notice("not detachable — run with --detachable, or ccx attach from another terminal"); break;
         default: append(formatUnknown(cmd.name));
       }
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }

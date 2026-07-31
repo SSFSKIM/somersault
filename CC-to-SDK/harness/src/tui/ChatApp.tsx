@@ -1,10 +1,11 @@
 // tui/src/ChatApp.tsx — composes the transcript, the composer (or the permission dialog when one is
 // pending), and the status bar. Esc interrupt / Shift+Tab cycle mode are owned by the composer and
 // inactive while a dialog is up; Ctrl-C / Ctrl-Z / Ctrl-B / Ctrl-T / Ctrl-O stay active even during a
-// dialog (Ctrl-Z can still detach — detach ≠ deny). Ctrl-L moved into the editor (Task 2) — it used to
+// dialog (Ctrl-Z can still suspend — F0 KB5: detach moved off this key onto /detach, a normal command
+// that goes through the composer like any other). Ctrl-L moved into the editor (Task 2) — it used to
 // live here as an app-level screen-clear that fired ALONGSIDE the editor's own input-clear on every
 // Ctrl-L (a transient double-handling); removing this arm leaves the editor as Ctrl-L's sole owner.
-// Ctrl-O (Task 5) opens the transcript pager; Ctrl-Z is checked ABOVE that gate (detach stays reachable
+// Ctrl-O (Task 5) opens the transcript pager; Ctrl-Z is checked ABOVE that gate (suspend stays reachable
 // even under the pager overlay) but every OTHER app arm is gated while the pager is open — the pager
 // owns the keys, including its own ctrl+c as transcript:exit (per the bundle), so the app's Ctrl-C
 // exit-arm must not also fire underneath it. Ctrl-R (Wave 2 task 7) opens the history-search overlay —
@@ -14,8 +15,9 @@
 // useInput, so e.g. Ctrl-O no longer both closes the overlay AND opens the pager in one keystroke.
 // Renders increment 8's multiline <ChatComposer>.
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Text, useApp, useInput, useStdin } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
+import { suspendProcess } from "./suspend.js";
 import type { InitialResume } from "./commands.js";
 import type { RenderLine } from "./render.js";
 import { Transcript } from "./Transcript.js";
@@ -38,7 +40,7 @@ import { ThemeDialog } from "./ThemeDialog.js";
 import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialLines, deps, yankHintMs, escClearMs }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialLines, deps, yankHintMs, escClearMs, suspend }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -50,9 +52,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   deps?: Parameters<typeof useChat>[2];
   yankHintMs?: number;
   escClearMs?: number;
+  suspend?: typeof suspendProcess;
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
-  const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit }, deps);
+  const { setRawMode } = useStdin();
+  const [, setRepaint] = useState(0);
+  const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined }, deps);
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
@@ -80,17 +85,14 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const onCycleMode = () => { cycleMode(); disarm(); };   // Shift+Tab cycles the permission ladder (default → acceptEdits → plan → auto)
   // Only Ctrl-C / Ctrl-Z / Ctrl-B / Ctrl-T live here — they conflict with nothing (composer/dialog/pickers never act
   // on them), so this stays active even during a pending dialog (so Ctrl-C can still quit, Ctrl-Z can still
-  // detach). Shift+Tab/Esc are owned by whatever input is focused: the composer fires onCycleMode on
+  // suspend). Shift+Tab/Esc are owned by whatever input is focused: the composer fires onCycleMode on
   // Shift+Tab even with a `/`/`@` popup open (matches 2.1.220 — the Autocomplete context binds only
   // tab/esc/↑/↓, so shift+tab falls through to Chat's cycleMode), and routes Esc to onInterrupt only
   // when no popup is open; dialogs/pickers own their own Esc.
   // Ctrl-L lives in the editor now (Task 2), not here.
   useInput((input, key) => {
-    if (key.ctrl && input === "z") {
-      // Detach ≠ deny (spec A2b §5): a pending remote permission stays parked either way — useChat's
-      // unmount sentinel never resolves it. Loopback has nobody else to hand the session to, so it refuses.
-      if (client.kind === "attached") { onDetach?.(); exit(); }
-      else notice("not detachable — run with --detachable, or ccx attach from another terminal");
+    if (key.ctrl && input === "z") {                          // KB5: suspend like every terminal app; detach is /detach now
+      (suspend ?? suspendProcess)(setRawMode, () => setRepaint((n) => n + 1));
       return;
     }
     if (state.shortcutsOpen) return;   // KB6: Help owns every key; its own useInput closes on Esc only

@@ -184,6 +184,27 @@ describe("useChat: permission feed", () => {
     expect(fake.disposed).toBe(1);
   });
 
+  // F0 KB5: detach moved off the Ctrl-Z chord onto /detach. ChatApp.tsx renders a decision dialog in the
+  // SAME slot as ChatComposer, so a real pending permission structurally pre-empts typing "/detach" at
+  // the integration level (chat.test.tsx's /detach test covers the reachable idle-composer flow) — calling
+  // submit() directly here exercises handleCommand's "detach" case the same way regardless, and is the only
+  // way to prove the "survives detaching" half of the old Ctrl-Z guarantee still holds on the new path.
+  it("/detach calls opts.detach without answering a pending permission — it stays parked (detach ≠ deny)", async () => {
+    const fake = fakeRemote();
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "t6", toolName: "Edit", kind: "permission", input: {}, createdAt: Date.now() };
+    let detachCalls = 0;
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, { detach: () => { detachCalls++; } }); api.run = c.submit; return <Text>{c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NONE"}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.parkPermission(entry);
+    await waitFor(() => frame(lastFrame).includes("PENDING:Edit"));
+    api.run!("/detach");
+    await waitFor(() => detachCalls === 1);
+    expect(fake.answeredCalls).toEqual([]);              // unanswered — stays parked, never denied
+    expect(frame(lastFrame)).toContain("PENDING:Edit");   // still parked after detach
+  });
+
   it("three parked entries queue FIFO: dialog shows the head; answering advances to the next", async () => {
     let fake!: FakeRemote;
     fake = fakeRemote();
@@ -562,6 +583,18 @@ describe("useChat", () => {
     await waitFor(() => exits === 1);
     api.run!("/quit");
     await waitFor(() => exits === 2);
+    expect(submitted).toBe(0);
+  });
+
+  it("/detach without opts.detach (a loopback client) notices not-detachable, never the model", async () => {
+    let submitted = 0;
+    const fake = fakeRemote({ submit: async () => { submitted++; return { result: "x" }; } });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, { cwd: "/proj" }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("/detach");
+    await waitFor(() => frame(lastFrame).includes("not detachable — run with --detachable, or ccx attach from another terminal"));
     expect(submitted).toBe(0);
   });
 

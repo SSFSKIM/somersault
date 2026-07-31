@@ -60,7 +60,7 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, onEmptyChange }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; onEmptyChange?: (empty: boolean) => void }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 2000, onEmptyChange }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number; onEmptyChange?: (empty: boolean) => void }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -78,6 +78,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const clearArm = useRef(0);
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (clearTimer.current) clearTimeout(clearTimer.current); }, []);
+  // KB3: Ctrl-D on an empty composer needs two presses (mirrors the Esc-Esc clear arm above) — a first
+  // press within exitArmMs just hints, a second exits; letting the arm expire re-arms rather than exiting.
+  const [dArmed, setDArmed] = useState(false);
+  const dArm = useRef(0);
+  const dTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (dTimer.current) clearTimeout(dTimer.current); }, []);
   const isEmptyNow = state.lines.length === 1 && state.lines[0] === "";
   useEffect(() => { onEmptyChange?.(isEmptyNow); }, [isEmptyNow]);
 
@@ -110,7 +116,13 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // flushes after commit, so a closure read lags one render and would submit stale text. The ref updates every render.
   useInput((input, key) => {
     const s = stateRef.current;
-    if (key.ctrl && input === "d" && s.lines.length === 1 && s.lines[0] === "") { onExit?.(); return; }   // Ctrl-D on empty = EOF exit
+    if (key.ctrl && input === "d" && s.lines.length === 1 && s.lines[0] === "") {   // KB3: EOF needs two presses
+      if (dArm.current && Date.now() - dArm.current < exitArmMs) { onExit?.(); return; }
+      dArm.current = Date.now(); setDArmed(true);
+      if (dTimer.current) clearTimeout(dTimer.current);
+      dTimer.current = setTimeout(() => { dArm.current = 0; setDArmed(false); }, exitArmMs);
+      return;
+    }
     // '?' on a genuinely empty composer (no buffer text, no open '/' or '@' popup) opens the shortcuts
     // overlay; typed anywhere else it must fall through to applyKey and insert a literal '?'.
     if (input === "?" && !s.command && !s.mention && s.lines.length === 1 && s.lines[0] === "") { onHelp?.(); return; }
@@ -194,6 +206,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       {mode === "memory" ? <Box paddingX={1}><Text color="blue" dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
       {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
       {clearArmed ? <Box paddingX={1}><Text dimColor>Esc again to clear</Text></Box> : null}
+      {dArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-D again to exit</Text></Box> : null}
       {showFooter ? <Box paddingX={1}><Text dimColor>⏎ send · \⏎ newline · @ files · / commands · ! bash · ⇧Tab mode</Text></Box> : null}
       {state.mention ? <MentionPopup state={state} /> : null}
       {state.command ? <CommandPopup state={state} /> : null}

@@ -20,8 +20,10 @@ Boot and per-line waits are wall-clock, not output-driven: an Ink full-screen ap
 repaints continuously, so there is no quiet prompt to synchronize on. Raise BOOT_WAIT
 if the banner has not appeared before the first line is typed.
 
-Exit: Ctrl-D is sent after the last line. Output is raw, escape sequences included;
-pipe through scripts/clean-pty.py (or the inline recipe in its docstring) to read it.
+Exit: Ctrl-D is sent TWICE after the last line (the REPL requires a double-press — the
+first arms a "Press Ctrl-D again to exit" hint, the second within the window exits).
+Output is raw, escape sequences included; pipe through scripts/clean-pty.py (or the
+inline recipe in its docstring) to read it.
 """
 import fcntl
 import os
@@ -111,7 +113,9 @@ try:
                 captured.append(f"\n<<pty closed after {line!r}>>\n")
                 break
         else:
-            os.write(fd, b"\x04")           # Ctrl-D
+            os.write(fd, b"\x04")           # Ctrl-D ×2 — the REPL now requires a double-press to exit
+            pump(0.5)
+            os.write(fd, b"\x04")
             pump(3.0)
 except OSError as e:
     captured.append(f"\n<<OSError {e}>>\n")

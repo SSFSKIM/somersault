@@ -292,16 +292,30 @@ describe("ChatComposer", () => {
     b.stdin.write("\t"); await new Promise((r) => setTimeout(r, 30));               // Tab → completes, not cycle
     expect(cycles).toBe(0);
   });
-  it("Ctrl-D on an empty buffer calls onExit; with text it does not", async () => {
+  it("Ctrl-D on an empty composer needs two presses (KB3): first arms a hint and does not exit, second within the window exits; with text it does nothing", async () => {
     let exits = 0;
     const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} />);
     await new Promise((r) => setTimeout(r, 20));
-    stdin.write("\x04");                                  // Ctrl-D on empty → exit
+    stdin.write("\x04");                                  // first Ctrl-D on empty → arms, does not exit
+    await waitFor(() => (lastFrame() ?? "").includes("Press Ctrl-D again to exit"));
+    expect(exits).toBe(0);
+    stdin.write("\x04");                                  // second Ctrl-D within the window → exits
     await waitFor(() => exits === 1);
     stdin.write("x"); await waitFor(() => (lastFrame() ?? "").includes("x"));
-    stdin.write("\x04");                                  // Ctrl-D with text → no exit
+    stdin.write("\x04");                                  // Ctrl-D with text → no-op (not an empty composer)
     await new Promise((r) => setTimeout(r, 30));
     expect(exits).toBe(1);
+  });
+  it("Ctrl-D's arm expires after exitArmMs — a press after the window re-arms instead of exiting", async () => {
+    let exits = 0;
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} exitArmMs={40} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x04");
+    await waitFor(() => (lastFrame() ?? "").includes("Press Ctrl-D again to exit"));
+    await new Promise((r) => setTimeout(r, 60));          // let the arm expire
+    stdin.write("\x04");
+    await waitFor(() => (lastFrame() ?? "").includes("Press Ctrl-D again to exit"));   // re-armed, not exited
+    expect(exits).toBe(0);
   });
   it("shows the placeholder + footer hint when empty, and hides them once you type", async () => {
     const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);

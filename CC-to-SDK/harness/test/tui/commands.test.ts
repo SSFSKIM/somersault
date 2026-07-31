@@ -144,6 +144,14 @@ describe("/bg (Goal B task 7)", () => {
   });
 });
 
+describe("/detach (F0 KB5 — detach moved off Ctrl-Z)", () => {
+  it("is a registered command, in LOCAL_NAMES, and in the palette entries", () => {
+    expect(COMMANDS.some((c) => c.name === "detach")).toBe(true);
+    expect(LOCAL_NAMES.has("detach")).toBe(true);
+    expect(LOCAL_COMMAND_ENTRIES.some((e) => e.name === "detach")).toBe(true);
+  });
+});
+
 describe("/config key=value (W3 T6)", () => {
   const FRESH_CTX: SettingsRowCtx = { theme: "dark", model: undefined, outputStyle: "default", mode: "default", thinkLevel: "default" };
   const freshRows = () => buildRows(FRESH_CTX);

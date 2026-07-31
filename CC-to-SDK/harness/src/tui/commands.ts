@@ -51,7 +51,8 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "rename", summary: "<title> — rename this session (shows current without args)" },
   { name: "tag", summary: "<name> — toggle a searchable tag on this session" },
   { name: "help", summary: "list commands" },
-  { name: "exit", summary: "leave the REPL (alias: /quit · same as Ctrl-D)" },
+  { name: "exit", summary: "leave the REPL (alias: /quit · same as Ctrl-D ×2)" },
+  { name: "detach", summary: "detach this client, leave the session running (reattach with ccx attach)" },
   { name: "quit", summary: "leave the REPL (alias: /exit)" },
 ];
 

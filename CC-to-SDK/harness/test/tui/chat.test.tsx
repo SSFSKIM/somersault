@@ -224,27 +224,52 @@ describe("<ChatApp>", () => {
     expect(lastFrame()).toContain("› do the thing");
   });
 
-  it("Ctrl-Z detaches when attached, and does NOT deny a pending remote permission (detach ≠ deny)", async () => {
-    let detachCalls = 0;
+  it("Ctrl-Z calls the injected suspend and does not exit or detach (KB5: detach moved to /detach)", async () => {
+    let suspended = 0; let detached = 0;
     const fake = fakeRemote();
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "attached", short: "abc" }} onDetach={() => { detachCalls++; }} cwd={process.cwd()} />);
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "attached", short: "abc" }} onDetach={() => { detached++; }} suspend={() => { suspended++; }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("\x1a");                                     // Ctrl-Z
+    await waitFor(() => suspended === 1);
+    expect(detached).toBe(0);
+    expect(frame(lastFrame)).toContain("›");                 // composer still alive, never exited
+  });
+
+  it("Ctrl-Z still reaches the injected suspend under a pending permission dialog, and never answers it", async () => {
+    let suspended = 0;
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "attached", short: "abc" }} suspend={() => { suspended++; }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
     const entry: PendingEntry = { sessionId: "s", toolUseID: "t", toolName: "Edit", kind: "permission", input: {}, createdAt: Date.now() };
     fake.parkPermission(entry);
     await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
-    stdin.write("\x1a");                                     // Ctrl-Z
-    await new Promise((r) => setTimeout(r, 30));
-    expect(detachCalls).toBe(1);
+    stdin.write("\x1a");                                     // Ctrl-Z — same gating tier as Ctrl-C/Ctrl-B, above every dialog gate
+    await waitFor(() => suspended === 1);
     expect(fake.answeredCalls).toEqual([]);                  // unanswered — stays parked, never denied
   });
 
-  it("Ctrl-Z with client.kind === 'loopback' appends a not-detachable notice and does not exit", async () => {
+  // "detach ≠ deny — a pending permission survives detaching" is proven in useChat.test.tsx ("/detach
+  // calls opts.detach without answering a pending permission"): a decision dialog occupies the SAME slot
+  // ChatComposer renders into (ChatApp.tsx's render chain), so a real permission dialog structurally
+  // pre-empts typing "/detach" at this integration level — the useChat-level test calls submit() directly,
+  // exercising the exact handleCommand code path this integration test exercises through keystrokes here.
+  it("/detach detaches an attached client; a loopback client notices not-detachable instead", async () => {
+    let detachCalls = 0;
     const fake = fakeRemote();
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "attached", short: "abc" }} onDetach={() => { detachCalls++; }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
-    stdin.write("\x1a");
-    await waitFor(() => frame(lastFrame).includes("not detachable — run with --detachable"));
-    stdin.write("still here"); await waitFor(() => frame(lastFrame).includes("still here"));   // composer still alive
+    stdin.write("/detach"); await waitFor(() => frame(lastFrame).includes("/detach"));
+    stdin.write("\r");
+    await waitFor(() => detachCalls === 1);
+
+    const loopback = fakeRemote();
+    const lb = render(<ChatApp makeSession={() => loopback} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lb.lastFrame).includes("›"));
+    lb.stdin.write("/detach"); await waitFor(() => frame(lb.lastFrame).includes("/detach"));
+    lb.stdin.write("\r");
+    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+    await waitFor(() => stripAnsi(frame(lb.lastFrame)).replace(/\s+/g, " ").includes("not detachable — run with --detachable, or ccx attach from another terminal"));
+    lb.stdin.write("still here"); await waitFor(() => frame(lb.lastFrame).includes("still here"));   // composer still alive
   });
 
   it("Ctrl-B while busy backgrounds the running turn (does not open the panel)", async () => {
