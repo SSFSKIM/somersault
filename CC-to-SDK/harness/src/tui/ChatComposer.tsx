@@ -62,10 +62,22 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800 }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number }) {
-  const [state, setState] = useState<EditorState>(() => initialEditorState());
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800 }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number }) {
+  const [state, setState] = useState<EditorState>(() => {
+    const saved = editorStateRef?.current ?? initialEditorState();
+    const normalized = saved.mention || saved.command ? { ...saved, mention: null, command: null } : saved;
+    if (editorStateRef) editorStateRef.current = normalized;
+    return normalized;
+  });
   const stateRef = useRef(state);
   stateRef.current = state;
+  const commitState = (next: EditorState | ((current: EditorState) => EditorState)) => {
+    const resolved = typeof next === "function" ? next(stateRef.current) : next;
+    stateRef.current = resolved;
+    if (editorStateRef) editorStateRef.current = resolved;
+    setState(resolved);
+    return resolved;
+  };
   const disposed = useRef(false);
   const [yankHint, setYankHint] = useState(false);
   const yankTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -111,27 +123,22 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   useEffect(() => () => { if (dTimer.current) clearTimeout(dTimer.current); }, []);
   const isEmptyNow = state.lines.length === 1 && state.lines[0] === "";
 
-  // Rewind's edit-and-resend: a NEW prefill (token bump) replaces the buffer wholesale; a re-render with the
-  // same token (or none) is a no-op — this must fire exactly once per rewind, not on every parent re-render.
-  // `lastPrefill` alone used to be the ONLY guard, but it lives in THIS component and resets to 0 every
-  // time the composer unmounts — which happens whenever any popup arm (shortcuts overlay, rewind picker,
-  // bg-tasks panel, model/session picker, any decision dialog) takes over. `composerPrefill` was never
-  // cleared after being consumed, so a remount re-armed the ref while the parent state still held the
-  // already-applied prefill, and the effect re-applied a stale rewound prompt into a freshly-typed buffer.
-  // `onPrefillApplied` moves the "already applied" knowledge up to useChat (which survives remounts): it
-  // clears `composerPrefill` to null the moment this fires, so no later remount can ever see a non-null
-  // prefill to re-apply — the ref here is now just a same-mount double-invoke guard, not the real dedup.
+  // Rewind's edit-and-resend: a NEW prefill token replaces the buffer wholesale; a re-render with the same
+  // token is a no-op. The ChatApp-owned consumed token ref survives every composer replacement, preventing
+  // a stale parent prefill from reapplying after the durable editor state has been edited or submitted.
+  // onPrefillApplied still clears the parent field, but correctness never depends on that passive render.
   // "prepend" mode (Task 3, CM49 — interrupt() rescuing a queue) MERGES above whatever the user was
   // mid-typing instead of clobbering it; every other prefill (rewind, history-accept — both modeless =
   // replace) keeps the wholesale-replace behavior above.
-  const lastPrefill = useRef(0);
+  const localPrefillTokenRef = useRef(0);
+  const lastPrefill = consumedPrefillTokenRef ?? localPrefillTokenRef;
   useEffect(() => {
     if (!prefill || prefill.token === lastPrefill.current) return;
     lastPrefill.current = prefill.token;
     const currentDraft = stateRef.current.lines.join("\n");
     const nextText = prefill.mode === "prepend" && currentDraft.length > 0 ? prefill.text + "\n" + currentDraft : prefill.text;
     if (currentDraft.length === 0 && nextText.length > 0) onDraftStartRef.current?.();
-    setState((s) => {
+    commitState((s) => {
       const draft = s.lines.join("\n");
       const text = prefill.mode === "prepend" && draft.length > 0 ? prefill.text + "\n" + draft : prefill.text;
       return replaceBufferFromOutside(s, text);
@@ -175,7 +182,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       // otherwise show stale items against the freshly-applied text.
       if (edited !== null && !disposed.current) {
         if (s.lines.length === 1 && s.lines[0] === "" && edited.length > 0) onDraftStartRef.current?.();
-        setState((st) => replaceBufferFromOutside(st, edited));
+        commitState((st) => replaceBufferFromOutside(st, edited));
       }
       return;
     }
@@ -193,7 +200,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
           if (clearArm.current && Date.now() - clearArm.current < escClearMsRef.current) {
             clearArm.current = 0; setClearArmed(false);
             if (clearTimer.current) clearTimeout(clearTimer.current);
-            setState(clearToHistory(s)); return;
+            commitState(clearToHistory(s)); return;
           }
           clearArm.current = Date.now(); setClearArmed(true);
           if (clearTimer.current) clearTimeout(clearTimer.current);
@@ -211,7 +218,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       yankTimer.current = setTimeout(() => setYankHint(false), yankHintMsRef.current);
     }
     if (s.lines.length === 1 && s.lines[0] === "" && !(r.state.lines.length === 1 && r.state.lines[0] === "")) onDraftStartRef.current?.();
-    if (r.submit != null) onSubmitRef.current(r.submit); setState(r.state);
+    if (r.submit != null) onSubmitRef.current(r.submit); commitState(r.state);
   });
 
   // A just-opened mention has empty files → walk cwd once and feed the results in.
@@ -219,14 +226,14 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   useEffect(() => {
     if (!needWalk) return;
     const files = collectFiles(cwd, realReaddir);
-    if (!disposed.current) setState((s) => setMentionFiles(s, files));
+    if (!disposed.current) commitState((s) => setMentionFiles(s, files));
   }, [needWalk, cwd]);
 
   // First time a command popup opens with an empty catalog, feed in the live catalog (mirrors the mention walk).
   const needCatalog = state.command != null && state.command.catalog.length === 0 && commandCatalog.length > 0;
   useEffect(() => {
     if (!needCatalog) return;
-    if (!disposed.current) setState((s) => setCommandCatalog(s, commandCatalog));
+    if (!disposed.current) commitState((s) => setCommandCatalog(s, commandCatalog));
   }, [needCatalog, commandCatalog]);
 
   const mode = inputMode(state);

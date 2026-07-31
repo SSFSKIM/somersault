@@ -11,9 +11,10 @@
 import { describe, it, expect } from "vitest";
 import React from "react";
 import { render } from "ink-testing-library";
-import { Box } from "ink";
+import { Box, Text } from "ink";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
+import { initialEditorState, type EditorState } from "../../src/tui/editor.js";
 import { ShortcutsOverlay } from "../../src/tui/ShortcutsOverlay.js";
 import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
@@ -51,6 +52,24 @@ function Harness({ makeSession, deps, api }: { makeSession: () => ChatSession; d
   );
 }
 
+type DurableApi = { open?: () => void; close?: () => void };
+function DurableHarness({ editorStateRef, consumedPrefillTokenRef, prefill, api, onSubmit = () => {} }: {
+  editorStateRef: React.MutableRefObject<EditorState>;
+  consumedPrefillTokenRef?: React.MutableRefObject<number>;
+  prefill?: { text: string; token: number } | null;
+  api: DurableApi;
+  onSubmit?: (text: string) => void;
+}) {
+  const [overlayOpen, setOverlayOpen] = React.useState(false);
+  api.open = () => setOverlayOpen(true);
+  api.close = () => setOverlayOpen(false);
+  return <Box flexDirection="column">
+    {overlayOpen
+      ? <Text>Settings overlay</Text>
+      : <ChatComposer editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} prefill={prefill} onSubmit={onSubmit} cwd={process.cwd()} commandCatalog={[]} />}
+  </Box>;
+}
+
 describe("composer prefill: consumed at most once across a popup remount (Important 1)", () => {
   it("a rewind prefill, once applied, does not resurrect after the shortcuts overlay opens and closes", async () => {
     const session = fakeRewindSession({ rewind: async () => {} });
@@ -76,6 +95,67 @@ describe("composer prefill: consumed at most once across a popup remount (Import
 
     // The already-consumed prefill must not resurrect into the freshly-mounted, empty composer.
     expect(frame(lastFrame)).not.toContain("fix the parser");
+  });
+});
+
+describe("app-scoped durable editor state across overlay remounts", () => {
+  it("retains the current rescue draft, kill ring, and submit reset without restoring stale autocomplete", async () => {
+    const editorStateRef = { current: initialEditorState() };
+    const api: DurableApi = {};
+    const submitted: string[] = [];
+    const { stdin, lastFrame } = render(<DurableHarness editorStateRef={editorStateRef} api={api} onSubmit={(text) => submitted.push(text)} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("rescued prompt");
+    await waitFor(() => frame(lastFrame).includes("rescued prompt"));
+    api.open!();                                                    // immediate parent transition: no passive draft copy may race it
+    await waitFor(() => frame(lastFrame).includes("Settings overlay"));
+    api.close!();
+    await waitFor(() => frame(lastFrame).includes("rescued prompt"));
+    await new Promise((r) => setTimeout(r, 20));
+
+    stdin.write(" edited");
+    await waitFor(() => frame(lastFrame).includes("rescued prompt edited"));
+    stdin.write("\x15");
+    await waitFor(() => !frame(lastFrame).includes("rescued prompt edited"));
+    api.open!(); await waitFor(() => frame(lastFrame).includes("Settings overlay"));
+    api.close!(); await waitFor(() => frame(lastFrame).includes("›"));
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x19");
+    await waitFor(() => frame(lastFrame).includes("rescued prompt edited"));
+
+    stdin.write("\r");
+    await waitFor(() => submitted.length === 1);
+    api.open!(); await waitFor(() => frame(lastFrame).includes("Settings overlay"));
+    api.close!(); await waitFor(() => frame(lastFrame).includes("›"));
+    expect(frame(lastFrame)).not.toContain("rescued prompt edited");
+
+    editorStateRef.current = {
+      ...initialEditorState(), lines: ["/review"], cursor: { row: 0, col: 7 },
+      command: { query: "review", items: [{ name: "review", description: "stale popup", source: "catalog" }], catalog: [], index: 0 },
+    };
+    api.open!(); await waitFor(() => frame(lastFrame).includes("Settings overlay"));
+    api.close!(); await waitFor(() => frame(lastFrame).includes("/review"));
+    expect(frame(lastFrame)).not.toContain("stale popup");
+  });
+
+  it("keeps an edited durable draft when a stale parent prefill survives an overlay remount", async () => {
+    const editorStateRef = { current: initialEditorState() } as React.MutableRefObject<EditorState>;
+    const consumedPrefillTokenRef = { current: 0 } as React.MutableRefObject<number>;
+    const api: DurableApi = {};
+    const { stdin, lastFrame } = render(
+      <DurableHarness editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef}
+        prefill={{ text: "old rewind", token: 17 }} api={api} />,
+    );
+    await waitFor(() => frame(lastFrame).includes("old rewind"));
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write(" revised");
+    await waitFor(() => frame(lastFrame).includes("old rewind revised"));
+
+    api.open!(); await waitFor(() => frame(lastFrame).includes("Settings overlay"));
+    api.close!(); await waitFor(() => frame(lastFrame).includes("old rewind revised"));
+    await new Promise((r) => setTimeout(r, 30)); // allow a remounted passive prefill effect to expose a stale-token bug
+    expect(frame(lastFrame)).toContain("old rewind revised");
+    expect(consumedPrefillTokenRef.current).toBe(17);
   });
 });
 

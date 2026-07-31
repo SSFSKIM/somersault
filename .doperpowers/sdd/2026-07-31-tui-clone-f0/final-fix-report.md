@@ -330,3 +330,50 @@ Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/
   `Claude Code Src` reference, the 2.1.220 bundle reference, and the corrected ~63% headline.
 - Fresh 100x40 self-captures remain `0 clean, 0 allowlisted, 3 DIVERGENT` for help and `0 clean, 0
   allowlisted, 5 DIVERGENT` for composer, both expected diff exit code 1. No tracked fixture was rewritten.
+
+## Sixth plugin review pass
+
+Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/2026-07-31-tui-clone-f0/final-rereview6-findings.md`.
+
+1. **Critical — durable editor state across temporary composer removal.** The initial red regression proved
+   that a current rescue draft disappeared as soon as the composer was unmounted for an overlay.
+   `ChatApp` now owns an instance-scoped `MutableRefObject<EditorState>` and the consumed-prefill token.
+   `ChatComposer` initializes from that object and synchronously writes every editor transition: typing,
+   replacement/prefill, external edit, clear, history/completion transitions, kill/yank, and submit reset.
+   It clears transient mention/command popup state only when remounting, so a stale autocomplete popup cannot
+   appear behind a later overlay. The real ChatApp matrix retains an edited rescue through pager, history, and
+   permission-decision remounts; the structurally identical settings-overlay harness covers that conditional
+   replacement; kill/yank survives; and a submitted draft stays empty. A deliberate local-token sabotage
+   red-proof re-applied `old rewind` and lost the user’s `revised` suffix after remount; the app-scoped token
+   keeps the current draft instead. The state is per `ChatApp` invocation, not module-global.
+2. **Important — insert-mode wide glyphs.** The red `CSI 4 h` test inserted `Z` before `界` and observed the
+   shifted glyph erased by the overwrite prepass. `DimScreen.draw()` now performs leading/trailing wide-pair
+   clearing only outside pyte insert-replace mode. Narrow-before-wide, dim/plain, lead/continuation-destination,
+   and row-edge cases preserve both visible text and the glyph’s dim attribute; existing ordinary overwrite
+   lead/stub regressions remain covered.
+
+### Sixth-pass verification
+
+- `npm run typecheck`: **PASS**.
+- Committed TUI suite excluding the protected concurrent probe: **39 files, 659 tests passed; 9
+  credential-gated live tests skipped**.
+- `npm run test:unit`: **PASS; 135 files, 1,227 tests passed**.
+- `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`: **PASS; 27 tests
+  passed**.
+- `git diff --check`: **PASS**.
+- Keyed PTY acceptance retained the exact queue-rescue contract: the final composer contained `one`, `two`,
+  `three` in order and no queued rows. The keyless PTY runs showed Esc clear then history restore, and the
+  first Ctrl-D hint followed by the driver’s second Ctrl-D exit. No credential value was printed.
+- The scorecard and F0 plan now describe the evidence-backed temporary-remount guarantee rather than claiming
+  a deliberately retained destroyed-text path or universal no-loss behavior.
+
+### Sixth-pass frame baseline
+
+Fresh 100x40 captures at `/tmp/frame-scratch` wrote all expected frames and left tracked fixtures untouched:
+
+- Help overlay: **3 frames; `0 clean, 0 allowlisted, 3 DIVERGENT`; expected diff exit 1**.
+- Composer basics: **5 frames; `0 clean, 0 allowlisted, 5 DIVERGENT`; expected diff exit 1**.
+
+The expected divergence remains the known layout/chrome fidelity gap, not a capture or diff false success.
+The only outstanding manual concern is still the owner-run terminal `Ctrl-Z` → `fg` round trip; injected
+suspend tests cover raw-mode and signal ordering, but an automated pty cannot safely execute `fg`.

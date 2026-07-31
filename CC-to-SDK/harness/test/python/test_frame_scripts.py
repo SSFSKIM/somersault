@@ -324,6 +324,29 @@ class FrameScriptsTest(unittest.TestCase):
         self.assertFalse(screen.dim_at(0, 0))
         self.assertFalse(screen.dim_at(0, 1), "overwriting a wide cell clears the stale dim stub")
 
+    def test_dim_insert_mode_shifts_wide_glyphs_without_preclearing_them(self):
+        for columns, glyph_dim in ((4, False), (3, True)):
+            screen = capture.DimScreen(columns, 1)
+            style = "\x1b[2m" if glyph_dim else "\x1b[0m"
+            capture.pyte.ByteStream(screen).feed((style + "界\x1b[1G\x1b[0m\x1b[4hZ").encode())
+            self.assertEqual(screen.buffer[0][0].data, "Z")
+            self.assertEqual(screen.buffer[0][1].data, "界")
+            self.assertEqual(screen.buffer[0][2].data, "")
+            self.assertFalse(screen.dim_at(0, 0))
+            self.assertEqual(screen.dim_at(0, 1), glyph_dim)
+            self.assertIn("Z界", re.sub(r"\x1b\[[0-9;]*m", "", capture.render_screen(screen)))
+
+    def test_dim_insert_mode_preserves_wide_glyphs_at_lead_and_continuation_destinations(self):
+        for payload, expected, glyph_column, glyph_dim in (
+            ("\x1b[2m界A\x1b[2G\x1b[0m\x1b[4hZ", "界ZA", 0, True),
+            ("\x1b[0mA界B\x1b[3G\x1b[4hZ", "A界ZB", 1, False),
+        ):
+            screen = capture.DimScreen(7, 1)
+            capture.pyte.ByteStream(screen).feed(payload.encode())
+            self.assertEqual(screen.buffer[0][glyph_column].data, "界")
+            self.assertEqual(screen.dim_at(0, glyph_column), glyph_dim)
+            self.assertIn(expected, re.sub(r"\x1b\[[0-9;]*m", "", capture.render_screen(screen)))
+
     def test_dim_wide_continuation_overwrite_clears_the_entire_glyph_and_style_at_row_edges(self):
         for payload, leading, trailing in (
             ("\x1b[2m界\x1b[2G\x1b[0mZ", 0, 1),

@@ -1626,6 +1626,50 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("Claude Code won't ask before using allowed tools.");   // dialog really closed
   });
 
+  it("a queue-rescued draft remains current through actual pager, history, and decision composer remounts", async () => {
+    let interrupted = 0;
+    let first = true;
+    let fake: ReturnType<typeof fakeRemote>;
+    fake = fakeRemote({
+      submit: async (_prompt) => {
+        fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+        if (first) { first = false; return new Promise(() => {}); }
+        fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+        return { result: "done" };
+      },
+      interrupt: async () => { interrupted++; fake.pushEvent({ kind: "turn", phase: "end", seq: 1 }); },
+    });
+    const deps = { getSessionMessages: async () => [] as any[], getSessionMessagesIn: async () => [] as any[], listHistorySessions: async () => [] };
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("start"); await waitFor(() => frame(lastFrame).includes("start"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
+    for (const text of ["queued one", "queued two"]) {
+      stdin.write(text); await waitFor(() => frame(lastFrame).includes(text));
+      stdin.write("\r"); await waitFor(() => frame(lastFrame).includes(`⋯ queued: ${text}`));
+    }
+    stdin.write("\x1b");
+    await waitFor(() => interrupted === 1 && frame(lastFrame).includes("queued one") && frame(lastFrame).includes("queued two"));
+
+    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Transcript"));
+    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("›"));
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x12"); await waitFor(() => frame(lastFrame).includes("Search prompts"));
+    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("›"));
+    await new Promise((r) => setTimeout(r, 20));
+
+    fake.parkPermission({ sessionId: "s", toolUseID: "rescue", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
+    await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
+    stdin.write("\x1b"); await waitFor(() => fake.answeredCalls.length === 1);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write(" edited"); await waitFor(() => frame(lastFrame).includes("queued two edited"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Ask Claude anything…"));
+
+    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Transcript"));
+    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Ask Claude anything…"));
+  });
+
   it("Esc with a running turn and 3 queued messages: composer holds all three newline-joined, queue empty, turn interrupted (F0 acceptance 1, CM49)", async () => {
     let interrupted = 0;
     const submitted: string[] = [];

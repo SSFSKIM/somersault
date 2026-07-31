@@ -143,15 +143,16 @@ class DimScreen(pyte.Screen):
         # pyte represents a wide glyph as a leading character plus an empty continuation cell. Clear that
         # pair in the real buffer BEFORE a write lands on either half, so a narrow overwrite cannot leave a
         # styled leading glyph behind and a wide overwrite starts from two ordinary cells.
-        x, y = self.cursor.x, self.cursor.y
-        for char in data:
-            width = wcwidth(char)
-            if x == self.columns and width > 0:
-                x = 0
-                y = min(y + 1, self.lines - 1)
-            if width > 0:
-                self._clear_wide_cell_at(y, x)
-                x = min(x + width, self.columns)
+        if pyte_modes.IRM not in self.mode:
+            x, y = self.cursor.x, self.cursor.y
+            for char in data:
+                width = wcwidth(char)
+                if x == self.columns and width > 0:
+                    x = 0
+                    y = min(y + 1, self.lines - 1)
+                if width > 0:
+                    self._clear_wide_cell_at(y, x)
+                    x = min(x + width, self.columns)
         super().draw(data)
 
     def dim_at(self, row: int, column: int) -> bool:
