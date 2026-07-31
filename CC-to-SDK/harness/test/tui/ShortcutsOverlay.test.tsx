@@ -1,7 +1,8 @@
-// test/tui/ShortcutsOverlay.test.tsx — the `?` help overlay (Stage C5 task 7): a pure-display bordered
-// keymap panel; ANY keypress closes it. Rows are checked only against bindings that actually exist in
-// this codebase (ChatApp.tsx / editor.ts / ChatComposer.tsx) — a row for a binding we don't implement
-// would be a false promise. Mirrors RewindPicker.test.tsx's waitFor-before-keys discipline.
+// test/tui/ShortcutsOverlay.test.tsx — the `?` help overlay (Stage C5 task 7, F0 KB6): a pure-display
+// bordered keymap panel that closes on Escape ONLY — every other key is swallowed here, not left to leak
+// into whatever's underneath. Rows are checked only against bindings that actually exist in this codebase
+// (ChatApp.tsx / editor.ts / ChatComposer.tsx) — a row for a binding we don't implement would be a false
+// promise. Mirrors RewindPicker.test.tsx's waitFor-before-keys discipline.
 import { describe, it, expect } from "vitest";
 import React from "react";
 import { render } from "ink-testing-library";
@@ -12,6 +13,7 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await new Promise((r) => setTimeout(r, 0)); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 }
+const tick = () => new Promise((r) => setTimeout(r, 20));   // let useInput subscribe
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 /** Find the exact keymap row for `key` (border char + key + whitespace boundary, so "Esc" doesn't match
  *  the "Esc Esc" row and vice versa) and return its full text — so a check against the row's label fails
@@ -38,12 +40,15 @@ describe("<ShortcutsOverlay>", () => {
     expect(rowFor(f, "?")).toContain("this help");
   });
 
-  it("any keypress calls onClose", async () => {
+  it("only Escape closes the overlay; other keys neither close nor leak", async () => {
     let closed = 0;
     const { stdin, lastFrame } = render(<ShortcutsOverlay onClose={() => { closed++; }} />);
-    await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
-    await new Promise((r) => setTimeout(r, 20));   // let useInput subscribe
-    stdin.write("x");
+    await tick();
+    stdin.write("x"); stdin.write("\x0f");                     // 'x', Ctrl-O
+    await tick();
+    expect(closed).toBe(0);
+    expect(frame(lastFrame)).toContain("esc closes");
+    stdin.write("\x1b");
     await waitFor(() => closed === 1);
   });
 });

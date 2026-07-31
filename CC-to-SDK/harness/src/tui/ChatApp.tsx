@@ -9,7 +9,10 @@
 // owns the keys, including its own ctrl+c as transcript:exit (per the bundle), so the app's Ctrl-C
 // exit-arm must not also fire underneath it. Ctrl-R (Wave 2 task 7) opens the history-search overlay —
 // same gating pattern: Ctrl-Z stays live, every other app arm is gated while it's open (its own Ctrl-C/
-// Ctrl-R/Ctrl-S own those keys). Renders increment 8's multiline <ChatComposer>.
+// Ctrl-R/Ctrl-S own those keys). The `?` shortcuts overlay (F0 KB6) is gated the same way, checked FIRST
+// (right after Ctrl-Z) so it wins even over Ctrl-O/Ctrl-R below — it closes on Esc only, via its own
+// useInput, so e.g. Ctrl-O no longer both closes the overlay AND opens the pager in one keystroke.
+// Renders increment 8's multiline <ChatComposer>.
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
@@ -90,6 +93,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       else notice("not detachable — run with --detachable, or ccx attach from another terminal");
       return;
     }
+    if (state.shortcutsOpen) return;   // KB6: Help owns every key; its own useInput closes on Esc only
     if (transcriptOpen) {                                   // pager owns the keys (its ctrl+c = transcript:exit, per bundle)
       if (key.ctrl && input === "o") { setTranscriptOpen(false); disarm(); }
       return;

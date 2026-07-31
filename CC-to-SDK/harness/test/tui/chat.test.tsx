@@ -359,7 +359,7 @@ describe("<ChatApp>", () => {
 
     stdin.write("?");                                               // empty composer → shortcuts overlay (composer unmounts)
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
-    stdin.write("x");                                               // any key closes it → composer REMOUNTS
+    stdin.write("\x1b");                                            // Escape closes it (KB6) → composer REMOUNTS
     await waitFor(() => frame(lastFrame).includes("›"));
     await new Promise((r) => setTimeout(r, 80));
     expect(frame(lastFrame)).not.toContain("fix the parser");       // must not resurrect
@@ -426,15 +426,31 @@ describe("<ChatApp>", () => {
     await waitFor(() => !frame(lastFrame).includes("restoring"));
   });
 
-  it("? on an empty idle composer opens the shortcuts overlay; any keypress closes it back to the composer", async () => {
+  it("? on an empty idle composer opens the shortcuts overlay; only Escape closes it back to the composer (KB6)", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
     stdin.write("?");
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
     expect(frame(lastFrame)).not.toContain("›");                     // composer is replaced by the overlay
     stdin.write("x");
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).toContain("Keyboard shortcuts");        // a non-Escape key leaves it open
+    stdin.write("\x1b");
     await waitFor(() => frame(lastFrame).includes("›"));
     expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");
+  });
+
+  it("with the ? overlay open, ctrl+o does NOT open the pager and the overlay stays (F0 acceptance 5)", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("?");
+    await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
+    stdin.write("\x0f");                                              // Ctrl-O
+    await new Promise((r) => setTimeout(r, 30)); await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).toContain("Keyboard shortcuts");         // still open
+    stdin.write("\x1b");
+    await waitFor(() => !frame(lastFrame).includes("Keyboard shortcuts"));
   });
 
   it("? mid-buffer inserts a literal '?' instead of opening the overlay", async () => {

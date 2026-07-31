@@ -1,14 +1,16 @@
 // tui/src/ShortcutsOverlay.tsx — the `?` help overlay (Stage C5 task 7): a pure-display bordered keymap
-// panel that dismisses on any keypress. Every row here corresponds to a binding that ACTUALLY exists —
-// checked against ChatApp.tsx (Ctrl-C/Ctrl-Z/Ctrl-T/Ctrl-O/Esc), editor.ts (Ctrl-L/Ctrl-_/Ctrl-S + the readline
-// and word-movement keys), and ChatComposer.tsx (⇧Tab/!/#/@// prefixes, Ctrl-D, Ctrl-X Ctrl-E / Ctrl-G
-// external editor). A help row for a binding we don't implement would be a false promise, so nothing is
-// listed here that isn't wired elsewhere in this package.
+// panel that dismisses on Escape ONLY (F0 KB6) — every other key is swallowed so it can't double-fire into
+// ChatApp's global chords underneath (e.g. Ctrl-O used to close the overlay AND open the pager in the same
+// keystroke). Every row here corresponds to a binding that ACTUALLY exists — checked against ChatApp.tsx
+// (Ctrl-C/Ctrl-Z/Ctrl-T/Ctrl-O/Esc), editor.ts (Ctrl-L/Ctrl-_/Ctrl-S + the readline and word-movement keys),
+// and ChatComposer.tsx (⇧Tab/!/#/@// prefixes, Ctrl-D, Ctrl-X Ctrl-E / Ctrl-G external editor). A help row
+// for a binding we don't implement would be a false promise, so nothing is listed here that isn't wired
+// elsewhere in this package.
 import React from "react";
 import { Box, Text, useInput } from "ink";
 import { ACCENT } from "./theme.js";
 
-const ROWS: [string, string][] = [
+export const ROWS: [string, string][] = [
   ["⏎", "send"],
   ["\\⏎ / Ctrl-J", "newline"],
   ["↑↓", "history"],
@@ -38,10 +40,10 @@ const ROWS: [string, string][] = [
 ];
 
 export function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
-  useInput(() => onClose());   // pure display — any key dismisses it, no key is otherwise interpreted
+  useInput((_input, key) => { if (key.escape) onClose(); });   // KB6: Escape only — every other key is swallowed here, not left to leak into a chord underneath
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
-      <Text bold>Keyboard shortcuts  <Text dimColor>(any key closes)</Text></Text>
+      <Text bold>Keyboard shortcuts  <Text dimColor>(esc closes)</Text></Text>
       {ROWS.map(([k, label]) => (
         <Box key={k} flexDirection="row">
           <Box width={18}><Text color={ACCENT}>{k}</Text></Box>
