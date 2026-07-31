@@ -347,6 +347,13 @@ source and commit history in `CC-to-SDK/harness/src/tui/`, not taken on the brie
 real, each landed in its own commit on `main`, and each is now backed by a test (including two that
 required a captured red-proof after an initial review found the first test was tautological):
 
+**Final-review correction pass (2026-08-01, commit `fa4c313c88`).** The consolidated review follow-up
+closed the remaining queue-rescue replacement-state race, stale composer callback/timing reads,
+focus-blind status hints, Windows suspend rollback, managed-permissions footer lie, and frame
+instrument false-success/masking gaps. The pass also adds regression coverage for each correction and
+keeps the committed frame baseline intentionally divergent: the corrected diff reports 3 divergent
+help-overlay frames and 5 divergent composer frames rather than silently treating them as clean.
+
 | # | Fix | Commit | Where scored above |
 |---|---|---|---|
 | 1 | Kill-ring: `Ctrl-K`/`Ctrl-U`/`Ctrl-W` used to discard killed text; now a real ring (cap 10) with `Ctrl-Y` yank / `Alt-Y` yank-pop | `a853e8dbc8` (+ fix-up `cc2a42282f`) | §1 "Ctrl-K / Ctrl-U", "Ctrl-W" |
@@ -367,7 +374,7 @@ own method note above points to, and are recorded here so a reader of the scorec
   of the audit's *own* checks that were comparing hand-copied literal strings instead of rendered
   output — both were proven inert by sabotage before the fix and caught by it after.
 - **The frame instrument** (`harness/scripts/capture-frames.py` + `harness/scripts/frame-diff.py`,
-  commit `a2dc8694dd`) captures a pyte-emulated screen state of a running TUI at named checkpoints and
+  commit `31c7528c80`) captures a pyte-emulated screen state of a running TUI at named checkpoints and
   diffs two capture directories with nondeterminism masked out. First goldens against the real,
   installed `claude` 2.1.220 binary are committed under `harness/test/fixtures/upstream-frames/`
   (`help-overlay/`, `composer-basics/`). Running it against our own `ccx` today reports both sets
@@ -397,7 +404,7 @@ own method note above points to, and are recorded here so a reader of the scorec
 | Ctrl-_ / Ctrl-- (undo edit) | ✅ | — | **W1** `editor.ts` snapshot-on-change stack (cap 100) — 2.1.220 `chat:undo`. **fixed 2026-07-31 (F0, t4, KB4):** this row was scored ✅ but was actually **unreachable** — terminals send the bare `0x1f` byte with `key.ctrl===false`, so the old `ctrl+"_"`/`ctrl+"-"` branch never fired and a literal `\x1f` was inserted instead (only reducer-level tests existed, which is why nothing caught it, and `ShortcutsOverlay.tsx` was advertising a dead chord). Fixed by matching the raw `\x1f` byte directly; the dead `ctrl+"_"/"-"` branch was removed |
 | Ctrl-S (stash / restore input) | ✅ | — | **W1** `editor.ts` — 2.1.220 `chat:stash`: parks a non-empty buffer, restores on the next Ctrl-S from empty |
 | Shift+Tab cycles permission mode (bare Tab popup-only) | ✅ | — | **W1** converged on 2.1.220's `chat:cycleMode` = `shift+tab`; bare Tab now belongs to autocomplete alone (our old bare-Tab cycle was a divergence) |
-| Ctrl-C twice / Ctrl-D to exit | ✅ | — | **U8** Ctrl-C interrupts a turn, else "Press Ctrl-C again to exit". **F0 update (t6, KB3):** Ctrl-D used to exit on a single empty-buffer press; it now needs two presses within the arm window, matching upstream's `Pee` helper — including its exact **800ms** window (`cli.pretty.js:183445`, the same constant `Ctrl-_`'s Escape-clear timer uses), corrected down from this plan's originally-assumed 2000ms after reading upstream's own patched-Ink suspend code |
+| Ctrl-C twice / Ctrl-D to exit | ✅ | — | **U8** Ctrl-C interrupts a turn, else "Press Ctrl-C again to exit". **F0 update (t6, KB3):** Ctrl-D used to exit on a single empty-buffer press; it now needs two presses within the arm window, matching upstream's `Pee` helper — including its exact **800ms** window (`cli.pretty.js:183445`, the same constant as the Esc-Esc clear timer), corrected down from this plan's originally-assumed 2000ms after reading upstream's own patched-Ink suspend code |
 | Queued messages while busy | ✅ | — | **U6** turns queue while busy + drain FIFO on turn end; `⋯ queued:` indicator. **fixed 2026-07-31 (F0, t3, CM49):** this row was scored ✅ but Esc during a busy turn **destroyed** the queued text instead of preserving it — the correction had this at 🟡. `interrupt()` now pops the queue back into the composer (prepended ahead of any in-progress draft) before clearing it, so typed/queued text is never lost on interrupt |
 | Placeholder / ghost text ("Ask Claude…") | 🟡 | — | **U7** dim placeholder on empty buffer. **F0 correction:** upstream's placeholder is a 4-rule precedence chain over a git-seeded random pool (one rule is the queue hint); ours is one fixed string |
 | `?` shortcuts / help menu | ✅ | — | **C5** `ShortcutsOverlay.tsx` — a real bordered overlay listing the keymap, opened by `?` on a genuinely empty composer; the U7 footer hint line stays alongside it. **fixed 2026-07-31 (F0, t5, KB6):** this row was scored ✅ but the overlay closed on **any** key, and that same key also fired `ChatApp`'s global chords underneath it (e.g. `Ctrl-O` would both close the overlay and open the transcript pager in one keystroke) — the correction had this at 🟡. It now closes on Escape only and swallows every other key, matching upstream's `Help` context (which binds only `escape`); a sabotage-verified honesty-audit test pins this |
