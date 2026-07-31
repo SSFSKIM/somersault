@@ -139,6 +139,14 @@ function submitTurn(s: EditorState): EditorResult {
   return { state: { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing }, submit: t };
 }
 
+/** Esc-Esc's second press (CC `cgr`): push the buffer to prompt history, then clear. Blank buffer = no-op. */
+export function clearToHistory(s: EditorState): EditorState {
+  if (isBlank(s)) return s;
+  const t = bufferText(s);
+  const history = s.history.length && s.history[s.history.length - 1] === t ? s.history : [...s.history, t];
+  return { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing };
+}
+
 function setBuffer(s: EditorState, t: string): EditorState {
   const lines = splitLines(t); const r = lines.length - 1;
   return { ...s, lines, cursor: { row: r, col: lines[r].length } };

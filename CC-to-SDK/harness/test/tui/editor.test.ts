@@ -1,7 +1,7 @@
 // tui/test/editor.test.ts — pure editor-reducer units. Probe 17d7116: a paste arrives as one `input` with
 // embedded \n; submit = a lone key.return; `\`+Enter = continuation.
 import { describe, it, expect } from "vitest";
-import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, inputMode, withBufferText, type EditorState, type KeyFlags } from "../../src/tui/editor.js";
+import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, inputMode, withBufferText, clearToHistory, type EditorState, type KeyFlags } from "../../src/tui/editor.js";
 import type { CommandEntry } from "../../src/tui/commandComplete.js";
 
 const type = (s: EditorState, text: string): EditorState => applyKey(s, text, {}).state;
@@ -510,5 +510,19 @@ describe("kill ring (CM10/CM11)", () => {
     const r = applyKey(s, "", { return: true });
     expect(r.submit).toBe("send this");
     expect(r.state.killRing).toEqual(["keep me"]);
+  });
+});
+
+describe("Escape semantics — clearToHistory (CM15)", () => {
+  it("clearToHistory pushes the buffer as the newest history entry, clears, and keeps stash + kill ring", () => {
+    let s = initialEditorState(["old"]);
+    s = { ...s, stashed: "parked", killRing: ["killed"] };
+    s = [..."new text"].reduce((st, ch) => applyKey(st, ch, {}).state, s);
+    const c = clearToHistory(s);
+    expect(c.lines).toEqual([""]);
+    expect(c.history).toEqual(["old", "new text"]);
+    expect(c.stashed).toBe("parked");
+    expect(c.killRing).toEqual(["killed"]);
+    expect(clearToHistory(initialEditorState())).toEqual(initialEditorState());  // blank = no-op
   });
 });

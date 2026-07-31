@@ -381,9 +381,9 @@ describe("<ChatApp>", () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
 
-    stdin.write("hi"); await waitFor(() => frame(lastFrame).includes("hi"));
-    stdin.write("\x1b");                                            // arm on an idle composer, THEN submit without a second Esc
+    stdin.write("\x1b");                                            // arm on an EMPTY composer (CM15: text would arm the clear instead)
     await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
+    stdin.write("hi"); await waitFor(() => frame(lastFrame).includes("hi"));   // THEN type and submit to start the turn
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("ok"));            // turn running
     expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");

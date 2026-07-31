@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { readdirSync } from "node:fs";
-import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, withBufferText, type EditorState } from "./editor.js";
+import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, withBufferText, clearToHistory, type EditorState } from "./editor.js";
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
 import { editExternal as realEditExternal } from "./externalEditor.js";
@@ -60,7 +60,7 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000 }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, onEmptyChange }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; onEmptyChange?: (empty: boolean) => void }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -70,6 +70,16 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   useEffect(() => () => { disposed.current = true; if (yankTimer.current) clearTimeout(yankTimer.current); }, []);
   const editExt = editExternal ?? realEditExternal;
   const ctrlX = useRef(0);
+  // busy is read through a ref in useInput below (busyRef.current, never the closure `busy`) — same reason
+  // as stateRef: useInput re-registers in a passive effect, so a closure read lags one render.
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const [clearArmed, setClearArmed] = useState(false);
+  const clearArm = useRef(0);
+  const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (clearTimer.current) clearTimeout(clearTimer.current); }, []);
+  const isEmptyNow = state.lines.length === 1 && state.lines[0] === "";
+  useEffect(() => { onEmptyChange?.(isEmptyNow); }, [isEmptyNow]);
 
   // Rewind's edit-and-resend: a NEW prefill (token bump) replaces the buffer wholesale; a re-render with the
   // same token (or none) is a no-op — this must fire exactly once per rewind, not on every parent re-render.
@@ -115,10 +125,29 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     }
     ctrlX.current = 0;                                       // any other key breaks the chord
     // Esc is global ONLY when no autocomplete popup is open; with a popup, applyKey owns it (closes the
-    // popup). This single owner prevents the ChatApp+composer double-handling.
+    // popup). This single owner prevents the ChatApp+composer double-handling. CC's Esc-Esc semantics
+    // (CM15): busy Esc always interrupts (buffer untouched); idle Esc with text arms a local double-press
+    // clear (pushing the buffer to history on the second press); idle Esc on an EMPTY buffer is forwarded
+    // to onInterrupt so ChatApp's rewind-picker arm — the picker is structurally unreachable while text
+    // is present, since only the empty branch ever reaches onInterrupt outside the busy case.
     if (!s.command && !s.mention) {
-      if (key.escape) { onInterrupt?.(); return; }
+      if (key.escape) {
+        if (busyRef.current) { onInterrupt?.(); return; }                  // running turn: Esc is interrupt; buffer untouched
+        if (!(s.lines.length === 1 && s.lines[0] === "")) {                // idle + text: CC's double-press clear (CM15)
+          if (clearArm.current && Date.now() - clearArm.current < escClearMs) {
+            clearArm.current = 0; setClearArmed(false);
+            if (clearTimer.current) clearTimeout(clearTimer.current);
+            setState(clearToHistory(s)); return;
+          }
+          clearArm.current = Date.now(); setClearArmed(true);
+          if (clearTimer.current) clearTimeout(clearTimer.current);
+          clearTimer.current = setTimeout(() => { clearArm.current = 0; setClearArmed(false); }, escClearMs);
+          return;
+        }
+        onInterrupt?.(); return;                                           // idle + empty: ChatApp owns rewind arming
+      }
     }
+    if (clearArm.current) { clearArm.current = 0; setClearArmed(false); if (clearTimer.current) clearTimeout(clearTimer.current); }
     const r = applyKey(s, input, key);
     if (key.ctrl && input === "u" && r.killed && r.killed.text.length >= 3) {
       setYankHint(true);
@@ -145,19 +174,19 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
 
   const mode = inputMode(state);
   const border = mode === "bash" ? "magenta" : mode === "memory" ? "blue" : undefined;
-  const isEmpty = state.lines.length === 1 && state.lines[0] === "";
   const showFooter = mode === "normal" && !state.mention && !state.command;
   return (
     <Box flexDirection="column">
       <Box borderStyle="round" borderColor={border} paddingX={1}>
         <Text>{"› "}</Text>
-        {isEmpty
+        {isEmptyNow
           ? <Box flexDirection="row"><Text inverse>{" "}</Text><Text dimColor>Ask Claude anything…</Text></Box>
           : <Box flexDirection="column">{renderBuffer(state)}</Box>}
       </Box>
       {mode === "bash" ? <Box paddingX={1}><Text color="magenta" dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
       {mode === "memory" ? <Box paddingX={1}><Text color="blue" dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
       {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
+      {clearArmed ? <Box paddingX={1}><Text dimColor>Esc again to clear</Text></Box> : null}
       {showFooter ? <Box paddingX={1}><Text dimColor>⏎ send · \⏎ newline · @ files · / commands · ! bash · ⇧Tab mode</Text></Box> : null}
       {state.mention ? <MentionPopup state={state} /> : null}
       {state.command ? <CommandPopup state={state} /> : null}
