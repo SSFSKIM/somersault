@@ -13,6 +13,7 @@ const ROWS: [string, string][] = [
   ["\\⏎ / Ctrl-J", "newline"],
   ["↑↓", "history"],
   ["Ctrl-A/E/K/U/W", "line start/end · kill to end/start · kill word"],
+  ["Ctrl-Y / Alt-Y", "yank / yank-pop killed text"],
   ["Alt-←→ / Alt-b/f", "move by word"],
   ["Ctrl-L", "clear input"],
   ["Ctrl-_", "undo edit"],

@@ -13,8 +13,11 @@ export interface EditorState {
   stashed: string | null;                                    // Ctrl-S input stash (distinct from history-nav `stash`)
   undo: { lines: string[]; cursor: Cursor }[];               // snapshot-on-change, capped at 100 (Ctrl-_ pops)
   mention: MentionState | null; command: CommandState | null;
+  killRing: string[];                                        // newest LAST, cap 10; entries are newline-free (kills are line-scoped)
+  killRun: boolean;                                          // an unbroken run of kill keystrokes coalesces into the newest entry
+  yankSite: { start: Cursor; end: Cursor; index: number } | null;   // set by yank; alt+y pops only while it holds
 }
-export interface EditorResult { state: EditorState; submit?: string }
+export interface EditorResult { state: EditorState; submit?: string; killed?: { text: string; dir: "append" | "prepend" } }
 /** Minimal structural subset of ink's Key the reducer reads (so editor.ts needs no ink import). */
 export interface KeyFlags {
   return?: boolean; backspace?: boolean; delete?: boolean; ctrl?: boolean; meta?: boolean; shift?: boolean;
@@ -22,7 +25,7 @@ export interface KeyFlags {
 }
 
 export function initialEditorState(history: string[] = []): EditorState {
-  return { lines: [""], cursor: { row: 0, col: 0 }, history: [...history], histIndex: null, stash: null, stashed: null, undo: [], mention: null, command: null };
+  return { lines: [""], cursor: { row: 0, col: 0 }, history: [...history], histIndex: null, stash: null, stashed: null, undo: [], mention: null, command: null, killRing: [], killRun: false, yankSite: null };
 }
 
 export type InputMode = "bash" | "memory" | "normal";
@@ -71,16 +74,35 @@ function moveRight(s: EditorState): EditorState {
 // Readline-style cursor + kill ops, scoped to the current line (the common case).
 function lineStart(s: EditorState): EditorState { return { ...s, cursor: { row: s.cursor.row, col: 0 } }; }
 function lineEnd(s: EditorState): EditorState { return { ...s, cursor: { row: s.cursor.row, col: s.lines[s.cursor.row].length } }; }
-function killToEnd(s: EditorState): EditorState {        // Ctrl-K: delete from cursor to end of line
-  const { row, col } = s.cursor; const lines = [...s.lines]; lines[row] = lines[row].slice(0, col); return { ...s, lines };
+function killToEnd(s: EditorState): { state: EditorState; text: string } {     // Ctrl-K → ring, append
+  const { row, col } = s.cursor; const lines = [...s.lines]; const text = lines[row].slice(col);
+  lines[row] = lines[row].slice(0, col); return { state: { ...s, lines }, text };
 }
-function killToStart(s: EditorState): EditorState {      // Ctrl-U: delete from start of line to cursor
-  const { row, col } = s.cursor; const lines = [...s.lines]; lines[row] = lines[row].slice(col); return { ...s, lines, cursor: { row, col: 0 } };
+function killToStart(s: EditorState): { state: EditorState; text: string } {   // Ctrl-U → ring, prepend
+  const { row, col } = s.cursor; const lines = [...s.lines]; const text = lines[row].slice(0, col);
+  lines[row] = lines[row].slice(col); return { state: { ...s, lines, cursor: { row, col: 0 } }, text };
 }
-function killWordBack(s: EditorState): EditorState {     // Ctrl-W: delete the word before the cursor
-  const { row, col } = s.cursor; if (col === 0) return deleteLeft(s); const line = s.lines[row];
+function killWordBack(s: EditorState): { state: EditorState; text: string } {  // Ctrl-W → ring, prepend
+  const { row, col } = s.cursor; if (col === 0) return { state: deleteLeft(s), text: "" };
+  const line = s.lines[row];
   let i = col; while (i > 0 && /\s/.test(line[i - 1])) i--; while (i > 0 && !/\s/.test(line[i - 1])) i--;
-  const lines = [...s.lines]; lines[row] = line.slice(0, i) + line.slice(col); return { ...s, lines, cursor: { row, col: i } };
+  const lines = [...s.lines]; lines[row] = line.slice(0, i) + line.slice(col);
+  return { state: { ...s, lines, cursor: { row, col: i } }, text: line.slice(i, col) };
+}
+function yank(s: EditorState): EditorState {                 // Ctrl-Y: insert the newest kill at the cursor
+  const text = s.killRing[s.killRing.length - 1]; if (text === undefined) return s;
+  const start = { ...s.cursor }; const ins = insertText(s, text);
+  // killRun: false — a yank ends the accumulation run (upstream sets mode "yanked"), so the next kill
+  // starts a fresh ring entry instead of coalescing into the one just yanked.
+  return { ...ins, killRun: false, yankSite: { start, end: { ...ins.cursor }, index: s.killRing.length - 1 } };
+}
+function yankPop(s: EditorState): EditorState {              // Alt-Y right after a yank: cycle the ring at the yank site
+  const site = s.yankSite; if (!site || s.killRing.length === 0) return s;
+  const index = (site.index - 1 + s.killRing.length) % s.killRing.length;
+  const lines = [...s.lines];                                // same-row splice: ring entries are newline-free by construction
+  lines[site.start.row] = lines[site.start.row].slice(0, site.start.col) + lines[site.end.row].slice(site.end.col);
+  const ins = insertText({ ...s, lines, cursor: { ...site.start } }, s.killRing[index]);
+  return { ...ins, killRun: false, yankSite: { start: { ...site.start }, end: { ...ins.cursor }, index } };
 }
 function wordLeft(s: EditorState): EditorState {         // Alt/Option-Left (and Alt-b): jump back a word
   let { row, col } = s.cursor;
@@ -113,7 +135,8 @@ function submitTurn(s: EditorState): EditorResult {
   const history = s.history.length && s.history[s.history.length - 1] === t ? s.history : [...s.history, t];   // dedup consecutive
   // The stash SURVIVES a send (2.1.220 chat:stash keeps it in state separate from the buffer) — park a
   // draft, fire a quick question, Ctrl-S restores the draft. The undo stack does reset with the buffer.
-  return { state: { ...initialEditorState(history), stashed: s.stashed }, submit: t };
+  // The kill ring survives too (like the stash) — a submit is not a keystroke that should clear it.
+  return { state: { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing }, submit: t };
 }
 
 function setBuffer(s: EditorState, t: string): EditorState {
@@ -227,15 +250,17 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResu
   if (key.meta && !key.escape && !key.backspace && !key.delete && !key.return) {
     if (key.leftArrow || input === "b") return { state: syncCompletions(wordLeft(s)) };
     if (key.rightArrow || input === "f") return { state: syncCompletions(wordRight(s)) };
+    if (input === "y") return { state: yankPop(s) };
     return { state: s };                                 // an unrecognized meta combo never inserts text
   }
   if (key.ctrl) {                                        // readline keys; other ctrl combos (l/c/d) act at app level → ignore here (never insert)
     switch (input) {
       case "a": return { state: syncCompletions(lineStart(s)) };
       case "e": return { state: syncCompletions(lineEnd(s)) };
-      case "k": return { state: syncCompletions(killToEnd(s)) };
-      case "u": return { state: syncCompletions(killToStart(s)) };
-      case "w": return { state: syncCompletions(killWordBack(s)) };
+      case "k": { const r = killToEnd(s); return { state: syncCompletions(r.state), ...(r.text ? { killed: { text: r.text, dir: "append" as const } } : {}) }; }
+      case "u": { const r = killToStart(s); return { state: syncCompletions(r.state), ...(r.text ? { killed: { text: r.text, dir: "prepend" as const } } : {}) }; }
+      case "w": { const r = killWordBack(s); return { state: syncCompletions(r.state), ...(r.text ? { killed: { text: r.text, dir: "prepend" as const } } : {}) }; }
+      case "y": return { state: syncCompletions(yank(s)) };
       case "j": return { state: syncCompletions(insertText(s, "\n")) };
       case "l": return { state: clearInput(s) };
       case "s": return { state: stashToggle(s) };
@@ -268,10 +293,22 @@ const sameText = (a: string[], b: string[]) => a === b || (a.length === b.length
 
 /** Snapshot-on-change undo: any key that changed the buffer pushes the PRIOR buffer (cap 100). An op
  *  that managed the stack itself (undoEdit pops it) is recognized by its own `undo` identity change;
- *  a submit returns a fresh initialEditorState, so its stack is already empty. */
+ *  a submit returns a fresh initialEditorState, so its stack is already empty. Also folds a kill into
+ *  the ring (coalescing an unbroken run) and tracks when that run / a yank-pop site ends. */
 export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorResult {
   const r = applyKeyInner(s, input, key);
-  if (r.submit !== undefined || r.state === s) return r;
-  if (sameText(r.state.lines, s.lines) || r.state.undo !== s.undo) return r;
-  return { ...r, state: { ...r.state, undo: [...s.undo.slice(-99), { lines: s.lines, cursor: s.cursor }] } };
+  let state = r.state;
+  if (r.killed) {                                            // fold into the ring; a run coalesces into the newest entry
+    const head = s.killRing[s.killRing.length - 1];
+    const ring = s.killRun && head !== undefined
+      ? [...s.killRing.slice(0, -1), r.killed.dir === "append" ? head + r.killed.text : r.killed.text + head]
+      : [...s.killRing, r.killed.text].slice(-10);
+    state = { ...state, killRing: ring, killRun: true, yankSite: null };
+  } else if (state.yankSite === s.yankSite && (s.killRun || s.yankSite)) {
+    state = { ...state, killRun: false, yankSite: null };    // any non-kill keystroke ends the run; any non-yank-pop fixes the yank
+  }
+  if (r.submit !== undefined) return { ...r, state };
+  if (state === s) return r;
+  if (sameText(state.lines, s.lines) || state.undo !== s.undo) return { ...r, state };
+  return { ...r, state: { ...state, undo: [...s.undo.slice(-99), { lines: s.lines, cursor: s.cursor }] } };
 }

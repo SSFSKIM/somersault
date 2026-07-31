@@ -426,3 +426,67 @@ describe("undo snapshots track CONTENT, not array identity", () => {
     expect(killed.undo.length).toBe(s.undo.length + 1);   // a real edit is still undoable
   });
 });
+
+describe("kill ring (CM10/CM11)", () => {
+  const CTRL = { ctrl: true };
+  const type = (s: EditorState, text: string) => [...text].reduce((st, ch) => applyKey(st, ch, {}).state, s);
+  it("ctrl+u kills the line into the ring and ctrl+y restores it verbatim (F0 acceptance 3)", () => {
+    let s = type(initialEditorState(), "hello world");
+    const killed = applyKey(s, "u", CTRL);
+    expect(killed.killed).toEqual({ text: "hello world", dir: "prepend" });
+    expect(killed.state.lines).toEqual([""]);
+    const yanked = applyKey(killed.state, "y", CTRL).state;
+    expect(yanked.lines).toEqual(["hello world"]);
+    expect(yanked.cursor).toEqual({ row: 0, col: 11 });
+  });
+  it("consecutive kills coalesce with direction: ctrl+k then ctrl+u rebuilds the whole line as ONE entry", () => {
+    let s = type(initialEditorState(), "hello world");
+    s = { ...s, cursor: { row: 0, col: 5 } };
+    s = applyKey(s, "k", CTRL).state;            // kills " world" (append)
+    s = applyKey(s, "u", CTRL).state;            // kills "hello" (prepend) into the SAME entry
+    expect(s.killRing).toEqual(["hello world"]);
+    expect(applyKey(s, "y", CTRL).state.lines).toEqual(["hello world"]);
+  });
+  it("a yank ends the kill run: kill, yank, kill = TWO ring entries (upstream mode 'yanked', cli.pretty.js:394640-394652)", () => {
+    let s = type(initialEditorState(), "abc");
+    s = applyKey(s, "u", CTRL).state;            // ring: ["abc"], run active
+    s = applyKey(s, "y", CTRL).state;            // yank — upstream leaves 'killing' mode here
+    s = applyKey(s, "u", CTRL).state;            // must start a FRESH entry, not coalesce into "abcabc"
+    expect(s.killRing).toEqual(["abc", "abc"]);
+  });
+  it("a non-kill keystroke ends the run: two separated kills are two ring entries; alt+y cycles between them", () => {
+    let s = type(initialEditorState(), "one");
+    s = applyKey(s, "u", CTRL).state;            // ring: ["one"]
+    s = type(s, "two");                          // breaks the run
+    s = applyKey(s, "u", CTRL).state;            // ring: ["one", "two"]
+    expect(s.killRing).toEqual(["one", "two"]);
+    s = applyKey(s, "y", CTRL).state;            // yanks "two"
+    expect(s.lines).toEqual(["two"]);
+    s = applyKey(s, "y", { meta: true }).state;  // alt+y → replaces with "one"
+    expect(s.lines).toEqual(["one"]);
+    s = applyKey(s, "y", { meta: true }).state;  // cycles back to "two"
+    expect(s.lines).toEqual(["two"]);
+  });
+  it("alt+y without a preceding yank is a no-op, and any keystroke after a yank fixes it (no late pop)", () => {
+    let s = type(initialEditorState(), "abc");
+    expect(applyKey(s, "y", { meta: true }).state.lines).toEqual(["abc"]);
+    s = applyKey(s, "u", CTRL).state;
+    s = applyKey(s, "y", CTRL).state;            // yank
+    s = type(s, "!");                            // fixes the yank
+    expect(applyKey(s, "y", { meta: true }).state.lines).toEqual(["abc!"]);
+  });
+  it("empty kills deposit nothing and the ring is capped at 10", () => {
+    let s = initialEditorState();
+    expect(applyKey(s, "k", CTRL).killed).toBeUndefined();
+    for (let i = 0; i < 12; i++) { s = type(s, String(i)); s = applyKey(s, "u", CTRL).state; s = type(s, "x"); s = applyKey(applyKey(s, "u", CTRL).state, "y", CTRL).state; s = applyKey(s, "u", CTRL).state; }
+    expect(s.killRing.length).toBeLessThanOrEqual(10);
+  });
+  it("the kill ring survives a submit (like the stash)", () => {
+    let s = type(initialEditorState(), "keep me");
+    s = applyKey(s, "u", CTRL).state;
+    s = type(s, "send this");
+    const r = applyKey(s, "", { return: true });
+    expect(r.submit).toBe("send this");
+    expect(r.state.killRing).toEqual(["keep me"]);
+  });
+});

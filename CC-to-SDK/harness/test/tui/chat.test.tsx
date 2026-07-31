@@ -446,6 +446,20 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");
   });
 
+  it("ctrl+u on ≥3 chars shows 'Ctrl+Y to paste deleted text' and it expires (CM11)", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} yankHintMs={80} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("hello");
+    await waitFor(() => frame(lastFrame).includes("hello"));
+    stdin.write("\x15");                                   // Ctrl-U
+    await waitFor(() => frame(lastFrame).includes("Ctrl+Y to paste deleted text"));
+    expect(frame(lastFrame)).not.toContain("hello");       // the kill really emptied the buffer
+    await waitFor(() => !frame(lastFrame).includes("Ctrl+Y to paste deleted text"));
+    stdin.write("\x19");                                   // Ctrl-Y yanks it back
+    await waitFor(() => frame(lastFrame).includes("hello"));
+  });
+
   it("Ctrl-R opens history search; Esc accepts the top entry into the composer", async () => {
     const fakeDeps = {
       getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],

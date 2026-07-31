@@ -60,12 +60,14 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000 }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
   const disposed = useRef(false);
-  useEffect(() => () => { disposed.current = true; }, []);
+  const [yankHint, setYankHint] = useState(false);
+  const yankTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { disposed.current = true; if (yankTimer.current) clearTimeout(yankTimer.current); }, []);
   const editExt = editExternal ?? realEditExternal;
   const ctrlX = useRef(0);
 
@@ -117,7 +119,13 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     if (!s.command && !s.mention) {
       if (key.escape) { onInterrupt?.(); return; }
     }
-    const r = applyKey(s, input, key); if (r.submit != null) onSubmit(r.submit); setState(r.state);
+    const r = applyKey(s, input, key);
+    if (key.ctrl && input === "u" && r.killed && r.killed.text.length >= 3) {
+      setYankHint(true);
+      if (yankTimer.current) clearTimeout(yankTimer.current);
+      yankTimer.current = setTimeout(() => setYankHint(false), yankHintMs);
+    }
+    if (r.submit != null) onSubmit(r.submit); setState(r.state);
   });
 
   // A just-opened mention has empty files → walk cwd once and feed the results in.
@@ -149,6 +157,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       </Box>
       {mode === "bash" ? <Box paddingX={1}><Text color="magenta" dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
       {mode === "memory" ? <Box paddingX={1}><Text color="blue" dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
+      {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
       {showFooter ? <Box paddingX={1}><Text dimColor>⏎ send · \⏎ newline · @ files · / commands · ! bash · ⇧Tab mode</Text></Box> : null}
       {state.mention ? <MentionPopup state={state} /> : null}
       {state.command ? <CommandPopup state={state} /> : null}
