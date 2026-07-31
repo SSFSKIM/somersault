@@ -335,28 +335,20 @@ describe("Wave-1 keymap: clear input, newline, undo, stash", () => {
   // so stepping back "one keystroke at a time" requires one applyKey call per character.
   const type = (s: EditorState, text: string) => [...text].reduce((st, ch) => applyKey(st, ch, {}).state, s);
 
-  it("Ctrl-L clears the buffer (input, not screen) and Ctrl-_ restores it", () => {
+  it("Ctrl-L clears the buffer (input, not screen) and Ctrl-_ (bare 0x1f) restores it", () => {
     let s = type(initialEditorState(), "hello world");
     s = applyKey(s, "l", { ctrl: true }).state;
     expect(s.lines).toEqual([""]);
-    s = applyKey(s, "_", { ctrl: true }).state;
+    s = applyKey(s, "\x1f", {}).state;                          // terminals send the bare C0 byte, no ctrl flag
     expect(s.lines).toEqual(["hello world"]);
     expect(s.cursor).toEqual({ row: 0, col: 11 });
   });
 
-  it("Ctrl-J inserts a newline at the cursor", () => {
-    let s = type(initialEditorState(), "ab");
-    s = applyKey(s, "", { leftArrow: true }).state;
-    s = applyKey(s, "j", { ctrl: true }).state;
-    expect(s.lines).toEqual(["a", "b"]);
-    expect(s.cursor).toEqual({ row: 1, col: 0 });
-  });
-
-  it("undo steps back one keystroke at a time; Ctrl-- is the same undo", () => {
+  it("undo (bare 0x1f) steps back one keystroke at a time", () => {
     let s = type(initialEditorState(), "abc");
-    s = applyKey(s, "_", { ctrl: true }).state;
+    s = applyKey(s, "\x1f", {}).state;
     expect(s.lines).toEqual(["ab"]);
-    s = applyKey(s, "-", { ctrl: true }).state;
+    s = applyKey(s, "\x1f", {}).state;
     expect(s.lines).toEqual(["a"]);
   });
 
@@ -510,6 +502,20 @@ describe("kill ring (CM10/CM11)", () => {
     const r = applyKey(s, "", { return: true });
     expect(r.submit).toBe("send this");
     expect(r.state.killRing).toEqual(["keep me"]);
+  });
+});
+
+describe("ctrl+_ undo reachability (KB4/KB23, F0 acceptance 4)", () => {
+  it("the raw 0x1f byte undoes the last edit and NEVER lands in the buffer", () => {
+    let s = initialEditorState();
+    s = applyKey(s, "a", {}).state; s = applyKey(s, "b", {}).state;
+    const undone = applyKey(s, "\x1f", {}).state;             // terminals send bare 0x1f for Ctrl+_ AND Ctrl+-
+    expect(undone.lines).toEqual(["a"]);
+    expect(applyKey(initialEditorState(), "\x1f", {}).state.lines).toEqual([""]);   // empty stack: no-op, no insertion
+  });
+  it("ctrl+j still yields a newline through the generic insert path (its dead ctrl-switch case is gone)", () => {
+    const s = applyKey(applyKey(initialEditorState(), "x", {}).state, "\n", {}).state;   // 0x0a arrives as input "\n"
+    expect(s.lines).toEqual(["x", ""]);
   });
 });
 

@@ -20,7 +20,6 @@ describe("pagerAction — the bundle Transcript context, key for key", () => {
     ["b", {}, { kind: "pages", n: -1 }],
     ["g", {}, { kind: "top" }],
     ["G", {}, { kind: "bottom" }],
-    ["g", { shift: true }, { kind: "bottom" }],
     ["", { pageUp: true }, { kind: "pages", n: -1 }],
     ["", { pageDown: true }, { kind: "pages", n: 1 }],
   ] as const)("input=%j key=%j → %j", (input, key, want) => {
@@ -29,6 +28,11 @@ describe("pagerAction — the bundle Transcript context, key for key", () => {
   it("unbound keys return null (never swallow)", () => {
     expect(pagerAction("z", {})).toBeNull();
     expect(pagerAction("e", { ctrl: true })).toBeNull();   // toggleShowAll deferred — must NOT act
+  });
+  it("g goes top and G goes bottom — Shift+G arrives as input 'G', never as key.shift (KB23)", () => {
+    expect(pagerAction("g", {})).toEqual({ kind: "top" });
+    expect(pagerAction("g", { shift: true } as any)).toEqual({ kind: "top" });   // the old dead branch returned bottom here
+    expect(pagerAction("G", {})).toEqual({ kind: "bottom" });
   });
 });
 

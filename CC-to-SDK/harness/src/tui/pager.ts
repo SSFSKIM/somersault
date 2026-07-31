@@ -3,7 +3,7 @@
 // both recorded in docs/parity/tui-ux.md: ctrl+e (transcript:toggleShowAll) is deferred — our
 // transcript has no collapsed variant to expand — and home/end never reach an Ink app as key flags
 // (g/G are the equivalents). "exit" is returned for q/escape/ctrl+c; the component owns closing.
-export interface PagerKey { upArrow?: boolean; downArrow?: boolean; pageUp?: boolean; pageDown?: boolean; escape?: boolean; ctrl?: boolean; shift?: boolean }
+export interface PagerKey { upArrow?: boolean; downArrow?: boolean; pageUp?: boolean; pageDown?: boolean; escape?: boolean; ctrl?: boolean }
 export type PagerAction = { kind: "exit" } | { kind: "top" } | { kind: "bottom" } | { kind: "lines"; n: number } | { kind: "pages"; n: number };
 
 export function pagerAction(input: string, key: PagerKey): PagerAction | null {
@@ -29,7 +29,7 @@ export function pagerAction(input: string, key: PagerKey): PagerAction | null {
   if (input === "k") return { kind: "lines", n: -1 };
   if (input === " ") return { kind: "pages", n: 1 };
   if (input === "b") return { kind: "pages", n: -1 };
-  if (input === "g") return key.shift ? { kind: "bottom" } : { kind: "top" };
+  if (input === "g") return { kind: "top" };
   if (input === "G") return { kind: "bottom" };
   return null;
 }

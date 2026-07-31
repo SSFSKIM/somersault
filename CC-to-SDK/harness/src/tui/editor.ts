@@ -251,6 +251,7 @@ function undoEdit(s: EditorState): EditorState {             // Ctrl-_ / Ctrl-- 
 }
 
 function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResult {
+  if (input === "\x1f") return { state: undoEdit(s) };       // Ctrl-_ / Ctrl-- arrive as the bare C0 byte; Ink sets NO flags on it
   // Alt/Option word movement (Alt-←→, Alt-b/f) — checked BEFORE key.ctrl so no meta combo ever falls through to
   // insert. Ink also sets key.meta on a BARE Escape and on ESC-prefixed backspace/delete (use-input.js:
   // meta = keypress.meta || keypress.name === "escape" || keypress.option), so those must NOT be swallowed here —
@@ -271,10 +272,8 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResu
       case "u": { const r = killToStart(s); return { state: syncCompletions(r.state), killed: { text: r.text, dir: "prepend" as const } }; }
       case "w": { const r = killWordBack(s); return { state: syncCompletions(r.state), killed: { text: r.text, dir: "prepend" as const } }; }
       case "y": return { state: syncCompletions(yank(s)) };
-      case "j": return { state: syncCompletions(insertText(s, "\n")) };
       case "l": return { state: clearInput(s) };
       case "s": return { state: stashToggle(s) };
-      case "_": case "-": return { state: undoEdit(s) };
       default: return { state: s };
     }
   }
