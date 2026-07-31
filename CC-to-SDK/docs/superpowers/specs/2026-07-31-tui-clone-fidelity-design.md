@@ -163,7 +163,8 @@ that F2 re-homes into the table.
 3. `ctrl+u` on a full line then `ctrl+y` restores it verbatim; `alt+y` cycles to the previous kill.
 4. Pressing `ctrl+_` undoes the last edit. No control character ever appears in the buffer.
 5. With the `?` overlay open, `ctrl+o` neither closes the overlay nor opens the transcript pager —
-   only Escape closes it, and no key pressed while it is open reaches the app underneath.
+   only Escape closes it, and no key pressed while it is open reaches the app underneath
+   (`ctrl+z` suspend excepted: suspension is process-level, like a real shell).
 6. `ctrl+d` on an empty composer prints a hint and stays; a second press exits. `ctrl+z` suspends to
    the shell and `fg` resumes with the transcript intact.
 7. `y` accepts and `n` rejects in a permission dialog.
