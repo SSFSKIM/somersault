@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -91,14 +92,16 @@ class FrameScriptsTest(unittest.TestCase):
         other = diff.load_masks(str(MASKS_PATH), "other-scenario/01-frame.ansi")
         self.assertNotEqual(diff.mask_text(quota_a, other), diff.mask_text(quota_b, other))
 
-    def test_original_capture_masks_byte_identically_to_stored_goldens(self):
+    def test_synthetic_unredacted_identities_round_trip_to_all_stored_goldens_without_git_history(self):
         fixtures = ROOT / "test" / "fixtures" / "upstream-frames"
-        repo = ROOT.parents[1]
         for stored in sorted(fixtures.glob("*/*.ansi")):
-            relative = stored.relative_to(repo).as_posix()
-            raw = subprocess.check_output(["git", "-C", str(repo), "show", f"d6b2b6d849:{relative}"], text=True)
+            expected = stored.read_text(encoding="utf-8")
+            synthetic = expected.replace("▒'s Organization", "fixture@example.test's Organization")
+            synthetic = re.sub(r"▒(?=\x1b\[[0-9;]*m:\x1b\[[0-9;]*m/)", "fixture@host", synthetic)
+            synthetic = re.sub(r"(\x1b\[0;1m)▒(\x1b\[0m)", r"\1Welcome back Fixture User!\2", synthetic)
+            self.assertNotIn("▒", synthetic, stored.name)
             key = "/".join(stored.relative_to(fixtures).parts)
-            self.assertEqual(diff.mask_text(raw, diff.load_redactions(str(MASKS_PATH), key)), stored.read_text(encoding="utf-8"), key)
+            self.assertEqual(diff.mask_text(synthetic, diff.load_redactions(str(MASKS_PATH), key)), expected, key)
 
     def test_capture_early_exit_and_zero_frames_fail(self):
         with tempfile.TemporaryDirectory() as td:
@@ -144,6 +147,48 @@ class FrameScriptsTest(unittest.TestCase):
             frame = (out / "01-boot.ansi").read_text(encoding="utf-8")
             self.assertIn("▒", frame)
             self.assertNotIn("Test Identity", frame)
+
+    def test_capture_refuses_tracked_scenarios_without_complete_redaction_rules_before_spawning(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            child = self.child_command("from pathlib import Path; import sys,time; Path('spawned').write_text('yes'); sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(0.3)")
+            no_match = root / "masks-no-match.json"
+            no_match.write_text(json.dumps({"redactions_by_frame": {"other/*.ansi": ["ready"]}}), encoding="utf-8")
+            out = root / "test" / "fixtures" / "upstream-frames" / "renamed"
+            refused = self.run_capture("frame:boot\n", child, out, no_match)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("renamed/01-boot.ansi", refused.stderr)
+            self.assertFalse((out.parent / "spawned").exists())
+            self.assertFalse(list(out.glob("*.ansi")))
+
+            partial = root / "masks-partial.json"
+            partial.write_text(json.dumps({"redactions_by_frame": {"renamed/01-first.ansi": ["ready"]}}), encoding="utf-8")
+            refused_partial = self.run_capture("frame:first\nframe:second\n", child, out, partial)
+            self.assertNotEqual(refused_partial.returncode, 0)
+            self.assertIn("renamed/02-second.ansi", refused_partial.stderr)
+            self.assertFalse((out.parent / "spawned").exists())
+            self.assertFalse(list(out.glob("*.ansi")))
+
+    def test_capture_accepts_fully_covered_tracked_frames_and_untracked_output_without_redaction(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            child = self.child_command("import sys,time; sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(0.3)")
+            masks = root / "masks-complete.json"
+            masks.write_text(json.dumps({"redactions_by_frame": {
+                "renamed/01-first.ansi": ["ready"],
+                "renamed/02-second.ansi": ["ready"],
+            }}), encoding="utf-8")
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "renamed"
+            captured = self.run_capture("frame:first\nframe:second\n", child, tracked, masks)
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            for name in ("01-first.ansi", "02-second.ansi"):
+                text = (tracked / name).read_text(encoding="utf-8")
+                self.assertIn("▒", text)
+                self.assertNotIn("ready", text)
+
+            untracked = self.run_capture("frame:boot\n", child, root / "scratch")
+            self.assertEqual(untracked.returncode, 0, untracked.stderr)
+            self.assertIn("ready", (root / "scratch" / "01-boot.ansi").read_text(encoding="utf-8"))
 
     def test_dim_follows_bottom_margin_scroll(self):
         screen = capture.DimScreen(3, 2)

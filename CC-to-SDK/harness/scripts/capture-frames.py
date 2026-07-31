@@ -295,6 +295,11 @@ def main() -> int:
         except (OSError, ValueError, KeyError, re.error) as error:
             sys.stderr.write(f"capture-frames: invalid redaction masks: {error}\n")
             return 2
+    if tracked_relative is not None:
+        missing = [frame_key(args.out, name) for name, masks in redactions.items() if not masks]
+        if missing:
+            sys.stderr.write(f"capture-frames: tracked golden output has no redaction rules for: {', '.join(missing)}\n")
+            return 2
 
     os.makedirs(args.out, exist_ok=True)
 

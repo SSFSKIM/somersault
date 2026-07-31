@@ -5,14 +5,12 @@
 // that goes through the composer like any other). Ctrl-L moved into the editor (Task 2) — it used to
 // live here as an app-level screen-clear that fired ALONGSIDE the editor's own input-clear on every
 // Ctrl-L (a transient double-handling); removing this arm leaves the editor as Ctrl-L's sole owner.
-// Ctrl-O (Task 5) opens the transcript pager; Ctrl-Z is checked ABOVE that gate (suspend stays reachable
-// even under the pager overlay) but every OTHER app arm is gated while the pager is open — the pager
-// owns the keys, including its own ctrl+c as transcript:exit (per the bundle), so the app's Ctrl-C
-// exit-arm must not also fire underneath it. Ctrl-R (Wave 2 task 7) opens the history-search overlay —
-// same gating pattern: Ctrl-Z stays live, every other app arm is gated while it's open (its own Ctrl-C/
-// Ctrl-R/Ctrl-S own those keys). The `?` shortcuts overlay (F0 KB6) is gated the same way, checked FIRST
-// (right after Ctrl-Z) so it wins even over Ctrl-O/Ctrl-R below. ChatApp owns Escape while help is
-// visible, including the passive-effect mount race; the overlay is presentational in this tree.
+// Ctrl-O (Task 5) opens the transcript pager; Ctrl-Z stays reachable there but every other app arm is
+// gated while the pager is open — the pager owns the keys, including its own ctrl+c as transcript:exit
+// (per the bundle), so the app's Ctrl-C exit-arm must not also fire underneath it. Ctrl-R (Wave 2 task 7)
+// opens the history-search overlay, whose own Ctrl-C/Ctrl-R/Ctrl-S keys remain exclusive. The `?`
+// shortcuts overlay (F0 KB6) owns every key except Escape, including during the passive-effect unmount
+// window of the composer; the overlay is presentational in this tree.
 // Renders increment 8's multiline <ChatComposer>.
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
@@ -21,7 +19,7 @@ import { suspendProcess } from "./suspend.js";
 import type { InitialResume } from "./commands.js";
 import type { RenderLine } from "./render.js";
 import { Transcript } from "./Transcript.js";
-import { ChatComposer } from "./ChatComposer.js";
+import { ChatComposer, type InputOwner } from "./ChatComposer.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { QuestionDialog } from "./QuestionDialog.js";
 import { PlanDialog } from "./PlanDialog.js";
@@ -63,10 +61,19 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
+  // Input subscriptions are passive. This ref changes during render, before the visible owner swaps, so a
+  // retiring composer can reject the next key even before Ink has removed its listener.
+  const inputOwnerRef = useRef<InputOwner>("composer");
+  inputOwnerRef.current = state.shortcutsOpen
+    ? "shortcuts"
+    : transcriptOpen
+      ? "transcript"
+      : state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open || state.pending
+        ? "overlay"
+        : "composer";
   // Ink's useInput subscription is passive, so a root handler can receive a key after a newer render has
   // already painted. Keep every state/callback value consumed by this handler current synchronously.
   const rootStateRef = useRef(state); rootStateRef.current = state;
-  const transcriptOpenRef = useRef(transcriptOpen); transcriptOpenRef.current = transcriptOpen;
   const exitArmedRef = useRef(exitArmed); exitArmedRef.current = exitArmed;
   const suspendRef = useRef(suspend); suspendRef.current = suspend;
   const closeShortcutsRef = useRef(closeShortcuts); closeShortcutsRef.current = closeShortcuts;
@@ -106,23 +113,21 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // Ctrl-L lives in the editor now (Task 2), not here.
   useInput((input, key) => {
     const current = rootStateRef.current;
-    if (key.ctrl && input === "z") {                          // KB5: suspend like every terminal app; detach is /detach now
-      (suspendRef.current ?? suspendProcess)({ stdin, repaint: () => write("") });
-      return;
-    }
-    if (current.shortcutsOpen) {                              // KB6: root owns the visible overlay race window
+    const owner = inputOwnerRef.current;
+    if (owner === "shortcuts") {                              // KB6: help owns the visible overlay race window
       if (key.escape) closeShortcutsRef.current();
       return;
     }
-    if (transcriptOpenRef.current) {                          // pager owns the keys (its ctrl+c = transcript:exit, per bundle)
+    if (owner === "transcript") {                              // pager owns its keys except the established app-level suspend/close arms
+      if (key.ctrl && input === "z") (suspendRef.current ?? suspendProcess)({ stdin, repaint: () => write("") });
       if (key.ctrl && input === "o") { setTranscriptOpen(false); disarm(); }
       return;
     }
-    if (current.historyOpen) return;   // the overlay owns Ctrl-C (cancel) / Ctrl-R (next) / Ctrl-S (scope); only Ctrl-Z above stays live
-    if (current.settings.open) return;   // W3 T5: the /config dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
-    if (current.permissions.open) return;   // W3 T7: the /permissions dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
-    if (current.themeDialog.open) return;   // W3 T4: the /theme dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
-    if (current.addDir.open) return;   // W3 T3: the /add-dir dialog owns its own keys (Ctrl-O/R/T/B, Esc-arm stay dead underneath it)
+    if (owner === "overlay" && !current.pending) return;       // the visible overlay owns its keys
+    if (key.ctrl && input === "z") {                            // KB5: suspend like every terminal app; detach is /detach now
+      (suspendRef.current ?? suspendProcess)({ stdin, repaint: () => write("") });
+      return;
+    }
     // Both open arms are gated on !rewinding (F3, final review): a confirmed rewind is a multi-second
     // engine swap held behind the “⏪ restoring…” modal so a mid-rewind prompt isn't lost — Ctrl-R/Ctrl-O
     // opening another overlay (or, for history, Enter-executing straight into the busy host) would
@@ -209,7 +214,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     : state.pending.kind === "plan"
                       ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
                       : <PermissionDialog key={state.pending.toolUseID} req={state.pending} onDecision={(d) => resolveDecision(d)} />
-                  : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} />}
+                  : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} inputOwnerRef={inputOwnerRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} />}
       {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
       {escArmed ? <Box paddingX={1}><Text dimColor>Press Esc again to rewind</Text></Box> : null}
       <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} thinkLevel={state.thinkLevel} bgCount={state.bgTasks.length} usageWarn={state.usageWarn} />

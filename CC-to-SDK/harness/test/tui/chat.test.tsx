@@ -568,6 +568,50 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");
   });
 
+  it("the first keys after help opens are exclusively owned by help, then the composer resumes normally", async () => {
+    const modes: string[] = [];
+    const suspend = vi.fn();
+    const fake = fakeRemote({ setPermissionMode: (mode: string) => { modes.push(mode); } });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} suspend={suspend as any} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+
+    stdin.write("?");
+    await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
+    stdin.write("\x1b[Z");                                      // Shift+Tab must not cycle the composer beneath help
+    stdin.write("\x0f");                                        // Ctrl-O must not open the pager
+    stdin.write("\x1a");                                        // Ctrl-Z must not suspend beneath help
+    stdin.write("\x1b");                                        // Escape only closes help; it must not arm rewind beneath it
+    await waitFor(() => frame(lastFrame).includes("›"));
+    expect(modes).toEqual([]);
+    expect(suspend).not.toHaveBeenCalled();
+    expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
+    expect(frame(lastFrame)).not.toContain("Transcript");
+
+    stdin.write("x");
+    await waitFor(() => frame(lastFrame).includes("x"));
+    stdin.write("\x15");
+    await waitFor(() => !frame(lastFrame).includes("x"));
+    stdin.write("\x1b[Z");
+    await waitFor(() => modes.length === 1);
+    expect(modes).toEqual(["acceptEdits"]);
+  });
+
+  it("a pending dialog synchronously blocks the retiring composer listener", async () => {
+    const modes: string[] = [];
+    const fake = fakeRemote({ setPermissionMode: (mode: string) => { modes.push(mode); } });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+
+    fake.parkPermission({ sessionId: "s", toolUseID: "guard", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
+    await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
+    stdin.write("\x1b[Z");                                      // must not leak to the former composer
+    stdin.write("\x1b");                                        // dialog denies; it must not also arm rewind
+    await waitFor(() => fake.answeredCalls.length === 1);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    expect(modes).toEqual([]);
+    expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
+  });
+
   it("? mid-buffer inserts a literal '?' instead of opening the overlay", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
@@ -606,6 +650,28 @@ describe("<ChatApp>", () => {
     stdin.write("\x1b");                                   // Esc = accept
     await waitFor(() => frame(lastFrame).includes("redo the build"));
     expect(frame(lastFrame)).toContain("redo the build");   // prefilled into the composer buffer
+  });
+
+  it("a nonempty history prefill synchronously disarms rewind before its first composer frame", async () => {
+    const fakeDeps = {
+      getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
+      getSessionMessagesIn: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
+      listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
+    };
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("\x1b");
+    await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
+    stdin.write("\x12");                                         // Ctrl-R opens history without disarming rewind itself
+    await waitFor(() => frame(lastFrame).includes("Search prompts"));
+    stdin.write("\x1b");                                         // accept the top history result as external prefill
+    await waitFor(() => frame(lastFrame).includes("redo the build"));
+    expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
+    expect(frame(lastFrame)).toContain("Esc clear");
+
+    stdin.write("\x1b");                                         // first Escape clears/arms locally; it cannot rewind
+    await waitFor(() => frame(lastFrame).includes("Esc again to clear"));
+    expect(frame(lastFrame)).not.toContain("Rewind to a previous message");
   });
 
   it("app-level keys are gated while the history overlay is open (its Ctrl-C is cancel, not exit-arm)", async () => {

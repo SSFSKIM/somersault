@@ -26,6 +26,8 @@ function renderBuffer(state: EditorState): React.ReactNode {
 
 const COMMAND_ROWS = 8;                            // visible rows; the selection scrolls through the full list
 
+export type InputOwner = "composer" | "shortcuts" | "transcript" | "overlay";
+
 function CommandPopup({ state }: { state: EditorState }) {
   const c = state.command!;
   if (c.items.length === 0) return <Box paddingX={1}><Text dimColor>/{c.query} — no matches</Text></Box>;
@@ -60,7 +62,7 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800 }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800 }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -126,6 +128,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   useEffect(() => {
     if (!prefill || prefill.token === lastPrefill.current) return;
     lastPrefill.current = prefill.token;
+    const currentDraft = stateRef.current.lines.join("\n");
+    const nextText = prefill.mode === "prepend" && currentDraft.length > 0 ? prefill.text + "\n" + currentDraft : prefill.text;
+    if (currentDraft.length === 0 && nextText.length > 0) onDraftStartRef.current?.();
     setState((s) => {
       const draft = s.lines.join("\n");
       const text = prefill.mode === "prepend" && draft.length > 0 ? prefill.text + "\n" + draft : prefill.text;
@@ -137,6 +142,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // Read stateRef.current (NOT the closure `state`): Ink re-registers this handler in a passive effect that
   // flushes after commit, so a closure read lags one render and would submit stale text. The ref updates every render.
   useInput((input, key) => {
+    if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
     const s = stateRef.current;
     if (!key.escape && clearArm.current) disarmClear();
     // KB3: EOF needs two presses. Unlike the Esc-Esc clearArm below, NO other keystroke disarms this one —

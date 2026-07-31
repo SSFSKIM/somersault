@@ -83,6 +83,29 @@ describe("composer prefill: consumed at most once across a popup remount (Import
 // with whatever the user was mid-typing rather than clobber it. Mounts ChatComposer directly (no useChat)
 // and drives `prefill` via rerender — the narrowest harness that can pin the merge contract in ChatComposer's
 // own effect, independent of useChat's interrupt() wiring (covered end-to-end by chat.test.tsx instead).
+describe("composer prefill: draft-start ownership", () => {
+  it("notifies only when an external prefill turns an empty buffer nonempty", async () => {
+    let starts = 0;
+    const onDraftStart = () => { starts++; };
+    const { lastFrame, rerender } = render(
+      <ChatComposer onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} onDraftStart={onDraftStart} prefill={null} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    rerender(<ChatComposer onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} onDraftStart={onDraftStart} prefill={{ text: "", token: 1 }} />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(starts).toBe(0);
+
+    rerender(<ChatComposer onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} onDraftStart={onDraftStart} prefill={{ text: "recalled prompt", token: 2 }} />);
+    await waitFor(() => frame(lastFrame).includes("recalled prompt"));
+    expect(starts).toBe(1);
+
+    rerender(<ChatComposer onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} onDraftStart={onDraftStart} prefill={{ text: "queued", token: 3, mode: "prepend" }} />);
+    await waitFor(() => frame(lastFrame).includes("queued"));
+    expect(starts).toBe(1);
+  });
+});
+
 describe("composer prefill: prepend mode merges with an existing draft (Task 3, CM49)", () => {
   it("a prepend-mode prefill retains a whitespace-only draft and submits exact bytes", async () => {
     const submitted: string[] = [];

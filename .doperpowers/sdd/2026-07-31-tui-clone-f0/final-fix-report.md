@@ -184,8 +184,8 @@ push was performed. The protected concurrent untracked probe files were not stag
 4. **Mask semantics and identity.** The old scoped-mask test collapsed arbitrary transcript cost/duration/
    token text. A shared `frame_masks.py` contract separates dashboard-anchored write-time identity
    redactions from scoped quota/status comparison masks. The test matrix preserves transcript email, UUID,
-   path, count, percentage, cost, duration, token and timestamp differences; all eight original frames from
-   `d6b2b6d849` redact byte-identically to stored fixtures.
+   path, count, percentage, cost, duration, token and timestamp differences; sanitized synthetic identities
+   derived from the tracked ANSI layouts redact byte-identically to all eight stored fixtures.
 5. **Wide continuation overwrite.** Overwriting the trailing half of a dim `界` initially retained the
    leading glyph. `DimScreen` now clears both actual pyte cells before a write targets either half; centre
    and row-edge continuation cases prove both glyph and dim style disappear.
@@ -239,3 +239,53 @@ A fresh capture at 100x40 with `/tmp/frame-scratch` wrote all expected files and
 The divergence is the known fidelity baseline, not an instrument false-success. The only remaining concern
 is the pre-existing manual shell `Ctrl-Z` → `fg` acceptance, which the automated pty driver cannot safely
 perform; raw-mode ordering and restoration remain unit-covered.
+
+## Fourth plugin review pass
+
+Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/2026-07-31-tui-clone-f0/final-rereview4-findings.md`.
+
+### TDD red proofs and corrections
+
+1. **Tracked fixture redaction coverage.** A tracked renamed scenario supplied with a masks file but no
+   matching `redactions_by_frame` entry initially returned success, which proved that the flag-only guard
+   could execute a child and write raw identity. Capture now resolves every scripted frame key before
+   `mkdir` or `pty.fork` and refuses the entire batch when any key has an empty applicable rule set. The
+   regression test covers no-match and partial-coverage batches, asserts no child side effect or frame
+   file, and retains successful explicitly redacted and untracked captures.
+2. **Retiring composer input ownership.** The immediate-help regression initially called the injected
+   suspend function after help was visibly open, proving that ChatApp processed Ctrl-Z before its help
+   gate. ChatApp now writes a scoped input-owner ref during render, routes help before global chords, and
+   gives ChatComposer the same ref; its listener returns before every composer/autocomplete branch unless
+   it is still owner. The test sends Shift+Tab, Ctrl-O, Ctrl-Z, and Escape immediately after help appears;
+   it proves no mode change, pager, suspend, or rewind arm, then proves the composer works after close.
+   A pending-dialog transition has the same stale-listener guard.
+3. **External prefill and rewind.** The direct prefill regression initially observed zero draft-start
+   notifications for an empty-to-nonempty replacement, and the ChatApp history-prefill regression rendered
+   both `Esc clear` and `Press Esc again to rewind`. ChatComposer now synchronously notifies the current
+   parent callback from the prefill effect before scheduling the replacement. Empty prefill and prepend to
+   a nonempty draft do not notify again. The first post-history-prefill frame has no rewind arm and Escape
+   takes only the local clear path.
+4. **Hermetic fixture identity proof.** A clean shallow clone initially failed because the Python suite
+   executed `git show` against unreachable object `d6b2b6d849`. The test now builds deterministic sanitized
+   fake identities into the current tracked ANSI layouts and asserts exact redaction round-trips for all
+   eight fixtures; no test or operational documentation uses that object. A fresh depth-one local clone
+   ran all 21 Python tests successfully and its tracked fixture/test source contains neither the object
+   identifier nor `git show` loading.
+
+### Fourth-pass verification
+
+- `npm run typecheck`: **PASS**.
+- `npx vitest run test/tui --exclude 'test/tui/tmp-probe-rescue-popup.test.tsx'`: **PASS; 39 files,
+  652 tests passed, 9 gated live tests skipped**.
+- `npm run test:unit`: **PASS; 135 files, 1,227 tests passed**.
+- `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`: **PASS; 21
+  tests passed**.
+- Focused red/green coverage: the old help implementation called suspend once; the old history-prefill
+  frame retained the rewind arm; the old direct prefill callback count was zero; the old capture guard
+  returned zero for an unmatched tracked key. All corresponding focused tests are green after correction.
+- A fresh frame capture at 100x40 with `/tmp/frame-scratch` produced **3 help** and **5 composer** frames.
+  The baseline remains `0 clean, 0 allowlisted, 3 DIVERGENT` for help and `0 clean, 0 allowlisted, 5
+  DIVERGENT` for composer, each with expected diff exit code 1.
+- F0 acceptance remains covered by the complete TUI/unit suites. The keyless PTY runs again showed the
+  Escape-clear affordance and the Ctrl-D first-press hint followed by clean exit; the real terminal
+  Ctrl-Z → `fg` round-trip remains the only manual concern. No credentials were printed.

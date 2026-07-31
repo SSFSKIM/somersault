@@ -23,6 +23,7 @@ scripts/frames/.venv/bin/python3 scripts/capture-frames.py \
 `redactions_by_frame` in `scripts/frames/masks.json` is the write-time contract. It is narrowly
 anchored to the boot dashboard; it does not redact transcript emails, UUIDs, paths, costs, durations,
 percentages, token counts or timestamps. `by_frame` contains separate, dashboard-only comparison masks
-for quota and status nondeterminism. Automated tests prove that the unredacted frames in commit
-`d6b2b6d849` redact byte-for-byte to all eight stored fixtures and that an attempted unredacted
-tracked-fixture write is refused.
+for quota and status nondeterminism. Automated tests derive sanitized fake unredacted identities
+from the ANSI/layout of every stored frame, prove they redact byte-for-byte to all eight fixtures, and
+prove a tracked-fixture write is refused unless every scripted frame key has a matching redaction rule
+before the child is started.
