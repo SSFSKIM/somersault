@@ -1322,4 +1322,33 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("Permissions dialog dismissed"));
     expect(frame(lastFrame)).not.toContain("Claude Code won't ask before using allowed tools.");   // dialog really closed
   });
+
+  it("Esc with a running turn and 3 queued messages: composer holds all three newline-joined, queue empty, turn interrupted (F0 acceptance 1, CM49)", async () => {
+    let interrupted = 0;
+    // A hanging turn, mirroring escape.test.tsx's "busy + text: Esc interrupts" pattern: fakeRemote() has
+    // no `run` field, so `submit` pushes the turn-start event itself (busy is driven by that host event,
+    // not by submit()'s own promise state) and then never resolves.
+    let fake: ReturnType<typeof fakeRemote>;
+    fake = fakeRemote({
+      submit: async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); return new Promise(() => {}); },
+      interrupt: async () => { interrupted++; },
+    });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("start"); await waitFor(() => frame(lastFrame).includes("start"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("⟳"));
+    for (const q of ["first queued", "second queued", "third queued"]) {
+      stdin.write(q); await waitFor(() => frame(lastFrame).includes(q));
+      stdin.write("\r");
+      await waitFor(() => frame(lastFrame).includes(`⋯ queued: ${q}`));
+    }
+    stdin.write("\x1b");                                              // Esc: interrupt + rescue
+    await waitFor(() => interrupted === 1);
+    await waitFor(() => !frame(lastFrame).includes("⋯ queued:"));
+    const f = frame(lastFrame);
+    expect(f).toContain("first queued");
+    expect(f).toContain("second queued");
+    expect(f).toContain("third queued");                              // all three now IN the composer
+  });
 });

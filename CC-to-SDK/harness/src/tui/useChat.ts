@@ -44,7 +44,7 @@ import { promptEntries, mergeEntries, type HistEntry, type HistoryScope } from "
 // adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
 export type { ChatSession };
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[]; }
+export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend" } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[]; }
 
 // Tab cycles these; bypassPermissions stays off-cycle (/yolo). Single source with settingsRows.ts's own
 // permissionMode row (review finding 3) — importing it here instead of a second literal array means the
@@ -84,7 +84,7 @@ export function useChat(
   const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[] }>({ open: false, sessions: [] });
   const [modelPicker, setModelPicker] = useState<{ open: boolean; models: ModelInfo[] }>({ open: false, models: [] });
   const [rewindPicker, setRewindPicker] = useState<{ open: boolean; anchors: RewindAnchor[] }>({ open: false, anchors: [] });
-  const [composerPrefill, setComposerPrefill] = useState<{ text: string; token: number } | null>(null);
+  const [composerPrefill, setComposerPrefill] = useState<{ text: string; token: number; mode?: "replace" | "prepend" } | null>(null);
   const [rewinding, setRewinding] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);   // the `?` help overlay (pure display)
   const [historyOpen, setHistoryOpen] = useState(false);       // the Ctrl-R history-search overlay
@@ -904,7 +904,16 @@ export function useChat(
     if (!disposed.current) setMode(next);
   }
   function cycleMode() { void applyMode(ladderNext(mode)); }
-  function interrupt() { drainGen.current++; setQueue([]); void session.interrupt().catch(() => {}); }   // Esc stops everything: queue + any scheduled drain
+  // Esc/Ctrl-C on a busy turn (ChatApp routes both here — a deliberate extension of upstream's Escape-only
+  // wording): stop everything, DESTROY nothing. Any queued prompts are rescued back into the composer as a
+  // "prepend" prefill (CM49) rather than dropped with the queue.
+  function interrupt() {
+    drainGen.current++;
+    const q = queueRef.current;
+    if (q.length) setComposerPrefill({ text: q.join("\n"), token: Date.now(), mode: "prepend" });
+    setQueue([]);
+    void session.interrupt().catch(() => {});
+  }
   function clear() { if (!disposed.current) { clearScreen(); setLines([]); setStreaming([]); setClearToken((t) => t + 1); } }   // /clear: wipe screen + model (session context kept)
 
   return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };

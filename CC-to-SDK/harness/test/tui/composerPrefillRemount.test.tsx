@@ -78,3 +78,36 @@ describe("composer prefill: consumed at most once across a popup remount (Import
     expect(frame(lastFrame)).not.toContain("fix the parser");
   });
 });
+
+// Task 3 (CM49): interrupt() rescues a queue into the composer via a "prepend" prefill, which must MERGE
+// with whatever the user was mid-typing rather than clobber it. Mounts ChatComposer directly (no useChat)
+// and drives `prefill` via rerender — the narrowest harness that can pin the merge contract in ChatComposer's
+// own effect, independent of useChat's interrupt() wiring (covered end-to-end by chat.test.tsx instead).
+describe("composer prefill: prepend mode merges with an existing draft (Task 3, CM49)", () => {
+  it("a prepend-mode prefill lands ABOVE an existing draft instead of replacing it; a replace/modeless prefill still replaces wholesale", async () => {
+    const { stdin, lastFrame, rerender } = render(
+      <ChatComposer onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} prefill={null} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));   // let the composer's useInput subscribe
+
+    stdin.write("my draft");
+    await waitFor(() => frame(lastFrame).includes("my draft"));
+
+    // A prepend prefill arrives (e.g. interrupt() rescuing the queue) while the draft is still there.
+    rerender(<ChatComposer onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} prefill={{ text: "q1\nq2", token: 1, mode: "prepend" }} />);
+    await waitFor(() => frame(lastFrame).includes("q1"));
+    const merged = frame(lastFrame);
+    expect(merged).toContain("q1");
+    expect(merged).toContain("q2");
+    expect(merged).toContain("my draft");   // draft survived, not clobbered
+
+    // A later replace-mode (or modeless) prefill still replaces the buffer wholesale — existing rewind/
+    // history-accept behavior (both call setComposerPrefill with no `mode`) must stay unchanged.
+    rerender(<ChatComposer onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} prefill={{ text: "replaced", token: 2 }} />);
+    await waitFor(() => frame(lastFrame).includes("replaced"));
+    const replaced = frame(lastFrame);
+    expect(replaced).not.toContain("my draft");
+    expect(replaced).not.toContain("q1");
+    expect(replaced).not.toContain("q2");
+  });
+});

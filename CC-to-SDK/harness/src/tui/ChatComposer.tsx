@@ -60,7 +60,7 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, onEmptyChange }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; onEmptyChange?: (empty: boolean) => void }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, onEmptyChange }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; onEmptyChange?: (empty: boolean) => void }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -91,11 +91,18 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // `onPrefillApplied` moves the "already applied" knowledge up to useChat (which survives remounts): it
   // clears `composerPrefill` to null the moment this fires, so no later remount can ever see a non-null
   // prefill to re-apply — the ref here is now just a same-mount double-invoke guard, not the real dedup.
+  // "prepend" mode (Task 3, CM49 — interrupt() rescuing a queue) MERGES above whatever the user was
+  // mid-typing instead of clobbering it; every other prefill (rewind, history-accept — both modeless =
+  // replace) keeps the wholesale-replace behavior above.
   const lastPrefill = useRef(0);
   useEffect(() => {
     if (!prefill || prefill.token === lastPrefill.current) return;
     lastPrefill.current = prefill.token;
-    setState((s) => withBufferText(s, prefill.text));
+    setState((s) => {
+      const draft = s.lines.join("\n");
+      const text = prefill.mode === "prepend" && draft.trim().length ? prefill.text + "\n" + draft : prefill.text;
+      return withBufferText(s, text);
+    });
     onPrefillApplied?.();
   }, [prefill]);
 
