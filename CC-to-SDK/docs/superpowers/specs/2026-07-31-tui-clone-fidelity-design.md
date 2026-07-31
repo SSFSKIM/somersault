@@ -131,13 +131,16 @@ abstraction.
   instead of discarding it), `CM15/CM16` (Esc-Esc clears the composer and pushes the text to prompt
   history; rewind arms only on an empty composer), `CM10`+`CM11` (a real kill ring with `ctrl+y` yank
   and `alt+y` yank-pop, plus the `Ctrl+Y to paste deleted text` notice after a kill of ≥3 characters).
-- **False advertising:** `KB4` (`ctrl+_` undo — make it reachable by matching `input === "\x1f"`, or
-  unbind it and delete the help line; it currently inserts a raw `\x1f` into the buffer),
+- **False advertising:** `KB4` (`ctrl+_` undo — make it reachable by matching `input === "\x1f"`;
+  settled 2026-07-31: the undo stack already exists and works in `editor.ts`, only the chord never
+  reaches it because terminals send the bare byte, which today falls through into the buffer),
   `KB6` (the `?` overlay binds Escape only, and `ChatApp`'s global handler is gated on `shortcutsOpen`
   so the key cannot double-fire), `KB23` (delete the three dead branches: `pager.ts:32`'s `key.shift`,
   `editor.ts:239`'s `ctrl+j`, and KB4's).
 - **Surprises:** `KB3` (`ctrl+d` needs two presses), `KB5` (`ctrl+z` returns to the shell as SIGTSTP;
-  detach moves to a new binding), `KB1` (bind `y`/`n`, keep `a`/`A`/`d`/`D` and digits as aliases).
+  detach moves to the `/detach` slash command **only** — no chord, owner decision 2026-07-31: detach
+  is ccx-only so any chord is a divergence and a permanent collision hazard for F2's upstream table),
+  `KB1` (bind `y`/`n`, keep `a`/`A`/`d`/`D` and digits as aliases).
 - **The honesty audit:** a test that enumerates every chord printed by `ShortcutsOverlay` and the
   footer against the live handler set. No string may advertise a chord that is not live.
 - **The map:** apply all ~20 scorecard corrections (§ The scorecard), add the missing structural rows,
@@ -158,8 +161,7 @@ that F2 re-homes into the table.
    Up immediately brings it back as the newest history entry. The rewind picker never opens while the
    composer holds text.
 3. `ctrl+u` on a full line then `ctrl+y` restores it verbatim; `alt+y` cycles to the previous kill.
-4. Pressing `ctrl+_` either undoes the last edit or does nothing and is absent from the help overlay.
-   In neither case does a control character appear in the buffer.
+4. Pressing `ctrl+_` undoes the last edit. No control character ever appears in the buffer.
 5. With the `?` overlay open, `ctrl+o` closes the overlay and does **not** open the transcript pager.
    Only Escape closes it.
 6. `ctrl+d` on an empty composer prints a hint and stays; a second press exits. `ctrl+z` suspends to
@@ -831,3 +833,7 @@ Pending — written at finish.
 - 2026-07-31 — the open tool-vocabulary question is closed by the owner: the model keeps Bash, no
   Grep/Glob steering (current Claude Code itself moved search into Bash). P94 narrowed to a pure
   census; Decision Log and § Where the asymptote is updated in place.
+- 2026-07-31 — F0 brainstorm settlements: `KB4` resolved to make-reachable (the undo stack already
+  exists in `editor.ts`; only the `0x1f` byte match is missing); `KB5`'s detach re-home resolved to
+  the `/detach` slash command only, no chord (owner). Golden captures will be taken from the
+  installed `claude` 2.1.220, which matches the reference bundle version exactly.
