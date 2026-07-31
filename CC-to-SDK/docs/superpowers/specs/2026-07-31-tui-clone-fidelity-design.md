@@ -65,9 +65,12 @@ residual is not cosmetic:
    difference lives in the tool catalog and the model's choices, not in our UI. We can soften it by
    classifying Bash command text into upstream's search/read/list clause families (upstream already
    does exactly this in `Kr_`), so the *collapsed summary* reads like Claude Code's even when the
-   expanded row does not. Whether to go further — restricting Bash-as-search to push the model onto
-   Grep/Glob — is a fidelity-versus-capability trade the owner should make with the census in hand
-   (P94), not a decision this spec takes.
+   expanded row does not. The owner has since settled the further question (2026-07-31): **the model
+   keeps Bash — no Grep/Glob steering.** Current Claude Code itself moved search into Bash (the owner's
+   observation, corroborated by a live harness session exposing no Grep/Glob to the model), so
+   Bash-as-search plus the `Kr_`-style clause classifier *is* the upstream-faithful shape, not a
+   concession. P94's census remains needed for `ST3`/`LT2`'s vocabulary, but its steering sub-question
+   is closed.
 2. **Anything gated on an alternate screen.** Ink's `<Static>` is append-only. The fullscreen
    renderer, the composer's scrolling viewport, right-column suppression and theme repaint of history
    are out, permanently.
@@ -572,7 +575,7 @@ item whose probe has not returned is **unschedulable**, and an item whose probe 
 |---|---|---|---|
 | **77 ✅** | What is in a `tool_result`? Anything structured? | `ST3`, `LT1`, `TR23`, `TR25` — and the whole derivation premise | done |
 | **78 ✅** | Which `canUseTool` fields arrive populated? Does `updatedPermissions` round-trip? | **the entire F6 permission cluster**; also settles the inventory's P79 for the `session` destination | done |
-| **P94** *(new)* | **Tool census.** Over a corpus of realistic tasks: which tools does the model actually call, at what frequency, with what argument and result-text shapes? Do `Grep`/`Glob` exist in this SDK's catalog and go unused, or not exist? Does disallowing Bash-as-search move the model onto them, and at what capability cost? | `ST3`'s vocabulary, `LT1`'s per-tool rows, `LT2`'s clause grammar — and informs the open tool-vocabulary decision | before F1 |
+| **P94** *(new)* | **Tool census.** Over a corpus of realistic tasks: which tools does the model actually call, at what frequency, with what argument and result-text shapes? (The steering sub-question — would disallowing Bash-as-search move the model onto Grep/Glob — is closed: owner decided 2026-07-31 the model keeps Bash; see Decision Log.) | `ST3`'s vocabulary, `LT1`'s per-tool rows, `LT2`'s clause grammar | before F1 |
 | **P86** | Ink input capability matrix in our terminals: `home`/`end`/`pageup`/`pagedown`, `shift+return`, `super`/`meta` chords, mouse click and wheel, terminal focus events, bracketed-paste boundaries | **scopes F2 and F5** — separates unreachable from unbuilt | before F2; needs a pty, not the SDK, so it can run from day one |
 | **P80** | Does `[Request interrupted by user]` reach a client as a user message? Do context-limit, credit-balance and abort conditions arrive as assistant text with upstream's sentinel strings, or as SDK errors? | `LT14`, `TR38` | batch B, before F3 |
 | **P81** | Does the `compact_boundary` frame carry a summarised-message count and direction? | `TR36` | batch B |
@@ -778,11 +781,16 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
   instrument that scores ✅ on divergence makes the whole program unfalsifiable.
 - **`ST2` ships with a consumer.** Building the verbose flag with nothing to expand would be
   speculative; `LT6` rides along in F1 so the mechanism is proven end to end the day it lands.
-- **Open, deliberately not decided here: whether to steer the model's tool vocabulary.** P94 will show
-  whether `Grep`/`Glob` exist in this SDK's catalog and whether restricting Bash-as-search moves the
-  model onto them. If it does, the transcript starts looking like Claude Code's in the single most
-  visible way available to us — but it changes agent behaviour, not just appearance, and that is a
-  fidelity-versus-capability trade for the owner, with the census in hand.
+- **Tool vocabulary: the model keeps Bash — no Grep/Glob steering** (owner decision, 2026-07-31,
+  closing what this spec originally left open). Rationale: current Claude Code itself dropped
+  Grep/Glob from the model's toolset in favour of Bash (owner's recollection, corroborated by a live
+  harness session whose tool list carries no Grep/Glob), and the bundle's own `Kr_` classifier exists
+  precisely to collapse Bash search/read/list commands into upstream-style summaries. So steering
+  would have chased an *older* upstream at a capability cost, while Bash + clause classification
+  matches the current one. Rejected alternative: restrict Bash-as-search via permission rules to push
+  the model onto Grep/Glob — changes agent behaviour, risks capability, and no longer buys fidelity.
+  P94 shrinks accordingly: it is now purely the census for `ST3`/`LT2` (observed tools, frequencies,
+  argument/result shapes), not a steering experiment.
 
 ## Surprises & Discoveries
 
@@ -820,3 +828,6 @@ Pending — written at finish.
   runtime facts settled by committed probes 77 and 78. The inventory's eight-wave proposal was
   restructured into nine — see § What changed — principally to put the keymap ahead of the composer and
   the transcript ahead of the dialogs, both to avoid building the same surface twice.
+- 2026-07-31 — the open tool-vocabulary question is closed by the owner: the model keeps Bash, no
+  Grep/Glob steering (current Claude Code itself moved search into Bash). P94 narrowed to a pure
+  census; Decision Log and § Where the asymptote is updated in place.
