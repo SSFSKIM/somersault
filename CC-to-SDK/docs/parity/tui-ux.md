@@ -382,9 +382,9 @@ own method note above points to, and are recorded here so a reader of the scorec
   commits `31c7528c80` + `181470a918`) captures a pyte-emulated screen state of a running TUI at named
   checkpoints and diffs two capture directories with dashboard-only nondeterminism masked out. SGR 2
   dim is a first-class cell attribute through pyte scroll/erase/insert/delete and wide-cell continuation
-  overwrites. Tracked-golden writes require the same narrowly scoped identity redaction contract that
-  byte-for-byte maps the original captures to their stored fixtures; arbitrary transcript identity,
-  quota, cost, duration, token, timestamp and UUID text remains distinguishable. First goldens against the real,
+  overwrites. Tracked-golden writes require named identity rules with per-rule and total match coverage,
+  staging every frame until the complete batch validates; arbitrary transcript identity, quota, cost,
+  duration, token, timestamp and UUID text remains distinguishable. First goldens against the real,
   installed `claude` 2.1.220 binary are committed under `harness/test/fixtures/upstream-frames/`
   (`help-overlay/`, `composer-basics/`). Running it against our own `ccx` today reports both sets
   DIVERGENT (expected — the boot-frame gap is real and large; the composer-editing semantics matched

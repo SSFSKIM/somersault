@@ -142,7 +142,14 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("--redact-masks", refused.stderr)
             self.assertFalse(list(out.glob("*.ansi")))
-            captured = self.run_capture("wait:0.05\nframe:boot\n", child, out, MASKS_PATH)
+            one_identity_masks = root / "masks-one-identity.json"
+            one_identity_masks.write_text(json.dumps({"redactions_by_frame": {
+                "help-overlay/01-boot.ansi": {
+                    "patterns": [{"name": "greeting", "pattern": "Welcome back [^!\\x1b]*!", "minimum_matches": 1}],
+                    "minimum_matches": 1,
+                },
+            }}), encoding="utf-8")
+            captured = self.run_capture("wait:0.05\nframe:boot\n", child, out, one_identity_masks)
             self.assertEqual(captured.returncode, 0, captured.stderr)
             frame = (out / "01-boot.ansi").read_text(encoding="utf-8")
             self.assertIn("▒", frame)
@@ -162,7 +169,10 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertFalse(list(out.glob("*.ansi")))
 
             partial = root / "masks-partial.json"
-            partial.write_text(json.dumps({"redactions_by_frame": {"renamed/01-first.ansi": ["ready"]}}), encoding="utf-8")
+            partial.write_text(json.dumps({"redactions_by_frame": {"renamed/01-first.ansi": {
+                "patterns": [{"name": "ready", "pattern": "ready", "minimum_matches": 1}],
+                "minimum_matches": 1,
+            }}}), encoding="utf-8")
             refused_partial = self.run_capture("frame:first\nframe:second\n", child, out, partial)
             self.assertNotEqual(refused_partial.returncode, 0)
             self.assertIn("renamed/02-second.ansi", refused_partial.stderr)
@@ -175,8 +185,8 @@ class FrameScriptsTest(unittest.TestCase):
             child = self.child_command("import sys,time; sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(0.3)")
             masks = root / "masks-complete.json"
             masks.write_text(json.dumps({"redactions_by_frame": {
-                "renamed/01-first.ansi": ["ready"],
-                "renamed/02-second.ansi": ["ready"],
+                "renamed/01-first.ansi": {"patterns": [{"name": "ready", "pattern": "ready", "minimum_matches": 1}], "minimum_matches": 1},
+                "renamed/02-second.ansi": {"patterns": [{"name": "ready", "pattern": "ready", "minimum_matches": 1}], "minimum_matches": 1},
             }}), encoding="utf-8")
             tracked = root / "test" / "fixtures" / "upstream-frames" / "renamed"
             captured = self.run_capture("frame:first\nframe:second\n", child, tracked, masks)
@@ -189,6 +199,91 @@ class FrameScriptsTest(unittest.TestCase):
             untracked = self.run_capture("frame:boot\n", child, root / "scratch")
             self.assertEqual(untracked.returncode, 0, untracked.stderr)
             self.assertIn("ready", (root / "scratch" / "01-boot.ansi").read_text(encoding="utf-8"))
+
+    def test_capture_rejects_declared_rules_that_match_no_identity_before_writing(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            out = root / "test" / "fixtures" / "upstream-frames" / "renamed"
+            masks = root / "masks-zero-match.json"
+            masks.write_text(json.dumps({"redactions_by_frame": {
+                "renamed/01-boot.ansi": {
+                    "patterns": [{"name": "greeting", "pattern": "FAKE-GREETING", "minimum_matches": 1}],
+                    "minimum_matches": 1,
+                },
+            }}), encoding="utf-8")
+            child = self.child_command("import sys,time; sys.stdout.write('RAW-FAKE-IDENTITY'); sys.stdout.flush(); time.sleep(0.3)")
+            refused = self.run_capture("frame:boot\n", child, out, masks)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("greeting", refused.stderr)
+            self.assertFalse(list(out.glob("*.ansi")))
+            self.assertNotIn("RAW-FAKE-IDENTITY", refused.stdout + refused.stderr)
+
+    def test_capture_redaction_validation_is_atomic_across_tracked_frames(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            out = root / "test" / "fixtures" / "upstream-frames" / "renamed"
+            masks = root / "masks-partial-match.json"
+            masks.write_text(json.dumps({"redactions_by_frame": {
+                "renamed/01-first.ansi": {
+                    "patterns": [{"name": "first", "pattern": "FAKE-FIRST", "minimum_matches": 1}],
+                    "minimum_matches": 1,
+                },
+                "renamed/02-second.ansi": {
+                    "patterns": [{"name": "second", "pattern": "FAKE-SECOND", "minimum_matches": 1}],
+                    "minimum_matches": 1,
+                },
+            }}), encoding="utf-8")
+            child = self.child_command("import sys,time; sys.stdout.write('FAKE-FIRST'); sys.stdout.flush(); time.sleep(0.3)")
+            refused = self.run_capture("frame:first\nframe:second\n", child, out, masks)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("second", refused.stderr)
+            self.assertFalse(list(out.glob("*.ansi")))
+
+    def test_capture_accepts_exact_identity_coverage_and_explicit_safe_frame(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            covered = root / "test" / "fixtures" / "upstream-frames" / "covered"
+            masks = root / "masks-coverage.json"
+            masks.write_text(json.dumps({"redactions_by_frame": {
+                "covered/01-identities.ansi": {
+                    "patterns": [
+                        {"name": "greeting", "pattern": "FAKE-GREETING", "minimum_matches": 1},
+                        {"name": "status", "pattern": "fake@host", "minimum_matches": 1},
+                    ],
+                    "minimum_matches": 2,
+                },
+                "safe/01-safe.ansi": {"patterns": [], "minimum_matches": 0},
+            }}), encoding="utf-8")
+            identity_child = self.child_command("import sys,time; sys.stdout.write('FAKE-GREETING fake@host'); sys.stdout.flush(); time.sleep(0.3)")
+            captured = self.run_capture("wait:0.05\nframe:identities\n", identity_child, covered, masks)
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            frame = (covered / "01-identities.ansi").read_text(encoding="utf-8")
+            self.assertNotIn("FAKE-GREETING", frame)
+            self.assertNotIn("fake@host", frame)
+            self.assertGreaterEqual(frame.count("▒"), 2)
+
+            safe = root / "test" / "fixtures" / "upstream-frames" / "safe"
+            safe_child = self.child_command("import sys,time; sys.stdout.write('safe frame'); sys.stdout.flush(); time.sleep(0.3)")
+            captured_safe = self.run_capture("wait:0.05\nframe:safe\n", safe_child, safe, masks)
+            self.assertEqual(captured_safe.returncode, 0, captured_safe.stderr)
+            self.assertIn("safe frame", (safe / "01-safe.ansi").read_text(encoding="utf-8"))
+
+    def test_capture_fails_closed_when_an_ansi_boundary_change_breaks_a_required_rule(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            out = root / "test" / "fixtures" / "upstream-frames" / "boundary"
+            masks = root / "masks-boundary.json"
+            masks.write_text(json.dumps({"redactions_by_frame": {
+                "boundary/01-boot.ansi": {
+                    "patterns": [{"name": "greeting", "pattern": "FAKE-GREETING(?=\\x1b\\[0m BOUNDARY)", "minimum_matches": 1}],
+                    "minimum_matches": 1,
+                },
+            }}), encoding="utf-8")
+            child = self.child_command("import sys,time; sys.stdout.write('FAKE-GREETING changed-layout'); sys.stdout.flush(); time.sleep(0.3)")
+            refused = self.run_capture("wait:0.05\nframe:boot\n", child, out, masks)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("greeting", refused.stderr)
+            self.assertFalse(list(out.glob("*.ansi")))
 
     def test_dim_follows_bottom_margin_scroll(self):
         screen = capture.DimScreen(3, 2)

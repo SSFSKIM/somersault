@@ -568,7 +568,7 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");
   });
 
-  it("the first keys after help opens are exclusively owned by help, then the composer resumes normally", async () => {
+  it("help owns ordinary keys while upstream-precedence Ctrl-Z suspends before it, then the composer resumes normally", async () => {
     const modes: string[] = [];
     const suspend = vi.fn();
     const fake = fakeRemote({ setPermissionMode: (mode: string) => { modes.push(mode); } });
@@ -579,11 +579,13 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
     stdin.write("\x1b[Z");                                      // Shift+Tab must not cycle the composer beneath help
     stdin.write("\x0f");                                        // Ctrl-O must not open the pager
-    stdin.write("\x1a");                                        // Ctrl-Z must not suspend beneath help
+    stdin.write("\x1a");                                        // upstream raw input intercepts Ctrl-Z before Help dispatch
+    await waitFor(() => suspend.mock.calls.length === 1);
+    expect(frame(lastFrame)).toContain("Keyboard shortcuts");
+    expect(modes).toEqual([]);
+    expect(frame(lastFrame)).not.toContain("Transcript");
     stdin.write("\x1b");                                        // Escape only closes help; it must not arm rewind beneath it
     await waitFor(() => frame(lastFrame).includes("›"));
-    expect(modes).toEqual([]);
-    expect(suspend).not.toHaveBeenCalled();
     expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
     expect(frame(lastFrame)).not.toContain("Transcript");
 
@@ -594,6 +596,72 @@ describe("<ChatApp>", () => {
     stdin.write("\x1b[Z");
     await waitFor(() => modes.length === 1);
     expect(modes).toEqual(["acceptEdits"]);
+  });
+
+  it("Ctrl-Z has upstream process-level precedence over every ordinary visible overlay", async () => {
+    const historyDeps = {
+      getSessionMessages: async () => [] as any[], getSessionMessagesIn: async () => [] as any[], listHistorySessions: async () => [],
+    };
+    const cases: { name: string; session: () => ReturnType<typeof fakeRemote>; deps?: any; open: (stdin: any, lastFrame: () => string | undefined) => Promise<void> }[] = [
+      {
+        name: "Search prompts", session: () => fakeRemote(), deps: historyDeps,
+        open: async (stdin, lastFrame) => { stdin.write("\x12"); await waitFor(() => frame(lastFrame).includes("Search prompts")); },
+      },
+      {
+        name: "Settings", session: () => fakeRemote(),
+        open: async (stdin, lastFrame) => { stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Settings")); },
+      },
+      {
+        name: "switch model", session: () => fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) }),
+        open: async (stdin, lastFrame) => { stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("switch model")); },
+      },
+      {
+        name: "resume a session", session: () => fakeRemote(), deps: { listSessions: async () => [{ sessionId: "prior", summary: "saved", lastModified: 1 }] },
+        open: async (stdin, lastFrame) => { stdin.write("/resume"); await waitFor(() => frame(lastFrame).includes("/resume")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("resume a session")); },
+      },
+    ];
+    for (const testCase of cases) {
+      const suspend = vi.fn();
+      const session = testCase.session();
+      const view = render(<ChatApp makeSession={() => session} client={{ kind: "loopback" }} cwd={process.cwd()} deps={testCase.deps} suspend={suspend as any} />);
+      await waitFor(() => frame(view.lastFrame).includes("›"));
+      await testCase.open(view.stdin, view.lastFrame);
+      view.stdin.write("\x1a");
+      await waitFor(() => suspend.mock.calls.length === 1);
+      expect(frame(view.lastFrame)).toContain(testCase.name);
+      view.unmount();
+    }
+  });
+
+  it("a hidden pending decision never bypasses the visible overlay's key ownership", async () => {
+    const historyDeps = {
+      getSessionMessages: async () => [] as any[], getSessionMessagesIn: async () => [] as any[], listHistorySessions: async () => [],
+    };
+    const cases: { name: string; session: () => ReturnType<typeof fakeRemote>; deps?: any; open: (stdin: any, lastFrame: () => string | undefined) => Promise<void>; closesOnCtrlC?: boolean }[] = [
+      { name: "Search prompts", session: () => fakeRemote(), deps: historyDeps, closesOnCtrlC: true, open: async (stdin, lastFrame) => { stdin.write("\x12"); await waitFor(() => frame(lastFrame).includes("Search prompts")); } },
+      { name: "Settings", session: () => fakeRemote(), open: async (stdin, lastFrame) => { stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Settings")); } },
+      { name: "switch model", session: () => fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) }), open: async (stdin, lastFrame) => { stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("switch model")); } },
+      { name: "resume a session", session: () => fakeRemote(), deps: { listSessions: async () => [{ sessionId: "prior", summary: "saved", lastModified: 1 }] }, open: async (stdin, lastFrame) => { stdin.write("/resume"); await waitFor(() => frame(lastFrame).includes("/resume")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("resume a session")); } },
+    ];
+    for (const testCase of cases) {
+      const fake = testCase.session();
+      const view = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={testCase.deps} />);
+      await waitFor(() => frame(view.lastFrame).includes("›"));
+      await testCase.open(view.stdin, view.lastFrame);
+      fake.parkPermission({ sessionId: "s", toolUseID: `hidden-${testCase.name}`, toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
+      view.stdin.write("\x03");                                // Ctrl-C belongs to the visible surface, never hidden pending
+      await new Promise((r) => setTimeout(r, 20));
+      expect(frame(view.lastFrame)).not.toContain("Press Ctrl-C again to exit");
+      if (testCase.closesOnCtrlC) await waitFor(() => frame(view.lastFrame).includes("Allow Claude to use"));
+      else {
+        expect(frame(view.lastFrame)).toContain(testCase.name);
+        view.stdin.write("\x1b");                              // visible overlay closes by its own Escape handler
+        await waitFor(() => frame(view.lastFrame).includes("Allow Claude to use"));
+      }
+      view.stdin.write("a");
+      await waitFor(() => fake.answeredCalls.length === 1);
+      view.unmount();
+    }
   });
 
   it("a pending dialog synchronously blocks the retiring composer listener", async () => {

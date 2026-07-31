@@ -26,7 +26,7 @@ function renderBuffer(state: EditorState): React.ReactNode {
 
 const COMMAND_ROWS = 8;                            // visible rows; the selection scrolls through the full list
 
-export type InputOwner = "composer" | "shortcuts" | "transcript" | "overlay";
+export type InputOwner = "composer" | "shortcuts" | "transcript" | "overlay" | "decision";
 
 function CommandPopup({ state }: { state: EditorState }) {
   const c = state.command!;
@@ -173,7 +173,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       const edited = (editExternalRef.current ?? realEditExternal)(s.lines.join("\n"));
       // Clear any open mention/command popup too — it was filtered against the pre-edit buffer and would
       // otherwise show stale items against the freshly-applied text.
-      if (edited !== null && !disposed.current) setState((st) => replaceBufferFromOutside(st, edited));
+      if (edited !== null && !disposed.current) {
+        if (s.lines.length === 1 && s.lines[0] === "" && edited.length > 0) onDraftStartRef.current?.();
+        setState((st) => replaceBufferFromOutside(st, edited));
+      }
       return;
     }
     ctrlX.current = 0;                                       // any other key breaks the chord

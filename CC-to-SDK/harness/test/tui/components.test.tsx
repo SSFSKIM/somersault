@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import React from "react";
 import { render } from "ink-testing-library";
+import { Box, Text } from "ink";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -505,6 +506,42 @@ describe("Wave-1 keymap wiring", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(edits).toEqual(["hi", ""]);
   });
+  it("a nonempty external-editor replacement notifies the parent draft owner exactly once; an empty replacement does not", async () => {
+    let starts = 0;
+    const edited = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} onDraftStart={() => { starts++; }} editExternal={() => "from-editor"} />);
+    await new Promise((r) => setTimeout(r, 20));
+    edited.stdin.write("\x07");                                // Ctrl-G opens the external editor from an empty composer
+    await waitFor(() => (edited.lastFrame() ?? "").includes("from-editor"));
+    expect(starts).toBe(1);
+
+    let emptyStarts = 0;
+    const empty = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} onDraftStart={() => { emptyStarts++; }} editExternal={() => ""} />);
+    await new Promise((r) => setTimeout(r, 20));
+    empty.stdin.write("\x07");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(emptyStarts).toBe(0);
+  });
+
+  it("external-editor text synchronously removes the parent's rewind arm before its first draft frame", async () => {
+    function RewindHarness() {
+      const [rewindArmed, setRewindArmed] = React.useState(false);
+      return <Box flexDirection="column">
+        <ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} onInterrupt={() => setRewindArmed(true)} onDraftStart={() => setRewindArmed(false)} editExternal={() => "from-editor"} />
+        {rewindArmed ? <Text>Press Esc again to rewind</Text> : null}
+      </Box>;
+    }
+    const { stdin, lastFrame } = render(<RewindHarness />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x1b");
+    await waitFor(() => (lastFrame() ?? "").includes("Press Esc again to rewind"));
+    stdin.write("\x07");
+    await waitFor(() => (lastFrame() ?? "").includes("from-editor"));
+    expect(lastFrame() ?? "").not.toContain("Press Esc again to rewind");
+    expect(lastFrame() ?? "").toContain("Esc clear");
+    stdin.write("\x1b");
+    await waitFor(() => (lastFrame() ?? "").includes("Esc again to clear"));
+  });
+
   it("chord completes but editExternal returns null → the ORIGINAL buffer is preserved (not cleared)", async () => {
     const submitted: string[] = [];
     const { stdin } = render(<ChatComposer onSubmit={(t) => submitted.push(t)} cwd="/" commandCatalog={[]} editExternal={() => null} />);

@@ -252,13 +252,12 @@ Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/
    `mkdir` or `pty.fork` and refuses the entire batch when any key has an empty applicable rule set. The
    regression test covers no-match and partial-coverage batches, asserts no child side effect or frame
    file, and retains successful explicitly redacted and untracked captures.
-2. **Retiring composer input ownership.** The immediate-help regression initially called the injected
-   suspend function after help was visibly open, proving that ChatApp processed Ctrl-Z before its help
-   gate. ChatApp now writes a scoped input-owner ref during render, routes help before global chords, and
-   gives ChatComposer the same ref; its listener returns before every composer/autocomplete branch unless
-   it is still owner. The test sends Shift+Tab, Ctrl-O, Ctrl-Z, and Escape immediately after help appears;
-   it proves no mode change, pager, suspend, or rewind arm, then proves the composer works after close.
-   A pending-dialog transition has the same stale-listener guard.
+2. **Retiring composer input ownership.** ChatApp writes a scoped input-owner ref during render and gives
+   ChatComposer the same ref; its listener returns before every composer/autocomplete branch unless it is
+   still owner. The initial test correctly found that the old listener fan-out could act after help became
+   visible, but its Ctrl-Z conclusion was superseded in the fifth pass by upstream raw-input evidence:
+   Ctrl-Z is a process-level exception that precedes Help. Ordinary immediate Help keys still prove no
+   mode change, pager, or rewind arm, and a pending-dialog transition has the same stale-listener guard.
 3. **External prefill and rewind.** The direct prefill regression initially observed zero draft-start
    notifications for an empty-to-nonempty replacement, and the ChatApp history-prefill regression rendered
    both `Esc clear` and `Press Esc again to rewind`. ChatComposer now synchronously notifies the current
@@ -289,3 +288,45 @@ Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/
 - F0 acceptance remains covered by the complete TUI/unit suites. The keyless PTY runs again showed the
   Escape-clear affordance and the Ctrl-D first-press hint followed by clean exit; the real terminal
   Ctrl-Z → `fg` round-trip remains the only manual concern. No credentials were printed.
+
+## Fifth plugin review pass
+
+Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/2026-07-31-tui-clone-f0/final-rereview5-findings.md`.
+
+1. **Counted, atomic tracked redaction.** `redactions_by_frame` now declares a contract object for every
+   tracked frame key: named patterns with individual `minimum_matches` and a total `minimum_matches`.
+   Capture counts substitutions, rejects a zero-match or changed-ANSI-boundary rule, stages all tracked
+   frames outside the target, and promotes only after every expected frame validates. Red proofs showed
+   that the former list-presence guard returned success for zero matches and wrote the first frame before a
+   later required rule failed. The new tests cover those failures, exact two-identity coverage, an explicit
+   safe no-identity frame, and confirm no raw fake identity is persisted.
+2. **Visible owner wins over hidden decisions.** The input-owner ref now represents `decision` only where
+   the render chain actually displays the decision. Higher-priority history, settings, model, and session
+   overlays remain `overlay`, so a newly parked hidden decision cannot enable ChatApp root chords beneath
+   them. The regression matrix parks an Edit decision under each surface, proves Ctrl-C is handled only by
+   the visible surface, then closes it and answers the visible decision once with no exit arm.
+3. **Upstream Ctrl-Z precedence restored.** Verified against
+   `/Users/new/claude-code-bundle/2.1.220/cli.pretty.js:177648-177703`: patched Ink calls
+   `handleSuspend()` and `continue`s before `dispatchKeyboardEvent`, so Help and modal swallowing never
+   receive Ctrl-Z. ChatApp now routes Ctrl-Z before every owner gate. The Help, history, settings, model,
+   and session tests prove the current suspend callback runs exactly once without triggering an overlay
+   action. Windows remains safe because `suspendProcess` is an existing no-op there.
+4. **External-editor rewind disarm.** The Ctrl-G/Ctrl-X Ctrl-E replacement path now emits the same
+   empty-to-nonempty draft-start notification used by typed input and prefill. The red sabotage observed a
+   zero callback count and the contradictory `Esc clear` plus rewind hint in the first editor-result frame.
+   The restored regression proves a nonempty external result disarms immediately, while an empty result
+   does not; the next Escape follows local clear semantics rather than rewind.
+
+### Fifth-pass verification
+
+- `npm run typecheck`: **PASS**.
+- Committed TUI suite: **39 files, 656 tests passed; 9 credential-gated live tests skipped**.
+- Unit suite: **135 files, 1,227 tests passed**.
+- Python frame suite: **25 tests passed** when run independently and again in a fresh depth-one clone.
+  The clone contains neither `d6b2b6d849` nor `git show` fixture loading. A concurrent TUI/unit/Python
+  invocation exposed the pre-existing 0.3-second live-child liveness test to scheduler contention; its
+  standalone rerun passed without code changes, so it is not represented as a product failure.
+- F0 acceptance 1–8 remains covered by the complete TUI/unit suites; the scorecard check still reports no
+  `Claude Code Src` reference, the 2.1.220 bundle reference, and the corrected ~63% headline.
+- Fresh 100x40 self-captures remain `0 clean, 0 allowlisted, 3 DIVERGENT` for help and `0 clean, 0
+  allowlisted, 5 DIVERGENT` for composer, both expected diff exit code 1. No tracked fixture was rewritten.

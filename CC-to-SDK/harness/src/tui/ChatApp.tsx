@@ -68,9 +68,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ? "shortcuts"
     : transcriptOpen
       ? "transcript"
-      : state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open || state.pending
+      : state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open
         ? "overlay"
-        : "composer";
+        : state.pending
+          ? "decision"
+          : "composer";
   // Ink's useInput subscription is passive, so a root handler can receive a key after a newer render has
   // already painted. Keep every state/callback value consumed by this handler current synchronously.
   const rootStateRef = useRef(state); rootStateRef.current = state;
@@ -104,30 +106,29 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     escTimer.current = setTimeout(() => setEscArmed(false), 1500);
   };
   const onCycleMode = () => { cycleMode(); disarm(); };   // Shift+Tab cycles the permission ladder (default → acceptEdits → plan → auto)
-  // Only Ctrl-C / Ctrl-Z / Ctrl-B / Ctrl-T live here — they conflict with nothing (composer/dialog/pickers never act
-  // on them), so this stays active even during a pending dialog (so Ctrl-C can still quit, Ctrl-Z can still
-  // suspend). Shift+Tab/Esc are owned by whatever input is focused: the composer fires onCycleMode on
-  // Shift+Tab even with a `/`/`@` popup open (matches 2.1.220 — the Autocomplete context binds only
-  // tab/esc/↑/↓, so shift+tab falls through to Chat's cycleMode), and routes Esc to onInterrupt only
-  // when no popup is open; dialogs/pickers own their own Esc.
+  // Ctrl-Z is process-level for EVERY visible owner: upstream's raw input loop handles it before context
+  // dispatch, including Help and modal swallowers; suspendProcess is already a Windows-safe no-op. Ctrl-O
+  // closes only Transcript or opens it only from Composer; Ctrl-R/T/B are Composer-only. Ctrl-C is allowed
+  // from Composer and a visible decision dialog, but never from an ordinary overlay hidden behind a decision.
+  // Shift+Tab/Esc are owned by the visible component: the composer fires onCycleMode on Shift+Tab even with
+  // a `/`/`@` popup open (matches 2.1.220), and routes Esc to onInterrupt only when no popup is open.
   // Ctrl-L lives in the editor now (Task 2), not here.
   useInput((input, key) => {
     const current = rootStateRef.current;
     const owner = inputOwnerRef.current;
-    if (owner === "shortcuts") {                              // KB6: help owns the visible overlay race window
-      if (key.escape) closeShortcutsRef.current();
-      return;
-    }
-    if (owner === "transcript") {                              // pager owns its keys except the established app-level suspend/close arms
-      if (key.ctrl && input === "z") (suspendRef.current ?? suspendProcess)({ stdin, repaint: () => write("") });
-      if (key.ctrl && input === "o") { setTranscriptOpen(false); disarm(); }
-      return;
-    }
-    if (owner === "overlay" && !current.pending) return;       // the visible overlay owns its keys
-    if (key.ctrl && input === "z") {                            // KB5: suspend like every terminal app; detach is /detach now
+    if (key.ctrl && input === "z") {                            // upstream intercepts this before Help/modal context dispatch
       (suspendRef.current ?? suspendProcess)({ stdin, repaint: () => write("") });
       return;
     }
+    if (owner === "shortcuts") {                                // Help owns every non-process key during its visible/race window
+      if (key.escape) closeShortcutsRef.current();
+      return;
+    }
+    if (owner === "transcript") {                               // pager owns its keys except its established Ctrl-O close arm
+      if (key.ctrl && input === "o") { setTranscriptOpen(false); disarm(); }
+      return;
+    }
+    if (owner === "overlay") return;                            // root globals never bypass the actually visible ordinary overlay
     // Both open arms are gated on !rewinding (F3, final review): a confirmed rewind is a multi-second
     // engine swap held behind the “⏪ restoring…” modal so a mid-rewind prompt isn't lost — Ctrl-R/Ctrl-O
     // opening another overlay (or, for history, Enter-executing straight into the busy host) would

@@ -33,14 +33,16 @@ import pty
 import re
 import select
 import shlex
+import shutil
 import signal
 import struct
 import sys
+import tempfile
 import termios
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from frame_masks import load_redactions, mask_text
+from frame_masks import RedactionContract, load_redaction_contract, redact_text
 
 try:
     import pyte
@@ -286,22 +288,24 @@ def main() -> int:
     if tracked_relative is not None and args.redact_masks is None:
         sys.stderr.write("capture-frames: tracked golden output requires --redact-masks\n")
         return 2
-    redactions: dict[str, list] = {}
+    redactions: dict[str, RedactionContract] = {}
     if args.redact_masks is not None:
         try:
             for seq, line in enumerate(expected_frames, 1):
                 name = f"{seq:02d}-{line.partition(':')[2]}.ansi"
-                redactions[name] = load_redactions(args.redact_masks, frame_key(args.out, name))
+                redactions[name] = load_redaction_contract(args.redact_masks, frame_key(args.out, name))
         except (OSError, ValueError, KeyError, re.error) as error:
             sys.stderr.write(f"capture-frames: invalid redaction masks: {error}\n")
             return 2
     if tracked_relative is not None:
-        missing = [frame_key(args.out, name) for name, masks in redactions.items() if not masks]
+        missing = [frame_key(args.out, name) for name, contract in redactions.items() if not contract.declared]
         if missing:
-            sys.stderr.write(f"capture-frames: tracked golden output has no redaction rules for: {', '.join(missing)}\n")
+            sys.stderr.write(f"capture-frames: tracked golden output has no redaction contract for: {', '.join(missing)}\n")
             return 2
 
-    os.makedirs(args.out, exist_ok=True)
+    stage_dir = tempfile.mkdtemp(prefix=".capture-", dir=os.path.dirname(os.path.abspath(args.out))) if tracked_relative is not None else args.out
+    if tracked_relative is None:
+        os.makedirs(stage_dir, exist_ok=True)
 
     screen = DimScreen(args.cols, args.rows)
     stream = pyte.ByteStream(screen)
@@ -396,9 +400,12 @@ def main() -> int:
                 out_name = f"{seq:02d}-{value}.ansi"
                 rendered = render_screen(screen)
                 if args.redact_masks is not None:
-                    rendered = mask_text(rendered, redactions[out_name])
+                    rendered, coverage_failures = redact_text(rendered, redactions[out_name])
+                    if coverage_failures:
+                        fail(f"redaction coverage failed for {frame_key(args.out, out_name)}: {', '.join(coverage_failures)}")
+                        break
                 try:
-                    with open(os.path.join(args.out, out_name), "w", encoding="utf-8") as fh:
+                    with open(os.path.join(stage_dir, out_name), "w", encoding="utf-8") as fh:
                         fh.write(rendered)
                 except OSError as error:
                     fail(f"frame write failed for {line!r}: {error}")
@@ -419,8 +426,17 @@ def main() -> int:
         fail("script produced no frame")
     if len(frames_written) != len(expected_frames):
         fail(f"incomplete capture: expected {len(expected_frames)} frame(s), wrote {len(frames_written)}")
+    if failed:
+        if tracked_relative is not None:
+            shutil.rmtree(stage_dir, ignore_errors=True)
+        return 1
+    if tracked_relative is not None:
+        os.makedirs(args.out, exist_ok=True)
+        for out_name in frames_written:
+            os.replace(os.path.join(stage_dir, out_name), os.path.join(args.out, out_name))
+        shutil.rmtree(stage_dir)
     sys.stderr.write(f"capture-frames: wrote {len(frames_written)} frame(s) to {args.out}: {frames_written}\n")
-    return 1 if failed else 0
+    return 0
 
 
 if __name__ == "__main__":

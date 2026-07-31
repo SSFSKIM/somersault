@@ -1,33 +1,51 @@
 {
   "redactions_by_frame": {
-    "help-overlay/*.ansi": [
-      {
-        "pattern": "Welcome back [^!\\x1b]*!(?=\\x1b\\[0m\\s+\\x1b\\[[0-9;]*m│\\x1b\\[0m Ask Claude to create)",
-        "replacement": "▒"
-      },
-      {
-        "pattern": "(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}(?:\\x1b\\[[0-9;]*m)?(?='s Organization\\x1b\\[0m +\\x1b\\[[0-9;]*m│\\x1b\\[0m {1,2}\\x1b\\[0;3;[0-9;]*m/release-notes)",
-        "replacement": "▒"
-      },
-      {
-        "pattern": "(?<=\\x1b\\[0m  )(?!git@)(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._-]+@[A-Za-z0-9.-]+(?=\\x1b\\[[0-9;]*m:\\x1b\\[[0-9;]*m/)",
-        "replacement": "▒"
-      }
-    ],
-    "composer-basics/*.ansi": [
-      {
-        "pattern": "Welcome back [^!\\x1b]*!(?=\\x1b\\[0m\\s+\\x1b\\[[0-9;]*m│\\x1b\\[0m Ask Claude to create)",
-        "replacement": "▒"
-      },
-      {
-        "pattern": "(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}(?:\\x1b\\[[0-9;]*m)?(?='s Organization\\x1b\\[0m +\\x1b\\[[0-9;]*m│\\x1b\\[0m {1,2}\\x1b\\[0;3;[0-9;]*m/release-notes)",
-        "replacement": "▒"
-      },
-      {
-        "pattern": "(?<=\\x1b\\[0m  )(?!git@)(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._-]+@[A-Za-z0-9.-]+(?=\\x1b\\[[0-9;]*m:\\x1b\\[[0-9;]*m/)",
-        "replacement": "▒"
-      }
-    ]
+    "help-overlay/*.ansi": {
+      "patterns": [
+        {
+          "name": "greeting",
+          "pattern": "Welcome back [^!\\x1b]*!(?=\\x1b\\[0m\\s+\\x1b\\[[0-9;]*m│\\x1b\\[0m Ask Claude to create)",
+          "replacement": "▒",
+          "minimum_matches": 1
+        },
+        {
+          "name": "organization-email",
+          "pattern": "(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}(?:\\x1b\\[[0-9;]*m)?(?='s Organization\\x1b\\[0m +\\x1b\\[[0-9;]*m│\\x1b\\[0m {1,2}\\x1b\\[0;3;[0-9;]*m/release-notes)",
+          "replacement": "▒",
+          "minimum_matches": 1
+        },
+        {
+          "name": "status-user-host",
+          "pattern": "(?<=\\x1b\\[0m  )(?!git@)(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._-]+@[A-Za-z0-9.-]+(?=\\x1b\\[[0-9;]*m:\\x1b\\[[0-9;]*m/)",
+          "replacement": "▒",
+          "minimum_matches": 1
+        }
+      ],
+      "minimum_matches": 3
+    },
+    "composer-basics/*.ansi": {
+      "patterns": [
+        {
+          "name": "greeting",
+          "pattern": "Welcome back [^!\\x1b]*!(?=\\x1b\\[0m\\s+\\x1b\\[[0-9;]*m│\\x1b\\[0m Ask Claude to create)",
+          "replacement": "▒",
+          "minimum_matches": 1
+        },
+        {
+          "name": "organization-email",
+          "pattern": "(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}(?:\\x1b\\[[0-9;]*m)?(?='s Organization\\x1b\\[0m +\\x1b\\[[0-9;]*m│\\x1b\\[0m {1,2}\\x1b\\[0;3;[0-9;]*m/release-notes)",
+          "replacement": "▒",
+          "minimum_matches": 1
+        },
+        {
+          "name": "status-user-host",
+          "pattern": "(?<=\\x1b\\[0m  )(?!git@)(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._-]+@[A-Za-z0-9.-]+(?=\\x1b\\[[0-9;]*m:\\x1b\\[[0-9;]*m/)",
+          "replacement": "▒",
+          "minimum_matches": 1
+        }
+      ],
+      "minimum_matches": 3
+    }
   },
   "by_frame": {
     "help-overlay/*.ansi": [
