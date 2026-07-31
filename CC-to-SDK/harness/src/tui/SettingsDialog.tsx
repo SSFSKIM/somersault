@@ -32,7 +32,11 @@ import { savePrefs as realSavePrefs } from "./prefs.js";
 const TABS = ["Status", "Config", "Usage", "Stats"] as const;
 type Tab = typeof TABS[number];
 const NORMAL_FOOTER = "Enter/Space to change · / to search · Esc to close";
-const SEARCH_FOOTER = "Type to filter · Enter/↓ to select · ↑ to tabs · Esc to clear";
+// DELIBERATE DIVERGENCE, same class as PermissionsDialog's RECENT_FOOTER (W3 final review Finding 5):
+// upstream's search footer promises "↑ to tabs" — a header-focus mode this wave doesn't ship (line 86's
+// own comment). key.upArrow below just exits search, identically to Esc — dropped the dead "↑ to tabs"
+// chord so the footer never advertises a focus move that doesn't happen.
+const SEARCH_FOOTER = "Type to filter · Enter/↓ to select · Esc to clear";
 const READONLY_FOOTER = "Tab/←/→ to switch tabs · Esc to close";
 
 export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outputStyle, onDone, applyMode, setThink, applyOutputStyle, fetchStatus, fetchUsage, fetchStats, onOpenModelPicker, savePrefs = realSavePrefs }: {

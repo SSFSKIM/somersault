@@ -521,7 +521,16 @@ export function useChat(
     // report the same fact twice (review finding 1). The standalone /model path (settings closed) keeps it,
     // exactly like every other /model invocation.
     const fromSettings = settings.open;
-    void (async () => { await session.setModel(v).catch(() => {}); if (!disposed.current) { setModel(v); if (!fromSettings) append(formatModel(v)); } })();
+    // Commit synchronously, BEFORE the engine round-trip — not after (final review Finding 2). The old
+    // code deferred setModel(v) until `await session.setModel(v)` settled, catching any rejection into a
+    // no-op first — so a failed engine call was already indistinguishable from a successful one; deferring
+    // the commit bought no correctness, it only opened a window where Esc landing mid-request hit
+    // closeSettings while `model` was still the OLD value, so the diff saw no change and printed "Config
+    // dialog dismissed" even though the model WAS about to change. Committing first closes that window:
+    // by the time any later keypress (Esc included) is processed, this state update has already rendered.
+    setModel(v);
+    if (!fromSettings) append(formatModel(v));
+    void session.setModel(v).catch(() => {});
   }
 
   // W3 T3: /add-dir. `addDirValidate` is the ONE place that turns a typed path into a verdict — both the
@@ -592,8 +601,12 @@ export function useChat(
   async function setThink(level: string): Promise<void> {
     if (disposed.current) return;
     const next = level === "off" ? "off" : "default";
+    // Commit first, same reasoning as pickModel above (final review Finding 2): the engine call's own
+    // rejection is already swallowed below and never rolls this back, so committing before the await
+    // removes the window where closeSettings could diff against a still-stale thinkLevel if Esc landed
+    // while setMaxThinkingTokens was still in flight.
+    setThinkLevel(next);
     await session.setMaxThinkingTokens(next === "off" ? 0 : null).catch(() => {});
-    if (!disposed.current) setThinkLevel(next);
   }
   // The Output-style row: apply the live engine style (best-effort, like every other flag-state op — a
   // session without SettingsOps just skips this leg), remember it in ccx's own prefs (the seed for next
@@ -602,11 +615,14 @@ export function useChat(
   // scalar patch instead of appendToArray.
   async function applyOutputStyle(id: string): Promise<void> {
     if (disposed.current) return;
-    if (hasSettingsOps(session)) await session.setOutputStyle(id).catch(() => {});
-    if (disposed.current) return;
+    // Commit + persist first, same reasoning as pickModel/setThink above (final review Finding 2): the
+    // awaited session.setOutputStyle call's own rejection is already swallowed below and never rolls this
+    // back, so committing before the await removes the window where closeSettings could diff against a
+    // still-stale outputStyle if Esc landed while the engine round trip was still in flight.
     setOutputStyleState(id);
     savePrefsFn({ outputStyle: id });
     try { mergeSettingsFile("localSettings", cwd, (current) => ({ ...(current && typeof current === "object" ? current : {}), outputStyle: id }), deps.settingsFileDeps); } catch { /* best-effort — no visible error line, mirrors theme's own silent persistence */ }
+    if (hasSettingsOps(session)) await session.setOutputStyle(id).catch(() => {});
   }
   // The Settings dialog's Status/Usage/Stats tabs — mirror the /status, /usage, /stats cases exactly
   // (formatStatus/formatUsage/formatStats), just returning lines instead of appending them: the dialog

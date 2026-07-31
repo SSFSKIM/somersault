@@ -748,7 +748,7 @@ describe("<ChatApp>", () => {
     stdin.write("/");
     await waitFor(() => frame(lastFrame).includes("Search settings…"));
     stdin.write("THEME");
-    await waitFor(() => frame(lastFrame).includes("Type to filter · Enter/↓ to select · ↑ to tabs · Esc to clear"));
+    await waitFor(() => frame(lastFrame).includes("Type to filter · Enter/↓ to select · Esc to clear"));   // final review Finding 5 — dropped the dead "↑ to tabs" chord
     const f = frame(lastFrame);
     expect(f).toContain("Theme");
     expect(f).not.toContain("Output style");
@@ -807,6 +807,37 @@ describe("<ChatApp>", () => {
     // notice, and would otherwise make this assertion count a legitimate second occurrence.
     expect(flat).not.toMatch(/model → claude-opus-5/);              // no immediate notice from pickModel while reached via Settings
     expect((flat.match(/Set Model to/g) ?? []).length).toBe(1);     // the close-time summary reported the change exactly once
+  });
+
+  // Final review Finding 2 (Important — distinct from the "finding 2" referenced in the comment above,
+  // which is a W3.5-round fix): pickModel used to commit setModel(v) only AFTER `await session.setModel(v)`
+  // settled. Holding that engine call open (simulating the real wire round trip) and closing Settings
+  // BEFORE it resolves used to print "Config dialog dismissed" — closeSettings diffed against the still-old
+  // `model` — even though the model DID change moments later. This test fails red against the unfixed
+  // pickModel (see the task report); it passes now because pickModel commits synchronously, before the await.
+  it("Config: closing Settings while the Model row's session.setModel(...) is still in flight still reports the change (final review Finding 2)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const fake = fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }), setModel: () => gate });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));
+    stdin.write("\x1b[B");                                          // Theme(0) → Model(1)
+    await waitFor(() => frame(lastFrame).includes("❯ Model"));
+    stdin.write("\r");                                              // Enter on Model → onOpenModelPicker
+    await waitFor(() => frame(lastFrame).includes("switch model"));
+    stdin.write("\r");                                              // pick the only model — session.setModel(...) is now blocked on `gate`
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));   // back on the Config row list
+    expect(frame(lastFrame).replace(/\n/g, " ")).toContain("Model  claude-opus-5");   // the row already reflects the pick — committed before the await, not after
+    stdin.write("\x1b");                                            // close Settings WHILE session.setModel(...) is still unresolved
+    await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes("Set Model to"));
+    const flat = frame(lastFrame).replace(/\n/g, " ");
+    expect(flat).not.toMatch(/model → claude-opus-5/);              // still no duplicate immediate notice on the Settings path
+    expect((flat.match(/Set Model to/g) ?? []).length).toBe(1);     // reported exactly once, even though the engine call hadn't settled yet
+    release();                                                       // let the held call resolve so it doesn't leak into a later test
+    await new Promise((r) => setTimeout(r, 0));
   });
 
   // W3.5 fix pass — finding 2 coverage gap: nothing previously opened the Theme row's embedded ThemeDialog
@@ -876,6 +907,65 @@ describe("<ChatApp>", () => {
     expect(JSON.parse(writes[0].content)).toEqual({ outputStyle: "proactive" });
   });
 
+  // Final review Finding 2: setThink had the identical commit-after-await shape as pickModel above — this
+  // fails red against the unfixed setThink (thinkLevel only committed after the awaited
+  // setMaxThinkingTokens settled), and passes now that it commits synchronously first.
+  it("Config: closing Settings while the Thinking-mode row's session.setMaxThinkingTokens(...) is still in flight still reports the change (final review Finding 2)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const fake = fakeRemote({ setMaxThinkingTokens: () => gate });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));
+    stdin.write("\x1b[B"); stdin.write("\x1b[B"); stdin.write("\x1b[B"); stdin.write("\x1b[B");   // Theme(0)→Model(1)→Output style(2)→Default permission mode(3)→Thinking mode(4)
+    await waitFor(() => frame(lastFrame).includes("❯ Thinking mode"));
+    stdin.write("\r");                                              // toggle it — session.setMaxThinkingTokens(...) is now blocked on `gate`
+    await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes("Thinking mode  false"));   // the row already reflects the toggle
+    stdin.write("\x1b");                                            // close Settings WHILE the engine call is still unresolved
+    // Not "...to false" — the value renders bold (a separate ANSI-wrapped segment, see summarizeChanges),
+    // so it is never adjacent plain text to "to " in the frame; every sibling test in this file matches on
+    // the un-valued prefix for the same reason (see the Model/Output-style race tests above).
+    await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes("Set Thinking mode to"));
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
+  // Final review Finding 2: applyOutputStyle had the identical commit-after-await shape — this fails red
+  // against the unfixed applyOutputStyle (outputStyle only committed after the awaited setOutputStyle
+  // settled), and passes now that it commits (and persists) synchronously first.
+  it("Config: closing Settings while the Output-style row's session.setOutputStyle(...) is still in flight still reports the change (final review Finding 2)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const fake = { ...fakeSettingsRemote(), setOutputStyle: (_id: string) => gate };
+    const writes: { path: string; content: string }[] = [];
+    const settingsFileDeps = {
+      read: (_p: string): string => { const e: any = new Error("ENOENT"); e.code = "ENOENT"; throw e; },
+      write: (p: string, s: string) => { writes.push({ path: p, content: s }); },
+    };
+    const { stdin, lastFrame } = render(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()}
+        deps={{ savePrefs: () => {}, settingsFileDeps }} />,
+    );
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Default permission mode"));
+    stdin.write("\x1b[B"); stdin.write("\x1b[B");                    // Theme(0) → Model(1) → Output style(2)
+    await waitFor(() => frame(lastFrame).includes("❯ Output style"));
+    stdin.write("\r");                                                // Enter opens the embedded OutputStylePicker
+    await waitFor(() => frame(lastFrame).includes("Preferred output style"));
+    stdin.write("\x1b[B");                                            // ↓ to "Proactive" (index 1)
+    await waitFor(() => frame(lastFrame).includes("❯ Proactive"));
+    stdin.write("\r");                                                // Enter picks it → applyOutputStyle("proactive") — session.setOutputStyle(...) is now blocked on `gate`
+    await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes("Output style  proactive"));   // the row already reflects the pick
+    stdin.write("\x1b");                                              // close Settings WHILE the engine call is still unresolved
+    await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes("Set Output style to"));
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
   // ---- W3 T6: /config key=value, /settings alias, /output-style redirect, /keybindings viewer ----
   // The exhaustive input/output matrix for parseConfigArg lives in commands.test.ts (pure unit tests);
   // these are end-to-end wiring checks — the composer really dispatches through parseConfigArg AND the
@@ -930,13 +1020,22 @@ describe("<ChatApp>", () => {
 
   it("Config: '/config theme=dark' prints 'Set theme to dark' and the theme actually switches", async () => {
     expect(currentTheme()).toBe("auto");   // afterEach resets it — confirms this test starts from a real baseline, not already "dark"
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    // Final review Finding 1 (Critical): this test used to render <ChatApp> with NO deps at all, so the
+    // theme arm's `savePrefsFn({theme:…})` fell through to the real ~/.claude/ccx/prefs.json writer —
+    // every full-suite run silently reset the developer's real theme file. Inject the seam, same as the
+    // standalone /theme Enter test above and the two Config-tab Theme/Output-style tests below.
+    const calls: unknown[] = [];
+    const { stdin, lastFrame } = render(
+      <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
+        deps={{ savePrefs: (patch: unknown) => { calls.push(patch); } }} />,   // never the real ~/.claude/ccx/prefs.json
+    );
     await waitFor(() => frame(lastFrame).includes("›"));
     stdin.write("/config theme=dark");
     await waitFor(() => frame(lastFrame).includes("/config theme=dark"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Set theme to dark"));
     expect(currentTheme()).toBe("dark");   // the engine-level effect, not just the printed line
+    expect(calls).toEqual([{ theme: "dark" }]);   // persisted through the injected seam, exactly once — never the real file
   });
 
   it("/settings aliases /config — opens the same Settings dialog at the Config tab", async () => {
@@ -1159,6 +1258,43 @@ describe("<ChatApp>", () => {
     stdin.write("\r");
     await waitFor(() => removeDirCalls.length === 1);
     expect(removeDirCalls[0]).toBe(sessionDir);
+  });
+
+  // W3 final review Finding 6: the embedded "Add directory…" flow used to fire refreshDirs() unchained
+  // from confirmAddDir's own promise, so a listDirs() that resolved before session.addDir(...) landed would
+  // capture a stale (pre-add) snapshot into state — and nothing ever refetched after, so the new directory
+  // stayed invisible until the user bounced tabs. `addDir` here is gated on a promise this test controls,
+  // standing in for the "ops arrive in separate socket chunks" race the reviewer described; `listDirs`
+  // reports the CURRENT server-side truth (only the cwd row until the gated addDir actually resolves).
+  it("/permissions Workspace tab: 'Add directory…' waits for confirmAddDir to land before refetching, so the new directory appears with no extra tab bounce (Finding 6, final review)", async () => {
+    const target = tmpdir();   // a real, existing directory outside process.cwd()
+    let added = false;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const fake = fakeSettingsRemote({
+      listDirs: async () => [{ path: process.cwd(), source: "cwd" as const }, ...(added ? [{ path: target, source: "session" as const }] : [])],
+      addDir: async () => { await gate; added = true; },
+    });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Permissions"));
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always ask for confirmation before using these tools."));
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always reject requests to use denied tools."));
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Add directory…"));
+    stdin.write("\r");                                              // Enter on "Add directory…" (idx 0) → embedded AddDirDialog entry phase
+    await waitFor(() => frame(lastFrame).includes("Enter the path to the directory:"));
+    stdin.write(target);
+    await waitFor(() => frame(lastFrame).includes(target));
+    stdin.write("\r");                                              // validate("ok") → confirm phase
+    await waitFor(() => frame(lastFrame).includes("Yes, for this session"));
+    stdin.write("\r");                                              // idx 0 default → onConfirm(target, false); session.addDir(...) now blocked on `gate`
+    await waitFor(() => frame(lastFrame).includes("Add directory…"));   // back on the Workspace row list (setSub("none") is synchronous either way)
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame).replace(/\n/g, " ")).not.toContain(target);   // not yet — addDir hasn't resolved, so it must not have been added
+    release();                                                       // let session.addDir(...) resolve
+    await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes(target));   // now it shows up — with no further keypress
   });
 
   it("/permissions: Esc at the top level dismisses with the exact upstream line, and /allowed-tools is a full alias", async () => {

@@ -40,7 +40,7 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "permissions", summary: "manage allow and deny tool permission rules" },
   { name: "allowed-tools", summary: "alias of /permissions" },
   { name: "output-style", summary: "output style moved to /config" },
-  { name: "keybindings", summary: "open your keyboard shortcuts file" },
+  { name: "keybindings", summary: "view the built-in keymap (same as ?)" },
   { name: "usage", summary: "show plan usage / rate-limit windows" },
   { name: "copy", summary: "copy the last response to the clipboard" },
   { name: "export", summary: "[file|clipboard] — export the conversation as markdown" },

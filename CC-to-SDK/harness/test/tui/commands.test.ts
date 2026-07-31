@@ -221,7 +221,7 @@ describe("/config key=value (W3 T6)", () => {
     const byName = Object.fromEntries(COMMANDS.map((c) => [c.name, c.summary]));
     expect(byName.settings).toBe("alias of /config");
     expect(byName["output-style"]).toBe("output style moved to /config");
-    expect(byName.keybindings).toBe("open your keyboard shortcuts file");
+    expect(byName.keybindings).toBe("view the built-in keymap (same as ?)");   // final review Finding 4 — ours views, it doesn't open a file
     expect(LOCAL_NAMES.has("settings")).toBe(true);
     expect(LOCAL_NAMES.has("output-style")).toBe(true);
     expect(LOCAL_NAMES.has("keybindings")).toBe(true);

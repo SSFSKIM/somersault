@@ -88,7 +88,10 @@ export function PermissionsDialog({
   removeRule: (behavior: Behavior, rule: string) => Promise<void>;
   removeDir: (path: string) => Promise<void>;
   addDirValidate: (raw: string) => Promise<AddDirVerdict>;
-  confirmAddDir: (abs: string, remember: boolean) => void;
+  // Promise<void>, not void: useChat's confirmAddDir is async (it awaits session.addDir(abs) before
+  // returning) — the type here must say so, or a caller can't chain refreshDirs onto its completion
+  // (final review Finding 6, see the onConfirm handler below).
+  confirmAddDir: (abs: string, remember: boolean) => Promise<void>;
   cancelAddDir: (abs?: string) => void;
   onDone: () => void;
 }) {
@@ -229,7 +232,12 @@ export function PermissionsDialog({
   if (sub === "addDir") return (
     <AddDirDialog
       onValidate={addDirValidate}
-      onConfirm={(abs, remember) => { confirmAddDir(abs, remember); setSub("none"); void refreshDirs(); }}
+      // Chain refreshDirs onto confirmAddDir's OWN promise, exactly like the add-rule/remove-rule/remove-dir
+      // branches above — confirmAddDir awaits session.addDir(abs) before it resolves, and ops from separate
+      // socket chunks dispatch concurrently, so firing refreshDirs unchained (as this used to) could have the
+      // listing return BEFORE the add landed, silently dropping the new directory until the user bounced tabs
+      // (final review Finding 6). setSub("none") still fires immediately, same as every sibling flow.
+      onConfirm={(abs, remember) => { setSub("none"); void confirmAddDir(abs, remember).then(refreshDirs); }}
       onCancel={(abs) => { cancelAddDir(abs); setSub("none"); }}
     />
   );

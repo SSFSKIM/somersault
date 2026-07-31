@@ -50,8 +50,10 @@ The full list is reproducible with the script at the bottom. What matters is the
 **Genuinely wanted (the sprint's likely body)** — Wave-1/Wave-3 statuses inline (2026-07-30 / 2026-07-31):
 **shipped:** `export` · `stats` · `tag` · `diff` (terminal stand-in: status + diff --stat) · `files` ·
 `session` (**deliberate divergence** — upstream's is a cloud-URL/QR bridge feature; ours shows local
-session info + resume hint) · `rename` (pulled in from class A) · `add-dir` (**Wave 3**, U6 — routes by
-path: `register_repo_root` inside cwd, `additionalDirectories` outside cwd, per probe 75) · `permissions`
+session info + resume hint) · `rename` (pulled in from class A) · `add-dir` (**Wave 3**, U6 — rejects
+inside-cwd paths as already accessible; outside-cwd paths grant via `additionalDirectories` (probe 75) —
+`register_repo_root`, probe 75's other engine door, works only on subdirectories of cwd, exactly what
+`/add-dir` rejects, so it stays permanently unused by this command) · `permissions`
 (**Wave 3**, U7 — five tabs, alias `/allowed-tools`) · `theme` (**Wave 3**, U7 — 5 of upstream's 7+
 themes, live `demo.js` diff preview) · `output-style` (**Wave 3**, U7 — redirects into `/config`,
 matching upstream's own 2.1.220 behavior) · `keybindings` (**Wave 3**, U7 — read-only viewer, not
