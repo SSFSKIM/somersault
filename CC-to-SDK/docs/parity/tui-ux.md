@@ -355,6 +355,11 @@ instrument false-success/masking gaps. The pass also adds regression coverage fo
 keeps the committed frame baseline intentionally divergent: the corrected diff reports 3 divergent
 help-overlay frames and 5 divergent composer frames rather than silently treating them as clean.
 
+**Second re-review boundary pass (2026-08-01, commit `11f412e285fec056b26ee8a80d243e716425b4aa`).** Root input
+routing now owns the visible help race with synchronously-current refs; whitespace-only clear and queue
+prepend preserve the intended bytes without polluting history; line-boundary Ctrl-W restores multiline
+structure through the kill ring; and the frame emulator/masks are mutation-safe and scenario-scoped.
+
 | # | Fix | Commit | Where scored above |
 |---|---|---|---|
 | 1 | Kill-ring: `Ctrl-K`/`Ctrl-U`/`Ctrl-W` used to discard killed text; now a real ring (cap 10) with `Ctrl-Y` yank / `Alt-Y` yank-pop | `a853e8dbc8` (+ fix-up `cc2a42282f`) | §1 "Ctrl-K / Ctrl-U", "Ctrl-W" |

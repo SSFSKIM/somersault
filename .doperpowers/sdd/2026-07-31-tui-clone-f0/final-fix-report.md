@@ -41,7 +41,7 @@ Every non-deferred finding received a focused regression proof before its correc
 10. **Permissions footer:** managed workspace rows advertised Enter despite having no Enter action.
 11. **Documentation:** stale reference/citation and Task 11 quoting claims were inconsistent with the current source of truth.
 
-The focused guard tests were then green after the minimal fixes. The implementation uses one deliberate `replaceBufferFromOutside` editor transition for prefill and external replacement, clears the queue ref synchronously before interrupt, synchronously tracks all handler-consumed callback/timing props through refs, derives status hints from active input ownership, preserves dim in a parallel pyte grid, fails closed in capture/diff, narrows masks, preserves kill-ring state through command submit, and rolls back suspend state on failure.
+The focused guard tests were then green after the minimal fixes. The implementation uses one deliberate `replaceBufferFromOutside` editor transition for prefill and external replacement, clears the queue ref synchronously before interrupt, synchronously tracks all handler-consumed callback/timing props through refs, derives status hints from active input ownership, preserves dim in extended pyte-compatible cells, fails closed in capture/diff, narrows masks, preserves kill-ring state through command submit, and rolls back suspend state on failure.
 
 ## Commands and final results
 
@@ -106,3 +106,59 @@ These divergences are expected F0 baseline differences in boot layout/chrome and
 - The frame baseline is intentionally divergent because the later visual-fidelity waves have not yet closed the large upstream boot/chrome/layout gap. This is recorded as a concern, not hidden as an allowlisted success.
 - Automated acceptance cannot perform a human shell `fg` interaction after SIGTSTP; POSIX suspend ordering and rollback are unit-covered, but the first owner-run terminal acceptance should include Ctrl-Z, `fg`, and a subsequent keypress.
 - No credentials, tokens, or `.env` contents were printed or committed. No push was performed.
+
+## Second re-review pass
+
+Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/2026-07-31-tui-clone-f0/final-rereview-findings.md`.
+
+Implementation and tests are committed on `main` as:
+
+- `11f412e285fec056b26ee8a80d243e716425b4aa` — `f0: close second rereview boundary cases`
+
+### TDD red proofs
+
+The eight fresh boundary cases were written and run red before their production corrections:
+
+1. **Help/root routing:** the immediate current-suspend callback test timed out because the root handler called the stale callback. The immediate help test also established the race boundary that the root must own.
+2. **Dim mutation state:** byte-feed tests failed for bottom-margin scroll, erase under current dim attributes, insert mode, and wide-cell overwrite. The initial parallel-grid implementation attached dim to the wrong cells or left stale wide-cell stubs.
+3. **Mask scope:** the semantic matrix failed because global email, percentage, cost, duration, and token masks collapsed arbitrary transcript values. The frame-scoped loader was initially absent and its new round-trip test failed with `load_masks() takes 1 positional argument but 2 were given`.
+4. **Whitespace clear:** `clearToHistory` returned the whitespace buffer unchanged.
+5. **Ctrl-W at line start:** Ctrl-W joined the lines but left the kill ring unchanged, so Ctrl-Y could not restore the line structure.
+6. **Whitespace prepend:** the rescue test received `queued` instead of the required exact `queued\\n   `.
+7. **Immediate busy hint:** the first busy render still contained `Esc again to clear` before the passive effect ran.
+8. **Documentation:** stale source/scorecard claims were updated as part of this pass and the new reachable commit is recorded above.
+
+### Corrections
+
+- `ChatApp` now keeps root state and every handler-consumed callback in synchronously-current refs. It owns Escape while the visible help overlay is mounted; `ShortcutsOverlay` remains interactive for standalone use but is presentational in `ChatApp`, eliminating the passive-effect leak without duplicate close handlers.
+- `DimScreen` now uses a pyte-compatible extended cell tuple carrying `dim`, so scroll, erase, insert/delete characters, insert/delete lines, and wide-cell overwrite move or clear dim with the actual pyte cell. No parallel mutation grid remains.
+- `frame-diff.py` now selects `by_frame` masks by scenario/frame key. Global masks are restricted to home/user prefixes and UUIDs; dashboard and identity patterns are scoped to the two known golden scenarios. Arbitrary `Notify`, progress, cost, and token text remains distinguishable.
+- Whitespace-only clear now empties the buffer without adding whitespace to history. Ctrl-W at column zero follows upstream's preceding-word-plus-newline kill, and yank restores the original multiline structure. Prepend rescue preserves any non-empty draft, including spaces. The clear hint is synchronously hidden on the first busy render and cannot resurrect after returning idle.
+
+### Pass 2 gates
+
+- `npm run typecheck`: **PASS**.
+- `npx vitest run test/tui --exclude 'test/tui/tmp-probe-rescue-popup.test.tsx'`: **PASS; 39 files, 646 tests passed, 9 gated live tests skipped**.
+- `npm run test:unit`: **PASS; 135 files, 1,227 tests passed**.
+- `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`: **PASS; 13 tests passed**.
+- `git diff --check`: **PASS** before commit.
+
+### Pass 2 acceptance 1–8
+
+1. **Queue rescue: PASS.** A keyed long-turn pty run ended with the exact composer lines `one`, `two`, `three` in order and no queued rows after Escape. The first short-turn attempt exposed a timing race where `one` had already drained; the long-turn rerun held all three queued and passed the required exact contract.
+2. **Escape clear/restore: PASS.** Keyless pty output showed the clear hint, an empty composer after the second Escape, and no whitespace history restoration when Up followed a whitespace-only clear.
+3. **Kill ring/yank-pop: PASS.** Editor tests now cover line-boundary Ctrl-W killing `old\\n` and Ctrl-Y restoring `old`/`new` lines without selecting an older ring entry.
+4. **Raw Ctrl-_ undo: PASS.** Existing raw `0x1f` tests remained green in the full TUI suite.
+5. **Immediate help ownership: PASS.** Keyless pty output showed `Keyboard shortcuts`; immediate Ctrl-O did not open the pager, and immediate Escape returned to the composer. The current-suspend callback rerender test also passed.
+6. **Ctrl-D/Ctrl-Z: PASS with the existing manual fg concern.** The keyless Ctrl-D run showed `Press Ctrl-D again to exit`; unit coverage still proves POSIX suspend ordering and Windows-safe behavior. A human `fg` cycle remains outside the automated pty driver.
+7. **Permission y/n and decision hint honesty: PASS.** Existing permission/question/plan tests and the full suite remained green; global composer hints remain hidden under decision owners.
+8. **Scorecard/docs: PASS.** The scorecard no longer claims a global pending `[y/n...]` hint, queue destruction, global style masking, or a parallel dim grid. Plan/spec revision notes document the second boundary pass and cite this implementation commit.
+
+### Pass 2 frame baseline
+
+The corrected capture/diff instrument wrote the expected **3 help-overlay** and **5 composer-basics** frames. With scoped masks, the baseline remains intentionally divergent:
+
+- Help overlay: `0 clean, 0 allowlisted, 3 DIVERGENT`; exit code `1`.
+- Composer basics: `0 clean, 0 allowlisted, 5 DIVERGENT`; exit code `1`.
+
+The mutation suite also proves style survives dim scroll/erase/insert/delete/wide-cell cases and that missing/empty/partial/missing-counterpart inputs cannot become clean.
