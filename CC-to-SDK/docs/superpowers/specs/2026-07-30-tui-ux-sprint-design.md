@@ -213,7 +213,54 @@ labels and ordering. Largest and most taste-dependent, so it lands last. `/vim` 
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+All three waves shipped to `main` (2026-07-30 → 2026-07-31). U1–U7 delivered; `/vim` remains the
+sprint's only planned deferral. Final state: typecheck clean, 567 Ink tests, 1227 unit tests, and
+three pty acceptance runs against the real binary. Scorecard moved honestly rather than
+flatteringly — the headline ended at ~88%, one point **below** where it started, because Wave 3
+added four dialog rows of which two are truthfully partial (5 of upstream's ~54 config rows; 5 of
+7+ themes). A denominator that grows when the map gets truer is the instrument working.
+
+**What this sprint actually proved: the review layer is not ceremony.** Every wave's most serious
+defect was found by the final whole-branch review, never by the task-scoped reviews that had just
+passed the same code clean — and in all three waves it was the same shape: a seam *between* tasks,
+where each task's own review saw a locally correct picture.
+
+- W1: the composer stash died on submit — and MY plan's test had pinned the wrong semantic.
+- W2: three cross-task findings, incl. everywhere-scope history reading 0 messages from
+  out-of-project sessions (runtime-proved 300-vs-0), again from plan-authored code.
+- W3: a test wrote the developer's REAL `~/.claude/ccx/prefs.json` on every suite run. This is the
+  sharpest instance of the pattern in the sprint: Task 3's review had *already* declared exactly
+  this class Critical for `settings.json`; Tasks 4 and 5 injected their seams correctly; then Task 6
+  added a NEW CALLER of the same seam whose test didn't inject. The wave reintroduced its own worst
+  bug, one file over, and no task-scoped review could see it.
+
+**The other recurring lesson, now four waves deep: plan-mandated is still a finding.** Defects
+authored by the plan itself surfaced in W1, W2 and W3. A reviewer told to treat the plan as
+authority cannot catch them; one told that plan-mandated code is reviewable caught them every time.
+
+**Tests that encode the bug they should catch.** W3 closed with a defect only a live frame could
+show — the turn spinner rendering `29758130m` (milliseconds since 1970) on a turn's first frame,
+because `busy` and the start stamp commit in separate renders. Two spinner tests passed against it,
+because both were written as `startedAt={0}` with a fake clock: they had encoded the broken contract
+as the expected one. Its twin was then found by the whole-branch review — `pickModel` commits state
+only after awaiting the engine, so closing the dialog mid-flight reports "nothing changed" while the
+change lands a moment later. **Look for state that must agree but is set separately, and for tests
+whose fixtures are the bug.**
+
+**Acceptance must run on a quiet machine.** W3's acceptance agent produced three scenarios of pure
+noise — every turn failing with `session is not running`, the SDK mis-blaming a libc mismatch —
+because six research agents and two probes were running concurrently. The binary was fine. Re-run
+idle, all three passed. A parallel-heavy controller has to schedule pty acceptance exclusively.
+
+**And a process failure worth recording:** that agent then went silent for ~10 hours — no report, no
+commit, no completion notification — and was only discovered when the owner asked. Silence from a
+long-running agent is not progress. Check its artifacts on disk rather than waiting on the
+notification.
+
+Two premises the 2.1.220 extraction flipped mid-sprint, both cheap to have gotten wrong:
+`/output-style` is a hidden redirect into `/config`, and `/keybindings` opens a file in `$EDITOR`
+with no in-app UI at all. Both were reverse-engineered correctly only because the bundle was read
+before the code was written.
 
 ## Revision Notes
 
