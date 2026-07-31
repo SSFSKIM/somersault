@@ -1,4 +1,5 @@
-// tui/src/ChatStatusBar.tsx — bottom bar: model · permission mode (color-coded) · ctx% · live streaming · hints.
+// tui/src/ChatStatusBar.tsx — bottom bar: model · permission mode (color-coded) · ctx% · live streaming ·
+// hints (pending-decision hint advertises y/n·↑↓·1/2/3·esc, KB1).
 import React from "react";
 import { Box, Text } from "ink";
 
@@ -17,7 +18,7 @@ export function ChatStatusBar({ model, mode, busy, ctxPct, hasPending, thinkLeve
       {usageWarn ? <Text color="red">{"  " + usageWarn}</Text> : null}
       <Text>{busy ? "  ⟳ streaming" : ""}</Text>
       <Text>{bgCount ? `  ⚙ ${bgCount} bg` : ""}</Text>
-      <Text dimColor>{hasPending ? "   [↑↓·1/2/3·esc]" : "   ⇧Tab mode · Esc interrupt · ? help"}</Text>
+      <Text dimColor>{hasPending ? "   [y/n·↑↓·1/2/3·esc]" : "   ⇧Tab mode · Esc interrupt · ? help"}</Text>
     </Box>
   );
 }

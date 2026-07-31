@@ -1,7 +1,8 @@
 // tui/src/PermissionDialog.tsx — CC-style approval gate: a numbered, arrow-selectable menu
-// (Yes / Yes-don't-ask-again / No) over the tool + its full target. ↑/↓ + Enter, 1/2/3, Esc = No; the
-// legacy a/A/d shortcuts still work. UI hints are absent headlessly, so the prompt is reconstructed from
-// toolName + input. Shared by the chat REPL (ChatApp) and the daemon console (App).
+// (Yes / Yes-don't-ask-again / No) over the tool + its full target. ↑/↓ + Enter, 1/2/3, Esc = No,
+// y = accept once, n = reject (KB1); the legacy a/A/d shortcuts still work. UI hints are absent
+// headlessly, so the prompt is reconstructed from toolName + input. Shared by the chat REPL (ChatApp)
+// and the daemon console (App).
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { PermissionDecision } from "../index.js";
@@ -30,6 +31,8 @@ export function PermissionDialog({ req, onDecision }: { req: { toolName: string;
     if (key.upArrow) { setIdx((i) => Math.max(0, i - 1)); return; }
     if (key.downArrow) { setIdx((i) => Math.min(opts.length - 1, i + 1)); return; }
     if (key.return) { onDecision(opts[idx].decision); return; }
+    if (input === "y") { onDecision({ kind: "allow_once" }); return; }   // CC confirm:yes
+    if (input === "n") { onDecision({ kind: "deny" }); return; }         // CC confirm:no
     const n = opts.findIndex((o) => o.key === input);
     if (n >= 0) { onDecision(opts[n].decision); return; }
     if (input === "a") onDecision({ kind: "allow_once" });          // legacy shortcuts

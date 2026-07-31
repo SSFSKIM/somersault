@@ -63,6 +63,20 @@ describe("<PermissionDialog>", () => {
     stdin.write("a"); await waitFor(() => got.length === 4);   // legacy shortcuts still work
     expect(got).toEqual([{ kind: "allow_once" }, { kind: "allow_always" }, { kind: "deny" }, { kind: "allow_once" }]);
   });
+  it("y accepts and n rejects (KB1, F0 acceptance 7)", async () => {
+    const decisions: PermissionDecision[] = [];
+    const bashReq = { toolName: "Bash", input: { command: "ls" }, toolUseID: "t", signal: new AbortController().signal };
+    const a = render(<PermissionDialog req={bashReq} onDecision={(d) => decisions.push(d)} />);
+    await new Promise((r) => setTimeout(r, 20)); // let useInput subscribe (passive effect) before non-idempotent keys
+    a.stdin.write("y");
+    await waitFor(() => decisions.length === 1);
+    expect(decisions[0]).toEqual({ kind: "allow_once" });
+    const b = render(<PermissionDialog req={bashReq} onDecision={(d) => decisions.push(d)} />);
+    await new Promise((r) => setTimeout(r, 20));
+    b.stdin.write("n");
+    await waitFor(() => decisions.length === 2);
+    expect(decisions[1]).toEqual({ kind: "deny" });
+  });
   it("↓ then Enter selects 'No' (deny); Esc denies directly", async () => {
     const got: PermissionDecision[] = [];
     const a = render(<PermissionDialog req={req} onDecision={(d) => got.push(d)} />);
