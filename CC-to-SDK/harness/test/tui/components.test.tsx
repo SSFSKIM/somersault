@@ -227,8 +227,11 @@ describe("ctxColor", () => {
 });
 
 describe("TurnSpinner", () => {
+  // NB: startedAt is a real epoch stamp in production, so these fakes use one too. They previously
+  // passed startedAt={0}, which is exactly the unset value the guard below now treats as "just
+  // started" — written that way they were asserting the buggy contract.
   it("shows the asterisk glyph, the verb, and the esc-to-interrupt status", () => {
-    const { lastFrame } = render(<TurnSpinner startedAt={0} verb="Cogitating" now={() => 3000} />);
+    const { lastFrame } = render(<TurnSpinner startedAt={1000} verb="Cogitating" now={() => 4000} />);
     const f = lastFrame() ?? "";
     expect(f).toContain("Cogitating…");
     expect(f).toContain("3s");
@@ -237,8 +240,17 @@ describe("TurnSpinner", () => {
     expect(/[·✢✳✶✻✽]/.test(f)).toBe(true);
   });
   it("shows the live token count once > 0", () => {
-    const f = render(<TurnSpinner startedAt={0} verb="Cogitating" tokens={142} now={() => 3000} />).lastFrame() ?? "";
+    const f = render(<TurnSpinner startedAt={1000} verb="Cogitating" tokens={142} now={() => 4000} />).lastFrame() ?? "";
     expect(f).toContain("142 tokens");
+  });
+  // Regression, found ONLY in the real binary (pty acceptance, w3.9): useChat sets busy and the start
+  // stamp in two setState calls that do not commit together, so the first painted frame of a turn has
+  // busy=true and startedAt=0. Unguarded, `now() - 0` is ms since 1970 and the tail read
+  // "(29758130m 59s · esc to interrupt)" for one frame before settling to 0s.
+  it("treats an unset (0) start stamp as just-started instead of measuring from the epoch", () => {
+    const f = render(<TurnSpinner startedAt={0} verb="Cogitating" now={() => 1.7845e12} />).lastFrame() ?? "";
+    expect(f).toContain("0s");
+    expect(f).not.toMatch(/\d{4,}m/);        // no "29758130m" — the epoch-elapsed signature
   });
 });
 
