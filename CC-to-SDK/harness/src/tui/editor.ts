@@ -250,16 +250,18 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResu
   if (key.meta && !key.escape && !key.backspace && !key.delete && !key.return) {
     if (key.leftArrow || input === "b") return { state: syncCompletions(wordLeft(s)) };
     if (key.rightArrow || input === "f") return { state: syncCompletions(wordRight(s)) };
-    if (input === "y") return { state: yankPop(s) };
+    if (input === "y") return { state: syncCompletions(yankPop(s)) };
     return { state: s };                                 // an unrecognized meta combo never inserts text
   }
   if (key.ctrl) {                                        // readline keys; other ctrl combos (l/c/d) act at app level → ignore here (never insert)
     switch (input) {
       case "a": return { state: syncCompletions(lineStart(s)) };
       case "e": return { state: syncCompletions(lineEnd(s)) };
-      case "k": { const r = killToEnd(s); return { state: syncCompletions(r.state), ...(r.text ? { killed: { text: r.text, dir: "append" as const } } : {}) }; }
-      case "u": { const r = killToStart(s); return { state: syncCompletions(r.state), ...(r.text ? { killed: { text: r.text, dir: "prepend" as const } } : {}) }; }
-      case "w": { const r = killWordBack(s); return { state: syncCompletions(r.state), ...(r.text ? { killed: { text: r.text, dir: "prepend" as const } } : {}) }; }
+      // A kill keystroke ALWAYS reports `killed` (even with empty text) so applyKey's wrapper can tell "a
+      // kill that killed nothing" apart from "not a kill at all" — the former must never break the run.
+      case "k": { const r = killToEnd(s); return { state: syncCompletions(r.state), killed: { text: r.text, dir: "append" as const } }; }
+      case "u": { const r = killToStart(s); return { state: syncCompletions(r.state), killed: { text: r.text, dir: "prepend" as const } }; }
+      case "w": { const r = killWordBack(s); return { state: syncCompletions(r.state), killed: { text: r.text, dir: "prepend" as const } }; }
       case "y": return { state: syncCompletions(yank(s)) };
       case "j": return { state: syncCompletions(insertText(s, "\n")) };
       case "l": return { state: clearInput(s) };
@@ -298,17 +300,26 @@ const sameText = (a: string[], b: string[]) => a === b || (a.length === b.length
 export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorResult {
   const r = applyKeyInner(s, input, key);
   let state = r.state;
-  if (r.killed) {                                            // fold into the ring; a run coalesces into the newest entry
-    const head = s.killRing[s.killRing.length - 1];
-    const ring = s.killRun && head !== undefined
-      ? [...s.killRing.slice(0, -1), r.killed.dir === "append" ? head + r.killed.text : r.killed.text + head]
-      : [...s.killRing, r.killed.text].slice(-10);
-    state = { ...state, killRing: ring, killRun: true, yankSite: null };
+  // A kill keystroke that killed nothing (Ctrl-K at end of line, Ctrl-U at col 0, Ctrl-W at col 0) must
+  // NEVER break the run — it just doesn't have anything to fold in. `killed` is stripped to undefined on
+  // the public result in that case (a defined `killed` always has non-empty text), but killRun is left
+  // exactly as it was so the next real kill still coalesces.
+  const killed = r.killed && r.killed.text ? r.killed : undefined;
+  if (r.killed) {
+    if (killed) {                                            // fold into the ring; a run coalesces into the newest entry
+      const head = s.killRing[s.killRing.length - 1];
+      const ring = s.killRun && head !== undefined
+        ? [...s.killRing.slice(0, -1), killed.dir === "append" ? head + killed.text : killed.text + head]
+        : [...s.killRing, killed.text].slice(-10);
+      state = { ...state, killRing: ring, killRun: true, yankSite: null };
+    } else {
+      state = { ...state, yankSite: null };                  // no-op kill: preserve killRun as-is, still fix a pending yank
+    }
   } else if (state.yankSite === s.yankSite && (s.killRun || s.yankSite)) {
     state = { ...state, killRun: false, yankSite: null };    // any non-kill keystroke ends the run; any non-yank-pop fixes the yank
   }
-  if (r.submit !== undefined) return { ...r, state };
-  if (state === s) return r;
-  if (sameText(state.lines, s.lines) || state.undo !== s.undo) return { ...r, state };
-  return { ...r, state: { ...state, undo: [...s.undo.slice(-99), { lines: s.lines, cursor: s.cursor }] } };
+  if (r.submit !== undefined) return { ...r, state, killed };
+  if (state === s) return { ...r, killed };
+  if (sameText(state.lines, s.lines) || state.undo !== s.undo) return { ...r, state, killed };
+  return { ...r, state: { ...state, undo: [...s.undo.slice(-99), { lines: s.lines, cursor: s.cursor }] }, killed };
 }

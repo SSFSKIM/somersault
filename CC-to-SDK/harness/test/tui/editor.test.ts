@@ -447,6 +447,14 @@ describe("kill ring (CM10/CM11)", () => {
     expect(s.killRing).toEqual(["hello world"]);
     expect(applyKey(s, "y", CTRL).state.lines).toEqual(["hello world"]);
   });
+  it("a no-op kill never breaks the run: kill, no-op kill, kill still coalesces into ONE entry", () => {
+    let s = type(initialEditorState(), "hello world");
+    s = { ...s, cursor: { row: 0, col: 5 } };
+    s = applyKey(s, "k", CTRL).state;            // kills " world" (append) — line is now "hello", cursor col 5
+    s = applyKey(s, "k", CTRL).state;            // ctrl+k at end of line: kills nothing, must NOT end the run
+    s = applyKey(s, "u", CTRL).state;            // kills "hello" (prepend) — must still coalesce into the same entry
+    expect(s.killRing).toEqual(["hello world"]);
+  });
   it("a yank ends the kill run: kill, yank, kill = TWO ring entries (upstream mode 'yanked', cli.pretty.js:394640-394652)", () => {
     let s = type(initialEditorState(), "abc");
     s = applyKey(s, "u", CTRL).state;            // ring: ["abc"], run active
@@ -475,11 +483,25 @@ describe("kill ring (CM10/CM11)", () => {
     s = type(s, "!");                            // fixes the yank
     expect(applyKey(s, "y", { meta: true }).state.lines).toEqual(["abc!"]);
   });
-  it("empty kills deposit nothing and the ring is capped at 10", () => {
-    let s = initialEditorState();
+  it("an empty kill deposits nothing into the ring", () => {
+    const s = initialEditorState();
     expect(applyKey(s, "k", CTRL).killed).toBeUndefined();
-    for (let i = 0; i < 12; i++) { s = type(s, String(i)); s = applyKey(s, "u", CTRL).state; s = type(s, "x"); s = applyKey(applyKey(s, "u", CTRL).state, "y", CTRL).state; s = applyKey(s, "u", CTRL).state; }
-    expect(s.killRing.length).toBeLessThanOrEqual(10);
+    expect(applyKey(s, "k", CTRL).state.killRing).toEqual([]);
+  });
+  it("the ring caps at exactly 10, dropping the oldest entries first", () => {
+    let s = initialEditorState();
+    const kills = Array.from({ length: 12 }, (_, i) => `kill${i}`);
+    for (const t of kills) { s = type(s, t); s = applyKey(s, "u", CTRL).state; }   // 12 distinct, un-coalesced kills (typing between them breaks the run each time)
+    expect(s.killRing.length).toBe(10);
+    expect(s.killRing).toEqual(kills.slice(-10));                 // the two oldest (kill0, kill1) fell off the front
+    expect(s.killRing[0]).toBe(kills[kills.length - 10]);         // oldest survivor = the 10th-most-recent kill pushed (kill2)
+  });
+  it("ctrl+y with an empty kill ring is a no-op", () => {
+    const s = initialEditorState();
+    const r = applyKey(s, "y", CTRL);
+    expect(r.state.lines).toEqual([""]);
+    expect(r.state.cursor).toEqual({ row: 0, col: 0 });
+    expect(r.state.yankSite).toBeNull();
   });
   it("the kill ring survives a submit (like the stash)", () => {
     let s = type(initialEditorState(), "keep me");
