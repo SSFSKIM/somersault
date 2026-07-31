@@ -162,8 +162,8 @@ that F2 re-homes into the table.
    composer holds text.
 3. `ctrl+u` on a full line then `ctrl+y` restores it verbatim; `alt+y` cycles to the previous kill.
 4. Pressing `ctrl+_` undoes the last edit. No control character ever appears in the buffer.
-5. With the `?` overlay open, `ctrl+o` closes the overlay and does **not** open the transcript pager.
-   Only Escape closes it.
+5. With the `?` overlay open, `ctrl+o` neither closes the overlay nor opens the transcript pager —
+   only Escape closes it, and no key pressed while it is open reaches the app underneath.
 6. `ctrl+d` on an empty composer prints a hint and stays; a second press exits. `ctrl+z` suspends to
    the shell and `fg` resumes with the transcript intact.
 7. `y` accepts and `n` rejects in a permission dialog.
@@ -837,3 +837,8 @@ Pending — written at finish.
   exists in `editor.ts`; only the `0x1f` byte match is missing); `KB5`'s detach re-home resolved to
   the `/detach` slash command only, no chord (owner). Golden captures will be taken from the
   installed `claude` 2.1.220, which matches the reference bundle version exactly.
+- 2026-07-31 — F0 planning pass: acceptance item 5 was self-contradictory ("ctrl+o closes the
+  overlay … Only Escape closes it") — corrected to escape-only per K36. And a refinement of § The
+  instrument: frames are **emulated-screen dumps** (pyte-rendered grid with reconstructed SGR), not
+  raw pty streams — raw streams are not comparable across two binaries' repaint strategies; the
+  screen state is. "The ANSI is the artefact" still holds: the dumps carry the SGR.
