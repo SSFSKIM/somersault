@@ -29,16 +29,29 @@
 export interface SuspendDeps {
   stdin: { setRawMode?: (v: boolean) => void };
   repaint: () => void;
+  platform?: NodeJS.Platform;
   kill?: (pid: number, signal: string) => void;
   once?: (signal: string, handler: () => void) => void;
+  removeListener?: (signal: string, handler: () => void) => void;
 }
 
 export function suspendProcess(deps: SuspendDeps): void {
+  if ((deps.platform ?? process.platform) === "win32") return;
   const kill = deps.kill ?? ((pid, signal) => { process.kill(pid, signal as NodeJS.Signals); });
   const once = deps.once ?? ((signal, handler) => { process.once(signal as NodeJS.Signals, handler); });
-  deps.stdin.setRawMode?.(false);
-  // once-before-kill is load-bearing: a fast `fg` (SIGCONT delivered right back) must not race a listener
-  // that hasn't attached yet, so the listener goes up BEFORE the signal that could trigger it.
-  once("SIGCONT", () => { deps.stdin.setRawMode?.(true); deps.repaint(); });
-  kill(0, "SIGTSTP");   // whole process group (matches upstream) — child processes suspend with us, like real job control
+  const removeListener = deps.removeListener ?? ((signal, handler) => { process.removeListener(signal as NodeJS.Signals, handler); });
+  const onResume = () => { deps.stdin.setRawMode?.(true); deps.repaint(); };
+  let listenerAttempted = false;
+  try {
+    deps.stdin.setRawMode?.(false);
+    // once-before-kill is load-bearing: a fast `fg` (SIGCONT delivered right back) must not race a listener
+    // that hasn't attached yet, so the listener goes up BEFORE the signal that could trigger it.
+    listenerAttempted = true;
+    once("SIGCONT", onResume);
+    kill(0, "SIGTSTP");   // whole process group (matches upstream) — child processes suspend with us, like real job control
+  } catch (error) {
+    if (listenerAttempted) removeListener("SIGCONT", onResume);
+    deps.stdin.setRawMode?.(true);
+    throw error;
+  }
 }

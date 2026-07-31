@@ -152,7 +152,13 @@ function setBuffer(s: EditorState, t: string): EditorState {
   return { ...s, lines, cursor: { row: r, col: lines[r].length } };
 }
 /** Replace the buffer's text wholesale, cursor at the end — the composer's rewind prefill (edit-and-resend). */
-export function withBufferText(s: EditorState, t: string): EditorState { return setBuffer(s, t); }
+/** Replace text supplied by a non-editor source; old-buffer navigation, popup, kill, and undo state cannot survive it. */
+export function replaceBufferFromOutside(s: EditorState, t: string): EditorState {
+  const lines = splitLines(t); const r = lines.length - 1;
+  return { ...s, lines, cursor: { row: r, col: lines[r].length }, histIndex: null, stash: null, undo: [], mention: null, command: null, killRun: false, yankSite: null };
+}
+/** Replace the buffer's text wholesale, cursor at the end — the composer's rewind prefill (edit-and-resend). */
+export function withBufferText(s: EditorState, t: string): EditorState { return replaceBufferFromOutside(s, t); }
 function historyPrev(s: EditorState): EditorState {
   if (s.history.length === 0) return s;
   if (s.histIndex === null) { const idx = s.history.length - 1; return setBuffer({ ...s, stash: bufferText(s), histIndex: idx }, s.history[idx]); }
@@ -224,7 +230,7 @@ function submitCommand(s: EditorState): EditorResult {
   const name = c.items.length ? c.items[Math.min(c.index, c.items.length - 1)].name : s.lines[0].slice(1);
   const t = "/" + name;
   const history = s.history.length && s.history[s.history.length - 1] === t ? s.history : [...s.history, t];
-  return { state: initialEditorState(history), submit: t };
+  return { state: { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing }, submit: t };
 }
 const syncCompletions = (s: EditorState): EditorState => (s.command ? refreshCommand(s) : (s.mention ? refreshMention(s) : s));
 function afterInsert(next: EditorState, prev: EditorState, t: string): EditorState {

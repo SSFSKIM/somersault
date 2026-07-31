@@ -306,8 +306,7 @@ it("the composer footer and status-bar hints only advertise chords that ROWS car
   // REAL <ChatComposer>/<ChatStatusBar> via lastFrame(), so a source edit changes what this test actually sees.
   const FOOTER_TOKEN_TO_ROW: Record<string, string> = {
     "⏎ send": "⏎", "\\⏎ newline": "\\⏎ / Ctrl-J", "@ files": "@", "/ commands": "/",
-    "! bash": "!", "⇧Tab mode": "⇧Tab",
-    "Esc interrupt": "Esc", "? help": "?",
+    "! bash": "!", "⇧Tab mode": "⇧Tab", "Esc rewind": "Esc", "Esc clear": "Esc", "Esc interrupt": "Esc", "? help": "?",
   };
   const rowKeys = new Set(ROWS.map(([k]) => k));
 
@@ -323,9 +322,16 @@ it("the composer footer and status-bar hints only advertise chords that ROWS car
   // the widest whitespace run: the hint's own literal carries 3 leading spaces, and none of the other
   // segments (mode/ctx/busy/bg, all empty/short here) ever produce a run that wide. This locates the hint
   // by structure, not by hardcoding what it says.
-  const statusLine = stripAnsi(frame(render(<ChatStatusBar mode="default" busy={false} hasPending={false} />).lastFrame));
-  const statusHint = statusLine.split(/ {2,}/).pop() ?? "";
-  const statusTokens = statusHint.trim().split(" · ");
+  const statusFrames = [
+    render(<ChatStatusBar mode="default" busy={false} hasPending={false} inputOwner="composer" composerEmpty />).lastFrame(),
+    render(<ChatStatusBar mode="default" busy={true} hasPending={false} inputOwner="composer" />).lastFrame(),
+    render(<ChatStatusBar mode="default" busy={false} hasPending={false} inputOwner="composer" composerEmpty={false} />).lastFrame(),
+  ];
+  const statusTokens = statusFrames.flatMap((raw) => {
+    const statusLine = stripAnsi(raw ?? "");
+    const statusHint = statusLine.split(/ {2,}/).pop() ?? "";
+    return statusHint.trim().split(" · ");
+  });
 
   const liveTokens = new Set([...composerTokens, ...statusTokens]);
   // Forward: every token either surface actually prints must have a live ROWS row behind it.
@@ -347,17 +353,10 @@ it("the composer footer and status-bar hints only advertise chords that ROWS car
 // advertise chords nobody proved. This does not fold into the ROWS/FOOTER_TOKEN_TO_ROW mapping above
 // because none of y/n/1/2/3 are ROWS entries (they're PermissionDialog-local, not composer chords) — its
 // own chords are proven elsewhere instead, referenced by name below rather than duplicated here.
-it("the pending-decision status-bar hint pins the exact advertised string (Task 7's y/n addition), and every chord it names is proven elsewhere", () => {
-  const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} hasPending={true} />);
-  // ChatStatusBar.tsx:21's pending branch, copied verbatim — INCLUDING its 3 leading spaces (Task 8
-  // review Finding 2: the old assertion dropped them, so stripping the source's own leading spaces left
-  // this green). ink-testing-library's lastFrame() preserves literal spaces exactly as Ink renders them —
-  // confirmed live: rendering this component prints the ANSI dim-open code immediately followed by the
-  // three spaces then "[y/n...", with nothing in between, so this substring check genuinely observes them.
-  expect(lastFrame()).toContain("   [y/n·↑↓·1/2/3·esc]");
-  // y/n: components.test.tsx "y accepts and n rejects (KB1, F0 acceptance 7)".
-  // 1/2/3: components.test.tsx "number keys 1/2/3 and legacy a/A/d both map to allow_once/allow_always/deny".
-  // ↑↓ and esc: components.test.tsx "↓ then Enter selects 'No' (deny); Esc denies directly".
-  const idle = render(<ChatStatusBar mode="default" busy={false} hasPending={false} />);
-  expect(idle.lastFrame()).not.toContain("[y/n");   // the pending hint never leaks when nothing is pending
+it("the status bar hides composer hints while a decision surface owns input", () => {
+  const permission = render(<ChatStatusBar mode="default" busy={false} hasPending={true} inputOwner="decision" />);
+  expect(permission.lastFrame()).not.toContain("[y/n");
+  expect(permission.lastFrame()).not.toContain("Esc interrupt");
+  const overlay = render(<ChatStatusBar mode="default" busy={false} hasPending={false} inputOwner="overlay" />);
+  expect(overlay.lastFrame()).not.toContain("? help");
 });

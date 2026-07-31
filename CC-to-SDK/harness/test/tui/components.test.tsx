@@ -132,6 +132,18 @@ describe("<ChatStatusBar>", () => {
     const absent = render(<ChatStatusBar mode="default" busy={false} hasPending={false} />).lastFrame() ?? "";
     expect(absent).not.toContain("bg");
   });
+  it("shows only the hint for the actual composer state and hides it for other input owners", () => {
+    const busy = render(<ChatStatusBar mode="default" busy={true} hasPending={false} inputOwner="composer" />).lastFrame() ?? "";
+    expect(busy).toContain("Esc interrupt");
+    const draft = render(<ChatStatusBar mode="default" busy={false} hasPending={false} inputOwner="composer" composerEmpty={false} />).lastFrame() ?? "";
+    expect(draft).toContain("Esc clear");
+    expect(draft).not.toContain("? help");
+    const question = render(<ChatStatusBar mode="default" busy={false} hasPending={true} inputOwner="decision" />).lastFrame() ?? "";
+    expect(question).not.toContain("[y/n");
+    expect(question).not.toContain("Esc interrupt");
+    const overlay = render(<ChatStatusBar mode="default" busy={false} hasPending={false} inputOwner="overlay" />).lastFrame() ?? "";
+    expect(overlay).not.toContain("help");
+  });
 });
 describe("SessionPicker", () => {
   const sessions = [
@@ -320,6 +332,16 @@ describe("ChatComposer", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(exits).toBe(1);
   });
+  it("Ctrl-D stays armed across an intervening key, matching the upstream asymmetry", async () => {
+    let exits = 0;
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} exitArmMs={10000} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x04"); await waitFor(() => (lastFrame() ?? "").includes("Press Ctrl-D again to exit"));
+    stdin.write("x"); await waitFor(() => (lastFrame() ?? "").includes("x"));
+    stdin.write("\x15");
+    await new Promise((r) => setTimeout(r, 30));
+    stdin.write("\x04"); await waitFor(() => exits === 1);
+  });
   it("Ctrl-D's arm expires after exitArmMs — a press after the window re-arms instead of exiting", async () => {
     let exits = 0;
     const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} exitArmMs={40} />);
@@ -339,6 +361,39 @@ describe("ChatComposer", () => {
     stdin.write("hi");
     await waitFor(() => (lastFrame() ?? "").includes("hi"));
     expect(lastFrame() ?? "").not.toContain("Ask Claude anything…");   // placeholder gone once typing
+    expect(lastFrame() ?? "").not.toContain("? help");                 // '?' inserts in a non-empty draft
+  });
+  it("clears an Esc-clear arm when busy starts and before early-return chords", async () => {
+    const busyView = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} busy={false} />);
+    await new Promise((r) => setTimeout(r, 20));
+    busyView.stdin.write("draft"); await waitFor(() => (busyView.lastFrame() ?? "").includes("draft"));
+    busyView.stdin.write("\x1b"); await waitFor(() => (busyView.lastFrame() ?? "").includes("Esc again to clear"));
+    busyView.rerender(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} busy />);
+    await waitFor(() => !(busyView.lastFrame() ?? "").includes("Esc again to clear"));
+
+    for (const chord of ["\x1b[Z", "\x18\x07"]) {
+      const view = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} onCycleMode={() => {}} editExternal={() => null} />);
+      await new Promise((r) => setTimeout(r, 20));
+      view.stdin.write("draft"); await waitFor(() => (view.lastFrame() ?? "").includes("draft"));
+      view.stdin.write("\x1b"); await waitFor(() => (view.lastFrame() ?? "").includes("Esc again to clear"));
+      if (chord === "\x1b[Z") view.stdin.write(chord); else { view.stdin.write("\x18"); view.stdin.write("\x07"); }
+      view.stdin.write("\x1b"); await waitFor(() => (view.lastFrame() ?? "").includes("Esc again to clear"));
+      expect(view.lastFrame() ?? "").toContain("draft");
+      view.stdin.write("\x1b"); await waitFor(() => !(view.lastFrame() ?? "").includes("draft"));
+    }
+  });
+  it("uses callback props from the latest render immediately after rerender", async () => {
+    let oldSubmit = 0, currentSubmit = 0, oldInterrupt = 0, currentInterrupt = 0;
+    const view = render(<ChatComposer onSubmit={() => { oldSubmit++; }} onInterrupt={() => { oldInterrupt++; }} cwd="/" commandCatalog={[]} />);
+    await new Promise((r) => setTimeout(r, 20));
+    view.stdin.write("draft"); await waitFor(() => (view.lastFrame() ?? "").includes("draft"));
+    view.rerender(<ChatComposer onSubmit={() => { currentSubmit++; }} onInterrupt={() => { currentInterrupt++; }} cwd="/" commandCatalog={[]} />);
+    view.stdin.write("\r");
+    await waitFor(() => currentSubmit === 1);
+    expect(oldSubmit).toBe(0);
+    view.stdin.write("\x1b");
+    await waitFor(() => currentInterrupt === 1);
+    expect(oldInterrupt).toBe(0);
   });
   it("shows the bash-mode indicator on a leading '!' and the memory-mode on '#'", async () => {
     const bash = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);

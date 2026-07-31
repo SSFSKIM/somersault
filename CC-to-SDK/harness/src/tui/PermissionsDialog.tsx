@@ -54,6 +54,7 @@ const RULE_FLOW_FOOTER = "Enter to submit · Esc to cancel";     // covers BOTH 
 // dead chords; kept the two that work.
 const RECENT_FOOTER = "↑/↓ to navigate · Esc to cancel";
 const DEFAULT_FOOTER = "↑/↓ to navigate · Enter to select · ←/→ to switch · Esc to cancel";
+const MANAGED_DIR_FOOTER = "↑/↓ to navigate · ←/→ to switch · Esc to cancel";
 // Not pinned by Global Constraints (which gives only "header"/"recent"/"default" — "header" belongs to an
 // upstream header-focus mode this wave deliberately doesn't ship, same recorded divergence as Task 5's own
 // unused "Settings dialog dismissed" string) — these three are this component's own reasonable choices,
@@ -125,6 +126,7 @@ export function PermissionsDialog({
     : behavior ? [{ kind: "addRule" }, ...ruleRows(settings, behavior).map((row): Item => ({ kind: "rule", row }))]
     : [];
   const clampedIdx = Math.min(idx, Math.max(0, items.length - 1));
+  const selectedItem = items[clampedIdx];
 
   useInput((input, key) => {
     if (sub === "addRuleText") {
@@ -286,7 +288,7 @@ export function PermissionsDialog({
         );
       })}
       <Text> </Text>
-      <Text dimColor>{activeTab === "Recently denied" ? RECENT_FOOTER : DEFAULT_FOOTER}</Text>
+      <Text dimColor>{activeTab === "Recently denied" ? RECENT_FOOTER : activeTab === "Workspace" && selectedItem?.kind === "dir" && selectedItem.d.source !== "session" ? MANAGED_DIR_FOOTER : DEFAULT_FOOTER}</Text>
     </Box>
   );
 }

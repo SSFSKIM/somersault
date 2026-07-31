@@ -846,6 +846,18 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
   contract, and in an audit it is worse than no check at all — it certifies the falsehood it exists to
   catch. Both instances originated in the plan's own template, which is where the correction was made.
   (2026-07-31)
+- **The frame instrument had a silent fidelity hole at the emulator boundary.** pyte's `Char` preserves bold,
+  italic, underline, blink, reverse, and strikethrough but deliberately drops SGR 2 dim/faint. The capture
+  path now carries dim in a parallel cell grid and reconstructs it alongside the retained attributes; capture
+  and diff also fail closed on premature child exit, missing frames, empty inputs, and missing counterparts.
+  (2026-08-01)
+- **Wholesale editor replacement is a state transition, not a buffer setter.** Queue rescue and external-editor
+  replacement both cross the editor boundary, so they must clear popup, history-navigation, kill-run, yank,
+  and undo state while retaining history, stash, and kill-ring state. The queue path also updates its ref before
+  interrupting so a synchronous turn-end event cannot drain a rescued prompt back into the host. (2026-08-01)
+- **A status hint is only honest relative to its focused owner.** Composer, autocomplete, overlay, and decision
+  surfaces now have explicit ownership; the status bar hides its composer affordances under every other owner,
+  and the composer derives Esc help from busy/empty/draft state. (2026-08-01)
 
 ## Outcomes & Retrospective
 
@@ -876,3 +888,7 @@ Pending — written at finish.
   instrument: frames are **emulated-screen dumps** (pyte-rendered grid with reconstructed SGR), not
   raw pty streams — raw streams are not comparable across two binaries' repaint strategies; the
   screen state is. "The ANSI is the artefact" still holds: the dumps carry the SGR.
+- 2026-08-01 — final review hardening: wholesale editor replacement now clears stale buffer-derived state
+  while preserving durable state; status hints are focus-owner/kind aware; Windows no longer advertises or
+  attempts POSIX suspend; pyte dim/faint and retained SGR attributes are preserved; capture/diff and mask
+  tests fail closed rather than certifying incomplete or semantically different frames.

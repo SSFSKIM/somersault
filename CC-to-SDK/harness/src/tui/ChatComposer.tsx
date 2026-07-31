@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { readdirSync } from "node:fs";
-import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, withBufferText, clearToHistory, type EditorState } from "./editor.js";
+import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, type EditorState } from "./editor.js";
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
 import { editExternal as realEditExternal } from "./externalEditor.js";
@@ -60,7 +60,7 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800, onEmptyChange }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number; onEmptyChange?: (empty: boolean) => void }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800, onEmptyChange, onInputOwnerChange }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number; onEmptyChange?: (empty: boolean) => void; onInputOwnerChange?: (owner: "composer" | "autocomplete") => void }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -68,16 +68,29 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const [yankHint, setYankHint] = useState(false);
   const yankTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { disposed.current = true; if (yankTimer.current) clearTimeout(yankTimer.current); }, []);
-  const editExt = editExternal ?? realEditExternal;
   const ctrlX = useRef(0);
   // busy is read through a ref in useInput below (busyRef.current, never the closure `busy`) — same reason
   // as stateRef: useInput re-registers in a passive effect, so a closure read lags one render.
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const onSubmitRef = useRef(onSubmit); onSubmitRef.current = onSubmit;
+  const onExitRef = useRef(onExit); onExitRef.current = onExit;
+  const onCycleModeRef = useRef(onCycleMode); onCycleModeRef.current = onCycleMode;
+  const onInterruptRef = useRef(onInterrupt); onInterruptRef.current = onInterrupt;
+  const onHelpRef = useRef(onHelp); onHelpRef.current = onHelp;
+  const onKillAgentsRef = useRef(onKillAgents); onKillAgentsRef.current = onKillAgents;
+  const editExternalRef = useRef(editExternal); editExternalRef.current = editExternal;
+  const onPrefillAppliedRef = useRef(onPrefillApplied); onPrefillAppliedRef.current = onPrefillApplied;
+  const onInputOwnerChangeRef = useRef(onInputOwnerChange); onInputOwnerChangeRef.current = onInputOwnerChange;
+  const yankHintMsRef = useRef(yankHintMs); yankHintMsRef.current = yankHintMs;
+  const escClearMsRef = useRef(escClearMs); escClearMsRef.current = escClearMs;
+  const exitArmMsRef = useRef(exitArmMs); exitArmMsRef.current = exitArmMs;
   const [clearArmed, setClearArmed] = useState(false);
   const clearArm = useRef(0);
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const disarmClear = () => { clearArm.current = 0; setClearArmed(false); if (clearTimer.current) { clearTimeout(clearTimer.current); clearTimer.current = null; } };
   useEffect(() => () => { if (clearTimer.current) clearTimeout(clearTimer.current); }, []);
+  useEffect(() => { if (busy) disarmClear(); }, [busy]);
   // KB3: Ctrl-D on an empty composer needs two presses (mirrors the Esc-Esc clear arm above) — a first
   // press within exitArmMs just hints, a second exits; letting the arm expire re-arms rather than exiting.
   // exitArmMs default is 800, not a round 2000: upstream's double-press helper (Pee, cli.pretty.js:183445)
@@ -111,44 +124,47 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     setState((s) => {
       const draft = s.lines.join("\n");
       const text = prefill.mode === "prepend" && draft.trim().length ? prefill.text + "\n" + draft : prefill.text;
-      return withBufferText(s, text);
+      return replaceBufferFromOutside(s, text);
     });
-    onPrefillApplied?.();
+    onPrefillAppliedRef.current?.();
   }, [prefill]);
+
+  useEffect(() => { onInputOwnerChangeRef.current?.(state.command || state.mention ? "autocomplete" : "composer"); }, [state.command, state.mention]);
 
   // Read stateRef.current (NOT the closure `state`): Ink re-registers this handler in a passive effect that
   // flushes after commit, so a closure read lags one render and would submit stale text. The ref updates every render.
   useInput((input, key) => {
     const s = stateRef.current;
+    if (!key.escape && clearArm.current) disarmClear();
     // KB3: EOF needs two presses. Unlike the Esc-Esc clearArm below, NO other keystroke disarms this one —
     // that asymmetry is deliberate, not an oversight: upstream's Pee (cli.pretty.js:183445) clears its
     // armed state ONLY on timeout or on the second press; reading an intervening key never resets it. Since
     // upstream wins on fidelity questions, this stays un-disarmed on other input even though it reads as
     // inconsistent with the Esc arm right below.
     if (key.ctrl && input === "d" && s.lines.length === 1 && s.lines[0] === "") {   // KB3: EOF needs two presses
-      if (dArm.current && Date.now() - dArm.current < exitArmMs) { onExit?.(); return; }
+      if (dArm.current && Date.now() - dArm.current < exitArmMsRef.current) { onExitRef.current?.(); return; }
       dArm.current = Date.now(); setDArmed(true);
       if (dTimer.current) clearTimeout(dTimer.current);
-      dTimer.current = setTimeout(() => { dArm.current = 0; setDArmed(false); }, exitArmMs);
+      dTimer.current = setTimeout(() => { dArm.current = 0; setDArmed(false); }, exitArmMsRef.current);
       return;
     }
     // '?' on a genuinely empty composer (no buffer text, no open '/' or '@' popup) opens the shortcuts
     // overlay; typed anywhere else it must fall through to applyKey and insert a literal '?'.
-    if (input === "?" && !s.command && !s.mention && s.lines.length === 1 && s.lines[0] === "") { onHelp?.(); return; }
+    if (input === "?" && !s.command && !s.mention && s.lines.length === 1 && s.lines[0] === "") { onHelpRef.current?.(); return; }
     // Shift+Tab cycles the permission ladder (CC chat:cycleMode). Bare Tab belongs to the autocomplete
     // popups alone (CC's Autocomplete context) — with no popup open it does nothing.
-    if (key.tab && key.shift) { onCycleMode?.(); return; }
+    if (key.tab && key.shift) { onCycleModeRef.current?.(); return; }
     // Ctrl-X Ctrl-E chord (2s window) or Ctrl-G: round-trip the buffer through $EDITOR. Ctrl-E alone
     // must stay line-end, so the chord prefix gates it.
     if (key.ctrl && input === "x") { ctrlX.current = Date.now(); return; }
     // Ctrl-X Ctrl-K (CC chat:killAgents) — only when chorded; a bare Ctrl-K stays the editor's kill-to-end.
-    if (key.ctrl && input === "k" && Date.now() - ctrlX.current < 2000) { ctrlX.current = 0; onKillAgents?.(); return; }
+    if (key.ctrl && input === "k" && Date.now() - ctrlX.current < 2000) { ctrlX.current = 0; onKillAgentsRef.current?.(); return; }
     if (key.ctrl && (input === "g" || (input === "e" && Date.now() - ctrlX.current < 2000))) {
       ctrlX.current = 0;
-      const edited = editExt(s.lines.join("\n"));
+      const edited = (editExternalRef.current ?? realEditExternal)(s.lines.join("\n"));
       // Clear any open mention/command popup too — it was filtered against the pre-edit buffer and would
       // otherwise show stale items against the freshly-applied text.
-      if (edited !== null && !disposed.current) setState((st) => withBufferText({ ...st, mention: null, command: null }, edited));
+      if (edited !== null && !disposed.current) setState((st) => replaceBufferFromOutside(st, edited));
       return;
     }
     ctrlX.current = 0;                                       // any other key breaks the chord
@@ -160,29 +176,29 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // is present, since only the empty branch ever reaches onInterrupt outside the busy case.
     if (!s.command && !s.mention) {
       if (key.escape) {
-        if (busyRef.current) { onInterrupt?.(); return; }                  // running turn: Esc is interrupt; buffer untouched
+        if (busyRef.current) { disarmClear(); onInterruptRef.current?.(); return; }                  // running turn: Esc is interrupt; buffer untouched
         if (!(s.lines.length === 1 && s.lines[0] === "")) {                // idle + text: CC's double-press clear (CM15)
-          if (clearArm.current && Date.now() - clearArm.current < escClearMs) {
+          if (clearArm.current && Date.now() - clearArm.current < escClearMsRef.current) {
             clearArm.current = 0; setClearArmed(false);
             if (clearTimer.current) clearTimeout(clearTimer.current);
             setState(clearToHistory(s)); return;
           }
           clearArm.current = Date.now(); setClearArmed(true);
           if (clearTimer.current) clearTimeout(clearTimer.current);
-          clearTimer.current = setTimeout(() => { clearArm.current = 0; setClearArmed(false); }, escClearMs);
+          clearTimer.current = setTimeout(() => { clearArm.current = 0; setClearArmed(false); }, escClearMsRef.current);
           return;
         }
-        onInterrupt?.(); return;                                           // idle + empty: ChatApp owns rewind arming
+        onInterruptRef.current?.(); return;                                           // idle + empty: ChatApp owns rewind arming
       }
     }
-    if (clearArm.current) { clearArm.current = 0; setClearArmed(false); if (clearTimer.current) clearTimeout(clearTimer.current); }
+    if (clearArm.current) disarmClear();
     const r = applyKey(s, input, key);
     if (key.ctrl && input === "u" && r.killed && r.killed.text.length >= 3) {
       setYankHint(true);
       if (yankTimer.current) clearTimeout(yankTimer.current);
-      yankTimer.current = setTimeout(() => setYankHint(false), yankHintMs);
+      yankTimer.current = setTimeout(() => setYankHint(false), yankHintMsRef.current);
     }
-    if (r.submit != null) onSubmit(r.submit); setState(r.state);
+    if (r.submit != null) onSubmitRef.current(r.submit); setState(r.state);
   });
 
   // A just-opened mention has empty files → walk cwd once and feed the results in.
@@ -216,7 +232,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
       {clearArmed ? <Box paddingX={1}><Text dimColor>Esc again to clear</Text></Box> : null}
       {dArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-D again to exit</Text></Box> : null}
-      {showFooter ? <Box paddingX={1}><Text dimColor>⏎ send · \⏎ newline · @ files · / commands · ! bash · ⇧Tab mode</Text></Box> : null}
+      {showFooter ? <Box paddingX={1}><Text dimColor>{isEmptyNow ? "⏎ send · \\⏎ newline · @ files · / commands · ! bash · ⇧Tab mode · ? help" : "⏎ send · \\⏎ newline · @ files · / commands · ! bash · ⇧Tab mode"}</Text></Box> : null}
       {state.mention ? <MentionPopup state={state} /> : null}
       {state.command ? <CommandPopup state={state} /> : null}
     </Box>

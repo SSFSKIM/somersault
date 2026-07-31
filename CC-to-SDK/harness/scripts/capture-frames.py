@@ -41,6 +41,7 @@ import time
 try:
     import pyte
     from pyte import graphics as pyte_graphics
+    from wcwidth import wcwidth
 except ImportError:
     sys.exit(
         "pyte not installed — run: python3 -m venv scripts/frames/.venv "
@@ -67,6 +68,134 @@ def clean_child_env() -> None:
             continue
         if name.startswith("CLAUDE") or name == "AI_AGENT":
             del os.environ[name]
+
+class DimScreen(pyte.Screen):
+    """pyte Screen plus the SGR 2 state that pyte intentionally omits from Char."""
+
+    def __init__(self, columns: int, lines: int):
+        super().__init__(columns, lines)
+        self.dim_buffer = [[False for _ in range(columns)] for _ in range(lines)]
+        self._dim = False
+
+    def select_graphic_rendition(self, *attrs: int) -> None:
+        if not attrs or attrs == (0,):
+            self._dim = False
+        else:
+            for attr in attrs:
+                if attr == 0:
+                    self._dim = False
+                elif attr == 2:
+                    self._dim = True
+                elif attr == 22:
+                    self._dim = False
+        super().select_graphic_rendition(*attrs)
+
+    def draw(self, data: str) -> None:
+        x, y = self.cursor.x, self.cursor.y
+        for char in data:
+            width = wcwidth(char)
+            if x == self.columns and width > 0:
+                x = 0
+                y = min(y + 1, self.lines - 1)
+            if width == 1 and 0 <= y < self.lines and 0 <= x < self.columns:
+                self.dim_buffer[y][x] = self._dim
+            elif width == 2 and 0 <= y < self.lines and 0 <= x < self.columns:
+                self.dim_buffer[y][x] = self._dim
+                if x + 1 < self.columns:
+                    self.dim_buffer[y][x + 1] = self._dim
+            if width > 0:
+                x = min(x + width, self.columns)
+        super().draw(data)
+
+    def dim_at(self, row: int, column: int) -> bool:
+        return self.dim_buffer[row][column]
+
+    def _blank(self) -> list[bool]:
+        return [False for _ in range(self.columns)]
+
+    def index(self) -> None:
+        top, bottom = self.margins or (0, self.lines - 1)
+        if self.cursor.y == bottom:
+            for row in range(top, bottom):
+                self.dim_buffer[row] = self.dim_buffer[row + 1]
+            self.dim_buffer[bottom] = self._blank()
+        super().index()
+
+    def reverse_index(self) -> None:
+        top, bottom = self.margins or (0, self.lines - 1)
+        if self.cursor.y == top:
+            for row in range(bottom, top, -1):
+                self.dim_buffer[row] = self.dim_buffer[row - 1]
+            self.dim_buffer[top] = self._blank()
+        super().reverse_index()
+
+    def erase_in_display(self, how: int = 0, *args, **kwargs) -> None:
+        super().erase_in_display(how, *args, **kwargs)
+        if how == 0:
+            for row in range(self.cursor.y + 1, self.lines):
+                self.dim_buffer[row] = self._blank()
+            for column in range(self.cursor.x, self.columns):
+                self.dim_buffer[self.cursor.y][column] = False
+        elif how == 1:
+            for row in range(self.cursor.y):
+                self.dim_buffer[row] = self._blank()
+            for column in range(self.cursor.x + 1):
+                self.dim_buffer[self.cursor.y][column] = False
+        elif how in (2, 3):
+            self.dim_buffer = [self._blank() for _ in range(self.lines)]
+
+    def erase_in_line(self, how: int = 0, private: bool = False) -> None:
+        super().erase_in_line(how, private)
+        if how == 0:
+            interval = range(self.cursor.x, self.columns)
+        elif how == 1:
+            interval = range(self.cursor.x + 1)
+        else:
+            interval = range(self.columns)
+        for column in interval:
+            self.dim_buffer[self.cursor.y][column] = False
+
+    def delete_characters(self, count: int | None = None) -> None:
+        count = count or 1
+        row, start = self.cursor.y, self.cursor.x
+        super().delete_characters(count)
+        dim = self.dim_buffer[row]
+        for column in range(start, self.columns):
+            dim[column] = dim[column + count] if column + count < self.columns else False
+
+    def insert_characters(self, count: int | None = None) -> None:
+        count = count or 1
+        row, start = self.cursor.y, self.cursor.x
+        super().insert_characters(count)
+        dim = self.dim_buffer[row]
+        for column in range(self.columns - 1, start - 1, -1):
+            dim[column] = dim[column - count] if column - count >= start else False
+
+    def delete_lines(self, count: int | None = None) -> None:
+        count = count or 1
+        top, bottom = self.margins or (0, self.lines - 1)
+        row = self.cursor.y
+        super().delete_lines(count)
+        if top <= row <= bottom:
+            dim = self.dim_buffer
+            for y in range(row, bottom + 1):
+                dim[y] = dim[y + count] if y + count <= bottom else self._blank()
+
+    def insert_lines(self, count: int | None = None) -> None:
+        count = count or 1
+        top, bottom = self.margins or (0, self.lines - 1)
+        row = self.cursor.y
+        super().insert_lines(count)
+        if top <= row <= bottom:
+            dim = self.dim_buffer
+            for y in range(bottom, row - 1, -1):
+                dim[y] = dim[y - count] if y - count >= row else self._blank()
+
+    def reset(self) -> None:
+        super().reset()
+        self.dim_buffer = [self._blank() for _ in range(self.lines)]
+        self._dim = False
+
 
 # Reverse pyte's code->name color tables into name->code, once. Built from pyte's own tables (not
 # hand-copied) so the FG/BG AIXTERM naming quirks (e.g. "brown" for ANSI yellow, a bg-side "bfight*"
@@ -98,42 +227,49 @@ def color_codes(name: str, is_fg: bool) -> list[str]:
     return [str(code)] if code is not None else []
 
 
-def sgr_codes(cell) -> list[str]:
+def sgr_codes(cell, dim: bool) -> list[str]:
     codes = []
     if cell.bold:
         codes.append("1")
+    if dim:
+        codes.append("2")
     if cell.italics:
         codes.append("3")
     if cell.underscore:
         codes.append("4")
+    if cell.blink:
+        codes.append("5")
     if cell.reverse:
         codes.append("7")
+    if cell.strikethrough:
+        codes.append("9")
     codes += color_codes(cell.fg, True)
     codes += color_codes(cell.bg, False)
     return codes
 
 
-def cell_style_key(cell):
-    return (cell.bold, cell.italics, cell.underscore, cell.reverse, cell.fg, cell.bg)
+def cell_style_key(cell, dim: bool):
+    return (cell.bold, dim, cell.italics, cell.underscore, cell.blink, cell.strikethrough, cell.reverse, cell.fg, cell.bg)
 
 
-def is_plain_space(cell) -> bool:
-    return cell.data == " " and cell_style_key(cell) == (False, False, False, False, "default", "default")
+def is_plain_space(cell, dim: bool) -> bool:
+    return cell.data == " " and cell_style_key(cell, dim) == (False, False, False, False, False, False, False, "default", "default")
 
 
-def render_line(row: dict, columns: int) -> str:
+def render_line(screen, row: dict, columns: int, row_index: int) -> str:
     """One screen row -> one line of text with minimal SGR runs. Trims only trailing cells that are
     both blank AND unstyled — a styled trailing space (e.g. a highlight bar) is real content."""
     cells = [row[c] for c in range(columns)]
     end = columns
-    while end > 0 and is_plain_space(cells[end - 1]):
+    while end > 0 and is_plain_space(cells[end - 1], screen.dim_at(row_index, end - 1)):
         end -= 1
     out = []
     prev_key = None
-    for cell in cells[:end]:
-        key = cell_style_key(cell)
+    for column, cell in enumerate(cells[:end]):
+        dim = screen.dim_at(row_index, column)
+        key = cell_style_key(cell, dim)
         if key != prev_key:
-            codes = sgr_codes(cell)
+            codes = sgr_codes(cell, dim)
             out.append(f"\x1b[0;{';'.join(codes)}m" if codes else "\x1b[0m")
             prev_key = key
         out.append(cell.data)
@@ -142,7 +278,7 @@ def render_line(row: dict, columns: int) -> str:
 
 
 def render_screen(screen) -> str:
-    lines = [render_line(screen.buffer[r], screen.columns) for r in range(screen.lines)]
+    lines = [render_line(screen, screen.buffer[r], screen.columns, r) for r in range(screen.lines)]
     return "\n".join(lines) + "\n"
 
 
@@ -169,7 +305,7 @@ def main() -> int:
 
     os.makedirs(args.out, exist_ok=True)
 
-    screen = pyte.Screen(args.cols, args.rows)
+    screen = DimScreen(args.cols, args.rows)
     stream = pyte.ByteStream(screen)
     captured: list[bytes] = []
 
@@ -191,11 +327,10 @@ def main() -> int:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", args.rows, args.cols, 0, 0))
 
     def pump(seconds: float) -> bool:
-        """Collect output for `seconds`, feeding it to the pyte stream as it arrives. Returns False
-        once the pty closes (child exited)."""
+        """Collect output for `seconds`; False means the child closed the pty before the script finished."""
         end = time.time() + seconds
         while time.time() < end:
-            readable, _, _ = select.select([fd], [], [], 0.2)
+            readable, _, _ = select.select([fd], [], [], min(0.2, max(0, end - time.time())))
             if not readable:
                 continue
             try:
@@ -206,41 +341,80 @@ def main() -> int:
                 return False
             captured.append(data)
             stream.feed(data)
+        readable, _, _ = select.select([fd], [], [], 0)
+        if readable:
+            try:
+                data = os.read(fd, 65536)
+            except OSError:
+                return False
+            if not data:
+                return False
+            captured.append(data)
+            stream.feed(data)
+        try:
+            done, _ = os.waitpid(pid, os.WNOHANG)
+            if done == pid:
+                return False
+        except ChildProcessError:
+            return False
         return True
 
+    expected_frames = [line for line in script_lines if line.startswith("frame:")]
     seq = 0
     frames_written = []
+    failed = False
+
+    def fail(message: str) -> None:
+        nonlocal failed
+        failed = True
+        sys.stderr.write(f"capture-frames: {message}\n")
+
     try:
         for line in script_lines:
             action, _, value = line.partition(":")
             if action == "wait":
                 if not pump(float(value)):
-                    sys.stderr.write(f"capture-frames: pty closed during {line!r}\n")
+                    fail(f"pty closed during {line!r}")
                     break
-            elif action == "type":
-                os.write(fd, value.encode())
-            elif action == "enter":
-                os.write(fd, b"\r")
-            elif action == "key":
-                os.write(fd, resolve_key(value))
+            elif action in ("type", "enter", "key"):
+                if not pump(0):
+                    fail(f"pty closed before {line!r}")
+                    break
+                data = value.encode() if action == "type" else b"\r" if action == "enter" else resolve_key(value)
+                written = os.write(fd, data)
+                if written != len(data):
+                    fail(f"short write during {line!r}: {written}/{len(data)} bytes")
+                    break
             elif action == "frame":
+                if not pump(0):
+                    fail(f"pty closed before {line!r}")
+                    break
                 seq += 1
                 out_name = f"{seq:02d}-{value}.ansi"
-                with open(os.path.join(args.out, out_name), "w", encoding="utf-8") as fh:
-                    fh.write(render_screen(screen))
+                try:
+                    with open(os.path.join(args.out, out_name), "w", encoding="utf-8") as fh:
+                        fh.write(render_screen(screen))
+                except OSError as error:
+                    fail(f"frame write failed for {line!r}: {error}")
+                    break
                 frames_written.append(out_name)
             else:
-                sys.exit(f"capture-frames: unknown action in key script: {line!r}")
-    except OSError as e:
-        sys.stderr.write(f"capture-frames: pty error: {e}\n")
+                fail(f"unknown action in key script: {line!r}")
+                break
+    except (OSError, ValueError) as error:
+        fail(f"pty/action error: {error}")
     finally:
         try:
             os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, OSError):
             pass
 
+    if not frames_written:
+        fail("script produced no frame")
+    if len(frames_written) != len(expected_frames):
+        fail(f"incomplete capture: expected {len(expected_frames)} frame(s), wrote {len(frames_written)}")
     sys.stderr.write(f"capture-frames: wrote {len(frames_written)} frame(s) to {args.out}: {frames_written}\n")
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

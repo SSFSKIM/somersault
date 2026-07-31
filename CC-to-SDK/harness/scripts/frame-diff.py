@@ -64,12 +64,18 @@ def main() -> int:
     p.add_argument("--allowlist", default=None)
     args = p.parse_args()
 
+    if not os.path.isdir(args.golden_dir) or not os.path.isdir(args.our_dir):
+        print("ERROR: frame input directory is nonexistent")
+        return 1
+    golden_files = set(f for f in os.listdir(args.golden_dir) if f.endswith(".ansi"))
+    our_files = set(f for f in os.listdir(args.our_dir) if f.endswith(".ansi"))
+    if not golden_files or not our_files:
+        print("ERROR: frame input directory is empty")
+        return 1
+
     patterns = load_masks(args.masks)
     allowlist = load_allowlist(args.allowlist)
     script_name = os.path.basename(os.path.normpath(args.golden_dir))
-
-    golden_files = set(f for f in os.listdir(args.golden_dir) if f.endswith(".ansi")) if os.path.isdir(args.golden_dir) else set()
-    our_files = set(f for f in os.listdir(args.our_dir) if f.endswith(".ansi")) if os.path.isdir(args.our_dir) else set()
 
     rows: list[tuple[str, str, str]] = []  # (frame_key, status, note)
     any_divergent = False
@@ -79,7 +85,7 @@ def main() -> int:
 
         if fname not in golden_files or fname not in our_files:
             missing_side = "OUR_DIR" if fname not in our_files else "GOLDEN_DIR"
-            status = "allowlisted" if key in allowlist else "DIVERGENT"
+            status = "DIVERGENT"
             note = f"missing in {missing_side}"
             rows.append((key, status, note))
             if status == "DIVERGENT":
@@ -87,8 +93,15 @@ def main() -> int:
             print(f"--- {key}: {note} ({status})")
             continue
 
-        golden_lines = [mask_text(l, patterns) for l in read_lines(os.path.join(args.golden_dir, fname))]
-        our_lines = [mask_text(l, patterns) for l in read_lines(os.path.join(args.our_dir, fname))]
+        golden_raw = read_lines(os.path.join(args.golden_dir, fname))
+        our_raw = read_lines(os.path.join(args.our_dir, fname))
+        if not golden_raw or not our_raw:
+            any_divergent = True
+            rows.append((key, "DIVERGENT", "empty frame"))
+            print(f"--- {key}: empty frame (DIVERGENT)")
+            continue
+        golden_lines = [mask_text(l, patterns) for l in golden_raw]
+        our_lines = [mask_text(l, patterns) for l in our_raw]
 
         if golden_lines == our_lines:
             rows.append((key, "clean", ""))
@@ -103,6 +116,10 @@ def main() -> int:
         )
         print(f"\n=== {key} ({status}) ===")
         print("\n".join(diff))
+
+    if not rows:
+        print("ERROR: zero frame comparisons")
+        return 1
 
     print("\nSUMMARY")
     print(f"{'FRAME':50} STATUS")

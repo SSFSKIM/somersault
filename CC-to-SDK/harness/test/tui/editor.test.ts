@@ -71,6 +71,23 @@ describe("editor composer prefill", () => {
     expect(s.lines).toEqual(["a", "b"]);
     expect(s.cursor).toEqual({ row: 1, col: 1 });
   });
+  it("external replacement clears stale buffer-derived state but preserves durable history, stash, and kill ring", () => {
+    let s = initialEditorState(["old"]);
+    s = { ...s, lines: ["draft"], cursor: { row: 0, col: 5 }, histIndex: 0, stash: "draft", stashed: "parked", undo: [{ lines: ["before"], cursor: { row: 0, col: 6 } }], mention: { anchor: { row: 0, col: 0 }, query: "d", files: ["draft.ts"], items: [], index: 0 }, command: { query: "mod", items: [], catalog: [], index: 0 }, killRing: ["keep"], killRun: true, yankSite: { start: { row: 0, col: 0 }, end: { row: 0, col: 4 }, index: 0 } };
+    const replaced = withBufferText(s, "queued\n/mod");
+    expect(replaced.lines).toEqual(["queued", "/mod"]);
+    expect(replaced.cursor).toEqual({ row: 1, col: 4 });
+    expect(replaced.histIndex).toBeNull();
+    expect(replaced.stash).toBeNull();
+    expect(replaced.undo).toEqual([]);
+    expect(replaced.mention).toBeNull();
+    expect(replaced.command).toBeNull();
+    expect(replaced.killRun).toBe(false);
+    expect(replaced.yankSite).toBeNull();
+    expect(replaced.history).toEqual(["old"]);
+    expect(replaced.stashed).toBe("parked");
+    expect(replaced.killRing).toEqual(["keep"]);
+  });
 });
 
 describe("editor history", () => {
@@ -174,6 +191,13 @@ describe("editor / command palette", () => {
     const r = applyKey(s, "", { return: true });
     expect(r.submit).toBe("/brainstorming");
     expect(r.state.command).toBeNull();
+  });
+  it("slash-command submission preserves the durable stash and kill ring", () => {
+    const s = { ...open(), stashed: "parked", killRing: ["keep me"] };
+    const r = applyKey(s, "", { return: true });
+    expect(r.submit).toBe("/brainstorming");
+    expect(r.state.stashed).toBe("parked");
+    expect(r.state.killRing).toEqual(["keep me"]);
   });
   it("a space ends the command name and closes the popup (now typing args)", () => {
     let s = open(); s = type(s, "review"); s = type(s, " ");

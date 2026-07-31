@@ -55,4 +55,29 @@ describe("suspendProcess", () => {
   it("stdin.setRawMode is optional (a non-TTY stdin) — suspendProcess doesn't throw when it's missing", () => {
     expect(() => suspendProcess({ stdin: {}, repaint: () => {}, once: () => {}, kill: () => {} })).not.toThrow();
   });
+
+  it("does nothing on Windows and never changes raw mode or signals", () => {
+    const calls: string[] = [];
+    suspendProcess({
+      platform: "win32",
+      stdin: { setRawMode: (v) => calls.push(`raw(${v})`) },
+      repaint: () => calls.push("repaint"),
+      once: () => calls.push("once"),
+      kill: () => calls.push("kill"),
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it("rolls raw mode back and removes the listener when signal delivery fails", () => {
+    const calls: string[] = [];
+    const handler = () => {};
+    expect(() => suspendProcess({
+      stdin: { setRawMode: (v) => calls.push(`raw(${v})`) },
+      repaint: () => {},
+      once: (_signal, h) => { calls.push("once"); Object.assign(handler, h); throw new Error("kill unavailable"); },
+      removeListener: (signal) => calls.push(`remove(${signal})`),
+      kill: () => { throw new Error("kill unavailable"); },
+    })).toThrow("kill unavailable");
+    expect(calls).toEqual(["raw(false)", "once", "remove(SIGCONT)", "raw(true)"]);
+  });
 });

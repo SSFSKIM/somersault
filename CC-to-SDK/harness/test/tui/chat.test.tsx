@@ -83,6 +83,26 @@ describe("<ChatApp>", () => {
     expect(fake.answeredCalls[0]).toEqual({ toolUseID: "t", decision: { kind: "allow_once" } });
   });
 
+  it("hides the global composer hint under permission, question, and plan input owners", async () => {
+    const fake = fakeRemote();
+    const { lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    fake.parkPermission({ sessionId: "s", toolUseID: "p", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
+    await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
+    expect(frame(lastFrame)).not.toContain("Esc interrupt");
+    expect(frame(lastFrame)).not.toContain("[y/n");
+    fake.settlePermission("p", "me", "deny");
+    await waitFor(() => !frame(lastFrame).includes("Allow Claude to use"));
+    fake.parkPermission({ sessionId: "s", toolUseID: "q", toolName: "AskUserQuestion", kind: "question", input: { questions: [{ question: "Continue?", options: [{ label: "yes" }], multiSelect: false }] }, createdAt: Date.now() });
+    await waitFor(() => frame(lastFrame).includes("Continue?"));
+    expect(frame(lastFrame)).not.toContain("Esc rewind");
+    fake.settlePermission("q", "me", "question_answer");
+    await waitFor(() => !frame(lastFrame).includes("Continue?"));
+    fake.parkPermission({ sessionId: "s", toolUseID: "r", toolName: "ExitPlanMode", kind: "plan", input: { plan: "ship it" }, createdAt: Date.now() });
+    await waitFor(() => frame(lastFrame).includes("Approve this plan?"));
+    expect(frame(lastFrame)).not.toContain("? help");
+  });
+
   it("surfaces a parked question as a QuestionDialog (kind dispatcher) and answers it", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
@@ -1321,6 +1341,22 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("WebFetch");               // the deleted rule no longer renders as a row
   });
 
+  it("/permissions Workspace tab: managed cwd rows do not advertise or respond to Enter", async () => {
+    const fake = fakeSettingsRemote({ listDirs: async () => [{ path: process.cwd(), source: "cwd" as const }] });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Permissions"));
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always ask for confirmation before using these tools."));
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always reject requests to use denied tools."));
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Add directory…"));
+    stdin.write("\x1b[B"); await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes(`❯ ${process.cwd()}`));
+    expect(frame(lastFrame)).not.toContain("Enter to select");
+    stdin.write("\r");
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).not.toContain("Remove directory from workspace?");
+  });
+
   it("/permissions Workspace tab: Enter on a session directory opens the remove confirm, and Enter there calls removeDir", async () => {
     const removeDirCalls: string[] = [];
     const sessionDir = tmpdir();
@@ -1403,13 +1439,14 @@ describe("<ChatApp>", () => {
 
   it("Esc with a running turn and 3 queued messages: composer holds all three newline-joined, queue empty, turn interrupted (F0 acceptance 1, CM49)", async () => {
     let interrupted = 0;
+    const submitted: string[] = [];
     // A hanging turn, mirroring escape.test.tsx's "busy + text: Esc interrupts" pattern: fakeRemote() has
     // no `run` field, so `submit` pushes the turn-start event itself (busy is driven by that host event,
     // not by submit()'s own promise state) and then never resolves.
     let fake: ReturnType<typeof fakeRemote>;
     fake = fakeRemote({
-      submit: async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); return new Promise(() => {}); },
-      interrupt: async () => { interrupted++; },
+      submit: async (prompt) => { submitted.push(prompt); fake.pushEvent({ kind: "turn", phase: "start", seq: submitted.length }); return new Promise(() => {}); },
+      interrupt: async () => { interrupted++; fake.pushEvent({ kind: "turn", phase: "end", seq: 1 }); },
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
@@ -1425,8 +1462,44 @@ describe("<ChatApp>", () => {
     await waitFor(() => interrupted === 1);
     await waitFor(() => !frame(lastFrame).includes("⋯ queued:"));
     const f = frame(lastFrame);
-    expect(f).toContain("first queued");
-    expect(f).toContain("second queued");
-    expect(f).toContain("third queued");                              // all three now IN the composer
+    expect(f).toMatch(/first queued[\s\S]*second queued[\s\S]*third queued/);
+    expect(f).toMatch(/third queued(?:\x1b\[[0-9;]*m)*\x1b\[7m /);   // cursor-at-end marker on the final line
+    stdin.write("\r");
+    await waitFor(() => submitted.length === 2);
+    expect(submitted[1]).toBe("first queued\nsecond queued\nthird queued");
+  });
+
+  it("Ctrl-C rescues queued text without submitting a stale open command popup (F0 critical rescue)", async () => {
+    let interrupted = 0;
+    let first = true;
+    const submitted: string[] = [];
+    let fake: ReturnType<typeof fakeRemote>;
+    fake = fakeRemote({
+      submit: async (prompt) => {
+        submitted.push(prompt);
+        fake.pushEvent({ kind: "turn", phase: "start", seq: submitted.length });
+        if (first) { first = false; return new Promise(() => {}); }
+        fake.pushEvent({ kind: "turn", phase: "end", seq: submitted.length });
+        return { result: "done" };
+      },
+      interrupt: async () => { interrupted++; fake.pushEvent({ kind: "turn", phase: "end", seq: 1 }); },
+    });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("start"); await waitFor(() => frame(lastFrame).includes("start"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
+    stdin.write("queued-one"); await waitFor(() => frame(lastFrame).includes("queued-one"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⋯ queued: queued-one"));
+    stdin.write("/"); await waitFor(() => frame(lastFrame).includes("/"));
+    stdin.write("mod"); await waitFor(() => frame(lastFrame).includes("/model"));
+    stdin.write("\x03");
+    await waitFor(() => interrupted === 1 && !frame(lastFrame).includes("⋯ queued:"));
+    expect(frame(lastFrame)).toContain("queued-one");
+    expect(frame(lastFrame)).toContain("/mod");
+    expect(frame(lastFrame)).not.toContain("↑/↓");
+    stdin.write("\r");
+    await waitFor(() => submitted.length === 2);
+    expect(submitted[1]).toBe("queued-one\n/mod");
+    expect(submitted[1]).not.toBe("/model");
   });
 });

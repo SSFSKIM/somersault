@@ -10,7 +10,7 @@ import React from "react";
 import { Box, Text, useInput } from "ink";
 import { ACCENT } from "./theme.js";
 
-export const ROWS: [string, string][] = [
+const BASE_ROWS: [string, string][] = [
   ["⏎", "send"],
   ["\\⏎ / Ctrl-J", "newline"],
   ["↑↓", "history"],
@@ -38,6 +38,8 @@ export const ROWS: [string, string][] = [
   ["/", "commands"],
   ["?", "this help"],
 ];
+
+export const ROWS: [string, string][] = process.platform === "win32" ? BASE_ROWS.filter(([key]) => key !== "Ctrl-Z") : BASE_ROWS;
 
 export function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   useInput((_input, key) => { if (key.escape) onClose(); });   // KB6: Escape only — every other key is swallowed here, not left to leak into a chord underneath

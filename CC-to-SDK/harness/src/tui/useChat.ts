@@ -916,6 +916,7 @@ export function useChat(
     drainGen.current++;
     const q = queueRef.current;
     if (q.length) setComposerPrefill({ text: q.join("\n"), token: Date.now(), mode: "prepend" });
+    queueRef.current = [];
     setQueue([]);
     void session.interrupt().catch(() => {});
   }
