@@ -24,7 +24,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from frame_masks import load_masks, load_redactions, mask_text
+from frame_masks import frame_key, load_masks, load_redactions, mask_text
 
 
 
@@ -66,13 +66,12 @@ def main() -> int:
         return 1
 
     allowlist = load_allowlist(args.allowlist)
-    script_name = os.path.basename(os.path.normpath(args.golden_dir))
 
     rows: list[tuple[str, str, str]] = []  # (frame_key, status, note)
     any_divergent = False
 
     for fname in sorted(golden_files | our_files):
-        key = f"{script_name}/{fname}"
+        key = frame_key(args.golden_dir, fname)
 
         if fname not in golden_files or fname not in our_files:
             missing_side = "OUR_DIR" if fname not in our_files else "GOLDEN_DIR"

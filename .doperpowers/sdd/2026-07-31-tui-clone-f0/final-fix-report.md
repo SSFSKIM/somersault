@@ -446,3 +446,49 @@ Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/
   no editor mutation, and the Windows-style no-op path are covered by injected TUI tests; the manual terminal
   `Ctrl-Z` → `fg` round trip remains the unchanged owner-run concern.
 - No credential value was printed. Protected concurrent untracked files remain untouched.
+
+## Ninth plugin review pass
+
+Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/2026-07-31-tui-clone-f0/final-rereview9-findings.md`.
+
+1. **Important — nested scenario scope was lost by diff.** The red reproduction placed a golden under
+   `test/fixtures/upstream-frames/new/scenario` and scoped a comparison mask to
+   `new/scenario/01-frame.ansi`. The old diff derived only `scenario/01-frame.ansi`, skipped the mask,
+   reported a false divergence, and printed both synthetic identities. `frame_masks.py` now owns the sole
+   `canonical_path`, tracked-fixture containment, and `frame_key` implementation; both capture and diff call
+   it. Tracked keys preserve every canonical scenario component; root and one-level keys stay unchanged;
+   symlink and `..` aliases use the same canonical target. Untracked directories use their canonical basename
+   plus frame name (for example, `scratch/01-frame.ansi`), a deterministic documented convention. The new
+   integration test proves direct, nested/`..`, one-level, symlink-root, scratch-symlink, and untracked keys,
+   then runs the actual diff and confirms the scoped mask produces `1 clean, 0 allowlisted, 0 DIVERGENT`
+   without printing either identity.
+2. **Important — successful recapture retained obsolete ANSI frames.** The red reproduction started with
+   old and extra `.ansi` files, captured one renamed frame, and showed that both stale files survived.
+   Capture now creates a private `.capture-*` staging directory for every target, including untracked output.
+   Only after all frames and redaction coverage validate does it promote each staged frame and remove immediate
+   target-directory `.ansi` names absent from the validated set. Non-ANSI metadata is untouched. Failure or
+   partial capture removes staging and leaves the prior output name-for-name and byte-for-byte intact. Because
+   retained metadata prevents a portable whole-directory swap, a process crash during the final promotion/deletion
+   merge can leave stale frames; it cannot publish an unvalidated frame, and the next successful capture converges
+   to the exact set. The regression covers successful and failed untracked output, nested tracked output,
+   metadata preservation, redaction, stale-frame removal, and staging cleanup.
+
+### Ninth-pass verification
+
+- Focused TDD: both nested-scope and exact-publication reproducers were red before the implementation and green
+  afterward.
+- The canonical helper has exactly one definition in `scripts/frame_masks.py`; capture and diff import it.
+- `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`: **PASS; 35 tests
+  passed**. An earlier full run hit the known intermittent PTY liveness failure in
+  `test_capture_writes_expected_frames_for_live_child`; five isolated repetitions and the final full-alone run
+  passed, so no unrelated timing change was made.
+- `npm run typecheck`: **PASS**.
+- Committed TUI suite excluding the protected concurrent probe: **PASS; 39 files, 662 tests passed; 9
+  credential-gated live tests skipped**.
+- `npm run test:unit`: **PASS; 135 files, 1,227 tests passed**.
+- `git diff --check`: **PASS**.
+- Fresh 100x40 captures wrote three help and five composer frames without touching tracked fixtures. Baselines
+  remain help **`0 clean, 0 allowlisted, 3 DIVERGENT`** and composer **`0 clean, 0 allowlisted, 5 DIVERGENT`**;
+  each diff exited 1 as expected.
+- No credentials were used or printed, no raw synthetic identity reached the scoped-mask diff output, no push
+  occurred, and protected concurrent untracked files remain untouched.

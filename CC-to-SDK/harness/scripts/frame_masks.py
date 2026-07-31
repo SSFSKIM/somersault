@@ -1,7 +1,9 @@
 """Shared scoped masking contract for capture-at-rest and frame comparison."""
 import fnmatch
 import json
+import os
 import re
+from pathlib import Path
 from typing import Any
 
 MASK_TOKEN = "▒"
@@ -25,6 +27,46 @@ class RedactionContract:
 def read_config(path: str) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+FIXTURE_MARKER = ("test", "fixtures", "upstream-frames")
+
+
+def canonical_path(path: str) -> Path:
+    try:
+        return Path(path).resolve(strict=False)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise ValueError(f"cannot resolve frame path {path!r}: {error}") from error
+
+
+def tracked_fixture_relative(path: str) -> str | None:
+    """Return a scenario path only when the canonical target is inside an upstream-fixtures root."""
+    target = canonical_path(path)
+    parts = target.parts
+    marker_norm = tuple(os.path.normcase(part) for part in FIXTURE_MARKER)
+    for index in range(len(parts) - len(FIXTURE_MARKER), -1, -1):
+        candidate = Path(*parts[:index + len(FIXTURE_MARKER)])
+        component_match = tuple(os.path.normcase(part) for part in parts[index:index + len(FIXTURE_MARKER)]) == marker_norm
+        expected = Path(*parts[:index]).joinpath(*FIXTURE_MARKER)
+        try:
+            case_alias = candidate.exists() and expected.exists() and candidate.samefile(expected)
+        except OSError:
+            case_alias = False
+        if not (component_match or case_alias):
+            continue
+        try:
+            relative = target.relative_to(candidate)
+        except ValueError:
+            continue
+        return "" if relative == Path(".") else relative.as_posix()
+    return None
+
+
+def frame_key(directory: str, name: str) -> str:
+    """Use tracked canonical scenario paths, or the canonical basename for deterministic scratch keys."""
+    tracked_relative = tracked_fixture_relative(directory)
+    scenario = tracked_relative if tracked_relative is not None else canonical_path(directory).name
+    return f"{scenario}/{name}" if scenario else name
 
 
 def _require_count(value: Any, label: str) -> int:

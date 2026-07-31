@@ -43,7 +43,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
-from frame_masks import RedactionContract, load_redaction_contract, redact_text
+from frame_masks import RedactionContract, canonical_path, frame_key, load_redaction_contract, redact_text, tracked_fixture_relative
 
 try:
     import pyte
@@ -271,39 +271,6 @@ def parse_args():
     return p.parse_args()
 
 
-FIXTURE_MARKER = ("test", "fixtures", "upstream-frames")
-
-
-def canonical_path(path: str) -> Path:
-    try:
-        return Path(path).resolve(strict=False)
-    except (OSError, RuntimeError, ValueError) as error:
-        raise ValueError(f"cannot resolve output path {path!r}: {error}") from error
-
-
-def tracked_fixture_relative(path: str) -> str | None:
-    """Return a scenario path only when the canonical target is inside an upstream-fixtures root."""
-    target = canonical_path(path)
-    parts = target.parts
-    marker_norm = tuple(os.path.normcase(part) for part in FIXTURE_MARKER)
-    for index in range(len(parts) - len(FIXTURE_MARKER), -1, -1):
-        candidate = Path(*parts[:index + len(FIXTURE_MARKER)])
-        component_match = tuple(os.path.normcase(part) for part in parts[index:index + len(FIXTURE_MARKER)]) == marker_norm
-        expected = Path(*parts[:index]).joinpath(*FIXTURE_MARKER)
-        try:
-            case_alias = candidate.exists() and expected.exists() and candidate.samefile(expected)
-        except OSError:
-            case_alias = False
-        if not (component_match or case_alias):
-            continue
-        try:
-            relative = target.relative_to(candidate)
-        except ValueError:
-            continue
-        return "" if relative == Path(".") else relative.as_posix()
-    return None
-
-
 def nearest_existing_canonical_ancestor(path: str) -> Path:
     candidate = canonical_path(path).parent
     while not candidate.exists():
@@ -314,12 +281,6 @@ def nearest_existing_canonical_ancestor(path: str) -> Path:
     if not candidate.is_dir():
         raise ValueError(f"output ancestor is not a directory: {candidate}")
     return candidate
-
-
-def frame_key(out_dir: str, name: str) -> str:
-    tracked_relative = tracked_fixture_relative(out_dir)
-    scenario = tracked_relative if tracked_relative is not None else os.path.basename(os.path.normpath(out_dir))
-    return f"{scenario}/{name}" if scenario else name
 
 
 def main() -> int:
@@ -356,15 +317,11 @@ def main() -> int:
             sys.stderr.write(f"capture-frames: tracked golden output has no redaction contract for: {', '.join(missing)}\n")
             return 2
 
-    if tracked_relative is not None:
-        try:
-            stage_dir = tempfile.mkdtemp(prefix=".capture-", dir=nearest_existing_canonical_ancestor(args.out))
-        except (OSError, ValueError) as error:
-            sys.stderr.write(f"capture-frames: cannot stage tracked golden output: {error}\n")
-            return 2
-    else:
-        stage_dir = args.out
-        os.makedirs(stage_dir, exist_ok=True)
+    try:
+        stage_dir = tempfile.mkdtemp(prefix=".capture-", dir=nearest_existing_canonical_ancestor(args.out))
+    except (OSError, ValueError) as error:
+        sys.stderr.write(f"capture-frames: cannot stage output: {error}\n")
+        return 2
 
     screen = DimScreen(args.cols, args.rows)
     stream = pyte.ByteStream(screen)
@@ -486,14 +443,22 @@ def main() -> int:
     if len(frames_written) != len(expected_frames):
         fail(f"incomplete capture: expected {len(expected_frames)} frame(s), wrote {len(frames_written)}")
     if failed:
-        if tracked_relative is not None:
-            shutil.rmtree(stage_dir, ignore_errors=True)
+        shutil.rmtree(stage_dir, ignore_errors=True)
         return 1
-    if tracked_relative is not None:
+    try:
         os.makedirs(args.out, exist_ok=True)
         for out_name in frames_written:
             os.replace(os.path.join(stage_dir, out_name), os.path.join(args.out, out_name))
-        shutil.rmtree(stage_dir)
+        for stale in Path(args.out).glob("*.ansi"):
+            if stale.name not in frames_written:
+                stale.unlink()
+    except OSError as error:
+        # A validation failure never touches the destination. A crash during this portable merge can leave
+        # stale frames, but cannot publish an unvalidated one; the next successful capture converges the set.
+        sys.stderr.write(f"capture-frames: frame publication failed: {error}\n")
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        return 1
+    shutil.rmtree(stage_dir)
     sys.stderr.write(f"capture-frames: wrote {len(frames_written)} frame(s) to {args.out}: {frames_written}\n")
     return 0
 

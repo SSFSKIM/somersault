@@ -41,8 +41,8 @@ class FrameScriptsTest(unittest.TestCase):
             args += ["--redact-masks", str(redact_masks)]
         return subprocess.run(args, text=True, capture_output=True)
 
-    def run_diff(self, golden: Path, ours: Path, allowlist: Path | None = None):
-        args = [sys.executable, str(DIFF_PATH), str(golden), str(ours), "--masks", str(MASKS_PATH)]
+    def run_diff(self, golden: Path, ours: Path, allowlist: Path | None = None, masks: Path = MASKS_PATH):
+        args = [sys.executable, str(DIFF_PATH), str(golden), str(ours), "--masks", str(masks)]
         if allowlist is not None:
             args += ["--allowlist", str(allowlist)]
         return subprocess.run(args, text=True, capture_output=True)
@@ -91,6 +91,45 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertNotEqual(diff.mask_text("Notify alice@example.com", scoped), diff.mask_text("Notify bob@example.com", scoped), key)
         other = diff.load_masks(str(MASKS_PATH), "other-scenario/01-frame.ansi")
         self.assertNotEqual(diff.mask_text(quota_a, other), diff.mask_text(quota_b, other))
+
+    def test_capture_and_diff_share_canonical_nested_frame_keys_for_scoped_masks(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fixture_root = root / "test" / "fixtures" / "upstream-frames"
+            golden = fixture_root / "new" / "scenario"
+            golden.mkdir(parents=True)
+            ours = root / "scratch"
+            ours.mkdir()
+            (golden / "01-frame.ansi").write_text("SECRET-GOLDEN\n", encoding="utf-8")
+            (ours / "01-frame.ansi").write_text("SECRET-OURS\n", encoding="utf-8")
+            masks = root / "masks.json"
+            masks.write_text(json.dumps({"by_frame": {
+                "new/scenario/01-frame.ansi": [{"pattern": "SECRET-[A-Z]+", "replacement": "▒"}],
+            }}), encoding="utf-8")
+
+            aliases = [
+                (golden, "new/scenario/01-frame.ansi"),
+                (golden / "nested" / "..", "new/scenario/01-frame.ansi"),
+                (fixture_root / "help-overlay", "help-overlay/01-frame.ansi"),
+                (root / "scratch", "scratch/01-frame.ansi"),
+            ]
+            (golden / "nested").mkdir()
+            linked_root = root / "linked-root"
+            linked_root.symlink_to(fixture_root, target_is_directory=True)
+            aliases.append((linked_root / "new" / "scenario", "new/scenario/01-frame.ansi"))
+            scratch_alias = root / "scratch-alias"
+            scratch_alias.symlink_to(ours, target_is_directory=True)
+            aliases.append((scratch_alias, "scratch/01-frame.ansi"))
+            for directory, expected in aliases:
+                with self.subTest(directory=directory):
+                    self.assertEqual(capture.frame_key(str(directory), "01-frame.ansi"), expected)
+                    self.assertEqual(diff.frame_key(str(directory), "01-frame.ansi"), expected)
+
+            compared = self.run_diff(golden, ours, masks=masks)
+            self.assertEqual(compared.returncode, 0, compared.stdout + compared.stderr)
+            self.assertIn("1 clean, 0 allowlisted, 0 DIVERGENT", compared.stdout)
+            self.assertNotIn("SECRET-GOLDEN", compared.stdout + compared.stderr)
+            self.assertNotIn("SECRET-OURS", compared.stdout + compared.stderr)
 
     def test_synthetic_unredacted_identities_round_trip_to_all_stored_goldens_without_git_history(self):
         fixtures = ROOT / "test" / "fixtures" / "upstream-frames"
@@ -308,6 +347,54 @@ class FrameScriptsTest(unittest.TestCase):
             untracked = self.run_capture("frame:boot\n", child, root / "scratch")
             self.assertEqual(untracked.returncode, 0, untracked.stderr)
             self.assertIn("ready", (root / "scratch" / "01-boot.ansi").read_text(encoding="utf-8"))
+
+    def test_capture_publishes_only_validated_ansi_frames_and_preserves_failed_output(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            child = self.child_command("import sys,time; sys.stdout.write('fresh'); sys.stdout.flush(); time.sleep(0.3)")
+            untracked = root / "untracked"
+            untracked.mkdir()
+            (untracked / "01-old.ansi").write_text("old\n", encoding="utf-8")
+            (untracked / "99-extra.ansi").write_text("extra\n", encoding="utf-8")
+            (untracked / "VERSION").write_bytes(b"metadata\n")
+            captured = self.run_capture("wait:0.05\nframe:new\n", child, untracked)
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            self.assertEqual({p.name for p in untracked.glob("*.ansi")}, {"01-new.ansi"})
+            self.assertIn("fresh", (untracked / "01-new.ansi").read_text(encoding="utf-8"))
+            self.assertEqual((untracked / "VERSION").read_bytes(), b"metadata\n")
+            self.assertFalse(list(root.glob(".capture-*")))
+
+            failed = root / "failed"
+            failed.mkdir()
+            (failed / "01-old.ansi").write_bytes(b"old frame\n")
+            (failed / "99-extra.ansi").write_bytes(b"extra frame\n")
+            (failed / "allowlist.md").write_bytes(b"metadata\n")
+            before_failure = {p.name: p.read_bytes() for p in failed.iterdir()}
+            partial = self.run_capture(
+                "wait:0.05\nframe:new\nwait:0.3\nframe:later\n",
+                self.child_command("import sys,time; sys.stdout.write('fresh'); sys.stdout.flush(); time.sleep(0.15)"),
+                failed,
+            )
+            self.assertNotEqual(partial.returncode, 0)
+            self.assertEqual({p.name: p.read_bytes() for p in failed.iterdir()}, before_failure)
+            self.assertFalse(list(root.glob(".capture-*")))
+
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "nested" / "recapture"
+            tracked.mkdir(parents=True)
+            (tracked / "01-old.ansi").write_text("old\n", encoding="utf-8")
+            (tracked / "VERSION").write_bytes(b"tracked metadata\n")
+            masks = root / "masks.json"
+            masks.write_text(json.dumps({"redactions_by_frame": {
+                "nested/recapture/01-new.ansi": {
+                    "patterns": [{"name": "fresh", "pattern": "fresh", "minimum_matches": 1}],
+                    "minimum_matches": 1,
+                },
+            }}), encoding="utf-8")
+            captured_tracked = self.run_capture("wait:0.05\nframe:new\n", child, tracked, masks)
+            self.assertEqual(captured_tracked.returncode, 0, captured_tracked.stderr)
+            self.assertEqual({p.name for p in tracked.glob("*.ansi")}, {"01-new.ansi"})
+            self.assertIn("▒", (tracked / "01-new.ansi").read_text(encoding="utf-8"))
+            self.assertEqual((tracked / "VERSION").read_bytes(), b"tracked metadata\n")
 
     def test_capture_rejects_declared_rules_that_match_no_identity_before_writing(self):
         with tempfile.TemporaryDirectory() as td:
