@@ -1,5 +1,5 @@
-// tui/src/ChatStatusBar.tsx — bottom bar: model · permission mode (color-coded) · ctx% · live streaming ·
-// composer-owned hints. Decision and overlay surfaces own their input and suppress this global hint.
+// tui/src/ChatStatusBar.tsx — bottom bar: model · permission mode (color-coded) · ctx% · live streaming.
+// Editor keyboard affordances live in ChatComposer so their popup/draft state is synchronous by construction.
 import React from "react";
 import { Box, Text } from "ink";
 
@@ -8,11 +8,7 @@ export function modeColor(mode: string): string { return mode === "bypassPermiss
 /** Context-usage color: green under half, yellow past half, red once compaction is near (CC's threshold feel). */
 export function ctxColor(pct: number): string | undefined { return pct >= 80 ? "red" : pct >= 50 ? "yellow" : undefined; }
 
-export type InputOwner = "composer" | "autocomplete" | "overlay" | "decision";
-
-export function ChatStatusBar({ model, mode, busy, ctxPct, hasPending, thinkLevel, bgCount, usageWarn, inputOwner, composerEmpty = true }: { model?: string; mode: string; busy: boolean; ctxPct?: number; hasPending?: boolean; thinkLevel?: string; bgCount?: number; usageWarn?: string; inputOwner?: InputOwner; composerEmpty?: boolean }) {
-  const owner = inputOwner ?? (hasPending ? "decision" : "composer");
-  const hint = busy ? "   Esc interrupt" : composerEmpty ? "   Esc rewind · ? help" : "   Esc clear";
+export function ChatStatusBar({ model, mode, busy, ctxPct, thinkLevel, bgCount, usageWarn }: { model?: string; mode: string; busy: boolean; ctxPct?: number; thinkLevel?: string; bgCount?: number; usageWarn?: string }) {
   return (
     <Box>
       {model ? <Text>model <Text color="cyan">{model}</Text>{"  "}</Text> : null}
@@ -22,7 +18,6 @@ export function ChatStatusBar({ model, mode, busy, ctxPct, hasPending, thinkLeve
       {usageWarn ? <Text color="red">{"  " + usageWarn}</Text> : null}
       <Text>{busy ? "  ⟳ streaming" : ""}</Text>
       <Text>{bgCount ? `  ⚙ ${bgCount} bg` : ""}</Text>
-      {owner === "composer" ? <Text dimColor>{hint}</Text> : null}
     </Box>
   );
 }

@@ -31,8 +31,9 @@ export function PermissionDialog({ req, onDecision }: { req: { toolName: string;
     if (key.upArrow) { setIdx((i) => Math.max(0, i - 1)); return; }
     if (key.downArrow) { setIdx((i) => Math.min(opts.length - 1, i + 1)); return; }
     if (key.return) { onDecision(opts[idx].decision); return; }
-    if (input === "y") { onDecision({ kind: "allow_once" }); return; }   // CC confirm:yes
-    if (input === "n") { onDecision({ kind: "deny" }); return; }         // CC confirm:no
+    const barePrintable = !key.ctrl && !key.meta && !key.shift;
+    if (barePrintable && input === "y") { onDecision({ kind: "allow_once" }); return; }   // CC confirm:yes
+    if (barePrintable && input === "n") { onDecision({ kind: "deny" }); return; }         // CC confirm:no
     const n = opts.findIndex((o) => o.key === input);
     if (n >= 0) { onDecision(opts[n].decision); return; }
     if (input === "a") onDecision({ kind: "allow_once" });          // legacy shortcuts

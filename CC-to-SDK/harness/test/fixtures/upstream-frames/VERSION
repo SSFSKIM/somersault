@@ -1,27 +1,28 @@
-2.1.220 (Claude Code) — captured 2026-07-31, 100x40, TERM=xterm-256color
+Claude Code 2.1.220 — captured 2026-07-31 — 100x40 — TERM=xterm-256color
 
-Identity redacted at rest. Three things a real session prints identify the person who captured it:
-the display name in the boot frame's greeting ("Welcome back <name>!"), an organization derived from
-their email address, and the `user@host` segment of the status line. None carries any fidelity signal
-— what we measure is that each line exists at that position with that shape — so all three are
-replaced in the stored goldens with the same fixed token the masks produce (▒), and the matching
-patterns lead `scripts/frames/masks.json`. Masking the frames exactly as captured yields byte-
-identical output to what is stored here (verified across all eight), so the redaction costs no
-comparison power and no identity enters git history.
+These tracked fixtures are identity-redacted at rest. The original capture's greeting, email-derived
+organization and `user@host` status segment are replaced with `▒`; no unredacted frame may be written
+under this directory. The capture command rejects a tracked-fixture output path unless it receives
+`--redact-masks` before the child is started or any frame is written.
 
-The `user@host` mask earns its place twice over: without it, a capture taken on any other machine or
-in CI would diverge permanently at that position no matter how faithful the clone became. It requires
-the segment to be followed by a colon AND a slash, so that an SSH git remote (`git@github.com:owner/
-repo.git`) — routine content for a coding agent to print — is not swallowed along with it.
+From `CC-to-SDK/harness/`, recapture with exactly:
 
-What is deliberately NOT redacted at rest: the quota line's percentage, its reset timestamp and
-timezone, and the model-tier label. The first three are neutralised at diff time by the ordinary
-nondeterminism masks, and the model label is a real fidelity signal we want to keep seeing (our
-footer does not print one, and that gap should show up as a divergence rather than be masked away).
-Baking every diff-time mask into the stored frames would also destroy what makes a golden useful —
-that a human can read it and see what upstream actually renders.
+```sh
+scripts/frames/.venv/bin/python3 scripts/capture-frames.py \
+  --script scripts/frames/help-overlay.keys \
+  --out test/fixtures/upstream-frames/help-overlay \
+  --bin "claude" --cwd /tmp/frame-scratch --cols 100 --rows 40 \
+  --redact-masks scripts/frames/masks.json
+scripts/frames/.venv/bin/python3 scripts/capture-frames.py \
+  --script scripts/frames/composer-basics.keys \
+  --out test/fixtures/upstream-frames/composer-basics \
+  --bin "claude" --cwd /tmp/frame-scratch --cols 100 --rows 40 \
+  --redact-masks scripts/frames/masks.json
+```
 
-Note for whoever edits those two patterns: an SGR escape sits flush against the text it colours, and
-its trailing "m" and digits are inside [A-Za-z0-9]. A naive address pattern therefore starts matching
-inside the escape and leaves a truncated sequence behind, so the email pattern consumes the optional
-SGR run ahead of the address deliberately.
+`redactions_by_frame` in `scripts/frames/masks.json` is the write-time contract. It is narrowly
+anchored to the boot dashboard; it does not redact transcript emails, UUIDs, paths, costs, durations,
+percentages, token counts or timestamps. `by_frame` contains separate, dashboard-only comparison masks
+for quota and status nondeterminism. Automated tests prove that the unredacted frames in commit
+`d6b2b6d849` redact byte-for-byte to all eight stored fixtures and that an attempted unredacted
+tracked-fixture write is refused.

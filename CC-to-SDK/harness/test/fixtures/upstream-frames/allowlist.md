@@ -11,7 +11,7 @@ Format (one entry per line, `#` for comments):
 
 Example:
 
-    help-overlay/02-help.ansi F0-123 — real binary's help overlay layout not yet ported
+    # help-overlay/02-help.ansi F0-123 — real binary's help overlay layout not yet ported
 
 Empty as of F0 (2026-07-31): no divergence has been triaged into an inventory item yet — every
 frame difference from `scripts/frame-diff.py` on this task is expected raw DIVERGENT output, per

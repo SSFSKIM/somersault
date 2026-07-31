@@ -60,7 +60,7 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800, onEmptyChange, onInputOwnerChange }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number; onEmptyChange?: (empty: boolean) => void; onInputOwnerChange?: (owner: "composer" | "autocomplete") => void }) {
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800 }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number }) {
   const [state, setState] = useState<EditorState>(() => initialEditorState());
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -78,10 +78,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const onCycleModeRef = useRef(onCycleMode); onCycleModeRef.current = onCycleMode;
   const onInterruptRef = useRef(onInterrupt); onInterruptRef.current = onInterrupt;
   const onHelpRef = useRef(onHelp); onHelpRef.current = onHelp;
+  const onDraftStartRef = useRef(onDraftStart); onDraftStartRef.current = onDraftStart;
   const onKillAgentsRef = useRef(onKillAgents); onKillAgentsRef.current = onKillAgents;
   const editExternalRef = useRef(editExternal); editExternalRef.current = editExternal;
   const onPrefillAppliedRef = useRef(onPrefillApplied); onPrefillAppliedRef.current = onPrefillApplied;
-  const onInputOwnerChangeRef = useRef(onInputOwnerChange); onInputOwnerChangeRef.current = onInputOwnerChange;
   const yankHintMsRef = useRef(yankHintMs); yankHintMsRef.current = yankHintMs;
   const escClearMsRef = useRef(escClearMs); escClearMsRef.current = escClearMs;
   const exitArmMsRef = useRef(exitArmMs); exitArmMsRef.current = exitArmMs;
@@ -108,7 +108,6 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const dTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (dTimer.current) clearTimeout(dTimer.current); }, []);
   const isEmptyNow = state.lines.length === 1 && state.lines[0] === "";
-  useEffect(() => { onEmptyChange?.(isEmptyNow); }, [isEmptyNow]);
 
   // Rewind's edit-and-resend: a NEW prefill (token bump) replaces the buffer wholesale; a re-render with the
   // same token (or none) is a no-op — this must fire exactly once per rewind, not on every parent re-render.
@@ -134,8 +133,6 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     });
     onPrefillAppliedRef.current?.();
   }, [prefill]);
-
-  useEffect(() => { onInputOwnerChangeRef.current?.(state.command || state.mention ? "autocomplete" : "composer"); }, [state.command, state.mention]);
 
   // Read stateRef.current (NOT the closure `state`): Ink re-registers this handler in a passive effect that
   // flushes after commit, so a closure read lags one render and would submit stale text. The ref updates every render.
@@ -204,6 +201,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       if (yankTimer.current) clearTimeout(yankTimer.current);
       yankTimer.current = setTimeout(() => setYankHint(false), yankHintMsRef.current);
     }
+    if (s.lines.length === 1 && s.lines[0] === "" && !(r.state.lines.length === 1 && r.state.lines[0] === "")) onDraftStartRef.current?.();
     if (r.submit != null) onSubmitRef.current(r.submit); setState(r.state);
   });
 
@@ -224,7 +222,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
 
   const mode = inputMode(state);
   const border = mode === "bash" ? "magenta" : mode === "memory" ? "blue" : undefined;
+  // The editor owns these affordances: derive them from this render's state so the first draft/popup
+  // frame cannot inherit an out-of-date parent status-bar hint through a passive effect.
   const showFooter = mode === "normal" && !state.mention && !state.command;
+  const keyboardHint = busy ? "Esc interrupt" : isEmptyNow ? "Esc rewind · ? help" : "Esc clear";
   const clearVisible = clearArmed && clearArm.current !== 0 && !busy;
   return (
     <Box flexDirection="column">
@@ -238,8 +239,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       {mode === "memory" ? <Box paddingX={1}><Text color="blue" dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
       {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
       {clearVisible ? <Box paddingX={1}><Text dimColor>Esc again to clear</Text></Box> : null}
-      {dArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-D again to exit</Text></Box> : null}
+      {dArmed && isEmptyNow ? <Box paddingX={1}><Text dimColor>Press Ctrl-D again to exit</Text></Box> : null}
       {showFooter ? <Box paddingX={1}><Text dimColor>{isEmptyNow ? "⏎ send · \\⏎ newline · @ files · / commands · ! bash · ⇧Tab mode · ? help" : "⏎ send · \\⏎ newline · @ files · / commands · ! bash · ⇧Tab mode"}</Text></Box> : null}
+      {showFooter ? <Box paddingX={1}><Text dimColor>{keyboardHint}</Text></Box> : null}
       {state.mention ? <MentionPopup state={state} /> : null}
       {state.command ? <CommandPopup state={state} /> : null}
     </Box>

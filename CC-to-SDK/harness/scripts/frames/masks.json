@@ -1,32 +1,54 @@
 {
-  "patterns": [
-    "/(?:Users|home)/[^/ \\x1b]+",
-    "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-  ],
-  "by_frame": {
+  "redactions_by_frame": {
     "help-overlay/*.ansi": [
-      "Welcome back [^!]*!",
-      "User: [A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}",
-      "You've used \\d+% of your weekly limit",
-      "Weekly: \\d+%",
-      "resets [^\\x1b|]+",
-      "\\$\\d+(?:\\.\\d+)?",
-      "\\d+(?:\\.\\d+)?s\\b",
-      "\\d[\\d,.]*k? tokens?\\b",
-      "\\d{1,2}:\\d{2}(:\\d{2})?\\b",
-      "[A-Za-z]{3} \\d{1,2} at \\d{1,2}(:\\d{2})?[ap]m \\([^)]*\\)"
+      {
+        "pattern": "Welcome back [^!\\x1b]*!(?=\\x1b\\[0m\\s+\\x1b\\[[0-9;]*m│\\x1b\\[0m Ask Claude to create)",
+        "replacement": "▒"
+      },
+      {
+        "pattern": "(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}(?:\\x1b\\[[0-9;]*m)?(?='s Organization\\x1b\\[0m +\\x1b\\[[0-9;]*m│\\x1b\\[0m {1,2}\\x1b\\[0;3;[0-9;]*m/release-notes)",
+        "replacement": "▒"
+      },
+      {
+        "pattern": "(?<=\\x1b\\[0m  )(?!git@)(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._-]+@[A-Za-z0-9.-]+(?=\\x1b\\[[0-9;]*m:\\x1b\\[[0-9;]*m/)",
+        "replacement": "▒"
+      }
     ],
     "composer-basics/*.ansi": [
-      "Welcome back [^!]*!",
-      "User: [A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}",
-      "You've used \\d+% of your weekly limit",
-      "Weekly: \\d+%",
-      "resets [^\\x1b|]+",
-      "\\$\\d+(?:\\.\\d+)?",
-      "\\d+(?:\\.\\d+)?s\\b",
-      "\\d[\\d,.]*k? tokens?\\b",
-      "\\d{1,2}:\\d{2}(:\\d{2})?\\b",
-      "[A-Za-z]{3} \\d{1,2} at \\d{1,2}(:\\d{2})?[ap]m \\([^)]*\\)"
+      {
+        "pattern": "Welcome back [^!\\x1b]*!(?=\\x1b\\[0m\\s+\\x1b\\[[0-9;]*m│\\x1b\\[0m Ask Claude to create)",
+        "replacement": "▒"
+      },
+      {
+        "pattern": "(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}(?:\\x1b\\[[0-9;]*m)?(?='s Organization\\x1b\\[0m +\\x1b\\[[0-9;]*m│\\x1b\\[0m {1,2}\\x1b\\[0;3;[0-9;]*m/release-notes)",
+        "replacement": "▒"
+      },
+      {
+        "pattern": "(?<=\\x1b\\[0m  )(?!git@)(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._-]+@[A-Za-z0-9.-]+(?=\\x1b\\[[0-9;]*m:\\x1b\\[[0-9;]*m/)",
+        "replacement": "▒"
+      }
+    ]
+  },
+  "by_frame": {
+    "help-overlay/*.ansi": [
+      {
+        "pattern": "(^\\x1b\\[0m {28}\\x1b\\[[0-9;]*mYou've used )\\d+%( of your weekly limit · resets )[^\\x1b\\n]+(\\x1b\\[0m$)",
+        "replacement": "\\g<1>▒\\g<2>▒\\g<3>"
+      },
+      {
+        "pattern": "(\\x1b\\[[0-9;]*m\\[[^\\]\\x1b]+\\]\\x1b\\[[0-9;]*m \\x1b\\[[0-9;]*m)\\$\\d+(?:\\.\\d+)?(\\x1b\\[[0-9;]*m · \\x1b\\[[0-9;]*m)\\d+(?:\\.\\d+)?s(?=\\x1b\\[0m$)",
+        "replacement": "\\g<1>▒\\g<2>▒"
+      }
+    ],
+    "composer-basics/*.ansi": [
+      {
+        "pattern": "(^\\x1b\\[0m {28}\\x1b\\[[0-9;]*mYou've used )\\d+%( of your weekly limit · resets )[^\\x1b\\n]+(\\x1b\\[0m$)",
+        "replacement": "\\g<1>▒\\g<2>▒\\g<3>"
+      },
+      {
+        "pattern": "(\\x1b\\[[0-9;]*m\\[[^\\]\\x1b]+\\]\\x1b\\[[0-9;]*m \\x1b\\[[0-9;]*m)\\$\\d+(?:\\.\\d+)?(\\x1b\\[[0-9;]*m · \\x1b\\[[0-9;]*m)\\d+(?:\\.\\d+)?s(?=\\x1b\\[0m$)",
+        "replacement": "\\g<1>▒\\g<2>▒"
+      }
     ]
   }
 }

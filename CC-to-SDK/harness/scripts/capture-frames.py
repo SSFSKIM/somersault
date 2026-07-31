@@ -21,7 +21,8 @@ Key-script grammar (one action per line, # comments and blank lines ignored):
 Usage (from harness/):
     scripts/frames/.venv/bin/python3 scripts/capture-frames.py \
         --script scripts/frames/help-overlay.keys \
-        --out test/fixtures/upstream-frames/help-overlay --bin "claude" --cwd /tmp/frame-scratch
+        --out test/fixtures/upstream-frames/help-overlay --bin "claude" --cwd /tmp/frame-scratch \
+        --cols 100 --rows 40 --redact-masks scripts/frames/masks.json
 Omitting --bin runs OUR binary: node --import tsx src/cli/bin.ts --cwd <cwd>, from the harness checkout
 (same guard as scripts/drive-repl.py — this must be launched from harness/).
 """
@@ -37,6 +38,9 @@ import struct
 import sys
 import termios
 import time
+
+sys.path.insert(0, os.path.dirname(__file__))
+from frame_masks import load_redactions, mask_text
 
 try:
     import pyte
@@ -121,26 +125,32 @@ class DimScreen(pyte.Screen):
                 dim = False
         self.cursor.attrs = self.cursor.attrs._replace(dim=dim)
 
+    def _clear_wide_cell_at(self, row: int, column: int) -> None:
+        """Erase both pyte cells of the wide glyph under either cursor half."""
+        if not (0 <= row < self.lines and 0 <= column < self.columns):
+            return
+        cell = self.buffer[row][column]
+        if cell.data == "" and column and wcwidth(self.buffer[row][column - 1].data) == 2:
+            self.buffer[row][column - 1] = self.default_char
+            self.buffer[row][column] = self.default_char
+        elif cell.data and wcwidth(cell.data) == 2 and column + 1 < self.columns and self.buffer[row][column + 1].data == "":
+            self.buffer[row][column] = self.default_char
+            self.buffer[row][column + 1] = self.default_char
+
     def draw(self, data: str) -> None:
-        # pyte correctly writes the replacement character but leaves the trailing stub of an overwritten
-        # wide cell in place. Clear only those stale stubs after pyte has completed its normal mutation;
-        # insert mode or a wide replacement naturally changes the cell away from the empty stub first.
-        stale_stubs = []
+        # pyte represents a wide glyph as a leading character plus an empty continuation cell. Clear that
+        # pair in the real buffer BEFORE a write lands on either half, so a narrow overwrite cannot leave a
+        # styled leading glyph behind and a wide overwrite starts from two ordinary cells.
         x, y = self.cursor.x, self.cursor.y
         for char in data:
             width = wcwidth(char)
             if x == self.columns and width > 0:
                 x = 0
                 y = min(y + 1, self.lines - 1)
-            if width == 1 and 0 <= y < self.lines and 0 <= x + 1 < self.columns:
-                if self.buffer[y][x].data and self.buffer[y][x + 1].data == "":
-                    stale_stubs.append((y, x + 1))
             if width > 0:
+                self._clear_wide_cell_at(y, x)
                 x = min(x + width, self.columns)
         super().draw(data)
-        for row, column in stale_stubs:
-            if self.buffer[row][column].data == "":
-                self.buffer[row][column] = self.default_char
 
     def dim_at(self, row: int, column: int) -> bool:
         return self.buffer[row][column].dim
@@ -231,6 +241,10 @@ def render_screen(screen) -> str:
     return "\n".join(lines) + "\n"
 
 
+def has_visible_content(screen) -> bool:
+    return any(screen.buffer[row][column].data not in ("", " ") for row in range(screen.lines) for column in range(screen.columns))
+
+
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--script", required=True, help="path to a .keys file")
@@ -239,7 +253,22 @@ def parse_args():
     p.add_argument("--cwd", required=True, help="working directory for the child (the TUI's --cwd or process cwd)")
     p.add_argument("--cols", type=int, default=100)
     p.add_argument("--rows", type=int, default=40)
+    p.add_argument("--redact-masks", default=None, help="mask file required when writing under test/fixtures/upstream-frames")
     return p.parse_args()
+
+
+def tracked_fixture_relative(path: str) -> str | None:
+    parts = os.path.abspath(path).split(os.sep)
+    marker = ("test", "fixtures", "upstream-frames")
+    for index in range(len(parts) - len(marker), -1, -1):
+        if tuple(parts[index:index + len(marker)]) == marker:
+            return "/".join(parts[index + len(marker):])
+    return None
+
+
+def frame_key(out_dir: str, name: str) -> str:
+    scenario = tracked_fixture_relative(out_dir) or os.path.basename(os.path.normpath(out_dir))
+    return f"{scenario}/{name}"
 
 
 def main() -> int:
@@ -252,11 +281,26 @@ def main() -> int:
     with open(args.script, encoding="utf-8") as f:
         script_lines = [ln.rstrip("\n") for ln in f if ln.strip() and not ln.strip().startswith("#")]
 
+    expected_frames = [line for line in script_lines if line.startswith("frame:")]
+    tracked_relative = tracked_fixture_relative(args.out)
+    if tracked_relative is not None and args.redact_masks is None:
+        sys.stderr.write("capture-frames: tracked golden output requires --redact-masks\n")
+        return 2
+    redactions: dict[str, list] = {}
+    if args.redact_masks is not None:
+        try:
+            for seq, line in enumerate(expected_frames, 1):
+                name = f"{seq:02d}-{line.partition(':')[2]}.ansi"
+                redactions[name] = load_redactions(args.redact_masks, frame_key(args.out, name))
+        except (OSError, ValueError, KeyError, re.error) as error:
+            sys.stderr.write(f"capture-frames: invalid redaction masks: {error}\n")
+            return 2
+
     os.makedirs(args.out, exist_ok=True)
 
     screen = DimScreen(args.cols, args.rows)
     stream = pyte.ByteStream(screen)
-    captured: list[bytes] = []
+    seen_meaningful_screen = False
 
     pid, fd = pty.fork()
     if pid == 0:
@@ -277,6 +321,7 @@ def main() -> int:
 
     def pump(seconds: float) -> bool:
         """Collect output for `seconds`; False means the child closed the pty before the script finished."""
+        nonlocal seen_meaningful_screen
         end = time.time() + seconds
         while time.time() < end:
             readable, _, _ = select.select([fd], [], [], min(0.2, max(0, end - time.time())))
@@ -288,8 +333,8 @@ def main() -> int:
                 return False
             if not data:
                 return False
-            captured.append(data)
             stream.feed(data)
+            seen_meaningful_screen = seen_meaningful_screen or has_visible_content(screen)
         readable, _, _ = select.select([fd], [], [], 0)
         if readable:
             try:
@@ -298,8 +343,8 @@ def main() -> int:
                 return False
             if not data:
                 return False
-            captured.append(data)
             stream.feed(data)
+            seen_meaningful_screen = seen_meaningful_screen or has_visible_content(screen)
         try:
             done, _ = os.waitpid(pid, os.WNOHANG)
             if done == pid:
@@ -308,7 +353,6 @@ def main() -> int:
             return False
         return True
 
-    expected_frames = [line for line in script_lines if line.startswith("frame:")]
     seq = 0
     frames_written = []
     failed = False
@@ -335,14 +379,22 @@ def main() -> int:
                     fail(f"short write during {line!r}: {written}/{len(data)} bytes")
                     break
             elif action == "frame":
-                if not pump(0):
+                # A zero-wait frame can race an immediately-exiting child. Settle only long enough to observe
+                # pty EOF/waitpid, then require that this live capture has rendered at least one real cell.
+                if not pump(0.02):
                     fail(f"pty closed before {line!r}")
+                    break
+                if not seen_meaningful_screen:
+                    fail(f"no rendered screen state before {line!r}")
                     break
                 seq += 1
                 out_name = f"{seq:02d}-{value}.ansi"
+                rendered = render_screen(screen)
+                if args.redact_masks is not None:
+                    rendered = mask_text(rendered, redactions[out_name])
                 try:
                     with open(os.path.join(args.out, out_name), "w", encoding="utf-8") as fh:
-                        fh.write(render_screen(screen))
+                        fh.write(rendered)
                 except OSError as error:
                     fail(f"frame write failed for {line!r}: {error}")
                     break

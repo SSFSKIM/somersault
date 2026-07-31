@@ -103,6 +103,39 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("? help");
   });
 
+  it("never paints a stale editor hint in any frame after a draft or autocomplete takes input ownership", async () => {
+    const { stdin, stdout, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/__ccx-empty-cwd__" />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    const expectOwnerFramesHonest = (frames: string[], marker: string) => {
+      const owned = frames.filter((f) => f.includes(marker));
+      expect(owned.length, `no emitted frame rendered ${JSON.stringify(marker)}`).toBeGreaterThan(0);
+      for (const rendered of owned) {
+        expect(rendered).not.toContain("Esc rewind");
+        expect(rendered).not.toContain("? help");
+      }
+    };
+
+    let start = stdout.frames.length;
+    stdin.write("sentinel-draft");
+    await waitFor(() => frame(lastFrame).includes("sentinel-draft"));
+    expectOwnerFramesHonest(stdout.frames.slice(start), "sentinel-draft");
+    stdin.write("\x15");
+    await waitFor(() => !frame(lastFrame).includes("sentinel-draft"));
+
+    start = stdout.frames.length;
+    stdin.write("/");
+    await waitFor(() => frame(lastFrame).includes("/ — no matches"));
+    expectOwnerFramesHonest(stdout.frames.slice(start), "/ — no matches");
+    stdin.write("\x1b");
+    await waitFor(() => !frame(lastFrame).includes("/ — no matches"));
+    stdin.write("\x15");
+
+    start = stdout.frames.length;
+    stdin.write("@");
+    await waitFor(() => frame(lastFrame).includes("@ — no matches"));
+    expectOwnerFramesHonest(stdout.frames.slice(start), "@ — no matches");
+  });
+
   it("surfaces a parked question as a QuestionDialog (kind dispatcher) and answers it", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);

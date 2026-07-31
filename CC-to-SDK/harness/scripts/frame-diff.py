@@ -5,10 +5,10 @@ Run with the same interpreter used to capture (no third-party imports here, but 
     scripts/frames/.venv/bin/python3 scripts/frame-diff.py GOLDEN_DIR OUR_DIR \
         --masks scripts/frames/masks.json [--allowlist test/fixtures/upstream-frames/allowlist.md]
 
-masks.json: {"patterns": ["regex", ...], "by_frame": {"glob": ["regex", ...]}}. Global
-patterns are restricted to identity prefixes and other truly run-invariant values; frame-scoped patterns
-are selected by `<scenario>/<frame>.ansi`. Every match (applied per line, on text with SGR sequences
-intact) is replaced with the FIXED token '▒' on BOTH sides before comparison. Fixed, not equal-length:
+masks.json separates `redactions_by_frame` (identity redaction required before tracked-golden writes)
+from `by_frame` (dashboard-only comparison nondeterminism). Both are selected by
+`<scenario>/<frame>.ansi`. Every match is applied per line with SGR sequences intact and replaced on
+BOTH sides with the fixed token `▒` (or a capture-group-preserving equivalent). Fixed, not equal-length:
 a 3s duration versus a 12s one must mask to the same string, or the mask is useless.
 (Column alignment after the mask point differs from the on-screen frame; comparison is masked-text
 to masked-text, so that is fine.)
@@ -20,30 +20,12 @@ files (in either direction) are divergences too.
 """
 import argparse
 import difflib
-import fnmatch
-import json
 import os
-import re
 import sys
 
-MASK_TOKEN = "▒"  # ▒
+sys.path.insert(0, os.path.dirname(__file__))
+from frame_masks import load_masks, load_redactions, mask_text
 
-
-def load_masks(path: str, frame_key: str | None = None) -> list[re.Pattern]:
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
-    patterns = list(data.get("patterns", []))
-    if frame_key is not None:
-        for glob, scoped in data.get("by_frame", {}).items():
-            if fnmatch.fnmatch(frame_key, glob):
-                patterns.extend(scoped)
-    return [re.compile(p) for p in patterns]
-
-
-def mask_text(text: str, patterns: list[re.Pattern]) -> str:
-    for pattern in patterns:
-        text = pattern.sub(MASK_TOKEN, text)
-    return text
 
 
 def load_allowlist(path: str | None) -> set[str]:
@@ -55,7 +37,9 @@ def load_allowlist(path: str | None) -> set[str]:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            keys.add(line.split()[0])
+            key = line.split()[0]
+            if key.endswith(".ansi") and "/" in key:
+                keys.add(key)
     return keys
 
 

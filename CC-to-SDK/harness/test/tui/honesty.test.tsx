@@ -298,65 +298,42 @@ it("every advertised chord has a proof", () => {
 });
 for (const [k] of ROWS) it(`"${k}" is live`, async () => { await PROOFS[k](); });
 
-it("the composer footer and status-bar hints only advertise chords that ROWS carries (explicit mapping)", async () => {
-  // The footer prints short tokens; ROWS uses fuller labels. This mapping IS the contract — a footer
-  // token missing from it, or mapping to a ROWS key that no longer exists, fails the test. Unlike the
-  // hand-copied literals this test used to diff against ROWS (Task 8 review Finding 1 — a source edit to
-  // either footer left it green because nothing ever rendered), both hints below are read straight off a
-  // REAL <ChatComposer>/<ChatStatusBar> via lastFrame(), so a source edit changes what this test actually sees.
+it("the composer-owned footer and contextual hints only advertise chords that ROWS carries", async () => {
   const FOOTER_TOKEN_TO_ROW: Record<string, string> = {
     "⏎ send": "⏎", "\\⏎ newline": "\\⏎ / Ctrl-J", "@ files": "@", "/ commands": "/",
     "! bash": "!", "⇧Tab mode": "⇧Tab", "Esc rewind": "Esc", "Esc clear": "Esc", "Esc interrupt": "Esc", "? help": "?",
   };
   const rowKeys = new Set(ROWS.map(([k]) => k));
-
-  // ChatComposer.tsx:219 — the footer is its own line, printed only when idle/empty with no popup open
-  // (the fresh initial render already qualifies), so no keys need to be sent first.
   const composer = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} />);
   await settle();
-  const composerLine = stripAnsi(frame(composer.lastFrame)).split("\n").find((l) => l.includes("·"));
-  expect(composerLine, "ChatComposer never rendered a footer hint containing '·'").toBeDefined();
-  const composerTokens = composerLine!.trim().split(" · ");
+  const frames = [frame(composer.lastFrame)];
+  composer.stdin.write("draft"); await waitFor(() => frame(composer.lastFrame).includes("draft"));
+  frames.push(frame(composer.lastFrame));
+  composer.rerender(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} busy />);
+  await waitFor(() => frame(composer.lastFrame).includes("Esc interrupt"));
+  frames.push(frame(composer.lastFrame));
 
-  // ChatStatusBar.tsx:21 idle branch — same line as "mode <mode>", so isolate the hint by splitting on
-  // the widest whitespace run: the hint's own literal carries 3 leading spaces, and none of the other
-  // segments (mode/ctx/busy/bg, all empty/short here) ever produce a run that wide. This locates the hint
-  // by structure, not by hardcoding what it says.
-  const statusFrames = [
-    render(<ChatStatusBar mode="default" busy={false} hasPending={false} inputOwner="composer" composerEmpty />).lastFrame(),
-    render(<ChatStatusBar mode="default" busy={true} hasPending={false} inputOwner="composer" />).lastFrame(),
-    render(<ChatStatusBar mode="default" busy={false} hasPending={false} inputOwner="composer" composerEmpty={false} />).lastFrame(),
-  ];
-  const statusTokens = statusFrames.flatMap((raw) => {
-    const statusLine = stripAnsi(raw ?? "");
-    const statusHint = statusLine.split(/ {2,}/).pop() ?? "";
-    return statusHint.trim().split(" · ");
-  });
-
-  const liveTokens = new Set([...composerTokens, ...statusTokens]);
-  // Forward: every token either surface actually prints must have a live ROWS row behind it.
+  const liveTokens = new Set(frames.flatMap((raw) => stripAnsi(raw).split("\n")
+    .filter((line) => line.includes(" · "))
+    .flatMap((line) => line.trim().split(" · "))
+    .filter((token) => token in FOOTER_TOKEN_TO_ROW)));
+  for (const token of ["Esc rewind", "Esc clear", "Esc interrupt"]) {
+    if (frames.some((raw) => raw.includes(token))) liveTokens.add(token);
+  }
   for (const token of liveTokens) {
     const row = FOOTER_TOKEN_TO_ROW[token];
     expect(row, `footer token "${token}" has no ROWS mapping`).toBeDefined();
     expect(rowKeys.has(row), `footer token "${token}" maps to missing row "${row}"`).toBe(true);
   }
-  // Reverse/completeness: every token the mapping claims is advertised must still be live somewhere —
-  // this is what catches a silently DELETED token (e.g. dropping "@ files ·" from the composer footer),
-  // which the forward-only check above would miss (fewer live tokens still all pass the forward check).
   for (const token of Object.keys(FOOTER_TOKEN_TO_ROW)) {
-    expect(liveTokens.has(token), `"${token}" is in the mapping but no live footer/hint advertises it`).toBe(true);
+    expect(liveTokens.has(token), `"${token}" is in the mapping but no live composer footer/hint advertises it`).toBe(true);
   }
 });
 
-// Scope addition (task-8 brief resolution): the pending-decision status-bar hint is otherwise completely
-// unpinned — Task 7 added y/n to it and no test asserted the literal string, so a silent edit could
-// advertise chords nobody proved. This does not fold into the ROWS/FOOTER_TOKEN_TO_ROW mapping above
-// because none of y/n/1/2/3 are ROWS entries (they're PermissionDialog-local, not composer chords) — its
-// own chords are proven elsewhere instead, referenced by name below rather than duplicated here.
-it("the status bar hides composer hints while a decision surface owns input", () => {
-  const permission = render(<ChatStatusBar mode="default" busy={false} hasPending={true} inputOwner="decision" />);
-  expect(permission.lastFrame()).not.toContain("[y/n");
-  expect(permission.lastFrame()).not.toContain("Esc interrupt");
-  const overlay = render(<ChatStatusBar mode="default" busy={false} hasPending={false} inputOwner="overlay" />);
-  expect(overlay.lastFrame()).not.toContain("? help");
+it("the status bar never advertises composer-local keys", () => {
+  const status = render(<ChatStatusBar mode="default" busy={true} ctxPct={42} />).lastFrame() ?? "";
+  expect(status).not.toContain("[y/n");
+  expect(status).not.toContain("Esc interrupt");
+  expect(status).not.toContain("Esc rewind");
+  expect(status).not.toContain("? help");
 });

@@ -63,7 +63,7 @@ describe("<PermissionDialog>", () => {
     stdin.write("a"); await waitFor(() => got.length === 4);   // legacy shortcuts still work
     expect(got).toEqual([{ kind: "allow_once" }, { kind: "allow_always" }, { kind: "deny" }, { kind: "allow_once" }]);
   });
-  it("y accepts and n rejects (KB1, F0 acceptance 7)", async () => {
+  it("bare y accepts and bare n rejects (KB1, F0 acceptance 7)", async () => {
     const decisions: PermissionDecision[] = [];
     const bashReq = { toolName: "Bash", input: { command: "ls" }, toolUseID: "t", signal: new AbortController().signal };
     const a = render(<PermissionDialog req={bashReq} onDecision={(d) => decisions.push(d)} />);
@@ -76,6 +76,16 @@ describe("<PermissionDialog>", () => {
     b.stdin.write("n");
     await waitFor(() => decisions.length === 2);
     expect(decisions[1]).toEqual({ kind: "deny" });
+  });
+  it("never treats modified y/n chords as permission decisions", async () => {
+    const decisions: PermissionDecision[] = [];
+    const view = render(<PermissionDialog req={req} onDecision={(d) => decisions.push(d)} />);
+    await new Promise((r) => setTimeout(r, 20));
+    for (const input of ["\x19", "\x0e", "\x1by", "\x1bn"]) { // Ctrl-Y, Ctrl-N, Alt-Y, Alt-N
+      view.stdin.write(input);
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    expect(decisions).toEqual([]);
   });
   it("↓ then Enter selects 'No' (deny); Esc denies directly", async () => {
     const got: PermissionDecision[] = [];
@@ -93,56 +103,53 @@ describe("<PermissionDialog>", () => {
 });
 describe("<ChatStatusBar>", () => {
   it("shows the mode and ctx%", () => {
-    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} ctxPct={42} hasPending={false} />);
+    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} ctxPct={42} />);
     expect(lastFrame()).toContain("default");
     expect(lastFrame()).toContain("42%");
   });
   it("shows the model and a live streaming indicator while busy", () => {
-    const { lastFrame } = render(<ChatStatusBar model="claude-sonnet-4-6" mode="default" busy={true} ctxPct={34} hasPending={false} />);
+    const { lastFrame } = render(<ChatStatusBar model="claude-sonnet-4-6" mode="default" busy={true} ctxPct={34} />);
     const f = lastFrame() ?? "";
     expect(f).toContain("claude-sonnet-4-6");
     expect(f).toContain("⟳ streaming");
     expect(f).toContain("ctx 34%");
   });
   it("hides the streaming indicator and model segment when idle/absent", () => {
-    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} ctxPct={10} hasPending={false} />);
+    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} ctxPct={10} />);
     const f = lastFrame() ?? "";
     expect(f).not.toContain("streaming");
     expect(f).not.toContain("model ");
   });
   it("warns about auto-compact once context is near the window", () => {
-    const f = render(<ChatStatusBar mode="default" busy={false} ctxPct={85} hasPending={false} />).lastFrame() ?? "";
+    const f = render(<ChatStatusBar mode="default" busy={false} ctxPct={85} />).lastFrame() ?? "";
     expect(f).toContain("85%");
     expect(f).toContain("auto-compact soon");
-    const lo = render(<ChatStatusBar mode="default" busy={false} ctxPct={20} hasPending={false} />).lastFrame() ?? "";
+    const lo = render(<ChatStatusBar mode="default" busy={false} ctxPct={20} />).lastFrame() ?? "";
     expect(lo).not.toContain("auto-compact");
   });
   it("shows the thinking level", () => {
-    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} hasPending={false} thinkLevel="high" />);
+    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} thinkLevel="high" />);
     expect(lastFrame()).toContain("think");
     expect(lastFrame()).toContain("high");
   });
   it("shows the bg-task count when bgCount is set", () => {
-    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} hasPending={false} bgCount={2} />);
+    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} bgCount={2} />);
     expect(lastFrame()).toContain("⚙ 2 bg");
   });
   it("hides the bg-task count when bgCount is 0/undefined", () => {
-    const zero = render(<ChatStatusBar mode="default" busy={false} hasPending={false} bgCount={0} />).lastFrame() ?? "";
+    const zero = render(<ChatStatusBar mode="default" busy={false} bgCount={0} />).lastFrame() ?? "";
     expect(zero).not.toContain("bg");
-    const absent = render(<ChatStatusBar mode="default" busy={false} hasPending={false} />).lastFrame() ?? "";
+    const absent = render(<ChatStatusBar mode="default" busy={false} />).lastFrame() ?? "";
     expect(absent).not.toContain("bg");
   });
-  it("shows only the hint for the actual composer state and hides it for other input owners", () => {
-    const busy = render(<ChatStatusBar mode="default" busy={true} hasPending={false} inputOwner="composer" />).lastFrame() ?? "";
-    expect(busy).toContain("Esc interrupt");
-    const draft = render(<ChatStatusBar mode="default" busy={false} hasPending={false} inputOwner="composer" composerEmpty={false} />).lastFrame() ?? "";
-    expect(draft).toContain("Esc clear");
-    expect(draft).not.toContain("? help");
-    const question = render(<ChatStatusBar mode="default" busy={false} hasPending={true} inputOwner="decision" />).lastFrame() ?? "";
-    expect(question).not.toContain("[y/n");
-    expect(question).not.toContain("Esc interrupt");
-    const overlay = render(<ChatStatusBar mode="default" busy={false} hasPending={false} inputOwner="overlay" />).lastFrame() ?? "";
-    expect(overlay).not.toContain("help");
+  it("renders status metadata without editor-owned keyboard affordances", () => {
+    const f = render(<ChatStatusBar mode="default" busy={true} ctxPct={42} />).lastFrame() ?? "";
+    expect(f).toContain("mode");
+    expect(f).toContain("⟳ streaming");
+    expect(f).not.toContain("Esc interrupt");
+    expect(f).not.toContain("Esc rewind");
+    expect(f).not.toContain("Esc clear");
+    expect(f).not.toContain("? help");
   });
 });
 describe("SessionPicker", () => {
@@ -332,14 +339,18 @@ describe("ChatComposer", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(exits).toBe(1);
   });
-  it("Ctrl-D stays armed across an intervening key, matching the upstream asymmetry", async () => {
+  it("Ctrl-D stays armed across an intervening key but only advertises an executable exit", async () => {
     let exits = 0;
     const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} exitArmMs={10000} />);
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("\x04"); await waitFor(() => (lastFrame() ?? "").includes("Press Ctrl-D again to exit"));
     stdin.write("x"); await waitFor(() => (lastFrame() ?? "").includes("x"));
-    stdin.write("\x15");
+    expect(lastFrame() ?? "").not.toContain("Press Ctrl-D again to exit");
+    stdin.write("\x04");                                      // Ctrl-D is a no-op while text makes exit impossible
     await new Promise((r) => setTimeout(r, 30));
+    expect(exits).toBe(0);
+    stdin.write("\x15");                                      // the upstream arm survives; emptying restores an executable second press
+    await waitFor(() => (lastFrame() ?? "").includes("Press Ctrl-D again to exit"));
     stdin.write("\x04"); await waitFor(() => exits === 1);
   });
   it("Ctrl-D's arm expires after exitArmMs — a press after the window re-arms instead of exiting", async () => {
@@ -358,6 +369,7 @@ describe("ChatComposer", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(lastFrame() ?? "").toContain("Ask Claude anything…");
     expect(lastFrame() ?? "").toContain("⏎ send");
+    expect(lastFrame() ?? "").toContain("Esc rewind · ? help");
     stdin.write("hi");
     await waitFor(() => (lastFrame() ?? "").includes("hi"));
     expect(lastFrame() ?? "").not.toContain("Ask Claude anything…");   // placeholder gone once typing

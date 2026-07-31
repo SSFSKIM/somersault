@@ -25,7 +25,7 @@ import { ChatComposer } from "./ChatComposer.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { QuestionDialog } from "./QuestionDialog.js";
 import { PlanDialog } from "./PlanDialog.js";
-import { ChatStatusBar, type InputOwner } from "./ChatStatusBar.js";
+import { ChatStatusBar } from "./ChatStatusBar.js";
 import { SessionPicker } from "./SessionPicker.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { TaskPanel } from "./TaskPanel.js";
@@ -63,8 +63,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
-  const [composerEmpty, setComposerEmpty] = useState(true);
-  const [composerOwner, setComposerOwner] = useState<InputOwner>("composer");
   // Ink's useInput subscription is passive, so a root handler can receive a key after a newer render has
   // already painted. Keep every state/callback value consumed by this handler current synchronously.
   const rootStateRef = useRef(state); rootStateRef.current = state;
@@ -139,8 +137,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     }
     if (key.ctrl && input === "b") { current.busy ? backgroundNowRef.current() : openBgPanelRef.current(); disarm(); return; }
   });
-  const overlayOwnsInput = state.shortcutsOpen || transcriptOpen || state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open;
-  const activeInputOwner: InputOwner = overlayOwnsInput ? "overlay" : state.pending ? "decision" : composerOwner;
   return (
     <Box flexDirection="column">
       <Transcript key={state.clearToken} lines={state.lines} streaming={state.streaming} />
@@ -213,10 +209,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     : state.pending.kind === "plan"
                       ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
                       : <PermissionDialog key={state.pending.toolUseID} req={state.pending} onDecision={(d) => resolveDecision(d)} />
-                  : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} onEmptyChange={(empty) => { setComposerEmpty(empty); if (!empty) disarmEsc(); }} onInputOwnerChange={setComposerOwner} />}
+                  : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} />}
       {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
       {escArmed ? <Box paddingX={1}><Text dimColor>Press Esc again to rewind</Text></Box> : null}
-      <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} hasPending={!!state.pending} thinkLevel={state.thinkLevel} bgCount={state.bgTasks.length} usageWarn={state.usageWarn} inputOwner={activeInputOwner} composerEmpty={composerEmpty} />
+      <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} thinkLevel={state.thinkLevel} bgCount={state.bgTasks.length} usageWarn={state.usageWarn} />
     </Box>
   );
 }
