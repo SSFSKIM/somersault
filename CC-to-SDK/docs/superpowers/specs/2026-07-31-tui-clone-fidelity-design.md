@@ -835,6 +835,18 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
   the terminal write when rendered output is unchanged (`ink/build/ink.js:132`) — invisible in tests
   because `ink-testing-library` renders with `debug: true`, which bypasses that gate. (2026-07-31)
 
+- **The anti-lying audit shipped with two lies of its own, and both were the same mistake.** F0's honesty
+  audit asserts that no string advertises a chord the app does not honour. Two of its checks compared
+  **hand-copied literals** rather than rendered output: the footer/status-bar mapping never rendered
+  either component, and the pending-hint assertion dropped the three leading spaces the source actually
+  prints. Both were proven inert by sabotage — editing the real strings left both tests green. The
+  twenty-six per-chord proofs, written against real behaviour, all bit correctly. **The rule: an
+  assertion about what the UI says must be taken from what the UI rendered, never from a copy kept beside
+  the test.** A comment promising that humans will hand-update the copy is a discipline note, not a
+  contract, and in an audit it is worse than no check at all — it certifies the falsehood it exists to
+  catch. Both instances originated in the plan's own template, which is where the correction was made.
+  (2026-07-31)
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
