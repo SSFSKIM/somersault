@@ -149,6 +149,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // Read stateRef.current (NOT the closure `state`): Ink re-registers this handler in a passive effect that
   // flushes after commit, so a closure read lags one render and would submit stale text. The ref updates every render.
   useInput((input, key) => {
+    // Ctrl-Z is reserved for ChatApp's process-level suspend handler. Ink broadcasts input to every
+    // subscriber, so returning here must precede arm cleanup and applyKey or a suspend corrupts editor state.
+    if (key.ctrl && input === "z") return;
     if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
     const s = stateRef.current;
     if (!key.escape && clearArm.current) disarmClear();

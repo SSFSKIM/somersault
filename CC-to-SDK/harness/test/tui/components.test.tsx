@@ -3,6 +3,7 @@ import React from "react";
 import { render } from "ink-testing-library";
 import { Box, Text } from "ink";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
+import { applyKey, initialEditorState, type EditorState } from "../../src/tui/editor.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -313,6 +314,37 @@ describe("ChatComposer", () => {
     stdin.write("\x1b"); await waitFor(() => interrupts === 1);
     expect([cycles, interrupts]).toEqual([1, 1]);
   });
+  it("makes Ctrl-Z invisible to editor metadata so yank-pop remains executable after suspension", async () => {
+    const ctrl = { ctrl: true };
+    let state = initialEditorState();
+    for (const char of "one") state = applyKey(state, char, {}).state;
+    state = applyKey(state, "u", ctrl).state;
+    for (const char of "two") state = applyKey(state, char, {}).state;
+    state = applyKey(state, "u", ctrl).state;
+    state = applyKey(state, "y", ctrl).state;
+    const editorStateRef = { current: state } as React.MutableRefObject<EditorState>;
+    const beforeSuspend = structuredClone(state);
+    const { stdin, lastFrame } = render(<ChatComposer editorStateRef={editorStateRef} onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(lastFrame() ?? "").toContain("two");
+    stdin.write("\x1a");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(editorStateRef.current).toEqual(beforeSuspend);
+    stdin.write("\x1by");
+    await waitFor(() => (lastFrame() ?? "").includes("one"));
+  });
+
+  it("keeps an armed local clear untouched by Ctrl-Z", async () => {
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} escClearMs={10000} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("draft"); await waitFor(() => (lastFrame() ?? "").includes("draft"));
+    stdin.write("\x1b"); await waitFor(() => (lastFrame() ?? "").includes("Esc again to clear"));
+    stdin.write("\x1a");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(lastFrame() ?? "").toContain("Esc again to clear");
+    expect(lastFrame() ?? "").toContain("draft");
+  });
+
   it("with a / popup open, Tab/Esc are consumed by the popup (NO global cycle/interrupt — fixes the double-handler)", async () => {
     let cycles = 0, interrupts = 0;
     const a = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onCycleMode={() => cycles++} onInterrupt={() => interrupts++} />);

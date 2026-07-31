@@ -288,6 +288,20 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).toContain("›");                 // composer still alive, never exited
   });
 
+  it("Ctrl-Z invokes a no-op suspend once without breaking the active composer's yank-pop", async () => {
+    const suspend = vi.fn();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} suspend={suspend as any} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("one"); await waitFor(() => frame(lastFrame).includes("one"));
+    stdin.write("\x15"); await waitFor(() => !frame(lastFrame).includes("one"));
+    stdin.write("two"); await waitFor(() => frame(lastFrame).includes("two"));
+    stdin.write("\x15"); await waitFor(() => frame(lastFrame).includes("Ask Claude anything…"));
+    stdin.write("\x19"); await waitFor(() => frame(lastFrame).includes("two"));
+    stdin.write("\x1a"); await waitFor(() => suspend.mock.calls.length === 1);
+    stdin.write("\x1by"); await waitFor(() => frame(lastFrame).includes("one"));
+    expect(suspend).toHaveBeenCalledTimes(1);
+  });
+
   it("Ctrl-Z still reaches the injected suspend under a pending permission dialog, and never answers it", async () => {
     let suspended = 0;
     const fake = fakeRemote();

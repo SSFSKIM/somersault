@@ -415,3 +415,34 @@ Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/
   5 DIVERGENT`**, with exit code 1 from each diff.
 - No credentials or raw tracked identity were printed or committed. The protected concurrent untracked files
   remain untouched. The existing manual `Ctrl-Z` → `fg` concern is unchanged.
+
+## Eighth plugin review pass
+
+Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/2026-07-31-tui-clone-f0/final-rereview8-findings.md`.
+
+1. **Important — Ctrl-Z composer fan-out.** Ink broadcasts the raw Ctrl-Z to both the root and composer
+   listeners. The red proof constructed a real kill ring and yank-pop site, then showed that Ctrl-Z changed
+   only `yankSite` to `null`; Alt-Y could no longer cycle from `two` back to `one`. A second red proof showed
+   the same raw key disarmed a visible local Esc-clear arm. `ChatComposer` now returns on Ctrl-Z before input
+   ownership, arm cleanup, chord handling, callbacks, or `applyKey`, leaving root `ChatApp` as the sole
+   process-suspend owner. The durable `EditorState` comparison proves draft, cursor, history/stash, undo,
+   popup, kill-ring, kill-run, and yank metadata remain exact; the integration test proves a one-call injected
+   no-op suspend (the Windows contract) and a still-working Alt-Y afterward. Deliberately removing the guard
+   made the metadata regression fail again, proving the test is not inert.
+
+### Eighth-pass verification
+
+- Focused TDD: exact state/yank-pop and local clear-arm tests were red before the guard, green after it, and
+  the guard-removal sabotage restored the red yank-site failure.
+- `npm run typecheck`: **PASS**.
+- Committed TUI suite excluding the protected concurrent probe: **PASS; 39 files, 662 tests passed; 9
+  credential-gated live tests skipped**.
+- `npm run test:unit`: **PASS; 135 files, 1,227 tests passed**.
+- The first chained unit/Python invocation saw two existing PTY liveness failures (`pty closed before frame`)
+  after the unit suite. Each failed case passed five isolated repetitions, and the full Python suite rerun
+  alone passed: **33 tests passed**. No unrelated frame timing change was made.
+- F0 acceptance remains covered by the full TUI/unit suites. A fresh keyless PTY Ctrl-D run displayed `Press
+  Ctrl-D again to exit` before the driver’s second Ctrl-D exited. Ctrl-Z process precedence, one suspend call,
+  no editor mutation, and the Windows-style no-op path are covered by injected TUI tests; the manual terminal
+  `Ctrl-Z` → `fg` round trip remains the unchanged owner-run concern.
+- No credential value was printed. Protected concurrent untracked files remain untouched.
