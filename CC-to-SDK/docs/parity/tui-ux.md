@@ -3,16 +3,39 @@
 > **Goal (2026-06-29):** bring our SDK-backed interactive REPL (`ccx`, the product
 > north star) to the *look-and-feel* level of the original Claude Code TUI. This scorecard is the
 > **source of truth for visual/interaction parity** — distinct from `coverage.md` (which scores SDK
-> *capability* realization). Tracked feature-by-feature against the reference TS harness in
-> `../../Claude Code Src/`.
+> *capability* realization). Tracked feature-by-feature against the real Claude Code bundle at
+> **`~/claude-code-bundle/2.1.220/`** (`cli.pretty.js` plus its `MAP.md`). Scores below are dated
+> **2026-07-31**.
+>
+> **This file is a coarse summary, not the primary record.** The detailed per-feature ledger is the
+> research inventory's **271 IDs**, at `docs/superpowers/research/2026-07-31-tui-clone/00-INVENTORY.md`.
+> A wave closes a named subset of those IDs; that count is the auditable source of truth. This
+> scorecard's rows are a public rollup derived from it — a single row here can stand in for several
+> inventory IDs, so treat a row's percentage as directional, not exact.
+>
+> **F0 correction (2026-07-31).** This file previously stated its method as "tracked against the
+> reference TS harness" in a February snapshot of Claude Code that the owner has since banned as stale,
+> after it produced wrong strings repeatedly. Every row below has been re-derived against the real
+> 2.1.220 bundle, not that snapshot. Two standing instruments now exist to
+> keep future scores honest: an executable **honesty audit**
+> (`harness/test/tui/honesty.test.tsx`) that fails the suite if `ShortcutsOverlay`'s advertised keymap
+> names a chord with no proof of live behavior behind it, and a **frame instrument**
+> (`harness/scripts/capture-frames.py` + `harness/scripts/frame-diff.py`, first goldens committed under
+> `harness/test/fixtures/upstream-frames/`) that diffs a pyte-emulated screen capture of our binary
+> against a capture of the real 2.1.220 binary, frame for frame. Neither instrument existed when the
+> pre-F0 scores in this file were taken — a pty run read by a human cannot reliably catch a wrong glyph,
+> a missing dim, or a four-column gutter, which is exactly the class of error this correction found.
 >
 > **Method:** the reference is read for *exact* glyphs / strings / key-bindings / option labels, so we
 > match fidelity rather than approximate. Each item is scored ✅ have · 🟡 partial · ❌ missing ·
 > 🚫 out-of-scope (bridge-coupled / non-terminal / explicit non-goal), with 🚫 excluded from the
-> denominator. **Two scoring eras — do not compare across them.** The `start` and `pre-C5` columns
-> weight rows by user-visible impact; from C5 (2026-07-28) onward the score is a plain
-> ✅=1.0 · 🟡=0.5 · ❌=0 row count, because impact weights were never written down and so could not
-> be reproduced or audited. See the C5 recompute note under the headline table.
+> denominator. **A row scored ✅ for something upstream does not have at all is not parity** — on a
+> cloning scorecard that is a category error, so such rows are moved to the "Recorded additions" table
+> below, out of the denominator, rather than counted as an achievement. **Two scoring eras — do not
+> compare across them.** The `start` and `pre-C5` columns weight rows by user-visible impact; from C5
+> (2026-07-28) onward the score is a plain ✅=1.0 · 🟡=0.5 · ❌=0 row count, because impact weights were
+> never written down and so could not be reproduced or audited. See the C5 recompute note under the
+> headline table.
 
 ## Headline
 
@@ -24,16 +47,78 @@ polish* that makes CC instantly recognizable: **no welcome banner, a non-CC spin
 glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input modes, no queued input, no
 `/cost`, and thin terminal-native editor ergonomics** (Ctrl-A/E/K/U/W, Ctrl-L, Ctrl-C-twice).
 
-| Category | Parity (start) | Parity (pre-C5) | Parity (now, post–sprint-W3) |
-|---|---|---|---|
-| 1. Input / composer ergonomics | ~45% | ~88% | ~95% |
-| 2. Transcript / message rendering | ~50% | ~74% | ~83% |
-| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% |
-| 4. Modals / overlays | ~60% | ~88% | ~88% (4 new W3 rows — see W3 recount note) |
-| 5. Slash commands | ~55% | ~70% | ~86% (6 new W3 rows — see W3 recount note) |
-| 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% |
-| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~80% (untouched in W3) |
-| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* |
+| Category | Parity (start) | Parity (pre-C5) | Parity (pre-F0, post–sprint-W3) | Parity (now, post-F0 correction) |
+|---|---|---|---|---|
+| 1. Input / composer ergonomics | ~45% | ~88% | ~95% | **~79%** |
+| 2. Transcript / message rendering | ~50% | ~74% | ~83% | **~57%** |
+| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% | **~36%** |
+| 4. Modals / overlays | ~60% | ~88% | ~88% (4 new W3 rows — see W3 recount note) | **~50%** |
+| 5. Slash commands | ~55% | ~70% | ~86% (6 new W3 rows — see W3 recount note) | **~86%** (unchanged — no §5 row was named in the corrections) |
+| 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% | **~61%** |
+| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~80% (untouched in W3) | **~75%** |
+| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* | **~63%**<br>*(plain row count)* |
+
+**F0 correction note (2026-07-31) — the headline fell from ~88% to ~63%, and this is the point of the
+exercise, not a regression to explain away.** Nothing that worked on 2026-07-30 stopped working; the
+drop is entirely a measurement correction, made of three additive effects:
+
+1. **Rows that were genuinely wrong get marked down.** ~26 rows across §1–§4/§8 move from ✅ (1.0) to
+   🟡 (0.5) because the pre-F0 scores were taken against the stale, now-banned TypeScript research
+   snapshot and never checked against the real bundle — e.g. the assistant bullet is `⏺` on macOS in
+   the plain `text` token, not an accent-coloured `●`; the footer has none of model/cost/context that
+   the old "Status bar" row claimed; `⎿` is emitted once at five columns upstream, not prefixed to
+   every line; the transcript pager is a scrollback view, not the verbose-mode flip `ctrl+o` actually
+   is upstream. None of these rows regressed — they were mis-scored from the start; see the per-section
+   corrections below each table for the specific citation on every row that moved.
+2. **~14 new rows enter the denominator at ❌** because the old file simply had no row for them: the
+   theme token contract (`ST4`), the keybinding table (`ST5`) and its ordered-context precedence
+   resolver (`ST6`), the notification queue, `statusLine`, terminal title, desktop notifications, tab
+   status, reduced motion, resize/`SIGCONT` handling, the `Select`/`Tabs` primitives, `DiffDialog`,
+   `EnterPlanMode`, and the background-dialog detail sub-dialogs. These are real, previously invisible
+   gaps — not manufactured to hit a target number.
+3. **One over-ship leaves the numerator.** The rate-limit usage warning chip was scored ✅ for a
+   feature upstream does not have at all; it moves to the "Recorded additions" table below the
+   headline, out of the denominator entirely. Image paste flips `🚫` → `❌`-pending-P87 (its `🚫`
+   rationale was wrong — reading the system clipboard is terminal-native, not "non-terminal / out of
+   scope" — so it now counts against the denominator instead of being excluded from it).
+
+**Four rows moved the *other* direction, ✅ preserved with a `fixed 2026-07-31 (F0)` note**, because F0
+itself shipped the fix in the same wave this correction pass belongs to: the kill-ring now retains
+discarded text (`Ctrl+Y`/`Alt+Y` yank/yank-pop), `Ctrl-_` undo is reachable (it arrives as the bare
+`0x1f` byte, not a `ctrl`-flagged key), `Esc` during a busy turn pops the queue back into the composer
+instead of destroying it, and the `?` help overlay now closes on Escape only. Four more rows were
+updated to reflect F0 behavior changes without a prior wrong score to correct (Ctrl-D now needs two
+presses; Ctrl-Z now suspends to the shell — matching upstream's own `SIGTSTP` reservation — with the
+detach capability moved to a `/detach` command instead of overloading a reserved key; `y`/`n` are now
+bound in the permission dialog). See § "F0 fixes verified in code" below the tables for the evidence.
+
+**Arithmetic, category by category** (✅=1.0 · 🟡=0.5 · ❌=0, `🚫` excluded, unweighted average of the 7
+category percentages, per the C5 recompute method below):
+
+| Category | ✅ | 🟡 | ❌ | non-🚫 rows | Score |
+|---|---|---|---|---|---|
+| 1. Input / composer | 19 | 3 | 4 | 26 | 20.5/26 = 78.8% |
+| 2. Transcript | 3 | 11 | 1 | 15 | 8.5/15 = 56.7% |
+| 3. Status / chrome | 3 | 7 | 8 | 18 | 6.5/18 = 36.1% |
+| 4. Modals / overlays | 4 | 9 | 4 | 17 | 8.5/17 = 50.0% |
+| 5. Slash commands | 16 | 4 | 1 | 21 | 18/21 = 85.7% |
+| 6. Polish | 3 | 5 | 1 | 9 | 5.5/9 = 61.1% |
+| 7. Control plane (§8) | 5 | 5 | 0 | 10 | 7.5/10 = 75.0% |
+| **Overall (unweighted avg of the 7 rows above)** | | | | | **≈ 63.3% → ~63%** |
+
+The spec that ordered this correction estimated the fall would land "into the low 70s"; the computed
+number lands lower, at ~63%. That is not a contradiction to paper over: the spec's figure was a
+back-of-envelope estimate ("roughly fifteen new rows scored 0"), and the actual count is 14 new-zero
+rows landing in 4 of the 7 categories rather than spread evenly — §3 (Status/chrome) in particular goes
+from 12 rows to 18 by adding 7 new zeros to a category that only had 11 non-🚫 rows before, which drags
+its own percentage down to 36% and pulls hard on the unweighted 7-category average. A handful of §6
+"Polish" rows (spinner animation, random verbs, `●`/`⎿` glyphs, "esc to interrupt" everywhere) were also
+marked down to 🟡 even though section 12 of the research inventory did not name their exact line numbers
+— they were left as duplicate ✅ rows of facts the inventory *did* establish elsewhere (the same spinner
+timing bug scored 🟡 in §3's "Spinner glyph" row, the same bullet-colour bug scored 🟡 in §2's "Assistant
+message identity" row); leaving the §6 copies at ✅ would have left a contradiction inside this same
+file. Each such row's note below cites which other row's finding it mirrors, so the provenance is
+auditable rather than invented.
 
 **W1 recount note (2026-07-30, TUI/UX sprint Wave 1):** §1 21✅/1❌ of 22 non-🚫 rows (Ctrl-L
 converged to clear-input, Ctrl-J/Ctrl-_/Ctrl-S/Shift+Tab/external-editor added); §4 recounted plainly
@@ -45,10 +130,14 @@ sprint's honesty posture.
 **W1 keymap deferrals — RESOLVED by Wave 2 (2026-07-31):** the three deferred bindings all shipped
 and are scored rows below — `ctrl+o` (`app:toggleTranscript` → the transcript pager, §4), `ctrl+r`
 (`history:search` → the prompt-history search, §4), and `ctrl+x ctrl+k` (`chat:killAgents` →
-double-press stop-all, §8). Standing intentional divergences, restated: our `Ctrl-Z` detach has no
-upstream equivalent (kept, and it stays live even while W2's overlays are open); real CC's `cmd+k`
+double-press stop-all, §8). Standing intentional divergences, restated: real CC's `cmd+k`
 screen-clear never reaches a terminal app, so screen clear stays `/clear`; `Ctrl-B` here is
 background-panel/backgrounding rather than upstream's `task:background` context binding.
+**Superseded by F0 (2026-07-31, KB5):** `Ctrl-Z` no longer detaches — it now suspends the process to the
+shell exactly like upstream's own `Ctrl-Z` (`SIGTSTP`, resumed on `fg`/`SIGCONT`), because upstream
+reserves that key and our detach-on-`Ctrl-Z` was a real divergence from it. The detach capability was
+not dropped, only rebound: it is now the `/detach` command (leaves the session running, reattach with
+`ccx attach`) — see the "Recorded additions" table, since upstream has no detach concept at all.
 
 **W2 divergences (2026-07-31, TUI/UX sprint Wave 2 — all deliberate, bundle-checked):**
 - The transcript pager is a **bordered overlay in the composer slot, not an alternate-screen view**:
@@ -84,10 +173,14 @@ seven working features. Not a regression in anything previously counted; a truer
 
 **W3 divergences (2026-07-31, TUI/UX sprint Wave 3 — from the plan's Global Constraints line 37 unless
 noted otherwise, each with its reason):**
-- **No custom/ANSI themes** — `/theme` ships 5 of upstream's 7+ theme rows (`theme.ts` `THEME_LABELS`);
-  the rest would need theme-authoring UI this harness has no use for yet.
-- **`auto` currently equals `dark`** — terminal-background detection isn't available headlessly, so the
-  "Auto (match terminal)" row picks a fixed default rather than truly detecting anything.
+- **No custom/ANSI themes** — `/theme` ships 5 of upstream's exactly **7** built-in theme rows (`theme.ts`
+  `THEME_LABELS`) — **F0 correction: not "7+"**, the two we lack are specifically the ANSI variants, whose
+  whole point is that the terminal owns the colours, so custom-theme-authoring UI is a separate,
+  larger gap than "the rest."
+- **`auto` currently equals `dark`** — **F0 correction:** the reason recorded here was wrong for this
+  foreground REPL. Upstream's Tier 2 detection (`COLORFGBG` env read) is a pure env read that works
+  today; Tier 1 (OSC 11) needs raw stdin plus a stdout write, both of which the foreground REPL already
+  owns. The constraint is real only for the daemon path — see §4's ThemeDialog row.
 - **Theme changes apply to NEW output only** — Ink's append-only `<Static>` keeps whatever colors its
   already-rendered lines were written with; only the live binding (`ACCENT`/`themeTokens()`) that new
   renders read updates immediately (the same `<Static>` constraint Wave 1 recorded for `/clear`).
@@ -220,51 +313,118 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 
 ---
 
+## Recorded additions (ours, outside the parity denominator)
+
+On a **cloning** scorecard, scoring ✅ for something upstream does not have at all is a category error —
+it flatters the headline with rows that were never a gap to begin with. This table is where those rows
+live instead: recorded so the capability isn't lost from the document, but out of every category's
+non-🚫 row count and out of the headline arithmetic above.
+
+| Feature | What it is | Why it's not a parity row |
+|---|---|---|
+| plan-usage warning chip (≥80% rate-limit utilization) | **C5** (F4) `usageFormat.ts` `usageWarning` → `ChatStatusBar.tsx` — a red chip in the footer once any rate-limit window crosses 80% | **F0 correction.** Upstream has no such chip at all — rate limits surface only via `/usage` and `statusLine`. Was scored ✅ in §3 pre-F0; that was the category error this table exists to fix. `/usage` itself (§5) is real upstream-equivalent functionality and stays a normal scored row |
+| `/detach` (leave the session running, reattach with `ccx attach`) | Detaches this client from a live session without ending it — a multi-client capability of our `ccx attach` architecture | Upstream has no detach concept at all — a genuine addition from our client/session split, not a divergent form of an existing upstream feature. **F0 (t6, KB5):** previously bound to `Ctrl-Z`, which collided with upstream's real reservation of that key for `SIGTSTP`; moved to the `/detach` command so the capability survives while `Ctrl-Z` itself becomes a real parity row (§1) |
+
+Two further additions are **kept but not counted**, per the spec's Exceptions to fidelity-first (owner
+decisions, not oversights) — recorded here rather than silently carried:
+
+- **`#` memory-mode composer input** (§1) — upstream's mode detector recognises only `!`; `#` is a
+  genuine addition, gated by the same start-of-buffer rule so it can never swallow a `#` mid-prompt
+  (spec Decision Log E6). Left scored ✅ in its §1 row rather than moved here, since the row itself
+  measures "does our composer support a fast local-command mode," which is genuinely delivered — the
+  divergence is disclosed in the row's note instead.
+- **Real `message_delta` output-token counts** (§3, "Live token counter during turn") over upstream's
+  animated `responseLength/4` estimate — deliberately kept as the more truthful number (spec Decision
+  Log E4), not counted as an over-ship since upstream has the same *concept* (a live token counter), just
+  computed differently.
+
+---
+
+## F0 fixes verified in code (2026-07-31)
+
+The task-10 brief listed eight items F0 was expected to have fixed; each was checked against the actual
+source and commit history in `CC-to-SDK/harness/src/tui/`, not taken on the brief's word. All eight are
+real, each landed in its own commit on `main`, and each is now backed by a test (including two that
+required a captured red-proof after an initial review found the first test was tautological):
+
+| # | Fix | Commit | Where scored above |
+|---|---|---|---|
+| 1 | Kill-ring: `Ctrl-K`/`Ctrl-U`/`Ctrl-W` used to discard killed text; now a real ring (cap 10) with `Ctrl-Y` yank / `Alt-Y` yank-pop | `a853e8dbc8` (+ fix-up `cc2a42282f`) | §1 "Ctrl-K / Ctrl-U", "Ctrl-W" |
+| 2 | `Ctrl-_`/`Ctrl--` undo was unreachable (terminals send the bare `0x1f` byte, not a `ctrl`-flagged key; a literal `\x1f` was inserted instead) | `aeb212804b` | §1 "Ctrl-_ / Ctrl--" |
+| 3 | Escape during a busy turn used to destroy the queue; now pops it back into the composer | `cd0b92baae` | §1 "Queued messages while busy" |
+| 4 | Esc-Esc on a **non-empty** composer now arms a clear-hint and clears text on the second press, instead of falling into the rewind flow; rewind is gated to an empty composer only | `ce2c22b278` | §6 "Double-Esc to rewind affordance" |
+| 5 | `?` help overlay used to close on **any** key (which could double-fire into `ChatApp`'s global chords underneath, e.g. `Ctrl-O`); now closes on Escape only | `52d724ea5b` (+ red-proof fix `257010f1c2`) | §1 "`?` shortcuts / help menu" |
+| 6 | `Ctrl-D` now needs two presses within upstream's real **800ms** window (not the plan's originally-assumed 2000ms); `Ctrl-Z` now suspends to the shell (`SIGTSTP`/`SIGCONT`, targeting the process group, past Ink's ref-counted raw-mode) instead of detaching; detach moved to `/detach` | `324853e1b9` (+ raw-mode/timing fix `cf1d0a4f14`) | §1 "Ctrl-C twice / Ctrl-D", "Ctrl-Z" |
+| 7 | `y`/`n` bound in the permission dialog (accept-once / reject) alongside the existing arrows/numbers/legacy aliases | `bab51d62ae` | §4 "Permission approval dialog" |
+
+Two further F0 deliverables have no single row of their own — they are the instruments this document's
+own method note above points to, and are recorded here so a reader of the scorecard knows they exist:
+
+- **The honesty audit** (`harness/test/tui/honesty.test.tsx`, commits `444b17364a` + `b278e3f986`) maps
+  every row in `ShortcutsOverlay.tsx`'s advertised keymap to an executable proof and fails the suite if
+  a row has no live proof behind it. Sabotage-verified twice (an injected fake row, and a reintroduced
+  dead `Ctrl-_` branch both correctly turned the audit red); a follow-up pass then found and fixed two
+  of the audit's *own* checks that were comparing hand-copied literal strings instead of rendered
+  output — both were proven inert by sabotage before the fix and caught by it after.
+- **The frame instrument** (`harness/scripts/capture-frames.py` + `harness/scripts/frame-diff.py`,
+  commit `a2dc8694dd`) captures a pyte-emulated screen state of a running TUI at named checkpoints and
+  diffs two capture directories with nondeterminism masked out. First goldens against the real,
+  installed `claude` 2.1.220 binary are committed under `harness/test/fixtures/upstream-frames/`
+  (`help-overlay/`, `composer-basics/`). Running it against our own `ccx` today reports both sets
+  DIVERGENT (expected — the boot-frame gap is real and large; the composer-editing semantics matched
+  closely on manual review even though the frames diverge on layout/chrome), which is the honest
+  starting baseline future waves measure against, not a defect in the instrument.
+
+---
+
 ## 1 — Input / composer ergonomics
 
 | Feature | Status | Priority | Notes / CC reference |
 |---|---|---|---|
-| Multiline editor (paste split, `\`-continuation) | ✅ | — | `editor.ts` — paste = one `useInput`, insert-and-split |
-| History up/down (draft stash/restore) | ✅ | — | `editor.ts` historyPrev/Next |
+| Multiline editor (paste split, `\`-continuation) | 🟡 | — | `editor.ts` — paste = one `useInput`, insert-and-split. **F0 correction:** upstream turns a >800-char or >2-newline paste into a `[Pasted text #N +M lines]` chip stored out of band and substituted at submit; ours inserts the pasted text verbatim, no chip |
+| History up/down (draft stash/restore) | 🟡 | — | `editor.ts` historyPrev/Next. **F0 correction:** ours is in-memory per composer mount; upstream persists `~/.claude/history.jsonl` across sessions with newest-wins dedup and a per-index edit cache |
 | `@`-file mention fuzzy autocomplete | ✅ | — | `editor.ts` + `fileComplete.ts` |
 | `/`-slash command autocomplete | ✅ | — | `editor.ts` command state + `commandComplete.ts` |
 | `!` bash mode (run shell directly, no model) | ✅ | — | **U5** `bash.ts` local exec in cwd, echoed `! cmd` + `⎿`-style output (local-only by design; no model context injection) |
-| `#` memory mode (append to CLAUDE.md) | ✅ | — | **U5** `memory.ts` appends under `## Memories` |
+| `#` memory mode (append to CLAUDE.md) | ✅ | — | **U5** `memory.ts` appends under `## Memories`. **F0 note (E6):** upstream's mode detector recognises only `!` — `#` is a genuine addition with no upstream equivalent, gated by the same start-of-buffer rule so it can never swallow a `#` mid-prompt. Kept as a recorded divergence, not carried silently (spec Decision Log E6) |
 | Input mode indicator (bash/memory/command) | ✅ | — | **U5** `inputMode()` → magenta bash / blue memory border + hint |
 | Ctrl-A / Ctrl-E (line start/end) | ✅ | — | **U7** `editor.ts` readline keys |
-| Ctrl-K / Ctrl-U (kill to end/start) | ✅ | — | **U7** `editor.ts` |
-| Ctrl-W (kill word back) | ✅ | — | **U7** `editor.ts` |
+| Ctrl-K / Ctrl-U (kill to end/start) | ✅ | — | **U7** `editor.ts`. **fixed 2026-07-31 (F0, t1, CM10/CM11):** killed text used to be discarded — the correction had this at 🟡. It now feeds a real kill ring (cap 10, coalescing runs), with `Ctrl+Y` yank / `Alt+Y` yank-pop and a `Ctrl+Y to paste deleted text` hint after a ≥3-char Ctrl-U kill, matching upstream |
+| Ctrl-W (kill word back) | ✅ | — | **U7** `editor.ts`. **fixed 2026-07-31 (F0, t1):** same kill-ring fix as Ctrl-K/Ctrl-U above |
 | Word movement (Alt/Ctrl ←→) | ✅ | — | **C5** `editor.ts` `wordLeft`/`wordRight` (Alt-←→ and Alt-b/f), checked ahead of the ctrl-combo branch so no meta chord falls through to insertion |
 | Ctrl-L (clear **input**) | ✅ | — | **W1** converged on 2.1.220's `chat:clearInput` (the old app-level screen-clear was a divergence); screen clear stays `/clear` — real CC's `cmd+k` never reaches a terminal app (intentional divergence, recorded) |
-| Ctrl-J (newline) | ✅ | — | **W1** `editor.ts` — 2.1.220 `chat:newline`, alongside `\`-continuation |
-| Ctrl-_ / Ctrl-- (undo edit) | ✅ | — | **W1** `editor.ts` snapshot-on-change stack (cap 100) — 2.1.220 `chat:undo`; terminals send 0x1F for both |
+| Ctrl-J (newline) | ✅ | — | **W1** `editor.ts` — 2.1.220 `chat:newline`, alongside `\`-continuation. **F0 note (t4, KB4/KB23):** the `key.ctrl==="j"` branch this used to dispatch through was dead code — real terminals send a bare `\n`, never a ctrl-flagged `"j"` — and was deleted; the newline still works via the generic bare-`"\n"` insert path, so behavior is unchanged, only the dead branch is gone |
+| Ctrl-_ / Ctrl-- (undo edit) | ✅ | — | **W1** `editor.ts` snapshot-on-change stack (cap 100) — 2.1.220 `chat:undo`. **fixed 2026-07-31 (F0, t4, KB4):** this row was scored ✅ but was actually **unreachable** — terminals send the bare `0x1f` byte with `key.ctrl===false`, so the old `ctrl+"_"`/`ctrl+"-"` branch never fired and a literal `\x1f` was inserted instead (only reducer-level tests existed, which is why nothing caught it, and `ShortcutsOverlay.tsx` was advertising a dead chord). Fixed by matching the raw `\x1f` byte directly; the dead `ctrl+"_"/"-"` branch was removed |
 | Ctrl-S (stash / restore input) | ✅ | — | **W1** `editor.ts` — 2.1.220 `chat:stash`: parks a non-empty buffer, restores on the next Ctrl-S from empty |
 | Shift+Tab cycles permission mode (bare Tab popup-only) | ✅ | — | **W1** converged on 2.1.220's `chat:cycleMode` = `shift+tab`; bare Tab now belongs to autocomplete alone (our old bare-Tab cycle was a divergence) |
-| Ctrl-C twice / Ctrl-D to exit | ✅ | — | **U8** Ctrl-C interrupts a turn, else "Press Ctrl-C again to exit"; Ctrl-D on empty = EOF exit |
-| Queued messages while busy | ✅ | — | **U6** turns queue while busy + drain FIFO on turn end; `⋯ queued:` indicator; Esc clears |
-| Placeholder / ghost text ("Ask Claude…") | ✅ | — | **U7** dim placeholder on empty buffer |
-| `?` shortcuts / help menu | ✅ | — | **C5** `ShortcutsOverlay.tsx` — a real bordered overlay listing the keymap, opened by `?` on a genuinely empty composer; the U7 footer hint line stays alongside it |
+| Ctrl-C twice / Ctrl-D to exit | ✅ | — | **U8** Ctrl-C interrupts a turn, else "Press Ctrl-C again to exit". **F0 update (t6, KB3):** Ctrl-D used to exit on a single empty-buffer press; it now needs two presses within the arm window, matching upstream's `Pee` helper — including its exact **800ms** window (`cli.pretty.js:183445`, the same constant `Ctrl-_`'s Escape-clear timer uses), corrected down from this plan's originally-assumed 2000ms after reading upstream's own patched-Ink suspend code |
+| Queued messages while busy | ✅ | — | **U6** turns queue while busy + drain FIFO on turn end; `⋯ queued:` indicator. **fixed 2026-07-31 (F0, t3, CM49):** this row was scored ✅ but Esc during a busy turn **destroyed** the queued text instead of preserving it — the correction had this at 🟡. `interrupt()` now pops the queue back into the composer (prepended ahead of any in-progress draft) before clearing it, so typed/queued text is never lost on interrupt |
+| Placeholder / ghost text ("Ask Claude…") | 🟡 | — | **U7** dim placeholder on empty buffer. **F0 correction:** upstream's placeholder is a 4-rule precedence chain over a git-seeded random pool (one rule is the queue hint); ours is one fixed string |
+| `?` shortcuts / help menu | ✅ | — | **C5** `ShortcutsOverlay.tsx` — a real bordered overlay listing the keymap, opened by `?` on a genuinely empty composer; the U7 footer hint line stays alongside it. **fixed 2026-07-31 (F0, t5, KB6):** this row was scored ✅ but the overlay closed on **any** key, and that same key also fired `ChatApp`'s global chords underneath it (e.g. `Ctrl-O` would both close the overlay and open the transcript pager in one keystroke) — the correction had this at 🟡. It now closes on Escape only and swallows every other key, matching upstream's `Help` context (which binds only `escape`); a sabotage-verified honesty-audit test pins this |
 | Vim mode (`/vim`) | ❌ | LOW | owner-deferred (the sprint's only deferral) |
 | External editor (Ctrl-X Ctrl-E / Ctrl-G → `$EDITOR`) | ✅ | — | **W1** `externalEditor.ts` — spawnSync terminal handoff (raw mode released/restored), null-safe (editor failure keeps the buffer), popups cleared on applied edit |
-| Image paste (Ctrl-V) | 🚫 | — | non-terminal / out of scope here |
+| Ctrl-Z (suspend to shell) | ✅ | — | **fixed 2026-07-31 (F0, t6, KB3/KB5):** new row — previously `Ctrl-Z` detached this client (a divergence with no upstream equivalent, undocumented as a row). It now suspends the whole process group to the shell on `SIGTSTP` and resumes on `SIGCONT`/`fg`, matching upstream's own reserved `Ctrl-Z` exactly, including targeting the process group (not just our own pid) and restoring raw mode past Ink's ref-counted `setRawMode` (`suspend.ts`, read from upstream's own `handleSuspend` at `cli.pretty.js:177985`). Detach moved to `/detach` — see Recorded additions |
+| Image paste (Ctrl-V) | ❌ | pending P87 | **F0 correction:** was scored `🚫` "non-terminal / out of scope" — **the rationale was wrong**. Upstream's `ctrl+v` reads the system clipboard, which is terminal-native; whether the SDK surface lets us reach it is an open probe (P87: image content blocks), not an out-of-scope call. Reclassified `🚫` → `❌`-pending-P87, which brings it into the denominator |
+| Keybinding table (`ST5`) | ❌ | — | **F0 — new row, no prior row existed.** Upstream resolves ~180 bindings across 19 declarative context blocks (one table, `jar`) with every hint string generated from the live binding. We have 17 ad-hoc `useInput` callbacks with hardcoded chord strings scattered per component — no single source of truth. Root cause of the help-overlay double-fire and `Ctrl-_` bugs F0 just fixed above. Owner decision: port the architecture (declarative table + resolver), not just the individual keys — its own future wave, sequenced after the harm list (spec Decision Log) |
+| Keybinding precedence model (`ST6`) | ❌ | — | **F0 — new row, no prior row existed.** Upstream resolves key events through an ordered-context resolver over a focus scope chain (first match wins, `Global` last, with `swallowAll`/`preemptiveScopes` above it). We have a nested-ternary render tree plus 6 hand-checked flags, and 7 surfaces were found ungated (real double-fire bugs — the help-overlay one was one of them, fixed this wave by hand; the generator of that bug class is still unbuilt) |
 
 ## 2 — Transcript / message rendering
 
 | Feature | Status | Priority | Notes / CC reference |
 |---|---|---|---|
-| User prompt echo | 🟡 | LOW | we show `› text` dim (intentional clean variant); CC uses `>` |
-| Assistant message identity (`●` bullet, accent) | ✅ | — | **U3** accent `●` gutter + aligned continuation (live + replay) |
-| Thinking blocks (stream + collapse) | ✅ | — | `liveTurn.ts` `✦ Thinking`; CC `✻`/token count |
-| Tool-use rows | ✅ | — | **C5** `render.ts` `toolUseLines` — CC's `● Name(target)` bullet form (was `⚙`); live turn status glyphs unchanged |
-| Tool result tree glyph (`⎿`) | ✅ | — | **U3** dim `⎿` result tree |
-| Markdown: headers/lists/quote/fenced | ✅ | — | `markdown.ts` (lightweight) |
+| User prompt echo | 🟡 | LOW | we show `› text` dim (intentional clean variant). **F0 correction:** the note was wrong, not just the score — upstream does not use plain `>`, it uses **`❯ ` (U+276F)** in the `subtle` colour on a `userMessageBackground` band |
+| Assistant message identity (`●` bullet, accent) | 🟡 | — | **U3** accent `●` gutter + aligned continuation (live + replay). **F0 correction:** two divergences under one ✅ — upstream's bullet is **`⏺`** on macOS (not `●`), and its colour is the plain `text` token, **not an accent** |
+| Thinking blocks (stream + collapse) | 🟡 | — | `liveTurn.ts` `✦ Thinking`; CC `✻`/token count. **F0 correction:** upstream shows a **duration**, not a token count; the streaming glyph is `✻` but the content gutter is `∴`; and the content is **hidden by default** |
+| Tool-use rows | 🟡 | — | **C5** `render.ts` `toolUseLines` — CC's `● Name(target)` bullet form (was `⚙`); live turn status glyphs unchanged. **F0 correction (`ST1`):** only the **replay** path renders `● Name(target)` — the live path renders `Name target`, no parens, no bold. Upstream bolds the name and the row adds the parens; two paths disagreeing about the same tool call is itself the defect |
+| Tool result tree glyph (`⎿`) | 🟡 | — | **U3** dim `⎿` result tree. **F0 correction:** ours prefixes `  ⎿ ` (4 cols) to **every** line of a multi-line result; upstream emits it **once** at 5 columns, with the content in a sibling flex column |
+| Markdown: headers/lists/quote/fenced | 🟡 | — | `markdown.ts` (lightweight). **F0 correction:** no links, no images, no strikethrough, no `hr`, no task lists, no nested lists, no depth-varying heading style, no block separation — not a ✅ |
 | Markdown: inline mixed bold/italic spans | ✅ | — | **U11** per-span `segments` (bold/italic/code) rendered within a line |
-| Markdown: tables | ✅ | — | **C5** `markdown.ts` `flushTableBuffer` — a buffered run of `\|`-lines becomes a column-padded table only once a `\|---\|` separator confirms it; otherwise re-emitted as prose untouched |
+| Markdown: tables | 🟡 | — | **C5** `markdown.ts` `flushTableBuffer` — a buffered run of `\|`-lines becomes a column-padded table only once a `\|---\|` separator confirms it; otherwise re-emitted as prose untouched. **F0 correction:** upstream draws a box table with per-column alignment, three-way width fitting, a rule between every pair of data rows, a 200-row cap, and a vertical record fallback — ours has none of that |
 | Markdown: code-block syntax highlight | ✅ | — | **C5** `highlight.ts` — a zero-dependency regex lexer (keywords/strings/comments/numbers for ts/js/py/sh/json). **Not a full grammar** — a hand-rolled single-pass lexer, a recognizable-90% approximation (spec Decision Log against a ~1MB dependency), unknown langs fall back to dim |
-| Edit/Write diff | ✅ | — | **C5** `render.ts` `toolDiffLines` — a real hunk body: up to 3 dim numbered context lines each side of the change, numbered `-`/`+` rows for the changed lines. **Numbering is hunk-relative** (1-based within the `old_string`/`new_string` snippet) — we never read the file from disk, so absolute file-line numbers are not available; scored honestly |
+| Edit/Write diff | 🟡 | — | **C5** `render.ts` `toolDiffLines` — a real hunk body: up to 3 dim numbered context lines each side of the change, numbered `-`/`+` rows for the changed lines. **Numbering is hunk-relative** (1-based within the `old_string`/`new_string` snippet) — we never read the file from disk, so absolute file-line numbers are not available. **F0 correction:** honest about the numbering, but was silent on more: no add/remove counts header, **foreground colour instead of background bands**, no word diff, no wrapping, and a 24-line cap upstream does not have |
 | Bash output rendering | 🟡 | MED | **C5**: only error framing landed — a failed `tool_result` (`is_error`) renders red with a `✗` prefix on its first line (`render.ts` `resultLines`). A `tool_result` carries no exit code, so `$`/exit-code framing is not reachable; stays 🟡, not promoted |
-| Long-output truncation + expand | 🟡 | LOW | we cap; no interactive expand |
-| Compact boundary marker | ✅ | — | **C5** `useChat.ts` — a `system`/`compact_boundary` frame renders a `─── context compacted ───` divider notice |
+| Long-output truncation + expand | 🟡 | **MED (structural)** | we cap; no interactive expand. **F0 correction:** the LOW priority was wrong — `(ctrl+o to expand)` is one mechanism that also drives collapsed groups, verbose diffs and expanded thinking; this is `ST2`, a structural gap, not a tail item |
+| Compact boundary marker | 🟡 | — | **C5** `useChat.ts` — a `system`/`compact_boundary` frame renders a `─── context compacted ───` divider notice. **F0 correction:** upstream renders a bulleted `Compact summary` with a message count and an expand affordance, not a rule |
 | Welcome banner / splash | ✅ | — | **U1** `banner.ts` — accent `✻ Welcome` box + cwd/model/mode + tips |
 | Tip of the day | ❌ | LOW | `tipScheduler.ts` |
 | Message timestamps | 🚫 | — | off by default in CC |
@@ -273,38 +433,48 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 
 | Feature | Status | Priority | Notes / CC reference |
 |---|---|---|---|
-| Status bar (model · mode · ctx%) | ✅ | — | `ChatStatusBar.tsx` |
-| Spinner glyph (`✻` asterisk-pulse) | ✅ | — | **U2** `spinner.ts` `·✢✳✶✻✽` fwd+reverse, Claude accent |
-| Spinner thinking verbs (187, random) | ✅ | — | **U2** verbatim 187-verb vocabulary, fixed per turn |
-| "esc to interrupt" affordance on spinner | ✅ | — | **U2** `(elapsed · esc to interrupt)` |
+| Status bar (model · mode · ctx%) | 🟡 | — | `ChatStatusBar.tsx`. **F0 correction:** upstream's footer has **none of the three** by default — model lives in the startup header, `/status` and `statusLine`; cost only in `/cost` and `statusLine`; ctx% is a transient notification, not a persistent readout. Downgraded rather than moved to Recorded additions, since the underlying concept (showing model/ctx) does exist upstream, just relocated — a form divergence, not a pure addition (would rise to ✅ once gated behind the `statusLine` extension point the Decision Log calls for, with the upstream-exact minimal footer as default) |
+| Spinner glyph (`✻` asterisk-pulse) | 🟡 | — | **U2** `spinner.ts` `·✢✳✶✻✽` fwd+reverse, Claude accent. **F0 correction:** glyph set is right, but the **timing model is wrong** (upstream: 2000ms triangle wave over 6 base glyphs, 100/50ms clock; ours: 120ms over 12) and the ghostty `TERM` glyph variant is missing |
+| Spinner thinking verbs (187, random) | 🟡 | — | **U2** verbatim 187-verb vocabulary, fixed per turn. **F0 correction:** upstream has **186**, not 187 — we carry one extra (`"Evaporating"`, pure drift, no argument for it, recommended for deletion in a future wave). And the random verb is the **last** fallback, not the primary source — upstream shows the active todo's `activeForm` first |
+| "esc to interrupt" affordance on spinner | 🟡 | — | **U2** `(elapsed · esc to interrupt)`. **F0 correction:** upstream puts this in the **footer** hint ladder, only while loading — never inside the spinner text itself. Scored 🟡 rather than lower since the affordance is genuinely present and discoverable, just in the wrong widget (would rise to ✅ by moving it to the footer hint ladder) |
 | Live token counter during turn | ✅ | — | **U10** real running output tokens from `message_delta` usage, in the spinner |
 | Elapsed timer during turn | ✅ | — | **U2** whole-turn elapsed in the spinner |
-| Context-left % + threshold warning | ✅ | — | **U13** ctx% color-escalates green→yellow→red + "⚠ auto-compact soon" near the window |
-| Permission-mode indicator (color) | ✅ | — | `ChatStatusBar.tsx` modeColor |
+| Context-left % + threshold warning | 🟡 | — | **U13** ctx% color-escalates green→yellow→red + "⚠ auto-compact soon" near the window. **F0 correction:** different trigger model (upstream is a queued notification, hidden entirely at `level === "ok"`), different text, different surface (transient, not a persistent status-bar segment) |
+| Permission-mode indicator (color) | 🟡 | — | `ChatStatusBar.tsx` modeColor. **F0 correction:** our colours are ours, not upstream's 6-entry table; no symbol (`⏸`/`⏵⏵`), no ` on` suffix, no `(shift+tab to cycle)` hint |
 | Cost in status / `/cost` | ✅ | — | **U4** `/cost` via `session.usage()` |
-| `? for shortcuts` hint line | ✅ | — | **C5** `ShortcutsOverlay.tsx`, opened by `?` — supersedes the footer-hint-only prior state (§1) |
-| Plan-usage warning chip (≥80% utilization) | ✅ | — | **C5** (F4) `usageFormat.ts` `usageWarning` → `ChatStatusBar.tsx` — a red chip once any rate-limit window crosses 80%, mirroring U13's ctx% escalation style |
+| `? for shortcuts` hint line | 🟡 | — | **C5** `ShortcutsOverlay.tsx`, opened by `?` — supersedes the footer-hint-only prior state (§1). **F0 correction:** we show a fixed 3-item string; upstream is an **11-rung one-winner ladder** where `? for shortcuts` appears only when everything else is empty and the mode chip is default |
 | Vim mode indicator | ❌ | LOW | tied to vim mode |
+| Notification queue (`ST8`) | ❌ | — | **F0 — new row, no prior row existed.** Upstream has a real notification queue: 4 priorities, `fold`/`invalidates`/`pinned` semantics, an 8s default lifetime, preemption + requeue. We have `notice()`, which just appends a transcript line — no queue, no priority, no folding |
+| `statusLine` extension point | ❌ | — | **F0 — new row, no prior row existed.** Upstream's real architecture for exactly the information our footer currently hard-codes — a scriptable status-line extension, and a compatibility surface for third-party scripts. Owner decision (Decision Log): build the extension point, ship an upstream-exact minimal default footer (mode chip + one-rung hint), and gate model/cost/ctx%/streaming/bg-count/thinking-level behind it as opt-in settings rather than deleting them |
+| Terminal title | ❌ | — | **F0 — new row, no prior row existed.** No coverage in this harness at all |
+| Desktop notifications | ❌ | — | **F0 — new row, no prior row existed.** No coverage in this harness at all |
+| Tab status | ❌ | — | **F0 — new row, no prior row existed.** No coverage in this harness at all |
+| Reduced motion | ❌ | — | **F0 — new row, no prior row existed.** No accessibility affordance for suppressing the spinner/animation |
+| Resize / `SIGCONT` repaint handling | ❌ | — | **F0 — new row, no prior row existed.** Upstream repaints correctly across a terminal resize and a suspend/resume cycle; ours was proven this wave (F0 t6) to leak Ink's ref-counted raw-mode state on suspend before the fix, and resize handling generally has no dedicated row or test |
 
 ## 4 — Modals / overlays
 
 | Feature | Status | Priority | Notes / CC reference |
 |---|---|---|---|
-| Permission approval dialog | ✅ | — | **U9** numbered arrow-selectable Yes / Yes-don't-ask-again / No (↑↓·Enter·1/2/3·Esc; legacy a/A/d kept) |
-| Bash permission shows full command | ✅ | — | **U9** `$ <command>` shown in full; file tools show the path |
-| Model picker | ✅ | — | `ModelPicker.tsx` |
-| Resume session picker | ✅ | — | `SessionPicker.tsx` |
-| Task/todo panel | ✅ | — | `TaskPanel.tsx` |
+| Permission approval dialog | 🟡 | — | **U9** numbered arrow-selectable Yes / Yes-don't-ask-again / No (↑↓·Enter·1/2/3·Esc; legacy a/A/d kept). **F0 correction:** upstream has **13 dialog kinds** behind a per-tool matcher; ours is one shape for all tools. Missing: per-tool titles, question lines, real inline diffs in the body, destructive-command warnings, symlink warnings, session/prefix/domain persist rows; our `allow_always` is an in-memory `Set<toolName>` that never persists and never emits `updatedPermissions`. **fixed 2026-07-31 (F0, t7, KB1):** `y`/`n` are now bound (`y`=accept once, `n`=reject) alongside the existing ↑↓·Enter·1/2/3·Esc and legacy a/A/d — upstream's two most reflexive confirmation keys were dead before this; the status-bar pending hint now reads `[y/n·↑↓·1/2/3·esc]` |
+| Bash permission shows full command | 🟡 | — | **U9** `$ <command>` shown in full; file tools show the path. **F0 correction:** we clip to 140 chars; upstream shows the rendered command **plus** the description **plus** a destructive-pattern warning |
+| Model picker | 🟡 | — | `ModelPicker.tsx`. **F0 correction:** no effort axis, no `s` session-only toggle, no pricing/entitlement metadata, no overflow counter or row window, different header and subtitle |
+| Resume session picker | 🟡 | — | `SessionPicker.tsx`. **F0 correction:** upstream has a search bar, expandable groups, `Space` preview, `Ctrl+R` rename, `Ctrl+A/B/W` scope toggles and an `(N of M)` header; ours is a flat list |
+| Task/todo panel | 🟡 | — | `TaskPanel.tsx`. **F0 correction:** different glyphs, no strikethrough on completed items, no bold on in-progress, no header counts, no owner/blocker/activity lines, not persisted to a setting |
 | Ctrl-T todo-panel toggle | ✅ | — | **W1** — 2.1.220 `app:toggleTodos` (default visible) |
-| Transcript pager (Ctrl-O) | ✅ | — | **W2** `TranscriptPager.tsx` + pure `pager.ts` — the bundle's 18-binding Transcript context (j/k · ctrl-u/d half · ctrl-b/f b/space page · g/G · arrows · q/Esc/ctrl-c exit), opens at bottom; bordered overlay, not alt-screen (see W2 divergences) |
+| Transcript pager (Ctrl-O) | 🟡 | — | **W2** `TranscriptPager.tsx` + pure `pager.ts` — the bundle's 18-binding Transcript context (j/k · ctrl-u/d half · ctrl-b/f b/space page · g/G · arrows · q/Esc/ctrl-c exit), opens at bottom; bordered overlay, not alt-screen (see W2 divergences). **F0 correction:** scored against the wrong mechanism — upstream's `ctrl+o` is a **verbose-mode flip** (`ST2`) that changes what every renderer emits, not a scrollback pager. Both are useful features; they are not the same feature. `ST2` is the real row for upstream's mechanism (see §2's "Long-output truncation + expand") |
 | History search (Ctrl-R) | ✅ | — | **W2** `HistorySearchOverlay.tsx` + pure `historySearch.ts` — incremental prompt search over session/project/everywhere scopes (Ctrl-S cycles, initial "everywhere"), substring-then-subsequence ranking, Esc/Tab accept into composer · Enter execute · Ctrl-C cancel — the bundle's HistorySearch context key for key |
 | SettingsDialog (`/config`, `/settings`) | 🟡 | — | **W3** `SettingsDialog.tsx` — four tabs (Status·Config·Usage·Stats, wrapping tab/shift+tab/←→), Config tab live rows + `/` search + Esc-close change summary (`Set {label} to {value}`, bold value); but only **5 of upstream's ~54 Config rows** ship (Theme/Model/Output style/Default permission mode/Thinking mode — the ones this harness's engine can actually apply) and there is no header-focus mode, so upstream's `Settings dialog dismissed` string is unused (W3 divergence) |
 | PermissionsDialog (`/permissions`, `/allowed-tools`) | ✅ | — | **W3** `PermissionsDialog.tsx` — all five upstream tabs (Recently denied/Allow/Ask/Deny/Workspace), provenance-aware rule rows, add-rule flow with the destination picker (project-local/project/user settings, verbatim upstream typo `Saved in at ~/.claude/settings.json` kept), delete confirm, a read-only panel for non-editable rules, workspace directory add/remove. Divergences: rules apply via the flag layer **and** get written to the chosen settings file (upstream's rule engine is CLI-internal, invisible to us) — functionally equivalent but no upstream shadowing warnings fire; the Recently-denied footer intentionally drops two dead key chords (W3 divergences) |
-| ThemeDialog (`/theme`) | 🟡 | — | **W3** `theme.ts` (live-binding token set) + `ThemeDialog.tsx` — picker with the exact `demo.js` live diff preview, Esc-restore; only **5 of upstream's 7+ theme rows** ship (no custom/ANSI themes), `auto` currently just equals `dark` (no headless terminal-background detection), and a theme recolors NEW output only — Ink's `<Static>` scrollback keeps whatever colors it was written with |
+| ThemeDialog (`/theme`) | 🟡 | — | **W3** `theme.ts` (live-binding token set) + `ThemeDialog.tsx` — picker with the exact `demo.js` live diff preview, Esc-restore. **F0 correction:** it is exactly **7 built-in picker rows** (`auto` + 6 palettes) upstream ships, not "7+" — the two we lack are the **ANSI variants**, whose whole point is that the terminal owns the colours, so ship 5 of 7, not "5 of 7+". **The `auto`-equals-`dark` note's stated reason was wrong for the foreground REPL**: upstream's Tier 2 detection (`COLORFGBG` env read) works today with no extra work, and Tier 1 (OSC 11) needs raw stdin plus a stdout write — both of which the foreground REPL already owns. The constraint is real only for the daemon path; the gap here is smaller than the old note claimed. A theme still recolors NEW output only — Ink's `<Static>` scrollback keeps whatever colors it was written with (unchanged, genuine `<Static>` constraint) |
 | AddDirDialog (`/add-dir`) | ✅ | — | **W3** `AddDirDialog.tsx` + `addDir.ts` — verbatim 2.1.220 validation copy (not-found / not-a-directory / already-added variants) and confirm dialog (session-only / remember-to-local-settings / cancel); grants go through `applyFlagSettings({additionalDirectories})` for outside-cwd paths only (probe 75) — inside-cwd paths are rejected as already accessible, so the other engine door probe 75 found, `register_repo_root`, stays permanently unused by this command |
 | `/help` overlay | 🟡 | LOW | we print lines; CC has a modal |
 | IDE diff viewer | 🚫 | — | IDE-coupled |
 | MCP elicitation dialog | 🚫 | — | rarely fires headless |
+| `Select`/`Tabs` primitives (`ST7`) | ❌ | — | **F0 — new row, no prior row existed.** Upstream has one `Select` (absolute indexes, `↑`/`↓` gutter overflow, `inlineDescriptions`, `type:"input"` rows, height-clamped paging) and one `Tabs`, reused by 9 different dialogs. Every dialog we have hand-rolls its own list and key handling instead |
+| `DiffDialog` | ❌ | — | **F0 — new row, no prior row existed.** A real upstream dialog kind with no ccx equivalent — distinct from the diff *sidebar*, which is vestigial upstream dead code (E1 in the spec, not cloned on purpose). `/diff` here is a terminal stand-in (`git status --short`/`git diff --stat`, §5), not this dialog |
+| `EnterPlanMode` | ❌ | — | **F0 — new row, no prior row existed.** The counterpart to `ExitPlanMode` (§8, "Plan-mode approval dialog") — how a user or model *enters* plan mode with its own dialog upstream. We have the Tab-ladder `plan` rung (§8) but no dedicated entry dialog |
+| Background-dialog detail sub-dialogs | ❌ | — | **F0 — new row, no prior row existed.** Upstream's background-task panel has per-task detail sub-dialogs beyond the flat row list `BgTasksPanel.tsx` (§8) provides |
 
 ## 5 — Slash commands
 
@@ -319,7 +489,7 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 | `/add-dir` | ✅ | **W3** `AddDirDialog.tsx` — rejects inside-cwd paths as already accessible; outside-cwd paths grant access via `additionalDirectories` (probe 75) — `register_repo_root`, probe 75's other engine door, is reachable but never used by this command (its only usable domain is exactly what `/add-dir` rejects); "remember" writes `.claude/settings.local.json` |
 | `/config` (alias `/settings`) | 🟡 | **W3** — opens `SettingsDialog`'s Config tab; also `/config key=value` inline parsing with upstream's exact error copy. Only 5 of upstream's ~54 rows are wired — see §4's SettingsDialog row |
 | `/permissions` (alias `/allowed-tools`) | ✅ | **W3** — opens `PermissionsDialog`; five tabs, add/delete rules, workspace directory management — see §4's PermissionsDialog row |
-| `/theme` | 🟡 | **W3** — opens `ThemeDialog`; 5 of upstream's 7+ themes, `auto` currently ≡ `dark` — see §4's ThemeDialog row |
+| `/theme` | 🟡 | **W3** — opens `ThemeDialog`; 5 of exactly 7 built-in upstream themes shipped (not "7+" — F0 correction), `auto` currently ≡ `dark` for a reason smaller than previously stated — see §4's ThemeDialog row (F0-corrected) |
 | `/output-style` | ✅ | **W3** — prints the exact redirect line then opens `/config`'s Output-style row. This matches upstream's **own** 2.1.220 behavior — its standalone picker is itself a hidden redirect into `/config` (bundle-extraction surprise, see the spec) |
 | `/keybindings` | 🟡 | **W3** — upstream opens `~/.claude/keybindings.json` in `$EDITOR` for in-place rebinding; we have no rebinding mechanism, so this opens the existing read-only `?` keymap viewer instead and says so up front (recorded divergence — viewing, not editing) |
 | `/export` (file or clipboard) | ✅ | **W1** `sessionTools.ts` `exportMarkdown` — prompts as `## ›` headings, tools as one-line markers |
@@ -336,14 +506,15 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 
 | Detail | Status | Priority |
 |---|---|---|
-| Asterisk-pulse spinner animation | ✅ | **U2** |
-| Random thinking verbs | ✅ | **U2** |
-| `●`/`⎿` message prefix glyphs + accent colors | ✅ | **U3** (`>` user echo kept as `›` by choice) |
-| "esc to interrupt" everywhere a turn runs | ✅ | **U2** |
+| Asterisk-pulse spinner animation | 🟡 | **U2**. **F0 correction:** mirrors §3's "Spinner glyph" finding — glyph set is right, but the timing model is wrong (upstream's 2000ms triangle wave over 6 glyphs vs. our 120ms/12) |
+| Random thinking verbs | 🟡 | **U2**. **F0 correction:** mirrors §3's "Spinner thinking verbs" finding — 186 upstream verbs not 187 (we carry one extra), and the random verb is upstream's last fallback, not its primary source (the active todo's `activeForm` goes first) |
+| `●`/`⎿` message prefix glyphs + accent colors | 🟡 | **U3**. **F0 correction:** mirrors §2's "Assistant message identity" and "Tool result tree glyph" findings — the bullet is `⏺` on macOS in the plain `text` token (not an accent `●`), and `⎿` is emitted once at 5 columns upstream, not prefixed per line (`>` user echo kept as `›` by choice, itself corrected to upstream's `❯ ` in §2) |
+| "esc to interrupt" everywhere a turn runs | 🟡 | **U2**. **F0 correction:** mirrors §3's "esc to interrupt affordance on spinner" finding — upstream puts this in the footer hint ladder only while loading, never inside the spinner text |
 | Ctrl-C interrupt + double-press-to-exit | ✅ | **U8** |
-| Double-Esc to rewind affordance | ✅ | **C5 — the flagship (U12)**: `RewindPicker.tsx` + `sessions/rows.ts` (content-shape anchor classifier, shared with `replay.ts`) + `host/host.ts` (`rewindAnchors`/`rewindDryRun`/`rewind`, validated before every side effect) + `ChatApp.tsx` Esc-Esc arming (1.5s idle-only window; busy Esc stays interrupt). Restores conversation and/or code via CC's 3-way picker; a conversation restore pre-fills the composer with the prompt text (CC's edit-and-resend loop) |
+| Double-Esc to rewind affordance | ✅ | **C5 — the flagship (U12)**: `RewindPicker.tsx` + `sessions/rows.ts` (content-shape anchor classifier, shared with `replay.ts`) + `host/host.ts` (`rewindAnchors`/`rewindDryRun`/`rewind`, validated before every side effect) + `ChatApp.tsx` Esc-Esc arming (1.5s idle-only window; busy Esc stays interrupt). Restores conversation and/or code via CC's 3-way picker; a conversation restore pre-fills the composer with the prompt text (CC's edit-and-resend loop). **fixed 2026-07-31 (F0, t2, CM15):** Esc-Esc used to open this rewind flow unconditionally. It is now gated to an **empty** composer only — with typed text present, the first Escape arms an "Esc again to clear" hint and the second press clears the text back into history instead (`clearToHistory`), so typed text can never be lost into a rewind prompt. Rewind itself is unchanged once the composer is empty |
 | Newline instructions hint | ✅ | **U7** footer (`\⏎ newline`) |
 | Focus borders / input box styling | 🟡 | LOW |
+| Theme token contract (`ST4`) | ❌ | **F0 — new row, no prior row existed.** Upstream reads 72 semantic theme tokens by name across 956 prop usages. Our `ThemeTokens` set is 3 tokens (`accent`, `diffAdd`, `diffRemove`); ~15 colours our TUI actually paints are hardcoded ANSI names scattered across 5 files, invisible to `setTheme()`. This is the prerequisite every other theme row (ThemeDialog, diff colouring, subagent attribution colours) sits on top of |
 
 ## 8 — Control plane
 
@@ -355,31 +526,33 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 
 | Feature | Status | Priority | Notes / CC reference |
 |---|---|---|---|
-| AskUserQuestion dialog | 🟡 | — | **GB8** `QuestionDialog.tsx` — sequential per-question flow (`[i/N]` progress, header chip), options as numbered rows + arrows, `multiSelect` toggled with space, an always-present "Other" free-text row → `response`; consults `canUseTool` in every permission mode incl. `bypassPermissions` (probe 65). Divergence: CC renders multiple questions as **side-by-side tabs**; we go one at a time — keyboard-identical outcomes, an accepted divergence (spec Decision Log) |
-| Plan-mode approval dialog (ExitPlanMode) | ✅ | — | **GB9** — moved here from §4 (was ❌). `PlanDialog.tsx` renders the plan as markdown in a 14-line scrollable window (↑↓ scroll), then CC's three choices (`1` approve + auto-accept edits · `2` approve, manual edits · `3`/Esc reject with a one-line feedback prompt); approve lets the CLI flip `permissionMode` itself (probe 66) — the dialog only reports the human's choice |
+| AskUserQuestion dialog | 🟡 | — | **GB8** `QuestionDialog.tsx` — sequential per-question flow (`[i/N]` progress, header chip), options as numbered rows + arrows, `multiSelect` toggled with space, an always-present "Other" free-text row → `response`; consults `canUseTool` in every permission mode incl. `bypassPermissions` (probe 65). Divergence: CC renders multiple questions as **side-by-side tabs**; we go one at a time — keyboard-identical outcomes, an accepted divergence (spec Decision Log). **F0 addition:** two more missing facts on record — upstream also has a **design-preview two-column variant** when any option carries a `preview`, and an **AFK auto-resolve** that submits partial answers on timeout; neither exists here |
+| Plan-mode approval dialog (ExitPlanMode) | 🟡 | — | **GB9** — moved here from §4 (was ❌). `PlanDialog.tsx` renders the plan as markdown in a 14-line scrollable window (↑↓ scroll), then CC's three choices (`1` approve + auto-accept edits · `2` approve, manual edits · `3`/Esc reject with a one-line feedback prompt); approve lets the CLI flip `permissionMode` itself (probe 66) — the dialog only reports the human's choice. **F0 correction:** upstream's is the **only** `layout:"modal"` dialog, titled `"Ready to code?"`, with up to **6 conditional options** including a clear-context family that **denies and re-seeds a fresh turn**, and an inline `"No, keep planning"` text input that keeps the dialog open on an empty submit. Ours has 3 fixed options |
 | `plan` on the Tab ladder | ✅ | — | **GB7** the ladder is now `default → acceptEdits → plan → auto` (`useChat.ts` `ladderNext`); off-ladder modes (`bypassPermissions`) still re-enter at `default` |
 | Ctrl+B background | 🟡 | — | **GB10** `ChatApp.tsx` — the key and the host `background` op are fully wired (`backgroundNow` → `Session.backgroundAll()`, probe 39) and idle `Ctrl+B` opens the background-task panel; but **live acceptance (2026-07-28)** found the real CLI does not detach an in-flight foreground `Bash` call — the op is accepted and the SDK reports success, yet the command runs to completion in the foreground regardless. The verified surface is **model-initiated** background shells (`run_in_background: true`): `⚙ N` status-bar count, `/bg` panel row, and stop-from-panel all confirmed live |
 | `/bg` panel | 🟡 | — | **GB10 + W2** `BgTasksPanel.tsx` — one row per background task with **status glyph + command line** (harvest-enriched `BgTaskRow`), plus up to 5 recently-finished rows (dim, with final status); ↑↓ select, `k`/`x` stop (running rows only), Esc close. Divergence: the command is **`/bg`**, not `/tasks` — `/tasks` would collide with the existing `TaskPanel.tsx` (the model's todo checklist), a deliberate rename recorded in the spec's Decision Log |
 | Background task **output** reachable (Enter-to-tail) | ✅ | — | **W2** probe-74 mechanism: the backgrounded tool_result names the output file ("Output is being written to: <path>"); `bgTaskMeta.ts` harvests path+command+status client-side from frames the REPL already receives (zero host/wire change — works identically over `ccx attach`), and Enter on a panel row tails the file's last 12 lines in-panel (Enter again re-reads; `local_agent` rows deliberately not tailed) |
 | Ctrl-X Ctrl-K kill agents | ✅ | — | **W2** — 2.1.220 `chat:killAgents` flow verbatim: "No background agents running" when idle; first press arms ("Press Ctrl-X Ctrl-K again to stop background agents"), second within 3s stops all |
 | Task lifecycle notices | ✅ | — | **GB7** `task_started`/`task_notification` frames render as one-line transcript notices (`⚙ task started: …` / `✓ task done: …` / `✗ task failed: …` / `◼ task stopped: …`), honoring `skip_transcript` |
-| Subagent attribution on dialogs | 🟡 | — | **GB5** a host-side correlation map (`parentToolUseID` from nested frames → `subagentType` from `task_started` frames) stamps `Subagent (<type>) asks:` on the Question/Plan/Permission dialogs when known; **best-effort** — a miss renders unattributed and never blocks (no per-subagent drill-in transcript view — spec Non-goals) |
+| Subagent attribution on dialogs | 🟡 | — | **GB5** a host-side correlation map (`parentToolUseID` from nested frames → `subagentType` from `task_started` frames) stamps `Subagent (<type>) asks:` on the Question/Plan/Permission dialogs when known; **best-effort** — a miss renders unattributed and never blocks (no per-subagent drill-in transcript view — spec Non-goals). **F0 correction:** upstream renders this as a **frame-header suffix** (`· from the <name> agent`), not a separate line above, and colours subagents from 8 reserved theme tokens |
 | Status-bar mode truth | ✅ | — | **GB5** the host intercepts the CLI's own `system`/`status` frames and pushes the real `permissionMode` on every `state` event (one field, last-write-wins between the CLI's own flip and the host's setter calls); closes the previously recorded "status bar starts at `default`" quirk — see the `full-use-checklist.md` A1 note, updated alongside this |
 
-**Score: ~80% (W2 first plain recount: 6✅ + 4🟡 of 10 rows = 8/10).** The previous ~81% was the
-impact-weighted era; the 81→80 movement is a **method change plus two added rows**, not a regression —
-per-row, Wave 2 only added ✅s (output-tail, killAgents) and enriched `/bg`. 4 of the original 8 rows
-were fully CC-faithful (✅); 4 carry a caveat (🟡). Three are accepted,
-spec-recorded divergences from CC's exact form while delivering the same functional/keyboard outcome
-(sequential questions, `/bg` naming, best-effort attribution). The fourth — Ctrl+B background — is a
-**live-acceptance-verified functional gap**, not a form divergence: the key/op path backgrounds nothing
-for an already-running foreground shell, and only the model-initiated path (`run_in_background: true`)
-reaches the panel. The other seven rows work identically in the foreground REPL and over `ccx attach` —
-closing the spec's motivating failure ("a `--bg` worker that hits a question and can only stall").
-**Live acceptance ran 2026-07-28** (`docs/superpowers/specs/2026-07-28-control-plane-fidelity-design.md`
-§ Outcomes): the AskUserQuestion round-trip (detached + Other free-text), the plan-approval loop, and
-subagent attribution all PASS; background shells PASS for the model-initiated path and are where the
-Ctrl+B gap above was found.
+**Score: ~75% (F0 recount: 5✅ + 5🟡 of 10 rows = 7.5/10).** The previous ~80% (W2's first plain recount:
+6✅+4🟡) is not wrong about capability — nothing regressed — but one of the six ✅ rows, Plan-mode
+approval dialog, was scored against the wrong reference (see the F0 correction on that row above: 3
+fixed options against upstream's up to 6 conditional ones, including a clear-context/re-seed family we
+don't have) and moves to 🟡. AskUserQuestion and Subagent attribution stay 🟡 with two more missing
+facts recorded each. Four rows are accepted, spec-recorded divergences from CC's exact form while
+delivering the same functional/keyboard outcome (sequential questions, `/bg` naming, best-effort
+attribution, the frame-header-suffix vs. separate-line attribution styling). Ctrl+B background remains
+the one **live-acceptance-verified functional gap**, not a form divergence: the key/op path backgrounds
+nothing for an already-running foreground shell, and only the model-initiated path
+(`run_in_background: true`) reaches the panel. The other rows work identically in the foreground REPL
+and over `ccx attach` — closing the spec's motivating failure ("a `--bg` worker that hits a question
+and can only stall"). **Live acceptance ran 2026-07-28**
+(`docs/superpowers/specs/2026-07-28-control-plane-fidelity-design.md` § Outcomes): the AskUserQuestion
+round-trip (detached + Other free-text), the plan-approval loop, and subagent attribution all PASS;
+background shells PASS for the model-initiated path and are where the Ctrl+B gap above was found.
 
 ---
 
@@ -434,10 +607,22 @@ Claude reviewer — **converged on the same 5 bugs**; all fixed, +5 regression t
 above: Esc-Esc rewind (U12, the flagship), the usage surface (F4), the `?` overlay, word movement,
 tool-row/diff/bash-error framing, tables, syntax highlight, the compact-boundary divider, and `/copy`.
 
-### Remaining gaps (all explicit spec non-goals or LOW-priority tail items)
+### Remaining gaps as of C5 (pre-F0; all explicit spec non-goals or LOW-priority tail items)
 - Vim mode (`/vim` + its status indicator) — owner-deferred, the sprint's only deferral. (The
   external editor formerly listed here shipped in W1 — Ctrl-X Ctrl-E / Ctrl-G, `externalEditor.ts`.)
 - Bash output's `$`/exit-code framing — not reachable: a `tool_result` carries no exit code, only
   `is_error` (the error-framing half already landed).
 - Long-output interactive expand, the `›` vs `>` user-echo glyph (intentional divergence), and
   focus-border/input-box styling polish.
+
+**F0 (2026-07-31) correction to this list: the biggest remaining gaps are not tail items.** This
+section's heading was accurate for what C5 left behind, but F0 added ~14 rows the pre-F0 file had no
+row for at all, and several of them are the *opposite* of low-priority tail work — the research
+inventory itself rates the theme token contract (`ST4`), the keybinding table (`ST5`) and its
+precedence resolver (`ST6`) as **Tier 1, Large effort**: "the largest structural gap in the whole
+inventory," in the inventory's own words, and the root cause of the exact key-handling bugs F0 just
+spent six tasks fixing one at a time. Treating them as tail items would repeat the mistake this
+correction pass exists to end. See the new rows in §1 (`ST5`/`ST6`), §3 (`statusLine`, notification
+queue, terminal title, desktop notifications, tab status, reduced motion, resize handling), §4
+(`Select`/`Tabs` primitives, `DiffDialog`, `EnterPlanMode`, background-dialog sub-dialogs), and §6
+(`ST4`) for the full list, each with its own priority note.
