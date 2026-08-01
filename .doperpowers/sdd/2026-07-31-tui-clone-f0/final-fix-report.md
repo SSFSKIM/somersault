@@ -583,3 +583,961 @@ The protected concurrent files and `CC-to-SDK/.doperpowers/sdd/progress.md` were
 ### Independent pass-12 review
 
 The Codex companion independently reviewed only the diff against `f160131f7c` and reported **no actionable correctness defects**. Its read-only sandbox passed typecheck and focused Python/editor checks; its own Vitest attempt was blocked only because Vite could not write a temporary config file in that sandbox. The direct working-tree TUI suite above passed independently, so there is no unresolved Critical or Important review finding.
+
+## Thirteenth plugin review pass
+
+Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/2026-07-31-tui-clone-f0/final-rereview13-findings.md`.
+
+### TDD red proofs, repairs, and sabotage
+
+1. **Fresh child configuration.** The new success/failure subprocess repro was red when the old child scrub simply removed `CLAUDE_CONFIG_DIR`: the child could not record a private config and the capture still used the ambient configuration fallback. `clean_child_env()` now builds a child-only scrubbed environment, then `main()` creates a fresh empty config directory before `pty.fork`, assigns it after the scrub, and clears/replaces the forked child's environment for both upstream Claude and ccx. The guard records only booleans and paths, never a credential: it proves the config exists and is empty while the child runs, differs from the fake ambient config and fake `HOME/.claude`, cannot see the ambient plugin marker, preserves OAuth presence, excludes the API key that would shadow OAuth, removes nested markers, and is gone after both successful and failed capture. Removing the private-config assignment again made that guard red; restoration returned it green.
+2. **Scenario-scoped allowlist staleness.** The red shared-allowlist repro allowlisted one reviewed difference in each of `help-overlay`, `composer-basics`, `nested`, and nested `nested/scenario`; the old global stale scan made each one-scenario comparison fail for the other entries, while its first prefix-only repair also misclassified `nested/scenario` as part of `nested`. `frame-diff.py` now derives the canonical compared scenario scope with `frame_key(args.golden_dir, "")` and compares the exact directory portion of every allowlist key, while parsing malformed entries globally before comparison. The regression verifies direct, `..`, and symlinked nested aliases; current-scenario stale, clean, and missing entries still fail. Removing the exact-scope guard reproduced the false stale errors.
+3. **Process-group teardown and reaping.** The red PTY subprocess leaves a SIGHUP-ignoring long-lived descendant and reports only job-local PID markers. Killing only the PTY leader left that descendant alive. Cleanup now calls `killpg` only for the capture's distinct child group, reaps the leader, never signals the controller group, closes the PTY, and only then removes the private config. The successful, repeated, and partial-failure cases prove both leader and descendant disappear within bounded polling. Replacing `killpg` with leader-only `kill` made the descendant-survival guard red; the direct controller-group guard confirms no controller signal attempt.
+4. **Bounded first-frame readiness.** The old 20 ms settle was red against a deterministic 80 ms delayed renderer. First frame capture now waits up to **500 ms** for visible content or child death, then uses a **50 ms post-content PTY drain** before publication; later frames retain zero-wait checks. The drain both rejects a shell that paints and exits before the snapshot and completes a paint split across writes (`r`, then `eady`). The same guard proves immediate death is prompt and a live blank child fails after the bound rather than hanging. Restoring the immediate-return branch made the split-paint guard red; removing the readiness bound made the delayed-renderer guard red.
+
+`VERSION` and Task 9 now describe the settings-isolated reproduction and use `$CLAUDE_JOB_DIR/tmp` for the recapture virtual environment and scratch directory. They retain the exact 2.1.220 version pins. The Task 9 allowlist text now distinguishes global parse failure from scenario-scoped stale evaluation.
+
+### Thirteenth-pass gates
+
+All commands used `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness` unless otherwise stated. Temporary environments, markers, captures, and logs used `$CLAUDE_JOB_DIR/tmp`; no credential file was loaded or printed.
+
+- Fresh pinned Python environment: `$CLAUDE_JOB_DIR/tmp/f0-pass13-python-venv` installed `pyte==0.8.2` and `wcwidth==0.8.2` from `scripts/frames/requirements.txt`.
+- `TMPDIR="$CLAUDE_JOB_DIR/tmp" "$CLAUDE_JOB_DIR/tmp/f0-pass13-python-venv/bin/python3" -m unittest discover -s test/python -p 'test_*.py'`: **PASS; 52 tests in 16.750 seconds** after the review fixes.
+- Ten full Python runs under a separate CPU-bound process: **10/10 PASS; 52 tests per run**. An earlier ten-run attempt reached eight passes before one escaped-symlink first-frame timeout; the exact case then passed 30/30 under the same CPU pressure from a clean process state, and the clean full-loop rerun passed all ten without a timing change.
+- `npm run typecheck`: **PASS; no diagnostics**.
+- `npx vitest run test/tui --exclude 'test/tui/tmp-probe-rescue-popup.test.tsx'`: **PASS; 39 files and 663 tests passed; 9 credential-gated tests skipped**.
+- `npm run test:unit`: **PASS; 135 files and 1,227 tests passed**.
+- `npm run test:integration`: **PASS; 3 files and 16 tests passed**.
+- `npm run test:contract`: **PASS; 1 file and 7 tests passed**.
+- `git diff --check`: **PASS; no whitespace errors**.
+
+### Fresh isolated capture and baseline
+
+A fresh job-local invocation checked the installed binary against exact `2.1.220 (Claude Code)` and captured upstream Claude under its empty per-capture config. It wrote **3 help-overlay frames** and **5 composer-basics frames**. A same-geometry ccx run wrote the same 3/5 frame counts. The committed-fixture comparisons remain the expected F0 baseline:
+
+- Help overlay: `0 clean, 0 allowlisted, 3 DIVERGENT`; exit status `1`.
+- Composer basics: `0 clean, 0 allowlisted, 5 DIVERGENT`; exit status `1`.
+
+These are known visual-fidelity divergences, not a capture/diff false success. No real configuration directory was read or written by the captured children, and the descendant teardown repro left no helper process alive.
+
+### Process disposition
+
+The aggregate F0 range remains above the 800-line guidance. This is the previously accepted process/planning deviation: the work remains split across task-scoped commits and successive focused reviews. This pass does not rewrite history; it adds only the pass-13 frame-harness corrections and records the deviation honestly. The protected concurrent files, including `CC-to-SDK/.doperpowers/sdd/progress.md` and `CC-to-SDK/harness/test/tui/tmp-probe-rescue-popup.test.tsx`, were not edited, staged, or used as test inputs. No push was performed.
+
+### Independent review disposition
+
+A read-only independent review found two Important defects: an emitting-but-exited first-frame child could publish a frame, and `ANTHROPIC_API_KEY` could shadow the intended OAuth credential. Both received dedicated red-to-green regressions. The authenticated-child report now records booleans only and proves OAuth present/API key absent; the immediate-exit shell child now fails without a published frame.
+
+The first Codex base-diff review found the independently verified nested parent/child allowlist defect and the split-paint readiness defect. The exact-directory scope test and the `r`/`eady` split-paint test were added; the latter was sabotage-proven by replacing the drain with the former immediate return and observing an `r`-only frame. Its suggestion to fall back from an unavailable `$CLAUDE_JOB_DIR/tmp` to a default temporary directory was not adopted: that would contradict the binding requirement that executed capture/test temporary paths remain job-local. The capture already reports a clear setup error before spawning a child when a requested private config cannot be created.
+
+A fresh final independent base-diff review is pending this completed correction set; every verified Critical or Important finding from the prior reviews has been fixed.
+
+## Fourteenth plugin review fix pass
+
+Source of truth: `/Users/new/.claude/jobs/e1de885d/tmp/pass13-scoped-findings.md`.
+
+### Red proofs, repairs, and sabotage
+
+1. **Fail-closed tracked identity redaction.** The stock private-config frames remain permitted to have zero identity substitutions because an isolated logged-out child is valid. Each stock redaction contract now additionally supplies narrow dashboard identity guards, evaluated after redaction. A residual greeting, organization email, or `user@host` dashboard identity therefore rejects the staged capture before it can publish, while absent identities remain valid. The new real capture regression writes the reviewer’s altered greeting layout (`Welcome back Test Identity!` without the narrow rule’s expected layout) and was red before the guard: capture exited zero and wrote a tracked ANSI frame. It is green after the guard, with no frame published and no identity echoed in diagnostics. The established fixture round-trip, identity-free isolated capture, and custom-required-rule tests remain green.
+
+   Sabotage proof: removing the two `identity_guards` arrays made that same regression fail again because capture returned zero and staged one frame. Restoring the masks byte-for-byte made the focused regression pass.
+
+2. **Stable visible baseline cwd.** Recapture documentation now uses the deterministic visible `/tmp/frame-scratch` cwd while keeping the temporary virtual environment job-local. The exact capture usage in `capture-frames.py`, `VERSION`, and Task 9 was updated. All eight upstream 2.1.220 fixtures required regeneration because every one rendered the former job-scoped cwd. Each was recaptured at 100×40 through the exact-version and write-time redaction gate; semantic comparison masks were not broadened. A separately captured stable-cwd run compared cleanly: help overlay **3 clean, 0 allowlisted, 0 DIVERGENT** and composer basics **5 clean, 0 allowlisted, 0 DIVERGENT**. The committed set contains eight stable-cwd frames and zero `/.claude/jobs/` paths.
+
+3. **Hermetic private-config test.** The private-config subprocess test now creates `root / "job"` and passes that path as its child `CLAUDE_JOB_DIR`, then asserts the private config is created under that test-local directory. Before the repair, running the test with `env -u CLAUDE_JOB_DIR` raised `KeyError` on the direct ambient lookup. The focused test and the full suite now pass both with and without the ambient variable.
+
+### Verification
+
+All commands ran from `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness`; no credential file was loaded or printed.
+
+- Focused reviewer-bypass red: `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py' -k 'private_config_masks_reject_reviewed_greeting_layout_bypass_before_publication'` — expected **FAIL**, one test; old behavior returned zero and wrote a frame.
+- Focused no-job-dir red: `env -u CLAUDE_JOB_DIR scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py' -k 'capture_seeds_a_private_claude_config_without_ambient_auth_or_config'` — expected **ERROR**, one test; `KeyError: 'CLAUDE_JOB_DIR'`.
+- Focused green: the reviewer-bypass and no-job-dir commands above each passed **1 test** after the repair. Stock fixture redaction, identity-free isolated capture, and custom required-rule checks each passed **1 test**.
+- Sabotage: deleting `identity_guards` from a temporary working copy of `masks.json` made the bypass regression fail **1 test**; the original mask file was restored byte-for-byte and the same regression passed **1 test**.
+- Fresh pinned environment: a new job-local `venv` installed `pyte==0.8.2` and `wcwidth==0.8.2` from `scripts/frames/requirements.txt`. `TMPDIR="$CLAUDE_JOB_DIR/tmp" <fresh-venv>/bin/python3 -m unittest discover -s test/python -p 'test_*.py'` passed **54 tests in 17.612 seconds**. `env -u CLAUDE_JOB_DIR TMPDIR="$CLAUDE_JOB_DIR/tmp" <fresh-venv>/bin/python3 -m unittest discover -s test/python -p 'test_*.py'` passed **54 tests in 17.301 seconds**.
+- Stability: ten complete 54-test runs from that fresh pinned environment passed under one low-priority CPU-bound process: **10/10 PASS**, with individual durations from **16.052 to 17.266 seconds**.
+- Fresh upstream recapture: exact `claude --version` was `2.1.220 (Claude Code)`. The tracked commands used `--cwd /tmp/frame-scratch --redact-masks scripts/frames/masks.json --expected-version '2.1.220 (Claude Code)'` and wrote **3 help-overlay** plus **5 composer-basics** frames. An independently recaptured untracked copy compared as **3/3 clean** and **5/5 clean** using the unchanged masks.
+
+No production TypeScript changed, so a TypeScript typecheck was not applicable. The pre-existing manual terminal `Ctrl-Z` → `fg` acceptance concern is unchanged and unrelated. The protected concurrent untracked files were not edited, staged, removed, or used as test inputs; no commit or push was performed.
+
+## Fifteenth plugin review fix pass
+
+Source of truth: `/Users/new/.claude/jobs/e1de885d/tmp/pass14-scoped-findings.md`.
+
+### Red proofs, repairs, and sabotage
+
+1. **Critical — ANSI-split identity leakage at the tracked-frame publication boundary.** The new real PTY regression emits a greeting, organization email, and `user@host` with valid SGR transitions inside each identity. Before the repair, its tracked capture returned zero and staged one frame. `redact_text()` now creates an SGR-normalized inspection view only for the narrow residual `identity_guards`; configured substitutions and the stored ANSI-bearing frame string are otherwise unchanged. The restored test rejects the batch before promotion, reports only guard names, and publishes no identity-bearing frame. The existing semantic transcript matrix remains green, so arbitrary transcript emails, paths, and other text are not broadly redacted or comparison-masked.
+
+   Sabotage proof: temporarily replacing the SGR-normalized inspection view with the original ANSI-bearing string made `test_private_config_masks_reject_sgr_split_identities_before_publication` fail again (exit 1, as expected) because the capture returned success. The exact source bytes were restored and the same test passed.
+
+2. **Important — isolated private-config leak on seed write failure.** The new deterministic in-process regression forces `.claude.json` `write_text()` to raise after `mkdtemp()`. Before the repair, it left one `.claude-config-*` directory behind, although the patched `pty.fork` correctly proved no child started. `config_dir` is now retained as an owned nullable resource during seed construction and removed immediately on every seed setup error; the child-start failure and runtime teardown paths retain the required child-group termination, reap, close, then config-removal order. The pre-finally terminal-initialization failure now follows that same order.
+
+   Sabotage proof: temporarily disabling the seed-error `rmtree` made `test_capture_removes_private_config_when_seed_write_fails_before_spawning` fail again (exit 1, as expected) with the orphaned directory assertion. The exact source bytes were restored and the test passed.
+
+`VERSION` and Task 9 now state the SGR-normalized residual-guard boundary, preserved stored ANSI, immediate pre-spawn cleanup, and ordered post-child cleanup. Their documentation regression is green.
+
+### Fifteenth-pass verification
+
+All commands ran from `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness`; no credential file was loaded, printed, or committed.
+
+- Focused red proofs, before repair:
+  - `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py' -k 'sgr_split_identities'` — expected **FAIL**, 1 test: capture returned zero and wrote one frame.
+  - `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py' -k 'seed_write_fails_before_spawning'` — expected **FAIL**, 1 test: the created `.claude-config-*` directory remained and `pty.fork` was not called.
+- Focused green: the SGR-split and seed-cleanup regressions each passed **1 test**. The `*private_config_masks*` cluster passed **3 tests**, the semantic transcript-preservation matrix passed **1 test**, and the documentation plus synthetic-child-inventory guards each passed **1 test**.
+- A new job-local Python environment installed and verified `pyte==0.8.2` and `wcwidth==0.8.2` from `scripts/frames/requirements.txt`.
+  - `TMPDIR="$CLAUDE_JOB_DIR/tmp" <fresh-venv>/bin/python3 -m unittest discover -s test/python -p 'test_*.py'` — **PASS; 56 tests in 17.976 seconds**.
+  - `env -u CLAUDE_JOB_DIR TMPDIR="$CLAUDE_JOB_DIR/tmp" <fresh-venv>/bin/python3 -m unittest discover -s test/python -p 'test_*.py'` — **PASS; 56 tests in 17.616 seconds**.
+  - Ten successive full-suite runs from that fresh pinned environment all passed **56 tests**; durations were 17–19 seconds.
+- Independent stable-cwd upstream capture used `--cwd "/tmp/frame-scratch"`, the private per-capture config, exact `2.1.220 (Claude Code)` preflight, and unchanged masks. It wrote **3 help-overlay** and **5 composer-basics** frames. Its comparisons against the tracked fixtures were **3 clean, 0 allowlisted, 0 DIVERGENT** and **5 clean, 0 allowlisted, 0 DIVERGENT**, respectively.
+- `git diff --check` passed after the source/documents and is rerun after this report append. No production TypeScript changed, so typecheck is not applicable.
+
+### Residual concerns
+
+There is no residual privacy or cleanup concern from these two fixes. The pre-existing manual terminal `Ctrl-Z` → `fg` acceptance concern remains unrelated. The protected concurrent untracked files were not edited, staged, removed, or used as test inputs; no commit or push was performed.
+
+## Sixteenth plugin review fix pass
+
+Source of truth: `/Users/new/.claude/jobs/e1de885d/tmp/pass15-scoped-findings.md`.
+
+### Root cause, red proofs, repairs, and sabotage
+
+1. **P1 — row-wrapped dashboard identities.** `redact_text()` correctly removes valid SGR transitions for
+   residual-guard inspection, but the pre-pass-16 organization and status patterns still required each
+   identity and delimiter to occupy one physical rendered row. A 60-column real PTY regression first masks a
+   same-row dashboard greeting, then splits an organization email exactly at its top-level-domain boundary and
+   a row-start status host exactly at its host boundary. Before the correction, the tracked capture returned
+   zero and wrote one frame. The two scenario-scoped residual patterns now consume only contiguous rendered-row
+   breaks within their existing narrow dashboard contexts: the organization row's `│ /release-notes` chrome
+   for organization email and a row-start two-space status segment ending in `:/` for status identities. They remain
+   inspection-only; primary write-time substitutions, stored SGR sequences, layout, and comparison masks are
+   unchanged. A separate 60-column greeting regression retains coverage for greeting row wrapping. A
+   transcript-scope regression then demonstrated that the same Organization wording without dashboard chrome
+   must publish and remain visible; it was red under the interim suffix-only guard and green after the chrome
+   constraint was restored.
+
+2. **P2 — exact `git@` exemption.** The former status residual guard used `(?<!git@)`, allowing regex search
+   to restart at a suffix inside a legitimate `git@host:/path` token. The replacement anchors the candidate at
+   the dashboard row prefix and applies `(?!git@)` at the actual token start, so an exempt token stays visible
+   while a real row-wrapped `user@host:/` remains a publication failure. The real tracked-capture regression
+   was red before the repair: it rejected the exempt status token with `unredacted identity status-user-host`.
+
+3. **Red and sabotage evidence.** Before editing production config:
+   - `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py' -k dashboard_identities_wrapped_across_rendered_rows`
+     failed one test because capture returned zero and wrote one tracked frame.
+   - `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py' -k dashboard_git_status_token`
+     failed one test because the residual guard rejected `git@`.
+   - The row-wrap sabotage temporarily restored both organization/status single-row residual patterns in a
+     temporary copy of `masks.json`; the first command failed again at the false-success assertion. The exact
+     file bytes were restored through a shell exit trap.
+   - The exemption sabotage temporarily restored only the legacy status lookbehind; the second command failed
+     again with the false rejection. The exact file bytes were restored through its exit trap.
+   - After restoration, `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py' -k private_config_masks`
+     passed **7 tests**. The child keepalive inventory guard passed **1 test** and now correctly counts **26**
+     five-second successful child fixtures, including the four new capture regressions.
+
+4. **Documentation.** The `VERSION` and Task 9 documentation regression was written red first and failed on
+   the absent `row-wrapped` contract. Both files now state that the SGR-normalized row-wrap inspection is
+   dashboard-only and does not alter stored ANSI. The focused documentation guard then passed **1 test**.
+
+### Pass-16 verification
+
+All commands ran from `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness`; no credential file,
+real settings, or API token was loaded or printed.
+
+- A fresh job-local virtual environment installed and verified `pyte==0.8.2` and `wcwidth==0.8.2` from
+  `scripts/frames/requirements.txt`.
+  - `TMPDIR="$CLAUDE_JOB_DIR/tmp" <fresh-venv>/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`
+    — **PASS; 60 tests in 19.143 seconds**.
+  - `env -u CLAUDE_JOB_DIR TMPDIR="$CLAUDE_JOB_DIR/tmp" <fresh-venv>/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`
+    — **PASS; 60 tests in 17.826 seconds**.
+- Ten complete 60-test runs in that fresh pinned environment passed under a low-priority CPU-bound process:
+  **10/10 PASS**, with durations from **17.008 to 18.171 seconds**.
+- Frame rendering and tracked `.ansi` fixture content did not change in this fix; only staged publication
+  guards, tests, and contract documentation changed. The conditional independent stable-cwd recapture/diff
+  gate was therefore not applicable.
+- `git diff --check` is rerun after this report append. No production TypeScript changed, so a TypeScript
+  typecheck is not applicable.
+
+### Residual concerns
+
+There is no residual privacy, row-wrap, or `git@` boundary concern from this pass. The pre-existing manual
+terminal `Ctrl-Z` → `fg` acceptance remains unrelated. Protected concurrent untracked files were not edited,
+staged, removed, or used as test inputs; no commit or push was performed.
+
+## Seventeenth plugin review fix pass
+
+Source of truth: `/Users/new/.claude/jobs/e1de885d/tmp/pass16-scoped-findings.md`.
+
+### Root cause, red proofs, repairs, and sabotage
+
+1. **P1 — current authenticated dim organization styling.** The fixture renderer emits the live 2.1.220
+   dim-italic `/release-notes` run as `0;2;3;…m`, while the primary write-time organization rule accepted only
+   historic `0;3;…m`. A synthetic identity-bearing frame therefore missed its primary substitution and reached
+   the residual guard. The primary rule now accepts only the exact optional dim parameter before its existing
+   italic layout anchor. Its new round-trip asserts the complete SGR-wrapped raw frame redacts byte-for-byte to
+   the expected sanitized frame; a bold+dim+italic `0;1;2;3;…m` boundary remains unsupported and is rejected
+   before publication by the unchanged fail-closed residual guard.
+2. **P2 — transcript-safe status scope.** The old primary status rule substituted an ANSI-styled indented
+   `alice@host:/repo` transcript row, while its residual guard rejected the plain equivalent solely from
+   indentation. Both rules now require the actual 2.1.220 status/footer continuation `⏸ manual mode on · ? for
+   shortcuts · ← for agents` after the status path, allowing at most two physical wrap rows. Plain and
+   ANSI-styled transcript paths, including `git@host:/repo`, remain visible and publishable; a dashboard path
+   immediately followed by that chrome redacts, and a real ANSI row-wrapped dashboard path rejects before
+   publication when primary matching cannot span its rendered rows.
+3. **Focused red/green and sabotage.** Before the production config correction,
+   `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py' -k
+   dim_dashboard_organization_round_trip` failed **1 test** by retaining the synthetic organization identity;
+   `-k status_identity_scope_requires_dashboard_footer_chrome` failed **1 test** (the plain transcript was
+   rejected and the ANSI-styled transcript was substituted). Both passed **1 test** after correction. A
+   byte-restored temporary removal of `(?:2;)?` made the dim test fail again; a byte-restored temporary
+   corruption of the footer anchor made the status-scope test fail again. Each restored test passed **1 test**.
+4. **Contract documentation.** `VERSION` and Task 9 now state the exact `0;3;…m`/`0;2;3;…m` organization
+   forms, the bounded current-footer status anchor, and transcript/code preservation. The documentation guard
+   was red when those terms were absent and passed **1 test** after both documents were updated. The synthetic
+   child inventory guard was updated from 26 to **28** successful child fixtures for the two new PTY cases and
+   passed **1 test**.
+
+### Pass-17 verification
+
+All commands ran from `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness`; no credential file,
+real settings, API key, or OAuth token was loaded or printed.
+
+- A fresh environment at `/tmp/f0-pass17.F9sCJ7/python-venv` installed from
+  `scripts/frames/requirements.txt` and verified `pyte=0.8.2` and `wcwidth=0.8.2`.
+  - `CLAUDE_JOB_DIR=/tmp/f0-pass17.F9sCJ7 TMPDIR=/tmp/f0-pass17.F9sCJ7/tmp
+    /tmp/f0-pass17.F9sCJ7/python-venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`:
+    **PASS; 62 tests in 18.806 seconds**.
+  - `env -u CLAUDE_JOB_DIR TMPDIR=/tmp/f0-pass17.F9sCJ7/tmp
+    /tmp/f0-pass17.F9sCJ7/python-venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`:
+    **PASS; 62 tests in 19.355 seconds**.
+- Ten complete 62-test repetitions from that fresh pinned environment, with ANSI-normalized completion
+  verification, passed **10/10** in **19.060–21.469 seconds**. An earlier runner attempt stopped after one
+  otherwise-green suite only because it tested raw colorized output for a literal final `OK`; a direct
+  diagnostic confirmed return code 0, `Ran 62 tests`, and normalized `OK` before the final 10/10 loop.
+- Pass-17 did not alter a tracked `.ansi` fixture. The current dirty diff retains eight earlier,
+  independently stable-cwd-verified fixture updates from pass 14, so no new conditional comparison was
+  triggered by this scoped fix. No production TypeScript changed, so typecheck was not applicable.
+  `git diff --check` passed after the initial report append and is re-run after this final report correction.
+
+### Residual concerns
+
+There is no residual organization-redaction or transcript-scope concern from this pass. The existing manual
+terminal `Ctrl-Z` → `fg` acceptance remains unrelated. Protected concurrent untracked files were not edited,
+staged, removed, or used as test inputs; no commit or push was performed.
+
+## Eighteenth plugin review fix pass
+
+Source of truth: `/Users/new/.claude/jobs/e1de885d/tmp/pass17-scoped-findings.md`.
+
+### Root cause, red proofs, repairs, and sabotage
+
+1. **P1 — authenticated reduced-footer and `git` status identities.** The two scoped status substitutions and
+   the SGR-normalized residual guards treated the whole `⏸ manual mode on · ? for shortcuts · ← for agents`
+   string as their context and exempted a literal `git@` token. The eight 2.1.220 fixtures prove that boot,
+   cleared, killed, and closed use that extended form, typed, Esc-armed, and yanked reduce it to
+   `⏸ manual mode on`, and help-open has no status marker. A fixture-backed variant matrix covers all eight
+   state names plus `alice` and real-user `git` dashboard identities, reduced and extended marker forms,
+   ANSI-split identities, row wrapping, and plain/ANSI/code transcript tokens. Before repair it produced
+   **11 failures**: reduced dashboard statuses and every dashboard `git` status could publish unchanged.
+   Both primary substitutions and residual guards now require only the shared indented `⏸ manual mode on`
+   dashboard marker after the bounded status path; there is no username exception. The matrix is green:
+   ordinary dashboard values redact, style- or row-wrap forms the primary rule cannot replace fail closed
+   before publication, and all chrome-free transcript/code values, including `git@host:/repo`, remain exact.
+
+   Sabotage proof: byte-restored temporary insertion of the old `git@` exemption into both primary rules
+   and both residual guards made the matrix fail **8** authenticated-`git` cases (exit 1, first case
+   `help-overlay/01-boot.ansi`). Restoring `masks.json` byte-for-byte made the matrix pass again.
+
+2. **P2 — later split repaint publication.** Once a meaningful screen existed, `frame:` set `settle` to zero,
+   so `pump(0)` could make one immediate read and render a repaint halfway through. The new deterministic
+   PTY regression establishes a `baseline` first frame, then uses a scripted Enter to cause a later repaint
+   whose `partial` and `-complete` writes are separated by 15 ms. Before repair, it published the later
+   `partial` frame and failed its complete-frame assertion. Established screens now call the existing
+   PTY/child-liveness `pump()` path with `SNAPSHOT_DRAIN_SECONDS = 0.02`; first-frame readiness remains
+   0.5 s and its closing-PTY drain remains 50 ms. The later frame now contains `partial-complete`.
+
+   Sabotage proof: byte-restored temporary replacement of the later-frame settle value with zero made the
+   regression fail **1** test (exit 1) with the published partial-frame assertion. Restoring
+   `capture-frames.py` byte-for-byte made the same test pass. The duration is statically bounded to one
+   requested **20 ms** drain per already-rendered requested snapshot; no large fixed sleep was added and the
+   existing immediate-dead, blank-child, first-frame split, and process-group liveness regressions remain in
+   the full suite. A host-level process-wall-time microbenchmark varied under scheduler load, so the exact
+   source-level 20 ms bound—not that noisy wall-clock sample—is the performance claim.
+
+3. **Documentation and inventory.** `VERSION` and Task 9 now describe the marker-based dashboard boundary,
+   the absence of a `git` exception, transcript/code preservation when dashboard chrome is absent, and the
+   20 ms snapshot drain. The documentation guard pins those terms and `SNAPSHOT_DRAIN_SECONDS == 0.02`.
+   The successful synthetic-child inventory is now **29** five-second fixtures and remains green.
+
+### Pass-18 verification
+
+All commands ran from `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness`; no credential file,
+real settings, API key, or OAuth token was loaded or printed.
+
+- Focused red proofs before production repair:
+  - `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py' -k 'dashboard_status_variant_matrix'` — expected **FAIL**, 1 test with **11** variant failures.
+  - `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py' -k 'later_frame_drains_a_split_repaint_before_publication'` — expected **FAIL**, 1 test; the published later frame contained `partial` but not `partial-complete`.
+- Focused green: the dashboard matrix, later-frame split repaint, documentation contract, and synthetic-child
+  inventory each passed **1 test**. The `private_config_masks` cluster passed **7 tests**.
+- Sabotage: reintroducing the old `git@` exemption into a temporary byte-restored working copy made the
+  matrix fail **8** authenticated-`git` variants; changing only later `settle` to zero made the split-repaint
+  regression fail **1** test. Both real files were restored byte-for-byte before their green reruns.
+- A new job-local virtual environment installed `pyte==0.8.2` and `wcwidth==0.8.2` from
+  `scripts/frames/requirements.txt`:
+  - `TMPDIR="$CLAUDE_JOB_DIR/tmp/f0-pass18-python/tmp" <fresh-venv>/bin/python3 -m unittest discover -s test/python -p 'test_*.py'` — **PASS; 64 tests in 22.667 seconds**.
+  - `env -u CLAUDE_JOB_DIR TMPDIR="$CLAUDE_JOB_DIR/tmp/f0-pass18-python/tmp" <fresh-venv>/bin/python3 -m unittest discover -s test/python -p 'test_*.py'` — **PASS; 64 tests in 22.460 seconds**.
+- Ten complete 64-test runs from that fresh pinned environment passed with one low-priority CPU-bound process:
+  **10/10 PASS**, with durations **20.231–21.318 seconds**. Each iteration also required return code zero,
+  `Ran 64 tests`, and ANSI-normalized `OK`.
+- This correction did not alter a tracked `.ansi` fixture byte; the conditional independent stable-cwd upstream
+  capture/comparison was therefore not rerun. No production TypeScript changed, so a TypeScript typecheck is
+  not applicable. `git diff --check` is rerun after this report append.
+
+### Residual concerns
+
+There is no remaining known redaction bypass or later split-repaint publication path in the exercised
+2.1.220 fixture and synthetic matrix. The unrelated manual terminal `Ctrl-Z` → `fg` acceptance concern
+remains. Protected concurrent untracked files were not edited, staged, removed, or used as test inputs; no
+commit or push was performed.
+
+## Nineteenth plugin review fix pass
+
+Source of truth: `/Users/new/.claude/jobs/e1de885d/tmp/pass18-scoped-findings.md`.
+
+### Root cause, red proofs, repairs, and sabotage
+
+1. **P1 — whole-frame privacy stopped at the comparison boundary.** Capture already applied the shared
+   redaction contract to the complete `render_screen()` result before publishing a tracked fixture, but
+   `frame-diff.py` split its input into physical lines and applied the same redaction expressions one line at
+   a time. The status identity expression deliberately needs the following indented `⏸ manual mode on` row,
+   so an authenticated raw frame compared against its redacted golden falsely diverged. The divergent output
+   and its allowlist fingerprint received the raw line.
+
+   `frame_masks.py` now exposes `preprocess_frame_for_publication()` as the complete-frame privacy seam.
+   Capture calls it before staging; comparison calls it before line splitting through
+   `preprocess_frame_for_comparison()`. Only after privacy succeeds do the existing narrow, line-compatible
+   `by_frame` nondeterminism masks run. If a primary substitution or residual identity guard fails,
+   comparison is a safe `DIVERGENT` diagnostic naming only the failed contract labels: it prints neither
+   unified lines nor a fingerprint. Canonical frame keys, nested allowlist scope, exact canonical JSON
+   fingerprints for safe comparisons, and stale/malformed allowlist behavior remain unchanged.
+
+   Red proof: a controlled raw status frame and its redacted equivalent returned exit **1**, reported
+   `DIVERGENT`, and the test observer found the synthetic identity in both the divergent output and the
+   pre-mask fingerprint input. The new full CLI regression was red before the repair; the ANSI-split and
+   row-wrapped privacy variants produced **two** red subtest failures, and a real semantic change remains
+   divergent after the repair without exposing the identity.
+
+   Sabotage proof: replacing the shared preprocessing block in `frame-diff.py` with the former linewise
+   `load_masks()`/`splitlines()` loop made
+   `diff_redacts_multiline_status_identity_before_output_or_fingerprint` fail (exit **1**). The exact source
+   bytes were restored (SHA-256 `a16c1b89e44157e059367879fda57ca1e1d7e198e8e48134149d0e18e5c97fcd`) and the
+   focused regression passed again.
+
+2. **P2 — one Task 11 final-check command still used the retired repository-local interpreter.** The plan
+   setup and scripts correctly specify the job-local pinned environment, but the final instrument re-check
+   had two stale invocations. Task 11 now invokes capture and diff through
+   `"$CLAUDE_JOB_DIR/tmp/frame-python-venv/bin/python3"`.
+
+   The documentation contract now checks both governing documents (`VERSION` and the F0 plan) for the
+   pinned interpreter and rejects the stale repository-local path. It was red before the plan repair.
+
+   Sabotage proof: replacing one final Task 11 pinned interpreter with the stale form made
+   `frame_emulator_dependencies_are_exactly_pinned_and_documented` fail (exit **1**). The plan bytes were
+   restored exactly (SHA-256 `d0b725634433028b32d84a94ad5a333b8d8cad9ec10d4e0b47ffe1110e94c17e`), and the
+   documentation contract passed again.
+
+### Pass-19 verification
+
+All commands ran from `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness`. A new job-local
+virtual environment at `$CLAUDE_JOB_DIR/tmp/f0-pass19-python-venv` installed the exact
+`pyte==0.8.2` and `wcwidth==0.8.2` requirements. No credential file, real settings, API key, or OAuth token
+was loaded or printed.
+
+- Focused red/green: the whole-frame raw/redacted comparison, ANSI-split/row-wrapped private failure, and
+  documentation contract tests were each **1 test** green after repair; before repair they failed with
+  **1**, **2**, and **1** failures respectively.
+- Frame-diff authenticated/raw acceptance:
+  `-k diff_redacts_multiline_status_identity_before_output_or_fingerprint` — **PASS; 1 test in 0.094 s**.
+  It proves equivalent authenticated/raw and redacted frames are clean, while a real non-identity semantic
+  difference stays divergent with a fingerprint that contains no identity.
+- Fixture baseline:
+  `-k synthetic_unredacted_identities_round_trip_to_all_stored_goldens_without_git_history` — **PASS; 1 test
+  in 0.005 s**. Pass 19 changed no tracked `.ansi` bytes, so an independent stable-cwd upstream recapture was
+  not applicable; this all-eight-fixture round-trip is the applicable non-live baseline.
+- Documentation contract:
+  `-k frame_emulator_dependencies_are_exactly_pinned_and_documented` — **PASS; 1 test in 0.002 s**.
+- Fresh pinned full suite:
+  `TMPDIR="$CLAUDE_JOB_DIR/tmp" <fresh-venv>/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`
+  — **PASS; 66 tests in 21.466 s**.
+  `env -u CLAUDE_JOB_DIR TMPDIR="$CLAUDE_JOB_DIR/tmp" <fresh-venv>/bin/python3 -m unittest discover -s
+  test/python -p 'test_*.py'` — **PASS; 66 tests in 20.453 s**.
+- Stability: with the same temporary low-priority CPU-bound load used by pass 18, ten complete 66-test runs
+  passed **10/10** with ANSI-normalized `OK`: **21.298, 21.589, 20.861, 20.658, 21.311, 20.667, 21.479,
+  20.991, 20.734, and 20.687 seconds**. The helper process was terminated by a shell exit trap.
+- `git diff --check` passed before this report append and is rerun afterward. No production TypeScript changed,
+  so a TypeScript typecheck is not applicable.
+
+### Residual concerns
+
+No remaining known whole-frame privacy, diff-output, fingerprint, or documented-interpreter concern remains.
+The pre-existing manual terminal `Ctrl-Z` → `fg` acceptance concern is unrelated. Protected concurrent
+untracked files were not edited, staged, removed, or used as test inputs; no commit or push was performed.
+
+## Twentieth plugin review fix pass
+
+Source of truth: `/Users/new/.claude/jobs/e1de885d/tmp/pass19-scoped-findings.md`.
+
+### Installed-reference evidence and root causes
+
+1. **P1 — manual-only dashboard status scope.** The 2.1.220 installed reference, not `Claude Code Src`,
+   defines the external permission modes at `~/claude-code-bundle/2.1.220/cli.pretty.js:41456-41536` and the
+   complete display table at `:41536`. Its normal renderer at `:493969-493971` and dense renderer at
+   `:494036-494038` both render `[symbol] [indicator] on`: `⏸ manual mode on`, `⏸ plan mode on`,
+   `⏵⏵ accept edits on`, `⏵⏵ bypass permissions on`, `⏵⏵ don't ask on`, and `⏵⏵ auto mode on`. Non-default
+   modes can add `(shift+tab to cycle)`; the shell-mode path has no permission marker. The committed 100×40
+   fixtures corroborate manual-mode ANSI and both footer shapes: full on help boot/closed and composer
+   cleared/killed, reduced on typed/Esc-armed/yanked, while help-open omits the status row. Before this pass,
+   both substitution and residual guard literally required only `⏸ manual mode on`, so a real non-manual
+   dashboard status could remain raw. The rules now substitute after all six exact installed markers. The
+   SGR-normalized residual guard treats any adjacent `⏸` or `⏵⏵` `[indicator] on` marker as dashboard-shaped
+   and fails closed when its label is unknown. It remains context-bound to the indented status/path rows, so
+   transcript and code text without dashboard chrome, including `git@host`, retains its semantics.
+2. **P2 — publication coverage coupled to comparison.** `preprocess_frame_for_comparison()` called the
+   strict publication seam. A stored `▒` golden therefore could not satisfy a custom contract's nonzero raw
+   match minima even when a raw current authenticated frame sanitized to exactly the same result. Publication
+   remains `preprocess_frame_for_publication()`/`redact_text()` with required per-pattern and aggregate counts.
+   The new explicit `sanitize_frame_for_comparison()` applies the same substitutions opportunistically, then
+   runs every residual identity guard before splitting, diffing, or fingerprinting; it never reimposes raw
+   publication coverage on either side.
+
+### TDD red proofs, repairs, and sabotage
+
+- The installed-marker table test was red before the config repair with **23 failures**: every non-manual
+  exact case was unredacted, split/wrapped non-manual statuses were not rejected, and the unknown marker was
+  failure-open. It covers all six exact reference strings, the optional auto `(shift+tab to cycle)` suffix,
+  manual and auto reduced/full footers, real username `git`, ANSI-split and row-wrapped fail-closed paths,
+  transcript preservation, and raw-versus-redacted
+  manual/auto frame-diff acceptance. It is green after the two narrow config changes.
+- The focused custom-contract comparison test was red before the API repair: its already-redacted golden
+  failed `raw-identity matched 0/1; total matched 0/1`. It asserts that publication still reports those exact
+  count failures, equivalent raw/redacted comparison is clean, a semantic difference still fingerprints as
+  divergent without identity, and an unmatched guarded identity fails before output or fingerprint. It is
+  green after the comparison sanitizer split.
+- The documentation contract was written red for the absent five non-manual installed markers and the two
+  privacy-role descriptions, then passed after VERSION and the plan were corrected.
+- **P1 sabotage:** a byte-restored temporary removal of only the two `⏵⏵` primary alternatives produced
+  **11 failures**, covering accept-edits, bypass, don't-ask, auto (including `git`) and raw auto comparison.
+  The config SHA-256 matched its original after restoration.
+- **P2 sabotage:** a byte-restored temporary insertion of publication redaction into
+  `sanitize_frame_for_comparison()` made the custom contract fail **1** test at the redacted golden's `0/1`
+  counts. The source SHA-256 matched its original after restoration.
+- Post-sabotage focused green checks: exact mode table **1**, comparison custom contract **1**, legacy
+  `private_config_masks` cluster **7**, and pinned documentation contract **1** test.
+
+### Pass-20 verification
+
+All commands ran from `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness`. No credential file,
+real settings, API key, or OAuth token was loaded or printed.
+
+- Applicable non-live stable-cwd baseline:
+  `-k synthetic_unredacted_identities_round_trip_to_all_stored_goldens_without_git_history` — **PASS; 1 test
+  in 0.005 s**. This pass did not rewrite a tracked `.ansi` fixture; the all-eight-fixture round trip is the
+  applicable baseline.
+- Fresh pinned environment: a new temporary venv installed the exact `pyte==0.8.2` and `wcwidth==0.8.2`
+  requirements, verified through package metadata. With an isolated temporary `CLAUDE_JOB_DIR`, the full
+  suite passed **68 tests in 22.557 s**; with `CLAUDE_JOB_DIR` unset it passed **68 tests in 23.949 s**.
+- Direct-shell stability: ten consecutive full 68-test runs passed **10/10** in **22.057, 22.486, 23.793,
+  22.912, 21.916, 22.467, 22.333, 21.842, 22.762, and 22.943 seconds**.
+- `git diff --check` passed before this report append and is rerun afterward. No production TypeScript changed,
+  so a TypeScript typecheck is not applicable.
+
+### Residual concerns
+
+There is no remaining known publication, comparison, non-manual dashboard-marker, raw-output, or fingerprint
+privacy concern in the exercised contract. Two preliminary subprocess-captured stability loops each hit the
+longstanding scheduler-sensitive later-repaint test once, while its isolated run passed 10/10 and the final
+fresh direct-shell gate passed 10/10; no unrelated timing code was changed. The unrelated manual terminal
+`Ctrl-Z` → `fg` concern remains. Protected concurrent untracked files were not edited, staged, removed, or
+used as test inputs; no commit or push was performed.
+
+## Pass-20 stability follow-up
+
+This follow-up supersedes the preliminary scheduler concern above.
+
+### Reproduction and causal trace
+
+The exact failure in every preliminary loop was
+`test_capture_later_frame_drains_a_split_repaint_before_publication` at
+`test_frame_scripts.py:432`, asserting that its later frame contained `partial-complete`. The original test
+sent one Enter, let the child write `partial`, then relied on `time.sleep(0.015)` before the child wrote its
+suffix. It was not a subprocess-stdout artifact:
+
+- A fresh Python wrapper using `subprocess.run(..., stdout=PIPE, stderr=STDOUT)` failed on captured full-suite
+  attempt **7/10**: exit 1, **68 tests in 23.045 s**, with `partial-complete` absent.
+- An immediate direct-shell loop using the same fresh venv failed at direct full-suite attempt **1/10**: exit 1,
+  **68 tests in 24.297 s**, with the identical assertion and rendered `partial` frame.
+
+Temporary, byte-restored timing instrumentation proved the old test's premise was invalid under scheduling:
+its child logged `partial` at monotonic `1187396.254177750`; the later frame did not begin until
+`1187396.272236458`; its nominal 20 ms pump began at `1187396.272296833` and returned only at
+`1187396.336826666`, without the sleeping child ever logging its `-complete` write before capture teardown.
+The preceding nominal 50 ms pump likewise consumed 138.593 ms. Therefore a scheduler-delayed child sleep,
+not a capture readiness or stdout-pipe behavior, controlled the old assertion. Extending the production drain
+would only exchange one unbounded scheduler assumption for another and violate the documented 20 ms bound.
+
+### Test-harness correction and proof
+
+`capture-frames.py` now supports `wait-output:<text>`, a condition-based key-script action. It reads in 4 KiB
+chunks only while looking for the marker, retains at most 64 KiB of raw PTY output in memory, returns as soon
+as the marker arrives, and prints neither the marker nor its raw tail. The repaired repaint test uses two
+observed markers and a 4 KiB post-marker transport chunk, placing the final suffix beyond the single zero-drain
+read but comfortably inside the real 20 ms drain. The frame itself remains a real pyte-rendered PTY capture.
+
+- **Red:** before the action existed, the rewritten test failed **1 test** with
+  `unknown action in key script: 'wait-output:partial'` before writing its second frame.
+- **Green:** the condition-based test passed **1 test in 0.448 s**.
+- **Sabotage:** replacing only `SNAPSHOT_DRAIN_SECONDS = 0.02` with zero made the same test fail **1 test**;
+  `-complete` was absent from the later frame. The exact `capture-frames.py` bytes were restored by SHA-256.
+
+### Follow-up verification
+
+A new pinned venv verified `pyte==0.8.2` and `wcwidth==0.8.2` through package metadata. No credential file,
+real settings, API key, or OAuth token was loaded or printed.
+
+- Captured wrapper fresh suite: isolated `CLAUDE_JOB_DIR` **68 tests in 23.318 s**; unset
+  `CLAUDE_JOB_DIR` **68 tests in 22.784 s**. Ten subprocess-captured full-suite repetitions passed **10/10**
+  in wall-clock **21.685, 23.022, 21.660, 21.960, 22.074, 22.459, 22.429, 22.121, 22.553, and 22.587 seconds**.
+- Direct shell fresh suite: isolated `CLAUDE_JOB_DIR` **68 tests in 21.911 s**; unset `CLAUDE_JOB_DIR`
+  **68 tests in 22.413 s**. With `set -e`, ten direct full-suite repetitions passed **10/10** in suite times
+  **22.129, 21.410, 21.849, 21.934, 21.670, 21.805, 22.810, 23.101, 22.582, and 22.957 seconds**.
+- `git diff --check` passed before this follow-up append and is rerun afterward. No production TypeScript
+  changed, so a TypeScript typecheck is not applicable.
+
+### Residual concerns
+
+The original loop failure is fixed as a test-harness correctness defect; both the subprocess-captured and
+inherited-stdout execution styles now pass their full fresh ten-run loops. The unrelated manual terminal
+`Ctrl-Z` → `fg` concern remains. Protected concurrent untracked files were not edited, staged, removed, or
+used as test inputs; no commit or push was performed.
+
+## Twenty-first plugin review fix pass
+
+### Contract and minimality audit
+
+The pass-20 review found that the tracked status rule used the same arbitrary `{0,2}` rendered-row bound for
+both substitution and its SGR-normalized residual guard. That boundary is not a renderer contract: the
+installed 2.1.220 footer uses a column layout below 80 columns, so a normal narrow terminal can put one status
+block on more than two physical rows. Rejecting ordinary narrow columns or long working directories would
+therefore reject a supported reference layout, and merely choosing a larger number would only overfit a newer
+fixture.
+
+`frame_masks.py` now has the narrow config-driven `DashboardStatusMask`. It walks a contiguous nonblank
+rendered block ending at an indented dashboard-shaped marker. An exact 2.1.220 mode marker makes an unbroken,
+raw-status-chrome `user@host` span replaceable regardless of path wrap count. The configured marker shape also
+finds unknown `⏸`/`⏵⏵` modes: those, SGR-split identities, and row-split identities remain unredacted and fail
+closed before publication, rendered diff, or fingerprint. The scope is still narrow: a transcript/code
+`user@host:/…` without that dashboard block is unchanged. This replaces the row count with the installed
+renderer’s actual semantic boundary; it is not a broader identity or transcript redaction.
+
+`wait-output:<marker>` now creates one empty `bytearray` generation for each action and passes it only to that
+action’s `pump` call. It retains at most the existing 64 KiB tail, still matches a marker across reads, has the
+same timeout and child-death paths, and prints neither marker nor retained output. No global output tail remains
+to satisfy a later same-marker action.
+
+### Red, green, and sabotage evidence
+
+All commands ran from `CC-to-SDK/harness` with synthetic children only. No credential file, real user settings,
+API key, or OAuth token was read or printed.
+
+- **Red:** a fresh `pyte==0.8.2` / `wcwidth==0.8.2` venv ran the two new tests before the production changes:
+  `FrameScriptsTest.test_dashboard_status_block_redacts_arbitrary_wrapped_rows_for_publication_and_diff` and
+  `FrameScriptsTest.test_capture_wait_output_requires_a_fresh_marker_for_each_action`. Both failed in **0.366 s**.
+  The first left the four-row status identity raw; the second captured `SECOND-PENDING` before the second,
+  same-marker repaint.
+- **P1 regression:** the 32-column synthetic capture naturally wraps a canonical status path across four rows,
+  publishes a redacted frame, and then runs a semantic divergent frame comparison. The comparison may print its
+  fingerprint and semantic diff but neither stdout nor stderr contains the raw identity. It also preserves a
+  transcript remote token outside dashboard chrome.
+- **P2 regression:** one script waits for `SYNC-MARKER`, captures `FIRST-READY`, then waits for the exact same
+  marker after Enter. The child emits `SECOND-PENDING`, then emits the fresh marker split across two PTY writes.
+  The later frame must contain `SECOND-READY` and not `SECOND-PENDING`.
+- **Green:** the two regressions plus installed-marker, fail-closed, and split-repaint coverage passed **5 tests
+  in 1.679 s**. After adapting two legacy tests to contiguous SGR-split rejection under the structural contract,
+  the two regressions plus those legacy guards passed **5 tests in 1.682 s**.
+- **P1 sabotage:** temporarily changing only the two configured recognized `auto mode` alternatives to
+  `auto-disabled mode` made the four-row regression fail **1 test** at the expected unredacted identity.
+  Restoring the config produced SHA-256
+  `7b8edea271170bd5470181d6bd1c2dd82e6a0e9c539fb6df2c1d9cb51110fa99`.
+- **P2 sabotage:** temporarily preloading every fresh wait generation with its marker reproduced stale-generation
+  acceptance and made the same-marker regression fail **1 test** because its second frame lacked `SECOND-READY`.
+  `bytearray()` was restored after the sabotage; the final byte check after the grammar documentation update
+  produced SHA-256 `ee2145a85062bd0108a68020609a3a7ed641119ce32210cfc12007e51df776b9`
+  for `capture-frames.py`.
+
+### Verification
+
+- A separately created `/tmp/f0-pass21-verify-python-venv` installed the exact pinned requirements and verified
+  package metadata for `pyte 0.8.2` and `wcwidth 0.8.2`.
+- Full suite with an isolated temporary `CLAUDE_JOB_DIR`:
+  `/tmp/f0-pass21-verify-python-venv/bin/python3 test/python/test_frame_scripts.py` — **70 tests in 23.403 s**.
+  The same command with `CLAUDE_JOB_DIR` unset passed **70 tests in 23.532 s**. The expected injected
+  private-config seed-write test emits its own controlled error line in both runs.
+- No fixture changed in this pass, so the applicable stable-CWD baseline was
+  `test_synthetic_unredacted_identities_round_trip_to_all_stored_goldens_without_git_history`; that plus the new
+  synthetic capture/diff privacy acceptance passed **2 tests in 0.295 s**.
+- Ten full suites through a `subprocess.run(..., stdout=PIPE, stderr=STDOUT)` wrapper passed **10/10** in
+  **23.584, 23.758, 23.584, 23.271, 23.175, 23.720, 23.093, 23.093, 23.033, and 23.475 seconds**.
+- Ten full suites with inherited terminal stdout passed **10/10** in **23.718, 23.869, 23.503, 23.313, 22.818,
+  23.120, 23.113, 23.213, 23.558, and 23.065 seconds**.
+- `git diff --check` passed before this report append and is rerun afterward. No production TypeScript changed,
+  so a TypeScript typecheck is not applicable.
+
+### Changed files and residual concerns
+
+This pass changed `harness/scripts/frame_masks.py`, `harness/scripts/frames/masks.json`,
+`harness/scripts/capture-frames.py`, `harness/test/python/test_frame_scripts.py`, and
+`docs/superpowers/plans/2026-07-31-tui-clone-f0.md`, as well as this report. Protected concurrent untracked
+files were not touched, staged, removed, or used as inputs; no commit or push was performed.
+
+The exact 2.1.220 marker set is intentionally closed. A future marker-shaped installed status remains a private
+capture/comparison failure until reviewed config adds its semantic marker; it cannot become a raw published or
+fingerprinted identity. The unrelated manual terminal `Ctrl-Z` → `fg` concern remains.
+
+## Twenty-second plugin review fix pass
+
+Source of truth: `/Users/new/.claude/jobs/e1de885d/tmp/pass21-scoped-findings.md`.
+
+### Installed-reference evidence and root causes
+
+1. **P1 — padded/right-aligned footer recognition.** The installed 2.1.220 renderer is authoritative. Its
+   right footer column is created as an end-aligned, overflow-hidden column at
+   `~/claude-code-bundle/2.1.220/cli.pretty.js:489333-489351`; for an invalid or missing credential,
+   `:489412-489415` renders the exact `Not logged in · Run /login` text with `wrap:"truncate"`. The normal
+   left renderer emits the mode plus finite action slots at `:493967-494031`; the dense renderer reduces this
+   to mode plus the optional cycle action at `:494036-494038`. A settings-isolated installed capture confirmed
+   that at 60 columns the full left footer and account state flow onto separate rows, and at 40 columns the left
+   footer is exactly clipped as ` · ? for shortcuts …` while the right text remains exact.
+
+   All eight 100×40 fixture status rows were inspected after SGR normalization. `help-overlay/01-boot` and
+   `03-closed`, plus `composer-basics/03-cleared` and `04-killed`, are full mode + shortcut/agent rows with the
+   right account column. `composer-basics/01-typed`, `02-esc-armed`, and `05-yanked` are reduced mode rows with
+   that same padded account column. `help-overlay/02-help` has no dashboard marker. The former configuration
+   allowed an arbitrary ` · ...` suffix but did not recognize terminal padding followed by the right column, so
+   both a valid padded marker and an unknown padded marker escaped structural classification.
+
+   The new closed grammar is: one of the six exact installed mode markers, optional `(shift+tab to cycle)`, then
+   reduced output, ` · ? for shortcuts`, ` · ← for agents`, the full ` · ? for shortcuts · ← for agents`, or the
+   installed clipped ` · ? for shortcuts …`. A physical wrap may end only at a literal prefix of the known
+   `? for shortcuts` token, preserving the prior narrow-screen pass-21 regression without admitting arbitrary
+   suffixes. The logged-out right column is only `Not logged in · Run /login`, padded after the left portion on
+   the same row or rendered separately. The broader marker grammar has the same finite footer language, so an
+   unknown `⏸`/`⏵⏵` mode in that shape still fails closed.
+
+2. **P2 — hostname underscores.** The raw substitution and SGR-normalized structural matchers both allowed `_`
+   in a username but stopped the hostname at `_`. Thus `alice@host_name:/repo` was neither substituted nor
+   reported as residual identity in valid dashboard context. Both hostname positions now admit `_` alongside
+   alphanumerics, `.` and `-`; they still exclude whitespace and the `:`/`/` path delimiters. No transcript or
+   code matching was broadened.
+
+### TDD red proofs, repairs, and sabotage
+
+- **P1 red:** `test_padded_or_clipped_footer_status_identity_is_private_for_capture_and_diff` failed before the
+  grammar repair with two assertions: a valid padded `alice@host` was left raw, and an unknown padded marker was
+  silently accepted. The new test uses raw authenticated capture, whole-frame diff/fingerprint privacy, all
+  full/reduced/clipped/padded footer forms, and a chrome-free transcript negative.
+- **P2 red:** `test_dashboard_hostname_underscore_is_private_but_transcripts_remain_semantic` failed before the
+  hostname repair because `alice@host_name` was left raw. It verifies direct substitution, ANSI-split and
+  row-wrapped dashboard rejection before diff output/fingerprinting, and plain transcript/code/path negatives.
+- **Documentation red:** the pinned documentation guard failed before the `VERSION`/plan update because it still
+  said `at most two rendered wrap rows` and documented neither the right-column grammar nor hostname `_` support.
+- **P1 sabotage:** replacing all four `Not logged in · Run /login` grammar literals with `Not logged out · Run
+  /login` made the padded-footer regression fail. The masks file was restored byte-for-byte before continuing.
+- **P2 sabotage:** restoring the hostname-side raw and semantic classes to exclude `_` made the underscore
+  regression fail. The masks file was restored byte-for-byte before continuing.
+
+### Pass-22 verification
+
+All commands ran from `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness`. Fresh private capture
+configuration and synthetic test directories were used; no credential file or real settings was accessed, and no
+credential value was printed.
+
+- Fresh environment: `${CLAUDE_JOB_DIR}/tmp/f0-pass22-python-venv` installed the pinned
+  `pyte==0.8.2` and `wcwidth==0.8.2` requirements and verified both package versions through
+  `importlib.metadata`.
+- Focused red commands used `python3 -m unittest discover -s test/python -p 'test_*.py' -k` for the padded-footer,
+  underscore-hostname, and documentation regressions. They failed before repair with **2**, **1**, and **1**
+  assertion failures respectively. Their corresponding final green checks passed **1 test** each; the full suite
+  also exercised all three contracts.
+- Isolated job directory:
+  `CLAUDE_JOB_DIR=<temporary>/job TMPDIR=<temporary>/tmp <fresh-venv>/bin/python3 test/python/test_frame_scripts.py`
+  — **PASS; 72 tests in 21.953 s**.
+- Unset job directory:
+  `env -u CLAUDE_JOB_DIR TMPDIR=<temporary>/tmp <fresh-venv>/bin/python3 test/python/test_frame_scripts.py`
+  — **PASS; 72 tests in 22.322 s**.
+- Captured-output stability: ten wrapper-driven full-suite repetitions each required exit zero, `Ran 72 tests`, and
+  ANSI-normalized `OK`: **10/10 PASS**.
+- Direct-terminal stability: ten inherited-stdout full-suite repetitions passed **10/10**, each with **72 tests**
+  (23.276–24.858 s).
+- Capture/diff privacy acceptance is exercised by the two new named regressions: the padded raw status capture
+  stores no identity; its semantic diff may fingerprint without identity disclosure; SGR-split and row-wrapped
+  underscore-host statuses reject privately before a diff or fingerprint; transcript/code/path values stay exact.
+- No tracked `.ansi` fixture was rewritten in this pass, so a new stable-cwd recapture/comparison was not
+  applicable. The pre-existing dirty fixture updates were preserved untouched.
+- `git diff --check` — **PASS** before this report append and is rerun after it.
+
+### Minimality audit and residual concerns
+
+Pass 22 changes only `harness/scripts/frames/masks.json`, `harness/test/python/test_frame_scripts.py`, the fixture
+`VERSION` contract, the F0 plan, and this report. The parser/control flow and comparison-mask scope were unchanged:
+the existing configuration-driven structural seam already expressed both fixes. The duplicated scenario contracts
+remain identical, and no protected untracked file was edited, staged, removed, or used as a test input. No commit
+or push was performed.
+
+No known P1/P2 privacy bypass remains in the exercised grammar. A future installed marker or account-status text
+outside this closed language intentionally becomes a private capture/comparison failure until reviewed evidence
+adds it. The unrelated manual terminal `Ctrl-Z` → `fg` acceptance concern remains.
+
+## Twenty-third plugin review fix pass
+
+Source of truth: `/Users/new/.claude/jobs/e1de885d/tmp/pass22-scoped-findings.md`.
+
+### Root cause, installed evidence, and repair
+
+The tracked write path and scratch path previously shared `clean_child_env()`. Its ambient namespace scrub removed
+all `ANTHROPIC_*` values but deliberately retained `CLAUDE_CODE_OAUTH_TOKEN`, while the stock identity-redaction
+contract correctly permitted zero substitutions. Consequently both a logged-out and an OAuth-authenticated renderer
+could pass privacy publication and write materially different tracked ANSI. A synthetic pre-edit reproduction used
+only fake environment values and a child reporting booleans: the no-auth and fake-auth tracked calls both exited zero
+and published frames; the fake-auth child observed OAuth present, API credentials absent, and emitted different bytes.
+No credential value was printed.
+
+Installed `claude --version` in a fake-home environment returned `2.1.220 (Claude Code)`. The installed
+`~/claude-code-bundle/2.1.220/cli.pretty.js:489412-489415` renderer confirms that an `invalid` or `missing`
+credential renders the exact `Not logged in · Run /login` footer. All eight current fixtures were inspected:
+seven display that footer; `help-overlay/02-help.ansi` intentionally obscures it behind the shortcut overlay but
+retains `Welcome back!`.
+
+Tracked `capture-frames.py` now calls the same ambient scrub as scratch capture, then removes the explicitly
+recognized `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_AUTH_TOKEN` names before the child starts.
+Untracked capture retains the previous OAuth-only forwarding behavior and still rejects all Anthropic variables.
+`frame_masks.py` now parses a separate `required_state_by_frame` contract and validates its required/forbidden rules
+against the SGR-normalized raw render before redaction. The check never mutates stored ANSI. `masks.json` requires the
+installed logged-out footer for seven frames, the non-personal help-overlay state for the footer-hidden frame, and
+rejects authenticated greeting/organization state. A state or redaction failure leaves the complete staged batch
+unpublished.
+
+### TDD red proofs, green regressions, and sabotage
+
+- Red credential regression:
+  `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py' -k 'tracked_capture_scrubs_fake_credentials'`
+  failed one assertion in **0.336 s** before the scrub repair because the tracked child reported OAuth present.
+- Red state/atomicity regression:
+  `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py' -k 'tracked_capture_rejects_mixed_state_atomically'`
+  failed one assertion in **0.464 s** before the state parser because the mixed second frame published with exit zero.
+- After the repair, the credential scrub and state/atomicity regressions each passed **1 test**. The existing
+  `capture_seeds_a_private_claude_config_without_ambient_auth_or_config` regression also passed **1 test**, proving
+  untracked OAuth-only forwarding and Anthropic suppression remain intact without exposing a value.
+- Environment-scrub sabotage temporarily changed the tracked call to use the scratch environment mode. The credential
+  regression failed as required; `capture-frames.py` was restored byte-for-byte.
+- Required-state sabotage temporarily changed only the configured `help-overlay/01-boot.ansi` logged-out pattern.
+  The credential regression failed before publication; `masks.json` was restored byte-for-byte.
+
+### Verification
+
+All commands ran from `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness`. The fresh environment used a
+new fake home and test-local temporary/job directories; no real Claude settings, credential file, API key, or OAuth
+value was read or printed.
+
+- A fresh `/tmp/f0-pass23.*/venv` installed the pinned `pyte==0.8.2` and `wcwidth==0.8.2` requirements and verified
+  both package versions. With a test-local `CLAUDE_JOB_DIR`,
+  `env -i PATH="$PATH" HOME=<fake> CLAUDE_JOB_DIR=<job> TMPDIR=<tmp> <venv>/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`
+  passed **74 tests in 24.924 s**. The same command without `CLAUDE_JOB_DIR` passed **74 tests in 24.646 s**.
+- Captured-output stability: ten `subprocess.run(..., stdout=PIPE, stderr=STDOUT)` full-suite runs passed **10/10**,
+  each with 74 tests, in **24.501, 23.483, 22.981, 24.024, 26.755, 27.053, 25.610, 25.586, 23.945, 25.004 seconds**.
+  Direct-terminal stability: ten inherited-output full-suite runs passed **10/10**, each with 74 tests, in
+  **24.343, 25.392, 24.769, 24.937, 24.980, 25.761, 25.127, 24.370, 26.106, 24.693 seconds**.
+- Installed-reference recapture used the documented exact-version, `100x40`, `/tmp/frame-scratch`, masks, and private
+  config commands twice: once with no ambient credential and once with fake OAuth/API environment names. Each run
+  wrote **3 help-overlay + 5 composer-basics frames**. The two eight-frame trees were byte-identical, and the
+  configured logged-out state held **8/8** times.
+- The unchanged raw ccx comparison flow captured **3 help-overlay** and **5 composer-basics** frames. `frame-diff.py`
+  reported the known expected baseline: help **0 clean, 0 allowlisted, 3 DIVERGENT** and composer **0 clean,
+  0 allowlisted, 5 DIVERGENT**, both exit status 1.
+- `git diff --check` passed before this report append and is rerun afterward. Production TypeScript did not change, so
+  a TypeScript typecheck was not applicable.
+
+### Minimality audit and residual concerns
+
+Logged-out is deliberately chosen over requiring OAuth because it reproduces the current validated fixtures without a
+credential, prevents account identity exposure, and allows deterministic recapture by any operator. Requiring OAuth
+would make the golden depend on a personal account and recreate the ambiguity this pass closes. The code change is
+limited to destination-aware credential removal, a small configuration parser/validator, two high-signal synthetic
+regressions, and the capture contract documentation. `frame-diff.py`, comparison masks, and all pre-existing fixture
+bytes remain untouched by this pass; no protected untracked file was edited, staged, removed, or used as input, and
+no commit or push was performed.
+
+The two freshly captured installed-reference trees are exactly equal to each other but are **0/8** byte-equal to the
+pre-existing dirty fixture trees; all eight differ from line one in semantic content and SGR styling. One inspected
+keyless boot frame retained the exact logged-out footer but used a different palette/layout. This is an environmental
+fixture-determinism concern outside the authentication separation, so the validated existing fixture bytes were not
+replaced. The unrelated manual terminal `Ctrl-Z` → `fg` concern remains.
+
+## Twenty-fourth plugin review follow-up — terminal capability determinism
+
+This follow-up resolves the pass-23 environmental concern rather than replacing fixtures. All commands used
+`/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness`, fake or private capture configuration, and
+synthetic credentials only. No real settings, credential file, or credential value was read or printed.
+
+### Diagnosis
+
+Three ANSI-aware, byte-only comparisons isolated the source of drift:
+
+1. The exact documented normal-shell upstream capture, with recognized authentication variables removed, matched the
+   existing dirty candidates **8/8 raw bytes** and **8/8 SGR-normalized semantic bytes**.
+2. The same normal terminal environment with a fake `HOME` still matched the three help-overlay candidates **3/3**,
+   proving the private `CLAUDE_CONFIG_DIR` seed—not a real-home setting—controls this capture path.
+3. The clean `env -i` no-auth capture differed **0/8**, from line one, from the candidates. A safe presence-only
+   inventory considered `COLORTERM`, `FORCE_COLOR`, and `LC_CTYPE`; no values were reported. One-variable help
+   recaptures found only `COLORTERM` sufficient (**3/3** candidate matches). `FORCE_COLOR` alone and `LC_CTYPE` alone
+   each matched **0/3**. A clean fake-home capture with the literal non-secret `COLORTERM=truecolor` then matched the
+   intended candidates **8/8**.
+
+The installed 2.1.220 bundle corroborates the experiment: its Chalk capability initialization considers terminal
+color inputs including `COLORTERM` at `~/claude-code-bundle/2.1.220/cli.pretty.js:20087-20102` and `:33055-33076`;
+color-level selection is process-start state at `:33212-33234`. The earlier clean tree lacked that capability signal,
+selecting a different palette/dim/layout branch. The candidates are therefore current and reproducible, not stale.
+
+### Repair, TDD, and sabotage
+
+Tracked `clean_child_env()` now applies the one-value `TRACKED_TERMINAL_ENV` contract:
+`COLORTERM=truecolor`. It does so after tracked credential removal and before child start; untracked/scratch capture
+continues to preserve its ambient terminal capability and OAuth-only credential behavior.
+
+- The tracked child-environment regression was first made red by requiring `"colorterm": "truecolor"`; before the
+  pin it failed because the observed value was absent. It passed after the one-branch environment update.
+- The existing scratch inventory regression now proves a supplied synthetic terminal capability remains unchanged for
+  untracked capture, alongside OAuth forwarding and Anthropic suppression; it passed **1 test**.
+- Sabotage temporarily removed the tracked `env.update(TRACKED_TERMINAL_ENV)` call. The tracked regression failed as
+  required, then `capture-frames.py` was restored byte-for-byte and both tracked and scratch regressions passed.
+
+### Final acceptance
+
+- Two independent clean fake-home installed captures, one no-auth and one with fake OAuth/API names, each wrote
+  **3 help-overlay + 5 composer-basics** frames. Both trees matched all intended tracked candidates **8/8 raw bytes**
+  and matched one another **8/8 raw bytes**.
+- The tracked-only terminal pin did not affect untracked comparison. Fresh raw ccx captures preserved the required
+  baseline: help **0 clean, 0 allowlisted, 3 DIVERGENT** and composer **0 clean, 0 allowlisted, 5 DIVERGENT**.
+- Fresh pinned suites with a test-local `CLAUDE_JOB_DIR` and with it unset each passed **74 tests** in **25.126 s** and
+  **24.851 s**, respectively. `npm run typecheck` passed.
+- The final captured-output stability loop passed **10/10** in **22.924, 22.893, 23.788, 24.244, 25.418, 25.610,
+  25.250, 25.047, 24.663, 25.421 seconds**. The final direct-terminal loop passed **10/10** in **25.256, 27.019,
+  24.240, 25.113, 24.700, 24.336, 25.269, 24.907, 24.229, 25.171 seconds**. One earlier buffered loop failed while
+  an independent source-tracing worker was consuming the host; the pre-existing first-frame liveness test then passed
+  **10/10** in isolation, and the final full captured loop passed 10/10 after the worker completed.
+
+### Minimality and residual concerns
+
+The fix adds one tracked-only terminal capability assignment, two precise child-environment assertions, and contract
+documentation. It does not change fixture bytes, comparison masking, frame-diff behavior, capture geometry, private
+configuration seeding, or scratch capture behavior. Protected untracked files were not edited, staged, removed, or
+used as inputs; no commit or push was performed. The pass-23 **0/8** concern is superseded by the root-cause proof
+and post-pin **8/8** candidate equality. The unrelated manual terminal `Ctrl-Z` → `fg` concern remains.
+
+## Twenty-fourth plugin review fix pass
+
+### Scoped findings and root causes
+
+This pass resolves the later scoped review’s two remaining capture defects without replacing any validated fixture
+bytes. All commands used fake homes, private temporary configuration/output directories, synthetic child processes,
+or the installed logged-out Claude binary. No real settings, credential file, API key, OAuth value, or protected
+untracked path was read, printed, changed, staged, or used as input. No commit or push was performed.
+
+1. **forkpty process-group race.** `pty.fork()` can return to the parent before its child has formed process group
+   `pid`. The prior helper swallowed `killpg(pid, SIGKILL)` `ESRCH` and immediately blocked in `waitpid(pid, 0)`,
+   leaving a live interactive leader indefinitely. A second investigation also found that the liveness pump may reap
+   an exited leader before final cleanup while a descendant still occupies that now-orphaned process group; a
+   `getpgid(pid)`-first repair would leak that descendant. The repair retries only `killpg(pid, SIGKILL)` for at most
+   200 ms (5 ms polling), never targets the controller’s PID or process group, then safely kills the leader before
+   blocking reap only when no addressable group appeared. Thus a live or orphaned child group remains tree-safe,
+   and a group-creation failure cannot make reaping unbounded. Both the pre-first-frame terminal-init error path and
+   the normal `finally` retain kill/reap → master-FD close → private-config removal ordering.
+2. **tracked color capability was still ambient-sensitive.** Installed Claude Code 2.1.220 resolves
+   `supports-color@10.2.2`: `FORCE_COLOR=0` selects level 0 before normal detection; `TF_BUILD`/`AGENT_NAME`, CI,
+   provider markers, and `TEAMCITY_VERSION` select earlier branches; `COLORTERM=truecolor` then selects level 3;
+   `TERM`/`TERM_PROGRAM` branches follow. The installed `colorize.ts` clamps level 3 to 2 under `TMUX`, and
+   `systemTheme.ts` derives the palette from `COLORFGBG`. The eight validated frames contain literal level-3 RGB
+   SGR (`38;2;...`), so either a level downgrade or palette seed changes their bytes. For tracked children only,
+   `clean_child_env()` now removes `FORCE_COLOR`, `NO_COLOR`, CI/provider selectors, `TMUX`, `TERM_PROGRAM`,
+   `TERM_PROGRAM_VERSION`, and `COLORFGBG`, then uses the existing authoritative `TERM=xterm-256color` and
+   `COLORTERM=truecolor` contract. Scratch children retain every supplied ambient terminal variable.
+
+### TDD, red proofs, and sabotage
+
+- The deterministic P1 regression forks a real SIGHUP-ignoring synthetic child in an outer process, forces every
+  group signal to raise `ProcessLookupError`, and simulates the not-yet-private group. Before implementation it
+  timed out at the test’s original one-second outer guard; its final two-second launch allowance is only for
+  interpreter/PTY startup, while the production retry stays 200 ms. After the repair the child is dead and reaped
+  in the test process. A ten-case empty/comment-only script test and a condition-synchronized terminal-init failure
+  test cover both immediate cleanup call sites; the latter records a real descendant and proves both PIDs exit.
+- The P2 hostile matrix first failed because the tracked child received synthetic `FORCE_COLOR=0` and `NO_COLOR=1`.
+  It exercises force/no-color, all detector CI/provider selectors, tmux/terminal/palette selectors, and their
+  combination; post-repair it asserts none remain, `TERM=xterm-256color`, `COLORTERM=truecolor`, logged-out state,
+  and byte-identical synthetic output. The pre-existing real scratch-child regression was extended to prove every
+  same supplied terminal value is preserved in both success and failure capture paths.
+- Installed reference red proof: a fake-home/private-config 2.1.220 help-overlay capture with only synthetic
+  `FORCE_COLOR=0` was **0/3** raw-equal to the candidates and contained **0** level-3 RGB SGR sequences. No
+  credential was present. The first temporary run used a random `--cwd` and exposed that cwd is intentional
+  dashboard content; all acceptance recaptures used the documented `/tmp/frame-scratch` cwd.
+- P1 sabotage temporarily disabled leader fallback. The deterministic race regression timed out and failed as
+  required; the fallback was restored before subsequent gates. P2 sabotage temporarily omitted the terminal-unset
+  union. The hostile matrix failed on leaked `FORCE_COLOR`/`NO_COLOR`; the union was restored before subsequent gates.
+
+### Final acceptance evidence
+
+All Python commands below used the fresh pinned `pyte==0.8.2` / `wcwidth==0.8.2` venv created outside the repository.
+
+- `env -i PATH="$PATH" HOME=<fake> TMPDIR=<tmp> CLAUDE_JOB_DIR=<job> <venv>/bin/python -m unittest discover -s test/python -p 'test_*.py'`
+  passed **77 tests in 31.667 s**. The same command without `CLAUDE_JOB_DIR` passed **77 tests in 30.147 s**.
+  Expected injected seed-write and terminal-init failure messages occurred only inside their respective tests.
+- Captured-output stability ran the same fresh 77-test suite **10/10** in
+  **31.247, 31.519, 31.744, 31.510, 31.505, 33.626, 31.429, 32.111, 31.600, 31.792 seconds**.
+  Direct inherited-output stability ran **10/10** in
+  **30.008, 30.913, 30.426, 30.886, 32.128, 32.020, 30.401, 29.805, 28.837, 29.602 seconds**.
+  The final captured loop initially exposed scheduler-startup flakiness: the initial rendered-cell wait was increased
+  from 0.5 to 1.0 second, and only outer subprocess assertions were widened to two seconds; after that measured
+  correction, both loops passed. The 200 ms production group retry was unchanged.
+- Focused process-group stress ran the forced race fallback **20/20** and real descendant cleanup **20/20** under
+  fake environment state, with individual runs spanning **0.366–1.348 s**. The controller-process-group guard,
+  terminal-init reaping, and empty/comment script stress regressions also pass.
+- Two independent installed 2.1.220 full recaptures, each with a fake home/private config and a different hostile
+  environment (one including `FORCE_COLOR=0`, `NO_COLOR`, all CI/provider markers, tmux/terminal/palette inputs;
+  one using a different force/CI/tmux/terminal combination), wrote **3 help-overlay + 5 composer-basics** frames.
+  At `/tmp/frame-scratch`, each matched the existing candidates **8/8 raw bytes** and contained **457** RGB SGR
+  occurrences. Temporary tracked destinations and custom contract files were removed after comparison.
+- The unchanged no-auth local `ccx` baseline wrote **3 + 5** untracked frames. `frame-diff.py` retained its expected
+  result: help-overlay exit **1** with **3** divergent frame headers, composer-basics exit **1** with **5** divergent
+  frame headers.
+- `npm run typecheck` passed. `git diff --check` is rerun after this report append.
+
+### Residual concerns
+
+The capture command intentionally renders `--cwd` in its dashboard; future byte-comparison recaptures must keep the
+contracted `/tmp/frame-scratch` path rather than a random temporary cwd. The process-group fallback is deliberately
+bounded and controller-safe, but cannot clean arbitrary descendants that never join the forkpty child group; the
+capture child and descendants created by its normal process tree do join it, as the real stress test proves. The
+unrelated manual terminal `Ctrl-Z` → `fg` concern remains. Fixture bytes, comparison masking, private-config seeding,
+and untracked capture semantics are otherwise unchanged.
+
+## Twenty-fourth plugin rereview — clean
+
+The installed doperpowers Codex companion reviewed the complete uncommitted pass-13-through-pass-24 diff against
+`6798e859f5` using `gpt-5.6-sol`. Its explicit terminal verdict was:
+
+> No actionable correctness defects were found. Targeted checks passed, although the full tempfile-dependent Python
+> suite could not run in the read-only environment.
+
+The full review transcript is recorded at
+`$CLAUDE_JOB_DIR/tmp/pass24-scoped-codex-review.log`. The reviewer's environment limitation does not replace the
+fresh authoritative gates above: both 77-test environments, both ten-run stability loops, process-group stress,
+hostile-environment installed recaptures, the 3/5 ccx baseline, TypeScript typecheck, and `git diff --check` all
+passed on the reviewed bytes. The scoped correctness gate is therefore clean.

@@ -8,20 +8,21 @@ streams — raw pty output is not comparable across binaries (repaint strategies
 grid is.
 
 Setup (once, PEP 668 blocks a bare pip on this machine):
-    python3 -m venv scripts/frames/.venv && scripts/frames/.venv/bin/pip install -r scripts/frames/requirements.txt
-Run every invocation of this script with that interpreter: scripts/frames/.venv/bin/python3.
+    python3 -m venv "$CLAUDE_JOB_DIR/tmp/frame-python-venv" && "$CLAUDE_JOB_DIR/tmp/frame-python-venv/bin/pip" install -r scripts/frames/requirements.txt
+Run every invocation of this script with that interpreter: "$CLAUDE_JOB_DIR/tmp/frame-python-venv/bin/python3".
 
 Key-script grammar (one action per line, # comments and blank lines ignored):
     wait:<seconds>      sleep while pumping output
+    wait-output:<text>  wait for a raw pty marker emitted after this action begins
     type:<text>         write text verbatim (no Enter)
     enter               write \r
     key:<name>          esc | tab | up | down | ctrl-<letter> | a raw \xNN escape
     frame:<name>        snapshot the screen now
 
 Usage (from harness/):
-    scripts/frames/.venv/bin/python3 scripts/capture-frames.py \
+    "$CLAUDE_JOB_DIR/tmp/frame-python-venv/bin/python3" scripts/capture-frames.py \
         --script scripts/frames/help-overlay.keys \
-        --out test/fixtures/upstream-frames/help-overlay --bin "claude" --cwd /tmp/frame-scratch \
+        --out test/fixtures/upstream-frames/help-overlay --bin "claude" --cwd "/tmp/frame-scratch" \
         --cols 100 --rows 40 --redact-masks scripts/frames/masks.json \
         --expected-version "2.1.220 (Claude Code)"
 Omitting --bin runs OUR binary: node --import tsx src/cli/bin.ts --cwd <cwd>, from the harness checkout
@@ -45,7 +46,18 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
-from frame_masks import RedactionContract, canonical_path, frame_key, load_redaction_contract, redact_text, tracked_fixture_relative
+from frame_masks import (
+    RedactionContract,
+    RequiredStateContract,
+    canonical_path,
+    frame_key,
+    load_redaction_contract,
+    load_required_state_contract,
+    preprocess_frame_for_publication,
+    redact_text,
+    tracked_fixture_relative,
+    validate_required_state,
+)
 
 try:
     import pyte
@@ -54,8 +66,8 @@ try:
     from wcwidth import wcwidth
 except ImportError:
     sys.exit(
-        "pyte not installed — run: python3 -m venv scripts/frames/.venv "
-        "&& scripts/frames/.venv/bin/pip install -r scripts/frames/requirements.txt"
+        "pyte not installed — run: python3 -m venv \"$CLAUDE_JOB_DIR/tmp/frame-python-venv\" "
+        "&& \"$CLAUDE_JOB_DIR/tmp/frame-python-venv/bin/pip\" install -r scripts/frames/requirements.txt"
     )
 
 KEY_MAP = {"esc": b"\x1b", "tab": b"\t", "up": b"\x1b[A", "down": b"\x1b[B"}
@@ -68,16 +80,75 @@ HEX6 = re.compile(r"^[0-9a-fA-F]{6}$")
 # real name/email/org, the live conversation title, and weekly quota usage instead of a pristine cold
 # boot. Golden and ccx captures must be reproducible regardless of who runs this script or from what
 # context, so the child gets a scrubbed environment: everything CLAUDE*-prefixed is dropped except the
-# one var our own binary needs to authenticate.
+# one var untracked scratch capture may use to authenticate. All ANTHROPIC_* variables stay out: their
+# credentials, profile, base URL, headers, and model overrides would supersede or perturb OAuth capture.
 KEEP_CLAUDE_ENV = {"CLAUDE_CODE_OAUTH_TOKEN"}
+RECOGNIZED_AUTH_ENV = {"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
+# Tracked ANSI goldens need the renderer's truecolor branch independently of the invoking terminal.
+TRACKED_TERMINAL_ENV = {"COLORTERM": "truecolor"}
+TRACKED_TERMINAL_UNSET = {
+    "FORCE_COLOR", "NO_COLOR", "CI", "TF_BUILD", "AGENT_NAME", "GITHUB_ACTIONS", "GITEA_ACTIONS",
+    "CIRCLECI", "TRAVIS", "APPVEYOR", "GITLAB_CI", "BUILDKITE", "DRONE", "CI_NAME",
+    "TEAMCITY_VERSION", "TMUX", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORFGBG",
+}
+ONBOARDING_COMPLETE_CONFIG = '{"hasCompletedOnboarding":true}\n'
+# One second absorbs scheduler pressure before the first rendered cell; later frames use a 20 ms drain.
+FIRST_FRAME_READY_SECONDS = 1.0
+# Once visible output arrives, drain a just-closing PTY before publishing a first frame.
+FIRST_FRAME_EXIT_DRAIN_SECONDS = 0.05
+# Every later snapshot also drains a bounded 20 ms repaint tail; this preserves the former per-frame settle.
+SNAPSHOT_DRAIN_SECONDS = 0.02
+# forkpty returns before its child has necessarily made itself the session/process-group leader.
+PROCESS_GROUP_READY_SECONDS = 0.2
+PROCESS_GROUP_POLL_SECONDS = 0.005
 
 
-def clean_child_env() -> None:
-    for name in list(os.environ):
-        if name in KEEP_CLAUDE_ENV:
-            continue
-        if name.startswith("CLAUDE") or name == "AI_AGENT":
-            del os.environ[name]
+def clean_child_env(tracked_fixture: bool) -> dict[str, str]:
+    env = {
+        name: value for name, value in os.environ.items()
+        if name in KEEP_CLAUDE_ENV or (
+            not name.startswith("CLAUDE")
+            and not name.startswith("ANTHROPIC_")
+            and name != "AI_AGENT"
+        )
+    }
+    if tracked_fixture:
+        for name in RECOGNIZED_AUTH_ENV | TRACKED_TERMINAL_UNSET:
+            env.pop(name, None)
+        env.update(TRACKED_TERMINAL_ENV)
+    return env
+
+
+def capture_temp_dir() -> str | None:
+    job_dir = os.environ.get("CLAUDE_JOB_DIR")
+    if not job_dir:
+        return None
+    path = Path(job_dir) / "tmp"
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
+
+
+def terminate_captured_process_group(pid: int) -> None:
+    if pid <= 0 or pid == os.getpid() or pid == os.getpgrp():
+        return
+    group_terminated = False
+    deadline = time.monotonic() + PROCESS_GROUP_READY_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+            group_terminated = True
+            break
+        except (ProcessLookupError, OSError):
+            time.sleep(PROCESS_GROUP_POLL_SECONDS)
+    if not group_terminated:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
 
 class DimChar(tuple):
     """A pyte-compatible character tuple with SGR 2 stored as a real cell attribute."""
@@ -337,11 +408,15 @@ def main() -> int:
         sys.stderr.write("capture-frames: tracked golden output requires --redact-masks\n")
         return 2
     redactions: dict[str, RedactionContract] = {}
+    required_states: dict[str, RequiredStateContract] = {}
     if args.redact_masks is not None:
         try:
             for seq, line in enumerate(expected_frames, 1):
                 name = f"{seq:02d}-{line.partition(':')[2]}.ansi"
-                redactions[name] = load_redaction_contract(args.redact_masks, frame_key(args.out, name))
+                key = frame_key(args.out, name)
+                redactions[name] = load_redaction_contract(args.redact_masks, key)
+                if tracked_relative is not None:
+                    required_states[name] = load_required_state_contract(args.redact_masks, key)
         except (OSError, ValueError, KeyError, re.error) as error:
             sys.stderr.write(f"capture-frames: invalid redaction masks: {error}\n")
             return 2
@@ -354,6 +429,10 @@ def main() -> int:
         if version_error:
             sys.stderr.write(f"capture-frames: {version_error}\n")
             return 2
+        missing_state = [frame_key(args.out, name) for name, contract in required_states.items() if not contract.required]
+        if missing_state:
+            sys.stderr.write(f"capture-frames: tracked golden output has no required state contract for: {', '.join(missing_state)}\n")
+            return 2
 
     try:
         stage_dir = tempfile.mkdtemp(prefix=".capture-", dir=nearest_existing_canonical_ancestor(args.out))
@@ -365,10 +444,30 @@ def main() -> int:
     stream = pyte.ByteStream(screen)
     seen_meaningful_screen = False
 
-    pid, fd = pty.fork()
+    config_dir: str | None = None
+    try:
+        child_env = clean_child_env(tracked_relative is not None)
+        config_dir = tempfile.mkdtemp(prefix=".claude-config-", dir=capture_temp_dir())
+        (Path(config_dir) / ".claude.json").write_text(ONBOARDING_COMPLETE_CONFIG, encoding="utf-8")
+        child_env["CLAUDE_CONFIG_DIR"] = config_dir
+        child_env["TERM"] = "xterm-256color"
+    except OSError as error:
+        sys.stderr.write(f"capture-frames: cannot create isolated Claude config: {error}\n")
+        if config_dir is not None:
+            shutil.rmtree(config_dir, ignore_errors=True)
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        return 2
+
+    try:
+        pid, fd = pty.fork()
+    except OSError as error:
+        sys.stderr.write(f"capture-frames: cannot start capture child: {error}\n")
+        shutil.rmtree(config_dir, ignore_errors=True)
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        return 1
     if pid == 0:
-        os.environ["TERM"] = "xterm-256color"
-        clean_child_env()
+        os.environ.clear()
+        os.environ.update(child_env)
         if args.bin:
             os.chdir(args.cwd)
             argv = shlex.split(args.bin)
@@ -380,34 +479,58 @@ def main() -> int:
 
     # Node does not read COLUMNS/LINES for a TTY; set the window size on the master fd before the
     # child paints anything, or every capture is an 80x24 frame regardless of --cols/--rows.
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", args.rows, args.cols, 0, 0))
+    try:
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", args.rows, args.cols, 0, 0))
+    except OSError as error:
+        sys.stderr.write(f"capture-frames: cannot initialize capture terminal: {error}\n")
+        terminate_captured_process_group(pid)
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        shutil.rmtree(config_dir, ignore_errors=True)
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        return 1
 
-    def pump(seconds: float) -> bool:
+    def pump(seconds: float, until_content: bool = False, until_output: bytes | None = None, output_generation: bytearray | None = None) -> bool:
         """Collect output for `seconds`; False means the child closed the pty before the script finished."""
         nonlocal seen_meaningful_screen
-        end = time.time() + seconds
-        while time.time() < end:
-            readable, _, _ = select.select([fd], [], [], min(0.2, max(0, end - time.time())))
+        end = time.monotonic() + seconds
+        read_size = 4096 if until_output is not None else 65536
+        while time.monotonic() < end:
+            readable, _, _ = select.select([fd], [], [], min(0.2, max(0, end - time.monotonic())))
             if not readable:
                 continue
             try:
-                data = os.read(fd, 65536)
+                data = os.read(fd, read_size)
             except OSError:
                 return False
             if not data:
                 return False
+            if output_generation is not None:
+                output_generation[:] = (output_generation + data)[-65536:]
             stream.feed(data)
             seen_meaningful_screen = seen_meaningful_screen or has_visible_content(screen)
+            if until_output is not None and output_generation is not None and until_output in output_generation:
+                return True
+            if until_content and seen_meaningful_screen:
+                return pump(FIRST_FRAME_EXIT_DRAIN_SECONDS)
         readable, _, _ = select.select([fd], [], [], 0)
         if readable:
             try:
-                data = os.read(fd, 65536)
+                data = os.read(fd, read_size)
             except OSError:
                 return False
             if not data:
                 return False
+            if output_generation is not None:
+                output_generation[:] = (output_generation + data)[-65536:]
             stream.feed(data)
             seen_meaningful_screen = seen_meaningful_screen or has_visible_content(screen)
+            if until_output is not None and output_generation is not None and until_output in output_generation:
+                return True
+            if until_content and seen_meaningful_screen:
+                return pump(FIRST_FRAME_EXIT_DRAIN_SECONDS)
         try:
             done, _ = os.waitpid(pid, os.WNOHANG)
             if done == pid:
@@ -432,6 +555,15 @@ def main() -> int:
                 if not pump(float(value)):
                     fail(f"pty closed during {line!r}")
                     break
+            elif action == "wait-output":
+                marker = value.encode()
+                if not marker:
+                    fail("wait-output requires a nonempty marker")
+                    break
+                output_generation = bytearray()
+                if not pump(FIRST_FRAME_READY_SECONDS, until_output=marker, output_generation=output_generation) or marker not in output_generation:
+                    fail("wait-output marker not received")
+                    break
             elif action in ("type", "enter", "key"):
                 if not pump(0):
                     fail(f"pty closed before {line!r}")
@@ -442,9 +574,10 @@ def main() -> int:
                     fail(f"short write during {line!r}: {written}/{len(data)} bytes")
                     break
             elif action == "frame":
-                # A zero-wait frame can race an immediately-exiting child. Settle only long enough to observe
-                # pty EOF/waitpid, then require that this live capture has rendered at least one real cell.
-                if not pump(0.02):
+                # The first zero-wait frame may arrive before a live child gets scheduled. Wait only until a
+                # visible cell or child death; established screens still get a bounded repaint-tail drain.
+                settle = FIRST_FRAME_READY_SECONDS if not seen_meaningful_screen else SNAPSHOT_DRAIN_SECONDS
+                if not pump(settle, until_content=not seen_meaningful_screen):
                     fail(f"pty closed before {line!r}")
                     break
                 if not seen_meaningful_screen:
@@ -453,11 +586,18 @@ def main() -> int:
                 seq += 1
                 out_name = f"{seq:02d}-{value}.ansi"
                 rendered = render_screen(screen)
+                state_failures = []
+                if tracked_relative is not None:
+                    state_failures = validate_required_state(rendered, required_states[out_name])
+                    if state_failures:
+                        fail(f"state validation failed for {frame_key(args.out, out_name)}: {', '.join(state_failures)}")
+                coverage_failures = []
                 if args.redact_masks is not None:
-                    rendered, coverage_failures = redact_text(rendered, redactions[out_name])
+                    rendered, coverage_failures = preprocess_frame_for_publication(rendered, redactions[out_name])
                     if coverage_failures:
                         fail(f"redaction coverage failed for {frame_key(args.out, out_name)}: {', '.join(coverage_failures)}")
-                        break
+                if state_failures or coverage_failures:
+                    break
                 try:
                     with open(os.path.join(stage_dir, out_name), "w", encoding="utf-8") as fh:
                         fh.write(rendered)
@@ -471,10 +611,12 @@ def main() -> int:
     except (OSError, ValueError) as error:
         fail(f"pty/action error: {error}")
     finally:
+        terminate_captured_process_group(pid)
         try:
-            os.kill(pid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
+            os.close(fd)
+        except OSError:
             pass
+        shutil.rmtree(config_dir, ignore_errors=True)
 
     if not frames_written:
         fail("script produced no frame")

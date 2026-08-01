@@ -3,12 +3,15 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 CAPTURE_PATH = ROOT / "scripts" / "capture-frames.py"
@@ -32,6 +35,13 @@ capture = load_module(CAPTURE_PATH, "capture_frames")
 diff = load_module(DIFF_PATH, "frame_diff")
 
 
+def synthetic_required_state(frame_keys: tuple[str, ...], marker: str) -> dict[str, object]:
+    return {
+        key: {"required": [{"name": "synthetic-logged-out", "pattern": marker, "minimum_matches": 1}]}
+        for key in frame_keys
+    }
+
+
 class FrameScriptsTest(unittest.TestCase):
     def synthetic_child_command(self, code: str) -> str:
         return f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
@@ -53,11 +63,11 @@ class FrameScriptsTest(unittest.TestCase):
         version = subprocess.run([sys.executable, "--version"], text=True, capture_output=True, check=True)
         return (version.stdout or version.stderr).strip()
 
-    def run_capture(self, script: str, binary: str, out: Path, redact_masks: Path | None = None, script_parent: Path | None = None, cwd: Path | None = None, expected_version: str | None = None, env: dict[str, str] | None = None):
+    def run_capture(self, script: str, binary: str, out: Path, redact_masks: Path | None = None, script_parent: Path | None = None, cwd: Path | None = None, expected_version: str | None = None, env: dict[str, str] | None = None, cols: int = 100, rows: int = 40):
         script_path = (script_parent or out.parent) / "case.keys"
         script_path.parent.mkdir(parents=True, exist_ok=True)
         script_path.write_text(textwrap.dedent(script), encoding="utf-8")
-        args = [sys.executable, str(CAPTURE_PATH), "--script", str(script_path), "--out", str(out), "--bin", binary, "--cwd", str(cwd or out.parent)]
+        args = [sys.executable, str(CAPTURE_PATH), "--script", str(script_path), "--out", str(out), "--bin", binary, "--cwd", str(cwd or out.parent), "--cols", str(cols), "--rows", str(rows)]
         if redact_masks is not None:
             args += ["--redact-masks", str(redact_masks)]
         if expected_version is not None:
@@ -69,6 +79,15 @@ class FrameScriptsTest(unittest.TestCase):
         if allowlist is not None:
             args += ["--allowlist", str(allowlist)]
         return subprocess.run(args, text=True, capture_output=True)
+
+    def wait_for_pid_exit(self, pid: int, timeout: float = 1) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], text=True, capture_output=True, check=False).stdout.strip()
+            if not state or state.startswith("Z"):
+                return True
+            time.sleep(0.01)
+        return False
 
     def test_plain_and_dim_are_distinct_and_retained_attributes_round_trip(self):
         plain = capture.DimScreen(30, 2)
@@ -165,6 +184,374 @@ class FrameScriptsTest(unittest.TestCase):
             key = "/".join(stored.relative_to(fixtures).parts)
             self.assertEqual(diff.mask_text(synthetic, diff.load_redactions(str(MASKS_PATH), key)), expected, key)
 
+    def test_dim_dashboard_organization_round_trip_and_unsupported_boundary_fails_closed(self):
+        contract = capture.load_redaction_contract(str(MASKS_PATH), "help-overlay/01-boot.ansi")
+        raw = (
+            "\x1b[0;2;38;2;215;119;87m│\x1b[0m  "
+            "\x1b[0;2;38;2;153;153;153midentity.fixture@example.test\x1b[0m's Organization\x1b[0m  "
+            "\x1b[0;2;38;2;215;119;87m│\x1b[0m  "
+            "\x1b[0;2;3;38;2;153;153;153m/release-notes\x1b[0m\n"
+            "Not logged in · Run /login\n"
+        )
+        expected = raw.replace("\x1b[0;2;38;2;153;153;153midentity.fixture@example.test\x1b[0m", "▒")
+        redacted, failures = capture.redact_text(raw, contract)
+        self.assertEqual(redacted, expected)
+        self.assertEqual(failures, [])
+
+        unsupported = raw.replace("\x1b[0;2;3;", "\x1b[0;1;2;3;")
+        redacted, failures = capture.redact_text(unsupported, contract)
+        self.assertEqual(redacted, unsupported)
+        self.assertEqual(failures, ["unredacted identity organization-email"])
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            child = self.live_child_command(f"import sys; sys.stdout.write({unsupported!r}); sys.stdout.flush()")
+            refused = self.run_capture("frame:boot\n", child, tracked, MASKS_PATH, expected_version=self.synthetic_version())
+            self.assertNotEqual(refused.returncode, 0, refused.stderr)
+            self.assertIn("unredacted identity organization-email", refused.stderr)
+            self.assertFalse(list(tracked.glob("*.ansi")))
+
+    def test_status_identity_scope_requires_dashboard_footer_chrome(self):
+        contract = capture.load_redaction_contract(str(MASKS_PATH), "help-overlay/01-boot.ansi")
+        transcript_rows = (
+            "  alice@host:/repo\n",
+            "\x1b[0m  alice@host\x1b[0m:\x1b[0m/repo\n",
+            "  git@host:/repo\n",
+        )
+        for transcript in transcript_rows:
+            with self.subTest(transcript=transcript.startswith("  git@")):
+                redacted, failures = capture.redact_text(transcript, contract)
+                self.assertEqual(redacted, transcript)
+                self.assertEqual(failures, [])
+
+        dashboard = (
+            "\x1b[0m  alice@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+            "\x1b[0m  \x1b[0;2;38;2;153;153;153m⏸ manual mode on · ? for shortcuts · ← for agents\x1b[0m\n"
+        )
+        expected = dashboard.replace("alice@host", "▒")
+        redacted, failures = capture.redact_text(dashboard, contract)
+        self.assertEqual(redacted, expected)
+        self.assertEqual(failures, [])
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            status_identity = "status" + "a" * 44 + "@host-name"
+            split_status_identity = status_identity.replace("@", "\x1b[31m@")
+            payload = (
+                f"\x1b[5;1H\x1b[0m  {split_status_identity}\x1b[0m:\x1b[0m/path"
+                "\x1b[7;1H\x1b[0m  \x1b[0;2;38;2;153;153;153m⏸ manual mode on · ? for shortcuts · ← for agents"
+                "\x1b[9;1HNot logged in · Run /login"
+            )
+            child = self.live_child_command(f"import sys; sys.stdout.write({payload!r}); sys.stdout.flush()")
+            refused = self.run_capture(
+                "frame:boot\n", child, tracked, MASKS_PATH,
+                expected_version=self.synthetic_version(), cols=60, rows=10,
+            )
+            self.assertNotEqual(refused.returncode, 0, refused.stderr)
+            self.assertIn("unredacted identity status-user-host", refused.stderr)
+            self.assertFalse(list(tracked.glob("*.ansi")))
+
+    def test_dashboard_status_block_redacts_arbitrary_wrapped_rows_for_publication_and_diff(self):
+        contract = capture.load_redaction_contract(str(MASKS_PATH), "help-overlay/01-boot.ansi")
+        identity = "wrapped-status@host"
+        raw_status = (
+            f"\x1b[0m  {identity}\x1b[0m:\x1b[0m/path-one\x1b[0m\n"
+            "\x1b[0m  /path-two\x1b[0m\n"
+            "\x1b[0m  /path-three\x1b[0m\n"
+            "\x1b[0m  /path-four\x1b[0m\n"
+            "\x1b[0m  \x1b[0;2m⏵⏵ auto mode on · ? for shortcuts · ← for agents\x1b[0m\n"
+        )
+        expected = raw_status.replace(identity, "▒")
+        redacted, failures = capture.preprocess_frame_for_publication(raw_status, contract)
+        self.assertEqual(redacted, expected)
+        self.assertEqual(failures, [])
+
+        transcript = "const remote = 'wrapped-status@host:/repo'; // no dashboard chrome\n"
+        redacted, failures = capture.redact_text(transcript, contract)
+        self.assertEqual(redacted, transcript)
+        self.assertEqual(failures, [])
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            path = "/" + "a" * 106
+            payload = (
+                f"\x1b[1;1H\x1b[0m  {identity}\x1b[0m:\x1b[0m{path}"
+                "\x1b[5;1H\x1b[0m  \x1b[0;2m⏵⏵ auto mode on · ? for shortcuts · ← for agents"
+                "\x1b[8;1HNot logged in · Run /login"
+            )
+            captured = self.run_capture(
+                "frame:boot\n",
+                self.live_child_command(f"import sys; sys.stdout.write({payload!r}); sys.stdout.flush()"),
+                tracked,
+                MASKS_PATH,
+                expected_version=self.synthetic_version(),
+                cols=32,
+                rows=8,
+            )
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            published = (tracked / "01-boot.ansi").read_text(encoding="utf-8")
+            self.assertNotIn(identity, re.sub(r"\x1b\[[0-?]*[ -/]*m", "", published))
+
+            ours = root / "scratch"
+            ours.mkdir()
+            (tracked / "01-boot.ansi").write_text(expected + "semantic=before\n", encoding="utf-8")
+            (ours / "01-boot.ansi").write_text(raw_status + "semantic=after\n", encoding="utf-8")
+            compared = self.run_diff(tracked, ours)
+            self.assertNotEqual(compared.returncode, 0)
+            self.assertIn("fingerprint: sha256:", compared.stdout)
+            self.assertNotIn(identity, compared.stdout + compared.stderr)
+
+    def test_dashboard_status_variant_matrix_redacts_authenticated_chrome_without_touching_transcripts(self):
+        contract = capture.load_redaction_contract(str(MASKS_PATH), "help-overlay/01-boot.ansi")
+        fixture_root = ROOT / "test" / "fixtures" / "upstream-frames"
+        fixture_footers = {
+            "help-overlay/01-boot.ansi": " · ? for shortcuts · ← for agents",
+            "help-overlay/02-help.ansi": None,
+            "help-overlay/03-closed.ansi": " · ? for shortcuts · ← for agents",
+            "composer-basics/01-typed.ansi": "",
+            "composer-basics/02-esc-armed.ansi": "",
+            "composer-basics/03-cleared.ansi": " · ? for shortcuts · ← for agents",
+            "composer-basics/04-killed.ansi": " · ? for shortcuts · ← for agents",
+            "composer-basics/05-yanked.ansi": "",
+        }
+        self.assertEqual(set(fixture_footers), {str(path.relative_to(fixture_root)) for path in fixture_root.glob("*/*.ansi")})
+        for fixture, footer in fixture_footers.items():
+            visible = re.sub(r"\x1b\[[0-?]*[ -/]*m", "", (fixture_root / fixture).read_text(encoding="utf-8"))
+            with self.subTest(fixture=fixture):
+                self.assertEqual("⏸ manual mode on" in visible, footer is not None)
+            if footer is None:
+                continue
+            for username in ("alice", "git"):
+                dashboard = (
+                    f"\x1b[0m  {username}@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+                    f"\x1b[0m  \x1b[0;2m⏸ manual mode on{footer}\x1b[0m\n"
+                )
+                with self.subTest(fixture=fixture, username=username):
+                    redacted, failures = capture.redact_text(dashboard, contract)
+                    self.assertEqual(redacted, dashboard.replace(f"{username}@host", "▒"))
+                    self.assertEqual(failures, [])
+
+        for username in ("alice", "git"):
+            split = (
+                f"\x1b[0m  {username[:1]}\x1b[31m{username[1:]}\x1b[0m@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+                "\x1b[0m  \x1b[0;2m⏸ manual mode on\x1b[0m\n"
+            )
+            redacted, failures = capture.redact_text(split, contract)
+            self.assertEqual(redacted, split)
+            self.assertEqual(failures, ["unredacted identity status-user-host"])
+
+        wrapped = "  wrappedidentity\n@host:/repo\n  ⏸ manual mode on\n"
+        redacted, failures = capture.redact_text(wrapped, contract)
+        self.assertEqual(redacted, wrapped)
+        self.assertEqual(failures, ["unredacted identity status-user-host"])
+
+        for username in ("alice", "git"):
+            for transcript in (
+                f"  {username}@host:/repo\n",
+                f"\x1b[0m  {username}@host\x1b[0m:\x1b[0m/repo\n",
+                f"const remote = '{username}@host:/repo'; // no dashboard chrome\n",
+            ):
+                with self.subTest(transcript=transcript):
+                    redacted, failures = capture.redact_text(transcript, contract)
+                    self.assertEqual(redacted, transcript)
+                    self.assertEqual(failures, [])
+
+    def test_dashboard_status_modes_redact_exact_2_1_220_markers_and_reject_unknown_markers(self):
+        contract = capture.load_redaction_contract(str(MASKS_PATH), "help-overlay/01-boot.ansi")
+        full_footer = " · ? for shortcuts · ← for agents"
+        modes = {
+            "default/manual": "⏸ manual mode on",
+            "plan": "⏸ plan mode on",
+            "acceptEdits": "⏵⏵ accept edits on",
+            "bypassPermissions": "⏵⏵ bypass permissions on",
+            "dontAsk": "⏵⏵ don't ask on",
+            "auto": "⏵⏵ auto mode on",
+        }
+        exact_cases = [
+            ("default/manual reduced", modes["default/manual"], ""),
+            ("default/manual full", modes["default/manual"], full_footer),
+            ("plan", modes["plan"], ""),
+            ("auto cycle suffix", modes["auto"] + " (shift+tab to cycle)", ""),
+            ("acceptEdits", modes["acceptEdits"], full_footer),
+            ("bypassPermissions", modes["bypassPermissions"], ""),
+            ("dontAsk", modes["dontAsk"], ""),
+            ("auto reduced", modes["auto"], ""),
+            ("auto full", modes["auto"], full_footer),
+        ]
+        for name, marker, footer in exact_cases:
+            for username in ("alice", "git"):
+                dashboard = (
+                    f"\x1b[0m  {username}@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+                    f"\x1b[0m  \x1b[0;2m{marker}{footer}\x1b[0m\n"
+                )
+                with self.subTest(name=name, username=username):
+                    redacted, failures = capture.redact_text(dashboard, contract)
+                    self.assertEqual(redacted, dashboard.replace(f"{username}@host", "▒"))
+                    self.assertEqual(failures, [])
+
+        for name, marker in modes.items():
+            ansi_split = (
+                f"\x1b[0m  g\x1b[31mit\x1b[0m@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+                f"\x1b[0m  \x1b[0;2m{marker}\x1b[0m\n"
+            )
+            row_wrapped = f"  git\n@host:/repo\n  {marker}\n"
+            for form, dashboard in (("ansi-split", ansi_split), ("row-wrapped", row_wrapped)):
+                with self.subTest(name=name, form=form):
+                    redacted, failures = capture.redact_text(dashboard, contract)
+                    self.assertEqual(redacted, dashboard)
+                    self.assertEqual(failures, ["unredacted identity status-user-host"])
+
+        unknown_marker = "⏵⏵ review mode on"
+        unknown_dashboard = f"  git@host:/repo\n  {unknown_marker}\n"
+        redacted, failures = capture.redact_text(unknown_dashboard, contract)
+        self.assertEqual(redacted, unknown_dashboard)
+        self.assertEqual(failures, ["unredacted identity status-user-host"])
+        transcript = f"const remote = 'git@host:/repo'; // {unknown_marker} without dashboard chrome\n"
+        redacted, failures = capture.redact_text(transcript, contract)
+        self.assertEqual(redacted, transcript)
+        self.assertEqual(failures, [])
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            golden = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            ours = root / "scratch"
+            golden.mkdir(parents=True); ours.mkdir()
+            for name, marker, footer in (
+                ("manual", modes["default/manual"], full_footer),
+                ("auto", modes["auto"], ""),
+            ):
+                raw = (
+                    "\x1b[0m  git@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+                    f"\x1b[0m  \x1b[0;2m{marker}{footer}\x1b[0m\n"
+                )
+                (golden / "01-boot.ansi").write_text(raw.replace("git@host", "▒"), encoding="utf-8")
+                (ours / "01-boot.ansi").write_text(raw, encoding="utf-8")
+                with self.subTest(name=f"diff {name}"):
+                    compared = self.run_diff(golden, ours)
+                    self.assertEqual(compared.returncode, 0, compared.stdout + compared.stderr)
+                    self.assertIn("1 clean, 0 allowlisted, 0 DIVERGENT", compared.stdout)
+                    self.assertNotIn("git@host", compared.stdout + compared.stderr)
+
+    def test_padded_or_clipped_footer_status_identity_is_private_for_capture_and_diff(self):
+        contract = capture.load_redaction_contract(str(MASKS_PATH), "help-overlay/01-boot.ansi")
+        mode = "⏸ manual mode on"
+        account = "Not logged in · Run /login"
+        footer_forms = {
+            "reduced": mode,
+            "full": mode + " · ? for shortcuts · ← for agents",
+            "clipped": mode + " · ? for shortcuts …",
+            "wrapped-prefix": mode + " · ? for shortc",
+            "padded": mode + " " * 14 + account,
+            "full-padded": mode + " · ? for shortcuts · ← for agents" + " " * 4 + account,
+        }
+        for name, footer in footer_forms.items():
+            dashboard = (
+                "\x1b[0m  alice@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+                f"\x1b[0m  \x1b[0;2m{footer}\x1b[0m\n"
+            )
+            with self.subTest(name=name):
+                redacted, failures = capture.preprocess_frame_for_publication(dashboard, contract)
+                self.assertEqual(redacted, dashboard.replace("alice@host", "▒"))
+                self.assertEqual(failures, [])
+
+        padded = footer_forms["padded"]
+        unknown_dashboard = (
+            "\x1b[0m  alice@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+            f"\x1b[0m  \x1b[0;2m⏵⏵ review mode on{' ' * 14}{account}\x1b[0m\n"
+        )
+        redacted, failures = capture.preprocess_frame_for_publication(unknown_dashboard, contract)
+        self.assertEqual(redacted, unknown_dashboard)
+        self.assertEqual(failures, ["unredacted identity status-user-host"])
+
+        transcript = f"const remote = 'alice@host:/repo'; // {padded} without dashboard chrome\n"
+        redacted, failures = capture.preprocess_frame_for_publication(transcript, contract)
+        self.assertEqual(redacted, transcript)
+        self.assertEqual(failures, [])
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            payload = (
+                "\x1b[5;1H\x1b[0m  alice@host\x1b[0m:\x1b[0m/repo"
+                f"\x1b[6;1H\x1b[0m  \x1b[0;2m{padded}\x1b[0m"
+            )
+            captured = self.run_capture(
+                "frame:boot\n",
+                self.live_child_command(f"import sys; sys.stdout.write({payload!r}); sys.stdout.flush()"),
+                tracked,
+                MASKS_PATH,
+                expected_version=self.synthetic_version(),
+                cols=100,
+                rows=10,
+            )
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            published = (tracked / "01-boot.ansi").read_text(encoding="utf-8")
+            self.assertNotIn("alice@host", re.sub(r"\x1b\[[0-?]*[ -/]*m", "", published))
+
+            ours = root / "ours"
+            ours.mkdir()
+            raw = (
+                "\x1b[0m  alice@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+                f"\x1b[0m  \x1b[0;2m{padded}\x1b[0m\n"
+            )
+            (tracked / "01-boot.ansi").write_text(raw.replace("alice@host", "▒") + "semantic=before\n", encoding="utf-8")
+            (ours / "01-boot.ansi").write_text(raw + "semantic=after\n", encoding="utf-8")
+            compared = self.run_diff(tracked, ours)
+            self.assertNotEqual(compared.returncode, 0)
+            self.assertIn("fingerprint: sha256:", compared.stdout)
+            self.assertNotIn("alice@host", compared.stdout + compared.stderr)
+
+    def test_dashboard_hostname_underscore_is_private_but_transcripts_remain_semantic(self):
+        contract = capture.load_redaction_contract(str(MASKS_PATH), "help-overlay/01-boot.ansi")
+        footer = "⏸ manual mode on · ? for shortcuts · ← for agents"
+        dashboard = (
+            "\x1b[0m  alice@host_name\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+            f"\x1b[0m  \x1b[0;2m{footer}\x1b[0m\n"
+        )
+        redacted, failures = capture.preprocess_frame_for_publication(dashboard, contract)
+        self.assertEqual(redacted, dashboard.replace("alice@host_name", "▒"))
+        self.assertEqual(failures, [])
+
+        split = dashboard.replace("host_name", "host\x1b[31m_name")
+        wrapped = (
+            "  alice@host_\n"
+            "name:/repo\n"
+            f"  {footer}\n"
+        )
+        for form in (split, wrapped):
+            with self.subTest(form=form):
+                redacted, failures = capture.preprocess_frame_for_publication(form, contract)
+                self.assertEqual(redacted, form)
+                self.assertEqual(failures, ["unredacted identity status-user-host"])
+
+        for transcript in (
+            "  alice@host_name:/repo\n",
+            "const remote = 'alice@host_name:/repo'; // no dashboard chrome\n",
+            "path/alice@host_name:/repo\n",
+        ):
+            with self.subTest(transcript=transcript):
+                redacted, failures = capture.preprocess_frame_for_publication(transcript, contract)
+                self.assertEqual(redacted, transcript)
+                self.assertEqual(failures, [])
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            golden = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            ours = root / "ours"
+            golden.mkdir(parents=True); ours.mkdir()
+            (golden / "01-boot.ansi").write_text("safe\n", encoding="utf-8")
+            for name, form in (("split", split), ("wrapped", wrapped)):
+                with self.subTest(diff=name):
+                    (ours / "01-boot.ansi").write_text(form, encoding="utf-8")
+                    compared = self.run_diff(golden, ours)
+                    self.assertNotEqual(compared.returncode, 0)
+                    self.assertIn("privacy redaction failed", compared.stdout)
+                    self.assertNotIn("alice@host_name", compared.stdout + compared.stderr)
+                    self.assertNotIn("fingerprint: sha256:", compared.stdout)
+
     def test_capture_early_exit_and_zero_frames_fail(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -195,6 +582,421 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("ready", (root / "live" / "01-boot.ansi").read_text(encoding="utf-8"))
 
+    def test_capture_first_frame_drains_a_split_visible_paint_before_publication(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            result = self.run_capture(
+                "frame:boot\n",
+                self.live_child_command("import sys,time; sys.stdout.write('r'); sys.stdout.flush(); time.sleep(0.002); sys.stdout.write('eady'); sys.stdout.flush()"),
+                root / "split",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("ready", (root / "split" / "01-boot.ansi").read_text(encoding="utf-8"))
+
+    def test_capture_later_frame_drains_a_split_repaint_before_publication(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            result = self.run_capture(
+                "frame:first\nenter\nwait-output:partial\nenter\nwait-output:FRAME-READY\nframe:later\n",
+                self.live_child_command(
+                    "import os,sys,time; sys.stdout.write('baseline'); sys.stdout.flush(); os.read(0, 1); "
+                    "sys.stdout.write('\\rpartial'); sys.stdout.flush(); os.read(0, 1); "
+                    "sys.stdout.write('\\x1b]0;FRAME-READY\\x07' + '\\x00' * 4096 + '-complete'); sys.stdout.flush()"
+                ),
+                root / "split-later",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("baseline", (root / "split-later" / "01-first.ansi").read_text(encoding="utf-8"))
+            later = (root / "split-later" / "02-later.ansi").read_text(encoding="utf-8")
+            self.assertIn("partial", later)
+            self.assertIn("-complete", later)
+
+    def test_capture_wait_output_requires_a_fresh_marker_for_each_action(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            marker = "SYNC-MARKER"
+            result = self.run_capture(
+                f"wait-output:{marker}\nframe:first\nenter\nwait-output:{marker}\nframe:second\n",
+                self.live_child_command(
+                    "import os,sys,time; "
+                    f"sys.stdout.write('FIRST-READY {marker}'); sys.stdout.flush(); os.read(0, 1); "
+                    "time.sleep(0.01); sys.stdout.write('\\rSECOND-PENDING'); sys.stdout.flush(); time.sleep(0.04); "
+                    f"sys.stdout.write('\\rSECOND-READY {marker[:-2]}'); sys.stdout.flush(); time.sleep(0.005); "
+                    f"sys.stdout.write('{marker[-2:]}'); sys.stdout.flush()"
+                ),
+                root / "fresh-marker",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("FIRST-READY", (root / "fresh-marker" / "01-first.ansi").read_text(encoding="utf-8"))
+            second = (root / "fresh-marker" / "02-second.ansi").read_text(encoding="utf-8")
+            self.assertIn("SECOND-READY", second)
+            self.assertNotIn("SECOND-PENDING", second)
+
+    def test_capture_seeds_a_private_claude_config_without_ambient_auth_or_config(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ambient_config = root / "ambient-config"
+            ambient_config.mkdir()
+            (ambient_config / "plugin-marker").write_text("ambient", encoding="utf-8")
+            home = root / "home"
+            (home / ".claude").mkdir(parents=True)
+            (home / ".claude" / "settings.json").write_text('{"plugin": "ambient"}', encoding="utf-8")
+            executed = root / "ambient-plugin-executed"
+            job_dir = root / "job"
+            job_dir.mkdir()
+            expected_seed = {".claude.json": '{"hasCompletedOnboarding":true}\n'}
+            ambient_terminal = {
+                "FORCE_COLOR": "2", "NO_COLOR": "1", "CI": "1", "TF_BUILD": "1", "AGENT_NAME": "agent",
+                "GITHUB_ACTIONS": "1", "GITEA_ACTIONS": "1", "CIRCLECI": "1", "TRAVIS": "1", "APPVEYOR": "1",
+                "GITLAB_CI": "1", "BUILDKITE": "1", "DRONE": "1", "CI_NAME": "codeship", "TEAMCITY_VERSION": "2025.1",
+                "TMUX": "/tmp/tmux-0/default", "TERM_PROGRAM": "iTerm.app", "TERM_PROGRAM_VERSION": "2.9", "COLORFGBG": "15;0",
+            }
+
+            def probe(report: Path) -> str:
+                return textwrap.dedent(f"""
+                    import json, os, sys
+                    from pathlib import Path
+                    config = Path(os.environ["CLAUDE_CONFIG_DIR"])
+                    ambient = Path(os.environ["AMBIENT_CONFIG"])
+                    home_config = Path(os.environ["HOME"]) / ".claude"
+                    if config == ambient:
+                        Path(os.environ["PLUGIN_EXECUTED"]).write_text("executed", encoding="utf-8")
+                    Path(os.environ["CONFIG_REPORT"]).write_text(json.dumps({{
+                        "config": str(config), "config_parent": str(config.parent), "exists": config.is_dir(),
+                        "seed_files": {{
+                            str(path.relative_to(config)): path.read_text(encoding="utf-8")
+                            for path in sorted(config.rglob("*")) if path.is_file()
+                        }},
+                        "anthropic_variables": sorted(name for name in os.environ if name.startswith("ANTHROPIC_")),
+                        "ambient_marker_visible": (config / "plugin-marker").exists(),
+                        "different_from_ambient": config != ambient,
+                        "different_from_home": config != home_config,
+                        "oauth_forwarded": bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")),
+                        "colorterm": os.environ.get("COLORTERM"),
+                        "ambient_terminal": {{name: os.environ.get(name) for name in {tuple(ambient_terminal)!r}}},
+                        "nested_markers_scrubbed": "CLAUDE_CODE_CHILD_SESSION" not in os.environ and "AI_AGENT" not in os.environ,
+                    }}), encoding="utf-8")
+                    sys.stdout.write("ready"); sys.stdout.flush()
+                """)
+
+            base_env = {
+                "PATH": os.defpath,
+                "CLAUDE_JOB_DIR": str(job_dir),
+                "CLAUDE_CONFIG_DIR": str(ambient_config),
+                "CLAUDE_CODE_OAUTH_TOKEN": "synthetic-test-token",
+                "ANTHROPIC_API_KEY": "synthetic-test-key",
+                "ANTHROPIC_AUTH_TOKEN": "synthetic-test-auth-token",
+                "ANTHROPIC_BASE_URL": "https://synthetic.invalid",
+                "ANTHROPIC_PROFILE": "synthetic-profile",
+                "ANTHROPIC_FUTURE_CREDENTIAL": "synthetic-future-secret",
+                "CLAUDE_CODE_CHILD_SESSION": "nested",
+                "AI_AGENT": "operator",
+                "COLORTERM": "synthetic-terminal",
+                **ambient_terminal,
+                "HOME": str(home),
+                "AMBIENT_CONFIG": str(ambient_config),
+                "PLUGIN_EXECUTED": str(executed),
+            }
+            reports = []
+            for label, script, command in (
+                ("success", "frame:boot\n", self.live_child_command),
+                ("failure", "frame:first\nwait:0.3\nframe:second\n", self.partial_child_command),
+            ):
+                report = root / f"{label}-config.json"
+                result = self.run_capture(script, command(probe(report)), root / label, env={**base_env, "CONFIG_REPORT": str(report)})
+                self.assertEqual(result.returncode, 0 if label == "success" else 1, result.stderr)
+                self.assertTrue(report.exists(), result.stderr)
+                recorded = json.loads(report.read_text(encoding="utf-8"))
+                reports.append(recorded)
+                self.assertTrue(recorded["exists"])
+                self.assertEqual(recorded["config_parent"], str(job_dir / "tmp"))
+                self.assertEqual(recorded["seed_files"], expected_seed)
+                self.assertEqual(recorded["anthropic_variables"], [])
+                self.assertTrue(recorded["different_from_ambient"])
+                self.assertTrue(recorded["different_from_home"])
+                self.assertFalse(recorded["ambient_marker_visible"])
+                self.assertTrue(recorded["oauth_forwarded"])
+                self.assertEqual(recorded["colorterm"], "synthetic-terminal")
+                self.assertEqual(recorded["ambient_terminal"], ambient_terminal)
+                self.assertTrue(recorded["nested_markers_scrubbed"])
+                self.assertFalse(Path(recorded["config"]).exists(), label)
+            self.assertNotEqual(reports[0]["config"], reports[1]["config"])
+            self.assertFalse(executed.exists())
+
+    def test_tracked_capture_scrubs_fake_credentials_and_hostile_terminal_environment(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            job_dir = root / "job"; job_dir.mkdir()
+            hostile_cases = (
+                ("force-no-color", {"FORCE_COLOR": "0", "NO_COLOR": "1"}),
+                ("ci", {"CI": "1", "TF_BUILD": "1", "AGENT_NAME": "agent", "GITHUB_ACTIONS": "1", "GITEA_ACTIONS": "1", "CIRCLECI": "1", "TRAVIS": "1", "APPVEYOR": "1", "GITLAB_CI": "1", "BUILDKITE": "1", "DRONE": "1", "CI_NAME": "codeship", "TEAMCITY_VERSION": "2025.1"}),
+                ("terminal-wrapper", {"TMUX": "/tmp/tmux-0/default", "TERM_PROGRAM": "iTerm.app", "TERM_PROGRAM_VERSION": "2.9", "COLORFGBG": "15;0"}),
+            )
+            hostile_cases += (("combined", dict((name, value) for _, case in hostile_cases for name, value in case.items())),)
+            hostile_names = tuple(sorted(hostile_cases[-1][1]))
+            child = self.live_child_command(textwrap.dedent(f"""
+                import json, os, sys
+                from pathlib import Path
+                credentials = {{
+                    "oauth_present": "CLAUDE_CODE_OAUTH_TOKEN" in os.environ,
+                    "api_key_present": "ANTHROPIC_API_KEY" in os.environ,
+                    "auth_token_present": "ANTHROPIC_AUTH_TOKEN" in os.environ,
+                }}
+                environment = {{
+                    **credentials,
+                    "term": os.environ.get("TERM"),
+                    "colorterm": os.environ.get("COLORTERM"),
+                    "hostile": {{name: os.environ[name] for name in {hostile_names!r} if name in os.environ}},
+                }}
+                Path(os.environ["CAPTURE_REPORT"]).write_text(json.dumps(environment), encoding="utf-8")
+                sys.stdout.write("AUTHENTICATED ACCOUNT STATE" if any(credentials.values()) else "Not logged in · Run /login")
+                sys.stdout.flush()
+            """))
+            published = []
+            for label, hostile_env in hostile_cases:
+                report = root / f"child-{label}.json"
+                captured = self.run_capture(
+                    "frame:boot\n", child, tracked, MASKS_PATH,
+                    expected_version=self.synthetic_version(),
+                    env={
+                        "PATH": os.defpath,
+                        "CLAUDE_JOB_DIR": str(job_dir),
+                        "CAPTURE_REPORT": str(report),
+                        "CLAUDE_CODE_OAUTH_TOKEN": "synthetic-oauth",
+                        "ANTHROPIC_API_KEY": "synthetic-api-key",
+                        "ANTHROPIC_AUTH_TOKEN": "synthetic-auth-token",
+                        **hostile_env,
+                    },
+                )
+                self.assertEqual(captured.returncode, 0, captured.stderr)
+                self.assertEqual(json.loads(report.read_text(encoding="utf-8")), {
+                    "oauth_present": False, "api_key_present": False, "auth_token_present": False,
+                    "term": "xterm-256color", "colorterm": "truecolor", "hostile": {},
+                })
+                frame = (tracked / "01-boot.ansi").read_bytes()
+                self.assertIn(b"Not logged in \xc2\xb7 Run /login", frame)
+                self.assertNotIn(b"AUTHENTICATED ACCOUNT STATE", frame)
+                published.append(frame)
+            self.assertEqual(published, [published[0]] * len(published))
+
+    def test_tracked_capture_rejects_mixed_state_atomically_before_publication(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "stateful"
+            tracked.mkdir(parents=True)
+            (tracked / "01-old.ansi").write_bytes(b"preserved tracked bytes\n")
+            before = {path.name: path.read_bytes() for path in tracked.iterdir()}
+            masks = root / "state-masks.json"
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    "stateful/01-first.ansi": {"patterns": [], "minimum_matches": 0},
+                    "stateful/02-second.ansi": {"patterns": [], "minimum_matches": 0},
+                },
+                "required_state_by_frame": {
+                    "stateful/*.ansi": {
+                        "required": [{"name": "logged-out", "pattern": "LOGGED-OUT STATE", "minimum_matches": 1}],
+                        "forbidden": [{"name": "authenticated", "pattern": "AUTHENTICATED STATE"}],
+                    },
+                },
+            }), encoding="utf-8")
+            child = self.live_child_command(
+                "import os,sys; sys.stdout.write('LOGGED-OUT STATE'); sys.stdout.flush(); "
+                "os.read(0, 1); sys.stdout.write('\\rAUTHENTICATED STATE'); sys.stdout.flush()"
+            )
+            job_dir = root / "job"; job_dir.mkdir()
+            refused = self.run_capture(
+                "frame:first\nenter\nframe:second\n", child, tracked, masks,
+                expected_version=self.synthetic_version(),
+                env={"PATH": os.defpath, "CLAUDE_JOB_DIR": str(job_dir)},
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("state validation failed", refused.stderr)
+            self.assertEqual({path.name: path.read_bytes() for path in tracked.iterdir()}, before)
+            self.assertFalse(list(root.glob(".capture-*")))
+
+    def test_capture_removes_private_config_when_seed_write_fails_before_spawning(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            keys = root / "case.keys"
+            keys.write_text("frame:boot\n", encoding="utf-8")
+            config_parent = root / "job" / "tmp"
+            config_parent.mkdir(parents=True)
+            argv = [
+                str(CAPTURE_PATH), "--script", str(keys), "--out", str(root / "out"),
+                "--bin", self.dead_child_command(), "--cwd", str(root),
+            ]
+            with patch.object(capture, "capture_temp_dir", return_value=str(config_parent)), \
+                 patch.object(capture.Path, "write_text", side_effect=OSError("injected seed write failure")), \
+                 patch.object(capture.pty, "fork") as fork, \
+                 patch.object(sys, "argv", argv):
+                self.assertEqual(capture.main(), 2)
+            fork.assert_not_called()
+            self.assertFalse(list(config_parent.glob(".claude-config-*")))
+            self.assertFalse(list(root.glob(".capture-*")))
+
+    def test_capture_terminates_and_reaps_the_entire_child_process_group(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            reports: list[dict[str, int]] = []
+            try:
+                for label, script, leader_lifetime, expected_exit in (
+                    ("success-one", "wait:0.05\nframe:boot\n", 60, 0),
+                    ("success-two", "wait:0.05\nframe:boot\n", 60, 0),
+                    ("partial", "wait:0.05\nframe:first\nwait:0.3\nframe:second\n", 0.1, 1),
+                ):
+                    report = root / f"{label}.json"
+                    child = self.synthetic_child_command(textwrap.dedent(f"""
+                        import json, os, subprocess, sys, time
+                        from pathlib import Path
+                        descendant = subprocess.Popen([sys.executable, "-c", "import signal, time; signal.signal(signal.SIGHUP, signal.SIG_IGN); time.sleep(60)"])
+                        Path({str(report)!r}).write_text(json.dumps({{
+                            "leader": os.getpid(), "leader_pgrp": os.getpgrp(), "descendant": descendant.pid,
+                        }}), encoding="utf-8")
+                        sys.stdout.write("ready"); sys.stdout.flush()
+                        time.sleep({leader_lifetime})
+                    """))
+                    result = self.run_capture(script, child, root / label)
+                    self.assertEqual(result.returncode, expected_exit, result.stderr)
+                    recorded = json.loads(report.read_text(encoding="utf-8"))
+                    reports.append(recorded)
+                    self.assertNotEqual(recorded["leader_pgrp"], os.getpgrp())
+                    self.assertTrue(self.wait_for_pid_exit(recorded["leader"]), recorded)
+                    self.assertTrue(self.wait_for_pid_exit(recorded["descendant"]), recorded)
+            finally:
+                for recorded in reports:
+                    try:
+                        os.kill(recorded["descendant"], signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_capture_empty_or_comment_only_scripts_use_bounded_cleanup(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for attempt in range(10):
+                script = "\n" if attempt % 2 else "# no capture actions\n"
+                started = time.monotonic()
+                result = self.run_capture(script, self.live_child_command("import time"), root / f"empty-{attempt}")
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertIn("script produced no frame", result.stderr)
+                self.assertLess(time.monotonic() - started, 2, result.stderr)
+
+    def test_capture_terminal_initialization_failure_terminates_and_reaps_group(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            keys = root / "case.keys"
+            keys.write_text("frame:boot\n", encoding="utf-8")
+            report = root / "terminal-failure.json"
+            child = self.synthetic_child_command(textwrap.dedent(f"""
+                import json, os, signal, subprocess, sys, time
+                from pathlib import Path
+                descendant = subprocess.Popen([sys.executable, "-c", "import signal, time; signal.signal(signal.SIGHUP, signal.SIG_IGN); time.sleep(60)"])
+                Path(os.environ["CAPTURE_REPORT"]).write_text(json.dumps({{"leader": os.getpid(), "descendant": descendant.pid}}), encoding="utf-8")
+                time.sleep(60)
+            """))
+            config_parent = root / "job" / "tmp"
+            config_parent.mkdir(parents=True)
+            argv = [
+                str(CAPTURE_PATH), "--script", str(keys), "--out", str(root / "out"),
+                "--bin", child, "--cwd", str(root),
+            ]
+            def fail_after_child_reports(*_args):
+                deadline = time.monotonic() + 0.5
+                while not report.exists() and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                raise OSError("injected terminal initialization failure")
+            with patch.dict(os.environ, {"CAPTURE_REPORT": str(report)}, clear=False), \
+                 patch.object(capture, "capture_temp_dir", return_value=str(config_parent)), \
+                 patch.object(capture.fcntl, "ioctl", side_effect=fail_after_child_reports), \
+                 patch.object(sys, "argv", argv):
+                self.assertEqual(capture.main(), 1)
+            recorded = json.loads(report.read_text(encoding="utf-8"))
+            self.assertTrue(self.wait_for_pid_exit(recorded["leader"]), recorded)
+            self.assertTrue(self.wait_for_pid_exit(recorded["descendant"]), recorded)
+            self.assertFalse(list(config_parent.glob(".claude-config-*")))
+            self.assertFalse(list(root.glob(".capture-*")))
+
+    def test_capture_group_creation_race_falls_back_to_leader_and_reaps_within_bound(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            report = root / "race.json"
+            completed = root / "completed"
+            probe = textwrap.dedent(f"""
+                import importlib.util, json, os, pty, signal, time
+                from pathlib import Path
+                spec = importlib.util.spec_from_file_location("capture_race", {str(CAPTURE_PATH)!r})
+                capture = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(capture)
+                pid, fd = pty.fork()
+                if pid == 0:
+                    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+                    time.sleep(60)
+                    os._exit(0)
+                Path({str(report)!r}).write_text(json.dumps({{"leader": pid, "controller_pgrp": os.getpgrp()}}), encoding="utf-8")
+                capture.os.getpgid = lambda _pid: os.getpgrp()
+                def group_missing(*_args):
+                    raise ProcessLookupError()
+                capture.os.killpg = group_missing
+                try:
+                    capture.terminate_captured_process_group(pid)
+                    Path({str(completed)!r}).write_text("reaped", encoding="utf-8")
+                finally:
+                    os.close(fd)
+            """)
+            try:
+                started = time.monotonic()
+                result = subprocess.run([sys.executable, "-c", probe], text=True, capture_output=True, timeout=2)
+                elapsed = time.monotonic() - started
+            except subprocess.TimeoutExpired as error:
+                self.fail(f"group-creation race cleanup hung past two seconds: {error}")
+            finally:
+                if report.exists():
+                    leader = json.loads(report.read_text(encoding="utf-8"))["leader"]
+                    try:
+                        if os.getpgid(leader) == leader and leader != os.getpgrp():
+                            os.killpg(leader, signal.SIGKILL)
+                        else:
+                            os.kill(leader, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    self.assertTrue(self.wait_for_pid_exit(leader), leader)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertLess(elapsed, 2, result.stderr)
+            self.assertEqual(completed.read_text(encoding="utf-8"), "reaped")
+
+    def test_capture_never_signals_the_controller_process_group(self):
+        with patch.object(capture.os, "killpg") as killpg, patch.object(capture.os, "waitpid") as waitpid:
+            capture.terminate_captured_process_group(os.getpgrp())
+        killpg.assert_not_called()
+        waitpid.assert_not_called()
+
+    def test_capture_first_frame_waits_for_content_but_not_an_indefinite_blank_child(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            delayed = self.synthetic_child_command("import sys, time; time.sleep(0.08); sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(60)")
+            for attempt in range(10):
+                result = self.run_capture("frame:boot\n", delayed, root / f"delayed-{attempt}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("ready", (root / f"delayed-{attempt}" / "01-boot.ansi").read_text(encoding="utf-8"))
+
+            blank_started = time.monotonic()
+            blank = self.run_capture("frame:boot\n", self.live_child_command("import time"), root / "blank")
+            blank_elapsed = time.monotonic() - blank_started
+            self.assertNotEqual(blank.returncode, 0, blank.stderr)
+            self.assertIn("no rendered screen state", blank.stderr)
+            self.assertGreaterEqual(blank_elapsed, 0.1)
+            self.assertLess(blank_elapsed, 2)
+
+            dead_started = time.monotonic()
+            dead = self.run_capture("frame:boot\n", self.dead_child_command(), root / "dead")
+            self.assertNotEqual(dead.returncode, 0, dead.stderr)
+            self.assertIn("pty closed", dead.stderr)
+            self.assertLess(time.monotonic() - dead_started, 2)
+
+            emitting_dead = self.run_capture("frame:boot\n", "sh -c 'printf ready'", root / "emitting-dead")
+            self.assertNotEqual(emitting_dead.returncode, 0, emitting_dead.stderr)
+            self.assertFalse(list((root / "emitting-dead").glob("*.ansi")), emitting_dead.stderr)
+
     def test_capture_refuses_unredacted_tracked_golden_writes_and_redacts_when_explicit(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -205,12 +1007,15 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertIn("--redact-masks", refused.stderr)
             self.assertFalse(list(out.glob("*.ansi")))
             one_identity_masks = root / "masks-one-identity.json"
-            one_identity_masks.write_text(json.dumps({"redactions_by_frame": {
-                "help-overlay/01-boot.ansi": {
-                    "patterns": [{"name": "greeting", "pattern": "Welcome back [^!\\x1b]*!", "minimum_matches": 1}],
-                    "minimum_matches": 1,
+            one_identity_masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    "help-overlay/01-boot.ansi": {
+                        "patterns": [{"name": "greeting", "pattern": "Welcome back [^!\\x1b]*!", "minimum_matches": 1}],
+                        "minimum_matches": 1,
+                    },
                 },
-            }}), encoding="utf-8")
+                "required_state_by_frame": synthetic_required_state(("help-overlay/01-boot.ansi",), "Welcome back"),
+            }), encoding="utf-8")
             captured = self.run_capture("wait:0.05\nframe:boot\n", child, out, one_identity_masks, expected_version=self.synthetic_version())
             self.assertEqual(captured.returncode, 0, captured.stderr)
             frame = (out / "01-boot.ansi").read_text(encoding="utf-8")
@@ -293,12 +1098,15 @@ class FrameScriptsTest(unittest.TestCase):
             tracked = linked_root / "new" / "scenario"
             self.assertFalse(tracked.parent.exists())
             masks = root / "masks.json"
-            masks.write_text(json.dumps({"redactions_by_frame": {
-                "new/scenario/01-boot.ansi": {
-                    "patterns": [{"name": "identity", "pattern": "FAKE-IDENTITY", "minimum_matches": 1}],
-                    "minimum_matches": 1,
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    "new/scenario/01-boot.ansi": {
+                        "patterns": [{"name": "identity", "pattern": "FAKE-IDENTITY", "minimum_matches": 1}],
+                        "minimum_matches": 1,
+                    },
                 },
-            }}), encoding="utf-8")
+                "required_state_by_frame": synthetic_required_state(("new/scenario/01-boot.ansi",), "FAKE-IDENTITY"),
+            }), encoding="utf-8")
             captured = self.run_capture(
                 "wait:0.05\nframe:boot\n",
                 self.live_child_command("import sys,time; sys.stdout.write('FAKE-IDENTITY'); sys.stdout.flush()"),
@@ -356,10 +1164,13 @@ class FrameScriptsTest(unittest.TestCase):
             root = Path(td)
             child = self.live_child_command("import sys,time; sys.stdout.write('ready'); sys.stdout.flush()")
             masks = root / "masks-complete.json"
-            masks.write_text(json.dumps({"redactions_by_frame": {
-                "renamed/01-first.ansi": {"patterns": [{"name": "ready", "pattern": "ready", "minimum_matches": 1}], "minimum_matches": 1},
-                "renamed/02-second.ansi": {"patterns": [{"name": "ready", "pattern": "ready", "minimum_matches": 1}], "minimum_matches": 1},
-            }}), encoding="utf-8")
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    "renamed/01-first.ansi": {"patterns": [{"name": "ready", "pattern": "ready", "minimum_matches": 1}], "minimum_matches": 1},
+                    "renamed/02-second.ansi": {"patterns": [{"name": "ready", "pattern": "ready", "minimum_matches": 1}], "minimum_matches": 1},
+                },
+                "required_state_by_frame": synthetic_required_state(("renamed/01-first.ansi", "renamed/02-second.ansi"), "ready"),
+            }), encoding="utf-8")
             tracked = root / "test" / "fixtures" / "upstream-frames" / "renamed"
             captured = self.run_capture("frame:first\nframe:second\n", child, tracked, masks, expected_version=self.synthetic_version())
             self.assertEqual(captured.returncode, 0, captured.stderr)
@@ -378,17 +1189,23 @@ class FrameScriptsTest(unittest.TestCase):
             marker = root / "capture-child-ran"
             child = self.live_child_command(f"from pathlib import Path; import sys,time; Path({str(marker)!r}).write_text('yes'); sys.stdout.write('ready'); sys.stdout.flush()")
             masks = root / "masks.json"
-            masks.write_text(json.dumps({"redactions_by_frame": {
-                key: {"patterns": [], "minimum_matches": 0}
-                for key in (
-                    "version/missing/01-boot.ansi",
-                    "version/correct/01-boot.ansi",
-                    "version/wrong/01-boot.ansi",
-                    "version/failed/01-boot.ansi",
-                    "version/path-correct/01-boot.ansi",
-                    "version/path-changed/01-boot.ansi",
-                )
-            }}), encoding="utf-8")
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    key: {"patterns": [], "minimum_matches": 0}
+                    for key in (
+                        "version/missing/01-boot.ansi",
+                        "version/correct/01-boot.ansi",
+                        "version/wrong/01-boot.ansi",
+                        "version/failed/01-boot.ansi",
+                        "version/path-correct/01-boot.ansi",
+                        "version/path-changed/01-boot.ansi",
+                    )
+                },
+                "required_state_by_frame": synthetic_required_state((
+                    "version/missing/01-boot.ansi", "version/correct/01-boot.ansi", "version/wrong/01-boot.ansi",
+                    "version/failed/01-boot.ansi", "version/path-correct/01-boot.ansi", "version/path-changed/01-boot.ansi",
+                ), "ready"),
+            }), encoding="utf-8")
 
             missing = self.run_capture("wait:0.05\nframe:boot\n", child, root / "test" / "fixtures" / "upstream-frames" / "version" / "missing", masks)
             self.assertNotEqual(missing.returncode, 0)
@@ -474,29 +1291,174 @@ class FrameScriptsTest(unittest.TestCase):
             (tracked / "01-old.ansi").write_text("old\n", encoding="utf-8")
             (tracked / "VERSION").write_bytes(b"tracked metadata\n")
             masks = root / "masks.json"
-            masks.write_text(json.dumps({"redactions_by_frame": {
-                "nested/recapture/01-new.ansi": {
-                    "patterns": [{"name": "fresh", "pattern": "fresh", "minimum_matches": 1}],
-                    "minimum_matches": 1,
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    "nested/recapture/01-new.ansi": {
+                        "patterns": [{"name": "fresh", "pattern": "fresh", "minimum_matches": 1}],
+                        "minimum_matches": 1,
+                    },
                 },
-            }}), encoding="utf-8")
+                "required_state_by_frame": synthetic_required_state(("nested/recapture/01-new.ansi",), "fresh"),
+            }), encoding="utf-8")
             captured_tracked = self.run_capture("wait:0.05\nframe:new\n", child, tracked, masks, expected_version=self.synthetic_version())
             self.assertEqual(captured_tracked.returncode, 0, captured_tracked.stderr)
             self.assertEqual({p.name for p in tracked.glob("*.ansi")}, {"01-new.ansi"})
             self.assertIn("▒", (tracked / "01-new.ansi").read_text(encoding="utf-8"))
             self.assertEqual((tracked / "VERSION").read_bytes(), b"tracked metadata\n")
 
+    def test_private_config_masks_accept_an_identity_free_tracked_frame(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            child = self.live_child_command("import sys; sys.stdout.write('Welcome back! Not logged in · Run /login'); sys.stdout.flush()")
+            captured = self.run_capture(
+                "frame:boot\n",
+                child,
+                tracked,
+                MASKS_PATH,
+                expected_version=self.synthetic_version(),
+            )
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            self.assertIn("Welcome back! Not logged in", (tracked / "01-boot.ansi").read_text(encoding="utf-8"))
+
+    def test_private_config_masks_reject_sgr_split_identities_before_publication(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            child = self.live_child_command(
+                "import sys; sys.stdout.write(\"Welcome back \\x1b[31mAlice\\x1b[0m! alice@\\x1b[32mexample.com\\x1b[0m's Organization alice@\\x1b[34mhost\\x1b[0m:/ Not logged in · Run /login\"); sys.stdout.flush()"
+            )
+            refused = self.run_capture(
+                "frame:boot\n",
+                child,
+                tracked,
+                MASKS_PATH,
+                expected_version=self.synthetic_version(),
+            )
+            self.assertNotEqual(refused.returncode, 0, refused.stderr)
+            self.assertIn("unredacted identity", refused.stderr)
+            self.assertFalse(list(tracked.glob("*.ansi")))
+            for identity in ("Alice", "alice@example.com", "alice@host"):
+                self.assertNotIn(identity, refused.stdout + refused.stderr)
+
+    def test_private_config_masks_reject_dashboard_identities_wrapped_across_rendered_rows(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            status_identity = "status" + "a" * 44 + "@host-name"
+            split_status_identity = status_identity.replace("@", "\x1b[31m@")
+            payload = (
+                "\x1b[1;1H\x1b[1mWelcome back Alice!\x1b[0m  \x1b[33m│\x1b[0m Ask Claude to create"
+                "\x1b[2;31Horganization.identity@example.test's Organization  │  /release-notes"
+                f"\x1b[5;1H\x1b[0m  {split_status_identity}\x1b[0m:\x1b[0m/path"
+                "\x1b[7;1H\x1b[0m  \x1b[0;2;38;2;153;153;153m⏸ manual mode on · ? for shortcuts · ← for agents"
+                "\x1b[9;1HNot logged in · Run /login"
+            )
+            child = self.live_child_command(f"import sys; sys.stdout.write({payload!r}); sys.stdout.flush()")
+            refused = self.run_capture(
+                "frame:boot\n",
+                child,
+                tracked,
+                MASKS_PATH,
+                expected_version=self.synthetic_version(),
+                cols=60,
+                rows=10,
+            )
+            self.assertNotEqual(refused.returncode, 0, refused.stderr)
+            self.assertIn("unredacted identity organization-email", refused.stderr)
+            self.assertIn("unredacted identity status-user-host", refused.stderr)
+            self.assertFalse(list(tracked.glob("*.ansi")))
+            for identity in ("organization.identity@example.test", status_identity):
+                self.assertNotIn(identity, refused.stdout + refused.stderr)
+
+    def test_private_config_masks_reject_greeting_identity_wrapped_across_rendered_rows(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            child = self.live_child_command(
+                "import sys; sys.stdout.write('\\x1b[1;45HWelcome back Alice Identity!\\nNot logged in · Run /login'); sys.stdout.flush()"
+            )
+            refused = self.run_capture(
+                "frame:boot\n",
+                child,
+                tracked,
+                MASKS_PATH,
+                expected_version=self.synthetic_version(),
+                cols=60,
+                rows=4,
+            )
+            self.assertNotEqual(refused.returncode, 0, refused.stderr)
+            self.assertIn("unredacted identity greeting", refused.stderr)
+            self.assertFalse(list(tracked.glob("*.ansi")))
+            self.assertNotIn("Alice Identity", refused.stdout + refused.stderr)
+
+    def test_private_config_masks_preserve_transcript_email_without_dashboard_chrome(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            child = self.live_child_command(
+                "import sys; sys.stdout.write(\"Transcript mentions organization.identity@example.test's Organization without dashboard chrome\\nNot logged in · Run /login\"); sys.stdout.flush()"
+            )
+            captured = self.run_capture(
+                "frame:boot\n",
+                child,
+                tracked,
+                MASKS_PATH,
+                expected_version=self.synthetic_version(),
+            )
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            visible = re.sub(r"\x1b\[[0-?]*[ -/]*m", "", (tracked / "01-boot.ansi").read_text(encoding="utf-8"))
+            self.assertIn("Transcript mentions organization.identity@example.test's Organization", visible)
+
+    def test_private_config_masks_preserve_git_status_token_without_dashboard_chrome(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            child = self.live_child_command(
+                "import sys; sys.stdout.write('\\x1b[0m  git@host\\x1b[0m:\\x1b[0m/path\\nNot logged in · Run /login'); sys.stdout.flush()"
+            )
+            captured = self.run_capture(
+                "frame:boot\n",
+                child,
+                tracked,
+                MASKS_PATH,
+                expected_version=self.synthetic_version(),
+            )
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            visible = re.sub(r"\x1b\[[0-?]*[ -/]*m", "", (tracked / "01-boot.ansi").read_text(encoding="utf-8"))
+            self.assertIn("git@host:/path", visible)
+
+    def test_private_config_masks_reject_reviewed_greeting_layout_bypass_before_publication(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            child = self.live_child_command("import sys; sys.stdout.write('\\x1b[0;1mWelcome back Test Identity!\\x1b[0m changed-layout\\nNot logged in · Run /login'); sys.stdout.flush()")
+            refused = self.run_capture(
+                "frame:boot\n",
+                child,
+                tracked,
+                MASKS_PATH,
+                expected_version=self.synthetic_version(),
+            )
+            self.assertNotEqual(refused.returncode, 0, refused.stderr)
+            self.assertIn("unredacted identity", refused.stderr)
+            self.assertFalse(list(tracked.glob("*.ansi")))
+            self.assertNotIn("Test Identity", refused.stdout + refused.stderr)
+
     def test_capture_rejects_declared_rules_that_match_no_identity_before_writing(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             out = root / "test" / "fixtures" / "upstream-frames" / "renamed"
             masks = root / "masks-zero-match.json"
-            masks.write_text(json.dumps({"redactions_by_frame": {
-                "renamed/01-boot.ansi": {
-                    "patterns": [{"name": "greeting", "pattern": "FAKE-GREETING", "minimum_matches": 1}],
-                    "minimum_matches": 1,
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    "renamed/01-boot.ansi": {
+                        "patterns": [{"name": "greeting", "pattern": "FAKE-GREETING", "minimum_matches": 1}],
+                        "minimum_matches": 1,
+                    },
                 },
-            }}), encoding="utf-8")
+                "required_state_by_frame": synthetic_required_state(("renamed/01-boot.ansi",), "RAW-FAKE-IDENTITY"),
+            }), encoding="utf-8")
             child = self.live_child_command("import sys,time; sys.stdout.write('RAW-FAKE-IDENTITY'); sys.stdout.flush()")
             refused = self.run_capture("frame:boot\n", child, out, masks, expected_version=self.synthetic_version())
             self.assertNotEqual(refused.returncode, 0)
@@ -509,16 +1471,19 @@ class FrameScriptsTest(unittest.TestCase):
             root = Path(td)
             out = root / "test" / "fixtures" / "upstream-frames" / "renamed"
             masks = root / "masks-partial-match.json"
-            masks.write_text(json.dumps({"redactions_by_frame": {
-                "renamed/01-first.ansi": {
-                    "patterns": [{"name": "first", "pattern": "FAKE-FIRST", "minimum_matches": 1}],
-                    "minimum_matches": 1,
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    "renamed/01-first.ansi": {
+                        "patterns": [{"name": "first", "pattern": "FAKE-FIRST", "minimum_matches": 1}],
+                        "minimum_matches": 1,
+                    },
+                    "renamed/02-second.ansi": {
+                        "patterns": [{"name": "second", "pattern": "FAKE-SECOND", "minimum_matches": 1}],
+                        "minimum_matches": 1,
+                    },
                 },
-                "renamed/02-second.ansi": {
-                    "patterns": [{"name": "second", "pattern": "FAKE-SECOND", "minimum_matches": 1}],
-                    "minimum_matches": 1,
-                },
-            }}), encoding="utf-8")
+                "required_state_by_frame": synthetic_required_state(("renamed/01-first.ansi", "renamed/02-second.ansi"), "FAKE-FIRST"),
+            }), encoding="utf-8")
             child = self.live_child_command("import sys,time; sys.stdout.write('FAKE-FIRST'); sys.stdout.flush()")
             refused = self.run_capture("frame:first\nframe:second\n", child, out, masks, expected_version=self.synthetic_version())
             self.assertNotEqual(refused.returncode, 0)
@@ -530,16 +1495,22 @@ class FrameScriptsTest(unittest.TestCase):
             root = Path(td)
             covered = root / "test" / "fixtures" / "upstream-frames" / "covered"
             masks = root / "masks-coverage.json"
-            masks.write_text(json.dumps({"redactions_by_frame": {
-                "covered/01-identities.ansi": {
-                    "patterns": [
-                        {"name": "greeting", "pattern": "FAKE-GREETING", "minimum_matches": 1},
-                        {"name": "status", "pattern": "fake@host", "minimum_matches": 1},
-                    ],
-                    "minimum_matches": 2,
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    "covered/01-identities.ansi": {
+                        "patterns": [
+                            {"name": "greeting", "pattern": "FAKE-GREETING", "minimum_matches": 1},
+                            {"name": "status", "pattern": "fake@host", "minimum_matches": 1},
+                        ],
+                        "minimum_matches": 2,
+                    },
+                    "safe/01-safe.ansi": {"patterns": [], "minimum_matches": 0},
                 },
-                "safe/01-safe.ansi": {"patterns": [], "minimum_matches": 0},
-            }}), encoding="utf-8")
+                "required_state_by_frame": {
+                    **synthetic_required_state(("covered/01-identities.ansi",), "FAKE-GREETING"),
+                    **synthetic_required_state(("safe/01-safe.ansi",), "safe frame"),
+                },
+            }), encoding="utf-8")
             identity_child = self.live_child_command("import sys,time; sys.stdout.write('FAKE-GREETING fake@host'); sys.stdout.flush()")
             captured = self.run_capture("wait:0.05\nframe:identities\n", identity_child, covered, masks, expected_version=self.synthetic_version())
             self.assertEqual(captured.returncode, 0, captured.stderr)
@@ -559,12 +1530,15 @@ class FrameScriptsTest(unittest.TestCase):
             root = Path(td)
             out = root / "test" / "fixtures" / "upstream-frames" / "boundary"
             masks = root / "masks-boundary.json"
-            masks.write_text(json.dumps({"redactions_by_frame": {
-                "boundary/01-boot.ansi": {
-                    "patterns": [{"name": "greeting", "pattern": "FAKE-GREETING(?=\\x1b\\[0m BOUNDARY)", "minimum_matches": 1}],
-                    "minimum_matches": 1,
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    "boundary/01-boot.ansi": {
+                        "patterns": [{"name": "greeting", "pattern": "FAKE-GREETING(?=\\x1b\\[0m BOUNDARY)", "minimum_matches": 1}],
+                        "minimum_matches": 1,
+                    },
                 },
-            }}), encoding="utf-8")
+                "required_state_by_frame": synthetic_required_state(("boundary/01-boot.ansi",), "FAKE-GREETING"),
+            }), encoding="utf-8")
             child = self.live_child_command("import sys,time; sys.stdout.write('FAKE-GREETING changed-layout'); sys.stdout.flush()")
             refused = self.run_capture("wait:0.05\nframe:boot\n", child, out, masks, expected_version=self.synthetic_version())
             self.assertNotEqual(refused.returncode, 0)
@@ -777,6 +1751,106 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertNotEqual(partial.returncode, 0)
             self.assertIn("pty closed", partial.stderr)
 
+    def test_diff_redacts_multiline_status_identity_before_output_or_fingerprint(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            golden = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            ours = root / "scratch"
+            golden.mkdir(parents=True); ours.mkdir()
+            identity = "comparison-identity@host"
+            raw_status = (
+                f"\x1b[0m  {identity}\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+                "\x1b[0m  \x1b[0;2m⏸ manual mode on\x1b[0m\n"
+            )
+            redacted_status = (
+                "\x1b[0m  ▒\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+                "\x1b[0m  \x1b[0;2m⏸ manual mode on\x1b[0m\n"
+            )
+            (golden / "01-boot.ansi").write_text(redacted_status + "semantic=before\n", encoding="utf-8")
+            (ours / "01-boot.ansi").write_text(raw_status + "semantic=before\n", encoding="utf-8")
+            equivalent = self.run_diff(golden, ours)
+            self.assertFalse(identity in equivalent.stdout + equivalent.stderr)
+            self.assertEqual(equivalent.returncode, 0)
+            self.assertIn("1 clean, 0 allowlisted, 0 DIVERGENT", equivalent.stdout)
+
+            (ours / "01-boot.ansi").write_text(raw_status + "semantic=after\n", encoding="utf-8")
+            changed = self.run_diff(golden, ours)
+            self.assertFalse(identity in changed.stdout + changed.stderr)
+            self.assertNotEqual(changed.returncode, 0)
+            self.assertIn("fingerprint: sha256:", changed.stdout)
+            self.assertIn("DIVERGENT", changed.stdout)
+            self.assertIn("semantic=before", changed.stdout)
+            self.assertIn("semantic=after", changed.stdout)
+
+    def test_diff_comparison_sanitizes_without_requiring_publication_coverage(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            golden = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            ours = root / "scratch"
+            golden.mkdir(parents=True); ours.mkdir()
+            masks = root / "masks.json"
+            masks.write_text(json.dumps({"redactions_by_frame": {
+                "help-overlay/01-boot.ansi": {
+                    "patterns": [{"name": "raw-identity", "pattern": "RAW-IDENTITY", "minimum_matches": 1}],
+                    "identity_guards": [{"name": "missed-identity", "pattern": "MISSED-IDENTITY"}],
+                    "minimum_matches": 1,
+                },
+            }}), encoding="utf-8")
+            contract = capture.load_redaction_contract(str(masks), "help-overlay/01-boot.ansi")
+            self.assertEqual(
+                capture.preprocess_frame_for_publication("▒\nsemantic=before\n", contract)[1],
+                ["raw-identity matched 0/1", "total matched 0/1"],
+            )
+            (golden / "01-boot.ansi").write_text("▒\nsemantic=before\n", encoding="utf-8")
+            (ours / "01-boot.ansi").write_text("RAW-IDENTITY\nsemantic=before\n", encoding="utf-8")
+
+            equivalent = self.run_diff(golden, ours, masks=masks)
+            self.assertEqual(equivalent.returncode, 0, equivalent.stdout + equivalent.stderr)
+            self.assertIn("1 clean, 0 allowlisted, 0 DIVERGENT", equivalent.stdout)
+            self.assertNotIn("RAW-IDENTITY", equivalent.stdout + equivalent.stderr)
+
+            (ours / "01-boot.ansi").write_text("RAW-IDENTITY\nsemantic=after\n", encoding="utf-8")
+            semantic_difference = self.run_diff(golden, ours, masks=masks)
+            self.assertNotEqual(semantic_difference.returncode, 0)
+            self.assertIn("fingerprint: sha256:", semantic_difference.stdout)
+            self.assertNotIn("RAW-IDENTITY", semantic_difference.stdout + semantic_difference.stderr)
+
+            (ours / "01-boot.ansi").write_text("MISSED-IDENTITY\nsemantic=before\n", encoding="utf-8")
+            missed_identity = self.run_diff(golden, ours, masks=masks)
+            self.assertNotEqual(missed_identity.returncode, 0)
+            self.assertIn("unredacted identity missed-identity", missed_identity.stdout)
+            self.assertNotIn("fingerprint: sha256:", missed_identity.stdout)
+            self.assertNotIn("MISSED-IDENTITY", missed_identity.stdout + missed_identity.stderr)
+
+    def test_diff_fails_privately_for_ansi_split_or_wrapped_unredacted_status_identity(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            golden = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            ours = root / "scratch"
+            golden.mkdir(parents=True); ours.mkdir()
+            (golden / "01-boot.ansi").write_text("sanitized baseline\n", encoding="utf-8")
+            variants = {
+                "ansi-split": (
+                    "\x1b[0m  split\x1b[31midentity@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+                    "\x1b[0m  \x1b[0;2m⏸ manual mode on\x1b[0m\n",
+                    "splitidentity@host",
+                ),
+                "row-wrapped": (
+                    "\x1b[0m  wrappedidentity\n@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+                    "\x1b[0m  \x1b[0;2m⏸ manual mode on\x1b[0m\n",
+                    "wrappedidentity@host",
+                ),
+            }
+            for label, (raw, identity) in variants.items():
+                with self.subTest(label=label):
+                    (ours / "01-boot.ansi").write_text(raw, encoding="utf-8")
+                    result = self.run_diff(golden, ours)
+                    visible_output = re.sub(r"\x1b\[[0-?]*[ -/]*m", "", result.stdout + result.stderr)
+                    self.assertFalse(identity in visible_output)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("privacy redaction failed", result.stdout)
+                    self.assertNotIn("fingerprint: sha256:", result.stdout)
+
     def test_diff_rejects_missing_empty_and_allowlisted_missing_counterparts(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -824,6 +1898,61 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertIn("fingerprint is stale", stale.stdout)
             self.assertIn("fingerprint: sha256:", stale.stdout)
 
+    def test_diff_scopes_allowlist_staleness_to_the_canonical_scenario_being_compared(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fixtures = root / "test" / "fixtures" / "upstream-frames"
+            cases = []
+            for scenario in ("help-overlay", "composer-basics", "nested", "nested/scenario"):
+                golden = fixtures / scenario
+                ours = root / "ours" / scenario.replace("/", "-")
+                golden.mkdir(parents=True)
+                ours.mkdir(parents=True)
+                (golden / "01-frame.ansi").write_text(f"golden {scenario}\n", encoding="utf-8")
+                (ours / "01-frame.ansi").write_text(f"ours {scenario}\n", encoding="utf-8")
+                initial = self.run_diff(golden, ours)
+                fingerprint = re.search(r"fingerprint: sha256:([0-9a-f]{64})", initial.stdout)
+                self.assertIsNotNone(fingerprint, initial.stdout)
+                cases.append((scenario, golden, ours, fingerprint.group(1)))
+
+            allowlist = root / "allowlist.md"
+            allowlist.write_text("".join(
+                f"{scenario}/01-frame.ansi sha256:{fingerprint} F0-13 — reviewed {scenario}\n"
+                for scenario, _, _, fingerprint in cases
+            ), encoding="utf-8")
+
+            for scenario, golden, ours, _ in cases:
+                result = self.run_diff(golden, ours, allowlist)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("0 clean, 1 allowlisted, 0 DIVERGENT", result.stdout)
+
+            nested = next(case for case in cases if case[0] == "nested/scenario")
+            (nested[1] / "alias").mkdir()
+            linked_fixtures = root / "linked-fixtures"
+            linked_fixtures.symlink_to(fixtures, target_is_directory=True)
+            for canonical_alias in (nested[1] / "alias" / "..", linked_fixtures / "nested" / "scenario"):
+                result = self.run_diff(canonical_alias, nested[2], allowlist)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            help_scenario, help_golden, help_ours, _ = cases[0]
+            help_ours.joinpath("01-frame.ansi").write_text("unreviewed visible change\n", encoding="utf-8")
+            stale = self.run_diff(help_golden, help_ours, allowlist)
+            self.assertNotEqual(stale.returncode, 0)
+            self.assertIn("allowlist fingerprint is stale", stale.stdout)
+
+            help_ours.joinpath("01-frame.ansi").write_text(help_golden.joinpath("01-frame.ansi").read_text(encoding="utf-8"), encoding="utf-8")
+            clean = self.run_diff(help_golden, help_ours, allowlist)
+            self.assertNotEqual(clean.returncode, 0)
+            self.assertIn("not a divergent masked comparison", clean.stdout)
+
+            help_golden.joinpath("02-keep.ansi").write_text("keep\n", encoding="utf-8")
+            help_ours.joinpath("02-keep.ansi").write_text("keep\n", encoding="utf-8")
+            help_ours.joinpath("01-frame.ansi").unlink()
+            missing = self.run_diff(help_golden, help_ours, allowlist)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("missing in OUR_DIR", missing.stdout)
+            self.assertIn(f"{help_scenario}/01-frame.ansi is not a divergent masked comparison", missing.stdout)
+
     def test_diff_fingerprint_is_stable_after_frame_scoped_masks(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -870,22 +1999,79 @@ class FrameScriptsTest(unittest.TestCase):
             FRAME_REQUIREMENTS_PATH.read_text(encoding="utf-8"),
             "pyte==0.8.2\nwcwidth==0.8.2\n",
         )
-        install = "pip install -r scripts/frames/requirements.txt"
+        install = "install -r scripts/frames/requirements.txt"
         self.assertIn(install, CAPTURE_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(capture.SNAPSHOT_DRAIN_SECONDS, 0.02)
+        pinned_python = "$CLAUDE_JOB_DIR/tmp/frame-python-venv/bin/python3"
+        stale_python = "scripts/frames/.venv/bin/python3"
+        frame_diff = DIFF_PATH.read_text(encoding="utf-8")
+        self.assertIn(pinned_python, frame_diff)
+        self.assertNotIn(stale_python, frame_diff)
         version = (ROOT / "test" / "fixtures" / "upstream-frames" / "VERSION").read_text(encoding="utf-8")
         self.assertIn(install, version)
+        self.assertIn('"hasCompletedOnboarding":true', version)
+        self.assertIn("`ANTHROPIC_*`", version)
+        self.assertIn("SGR-normalized", version)
+        self.assertIn("row-wrapped", version)
+        self.assertIn("0;2;3", version)
+        for marker in (
+            "⏸ manual mode on", "⏸ plan mode on", "⏵⏵ accept edits on",
+            "⏵⏵ bypass permissions on", "⏵⏵ don't ask on", "⏵⏵ auto mode on",
+        ):
+            self.assertIn(marker, version)
+        self.assertIn("publication coverage", version)
+        self.assertIn("comparison sanitization", version)
+        for footer_grammar in (
+            "contiguous nonblank rendered dashboard block",
+            "Not logged in · Run /login",
+            " · ? for shortcuts …",
+            "hostname token accepts `_`",
+        ):
+            self.assertIn(footer_grammar, version)
+        self.assertNotIn("at most two rendered wrap rows", version)
+        self.assertIn("`git` is redacted", version)
+        self.assertIn("at\nmost 20 ms", version)
+        self.assertIn("transcript/code", version)
+        self.assertRegex(version, r"immediately if seeding\s+fails before a child starts")
+        self.assertIn('"/tmp/frame-scratch"', version)
         expected_version_flag = '--expected-version "2.1.220 (Claude Code)"'
         self.assertEqual(version.count(expected_version_flag), 2)
         plan = F0_PLAN_PATH.read_text(encoding="utf-8")
+        for documented in (version, plan):
+            self.assertIn(pinned_python, documented)
+            self.assertNotIn(stale_python, documented)
         self.assertIn(install, plan)
-        self.assertIn('--bin "claude" --expected-version "2.1.220 (Claude Code)" --cwd /tmp/frame-scratch', plan)
+        self.assertIn('`{"hasCompletedOnboarding":true}`', plan)
+        self.assertIn("`ANTHROPIC_*`", plan)
+        self.assertIn("SGR-normalized", plan)
+        self.assertIn("row-wrapped", plan)
+        self.assertIn("0;2;3", plan)
+        for marker in (
+            "⏸ manual mode on", "⏸ plan mode on", "⏵⏵ accept edits on",
+            "⏵⏵ bypass permissions on", "⏵⏵ don't ask on", "⏵⏵ auto mode on",
+        ):
+            self.assertIn(marker, plan)
+        self.assertIn("publication coverage", plan.lower())
+        self.assertIn("comparison sanitization", plan.lower())
+        for footer_grammar in (
+            "contiguous nonblank rendered dashboard block",
+            "Not logged in · Run /login",
+            " · ? for shortcuts …",
+            "hostname token accepts `_`",
+        ):
+            self.assertIn(footer_grammar, plan)
+        self.assertIn("username `git`", plan)
+        self.assertIn("at most 20 ms", plan)
+        self.assertIn("transcript/code", plan)
+        self.assertIn("immediately if seeding fails before a child starts", plan)
+        self.assertIn('--bin "claude" --expected-version "2.1.220 (Claude Code)" --cwd "/tmp/frame-scratch"', plan)
         self.assertNotIn("pip install pyte", plan)
 
     def test_successful_synthetic_children_use_one_scheduler_robust_keepalive(self):
         source = Path(__file__).read_text(encoding="utf-8")
         self.assertIn("LIVE_CHILD_KEEPALIVE_SECONDS = 5", source)
         self.assertIn("PARTIAL_CHILD_KEEPALIVE_SECONDS = 0.15", source)
-        self.assertEqual(len(re.findall(r"self\.live_child_command\(", source)), 17)
+        self.assertEqual(len(re.findall(r"self\.live_child_command\(", source)), 35)
         self.assertEqual(len(re.findall(r"self\.partial_child_command\(", source)), 2)
         self.assertIn("self.dead_child_command()", source)
         self.assertNotIn("self." + "child_command(", source)

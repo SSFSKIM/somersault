@@ -2,22 +2,26 @@
 """Diff two frame directories cell-for-cell after masking nondeterminism.
 
 Run with the same interpreter used to capture (no third-party imports here, but kept uniform):
-    scripts/frames/.venv/bin/python3 scripts/frame-diff.py GOLDEN_DIR OUR_DIR \
+    "$CLAUDE_JOB_DIR/tmp/frame-python-venv/bin/python3" scripts/frame-diff.py GOLDEN_DIR OUR_DIR \
         --masks scripts/frames/masks.json [--allowlist test/fixtures/upstream-frames/allowlist.md]
 
-masks.json separates `redactions_by_frame` (identity redaction required before tracked-golden writes)
-from `by_frame` (dashboard-only comparison nondeterminism). Both are selected by
-`<scenario>/<frame>.ansi`. Every match is applied per line with SGR sequences intact and replaced on
-BOTH sides with the fixed token `▒` (or a capture-group-preserving equivalent). Fixed, not equal-length:
-a 3s duration versus a 12s one must mask to the same string, or the mask is useless.
+masks.json separates `redactions_by_frame` (strict publication coverage for tracked capture, count-free
+comparison sanitization for diff) from `by_frame` (narrow dashboard-only comparison nondeterminism). Both
+are selected by `<scenario>/<frame>.ansi`. Privacy substitutions run on each complete ANSI frame before
+physical-line splitting. Only comparison-only masks then run per line with SGR sequences intact, replacing
+values on BOTH sides with the fixed token `▒` (or a capture-group-preserving equivalent). Fixed, not
+equal-length: a 3s duration versus a 12s one must mask to the same string, or the mask is useless. A failed
+residual identity guard is divergent without a fingerprint or rendered diff, so raw identities cannot leak
+through either.
 (Column alignment after the mask point differs from the on-screen frame; comparison is masked-text
 to masked-text, so that is fine.)
 
 Allowlist lines look like:  <script-dir>/<frame-file> sha256:<masked-pair-digest> <INVENTORY-ID> — <reason>
 A differing frame is allowlisted only when its masked golden/ours pair has the reviewed digest. Every
-other difference is DIVERGENT. Exit 0 = clean or exactly allowlisted only; exit 1 = malformed/stale
-allowlist data or any unlisted divergence. Missing counterpart files (in either direction) are divergences
-and cannot be allowlisted.
+other difference is DIVERGENT. Malformed allowlist data fails globally, while stale/clean/non-divergent
+entries are evaluated only for the canonical scenario directory being compared. Exit 0 = clean or exactly
+allowlisted only; exit 1 = malformed/stale allowlist data or any unlisted divergence. Missing counterpart
+files (in either direction) are divergences and cannot be allowlisted.
 """
 import argparse
 import difflib
@@ -28,7 +32,15 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from frame_masks import frame_key, load_masks, load_redactions, mask_text
+from frame_masks import (
+    frame_key,
+    load_comparison_masks,
+    load_masks,
+    load_redaction_contract,
+    load_redactions,
+    mask_text,
+    sanitize_frame_for_comparison,
+)
 
 
 
@@ -85,9 +97,9 @@ def load_allowlist(path: str | None) -> dict[str, str]:
     return entries
 
 
-def read_lines(path: str) -> list[str]:
+def read_frame(path: str) -> str:
     with open(path, encoding="utf-8") as f:
-        return f.read().splitlines()
+        return f.read()
 
 
 def main() -> int:
@@ -113,6 +125,7 @@ def main() -> int:
         print(f"ERROR: invalid allowlist entry: {error}")
         return 1
 
+    scenario_scope = frame_key(args.golden_dir, "").rstrip("/")
     rows: list[tuple[str, str, str]] = []  # (frame_key, status, note)
     matched_allowlist_keys = set()
     divergent_keys = set()
@@ -131,16 +144,25 @@ def main() -> int:
             print(f"--- {key}: {note} ({status})")
             continue
 
-        golden_raw = read_lines(os.path.join(args.golden_dir, fname))
-        our_raw = read_lines(os.path.join(args.our_dir, fname))
+        golden_raw = read_frame(os.path.join(args.golden_dir, fname))
+        our_raw = read_frame(os.path.join(args.our_dir, fname))
         if not golden_raw or not our_raw:
             any_divergent = True
             rows.append((key, "DIVERGENT", "empty frame"))
             print(f"--- {key}: empty frame (DIVERGENT)")
             continue
-        patterns = load_masks(args.masks, key)
-        golden_lines = [mask_text(l, patterns) for l in golden_raw]
-        our_lines = [mask_text(l, patterns) for l in our_raw]
+        redactions = load_redaction_contract(args.masks, key)
+        comparison_masks = load_comparison_masks(args.masks, key)
+        golden_lines, golden_failures = sanitize_frame_for_comparison(golden_raw, redactions, comparison_masks)
+        our_lines, our_failures = sanitize_frame_for_comparison(our_raw, redactions, comparison_masks)
+        if golden_failures or our_failures:
+            any_divergent = True
+            divergent_keys.add(key)
+            failures = [*(f"GOLDEN {failure}" for failure in golden_failures), *(f"OUR {failure}" for failure in our_failures)]
+            note = f"privacy redaction failed: {'; '.join(failures)}"
+            rows.append((key, "DIVERGENT", note))
+            print(f"--- {key}: {note} (DIVERGENT)")
+            continue
 
         if golden_lines == our_lines:
             rows.append((key, "clean", ""))
@@ -169,6 +191,8 @@ def main() -> int:
         print("\n".join(diff))
 
     for key in sorted(set(allowlist) - matched_allowlist_keys - divergent_keys):
+        if key.rsplit("/", 1)[0] != scenario_scope:
+            continue
         any_divergent = True
         print(
             f"ERROR: allowlist entry for {key} is not a divergent masked comparison; "
