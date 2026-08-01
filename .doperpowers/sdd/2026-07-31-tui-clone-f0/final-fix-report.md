@@ -492,3 +492,24 @@ Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/
   each diff exited 1 as expected.
 - No credentials were used or printed, no raw synthetic identity reached the scoped-mask diff output, no push
   occurred, and protected concurrent untracked files remain untouched.
+
+## Tenth plugin review pass
+
+Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/2026-07-31-tui-clone-f0/final-rereview10-findings.md`.
+
+### Red proof and repair
+
+- The new width-two overwrite matrix was red before the implementation. `-k 'wide_overwrite'` ran 3 tests and all 3 failed because the second covered cell retained an empty continuation; the non-bottom autowrap case ran 1 test and failed for the same reason. The no-autowrap right-edge preservation case passed under the old implementation, confirming its existing first-cell repair.
+- `DimScreen.draw()` now calculates pyte's actual pre-draw destination, including non-bottom DECAWM wrapping and DECAWM-off right-edge back-up, and clears every in-bounds cell occupied by the incoming glyph before calling pyte. Insert mode remains untouched, and bottom-margin wrapping still skips preclear because pyte scrolls to a blank row.
+- The focused `-k 'wide'` group passed **11 tests** after the repair. Sabotaging the span loop to clear only its first cell made all 3 overwrite tests fail again; restoring the full-span loop returned the same 11 focused tests to green.
+
+### Tenth-pass gates
+
+- `scripts/frames/.venv/bin/python3 -m unittest discover -s test/python -p 'test_*.py'`: **PASS; 40 tests**.
+- `npm run typecheck`: **PASS; no diagnostics**.
+- `npx vitest run test/tui --exclude 'test/tui/tmp-probe-rescue-popup.test.tsx'`: **PASS; 39 files and 662 tests passed; 9 credential-gated tests skipped**.
+- `npm run test:unit`: **PASS; 135 files and 1,227 tests passed**.
+- Fresh keyless 100x40 local captures wrote **3 help** and **5 composer** frames. The documented diffs remain help **`0 clean, 0 allowlisted, 3 DIVERGENT`** and composer **`0 clean, 0 allowlisted, 5 DIVERGENT`**, each with expected exit code **1**.
+- `git diff --check`: **PASS** before commit.
+
+No credentials or `.env` were loaded or printed. The protected concurrent untracked files were not edited or staged. The pre-existing manual `Ctrl-Z` → `fg` concern remains unrelated to this frame-emulator repair.
