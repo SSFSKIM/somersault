@@ -52,7 +52,15 @@ def load_allowlist(path: str | None) -> dict[str, str]:
     with open(path, encoding="utf-8") as f:
         for line_number, raw_line in enumerate(f, 1):
             line = raw_line.strip()
-            if not line or line.startswith("#") or ".ansi" not in line:
+            if not line or line.startswith("#"):
+                continue
+            first_field = line.split(maxsplit=1)[0]
+            entry_shaped = (
+                not raw_line[0].isspace()
+                and "/" in first_field
+                and ("sha256:" in line or " — " in line)
+            )
+            if ".ansi" not in line and not entry_shaped:
                 continue
             try:
                 fields, reason = line.split(" — ", 1)

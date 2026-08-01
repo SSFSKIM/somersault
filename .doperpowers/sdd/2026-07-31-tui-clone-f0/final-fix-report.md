@@ -536,3 +536,13 @@ Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/
 - `npm run test:unit`: **PASS; 135 files and 1,227 tests passed**. `npm run test:integration`: **PASS; 3 files and 16 tests passed**. `npm run test:contract`: **PASS; 1 file and 7 tests passed**.
 - Fresh keyless local 100x40 captures wrote **3 help** and **5 composer** frames. With the empty active allowlist, help remained **`0 clean, 0 allowlisted, 3 DIVERGENT`** and composer **`0 clean, 0 allowlisted, 5 DIVERGENT`**; both expectedly exited **1**.
 - `git diff --check`: **PASS** before commit. No credentials were loaded, printed, or committed. The protected concurrent untracked files were not edited or staged.
+
+## Eleventh review follow-up
+
+An independent review completed after the eleventh-pass commit and identified four residual gaps. A focused three-test red run reproduced them: an unindented `.ans` plus `sha256:` record was ignored rather than rejected, the F0 plan still contained unpinned `pip install pyte` setup, and synthetic fixtures still used a generic child builder.
+
+- The allowlist parser now treats unindented path-shaped rows containing either an inventory delimiter or `sha256:` as entries even if their extension is malformed. Indented Markdown templates remain explanatory prose. The malformed-record test uses equal frames, so the old parser would have exited 0; it now fails at allowlist validation.
+- The F0 Task 9 plan now creates and installs `scripts/frames/requirements.txt`, names both exact emulator versions, and describes the post-mask fingerprint allowlist, including malformed/stale fail-closed behavior.
+- Test fixtures now have explicit `live_child_command`, `partial_child_command`, and `dead_child_command` helpers. All 16 successful fixtures are structurally required to use the five-second helper; the two partial fixtures alone use the explicit 0.15-second helper.
+- Follow-up gates: focused guards **PASS; 3 tests**; full Python suite **PASS; 44 tests in 7.368 seconds**; ten scheduler-pressure full-suite runs **all PASS; 44 tests each**. Typecheck, TUI, unit, integration, and contract suites again passed **662**, **1,227**, **16**, and **7** tests, respectively; 9 credential-gated TUI tests skipped.
+- The corrected parser retained the expected keyless baseline: help **`0 clean, 0 allowlisted, 3 DIVERGENT`** and composer **`0 clean, 0 allowlisted, 5 DIVERGENT`**, both exit 1. No credentials were loaded or printed, and protected concurrent files remain unstaged.
