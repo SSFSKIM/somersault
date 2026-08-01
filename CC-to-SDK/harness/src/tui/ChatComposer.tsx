@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { readdirSync } from "node:fs";
-import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, type EditorState } from "./editor.js";
+import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, type EditorState } from "./editor.js";
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
 import { editExternal as realEditExternal } from "./externalEditor.js";
@@ -77,6 +77,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     if (editorStateRef) editorStateRef.current = resolved;
     setState(resolved);
     return resolved;
+  };
+  const endInterceptedEditorAction = (editor: EditorState) => {
+    const ended = endKillAndYank(editor);
+    if (ended !== editor) commitState(ended);
+    return ended;
   };
   const disposed = useRef(false);
   const [yankHint, setYankHint] = useState(false);
@@ -161,6 +166,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // upstream wins on fidelity questions, this stays un-disarmed on other input even though it reads as
     // inconsistent with the Esc arm right below.
     if (key.ctrl && input === "d" && s.lines.length === 1 && s.lines[0] === "") {   // KB3: EOF needs two presses
+      endInterceptedEditorAction(s);
       if (dArm.current && Date.now() - dArm.current < exitArmMsRef.current) { onExitRef.current?.(); return; }
       dArm.current = Date.now(); setDArmed(true);
       if (dTimer.current) clearTimeout(dTimer.current);
@@ -169,23 +175,24 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     }
     // '?' on a genuinely empty composer (no buffer text, no open '/' or '@' popup) opens the shortcuts
     // overlay; typed anywhere else it must fall through to applyKey and insert a literal '?'.
-    if (input === "?" && !s.command && !s.mention && s.lines.length === 1 && s.lines[0] === "") { onHelpRef.current?.(); return; }
+    if (input === "?" && !s.command && !s.mention && s.lines.length === 1 && s.lines[0] === "") { endInterceptedEditorAction(s); onHelpRef.current?.(); return; }
     // Shift+Tab cycles the permission ladder (CC chat:cycleMode). Bare Tab belongs to the autocomplete
     // popups alone (CC's Autocomplete context) — with no popup open it does nothing.
-    if (key.tab && key.shift) { onCycleModeRef.current?.(); return; }
+    if (key.tab && key.shift) { endInterceptedEditorAction(s); onCycleModeRef.current?.(); return; }
     // Ctrl-X Ctrl-E chord (2s window) or Ctrl-G: round-trip the buffer through $EDITOR. Ctrl-E alone
     // must stay line-end, so the chord prefix gates it.
-    if (key.ctrl && input === "x") { ctrlX.current = Date.now(); return; }
+    if (key.ctrl && input === "x") { endInterceptedEditorAction(s); ctrlX.current = Date.now(); return; }
     // Ctrl-X Ctrl-K (CC chat:killAgents) — only when chorded; a bare Ctrl-K stays the editor's kill-to-end.
-    if (key.ctrl && input === "k" && Date.now() - ctrlX.current < 2000) { ctrlX.current = 0; onKillAgentsRef.current?.(); return; }
+    if (key.ctrl && input === "k" && Date.now() - ctrlX.current < 2000) { endInterceptedEditorAction(s); ctrlX.current = 0; onKillAgentsRef.current?.(); return; }
     if (key.ctrl && (input === "g" || (input === "e" && Date.now() - ctrlX.current < 2000))) {
+      const ended = endInterceptedEditorAction(s);
       ctrlX.current = 0;
       const edited = (editExternalRef.current ?? realEditExternal)(s.lines.join("\n"));
       // Clear any open mention/command popup too — it was filtered against the pre-edit buffer and would
       // otherwise show stale items against the freshly-applied text.
       if (edited !== null && !disposed.current) {
         if (s.lines.length === 1 && s.lines[0] === "" && edited.length > 0) onDraftStartRef.current?.();
-        commitState((st) => replaceBufferFromOutside(st, edited));
+        commitState(replaceBufferFromOutside(ended, edited));
       }
       return;
     }
@@ -198,19 +205,21 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // is present, since only the empty branch ever reaches onInterrupt outside the busy case.
     if (!s.command && !s.mention) {
       if (key.escape) {
-        if (busyRef.current) { disarmClear(); onInterruptRef.current?.(); return; }                  // running turn: Esc is interrupt; buffer untouched
+        if (busyRef.current) { endInterceptedEditorAction(s); disarmClear(); onInterruptRef.current?.(); return; }                  // running turn: Esc is interrupt; buffer untouched
         if (!(s.lines.length === 1 && s.lines[0] === "")) {                // idle + text: CC's double-press clear (CM15)
           if (clearArm.current && Date.now() - clearArm.current < escClearMsRef.current) {
+            const ended = endInterceptedEditorAction(s);
             clearArm.current = 0; setClearArmed(false);
             if (clearTimer.current) clearTimeout(clearTimer.current);
-            commitState(clearToHistory(s)); return;
+            commitState(clearToHistory(ended)); return;
           }
+          endInterceptedEditorAction(s);
           clearArm.current = Date.now(); setClearArmed(true);
           if (clearTimer.current) clearTimeout(clearTimer.current);
           clearTimer.current = setTimeout(() => { clearArm.current = 0; setClearArmed(false); }, escClearMsRef.current);
           return;
         }
-        onInterruptRef.current?.(); return;                                           // idle + empty: ChatApp owns rewind arming
+        endInterceptedEditorAction(s); onInterruptRef.current?.(); return;                                           // idle + empty: ChatApp owns rewind arming
       }
     }
     if (clearArm.current) disarmClear();

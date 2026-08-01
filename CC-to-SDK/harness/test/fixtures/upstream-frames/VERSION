@@ -14,12 +14,14 @@ scripts/frames/.venv/bin/python3 scripts/capture-frames.py \
   --script scripts/frames/help-overlay.keys \
   --out test/fixtures/upstream-frames/help-overlay \
   --bin "claude" --cwd /tmp/frame-scratch --cols 100 --rows 40 \
-  --redact-masks scripts/frames/masks.json
+  --redact-masks scripts/frames/masks.json \
+  --expected-version "2.1.220 (Claude Code)"
 scripts/frames/.venv/bin/python3 scripts/capture-frames.py \
   --script scripts/frames/composer-basics.keys \
   --out test/fixtures/upstream-frames/composer-basics \
   --bin "claude" --cwd /tmp/frame-scratch --cols 100 --rows 40 \
-  --redact-masks scripts/frames/masks.json
+  --redact-masks scripts/frames/masks.json \
+  --expected-version "2.1.220 (Claude Code)"
 ```
 
 `redactions_by_frame` in `scripts/frames/masks.json` is the write-time contract. Every tracked frame

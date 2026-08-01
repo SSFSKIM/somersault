@@ -324,6 +324,12 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResu
  *  Ctrl-_ then restores identical text and undo looks broken. */
 const sameText = (a: string[], b: string[]) => a === b || (a.length === b.length && a.every((l, i) => l === b[i]));
 
+/** End a normal input sequence without changing any buffer, history, stash, ring, or undo data.
+ * Composer-owned commands call this when they intercept a non-kill key before the reducer can do so. */
+export function endKillAndYank(s: EditorState): EditorState {
+  return s.killRun || s.yankSite ? { ...s, killRun: false, yankSite: null } : s;
+}
+
 /** Snapshot-on-change undo: any key that changed the buffer pushes the PRIOR buffer (cap 100). An op
  *  that managed the stack itself (undoEdit pops it) is recognized by its own `undo` identity change;
  *  a submit returns a fresh initialEditorState, so its stack is already empty. Also folds a kill into
@@ -346,8 +352,8 @@ export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorRe
     } else {
       state = { ...state, yankSite: null };                  // no-op kill: preserve killRun as-is, still fix a pending yank
     }
-  } else if (state.yankSite === s.yankSite && (s.killRun || s.yankSite)) {
-    state = { ...state, killRun: false, yankSite: null };    // any non-kill keystroke ends the run; any non-yank-pop fixes the yank
+  } else if (state.yankSite === s.yankSite) {
+    state = endKillAndYank(state);                            // any non-kill keystroke ends the run; any non-yank-pop fixes the yank
   }
   if (r.submit !== undefined) return { ...r, state, killed };
   if (state === s) return { ...r, killed };

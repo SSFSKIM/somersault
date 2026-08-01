@@ -345,6 +345,73 @@ describe("ChatComposer", () => {
     expect(lastFrame() ?? "").toContain("draft");
   });
 
+  it("ends pending yank-pop for every composer-owned non-kill intercept but leaves Ctrl-Z exact", async () => {
+    const ctrl = { ctrl: true };
+    const makeYankedState = () => {
+      let editor = initialEditorState();
+      for (const char of "one") editor = applyKey(editor, char, {}).state;
+      editor = applyKey(editor, "u", ctrl).state;
+      for (const char of "two") editor = applyKey(editor, char, {}).state;
+      editor = applyKey(editor, "u", ctrl).state;
+      return applyKey(editor, "y", ctrl).state;
+    };
+    const makeEmptyPendingState = () => ({ ...makeYankedState(), lines: [""], cursor: { row: 0, col: 0 } });
+    const exercise = async (trigger: (stdin: { write(input: string): void }) => void | Promise<void>, props: Record<string, unknown> = {}, assertCallback: () => void = () => {}, initialState = makeYankedState()) => {
+      const editorStateRef = { current: initialState } as React.MutableRefObject<EditorState>;
+      const view = render(<ChatComposer editorStateRef={editorStateRef} onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} {...props as any} />);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(editorStateRef.current.yankSite).not.toBeNull();
+      await trigger(view.stdin);
+      await waitFor(() => editorStateRef.current.yankSite === null);
+      expect(editorStateRef.current.killRun).toBe(false);
+      expect(editorStateRef.current.lines).toEqual(initialState.lines);
+      assertCallback();
+      view.stdin.write("\x1by");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(editorStateRef.current.lines).toEqual(initialState.lines);
+      view.unmount();
+    };
+
+    await exercise((stdin) => stdin.write("\x1b"));
+
+    let modeCycles = 0;
+    await exercise((stdin) => stdin.write("\x1b[Z"), { onCycleMode: () => modeCycles++ }, () => expect(modeCycles).toBe(1));
+
+    await exercise((stdin) => stdin.write("\x18"));
+
+    let externalEdits = 0;
+    await exercise((stdin) => stdin.write("\x07"), { editExternal: () => { externalEdits++; return null; } }, () => expect(externalEdits).toBe(1));
+
+    let chordEdits = 0;
+    await exercise(async (stdin) => { stdin.write("\x18"); await new Promise((r) => setTimeout(r, 20)); stdin.write("\x05"); }, { editExternal: () => { chordEdits++; return null; } }, () => expect(chordEdits).toBe(1));
+
+    let killedAgents = 0;
+    await exercise(async (stdin) => { stdin.write("\x18"); await new Promise((r) => setTimeout(r, 20)); stdin.write("\x0b"); }, { onKillAgents: () => killedAgents++ }, () => expect(killedAgents).toBe(1));
+
+    let interrupts = 0;
+    await exercise((stdin) => stdin.write("\x1b"), { busy: true, onInterrupt: () => interrupts++ }, () => expect(interrupts).toBe(1));
+
+    let emptyInterrupts = 0;
+    await exercise((stdin) => stdin.write("\x1b"), { onInterrupt: () => emptyInterrupts++ }, () => expect(emptyInterrupts).toBe(1), makeEmptyPendingState());
+
+    let helps = 0;
+    await exercise((stdin) => stdin.write("?"), { onHelp: () => helps++ }, () => expect(helps).toBe(1), makeEmptyPendingState());
+
+    let exits = 0;
+    await exercise(async (stdin) => { stdin.write("\x04"); await new Promise((r) => setTimeout(r, 20)); stdin.write("\x04"); }, { onExit: () => exits++ }, () => expect(exits).toBe(1), makeEmptyPendingState());
+
+    const editorStateRef = { current: makeYankedState() } as React.MutableRefObject<EditorState>;
+    const beforeSuspend = structuredClone(editorStateRef.current);
+    const suspended = render(<ChatComposer editorStateRef={editorStateRef} onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
+    await new Promise((r) => setTimeout(r, 20));
+    suspended.stdin.write("\x1a");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(editorStateRef.current).toEqual(beforeSuspend);
+    suspended.stdin.write("\x1by");
+    await waitFor(() => editorStateRef.current.lines.join("\n") === "one");
+    suspended.unmount();
+  });
+
   it("with a / popup open, Tab/Esc are consumed by the popup (NO global cycle/interrupt — fixes the double-handler)", async () => {
     let cycles = 0, interrupts = 0;
     const a = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onCycleMode={() => cycles++} onInterrupt={() => interrupts++} />);

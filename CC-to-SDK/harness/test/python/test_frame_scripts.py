@@ -49,14 +49,20 @@ class FrameScriptsTest(unittest.TestCase):
     def dead_child_command(self) -> str:
         return self.synthetic_child_command("")
 
-    def run_capture(self, script: str, binary: str, out: Path, redact_masks: Path | None = None, script_parent: Path | None = None, cwd: Path | None = None):
+    def synthetic_version(self) -> str:
+        version = subprocess.run([sys.executable, "--version"], text=True, capture_output=True, check=True)
+        return (version.stdout or version.stderr).strip()
+
+    def run_capture(self, script: str, binary: str, out: Path, redact_masks: Path | None = None, script_parent: Path | None = None, cwd: Path | None = None, expected_version: str | None = None, env: dict[str, str] | None = None):
         script_path = (script_parent or out.parent) / "case.keys"
         script_path.parent.mkdir(parents=True, exist_ok=True)
         script_path.write_text(textwrap.dedent(script), encoding="utf-8")
         args = [sys.executable, str(CAPTURE_PATH), "--script", str(script_path), "--out", str(out), "--bin", binary, "--cwd", str(cwd or out.parent)]
         if redact_masks is not None:
             args += ["--redact-masks", str(redact_masks)]
-        return subprocess.run(args, text=True, capture_output=True)
+        if expected_version is not None:
+            args += ["--expected-version", expected_version]
+        return subprocess.run(args, text=True, capture_output=True, env=env)
 
     def run_diff(self, golden: Path, ours: Path, allowlist: Path | None = None, masks: Path = MASKS_PATH):
         args = [sys.executable, str(DIFF_PATH), str(golden), str(ours), "--masks", str(masks)]
@@ -205,7 +211,7 @@ class FrameScriptsTest(unittest.TestCase):
                     "minimum_matches": 1,
                 },
             }}), encoding="utf-8")
-            captured = self.run_capture("wait:0.05\nframe:boot\n", child, out, one_identity_masks)
+            captured = self.run_capture("wait:0.05\nframe:boot\n", child, out, one_identity_masks, expected_version=self.synthetic_version())
             self.assertEqual(captured.returncode, 0, captured.stderr)
             frame = (out / "01-boot.ansi").read_text(encoding="utf-8")
             self.assertIn("▒", frame)
@@ -300,6 +306,7 @@ class FrameScriptsTest(unittest.TestCase):
                 masks,
                 script_parent=root,
                 cwd=root,
+                expected_version=self.synthetic_version(),
             )
             self.assertEqual(captured.returncode, 0, captured.stderr)
             frame = (tracked / "01-boot.ansi").read_text(encoding="utf-8")
@@ -354,7 +361,7 @@ class FrameScriptsTest(unittest.TestCase):
                 "renamed/02-second.ansi": {"patterns": [{"name": "ready", "pattern": "ready", "minimum_matches": 1}], "minimum_matches": 1},
             }}), encoding="utf-8")
             tracked = root / "test" / "fixtures" / "upstream-frames" / "renamed"
-            captured = self.run_capture("frame:first\nframe:second\n", child, tracked, masks)
+            captured = self.run_capture("frame:first\nframe:second\n", child, tracked, masks, expected_version=self.synthetic_version())
             self.assertEqual(captured.returncode, 0, captured.stderr)
             for name in ("01-first.ansi", "02-second.ansi"):
                 text = (tracked / name).read_text(encoding="utf-8")
@@ -364,6 +371,72 @@ class FrameScriptsTest(unittest.TestCase):
             untracked = self.run_capture("frame:boot\n", child, root / "scratch")
             self.assertEqual(untracked.returncode, 0, untracked.stderr)
             self.assertIn("ready", (root / "scratch" / "01-boot.ansi").read_text(encoding="utf-8"))
+
+    def test_tracked_capture_requires_an_exact_version_preflight_before_capture_or_staging(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            marker = root / "capture-child-ran"
+            child = self.live_child_command(f"from pathlib import Path; import sys,time; Path({str(marker)!r}).write_text('yes'); sys.stdout.write('ready'); sys.stdout.flush()")
+            masks = root / "masks.json"
+            masks.write_text(json.dumps({"redactions_by_frame": {
+                key: {"patterns": [], "minimum_matches": 0}
+                for key in (
+                    "version/missing/01-boot.ansi",
+                    "version/correct/01-boot.ansi",
+                    "version/wrong/01-boot.ansi",
+                    "version/failed/01-boot.ansi",
+                    "version/path-correct/01-boot.ansi",
+                    "version/path-changed/01-boot.ansi",
+                )
+            }}), encoding="utf-8")
+
+            missing = self.run_capture("wait:0.05\nframe:boot\n", child, root / "test" / "fixtures" / "upstream-frames" / "version" / "missing", masks)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("--expected-version", missing.stderr)
+            self.assertFalse(marker.exists())
+            self.assertFalse(list(root.glob(".capture-*")))
+
+            version = self.synthetic_version()
+            correct = self.run_capture("wait:0.05\nframe:boot\n", child, root / "test" / "fixtures" / "upstream-frames" / "version" / "correct", masks, expected_version=version)
+            self.assertEqual(correct.returncode, 0, correct.stderr)
+            self.assertTrue(marker.exists())
+            marker.unlink()
+
+            wrong = self.run_capture("wait:0.05\nframe:boot\n", child, root / "test" / "fixtures" / "upstream-frames" / "version" / "wrong", masks, expected_version="not the synthetic interpreter")
+            self.assertNotEqual(wrong.returncode, 0)
+            self.assertIn("version mismatch", wrong.stderr)
+            self.assertFalse(marker.exists())
+            self.assertFalse(list(root.glob(".capture-*")))
+
+            failing = root / "failing-version"
+            failing.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+            failing.chmod(0o755)
+            failed = self.run_capture("frame:boot\n", str(failing), root / "test" / "fixtures" / "upstream-frames" / "version" / "failed", masks, expected_version="2.1.220 (Claude Code)")
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("version check failed", failed.stderr)
+            self.assertFalse(list(root.glob(".capture-*")))
+
+            def fake_claude(directory: Path, version_output: str, capture_marker: Path | None = None) -> None:
+                marker_line = f"touch {shlex.quote(str(capture_marker))}\n" if capture_marker else ""
+                executable = directory / "claude"
+                executable.parent.mkdir(parents=True)
+                executable.write_text(f"#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' {shlex.quote(version_output)}\n  exit 0\nfi\n{marker_line}printf ready\nsleep {LIVE_CHILD_KEEPALIVE_SECONDS}\n", encoding="utf-8")
+                executable.chmod(0o755)
+
+            first_path, changed_path = root / "first-bin", root / "changed-bin"
+            fake_claude(first_path, "2.1.220 (Claude Code)")
+            path_env = {"PATH": f"{first_path}{os.pathsep}{os.defpath}"}
+            path_correct = self.run_capture("wait:0.05\nframe:boot\n", "claude", root / "test" / "fixtures" / "upstream-frames" / "version" / "path-correct", masks, expected_version="2.1.220 (Claude Code)", env=path_env)
+            self.assertEqual(path_correct.returncode, 0, path_correct.stderr)
+
+            path_marker = root / "changed-path-child-ran"
+            fake_claude(changed_path, "2.1.221 (Claude Code)", path_marker)
+            changed_env = {"PATH": f"{changed_path}{os.pathsep}{os.defpath}"}
+            path_changed = self.run_capture("wait:0.05\nframe:boot\n", "claude", root / "test" / "fixtures" / "upstream-frames" / "version" / "path-changed", masks, expected_version="2.1.220 (Claude Code)", env=changed_env)
+            self.assertNotEqual(path_changed.returncode, 0)
+            self.assertIn("version mismatch", path_changed.stderr)
+            self.assertFalse(path_marker.exists())
+            self.assertFalse(list(root.glob(".capture-*")))
 
     def test_capture_publishes_only_validated_ansi_frames_and_preserves_failed_output(self):
         with tempfile.TemporaryDirectory() as td:
@@ -407,7 +480,7 @@ class FrameScriptsTest(unittest.TestCase):
                     "minimum_matches": 1,
                 },
             }}), encoding="utf-8")
-            captured_tracked = self.run_capture("wait:0.05\nframe:new\n", child, tracked, masks)
+            captured_tracked = self.run_capture("wait:0.05\nframe:new\n", child, tracked, masks, expected_version=self.synthetic_version())
             self.assertEqual(captured_tracked.returncode, 0, captured_tracked.stderr)
             self.assertEqual({p.name for p in tracked.glob("*.ansi")}, {"01-new.ansi"})
             self.assertIn("▒", (tracked / "01-new.ansi").read_text(encoding="utf-8"))
@@ -425,7 +498,7 @@ class FrameScriptsTest(unittest.TestCase):
                 },
             }}), encoding="utf-8")
             child = self.live_child_command("import sys,time; sys.stdout.write('RAW-FAKE-IDENTITY'); sys.stdout.flush()")
-            refused = self.run_capture("frame:boot\n", child, out, masks)
+            refused = self.run_capture("frame:boot\n", child, out, masks, expected_version=self.synthetic_version())
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("greeting", refused.stderr)
             self.assertFalse(list(out.glob("*.ansi")))
@@ -447,7 +520,7 @@ class FrameScriptsTest(unittest.TestCase):
                 },
             }}), encoding="utf-8")
             child = self.live_child_command("import sys,time; sys.stdout.write('FAKE-FIRST'); sys.stdout.flush()")
-            refused = self.run_capture("frame:first\nframe:second\n", child, out, masks)
+            refused = self.run_capture("frame:first\nframe:second\n", child, out, masks, expected_version=self.synthetic_version())
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("second", refused.stderr)
             self.assertFalse(list(out.glob("*.ansi")))
@@ -468,7 +541,7 @@ class FrameScriptsTest(unittest.TestCase):
                 "safe/01-safe.ansi": {"patterns": [], "minimum_matches": 0},
             }}), encoding="utf-8")
             identity_child = self.live_child_command("import sys,time; sys.stdout.write('FAKE-GREETING fake@host'); sys.stdout.flush()")
-            captured = self.run_capture("wait:0.05\nframe:identities\n", identity_child, covered, masks)
+            captured = self.run_capture("wait:0.05\nframe:identities\n", identity_child, covered, masks, expected_version=self.synthetic_version())
             self.assertEqual(captured.returncode, 0, captured.stderr)
             frame = (covered / "01-identities.ansi").read_text(encoding="utf-8")
             self.assertNotIn("FAKE-GREETING", frame)
@@ -477,7 +550,7 @@ class FrameScriptsTest(unittest.TestCase):
 
             safe = root / "test" / "fixtures" / "upstream-frames" / "safe"
             safe_child = self.live_child_command("import sys,time; sys.stdout.write('safe frame'); sys.stdout.flush()")
-            captured_safe = self.run_capture("wait:0.05\nframe:safe\n", safe_child, safe, masks)
+            captured_safe = self.run_capture("wait:0.05\nframe:safe\n", safe_child, safe, masks, expected_version=self.synthetic_version())
             self.assertEqual(captured_safe.returncode, 0, captured_safe.stderr)
             self.assertIn("safe frame", (safe / "01-safe.ansi").read_text(encoding="utf-8"))
 
@@ -493,7 +566,7 @@ class FrameScriptsTest(unittest.TestCase):
                 },
             }}), encoding="utf-8")
             child = self.live_child_command("import sys,time; sys.stdout.write('FAKE-GREETING changed-layout'); sys.stdout.flush()")
-            refused = self.run_capture("wait:0.05\nframe:boot\n", child, out, masks)
+            refused = self.run_capture("wait:0.05\nframe:boot\n", child, out, masks, expected_version=self.synthetic_version())
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("greeting", refused.stderr)
             self.assertFalse(list(out.glob("*.ansi")))
@@ -624,6 +697,31 @@ class FrameScriptsTest(unittest.TestCase):
                 stream.feed(payload[:split_at])
                 stream.feed(payload[split_at:])
                 self.assertEqual(capture.render_screen(split), capture.render_screen(whole), split_at)
+
+    def test_dim_pending_wrap_below_partial_decstbm_repairs_pytes_clamped_bottom_destination(self):
+        for old_dim, incoming_dim, incoming, expected_cells in (
+            (False, False, "Z", ["Z", " ", " ", " "]),
+            (False, True, "Z", ["Z", " ", " ", " "]),
+            (True, False, "語", ["語", "", " ", " "]),
+            (True, True, "語", ["語", "", " ", " "]),
+        ):
+            with self.subTest(old_dim=old_dim, incoming_dim=incoming_dim, incoming=incoming):
+                old_style = b"\x1b[2m" if old_dim else b"\x1b[0m"
+                incoming_style = b"\x1b[2m" if incoming_dim else b"\x1b[0m"
+                payload = b"\x1b[2;3r\x1b[3;1H" + old_style + "界".encode() + b"\x1b[4;1H\x1b[0m1234" + incoming_style + incoming.encode()
+                whole = capture.DimScreen(4, 4)
+                capture.pyte.ByteStream(whole).feed(payload)
+                self.assertEqual([whole.buffer[2][column].data for column in range(4)], expected_cells)
+                self.assertEqual(whole.dim_at(2, 0), incoming_dim)
+                self.assertEqual(whole.dim_at(2, 1), incoming_dim if incoming == "語" else False)
+                self.assertFalse(whole.dim_at(2, 2), "the stale wide continuation must be cleared at pyte's clamped destination")
+
+                for split_at in range(1, len(payload)):
+                    split = capture.DimScreen(4, 4)
+                    stream = capture.pyte.ByteStream(split)
+                    stream.feed(payload[:split_at])
+                    stream.feed(payload[split_at:])
+                    self.assertEqual(capture.render_screen(split), capture.render_screen(whole), split_at)
 
     def test_dim_nonbottom_autowrap_still_repairs_an_existing_wide_destination(self):
         screen = capture.DimScreen(4, 3)
@@ -776,15 +874,18 @@ class FrameScriptsTest(unittest.TestCase):
         self.assertIn(install, CAPTURE_PATH.read_text(encoding="utf-8"))
         version = (ROOT / "test" / "fixtures" / "upstream-frames" / "VERSION").read_text(encoding="utf-8")
         self.assertIn(install, version)
+        expected_version_flag = '--expected-version "2.1.220 (Claude Code)"'
+        self.assertEqual(version.count(expected_version_flag), 2)
         plan = F0_PLAN_PATH.read_text(encoding="utf-8")
         self.assertIn(install, plan)
+        self.assertIn('--bin "claude" --expected-version "2.1.220 (Claude Code)" --cwd /tmp/frame-scratch', plan)
         self.assertNotIn("pip install pyte", plan)
 
     def test_successful_synthetic_children_use_one_scheduler_robust_keepalive(self):
         source = Path(__file__).read_text(encoding="utf-8")
         self.assertIn("LIVE_CHILD_KEEPALIVE_SECONDS = 5", source)
         self.assertIn("PARTIAL_CHILD_KEEPALIVE_SECONDS = 0.15", source)
-        self.assertEqual(len(re.findall(r"self\.live_child_command\(", source)), 16)
+        self.assertEqual(len(re.findall(r"self\.live_child_command\(", source)), 17)
         self.assertEqual(len(re.findall(r"self\.partial_child_command\(", source)), 2)
         self.assertIn("self.dead_child_command()", source)
         self.assertNotIn("self." + "child_command(", source)

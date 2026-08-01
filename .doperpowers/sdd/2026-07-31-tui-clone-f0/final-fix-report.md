@@ -546,3 +546,40 @@ An independent review completed after the eleventh-pass commit and identified fo
 - Test fixtures now have explicit `live_child_command`, `partial_child_command`, and `dead_child_command` helpers. All 16 successful fixtures are structurally required to use the five-second helper; the two partial fixtures alone use the explicit 0.15-second helper.
 - Follow-up gates: focused guards **PASS; 3 tests**; full Python suite **PASS; 44 tests in 7.368 seconds**; ten scheduler-pressure full-suite runs **all PASS; 44 tests each**. Typecheck, TUI, unit, integration, and contract suites again passed **662**, **1,227**, **16**, and **7** tests, respectively; 9 credential-gated TUI tests skipped.
 - The corrected parser retained the expected keyless baseline: help **`0 clean, 0 allowlisted, 3 DIVERGENT`** and composer **`0 clean, 0 allowlisted, 5 DIVERGENT`**, both exit 1. No credentials were loaded or printed, and protected concurrent files remain unstaged.
+
+## Twelfth plugin review pass
+
+Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/2026-07-31-tui-clone-f0/final-rereview12-findings.md`.
+
+### TDD red proofs, corrections, and sabotage
+
+1. **Composer-owned non-kill input now finalizes yank metadata.** A real `ChatComposer` with its durable `editorStateRef` was seeded through two actual Ctrl-U kills and Ctrl-Y. Against the old early-return routing, its first Escape case timed out waiting for `yankSite` to clear. `editor.ts` now exports the pure `endKillAndYank` transition, used both by `applyKey` and every composer-owned interception: EOF, help, Shift-Tab, Ctrl-X prefix, Ctrl-X Ctrl-K, Ctrl-G/Ctrl-X Ctrl-E (including cancellation), and all busy/text/empty Escape branches. The live component matrix proves each leaves the buffer unchanged, clears `killRun`/`yankSite`, makes Alt-Y a no-op, and calls the relevant callback once; Ctrl-Z retains an exact metadata clone and still Alt-Y cycles. The input-owner guard remains before this transition, so an inactive composer cannot mutate state. Sabotaging the one composer helper to return its unmodified state made the same matrix red at stale `yankSite`; restoring it returned green.
+2. **Partial-DECSTBM pending-wrap now repairs pyte's clamped destination.** The `4×4` regression set rows 2–3 as the scroll region, put a dim wide glyph at row 3 columns 1–2, placed a wrap-pending cursor on row 4, and then drew narrow and width-two spans in dim/plain combinations. Before the correction, narrow cases produced `['Z', '', ' ', ' ']`, retaining the old continuation rather than the expected `['Z', ' ', ' ', ' ']`. `DimScreen.draw()` now maps `y < bottom` to the next row, `y == bottom` to no preclear because pyte scrolls to blank, and `y > bottom` to `(bottom, 0)` because pyte's `cursor_down()` clamps upward. The test also compares every byte split with the one-chunk render. Sabotaging only the `y > bottom` branch recreated the two stale-continuation failures; restoring it passed.
+3. **Tracked fixture capture now requires an exact executable-version preflight.** A complete-redaction tracked capture without `--expected-version` previously exited zero and ran its marker-writing child. The script now parses `--expected-version` and, after redaction contract validation but before staging or `pty.fork`, runs the selected `--bin` executable with `--version` and compares its complete output exactly. The new boundary test proves missing, mismatched, failing, and PATH-switched versions stop with no capture-child marker, staging directory, or fixture write; correct synthetic and untracked captures remain usable. Existing synthetic tracked redaction-runtime tests now pass their interpreter's derived version so they exercise their intended post-child redaction failures. Sabotaging the version-error rejection recreated the missing-pin zero exit. The installed `claude --version` was exactly `2.1.220 (Claude Code)`, and `validate_tracked_child_version("claude", "2.1.220 (Claude Code)", harness_root)` accepted it. `VERSION` contains two exact 2.1.220 capture pins and Task 9 documents the same command; changing one recorded pin to 2.1.221 made the documentation guard fail (`1 != 2`).
+
+No new implementation Surprise or Revision fact was required; the final spec retrospective remains with the controller.
+
+### Twelfth-pass gates
+
+All commands ran from `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness` unless their absolute path says otherwise. No credential file was loaded or printed.
+
+- Focused red/green: `npx vitest run test/tui/components.test.tsx -t 'ends pending yank-pop'` was red on the old composer and green after the correction. The DECSTBM and expected-version focused `unittest discover -k` commands were red on old code and green afterward. The exact documentation guard is green.
+- `npm run typecheck`: **PASS**.
+- `npx vitest run test/tui --exclude 'test/tui/tmp-probe-rescue-popup.test.tsx'`: **PASS; 39 files, 663 tests passed, 9 credential-gated tests skipped**. The explicit exclude leaves `test/tui/tmp-probe-rescue-popup.test.tsx` out of the committed suite.
+- `npm run test:unit`: **PASS; 135 files, 1,227 tests passed**.
+- `npm run test:integration`: **PASS; 3 files, 16 tests passed**.
+- `npm run test:contract`: **PASS; 1 file, 7 tests passed**.
+- Fresh environment: `$CLAUDE_JOB_DIR/tmp/f0-pass12-python-venv` installed and verified **`pyte=0.8.2 wcwidth=0.8.2`** from `scripts/frames/requirements.txt`. Its standalone full Python run passed **46 tests in 8.789 seconds**.
+- Ten consecutive full Python runs from that fresh environment: **10/10 PASS**, 46 tests each, in 9.269–9.924 seconds. An earlier attempt passed runs 1–8 and saw the pre-existing zero-wait live-child test flake on run 9 (`no rendered screen state before 'frame:boot'`). Ten isolated repetitions of that test then passed in 0.092–0.109 seconds, and the subsequent final ten-full-run gate passed without a product timing change.
+- Fresh untracked 100×40 ccx captures under `$CLAUDE_JOB_DIR/tmp/f0-pass12-frames`: help overlay wrote **3** frames and composer basics wrote **5**. The frame diffs remain the known baselines: help **`0 clean, 0 allowlisted, 3 DIVERGENT`**, composer **`0 clean, 0 allowlisted, 5 DIVERGENT`**, each with expected exit status **1**.
+- `claude --version` and the production preflight both accepted exactly **`2.1.220 (Claude Code)`**.
+
+### Review-size process disposition
+
+The aggregate F0 range remains larger than the 800-line guidance. This is an accepted process/planning deviation, not authorization for history surgery: F0 already landed as eleven task-scoped commits with per-task reviews and broader final rereviews to catch cross-task defects. This pass does not reset, rebase, split, reorder, or drop those commits, and the final retrospective is left to the controller.
+
+The protected concurrent files and `CC-to-SDK/.doperpowers/sdd/progress.md` were not edited, staged, or used as test inputs. No push was performed.
+
+### Independent pass-12 review
+
+The Codex companion independently reviewed only the diff against `f160131f7c` and reported **no actionable correctness defects**. Its read-only sandbox passed typecheck and focused Python/editor checks; its own Vitest attempt was blocked only because Vite could not write a temporary config file in that sandbox. The direct working-tree TUI suite above passed independently, so there is no unresolved Critical or Important review finding.

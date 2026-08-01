@@ -22,7 +22,8 @@ Usage (from harness/):
     scripts/frames/.venv/bin/python3 scripts/capture-frames.py \
         --script scripts/frames/help-overlay.keys \
         --out test/fixtures/upstream-frames/help-overlay --bin "claude" --cwd /tmp/frame-scratch \
-        --cols 100 --rows 40 --redact-masks scripts/frames/masks.json
+        --cols 100 --rows 40 --redact-masks scripts/frames/masks.json \
+        --expected-version "2.1.220 (Claude Code)"
 Omitting --bin runs OUR binary: node --import tsx src/cli/bin.ts --cwd <cwd>, from the harness checkout
 (same guard as scripts/drive-repl.py — this must be launched from harness/).
 """
@@ -34,6 +35,7 @@ import re
 import select
 import shlex
 import shutil
+import subprocess
 import signal
 import struct
 import sys
@@ -155,11 +157,14 @@ class DimScreen(pyte.Screen):
                 x, y = self.cursor.x, self.cursor.y
                 if x == self.columns:
                     if pyte_modes.DECAWM in self.mode:
-                        # pyte's next draw first wraps. At the bottom margin it also scrolls, yielding a
-                        # blank destination, whereas above it the next row is an overwrite destination.
+                        # pyte's next draw first wraps. y == bottom scrolls to a blank bottom row; above
+                        # it the next row is an overwrite destination; below a partial region cursor_down()
+                        # clamps back up to bottom, which can overwrite a pre-existing wide cell there.
                         bottom = self.margins.bottom if self.margins is not None else self.lines - 1
                         if y < bottom:
                             destination = y + 1, 0
+                        elif y > bottom:
+                            destination = bottom, 0
                     else:
                         # With autowrap disabled, pyte backs up by the incoming character width instead.
                         destination = y, x - width
@@ -273,6 +278,7 @@ def parse_args():
     p.add_argument("--cols", type=int, default=100)
     p.add_argument("--rows", type=int, default=40)
     p.add_argument("--redact-masks", default=None, help="mask file required when writing under test/fixtures/upstream-frames")
+    p.add_argument("--expected-version", default=None, help="exact --version output required for tracked golden captures")
     return p.parse_args()
 
 
@@ -286,6 +292,29 @@ def nearest_existing_canonical_ancestor(path: str) -> Path:
     if not candidate.is_dir():
         raise ValueError(f"output ancestor is not a directory: {candidate}")
     return candidate
+
+
+def validate_tracked_child_version(command: str | None, expected_version: str | None, cwd: str) -> str | None:
+    if not expected_version:
+        return "tracked golden output requires --expected-version"
+    if not command:
+        return "tracked golden output requires --bin so its version can be verified"
+    try:
+        argv = shlex.split(command)
+    except ValueError as error:
+        return f"invalid --bin command for version check: {error}"
+    if not argv:
+        return "tracked golden output requires a nonempty --bin command"
+    try:
+        version = subprocess.run([argv[0], "--version"], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    except OSError as error:
+        return f"version check failed: {error}"
+    if version.returncode:
+        return f"version check failed with exit status {version.returncode}"
+    actual_version = version.stdout.strip() or version.stderr.strip()
+    if actual_version != expected_version:
+        return f"version mismatch: expected {expected_version!r}, got {actual_version!r}"
+    return None
 
 
 def main() -> int:
@@ -320,6 +349,10 @@ def main() -> int:
         missing = [frame_key(args.out, name) for name, contract in redactions.items() if not contract.declared]
         if missing:
             sys.stderr.write(f"capture-frames: tracked golden output has no redaction contract for: {', '.join(missing)}\n")
+            return 2
+        version_error = validate_tracked_child_version(args.bin, args.expected_version, args.cwd)
+        if version_error:
+            sys.stderr.write(f"capture-frames: {version_error}\n")
             return 2
 
     try:
