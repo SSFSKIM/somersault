@@ -861,7 +861,47 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+### F0 outcome — completed 2026-08-02
+
+F0 established an honest, testable foundation for the remaining fidelity waves. It removed the user-harm
+cases in scope: queued prompts return to the composer on interrupt, Esc-Esc clears without losing history,
+the editor has a durable kill ring with yank/yank-pop and reachable raw-byte undo, Ctrl-D uses upstream's
+timed double-press contract, Ctrl-Z performs POSIX process suspension, detach is available only through
+`/detach`, permission dialogs accept bare `y`/`n`, and the help overlay has truthful Escape-only ownership.
+Editor state now survives temporary overlay and decision unmounts without stale completion,
+history-navigation, undo, or yank coordinates leaking across wholesale replacements.
+
+The wave also made later parity claims falsifiable. The honesty audit reads rendered UI and proves every
+advertised chord against live behavior. The frame instrument compares pyte-emulated screen states, retains
+dim and other SGR attributes, handles wide cells and terminal mutation semantics, fails closed on incomplete
+inputs, publishes exact validated frame sets, derives canonical nested scenario keys, and enforces declared
+identity-redaction contracts before tracked fixtures can be written, compared, fingerprinted, or printed.
+The scorecard now names the installed 2.1.220 bundle as its reference, moves upstream-absent additions outside
+the denominator, and reports the measured baseline as approximately 63% rather than the previous unauditable
+approximately 88%.
+
+All eight F0 acceptance contracts pass. Final verification covers typecheck, package build, 40 tracked TUI
+files and 665 tests, 1,227 unit tests, 16 integration tests, 7 contract tests, the complete 86-test Python
+suite both with and without `CLAUDE_JOB_DIR`, two independent ten-run Python stability loops, current
+queue-rescue/Escape/Ctrl-D PTY traces, scorecard invariants, and the expected frame baseline. The real
+synthetic-shell PTY acceptance performs Ctrl-Z, observes the shell, preserves shell output, sends `fg`, and
+verifies cursor-hide ordering before the resumed TUI becomes ready. A separate human-operated terminal smoke
+test was not performed; the automated test exercises the actual OS job-control path, while a human run would
+add only subjective terminal-emulator observation. The frame baseline intentionally remains divergent —
+three help frames and five composer frames — because F1–F8 own the visual gaps that F0's instrument now
+measures rather than hides.
+
+The review sequence changed the engineering lesson of F0. Most late defects were not isolated feature
+mistakes; they lived at boundaries between React render state and Ink's passive input subscriptions, between
+process-level and composer-level key listeners, between terminal cell width and serialized screen text, or
+between validated staging and published fixture sets. The reliable pattern is therefore to model the current
+input owner explicitly, keep handler-read values synchronously current, treat external buffer replacement as
+a full state transition, sabotage every guard test against the regression it claims to prevent, and make
+evidence tools fail closed. A plan-mandated test or architecture is not exempt from review: several of F0's
+most important corrections were defects copied directly from the approved plan.
+
+F1–F8 remain pending. They start from the honest approximately 63% scorecard and the 3/5 divergent golden
+baseline established here.
 
 ## Revision Notes
 
@@ -898,3 +938,11 @@ Pending — written at finish.
   SGR 2 is an extended cell attribute that follows pyte's own scroll/erase/insert/delete pipeline rather
   than a parallel grid. Dashboard nondeterminism masks are scoped by scenario/frame, so transcript values
   such as arbitrary email, percentage, cost, duration, and token counts remain comparable.
+- 2026-08-02 — whole-range review and final verification closed the remaining cross-boundary gaps. Ctrl-Z
+  resume now owns Ink's stale erase bookkeeping at the render boundary and restores cursor visibility in
+  shell/TUI order; the real PTY acceptance executes an actual shell `fg` cycle rather than relying only on
+  mocks. Tracked frame comparison requires an explicit redaction contract before any fingerprint or
+  diagnostic output, required-state counts must be positive non-boolean integers, and dashboard/diagnostic
+  identities use delimiter-based Unicode-safe component recognition. The final full Python gate exposed two
+  older synthetic tracked-fixture tests that had not declared their identity-free contracts; only those test
+  fixtures changed, and both complete 86-test environments plus both ten-run stability modes then passed.

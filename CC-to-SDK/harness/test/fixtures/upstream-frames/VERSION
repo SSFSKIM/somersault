@@ -6,8 +6,9 @@ identity may be written under this directory. The residual identity guards inspe
 row-wrapped dashboard-only view before publication, so valid ANSI style transitions or contiguous rendered
 row breaks cannot conceal an identity; the stored ANSI remains otherwise exact. The organization rule accepts
 both historic italic `0;3;…m` and current dim-italic `0;2;3;…m` `/release-notes` styling. A `user@host:/…`
-token is dashboard status only within a contiguous nonblank rendered dashboard block ending at the indented
-2.1.220 `[symbol] [indicator] on` marker: `⏸ manual mode on`, `⏸ plan mode on`, `⏵⏵ accept edits on`,
+token is dashboard status only when it is the nearest structural status candidate before the indented
+2.1.220 `[symbol] [indicator] on` marker; earlier nonblank transcript or code rows remain semantic. The status
+candidate may precede the footer through physical path wraps. The marker is one of: `⏸ manual mode on`, `⏸ plan mode on`, `⏵⏵ accept edits on`,
 `⏵⏵ bypass permissions on`, `⏵⏵ don't ask on`, or `⏵⏵ auto mode on`. A mode may add `(shift+tab to cycle)`;
 the closed left-footer grammar is reduced, ` · ? for shortcuts`, ` · ← for agents`, the full
 ` · ? for shortcuts · ← for agents`, or clipped ` · ? for shortcuts …`; a physically wrapped row may end only at a
@@ -17,8 +18,8 @@ row or flows to its own rendered row. A hostname token accepts `_` alongside alp
 whitespace or path delimiters. `git` is redacted like every other authenticated username. An adjacent unknown
 `⏸`/`⏵⏵` marker of that dashboard shape fails closed; transcript/code tokens remain visible when dashboard chrome is absent. The settings-isolated tracked capture deliberately has none of those values: after the ambient namespace scrub,
 it removes OAuth and every currently recognized Claude/API credential before starting its child. It removes
-`FORCE_COLOR`, `NO_COLOR`, the installed CI/provider selectors, `TMUX`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, and
-`COLORFGBG`, then pins `TERM=xterm-256color` and `COLORTERM=truecolor`, the installed level-3 renderer branch
+`FORCE_COLOR`, `NO_COLOR`, fixed CI/provider selectors, `CONTINUOUS_INTEGRATION`, and every exact `CI_`-prefixed
+selector, plus `TMUX`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, and `COLORFGBG`, then pins `TERM=xterm-256color` and `COLORTERM=truecolor`, the installed level-3 renderer branch
 represented by these ANSI candidates, so invoking terminal state cannot change palette, dim styling, or layout. The stock identity rules therefore remain optional
 while retaining their redaction patterns. `required_state_by_frame` independently
 validates the SGR-normalized, unredacted screen before redaction or staging: seven frames require the exact
@@ -36,7 +37,7 @@ suppresses the upstream onboarding screen without accepting project trust; the e
 key script accepts that workspace-trust dialog. The child never reads the operator's `~/.claude`, configured
 plugins, hooks, MCP servers, or settings. Untracked/scratch capture preserves only the already-authorized OAuth
 environment credential and every supplied ambient terminal capability; tracked upstream-fixture capture instead removes
-the installed color-force/CI/provider/tmux/terminal-wrapper/palette overrides and pins `TERM=xterm-256color` plus
+the installed color-force/fixed-CI-provider/`CONTINUOUS_INTEGRATION`/exact-`CI_`/tmux/terminal-wrapper/palette overrides and pins `TERM=xterm-256color` plus
 `COLORTERM=truecolor`, then removes that credential together with
 `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and every other scrubbed `CLAUDE*`, `ANTHROPIC_*`, and `AI_AGENT`
 value. The private config is removed after the captured child process group has been terminated and reaped, or

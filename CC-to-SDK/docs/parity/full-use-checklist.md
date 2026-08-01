@@ -278,8 +278,8 @@ ccx --detachable -n qa-det "Reply with exactly: OK"
 ccx --detachable --idle-timeout 10 -n qa-idle
 ```
 
-- [ ] Detach immediately (`Ctrl-Z`) and leave it unattached for >10s → `ccx agents --all` shows the
-  row reach a terminal state (`done`) — the idle reaper ended it because nobody was attached.
+- [ ] Detach immediately with `/detach` ↵ and leave it unattached for >10s → `ccx agents --all`
+  shows the row reach a terminal state (`done`) — the idle reaper ended it because nobody was attached.
 - [ ] **`--idle-timeout` without `--detachable` is refused** — `ccx --bg --idle-timeout 10 "hi"` →
   exits 2 with `ccx: --idle-timeout only applies to --detachable sessions`.
 - [ ] **`--detachable` and `--bg` together are refused** — exits 2 with

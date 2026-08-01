@@ -115,6 +115,9 @@ def clean_child_env(tracked_fixture: bool) -> dict[str, str]:
     if tracked_fixture:
         for name in RECOGNIZED_AUTH_ENV | TRACKED_TERMINAL_UNSET:
             env.pop(name, None)
+        for name in tuple(env):
+            if name == "CONTINUOUS_INTEGRATION" or name.startswith("CI_"):
+                env.pop(name)
         env.update(TRACKED_TERMINAL_ENV)
     return env
 

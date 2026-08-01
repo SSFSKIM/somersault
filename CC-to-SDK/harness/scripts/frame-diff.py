@@ -39,7 +39,9 @@ from frame_masks import (
     load_redaction_contract,
     load_redactions,
     mask_text,
+    redact_diagnostic_text,
     sanitize_frame_for_comparison,
+    tracked_fixture_relative,
 )
 
 
@@ -125,6 +127,20 @@ def main() -> int:
         print(f"ERROR: invalid allowlist entry: {error}")
         return 1
 
+    frame_keys = {fname: frame_key(args.golden_dir, fname) for fname in golden_files | our_files}
+    tracked_golden = tracked_fixture_relative(args.golden_dir) is not None
+    redactions_by_key = {}
+    try:
+        for key in frame_keys.values():
+            contract = load_redaction_contract(args.masks, key)
+            if tracked_golden and not contract.declared:
+                print(f"ERROR: no redaction contract declared for tracked frame {key}")
+                return 1
+            redactions_by_key[key] = contract
+    except ValueError as error:
+        print(f"ERROR: invalid redaction contract: {error}")
+        return 1
+
     scenario_scope = frame_key(args.golden_dir, "").rstrip("/")
     rows: list[tuple[str, str, str]] = []  # (frame_key, status, note)
     matched_allowlist_keys = set()
@@ -151,7 +167,7 @@ def main() -> int:
             rows.append((key, "DIVERGENT", "empty frame"))
             print(f"--- {key}: empty frame (DIVERGENT)")
             continue
-        redactions = load_redaction_contract(args.masks, key)
+        redactions = redactions_by_key[key]
         comparison_masks = load_comparison_masks(args.masks, key)
         golden_lines, golden_failures = sanitize_frame_for_comparison(golden_raw, redactions, comparison_masks)
         our_lines, our_failures = sanitize_frame_for_comparison(our_raw, redactions, comparison_masks)
@@ -188,7 +204,7 @@ def main() -> int:
         print(f"fingerprint: sha256:{fingerprint}")
         if note:
             print(f"ERROR: {note}; update this entry with the fingerprint above after review")
-        print("\n".join(diff))
+        print(redact_diagnostic_text("\n".join(diff)))
 
     for key in sorted(set(allowlist) - matched_allowlist_keys - divergent_keys):
         if key.rsplit("/", 1)[0] != scenario_scope:

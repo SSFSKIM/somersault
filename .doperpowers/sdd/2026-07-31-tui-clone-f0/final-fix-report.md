@@ -1541,3 +1541,148 @@ The full review transcript is recorded at
 fresh authoritative gates above: both 77-test environments, both ten-run stability loops, process-group stress,
 hostile-environment installed recaptures, the 3/5 ccx baseline, TypeScript typecheck, and `git diff --check` all
 passed on the reviewed bytes. The scoped correctness gate is therefore clean.
+
+## Whole-range review fix pass
+
+This consolidated pass preserves the complete F0 range and the prior dirty review corrections. It does not stage,
+commit, push, read real settings, or load credentials.
+
+### Preserved earlier corrections
+
+- **Cursor and Ink resume:** `createResumeSafeStdout()` remains the single render-boundary adapter. The Ctrl-Z path
+  routes its forced Ink repaint through that owner, suppressing only Ink's first stale erase after foregrounding while
+  preserving intervening shell output and later normal erases. The intended `resumeOutput.test.ts`, real Ink fixture,
+  and PTY acceptance remain in the working diff.
+- **Suspend lifecycle:** the existing POSIX ordering, raw-mode restoration, cursor show-before-shell-prompt, cursor
+  hide-before-resumed frame, and safe non-POSIX path remain covered. The real PTY acceptance performed Ctrl-Z, emitted
+  an inert synthetic shell marker, foregrounded, and verified that marker remained on the rendered screen.
+- **Dashboard scope and first rereview corrections:** comparison still selects only the nearest structural dashboard
+  identity before a recognized status footer. Earlier transcript/code identities remain semantic differences, while an
+  already-masked dashboard candidate is not re-masked. The dashboard candidate-to-footer row bound, cursor ordering,
+  render reset adapter, and daemon-dashboard row correction remain intact.
+
+### This round: diagnostic identity privacy and tracked CI determinism
+
+1. **Diagnostic component wraps.** The semantic comparison and post-mask fingerprint input are unchanged. Only the
+   emitted unified diff is sanitized. A linear visible-character projection removes ANSI transitions and physical
+   diagnostic row structure, matches only `user@host:/` shapes, maps matching identity characters back to their source
+   offsets, and recognizes a preceding unified-diff alternate identity path. It masks username/hostname components
+   without reconstructable fragments across adjacent output lines and without catastrophic regex backtracking.
+   The matrix covers a username interior wrap, both sides of `@`, `_`/`-` hostname wrapping, the `:/` boundary, and
+   SGR plus wrapping. Every case remains `DIVERGENT` with a fingerprint before its displayed identity is replaced.
+
+2. **Tracked generic CI selectors.** `clean_child_env(True)` now removes the existing fixed terminal/provider names,
+   `CONTINUOUS_INTEGRATION`, and every exact `CI_`-prefixed name. Scratch capture is unchanged. The installed
+   `is-in-ci` detector treats those selectors as CI, and Ink then withholds dynamic repainting, so the tracked child
+   matrix executes real Ink and records the installed detector result. Eight hostile captures (force/color, legacy,
+   GitLab, GitHub, continuous-integration, generic-prefix, terminal-wrapper, and combined) are byte-identical; no
+   tracked selector reaches the child, unrelated embedded-`CI` names remain, and scratch preserves generic selectors.
+
+### Red, green, sabotage, and performance evidence
+
+- Before the P1 repair, five matrix variants displayed synthetic `transcript` identity fragments. The first broad
+  regex attempt also made the real 4,282-character baseline diff exceed a five-second faulthandler bound; this was
+  diagnosed as nested-transition regex backtracking and replaced with the linear projection rather than increasing a
+  timeout. The final projection completes that payload under five seconds.
+- The current P1 sabotage retained physical newlines in the projection. It failed five wrapped cases and exposed the
+  synthetic transcript fragments; restoring newline flattening returned the focused three-test P1/P2 suite green.
+- Before P2 filtering, the GitLab matrix child retained `CI_JOB_ID` and installed `is-in-ci` returned true. Temporarily
+  disabling the dynamic filter reproduced the same failure; restoration returned all eight tracked Ink captures green.
+- Fresh pinned environment: `pyte==0.8.2`, `wcwidth==0.8.2`. The final isolated Python suite passed **82 tests**.
+  Ten stdout-captured full runs and ten inherited-output full runs each passed **10/10**, all with 82 tests.
+- `npm run typecheck` passed. The protected-probe-excluded TUI suite passed **40 files / 665 tests**, with **9**
+  credential-gated live tests skipped. Unit, integration, and contract suites passed **1,227**, **16**, and **7** tests.
+- The real synthetic Ink PTY suspend/foreground test passed **1 test**. Credential-free ccx captures wrote **3** help
+  and **5** composer frames; sanitized baseline diffs were the expected `0 clean, 0 allowlisted, 3 DIVERGENT` and
+  `0 clean, 0 allowlisted, 5 DIVERGENT`, both exit **1**.
+
+### Residual concerns and disposition
+
+The intentional F0 visual baseline remains divergent; that is a fidelity gap, not a capture/diff false success. The
+unrelated manual human-terminal Ctrl-Z → `fg` concern remains narrowed by the passing real PTY acceptance. The
+protected concurrent untracked probe files and `.doperpowers/sdd/progress.md` were not edited, staged, removed, or
+used as inputs. No commit or push was performed.
+
+## Final whole-range review and verification close-out — 2026-08-02
+
+### Installed Codex whole-range review r7
+
+The installed doperpowers Codex companion reviewed the complete F0 range against `cce15af0f5` with
+`gpt-5.6-sol` and the configured xhigh reasoning. Its final verdict was:
+
+> No actionable correctness defects were found. `git diff --check` and `npm run typecheck` passed; Vitest was
+> blocked by the read-only sandbox when Vite attempted temporary-file writes.
+
+The complete transcript is `$CLAUDE_JOB_DIR/tmp/f0-whole-codex-companion-review-r7.log`. The sandbox-limited
+Vitest attempt was not counted as verification; the authoritative local suites below ran on the same reviewed
+working tree.
+
+### Full-suite discovery after the clean review
+
+The first complete final Python run exposed two stale synthetic tests, not a production failure. The new tracked
+comparison preflight correctly rejected `new/scenario/01-frame.ansi` and `nested/01-frame.ansi` before a fingerprint
+because those older test fixtures had no declared redaction contract. Both tests were written before tracked diff
+inputs became fail-closed. The minimal repair added explicit empty, identity-free redaction contracts to only those
+synthetic fixtures and threaded the test-local masks through their comparison calls. The production preflight and
+real fixture contracts were unchanged. Both focused regressions then passed, followed by the complete matrix below.
+
+### Exact final verification matrix
+
+- `npm run typecheck`: **PASS; no diagnostics**.
+- `npm run build`: **PASS**.
+- `npm run test:tui -- --exclude test/tui/tmp-probe-rescue-popup.test.tsx`: **PASS; 40 files and 665 tests
+  passed; 9 credential-gated tests skipped**. The protected untracked probe was not an input.
+- `npm run test:unit`: **PASS; 135 files and 1,227 tests**.
+- `npm run test:integration`: **PASS; 3 files and 16 tests**.
+- `npm run test:contract`: **PASS; 1 file and 7 tests**.
+- Fresh pinned environment: **`pyte==0.8.2` and `wcwidth==0.8.2`** installed from
+  `scripts/frames/requirements.txt`.
+- Hermetic full Python suite with a test-local `CLAUDE_JOB_DIR`: **PASS; 86 tests in 36.695 seconds**.
+  The same suite with `CLAUDE_JOB_DIR` absent: **PASS; 86 tests in 35.997 seconds**.
+- Captured-output stability: **10/10 complete 86-test suites passed**, in 36.763–38.687 seconds.
+- Inherited-output stability: **10/10 complete 86-test suites passed**, in 35–37 seconds.
+- Real OS job-control acceptance: `test/python/test_suspend_pty.py` **PASS; 1 test**. It ran an Ink fixture
+  beneath a real synthetic shell, sent Ctrl-Z, observed cursor-show before the shell prompt, preserved shell
+  output, sent `fg`, and observed cursor-hide before resumed TUI readiness.
+- Live queue-rescue PTY: **PASS**. While the model turn remained streaming, `one`, `two`, and `three` appeared as
+  queued rows; Escape removed every queued row and left the composer holding the three lines in order.
+- Keyless Ctrl-D PTY: **PASS**. The first press rendered `Press Ctrl-D again to exit`; the driver's subsequent
+  double-press cleanup exited the process.
+- Keyless Escape PTY plus `escape.test.tsx`: **PASS**. The trace rendered `Esc again to clear` and ended with
+  `draft` restored by Up; the component test proves the intervening second-Escape empty state.
+- Fresh untracked 100×40 ccx captures wrote **3 help-overlay frames** and **5 composer-basics frames**. Their
+  comparison baselines are exactly **`0 clean, 0 allowlisted, 3 DIVERGENT`** and
+  **`0 clean, 0 allowlisted, 5 DIVERGENT`**, each with the expected diff exit status 1.
+- Scorecard invariants: **PASS**. `Claude Code Src` occurs zero times; the installed reference is
+  `~/claude-code-bundle/2.1.220/`; `plan-usage` appears only in Recorded additions; the headline records the
+  correction from approximately 88% to approximately 63%.
+
+The first npm commands in this close-out were accidentally launched from `CC-to-SDK/` rather than `harness/` and
+failed before reading a package manifest; every command was reissued with the explicit harness prefix. The first
+frame-diff wrapper also used zsh's read-only special variable `status`; the unchanged diffs were reissued with a
+neutral variable and their exit statuses and exact summaries were verified. Neither command-wrapper correction
+changed product or test bytes.
+
+### Acceptance disposition
+
+All eight F0 acceptance items are **PASS**: queue rescue; Esc-Esc clear/history restore; kill/yank/yank-pop;
+raw-byte Ctrl-_ undo; Escape-only help ownership; Ctrl-D double exit plus Ctrl-Z suspend/`fg`; bare permission
+`y`/`n`; and the corrected scorecard. A separate human-operated terminal smoke test was not performed. The automated
+PTY acceptance exercises the actual POSIX suspension and foreground path; a human run would add subjective
+terminal-emulator observation, not missing acceptance coverage.
+
+The protected concurrent untracked probe files and `.doperpowers/sdd/progress.md` remained untouched and excluded
+from all test inputs. No push was performed.
+
+### Final exact-byte review r8
+
+After the retrospective, plan checkmarks, synthetic contract repair, final report, and memory close-out were present,
+the installed doperpowers Codex companion reran its whole-range review against `cce15af0f5` with
+`gpt-5.6-sol`. Its verdict was:
+
+> No actionable defects were found in the reviewed diff. Typechecking and targeted TUI tests passed; Python PTY
+> tests could not run because the sandbox lacks pyte and writable temporary directories.
+
+The complete result is `$CLAUDE_JOB_DIR/tmp/f0-whole-codex-companion-review-r8.log`. The reviewer's Python sandbox
+limitation is covered by the fresh pinned 86-test runs, both 10/10 stability modes, and the explicit real PTY
+acceptance recorded above. The final independent correctness gate is clean.

@@ -18,21 +18,21 @@ describe("suspendProcess", () => {
     expect(calls).toEqual(["setRawMode(false)", "once(SIGCONT)", "kill(0,SIGTSTP)"]);
   });
 
-  it("the SIGCONT handler re-enables raw mode and repaints — nothing fires before resume", () => {
-    const rawModeCalls: boolean[] = [];
-    let repainted = 0;
+  it("shows the cursor after raw mode leaves, then hides it before the resumed repaint", () => {
+    const calls: string[] = [];
     let onResume: (() => void) | undefined;
-    suspendProcess({
-      stdin: { setRawMode: (v) => rawModeCalls.push(v) },
-      repaint: () => { repainted++; },
-      once: (_signal, handler) => { onResume = handler; },
-      kill: () => {},
-    });
-    expect(rawModeCalls).toEqual([false]);
-    expect(repainted).toBe(0);
+    const deps = {
+      stdin: { setRawMode: (v: boolean) => calls.push(`raw(${v})`) },
+      stdout: { isTTY: true, write: (data: string) => { calls.push(`write(${JSON.stringify(data)})`); return true; } },
+      repaint: () => calls.push("repaint"),
+      once: (_signal: string, handler: () => void) => { calls.push("once(SIGCONT)"); onResume = handler; },
+      kill: () => calls.push("kill(0,SIGTSTP)"),
+    };
+
+    suspendProcess(deps);
+    expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', "once(SIGCONT)", "kill(0,SIGTSTP)"]);
     onResume?.();
-    expect(rawModeCalls).toEqual([false, true]);
-    expect(repainted).toBe(1);
+    expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', "once(SIGCONT)", "kill(0,SIGTSTP)", "raw(true)", 'write("\\u001b[?25l")', "repaint"]);
   });
 
   it("registers via `once`, not `on` — repeated suspend/resume cycles register exactly one listener per cycle, never accumulating", () => {
@@ -68,16 +68,17 @@ describe("suspendProcess", () => {
     expect(calls).toEqual([]);
   });
 
-  it("rolls raw mode back and removes the listener when signal delivery fails", () => {
+  it("rolls raw mode, cursor visibility, and the listener back when signal delivery fails", () => {
     const calls: string[] = [];
     const handler = () => {};
     expect(() => suspendProcess({
       stdin: { setRawMode: (v) => calls.push(`raw(${v})`) },
+      stdout: { isTTY: true, write: (data) => { calls.push(`write(${JSON.stringify(data)})`); return true; } },
       repaint: () => {},
       once: (_signal, h) => { calls.push("once"); Object.assign(handler, h); throw new Error("kill unavailable"); },
       removeListener: (signal) => calls.push(`remove(${signal})`),
       kill: () => { throw new Error("kill unavailable"); },
     })).toThrow("kill unavailable");
-    expect(calls).toEqual(["raw(false)", "once", "remove(SIGCONT)", "raw(true)"]);
+    expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', "once", "remove(SIGCONT)", "raw(true)", 'write("\\u001b[?25l")']);
   });
 });

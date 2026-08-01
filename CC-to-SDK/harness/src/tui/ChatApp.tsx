@@ -39,7 +39,7 @@ import { ThemeDialog } from "./ThemeDialog.js";
 import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialLines, deps, yankHintMs, escClearMs, suspend }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialLines, deps, yankHintMs, escClearMs, suspend, resumeOutput }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -52,12 +52,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   yankHintMs?: number;
   escClearMs?: number;
   suspend?: typeof suspendProcess;
+  resumeOutput?: { repaint: (runInkWrite: () => void) => void };
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
   // suspend.ts needs the REAL tty object, not Ink's ref-counted `setRawMode` function — see that module's
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
-  const { write } = useStdout();
+  const { stdout, write } = useStdout();
   const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined }, deps);
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
@@ -83,6 +84,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const rootStateRef = useRef(state); rootStateRef.current = state;
   const exitArmedRef = useRef(exitArmed); exitArmedRef.current = exitArmed;
   const suspendRef = useRef(suspend); suspendRef.current = suspend;
+  const resumeOutputRef = useRef(resumeOutput); resumeOutputRef.current = resumeOutput;
   const closeShortcutsRef = useRef(closeShortcuts); closeShortcutsRef.current = closeShortcuts;
   const openHistorySearchRef = useRef(openHistorySearch); openHistorySearchRef.current = openHistorySearch;
   const interruptRef = useRef(interrupt); interruptRef.current = interrupt;
@@ -122,7 +124,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     const current = rootStateRef.current;
     const owner = inputOwnerRef.current;
     if (key.ctrl && input === "z") {                            // upstream intercepts this before Help/modal context dispatch
-      (suspendRef.current ?? suspendProcess)({ stdin, repaint: () => write("") });
+      const repaint = () => write("");
+      (suspendRef.current ?? suspendProcess)({ stdin, stdout, repaint: () => {
+        const output = resumeOutputRef.current;
+        if (output) output.repaint(repaint); else repaint();
+      } });
       return;
     }
     if (owner === "shortcuts") {                                // Help owns every non-process key during its visible/race window

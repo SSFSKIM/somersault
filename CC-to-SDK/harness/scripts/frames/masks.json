@@ -17,8 +17,8 @@
       ],
       "dashboard_status": {
         "name": "status-user-host",
-        "identity_pattern": "(?<=\\x1b\\[0m  )(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._-]+@[A-Za-z0-9._-]+(?=(?:\\x1b\\[[0-9;]*m)?:(?:\\x1b\\[[0-9;]*m)?/)",
-        "semantic_identity_pattern": "(?:^|\\n) {2,}[A-Za-z0-9._-]+(?:\\n+[A-Za-z0-9._-]+)*(?:\\n+)?@(?:\\n+)?[A-Za-z0-9._-]+(?:\\n+[A-Za-z0-9._-]+)*(?=(?:\\n+)?:(?:\\n+)?/)",
+        "identity_pattern": "(?<=\\x1b\\[0m  )(?:\\x1b\\[[0-9;]*m)?[^\\s@:/\\x1b]+@[^\\s@:/\\x1b]+(?=(?:\\x1b\\[[0-9;]*m)?:(?:\\x1b\\[[0-9;]*m)?/)",
+        "semantic_identity_pattern": "(?:^|\\n) {2,}[^\\s@:/]+(?:\\n+[^\\s@:/]+)*(?:\\n+)?@(?:\\n+)?[^\\s@:/]+(?:\\n+[^\\s@:/]+)*(?=(?:\\n+)?:(?:\\n+)?/)",
         "mode_pattern": "  (?:⏸ (?:manual|plan) mode on|⏵⏵ (?:accept edits|bypass permissions|don't ask|auto mode) on)(?: \\(shift\\+tab to cycle\\))?(?: · (?:← for agents|\\? for short(?:c(?:u(?:t(?:s(?:(?: …)?|(?: · ← for agents)?)?)?)?)?)?))?(?: {2,}Not logged in · Run /login)? *",
         "marker_pattern": "  (?:⏸|⏵⏵) [^\\n]* on(?: \\(shift\\+tab to cycle\\))?(?: · (?:← for agents|\\? for short(?:c(?:u(?:t(?:s(?:(?: …)?|(?: · ← for agents)?)?)?)?)?)?))?(?: {2,}Not logged in · Run /login)? *",
         "replacement": "▒",
@@ -53,8 +53,8 @@
       ],
       "dashboard_status": {
         "name": "status-user-host",
-        "identity_pattern": "(?<=\\x1b\\[0m  )(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._-]+@[A-Za-z0-9._-]+(?=(?:\\x1b\\[[0-9;]*m)?:(?:\\x1b\\[[0-9;]*m)?/)",
-        "semantic_identity_pattern": "(?:^|\\n) {2,}[A-Za-z0-9._-]+(?:\\n+[A-Za-z0-9._-]+)*(?:\\n+)?@(?:\\n+)?[A-Za-z0-9._-]+(?:\\n+[A-Za-z0-9._-]+)*(?=(?:\\n+)?:(?:\\n+)?/)",
+        "identity_pattern": "(?<=\\x1b\\[0m  )(?:\\x1b\\[[0-9;]*m)?[^\\s@:/\\x1b]+@[^\\s@:/\\x1b]+(?=(?:\\x1b\\[[0-9;]*m)?:(?:\\x1b\\[[0-9;]*m)?/)",
+        "semantic_identity_pattern": "(?:^|\\n) {2,}[^\\s@:/]+(?:\\n+[^\\s@:/]+)*(?:\\n+)?@(?:\\n+)?[^\\s@:/]+(?:\\n+[^\\s@:/]+)*(?=(?:\\n+)?:(?:\\n+)?/)",
         "mode_pattern": "  (?:⏸ (?:manual|plan) mode on|⏵⏵ (?:accept edits|bypass permissions|don't ask|auto mode) on)(?: \\(shift\\+tab to cycle\\))?(?: · (?:← for agents|\\? for short(?:c(?:u(?:t(?:s(?:(?: …)?|(?: · ← for agents)?)?)?)?)?)?))?(?: {2,}Not logged in · Run /login)? *",
         "marker_pattern": "  (?:⏸|⏵⏵) [^\\n]* on(?: \\(shift\\+tab to cycle\\))?(?: · (?:← for agents|\\? for short(?:c(?:u(?:t(?:s(?:(?: …)?|(?: · ← for agents)?)?)?)?)?)?))?(?: {2,}Not logged in · Run /login)? *",
         "replacement": "▒",

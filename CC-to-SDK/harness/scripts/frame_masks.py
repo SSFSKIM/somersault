@@ -28,7 +28,7 @@ class StateRule:
 
 
 class DashboardStatusMask:
-    """Redact an unbroken raw identity only inside a contiguous, recognized dashboard status block."""
+    """Redact only the nearest status identity before a recognized dashboard footer."""
     def __init__(self, spec: dict[str, Any]):
         self.name = spec["name"]
         self.identity_pattern = re.compile(spec["identity_pattern"])
@@ -36,9 +36,12 @@ class DashboardStatusMask:
         self.mode_pattern = re.compile(spec["mode_pattern"])
         self.marker_pattern = re.compile(spec["marker_pattern"])
         self.replacement = spec.get("replacement", MASK_TOKEN)
+        self.semantic_masked_pattern = re.compile(
+            rf"(?:^|\n) {{2,}}{re.escape(self.replacement)}(?=(?:\n+)?:(?:\n+)?/)"
+        )
         self.minimum_matches = spec.get("minimum_matches", 0)
 
-    def _blocks(self, text: str) -> list[tuple[int, int, bool]]:
+    def _blocks(self, text: str) -> list[tuple[int, int, int, bool, bool]]:
         raw_lines = text.splitlines(keepends=True)
         semantic_lines = [SGR_TRANSITION.sub("", line).rstrip("\r\n") for line in raw_lines]
         blocks = []
@@ -48,9 +51,15 @@ class DashboardStatusMask:
             start = marker_index
             while start and semantic_lines[start - 1].strip():
                 start -= 1
-            if not self.semantic_identity_pattern.search("\n".join(semantic_lines[start:marker_index])):
+            semantic_block = "\n".join(semantic_lines[start:marker_index])
+            candidates = [(match, False) for match in self.semantic_identity_pattern.finditer(semantic_block)]
+            candidates.extend((match, True) for match in self.semantic_masked_pattern.finditer(semantic_block))
+            if not candidates:
                 continue
-            blocks.append((start, marker_index, bool(self.mode_pattern.fullmatch(marker))))
+            candidate, masked = max(candidates, key=lambda item: item[0].start())
+            candidate_start = start + semantic_block.count("\n", 0, candidate.start()) + int(candidate.group(0).startswith("\n"))
+            candidate_end = start + semantic_block.count("\n", 0, candidate.end())
+            blocks.append((candidate_start, candidate_end, marker_index, bool(self.mode_pattern.fullmatch(marker)), masked))
         return blocks
 
     def redact(self, text: str) -> tuple[str, int]:
@@ -61,10 +70,10 @@ class DashboardStatusMask:
             offsets.append(offset)
             offset += len(line)
         spans = set()
-        for start, marker_index, recognized in self._blocks(text):
-            if not recognized:
+        for candidate_start, candidate_end, _marker_index, recognized, masked in self._blocks(text):
+            if not recognized or masked:
                 continue
-            for line_index in range(start, marker_index):
+            for line_index in range(candidate_start, candidate_end + 1):
                 for match in self.identity_pattern.finditer(raw_lines[line_index]):
                     spans.add((offsets[line_index] + match.start(), offsets[line_index] + match.end()))
         for start, end in sorted(spans, reverse=True):
@@ -72,7 +81,7 @@ class DashboardStatusMask:
         return text, len(spans)
 
     def has_unredacted_identity(self, text: str) -> bool:
-        return bool(self._blocks(text))
+        return any(not masked for _start, _end, _marker, _recognized, masked in self._blocks(text))
 
 
 class RedactionContract:
@@ -137,8 +146,14 @@ def frame_key(directory: str, name: str) -> str:
 
 
 def _require_count(value: Any, label: str) -> int:
-    if not isinstance(value, int) or value < 0:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{label} must be a non-negative integer")
+    return value
+
+
+def _require_positive_count(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{label} must be a positive integer")
     return value
 
 
@@ -209,7 +224,7 @@ def load_required_state_contract(path: str, frame_key: str | None) -> RequiredSt
                     raise ValueError(f"required_state_by_frame[{glob!r}].{field}[{index}] must declare name and pattern")
                 spec = dict(spec)
                 if needs_count:
-                    spec["minimum_matches"] = _require_count(
+                    spec["minimum_matches"] = _require_positive_count(
                         spec.get("minimum_matches"), f"required_state_by_frame[{glob!r}].{field}[{index}].minimum_matches",
                     )
                 target.append(StateRule(spec))
@@ -283,6 +298,72 @@ def mask_text(text: str, masks: list[Mask]) -> str:
     for mask in masks:
         text = mask.pattern.sub(mask.replacement, text)
     return text
+
+
+DIAGNOSTIC_SGR_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*m")
+DIAGNOSTIC_IDENTITY = re.compile(r"[^\s@:/]+@[^\s@:/]+(?=:/)")
+DIAGNOSTIC_COMPONENT_CHAR = re.compile(r"[^\s@:/]")
+
+
+def diagnostic_projection(text: str) -> tuple[str, list[int]]:
+    """Flatten ANSI and physical diff rows into visible characters with source offsets."""
+    visible, offsets = [], []
+    cursor = 0
+    line_start = True
+    while cursor < len(text):
+        if line_start:
+            if text[cursor:cursor + 1] in ("+", "-", " "):
+                cursor += 1
+            while cursor < len(text):
+                sgr = DIAGNOSTIC_SGR_PATTERN.match(text, cursor)
+                if sgr:
+                    cursor = sgr.end()
+                elif text[cursor] in " \t":
+                    cursor += 1
+                else:
+                    break
+            line_start = False
+            continue
+        sgr = DIAGNOSTIC_SGR_PATTERN.match(text, cursor)
+        if sgr:
+            cursor = sgr.end()
+        elif text[cursor] == "\n":
+            cursor += 1
+            line_start = True
+        else:
+            visible.append(text[cursor])
+            offsets.append(cursor)
+            cursor += 1
+    return "".join(visible), offsets
+
+
+def redact_diagnostic_text(text: str) -> str:
+    """Protect ANSI- and row-wrapped identities in printed diffs without changing comparison semantics."""
+    projection, offsets = diagnostic_projection(text)
+    masked = set()
+    for identity in DIAGNOSTIC_IDENTITY.finditer(projection):
+        start = identity.start()
+        previous_at = projection.rfind("@", 0, start)
+        if previous_at >= 0:
+            alternate_start = previous_at
+            while alternate_start and DIAGNOSTIC_COMPONENT_CHAR.fullmatch(projection[alternate_start - 1]):
+                alternate_start -= 1
+            if re.search(r"\n[+\-]", text[offsets[previous_at]:offsets[identity.end() - 1]]):
+                start = alternate_start
+        for index in range(start, identity.end()):
+            if DIAGNOSTIC_COMPONENT_CHAR.fullmatch(projection[index]):
+                masked.add(offsets[index])
+    redacted = []
+    cursor = 0
+    while cursor < len(text):
+        if cursor in masked:
+            while cursor < len(text) and cursor in masked:
+                cursor += 1
+            redacted.append(MASK_TOKEN)
+        else:
+            redacted.append(text[cursor])
+            cursor += 1
+    return "".join(redacted)
 
 
 def sanitize_frame_for_comparison(

@@ -145,9 +145,14 @@ class FrameScriptsTest(unittest.TestCase):
             (golden / "01-frame.ansi").write_text("SECRET-GOLDEN\n", encoding="utf-8")
             (ours / "01-frame.ansi").write_text("SECRET-OURS\n", encoding="utf-8")
             masks = root / "masks.json"
-            masks.write_text(json.dumps({"by_frame": {
-                "new/scenario/01-frame.ansi": [{"pattern": "SECRET-[A-Z]+", "replacement": "▒"}],
-            }}), encoding="utf-8")
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    "new/scenario/01-frame.ansi": {"patterns": [], "identity_guards": [], "minimum_matches": 0},
+                },
+                "by_frame": {
+                    "new/scenario/01-frame.ansi": [{"pattern": "SECRET-[A-Z]+", "replacement": "▒"}],
+                },
+            }), encoding="utf-8")
 
             aliases = [
                 (golden, "new/scenario/01-frame.ansi"),
@@ -172,6 +177,26 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertIn("1 clean, 0 allowlisted, 0 DIVERGENT", compared.stdout)
             self.assertNotIn("SECRET-GOLDEN", compared.stdout + compared.stderr)
             self.assertNotIn("SECRET-OURS", compared.stdout + compared.stderr)
+
+    def test_tracked_diff_requires_a_declared_redaction_contract_before_diagnostics(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            golden = root / "test" / "fixtures" / "upstream-frames" / "new-scenario"
+            ours = root / "ours"
+            golden.mkdir(parents=True); ours.mkdir()
+            (golden / "01-frame.ansi").write_text("Alice alice@example.test\n", encoding="utf-8")
+            (ours / "01-frame.ansi").write_text("Bob bob@example.test\n", encoding="utf-8")
+            masks = root / "masks.json"
+            masks.write_text(json.dumps({"redactions_by_frame": {}, "by_frame": {}}), encoding="utf-8")
+
+            compared = self.run_diff(golden, ours, masks=masks)
+            output = compared.stdout + compared.stderr
+            self.assertNotEqual(compared.returncode, 0)
+            self.assertIn("no redaction contract declared for tracked frame", output)
+            for private in ("Alice", "alice@example.test", "Bob", "bob@example.test"):
+                self.assertNotIn(private, output)
+            self.assertNotIn("fingerprint: sha256:", output)
+            self.assertNotIn("@@", output)
 
     def test_synthetic_unredacted_identities_round_trip_to_all_stored_goldens_without_git_history(self):
         fixtures = ROOT / "test" / "fixtures" / "upstream-frames"
@@ -303,6 +328,120 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertNotEqual(compared.returncode, 0)
             self.assertIn("fingerprint: sha256:", compared.stdout)
             self.assertNotIn(identity, compared.stdout + compared.stderr)
+
+    def test_only_nearest_dashboard_status_identity_is_masked_and_transcript_differences_stay_private(self):
+        contract = capture.load_redaction_contract(str(MASKS_PATH), "help-overlay/01-boot.ansi")
+        comparison_masks = diff.load_comparison_masks(str(MASKS_PATH), "help-overlay/01-boot.ansi")
+        marker = "\x1b[0m  \x1b[0;2m⏵⏵ auto mode on · ? for shortcuts · ← for agents\x1b[0m\n"
+        dashboard = "\x1b[0m  dashboard@host\x1b[0m:\x1b[0m/repo\x1b[0m\n" + marker
+        golden_raw = "\x1b[0m  transcript-left@host\x1b[0m:\x1b[0m/repo\x1b[0m\n" + dashboard
+        ours_raw = "\x1b[0m  transcript-right@host\x1b[0m:\x1b[0m/repo\x1b[0m\n" + dashboard
+
+        golden_lines, golden_failures = diff.sanitize_frame_for_comparison(golden_raw, contract, comparison_masks)
+        ours_lines, ours_failures = diff.sanitize_frame_for_comparison(ours_raw, contract, comparison_masks)
+        self.assertEqual(golden_failures, [])
+        self.assertEqual(ours_failures, [])
+        self.assertIn("transcript-left@host", "\n".join(golden_lines))
+        self.assertIn("transcript-right@host", "\n".join(ours_lines))
+        self.assertNotEqual(golden_lines, ours_lines)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            golden = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            ours = root / "ours"
+            golden.mkdir(parents=True); ours.mkdir()
+            (golden / "01-boot.ansi").write_text(golden_raw, encoding="utf-8")
+            (ours / "01-boot.ansi").write_text(ours_raw, encoding="utf-8")
+            compared = self.run_diff(golden, ours)
+            self.assertNotEqual(compared.returncode, 0)
+            self.assertIn("DIVERGENT", compared.stdout)
+            for identity in ("transcript-left@host", "transcript-right@host", "dashboard@host"):
+                self.assertNotIn(identity, compared.stdout + compared.stderr)
+
+    def test_diff_redacts_wrapped_transcript_identity_fragments_after_status_masking(self):
+        marker = "\x1b[0m  \x1b[0;2m⏵⏵ auto mode on · ? for shortcuts · ← for agents\x1b[0m\n"
+        dashboard = "\x1b[0m  dashboard@host\x1b[0m:\x1b[0m/repo\x1b[0m\n" + marker
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            golden = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            ours = root / "ours"
+            golden.mkdir(parents=True); ours.mkdir()
+            (golden / "01-boot.ansi").write_text(
+                "\x1b[0m  transcript-left\n@private-host\x1b[0m:\x1b[0m/repo\x1b[0m\n" + dashboard,
+                encoding="utf-8",
+            )
+            (ours / "01-boot.ansi").write_text(
+                "\x1b[0m  transcript-right\n@private-host\x1b[0m:\x1b[0m/repo\x1b[0m\n" + dashboard,
+                encoding="utf-8",
+            )
+            compared = self.run_diff(golden, ours)
+            self.assertNotEqual(compared.returncode, 0)
+            self.assertIn("DIVERGENT", compared.stdout)
+            for fragment in ("transcript-left", "transcript-right", "@private-host"):
+                self.assertNotIn(fragment, compared.stdout + compared.stderr)
+
+    def test_diff_redacts_ansi_split_transcript_identity_fragments_after_status_masking(self):
+        marker = "\x1b[0m  \x1b[0;2m⏵⏵ auto mode on · ? for shortcuts · ← for agents\x1b[0m\n"
+        dashboard = "\x1b[0m  dashboard@host\x1b[0m:\x1b[0m/repo\x1b[0m\n" + marker
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            golden = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            ours = root / "ours"
+            golden.mkdir(parents=True); ours.mkdir()
+            (golden / "01-boot.ansi").write_text(
+                "\x1b[0m  transcript-\x1b[31mleft@private-host\x1b[0m:\x1b[0m/repo\x1b[0m\n" + dashboard,
+                encoding="utf-8",
+            )
+            (ours / "01-boot.ansi").write_text(
+                "\x1b[0m  transcript-\x1b[31mright@private-host\x1b[0m:\x1b[0m/repo\x1b[0m\n" + dashboard,
+                encoding="utf-8",
+            )
+            compared = self.run_diff(golden, ours)
+            self.assertNotEqual(compared.returncode, 0)
+            self.assertIn("DIVERGENT", compared.stdout)
+            visible_output = re.sub(r"\x1b\[[0-?]*[ -/]*m", "", compared.stdout + compared.stderr)
+            for fragment in ("transcript-", "left", "right", "@private-host"):
+                self.assertNotIn(fragment, visible_output)
+
+    def test_diff_diagnostic_redaction_covers_component_wrap_matrix_without_changing_divergence(self):
+        marker = "\x1b[0m  \x1b[0;2m⏵⏵ auto mode on · ? for shortcuts · ← for agents\x1b[0m\n"
+        dashboard = "\x1b[0m  dashboard@host\x1b[0m:\x1b[0m/repo\x1b[0m\n" + marker
+        cases = {
+            "inside-username": ("transcript-\nleft@private-host:/repo", "transcript-\nright@private-host:/repo"),
+            "before-at": ("transcript-left\n@private-host:/repo", "transcript-right\n@private-host:/repo"),
+            "after-at": ("transcript-left@\nprivate-host:/repo", "transcript-right@\nprivate-host:/repo"),
+            "inside-hostname": ("transcript-left@private_\nhost-name:/repo", "transcript-right@private_\nhost-name:/repo"),
+            "before-path": ("transcript-left@private-host\n:/repo", "transcript-right@private-host\n:/repo"),
+            "sgr-and-wrap": ("transcript-\x1b[31mleft@private-\n\x1b[2mhost:/repo", "transcript-\x1b[31mright@private-\n\x1b[2mhost:/repo"),
+        }
+        for name, (left, right) in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                golden = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+                ours = root / "ours"
+                golden.mkdir(parents=True); ours.mkdir()
+                golden_raw = f"\x1b[0m  {left}\x1b[0m\n" + dashboard
+                ours_raw = f"\x1b[0m  {right}\x1b[0m\n" + dashboard
+                golden_lines, golden_failures = diff.sanitize_frame_for_comparison(
+                    golden_raw, capture.load_redaction_contract(str(MASKS_PATH), "help-overlay/01-boot.ansi"),
+                    diff.load_comparison_masks(str(MASKS_PATH), "help-overlay/01-boot.ansi"),
+                )
+                ours_lines, ours_failures = diff.sanitize_frame_for_comparison(
+                    ours_raw, capture.load_redaction_contract(str(MASKS_PATH), "help-overlay/01-boot.ansi"),
+                    diff.load_comparison_masks(str(MASKS_PATH), "help-overlay/01-boot.ansi"),
+                )
+                self.assertEqual(golden_failures, [])
+                self.assertEqual(ours_failures, [])
+                self.assertNotEqual(golden_lines, ours_lines)
+                (golden / "01-boot.ansi").write_text(golden_raw, encoding="utf-8")
+                (ours / "01-boot.ansi").write_text(ours_raw, encoding="utf-8")
+                compared = self.run_diff(golden, ours)
+                self.assertNotEqual(compared.returncode, 0)
+                self.assertIn("DIVERGENT", compared.stdout)
+                self.assertIn("fingerprint: sha256:", compared.stdout)
+                visible = re.sub(r"\x1b\[[0-?]*[ -/]*m", "", compared.stdout + compared.stderr)
+                for fragment in ("transcript", "left", "right", "private", "host", "name"):
+                    self.assertNotIn(fragment, visible)
 
     def test_dashboard_status_variant_matrix_redacts_authenticated_chrome_without_touching_transcripts(self):
         contract = capture.load_redaction_contract(str(MASKS_PATH), "help-overlay/01-boot.ansi")
@@ -552,6 +691,37 @@ class FrameScriptsTest(unittest.TestCase):
                     self.assertNotIn("alice@host_name", compared.stdout + compared.stderr)
                     self.assertNotIn("fingerprint: sha256:", compared.stdout)
 
+    def test_unicode_dashboard_identities_are_private_without_hiding_transcript_differences(self):
+        contract = capture.load_redaction_contract(str(MASKS_PATH), "help-overlay/01-boot.ansi")
+        footer = "⏸ manual mode on · ? for shortcuts · ← for agents"
+        dashboard = (
+            "\x1b[0m  álïce@høst_name\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+            f"\x1b[0m  \x1b[0;2m{footer}\x1b[0m\n"
+        )
+        redacted, failures = capture.preprocess_frame_for_publication(dashboard, contract)
+        self.assertEqual(redacted, dashboard.replace("álïce@høst_name", "▒"))
+        self.assertEqual(failures, [])
+
+        wrapped = f"  álï\nce@hø\nst:/repo\n  {footer}\n"
+        redacted, failures = capture.preprocess_frame_for_publication(wrapped, contract)
+        self.assertEqual(redacted, wrapped)
+        self.assertEqual(failures, ["unredacted identity status-user-host"])
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            golden = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
+            ours = root / "ours"
+            golden.mkdir(parents=True); ours.mkdir()
+            dashboard_tail = f"  ▒:/cwd\n  {footer}\n"
+            (golden / "01-boot.ansi").write_text("remote álïce@høst:/repo-a\n" + dashboard_tail, encoding="utf-8")
+            (ours / "01-boot.ansi").write_text("remote bób@høst:/repo-b\n" + dashboard_tail, encoding="utf-8")
+            compared = self.run_diff(golden, ours)
+            output = compared.stdout + compared.stderr
+            self.assertNotEqual(compared.returncode, 0)
+            self.assertIn("DIVERGENT", output)
+            for private in ("álïce", "bób", "høst"):
+                self.assertNotIn(private, output)
+
     def test_capture_early_exit_and_zero_frames_fail(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -728,44 +898,59 @@ class FrameScriptsTest(unittest.TestCase):
             root = Path(td)
             tracked = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
             job_dir = root / "job"; job_dir.mkdir()
+            unrelated = {"PREFIX_CI_SUFFIX": "retain-prefix", "VICIOUS": "retain-embedded"}
             hostile_cases = (
                 ("force-no-color", {"FORCE_COLOR": "0", "NO_COLOR": "1"}),
-                ("ci", {"CI": "1", "TF_BUILD": "1", "AGENT_NAME": "agent", "GITHUB_ACTIONS": "1", "GITEA_ACTIONS": "1", "CIRCLECI": "1", "TRAVIS": "1", "APPVEYOR": "1", "GITLAB_CI": "1", "BUILDKITE": "1", "DRONE": "1", "CI_NAME": "codeship", "TEAMCITY_VERSION": "2025.1"}),
+                ("legacy-ci", {"CI": "1", "TF_BUILD": "1", "AGENT_NAME": "agent", "GITEA_ACTIONS": "1", "CIRCLECI": "1", "TRAVIS": "1", "APPVEYOR": "1", "BUILDKITE": "1", "DRONE": "1", "CI_NAME": "codeship", "TEAMCITY_VERSION": "2025.1"}),
+                ("gitlab", {"GITLAB_CI": "1", "CI_JOB_ID": "gitlab-job"}),
+                ("github", {"GITHUB_ACTIONS": "1", "CI_RUN_ID": "github-run"}),
+                ("continuous-integration", {"CONTINUOUS_INTEGRATION": "1"}),
+                ("generic-ci-prefix", {"CI_CAPTURE_SENTINEL": "generic", "CI_BUILD_ID": "build"}),
                 ("terminal-wrapper", {"TMUX": "/tmp/tmux-0/default", "TERM_PROGRAM": "iTerm.app", "TERM_PROGRAM_VERSION": "2.9", "COLORFGBG": "15;0"}),
             )
             hostile_cases += (("combined", dict((name, value) for _, case in hostile_cases for name, value in case.items())),)
+            self.assertEqual(len(hostile_cases), 8)
             hostile_names = tuple(sorted(hostile_cases[-1][1]))
-            child = self.live_child_command(textwrap.dedent(f"""
-                import json, os, sys
-                from pathlib import Path
-                credentials = {{
-                    "oauth_present": "CLAUDE_CODE_OAUTH_TOKEN" in os.environ,
-                    "api_key_present": "ANTHROPIC_API_KEY" in os.environ,
-                    "auth_token_present": "ANTHROPIC_AUTH_TOKEN" in os.environ,
-                }}
-                environment = {{
-                    **credentials,
-                    "term": os.environ.get("TERM"),
-                    "colorterm": os.environ.get("COLORTERM"),
-                    "hostile": {{name: os.environ[name] for name in {hostile_names!r} if name in os.environ}},
-                }}
-                Path(os.environ["CAPTURE_REPORT"]).write_text(json.dumps(environment), encoding="utf-8")
-                sys.stdout.write("AUTHENTICATED ACCOUNT STATE" if any(credentials.values()) else "Not logged in · Run /login")
-                sys.stdout.flush()
-            """))
+            node_version = subprocess.run(["node", "--version"], text=True, capture_output=True, check=True).stdout.strip()
+            child_code = textwrap.dedent(f"""
+                import {{ writeFileSync }} from "node:fs";
+                import React from "react";
+                import {{ render, Text }} from "ink";
+                import isInCi from "is-in-ci";
+                const names = {json.dumps(hostile_names)};
+                const unrelated = {json.dumps(tuple(unrelated))};
+                const credentials = {{
+                  oauth_present: "CLAUDE_CODE_OAUTH_TOKEN" in process.env,
+                  api_key_present: "ANTHROPIC_API_KEY" in process.env,
+                  auth_token_present: "ANTHROPIC_AUTH_TOKEN" in process.env,
+                }};
+                writeFileSync(process.env.CAPTURE_REPORT, JSON.stringify({{
+                  ...credentials,
+                  term: process.env.TERM,
+                  colorterm: process.env.COLORTERM,
+                  hostile: Object.fromEntries(names.filter(name => name in process.env).map(name => [name, process.env[name]])),
+                  unrelated: Object.fromEntries(unrelated.map(name => [name, process.env[name]])),
+                  is_in_ci: isInCi,
+                }}));
+                process.stdout.write(Object.values(credentials).some(Boolean) ? "AUTHENTICATED ACCOUNT STATE" : "Not logged in · Run /login");
+                render(React.createElement(Text, null, "INK-DYNAMIC"));
+                setTimeout(() => {{}}, 5000);
+            """)
+            child = f"node --input-type=module -e {shlex.quote(child_code)}"
             published = []
             for label, hostile_env in hostile_cases:
                 report = root / f"child-{label}.json"
                 captured = self.run_capture(
-                    "frame:boot\n", child, tracked, MASKS_PATH,
-                    expected_version=self.synthetic_version(),
+                    "frame:boot\n", child, tracked, MASKS_PATH, cwd=ROOT,
+                    expected_version=node_version,
                     env={
-                        "PATH": os.defpath,
+                        "PATH": os.environ["PATH"],
                         "CLAUDE_JOB_DIR": str(job_dir),
                         "CAPTURE_REPORT": str(report),
                         "CLAUDE_CODE_OAUTH_TOKEN": "synthetic-oauth",
                         "ANTHROPIC_API_KEY": "synthetic-api-key",
                         "ANTHROPIC_AUTH_TOKEN": "synthetic-auth-token",
+                        **unrelated,
                         **hostile_env,
                     },
                 )
@@ -773,12 +958,52 @@ class FrameScriptsTest(unittest.TestCase):
                 self.assertEqual(json.loads(report.read_text(encoding="utf-8")), {
                     "oauth_present": False, "api_key_present": False, "auth_token_present": False,
                     "term": "xterm-256color", "colorterm": "truecolor", "hostile": {},
+                    "unrelated": unrelated, "is_in_ci": False,
                 })
                 frame = (tracked / "01-boot.ansi").read_bytes()
                 self.assertIn(b"Not logged in \xc2\xb7 Run /login", frame)
+                self.assertIn(b"INK-DYNAMIC", frame)
                 self.assertNotIn(b"AUTHENTICATED ACCOUNT STATE", frame)
                 published.append(frame)
             self.assertEqual(published, [published[0]] * len(published))
+
+    def test_untracked_capture_preserves_generic_ci_selectors(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            report = root / "child.json"
+            ambient = {"CONTINUOUS_INTEGRATION": "1", "CI_CAPTURE_SENTINEL": "generic", "PREFIX_CI_SUFFIX": "retain-prefix"}
+            child = self.live_child_command(textwrap.dedent("""
+                import json, os, sys
+                from pathlib import Path
+                names = ("CONTINUOUS_INTEGRATION", "CI_CAPTURE_SENTINEL", "PREFIX_CI_SUFFIX")
+                Path(os.environ["CAPTURE_REPORT"]).write_text(json.dumps({name: os.environ.get(name) for name in names}), encoding="utf-8")
+                sys.stdout.write("ready"); sys.stdout.flush()
+            """))
+            captured = self.run_capture(
+                "frame:boot\n", child, root / "scratch",
+                env={"PATH": os.defpath, "CAPTURE_REPORT": str(report), **ambient},
+            )
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            self.assertEqual(json.loads(report.read_text(encoding="utf-8")), ambient)
+
+    def test_required_state_rules_require_positive_non_boolean_match_counts(self):
+        with tempfile.TemporaryDirectory() as td:
+            masks = Path(td) / "state-masks.json"
+            for minimum_matches in (0, True):
+                with self.subTest(minimum_matches=minimum_matches):
+                    masks.write_text(json.dumps({
+                        "required_state_by_frame": {
+                            "stateful/*.ansi": {
+                                "required": [{
+                                    "name": "logged-out",
+                                    "pattern": "LOGGED-OUT STATE",
+                                    "minimum_matches": minimum_matches,
+                                }],
+                            },
+                        },
+                    }), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "must be a positive integer"):
+                        capture.load_required_state_contract(str(masks), "stateful/01-frame.ansi")
 
     def test_tracked_capture_rejects_mixed_state_atomically_before_publication(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1902,15 +2127,21 @@ class FrameScriptsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             fixtures = root / "test" / "fixtures" / "upstream-frames"
+            scenarios = ("help-overlay", "composer-basics", "nested", "nested/scenario")
+            masks = root / "masks.json"
+            masks.write_text(json.dumps({"redactions_by_frame": {
+                f"{scenario}/*.ansi": {"patterns": [], "identity_guards": [], "minimum_matches": 0}
+                for scenario in scenarios
+            }}), encoding="utf-8")
             cases = []
-            for scenario in ("help-overlay", "composer-basics", "nested", "nested/scenario"):
+            for scenario in scenarios:
                 golden = fixtures / scenario
                 ours = root / "ours" / scenario.replace("/", "-")
                 golden.mkdir(parents=True)
                 ours.mkdir(parents=True)
                 (golden / "01-frame.ansi").write_text(f"golden {scenario}\n", encoding="utf-8")
                 (ours / "01-frame.ansi").write_text(f"ours {scenario}\n", encoding="utf-8")
-                initial = self.run_diff(golden, ours)
+                initial = self.run_diff(golden, ours, masks=masks)
                 fingerprint = re.search(r"fingerprint: sha256:([0-9a-f]{64})", initial.stdout)
                 self.assertIsNotNone(fingerprint, initial.stdout)
                 cases.append((scenario, golden, ours, fingerprint.group(1)))
@@ -1922,7 +2153,7 @@ class FrameScriptsTest(unittest.TestCase):
             ), encoding="utf-8")
 
             for scenario, golden, ours, _ in cases:
-                result = self.run_diff(golden, ours, allowlist)
+                result = self.run_diff(golden, ours, allowlist, masks=masks)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("0 clean, 1 allowlisted, 0 DIVERGENT", result.stdout)
 
@@ -1931,24 +2162,24 @@ class FrameScriptsTest(unittest.TestCase):
             linked_fixtures = root / "linked-fixtures"
             linked_fixtures.symlink_to(fixtures, target_is_directory=True)
             for canonical_alias in (nested[1] / "alias" / "..", linked_fixtures / "nested" / "scenario"):
-                result = self.run_diff(canonical_alias, nested[2], allowlist)
+                result = self.run_diff(canonical_alias, nested[2], allowlist, masks=masks)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             help_scenario, help_golden, help_ours, _ = cases[0]
             help_ours.joinpath("01-frame.ansi").write_text("unreviewed visible change\n", encoding="utf-8")
-            stale = self.run_diff(help_golden, help_ours, allowlist)
+            stale = self.run_diff(help_golden, help_ours, allowlist, masks=masks)
             self.assertNotEqual(stale.returncode, 0)
             self.assertIn("allowlist fingerprint is stale", stale.stdout)
 
             help_ours.joinpath("01-frame.ansi").write_text(help_golden.joinpath("01-frame.ansi").read_text(encoding="utf-8"), encoding="utf-8")
-            clean = self.run_diff(help_golden, help_ours, allowlist)
+            clean = self.run_diff(help_golden, help_ours, allowlist, masks=masks)
             self.assertNotEqual(clean.returncode, 0)
             self.assertIn("not a divergent masked comparison", clean.stdout)
 
             help_golden.joinpath("02-keep.ansi").write_text("keep\n", encoding="utf-8")
             help_ours.joinpath("02-keep.ansi").write_text("keep\n", encoding="utf-8")
             help_ours.joinpath("01-frame.ansi").unlink()
-            missing = self.run_diff(help_golden, help_ours, allowlist)
+            missing = self.run_diff(help_golden, help_ours, allowlist, masks=masks)
             self.assertNotEqual(missing.returncode, 0)
             self.assertIn("missing in OUR_DIR", missing.stdout)
             self.assertIn(f"{help_scenario}/01-frame.ansi is not a divergent masked comparison", missing.stdout)
@@ -2022,7 +2253,7 @@ class FrameScriptsTest(unittest.TestCase):
         self.assertIn("publication coverage", version)
         self.assertIn("comparison sanitization", version)
         for footer_grammar in (
-            "contiguous nonblank rendered dashboard block",
+            "nearest structural status candidate",
             "Not logged in · Run /login",
             " · ? for shortcuts …",
             "hostname token accepts `_`",
@@ -2054,7 +2285,7 @@ class FrameScriptsTest(unittest.TestCase):
         self.assertIn("publication coverage", plan.lower())
         self.assertIn("comparison sanitization", plan.lower())
         for footer_grammar in (
-            "contiguous nonblank rendered dashboard block",
+            "nearest structural status candidate",
             "Not logged in · Run /login",
             " · ? for shortcuts …",
             "hostname token accepts `_`",

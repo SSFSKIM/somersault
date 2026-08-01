@@ -288,6 +288,18 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).toContain("›");                 // composer still alive, never exited
   });
 
+  it("Ctrl-Z routes its resumed Ink write through the render owner exactly once", async () => {
+    const owner = { repaint: vi.fn((run: () => void) => run()) };
+    const suspend = (deps: any) => deps.repaint();
+    const { stdin, stdout, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} suspend={suspend} resumeOutput={owner} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    const framesBefore = stdout.frames.length;
+    stdin.write("\x1a");
+    await waitFor(() => owner.repaint.mock.calls.length === 1);
+    await waitFor(() => stdout.frames.length > framesBefore);
+    expect(stdout.frames.length).toBe(framesBefore + 1);
+  });
+
   it("Ctrl-Z invokes a no-op suspend once without breaking the active composer's yank-pop", async () => {
     const suspend = vi.fn();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} suspend={suspend as any} cwd={process.cwd()} />);
