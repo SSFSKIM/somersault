@@ -520,6 +520,54 @@ class FrameScriptsTest(unittest.TestCase):
         self.assertFalse(screen.dim_at(0, 0))
         self.assertFalse(screen.dim_at(0, 1), "overwriting a wide cell clears the stale dim stub")
 
+    def test_dim_wide_overwrite_clears_the_full_incoming_span(self):
+        for old_dim, incoming_dim in ((False, True), (True, False)):
+            screen = capture.DimScreen(4, 1)
+            old_style = "\x1b[2m" if old_dim else "\x1b[0m"
+            incoming_style = "\x1b[2m" if incoming_dim else "\x1b[0m"
+            capture.pyte.ByteStream(screen).feed((old_style + "a界b\x1b[1G" + incoming_style + "語").encode())
+            self.assertEqual([screen.buffer[0][column].data for column in range(4)], ["語", "", " ", "b"])
+            self.assertEqual(screen.dim_at(0, 0), incoming_dim)
+            self.assertEqual(screen.dim_at(0, 1), incoming_dim)
+            self.assertFalse(screen.dim_at(0, 2), "clearing the old continuation must remove its dim style")
+            self.assertEqual(re.sub(r"\x1b\[[0-9;]*m", "", capture.render_screen(screen)), "語 b\n")
+
+    def test_dim_wide_overwrite_clears_each_old_pair_intersecting_its_span(self):
+        for first_dim, second_dim in ((False, True), (True, False)):
+            screen = capture.DimScreen(4, 1)
+            first_style = "\x1b[2m" if first_dim else "\x1b[0m"
+            second_style = "\x1b[2m" if second_dim else "\x1b[0m"
+            capture.pyte.ByteStream(screen).feed((first_style + "界" + second_style + "界\x1b[2G\x1b[0m語").encode())
+            self.assertEqual([screen.buffer[0][column].data for column in range(4)], [" ", "語", "", " "])
+            self.assertFalse(screen.dim_at(0, 0))
+            self.assertFalse(screen.dim_at(0, 3), "the second old pair's continuation must not survive")
+
+    def test_dim_wide_overwrite_clears_lead_and_continuation_intersections(self):
+        for payload, expected in (
+            ("\x1b[2ma界b\x1b[1G\x1b[0m語", ["語", "", " ", "b"]),
+            ("\x1b[2m界ab\x1b[2G\x1b[0m語", [" ", "語", "", "b"]),
+        ):
+            screen = capture.DimScreen(4, 1)
+            capture.pyte.ByteStream(screen).feed(payload.encode())
+            self.assertEqual([screen.buffer[0][column].data for column in range(4)], expected)
+            for column, cell in enumerate(expected):
+                if cell == " ":
+                    self.assertFalse(screen.dim_at(0, column), column)
+
+    def test_dim_wide_nonbottom_autowrap_repairs_its_full_wrapped_span(self):
+        screen = capture.DimScreen(4, 3)
+        capture.pyte.ByteStream(screen).feed("\x1b[2;1H\x1b[2ma界b\x1b[1;1H\x1b[0m1234語".encode())
+        self.assertEqual([screen.buffer[1][column].data for column in range(4)], ["語", "", " ", "b"])
+        self.assertFalse(screen.dim_at(1, 2), "the wrapped write must clear its second old destination cell")
+
+    def test_dim_wide_no_autowrap_repairs_its_actual_right_edge_span(self):
+        screen = capture.DimScreen(4, 1)
+        capture.pyte.ByteStream(screen).feed("\x1b[2ma界b\x1b[0m\x1b[?7l語".encode())
+        self.assertEqual([screen.buffer[0][column].data for column in range(4)], ["a", " ", "語", ""])
+        self.assertFalse(screen.dim_at(0, 1))
+        self.assertFalse(screen.dim_at(0, 2))
+        self.assertFalse(screen.dim_at(0, 3))
+
     def test_dim_insert_mode_shifts_wide_glyphs_without_preclearing_them(self):
         for columns, glyph_dim in ((4, False), (3, True)):
             screen = capture.DimScreen(columns, 1)

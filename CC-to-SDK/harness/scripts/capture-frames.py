@@ -141,15 +141,16 @@ class DimScreen(pyte.Screen):
             self.buffer[row][column + 1] = self.default_char
 
     def draw(self, data: str) -> None:
-        # pyte represents a wide glyph as a leading character plus an empty continuation cell. Clear that
-        # pair immediately before each overwrite, after pyte has applied any prior character's wrap/scroll.
-        # Processing a full PTY chunk in one speculative prepass is wrong at a bottom-row pending wrap: the
-        # first next character scrolls the old row away, so its wide cells are not overwrite destinations.
+        # pyte represents a wide glyph as a leading character plus an empty continuation cell. Clear every
+        # pair intersecting the next draw's actual destination span, after prior characters have wrapped or
+        # scrolled. Processing a full PTY chunk in one speculative prepass is wrong at a bottom-row pending
+        # wrap: the first next character scrolls the old row away, so its wide cells are not destinations.
         if pyte_modes.IRM in self.mode:
             super().draw(data)
             return
         for char in data:
             width = wcwidth(char)
+            destination = None
             if width > 0:
                 x, y = self.cursor.x, self.cursor.y
                 if x == self.columns:
@@ -158,12 +159,16 @@ class DimScreen(pyte.Screen):
                         # blank destination, whereas above it the next row is an overwrite destination.
                         bottom = self.margins.bottom if self.margins is not None else self.lines - 1
                         if y < bottom:
-                            self._clear_wide_cell_at(y + 1, 0)
+                            destination = y + 1, 0
                     else:
                         # With autowrap disabled, pyte backs up by the incoming character width instead.
-                        self._clear_wide_cell_at(y, x - width)
+                        destination = y, x - width
                 else:
-                    self._clear_wide_cell_at(y, x)
+                    destination = y, x
+                if destination is not None:
+                    row, column = destination
+                    for covered in range(column, min(column + width, self.columns)):
+                        self._clear_wide_cell_at(row, covered)
             super().draw(char)
 
     def dim_at(self, row: int, column: int) -> bool:
