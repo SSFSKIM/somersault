@@ -8,7 +8,7 @@ streams — raw pty output is not comparable across binaries (repaint strategies
 grid is.
 
 Setup (once, PEP 668 blocks a bare pip on this machine):
-    python3 -m venv scripts/frames/.venv && scripts/frames/.venv/bin/pip install pyte
+    python3 -m venv scripts/frames/.venv && scripts/frames/.venv/bin/pip install -r scripts/frames/requirements.txt
 Run every invocation of this script with that interpreter: scripts/frames/.venv/bin/python3.
 
 Key-script grammar (one action per line, # comments and blank lines ignored):
@@ -53,7 +53,7 @@ try:
 except ImportError:
     sys.exit(
         "pyte not installed — run: python3 -m venv scripts/frames/.venv "
-        "&& scripts/frames/.venv/bin/pip install pyte"
+        "&& scripts/frames/.venv/bin/pip install -r scripts/frames/requirements.txt"
     )
 
 KEY_MAP = {"esc": b"\x1b", "tab": b"\t", "up": b"\x1b[A", "down": b"\x1b[B"}

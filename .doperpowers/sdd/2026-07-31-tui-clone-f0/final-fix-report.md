@@ -513,3 +513,26 @@ Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/
 - `git diff --check`: **PASS** before commit.
 
 No credentials or `.env` were loaded or printed. The protected concurrent untracked files were not edited or staged. The pre-existing manual `Ctrl-Z` → `fg` concern remains unrelated to this frame-emulator repair.
+
+## Eleventh plugin review pass
+
+Source of truth: `/Users/new/Developer/GitHub/codex_somersault/.doperpowers/sdd/2026-07-31-tui-clone-f0/final-rereview11-findings.md`.
+
+### Red proof and repair
+
+- A direct focused red run against the pre-repair code showed the three findings: no emitted/checked pair fingerprint, malformed or missing digest fields accepted as key-only records, no pinned requirements file, and surviving successful synthetic fixtures using `time.sleep(0.3)`.
+- `frame-diff.py` now hashes a deterministic JSON representation of the *post-mask* golden/ours line pair and requires one exact `sha256:<64-lowercase-hex>` fingerprint per frame key. It rejects malformed and duplicate entries, makes stale fingerprints divergent, and rejects entries for clean, missing, or empty comparisons. Its divergent output prints the reviewer-copyable fingerprint.
+- `scripts/frames/requirements.txt` pins exactly `pyte==0.8.2` and `wcwidth==0.8.2`; capture setup, import remediation, and golden-recapture instructions install that file.
+- Successful synthetic children now use the shared five-second keepalive; deliberately early (`true`/empty) and partial (`0.15` seconds) child fixtures are unchanged.
+- Sabotage proof: a temporary key-only variant returned exit 0 for an unrelated visible mutation while the restored implementation returned stale-fingerprint exit 1. Temporarily substituting `pyte>=0.8.2` and reintroducing `time.sleep(0.3)` each made their dedicated regression guards fail.
+
+### Eleventh-pass gates
+
+- Focused changed-behavior group: **PASS; 8 tests**. Full Python suite: **PASS; 44 tests in 7.536 seconds**.
+- Fresh job-local virtual environment installed and verified **`pyte=0.8.2 wcwidth=0.8.2`** via `importlib.metadata`; its full suite passed **44 tests in 7.335 seconds**.
+- Ten consecutive full-suite runs from that fresh pinned environment, while a local CPU-bound process supplied scheduler pressure: **all 10 PASS; 44 tests each**.
+- `npm run typecheck`: **PASS; no diagnostics**.
+- `npx vitest run test/tui --exclude 'test/tui/tmp-probe-rescue-popup.test.tsx'`: **PASS; 39 files and 662 tests passed; 9 credential-gated tests skipped**.
+- `npm run test:unit`: **PASS; 135 files and 1,227 tests passed**. `npm run test:integration`: **PASS; 3 files and 16 tests passed**. `npm run test:contract`: **PASS; 1 file and 7 tests passed**.
+- Fresh keyless local 100x40 captures wrote **3 help** and **5 composer** frames. With the empty active allowlist, help remained **`0 clean, 0 allowlisted, 3 DIVERGENT`** and composer **`0 clean, 0 allowlisted, 5 DIVERGENT`**; both expectedly exited **1**.
+- `git diff --check`: **PASS** before commit. No credentials were loaded, printed, or committed. The protected concurrent untracked files were not edited or staged.

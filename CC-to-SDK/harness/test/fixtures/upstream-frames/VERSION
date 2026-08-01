@@ -5,9 +5,11 @@ organization and `user@host` status segment are replaced with `▒`; no unredact
 under this directory. The capture command rejects a tracked-fixture output path unless it receives
 `--redact-masks` before the child is started or any frame is written.
 
-From `CC-to-SDK/harness/`, recapture with exactly:
+From `CC-to-SDK/harness/`, create the pinned emulator environment once, then recapture with exactly:
 
 ```sh
+python3 -m venv scripts/frames/.venv
+scripts/frames/.venv/bin/pip install -r scripts/frames/requirements.txt
 scripts/frames/.venv/bin/python3 scripts/capture-frames.py \
   --script scripts/frames/help-overlay.keys \
   --out test/fixtures/upstream-frames/help-overlay \

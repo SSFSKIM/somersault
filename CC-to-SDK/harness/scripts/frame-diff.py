@@ -13,14 +13,18 @@ a 3s duration versus a 12s one must mask to the same string, or the mask is usel
 (Column alignment after the mask point differs from the on-screen frame; comparison is masked-text
 to masked-text, so that is fine.)
 
-Allowlist lines look like:  <script-dir>/<frame-file> <INVENTORY-ID> — <reason>
-A differing frame that is allowlisted counts as clean-with-note; any other difference is DIVERGENT.
-Exit 0 = clean or allowlisted only; exit 1 = at least one unlisted divergence. Missing counterpart
-files (in either direction) are divergences too.
+Allowlist lines look like:  <script-dir>/<frame-file> sha256:<masked-pair-digest> <INVENTORY-ID> — <reason>
+A differing frame is allowlisted only when its masked golden/ours pair has the reviewed digest. Every
+other difference is DIVERGENT. Exit 0 = clean or exactly allowlisted only; exit 1 = malformed/stale
+allowlist data or any unlisted divergence. Missing counterpart files (in either direction) are divergences
+and cannot be allowlisted.
 """
 import argparse
 import difflib
+import hashlib
+import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -28,19 +32,49 @@ from frame_masks import frame_key, load_masks, load_redactions, mask_text
 
 
 
-def load_allowlist(path: str | None) -> set[str]:
+ALLOWLIST_DIGEST = re.compile(r"sha256:([0-9a-f]{64})$")
+
+
+def masked_fingerprint(golden_lines: list[str], our_lines: list[str]) -> str:
+    payload = json.dumps(
+        {"golden": golden_lines, "ours": our_lines},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def load_allowlist(path: str | None) -> dict[str, str]:
     if not path or not os.path.exists(path):
-        return set()
-    keys = set()
+        return {}
+    entries = {}
     with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
+        for line_number, raw_line in enumerate(f, 1):
+            line = raw_line.strip()
+            if not line or line.startswith("#") or ".ansi" not in line:
                 continue
-            key = line.split()[0]
-            if key.endswith(".ansi") and "/" in key:
-                keys.add(key)
-    return keys
+            try:
+                fields, reason = line.split(" — ", 1)
+            except ValueError as error:
+                raise ValueError(
+                    f"line {line_number}: expected '<frame>.ansi sha256:<64 lowercase hex> <inventory-id> — <reason>'"
+                ) from error
+            parts = fields.split()
+            if len(parts) != 3 or not reason.strip():
+                raise ValueError(
+                    f"line {line_number}: expected '<frame>.ansi sha256:<64 lowercase hex> <inventory-id> — <reason>'"
+                )
+            key, digest_field, inventory_id = parts
+            digest_match = ALLOWLIST_DIGEST.fullmatch(digest_field)
+            if not key.endswith(".ansi") or "/" not in key or not digest_match or not inventory_id:
+                raise ValueError(
+                    f"line {line_number}: expected '<frame>.ansi sha256:<64 lowercase hex> <inventory-id> — <reason>'"
+                )
+            if key in entries:
+                raise ValueError(f"line {line_number}: duplicate frame key {key!r}; one reviewed fingerprint per frame is supported")
+            entries[key] = digest_match.group(1)
+    return entries
 
 
 def read_lines(path: str) -> list[str]:
@@ -65,9 +99,15 @@ def main() -> int:
         print("ERROR: frame input directory is empty")
         return 1
 
-    allowlist = load_allowlist(args.allowlist)
+    try:
+        allowlist = load_allowlist(args.allowlist)
+    except ValueError as error:
+        print(f"ERROR: invalid allowlist entry: {error}")
+        return 1
 
     rows: list[tuple[str, str, str]] = []  # (frame_key, status, note)
+    matched_allowlist_keys = set()
+    divergent_keys = set()
     any_divergent = False
 
     for fname in sorted(golden_files | our_files):
@@ -98,15 +138,34 @@ def main() -> int:
             rows.append((key, "clean", ""))
             continue
 
-        status = "allowlisted" if key in allowlist else "DIVERGENT"
-        if status == "DIVERGENT":
+        fingerprint = masked_fingerprint(golden_lines, our_lines)
+        if allowlist.get(key) == fingerprint:
+            status = "allowlisted"
+            matched_allowlist_keys.add(key)
+            note = ""
+        else:
+            status = "DIVERGENT"
+            divergent_keys.add(key)
             any_divergent = True
-        rows.append((key, status, ""))
+            note = ""
+            if key in allowlist:
+                note = "allowlist fingerprint is stale"
+        rows.append((key, status, note))
         diff = difflib.unified_diff(
             golden_lines, our_lines, fromfile=f"GOLDEN/{key}", tofile=f"OUR/{key}", lineterm=""
         )
         print(f"\n=== {key} ({status}) ===")
+        print(f"fingerprint: sha256:{fingerprint}")
+        if note:
+            print(f"ERROR: {note}; update this entry with the fingerprint above after review")
         print("\n".join(diff))
+
+    for key in sorted(set(allowlist) - matched_allowlist_keys - divergent_keys):
+        any_divergent = True
+        print(
+            f"ERROR: allowlist entry for {key} is not a divergent masked comparison; "
+            "remove it or replace it with a current reviewed fingerprint"
+        )
 
     if not rows:
         print("ERROR: zero frame comparisons")

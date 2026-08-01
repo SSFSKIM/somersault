@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 CAPTURE_PATH = ROOT / "scripts" / "capture-frames.py"
 DIFF_PATH = ROOT / "scripts" / "frame-diff.py"
 MASKS_PATH = ROOT / "scripts" / "frames" / "masks.json"
+FRAME_REQUIREMENTS_PATH = ROOT / "scripts" / "frames" / "requirements.txt"
+LIVE_CHILD_KEEPALIVE_SECONDS = 5
 
 
 def load_module(path: Path, name: str):
@@ -30,6 +32,7 @@ diff = load_module(DIFF_PATH, "frame_diff")
 
 class FrameScriptsTest(unittest.TestCase):
     def child_command(self, code: str) -> str:
+        code = f"LIVE_CHILD_KEEPALIVE_SECONDS = {LIVE_CHILD_KEEPALIVE_SECONDS}\n{code}"
         return f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
 
     def run_capture(self, script: str, binary: str, out: Path, redact_masks: Path | None = None, script_parent: Path | None = None, cwd: Path | None = None):
@@ -148,7 +151,7 @@ class FrameScriptsTest(unittest.TestCase):
             early = self.run_capture("wait:0.05\nframe:boot\n", self.child_command(""), root / "early")
             self.assertNotEqual(early.returncode, 0)
             self.assertIn("pty closed", early.stderr)
-            zero = self.run_capture("wait:0.01\n", self.child_command("import time; time.sleep(0.3)"), root / "zero")
+            zero = self.run_capture("wait:0.01\n", self.child_command("import time; time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)"), root / "zero")
             self.assertNotEqual(zero.returncode, 0)
             self.assertIn("no frame", zero.stderr)
 
@@ -166,7 +169,7 @@ class FrameScriptsTest(unittest.TestCase):
             root = Path(td)
             result = self.run_capture(
                 "frame:boot\n",
-                self.child_command("import sys,time; sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(0.3)"),
+                self.child_command("import sys,time; sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)"),
                 root / "live",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -176,7 +179,7 @@ class FrameScriptsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             out = root / "test" / "fixtures" / "upstream-frames" / "help-overlay"
-            child = self.child_command("import sys,time; sys.stdout.write('\\x1b[0;1mWelcome back Test Identity!\\x1b[0m             \\x1b[0;38;2;215;119;87m│\\x1b[0m Ask Claude to create'); sys.stdout.flush(); time.sleep(0.3)")
+            child = self.child_command("import sys,time; sys.stdout.write('\\x1b[0;1mWelcome back Test Identity!\\x1b[0m             \\x1b[0;38;2;215;119;87m│\\x1b[0m Ask Claude to create'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)")
             refused = self.run_capture("wait:0.05\nframe:boot\n", child, out)
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("--redact-masks", refused.stderr)
@@ -243,7 +246,7 @@ class FrameScriptsTest(unittest.TestCase):
                     marker = f"spawned-{label}"
                     child = self.child_command(
                         f"from pathlib import Path; import sys,time; Path({marker!r}).write_text('yes'); "
-                        "sys.stdout.write('RAW-IDENTITY'); sys.stdout.flush(); time.sleep(0.3)"
+                        "sys.stdout.write('RAW-IDENTITY'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)"
                     )
                     refused = self.run_capture("frame:boot\n", child, out)
                     self.assertNotEqual(refused.returncode, 0, refused.stderr)
@@ -254,7 +257,7 @@ class FrameScriptsTest(unittest.TestCase):
             nearby = root / "test" / "fixtures" / "upstream-frames-lookalike" / "scenario"
             captured = self.run_capture(
                 "wait:0.05\nframe:boot\n",
-                self.child_command("import sys,time; sys.stdout.write('RAW-IDENTITY'); sys.stdout.flush(); time.sleep(0.3)"),
+                self.child_command("import sys,time; sys.stdout.write('RAW-IDENTITY'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)"),
                 nearby,
             )
             self.assertEqual(captured.returncode, 0, captured.stderr)
@@ -278,7 +281,7 @@ class FrameScriptsTest(unittest.TestCase):
             }}), encoding="utf-8")
             captured = self.run_capture(
                 "wait:0.05\nframe:boot\n",
-                self.child_command("import sys,time; sys.stdout.write('FAKE-IDENTITY'); sys.stdout.flush(); time.sleep(0.3)"),
+                self.child_command("import sys,time; sys.stdout.write('FAKE-IDENTITY'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)"),
                 tracked,
                 masks,
                 script_parent=root,
@@ -295,7 +298,7 @@ class FrameScriptsTest(unittest.TestCase):
             escape.symlink_to(outside, target_is_directory=True)
             escaped = self.run_capture(
                 "wait:0.05\nframe:boot\n",
-                self.child_command("import sys,time; sys.stdout.write('RAW-OUTSIDE'); sys.stdout.flush(); time.sleep(0.3)"),
+                self.child_command("import sys,time; sys.stdout.write('RAW-OUTSIDE'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)"),
                 escape / "scenario",
                 script_parent=root,
                 cwd=root,
@@ -306,7 +309,7 @@ class FrameScriptsTest(unittest.TestCase):
     def test_capture_refuses_tracked_scenarios_without_complete_redaction_rules_before_spawning(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            child = self.child_command("from pathlib import Path; import sys,time; Path('spawned').write_text('yes'); sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(0.3)")
+            child = self.child_command("from pathlib import Path; import sys,time; Path('spawned').write_text('yes'); sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)")
             no_match = root / "masks-no-match.json"
             no_match.write_text(json.dumps({"redactions_by_frame": {"other/*.ansi": ["ready"]}}), encoding="utf-8")
             out = root / "test" / "fixtures" / "upstream-frames" / "renamed"
@@ -330,7 +333,7 @@ class FrameScriptsTest(unittest.TestCase):
     def test_capture_accepts_fully_covered_tracked_frames_and_untracked_output_without_redaction(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            child = self.child_command("import sys,time; sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(0.3)")
+            child = self.child_command("import sys,time; sys.stdout.write('ready'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)")
             masks = root / "masks-complete.json"
             masks.write_text(json.dumps({"redactions_by_frame": {
                 "renamed/01-first.ansi": {"patterns": [{"name": "ready", "pattern": "ready", "minimum_matches": 1}], "minimum_matches": 1},
@@ -351,7 +354,7 @@ class FrameScriptsTest(unittest.TestCase):
     def test_capture_publishes_only_validated_ansi_frames_and_preserves_failed_output(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            child = self.child_command("import sys,time; sys.stdout.write('fresh'); sys.stdout.flush(); time.sleep(0.3)")
+            child = self.child_command("import sys,time; sys.stdout.write('fresh'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)")
             untracked = root / "untracked"
             untracked.mkdir()
             (untracked / "01-old.ansi").write_text("old\n", encoding="utf-8")
@@ -407,7 +410,7 @@ class FrameScriptsTest(unittest.TestCase):
                     "minimum_matches": 1,
                 },
             }}), encoding="utf-8")
-            child = self.child_command("import sys,time; sys.stdout.write('RAW-FAKE-IDENTITY'); sys.stdout.flush(); time.sleep(0.3)")
+            child = self.child_command("import sys,time; sys.stdout.write('RAW-FAKE-IDENTITY'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)")
             refused = self.run_capture("frame:boot\n", child, out, masks)
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("greeting", refused.stderr)
@@ -429,7 +432,7 @@ class FrameScriptsTest(unittest.TestCase):
                     "minimum_matches": 1,
                 },
             }}), encoding="utf-8")
-            child = self.child_command("import sys,time; sys.stdout.write('FAKE-FIRST'); sys.stdout.flush(); time.sleep(0.3)")
+            child = self.child_command("import sys,time; sys.stdout.write('FAKE-FIRST'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)")
             refused = self.run_capture("frame:first\nframe:second\n", child, out, masks)
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("second", refused.stderr)
@@ -450,7 +453,7 @@ class FrameScriptsTest(unittest.TestCase):
                 },
                 "safe/01-safe.ansi": {"patterns": [], "minimum_matches": 0},
             }}), encoding="utf-8")
-            identity_child = self.child_command("import sys,time; sys.stdout.write('FAKE-GREETING fake@host'); sys.stdout.flush(); time.sleep(0.3)")
+            identity_child = self.child_command("import sys,time; sys.stdout.write('FAKE-GREETING fake@host'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)")
             captured = self.run_capture("wait:0.05\nframe:identities\n", identity_child, covered, masks)
             self.assertEqual(captured.returncode, 0, captured.stderr)
             frame = (covered / "01-identities.ansi").read_text(encoding="utf-8")
@@ -459,7 +462,7 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertGreaterEqual(frame.count("▒"), 2)
 
             safe = root / "test" / "fixtures" / "upstream-frames" / "safe"
-            safe_child = self.child_command("import sys,time; sys.stdout.write('safe frame'); sys.stdout.flush(); time.sleep(0.3)")
+            safe_child = self.child_command("import sys,time; sys.stdout.write('safe frame'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)")
             captured_safe = self.run_capture("wait:0.05\nframe:safe\n", safe_child, safe, masks)
             self.assertEqual(captured_safe.returncode, 0, captured_safe.stderr)
             self.assertIn("safe frame", (safe / "01-safe.ansi").read_text(encoding="utf-8"))
@@ -475,7 +478,7 @@ class FrameScriptsTest(unittest.TestCase):
                     "minimum_matches": 1,
                 },
             }}), encoding="utf-8")
-            child = self.child_command("import sys,time; sys.stdout.write('FAKE-GREETING changed-layout'); sys.stdout.flush(); time.sleep(0.3)")
+            child = self.child_command("import sys,time; sys.stdout.write('FAKE-GREETING changed-layout'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)")
             refused = self.run_capture("wait:0.05\nframe:boot\n", child, out, masks)
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("greeting", refused.stderr)
@@ -644,7 +647,7 @@ class FrameScriptsTest(unittest.TestCase):
             root = Path(td)
             result = self.run_capture(
                 "wait:0.05\nframe:dim\n",
-                self.child_command("import sys,time; sys.stdout.write('\x1b[2mdim\x1b[0m'); sys.stdout.flush(); time.sleep(0.3)"),
+                self.child_command("import sys,time; sys.stdout.write('\x1b[2mdim\x1b[0m'); sys.stdout.flush(); time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)"),
                 root / "valid",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -662,7 +665,7 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertNotEqual(partial.returncode, 0)
             self.assertIn("pty closed", partial.stderr)
 
-    def test_diff_rejects_missing_empty_and_missing_allowlisted_counterpart(self):
+    def test_diff_rejects_missing_empty_and_allowlisted_missing_counterparts(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             missing = self.run_diff(root / "no-golden", root / "no-ours")
@@ -676,33 +679,94 @@ class FrameScriptsTest(unittest.TestCase):
             (golden / "01-x.ansi").write_text("one\n", encoding="utf-8")
             (ours / "02-extra.ansi").write_text("extra\n", encoding="utf-8")
             allow = root / "allowlist.md"
-            allow.write_text("golden/01-x.ansi F0-1 — temporary\n", encoding="utf-8")
+            allow.write_text("golden/01-x.ansi sha256:" + "0" * 64 + " F0-1 — temporary\n", encoding="utf-8")
             missing_counterpart = self.run_diff(golden, ours, allow)
             self.assertNotEqual(missing_counterpart.returncode, 0)
             self.assertIn("DIVERGENT", missing_counterpart.stdout)
+            self.assertIn("not a divergent masked comparison", missing_counterpart.stdout)
 
-    def test_tracked_allowlist_template_has_no_active_example_entry(self):
-        self.assertEqual(diff.load_allowlist(str(ROOT / "test" / "fixtures" / "upstream-frames" / "allowlist.md")), set())
+    def test_tracked_allowlist_template_has_no_active_entry(self):
+        self.assertEqual(diff.load_allowlist(str(ROOT / "test" / "fixtures" / "upstream-frames" / "allowlist.md")), {})
 
-    def test_diff_clean_divergent_and_content_allowlisted_contracts(self):
+    def test_diff_allowlists_only_the_exact_reviewed_masked_fingerprint(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             golden, ours = root / "golden", root / "ours"
             golden.mkdir(); ours.mkdir()
-            (golden / "01-x.ansi").write_text("same\n", encoding="utf-8")
-            (ours / "01-x.ansi").write_text("same\n", encoding="utf-8")
-            clean = self.run_diff(golden, ours)
-            self.assertEqual(clean.returncode, 0)
-            self.assertIn("1 clean, 0 allowlisted, 0 DIVERGENT", clean.stdout)
-            (ours / "01-x.ansi").write_text("different\n", encoding="utf-8")
+            (golden / "01-x.ansi").write_text("golden text\n", encoding="utf-8")
+            (ours / "01-x.ansi").write_text("reviewed difference\n", encoding="utf-8")
             divergent = self.run_diff(golden, ours)
             self.assertNotEqual(divergent.returncode, 0)
-            self.assertIn("DIVERGENT", divergent.stdout)
+            match = re.search(r"fingerprint: sha256:([0-9a-f]{64})", divergent.stdout)
+            self.assertIsNotNone(match, divergent.stdout)
             allow = root / "allowlist.md"
-            allow.write_text("golden/01-x.ansi F0-1 — accepted content difference\n", encoding="utf-8")
+            allow.write_text(f"golden/01-x.ansi sha256:{match.group(1)} F0-1 — accepted content difference\n", encoding="utf-8")
             allowed = self.run_diff(golden, ours, allow)
-            self.assertEqual(allowed.returncode, 0)
+            self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
             self.assertIn("0 clean, 1 allowlisted, 0 DIVERGENT", allowed.stdout)
+
+            (ours / "01-x.ansi").write_text("unrelated visible regression\n", encoding="utf-8")
+            stale = self.run_diff(golden, ours, allow)
+            self.assertNotEqual(stale.returncode, 0)
+            self.assertIn("DIVERGENT", stale.stdout)
+            self.assertIn("fingerprint is stale", stale.stdout)
+            self.assertIn("fingerprint: sha256:", stale.stdout)
+
+    def test_diff_fingerprint_is_stable_after_frame_scoped_masks(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            golden, ours = root / "golden", root / "ours"
+            golden.mkdir(); ours.mkdir()
+            masks = root / "masks.json"
+            masks.write_text(json.dumps({"by_frame": {
+                "golden/01-x.ansi": [{"pattern": "nonce=[0-9]+", "replacement": "▒"}],
+            }}), encoding="utf-8")
+            (golden / "01-x.ansi").write_text("golden nonce=1\n", encoding="utf-8")
+            (ours / "01-x.ansi").write_text("ours nonce=2\n", encoding="utf-8")
+            first = self.run_diff(golden, ours, masks=masks)
+            first_match = re.search(r"fingerprint: sha256:([0-9a-f]{64})", first.stdout)
+            self.assertIsNotNone(first_match, first.stdout)
+            (golden / "01-x.ansi").write_text("golden nonce=3\n", encoding="utf-8")
+            (ours / "01-x.ansi").write_text("ours nonce=4\n", encoding="utf-8")
+            second = self.run_diff(golden, ours, masks=masks)
+            second_match = re.search(r"fingerprint: sha256:([0-9a-f]{64})", second.stdout)
+            self.assertIsNotNone(second_match, second.stdout)
+            self.assertEqual(first_match.group(1), second_match.group(1))
+
+    def test_diff_rejects_malformed_or_missing_allowlist_digests(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            golden, ours = root / "golden", root / "ours"
+            golden.mkdir(); ours.mkdir()
+            (golden / "01-x.ansi").write_text("golden\n", encoding="utf-8")
+            (ours / "01-x.ansi").write_text("ours\n", encoding="utf-8")
+            for entry in (
+                "golden/01-x.ansi F0-1 — missing digest\n",
+                "golden/01-x.ansi sha256:not-a-digest F0-1 — malformed digest\n",
+            ):
+                with self.subTest(entry=entry):
+                    allow = root / "allowlist.md"
+                    allow.write_text(entry, encoding="utf-8")
+                    result = self.run_diff(golden, ours, allow)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("ERROR: invalid allowlist entry", result.stdout)
+                    self.assertIn("sha256:<64 lowercase hex>", result.stdout)
+
+    def test_frame_emulator_dependencies_are_exactly_pinned_and_documented(self):
+        self.assertEqual(
+            FRAME_REQUIREMENTS_PATH.read_text(encoding="utf-8"),
+            "pyte==0.8.2\nwcwidth==0.8.2\n",
+        )
+        install = "pip install -r scripts/frames/requirements.txt"
+        self.assertIn(install, CAPTURE_PATH.read_text(encoding="utf-8"))
+        version = (ROOT / "test" / "fixtures" / "upstream-frames" / "VERSION").read_text(encoding="utf-8")
+        self.assertIn(install, version)
+
+    def test_successful_synthetic_children_use_one_scheduler_robust_keepalive(self):
+        source = Path(__file__).read_text(encoding="utf-8")
+        self.assertIn("LIVE_CHILD_KEEPALIVE_SECONDS = 5", source)
+        self.assertNotIn("time.sleep(0" + ".3)", source)
+        self.assertIn("time.sleep(LIVE_CHILD_KEEPALIVE_SECONDS)", source)
 
 
 if __name__ == "__main__":
