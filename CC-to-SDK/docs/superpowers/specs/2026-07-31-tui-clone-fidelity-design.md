@@ -32,7 +32,7 @@ the research reports, or a constraint we have already paid for in a shipped wave
 
 | Evidence | What it settles | Strength |
 |---|---|---|
-| **probe 77** (`probes/probes/77-tool-result-shape.ts`, commit `19f9845555`) | The SDK's tool wire is **flat text**. Every `tool_result` carried only `{tool_use_id, type, content, is_error}` with `content` a plain string — no `structuredPatch`, no line counts, no match counts. Upstream's typed result rows must be **derived client-side**. Read/Grep/Glob counts derive from result text, Write from `input.content`, Edit's add/remove from `old_string`/`new_string`; **absolute diff line numbers are the sole exception**. Also: this SDK's tool vocabulary is not upstream's — the model reached for **Bash to grep and glob**, there is **no `LS`**, and todos are `TaskCreate`/`TaskUpdate` **behind `ToolSearch`** | direct |
+| **probe 77** (`probes/probes/77-tool-result-shape.ts`, commit `19f9845555`) + **P94/94b** on the shipped SDK 0.3.220 | Probe 77 correctly observed that the ordinary `tool_result` block is flat, but P94 found an optional separate `SDKUserMessage.tool_use_result` sidecar on 52 of 328 natural calls and the directed Write call. F1 therefore normalizes **structured-first per call with deterministic flat/input fallback**, never derived-only or sidecar-only. Recognized Edit sidecars carry `structuredPatch` absolute hunk positions; Bash sidecars carry stdout/stderr/interruption and optional string `returnCodeInterpretation`, but no numeric exit code. The live vocabulary used Bash for search/list/read behavior, no natural `Grep`/`Glob`/`LS`, and task bookkeeping through Task tools. Probe 94b additionally proves UUID-less compact successes require compact-lifecycle correlation rather than generic FIFO | direct |
 | **probe 78** (`probes/probes/78-permission-wire-shape.ts`, commit `a9cd9d9272`) | `canUseTool`'s options argument carries `signal · suggestions · blockedPath · decisionReason · title · displayName · description · toolUseID · agentID · requestId`. The declared `suppress_always_allow_rule`, `decision_reason_type` and `classifier_approvable` are **absent on the live wire** — the static reading of `sdk.mjs` is confirmed. `updatedPermissions` **round-trips**: granting on the first consult produced **zero consults** on the second identical call. And the design-changing part: **the engine suggests the rule itself**, per tool, in `suggestions`, in exactly the shape the return value accepts (`{type:"addRules",rules:[{toolName,ruleContent}],behavior,destination}` for Read; `{type:"setMode",mode:"acceptEdits"}` for Write/Edit) | direct |
 | Research reports 01–06 + `00-INVENTORY.md` (2026-07-31) | 271 deduplicated gaps with per-item bundle citations; 9 structural, 8 tier-0 harm, ~38 do-not-clone, ~14 places we ship more than upstream | derived from the bundle |
 | Bundle `cli.pretty.js` — keymap `jar` L186,116 · context registry `War` L186,159 · resolver `ePt` L183,234 · scope chain `Gbp` L398,368 · dispatch `cZs` L398,121 · `keybindings.json` loader `TQr` L186,316 | Upstream's keybinding architecture: a declarative table over 19 context blocks (20 valid contexts), resolved against an **ordered** context array built by walking the focused node's parent chain, **first match wins**, `Global` always last, with `swallowAll` and `preemptiveScopes` layered above it | direct |
@@ -188,10 +188,11 @@ Nothing downstream can be built twice after this lands.
 - `ST3` — the result-summary normalization layer grounded by completed P94 evidence on SDK 0.3.220:
   preserve both flat `tool_result` content and the per-call `SDKUserMessage.tool_use_result` sidecar, plus
   privacy-safe result provenance. Prefer a uniquely associated recognized sidecar shape, then fall back to
-  deterministic derivation from complete tool input plus flat result text. A successful result completes
-  only the waiter owning its `user_message_uuid`; when origin is explicit, it must match that waiter's
-  submitted provenance class. UUID-less SDK errors may use FIFO only when their explicit origin matches the
-  head waiter. Background/synthetic results remain retained records, not interchangeable completions.
+  deterministic derivation from complete tool input plus flat result text. UUID-bearing results complete
+  only the waiter owning that exact `user_message_uuid`; when origin is explicit, it must match that waiter's
+  submitted provenance class. UUID-less results may use FIFO when their explicit origin matches the head
+  waiter. An origin-absent UUID-less result may settle only a FIFO-head compact waiter that observed its own
+  compact lifecycle marker. Background/synthetic results remain retained records, not interchangeable completions.
   Upstream's Bash-command classifier (`Kr_`) remains the transferable collapse predicate. Unknown,
   forwarded, or sidecar-less calls use the generic fallback rather than guessed structure.
 - `ST2` — one canonical retained transcript source with two projections. The normal live projection stays
@@ -626,7 +627,7 @@ becomes permanently unbuilt.
 |---|---|---|
 | `suppress_always_allow_rule`, `decision_reason_type`, `classifier_approvable` | Probe 78 on the live wire: absent by both snake and camel name. Confirms the static reading (`sdk.d.ts` L3596–3625 declares them; `sdk.mjs` has zero occurrences) | `DG22`: our "don't ask again" row will sometimes appear where upstream hides it. `DG20`: only the free-text `decisionReason` sentence is available — never upstream's eight typed variants with their config hints, nor the error-coloured classifier case |
 | `isAskCappedByOrg` (MCP `effectiveMaxPermission === "ask"`) | No field on the callback | `DG23`: the MCP-capped suppression of the persist row |
-| Structured tool results | Probe 77 | Every result summary is derived. Most derive cleanly; **absolute diff line numbers do not** — hence owner decision 2 |
+| Numeric Bash exit codes on the tool-result wire | P94 on SDK 0.3.220: recognized Bash sidecars carry stdout/stderr/interruption fields and may carry the optional string `returnCodeInterpretation`, but no numeric exit code | Upstream's `$`/numeric-exit-code framing cannot be reproduced from the reachable SDK wire. F1 uses recognized structured Bash fields when uniquely associated and the flat result/error fallback otherwise |
 | Upstream's per-tool clause table, transcribed | Probe 77: Bash-as-search, no `LS`, todos behind `ToolSearch` | A Grep/Glob-keyed table fires on nothing. `LT2`'s grammar is built from our census, with upstream's Bash-command classifier as the transferable part |
 | Alt-screen rendering, and everything gated on it | Ink `<Static>` is append-only; unmounting replays the scrollback (paid for in TUI/UX Wave 1) | `CH35`; the composer's `maxVisibleLines` viewport (`CM7`); the footer's right-column suppression; upstream's `ds()`-gated collapse clauses |
 | Theme change repainting history | Same `<Static>` constraint, recorded at `tui-ux.md:91–93` | `TH12`: a theme change recolours new output only |
@@ -764,13 +765,17 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
   rather than deleted. **Capability preserved; the out-of-the-box experience is Claude Code's.**
   Rejected: deleting the extras (throws away working features to score a parity row). Rejected: keeping
   the current footer and calling it a divergence (it is the single most-looked-at surface in the app).
-- **Diff line numbers: read the file from disk at render time, fall back visibly.** Probe 77 established
-  `structuredPatch` is not on the wire, so upstream's absolute numbering is not derivable. Our REPL is a
-  local client sharing the working directory, so reading the file is legitimate — it is a disk read per
-  Edit render, and it is the only route. When the file is missing or has changed since the edit, fall
-  back to the current snippet-relative numbering with a visible marker. **Being visibly approximate
-  beats being confidently wrong.** Rejected: staying snippet-relative always (a permanent, silent
-  divergence on one of the most-read surfaces). Rejected: pretending the numbers are absolute.
+- **Diff line numbers: use a recognized structured patch first; use a disk-assisted, visibly approximate
+  fallback only for flat-only results.** P94 corrected probe 77's block-level observation: the ordinary
+  `tool_result.content` remains flat, but a uniquely associated `SDKUserMessage.tool_use_result` may carry
+  `structuredPatch` with absolute hunk positions. Use those positions directly and never reread the file
+  in that branch. For a flat-only, unknown, unmatched, or ambiguous sidecar, retain the complete Edit
+  input and flat result; a local disk read may anchor the input diff only when the expected content still
+  matches. When the file is missing or has changed, use hunk-relative numbering with a visible marker.
+  **Being visibly approximate beats being confidently wrong.** Rejected: rereading disk despite a
+  recognized structured patch (it can observe state newer than the completed edit). Rejected: staying
+  snippet-relative always (a permanent divergence for flat-only results). Rejected: pretending fallback
+  numbers are absolute.
 - **Keybindings: port the architecture, not the keys.** Upstream resolves a declarative table through an
   ordered context stack, first match wins. We have hit three separate key bugs — help-overlay
   double-fire, the unreachable `ctrl+_`, the dead `pager.ts` shift branch — whose shared root cause is
@@ -810,9 +815,10 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
 - **Tool results are structured-first per call, not derived-only per session** (P94 final SDK 0.3.220
   evidence, 2026-08-02). `tool_result.content` remains flat while `SDKUserMessage.tool_use_result` is an
   optional separate channel whose presence varies even within one tool. Preserve both channels, prefer a
-  uniquely associated recognized sidecar, and retain deterministic flat/input fallback. Successful result
-  completion is waiter-owned by UUID and submitted provenance class; UUID-less errors require an explicit
-  origin matching the FIFO-head waiter. Background/synthetic frames cannot complete another turn. Rejected:
+  uniquely associated recognized sidecar, and retain deterministic flat/input fallback. UUID-bearing result
+  completion is waiter-owned by exact UUID and submitted provenance class. UUID-less frames may use explicit
+  matching-origin FIFO; origin-absent FIFO is restricted to a compact waiter that observed its own compact
+  lifecycle marker. Background/synthetic frames cannot complete another turn. Rejected:
   derived-only rendering, sidecar-only rendering, and globally treating every locally injected prompt as
   human.
 - **Ctrl-O is a second projection, not mutation of static history** (bundle trace, 2026-08-02). The live
@@ -994,9 +1000,15 @@ successful completion by UUID. F1 is schedulable; F1–F8 remain otherwise pendi
   OAuth-only authentication. The r3 probe passed its natural corpus and separate absolute-path Write case,
   confirmed optional per-call sidecars plus flat fallbacks, recorded safe result ownership, preserved Bash
   redirect classification, and found optional `returnCodeInterpretation` without a numeric exit code.
-  Independent review of the Session prerequisite then caught automatic heartbeat/compaction prompts being
-  stamped human; the final rule stores each waiter's submitted provenance, matches success by UUID plus any
-  explicit origin, and permits UUID-less error FIFO only for the same explicit origin class. F1 is now
-  schedulable. The installed bundle trace separately settled ST2 as an append-only live projection plus a
+  Independent probe review hardened attribution, exact Write side effects, emitted tool configuration, cross-platform
+  self-tests, and clean-install typing. Its unchanged final source passed every natural case and Write through an
+  honestly recorded sharded validation after one all-corpus case timeout; the original successful run remains the
+  sole frequency census. Independent review of the Session prerequisite then caught automatic heartbeat/compaction prompts being
+  stamped human and the SDK's UUID-less compact-success exception. Permanent probe 94b proved human compact
+  returns a human-origin UUID-less success, a normal automatic turn retains its exact UUID despite absent
+  result origin, and automatic compact returns an origin-absent UUID-less success after a compact lifecycle
+  marker. The final rule is UUID-first, then explicit matching-origin FIFO, with origin-absent FIFO restricted
+  to a lifecycle-marked compact waiter; exact `submitAutomatic("/compact")` commands use that compact route
+  rather than a normal automatic waiter. F1 is now schedulable. The installed bundle trace separately settled ST2 as an append-only live projection plus a
   Ctrl-O detailed transcript over retained source, with transcript-local Ctrl-E show-all/collapse. LT5 moved
   to the F3 collapsed-group state that owns it.

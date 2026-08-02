@@ -482,7 +482,7 @@ function resultFrameProvenance(state: PairState, message: UnknownRecord): Result
     : !user ? "unseen"
     : user.synthetic ? "matched-synthetic"
     : !user.shouldQuery ? "matched-non-query"
-    : user.origin !== "absent" && user.origin !== "human" ? "matched-non-human"
+    : user.origin !== "human" ? "matched-non-human"
     : "matched-query";
   const isOriginatingUserTurn = userMessageUuid === "present"
     && (origin === "absent" || origin === "human")
@@ -509,7 +509,7 @@ function consumeCompletedMessage(state: PairState, message: unknown): void {
     }
   }
   if (message.type === "user") {
-    if (typeof message.uuid === "string" && message.uuid.length > 0) {
+    if (typeof message.uuid === "string" && message.uuid.length > 0 && !state.userMessageRoutes.has(message.uuid)) {
       const route = resultOrigin(message.origin);
       state.userMessageRoutes.set(message.uuid, { origin: route.origin, synthetic: message.isSynthetic === true, shouldQuery: message.shouldQuery !== false });
     }
@@ -578,6 +578,30 @@ function casePrompt(spec: CaseSpec, fixture: Fixture): string {
   return `Use the available Write tool exactly once to create a new note containing exactly three non-empty lines at the absolute path \`${join(fixture.repo, "write-coverage.md")}\`. Do not use any other tool or modify any other file.`;
 }
 
+function writeCoverageFailureKinds(state: PairState, expectedPath: string): string[] {
+  const failures: string[] = [], calls = [...state.uses.values()];
+  const call = calls.length === 1 && calls[0]?.name === "Write" ? calls[0] : undefined;
+  if (!call) return ["expected_exactly_one_write_call"];
+  const input = isRecord(call.input) ? call.input : undefined;
+  const content = typeof input?.content === "string" ? input.content : undefined;
+  const lines = content?.replace(/\r\n/g, "\n").split("\n") ?? [];
+  if (lines.at(-1) === "") lines.pop();
+  const inputValid = input?.file_path === expectedPath && Boolean(content) && lines.length === 3 && lines.every((line) => line.trim().length > 0);
+  if (!inputValid) failures.push("invalid_write_input");
+  else {
+    try {
+      if (readFileSync(expectedPath, "utf8") !== content) failures.push("written_file_mismatch");
+    } catch {
+      failures.push("missing_written_file");
+    }
+  }
+  if (!call.result) failures.push("missing_write_result");
+  else if (call.result.is_error === true) failures.push("write_result_is_error");
+  const sidecar = isRecord(call.structuredResult) ? call.structuredResult : undefined;
+  if (!sidecar || sidecar.filePath !== expectedPath || sidecar.content !== content || sidecar.originalFile !== null || !Array.isArray(sidecar.structuredPatch) || typeof sidecar.type !== "string" || typeof sidecar.userModified !== "boolean") failures.push("invalid_write_sidecar");
+  return failures;
+}
+
 async function runCase(spec: CaseSpec, repetition: number, privateRoots: string[]): Promise<RunOutcome> {
   let fixture: Fixture | undefined;
   const state: PairState = {
@@ -622,6 +646,7 @@ async function runCase(spec: CaseSpec, repetition: number, privateRoots: string[
       // Do not consume partial/stream frames; assistant and user messages are completed transcript frames.
       if (isRecord(message) && (message.type === "assistant" || message.type === "user" || message.type === "system" || message.type === "result")) consumeCompletedMessage(state, message);
     }
+    if (spec.coverage === "write") for (const kind of writeCoverageFailureKinds(state, join(fixture.repo, "write-coverage.md"))) failures.push({ caseId: spec.id, repetition, stage: "coverage", kind });
   } catch {
     failures.push({ caseId: spec.id, repetition, stage: activeStage, kind: timedOut ? `${activeStage}_timeout` : `${activeStage}_failed` });
   } finally {
@@ -645,11 +670,6 @@ async function runCase(spec: CaseSpec, repetition: number, privateRoots: string[
     const paired = [...state.uses.values()].filter((use) => use.result).length;
     if (state.uses.size === 0) failures.push({ caseId: spec.id, repetition, stage: "census", kind: "no_tool_calls" });
     if (paired !== state.uses.size || state.unmatchedResults || state.duplicateUses || state.duplicateResults) failures.push({ caseId: spec.id, repetition, stage: "pairing", kind: "unpaired_or_duplicate" });
-    if (spec.coverage === "write") {
-      const writeCalls = [...state.uses.values()].filter((use) => use.name === "Write" && use.result?.is_error !== true);
-      if (writeCalls.length !== 1) failures.push({ caseId: spec.id, repetition, stage: "coverage", kind: "expected_one_successful_write" });
-      else if (writeCalls[0]!.structuredResult === undefined) failures.push({ caseId: spec.id, repetition, stage: "coverage", kind: "missing_write_sidecar" });
-    }
   }
   const calls = [...state.uses.values()]
     .filter((use): use is ToolUse & { result: UnknownRecord } => Boolean(use.result))
@@ -889,8 +909,13 @@ function safeRuntime() {
   return { platform: process.platform, node: process.version, sdk: sdkVersion() };
 }
 
-function safeConfiguration() {
-  return { modelAlias: MODEL_ALIAS, effort: "xhigh", permissionMode: "auto", settingSources: [], toolPreset: "claude_code", maxTurns: MAX_TURNS, caseTimeoutMs: CASE_TIMEOUT_MS };
+function safeConfiguration(cases: readonly CaseSpec[]) {
+  const configurations = [...new Map(cases.map((spec) => {
+    const tools = spec.tools ?? { type: "preset", preset: "claude_code" as const };
+    const value = Array.isArray(tools) ? { type: "explicit", names: [...tools].sort() } : tools;
+    return [JSON.stringify(value), value] as const;
+  })).values()];
+  return { modelAlias: MODEL_ALIAS, effort: "xhigh", permissionMode: "auto", settingSources: [], tools: configurations.length === 1 ? configurations[0] : { type: "mixed", configurations }, maxTurns: MAX_TURNS, caseTimeoutMs: CASE_TIMEOUT_MS };
 }
 
 function emitJson(report: UnknownRecord, privateRoots: string[] = [], secrets: string[] = credentialValues(process.env)): boolean {
@@ -906,7 +931,7 @@ function emitJson(report: UnknownRecord, privateRoots: string[] = [], secrets: s
   return true;
 }
 
-function safeFailureReport(expectedRuns: number, caseIds: string[], failures: Failure[], outcomes: RunOutcome[]): UnknownRecord {
+function safeFailureReport(expectedRuns: number, cases: readonly CaseSpec[], failures: Failure[], outcomes: RunOutcome[]): UnknownRecord {
   const kinds = new Map<string, number>();
   const failedRuns = new Set<string>();
   const successfulOutcomes = outcomes.filter((outcome) => outcome.failures.length === 0);
@@ -918,9 +943,9 @@ function safeFailureReport(expectedRuns: number, caseIds: string[], failures: Fa
   return {
     probeVersion: PROBE_VERSION,
     corpusRevision: CORPUS_REVISION,
-    configuration: safeConfiguration(),
+    configuration: safeConfiguration(cases),
     runtime: safeRuntime(),
-    corpusCaseIds: caseIds,
+    corpusCaseIds: cases.map((spec) => spec.id),
     status: "failed",
     completion: { expectedRuns, completedRuns: expectedRuns - failedRuns.size, failedRuns: failedRuns.size },
     failures: failures.sort((a, b) => a.caseId.localeCompare(b.caseId) || a.repetition - b.repetition || a.stage.localeCompare(b.stage) || a.kind.localeCompare(b.kind)),
@@ -982,7 +1007,28 @@ function selfTest(): void {
   assert.deepEqual(parseArgs(["--case=write-coverage"]), { repetitions: DEFAULT_REPETITIONS, caseId: "write-coverage", selfTest: false });
   assert.equal(NATURAL_CASES.some((spec) => spec.id === WRITE_COVERAGE_CASE.id), false);
   assert.deepEqual(WRITE_COVERAGE_CASE.tools, ["Write"]);
-  assert.match(casePrompt(WRITE_COVERAGE_CASE, { root: "/private", repo: "/private/repo", config: "/private/config" }), /absolute path `\/private\/repo\/write-coverage\.md`/);
+  assert.equal(casePrompt(WRITE_COVERAGE_CASE, { root: "/private", repo: "/private/repo", config: "/private/config" }).includes(`absolute path \`${join("/private/repo", "write-coverage.md")}\``), true);
+  const writeRoot = mkdtempSync(join(tmpdir(), "p94-write-selftest-")), writePath = join(writeRoot, "write-coverage.md"), writeContent = "one\ntwo\nthree";
+  try {
+    writeFileSync(writePath, writeContent);
+    const validWriteState: PairState = {
+      uses: new Map([["write-1", { name: "Write", input: { file_path: writePath, content: writeContent }, result: { type: "tool_result", tool_use_id: "write-1", content: "created" }, structuredResult: { type: "create", filePath: writePath, content: writeContent, originalFile: null, structuredPatch: [], userModified: false } }]]),
+      unmatchedResults: 0, duplicateUses: 0, duplicateResults: 0, structuredResultMessages: 1, structuredResultUnmatched: 0, structuredResultAmbiguous: 0, duplicateStructuredResults: 0, unassociatedStructuredShapes: [], userMessageRoutes: new Map(), resultFrames: [],
+    };
+    assert.deepEqual(writeCoverageFailureKinds(validWriteState, writePath), []);
+    validWriteState.uses.set("failed-write", { name: "Write", input: {}, result: { type: "tool_result", is_error: true } });
+    assert.deepEqual(writeCoverageFailureKinds(validWriteState, writePath), ["expected_exactly_one_write_call"]);
+    validWriteState.uses.delete("failed-write");
+    const writeUse = validWriteState.uses.get("write-1")!;
+    writeUse.input = { file_path: join(writeRoot, "wrong.md"), content: writeContent };
+    assert.equal(writeCoverageFailureKinds(validWriteState, writePath).includes("invalid_write_input"), true);
+    writeUse.input = { file_path: writePath, content: writeContent }; writeFileSync(writePath, "changed");
+    assert.equal(writeCoverageFailureKinds(validWriteState, writePath).includes("written_file_mismatch"), true);
+    writeFileSync(writePath, writeContent); writeUse.structuredResult = { type: "create", filePath: writePath, content: "wrong", originalFile: null, structuredPatch: [], userModified: false };
+    assert.equal(writeCoverageFailureKinds(validWriteState, writePath).includes("invalid_write_sidecar"), true);
+  } finally {
+    rmSync(writeRoot, { recursive: true, force: true });
+  }
 
   const structural = summarizeCalls([{
     caseId: "orientation", repetition: 1, name: "Read", input: { path: "/private/value" },
@@ -1008,7 +1054,9 @@ function selfTest(): void {
   assert.equal(pairState.unmatchedResults, 0);
   consumeCompletedMessage(pairState, { type: "user", uuid: "synthetic-turn", isSynthetic: true, shouldQuery: true, origin: { kind: "task-notification" }, message: { content: [] } });
   consumeCompletedMessage(pairState, { type: "result", subtype: "success", is_error: false, user_message_uuid: "synthetic-turn", origin: { kind: "task-notification" }, result: "done" });
-  consumeCompletedMessage(pairState, { type: "user", uuid: "human-turn", isSynthetic: false, shouldQuery: true, origin: { kind: "human" }, message: { content: [] } });
+  pairState.userMessageRoutes.set("human-turn", { origin: "human", synthetic: false, shouldQuery: true });
+  consumeCompletedMessage(pairState, { type: "user", uuid: "human-turn", isSynthetic: false, shouldQuery: true, message: { content: [] } });
+  assert.deepEqual(pairState.userMessageRoutes.get("human-turn"), { origin: "human", synthetic: false, shouldQuery: true });
   consumeCompletedMessage(pairState, { type: "result", subtype: "success", is_error: false, user_message_uuid: "human-turn", origin: { kind: "human" }, result: "done" });
   assert.deepEqual(pairState.resultFrames.map((frame) => frame.provenance), [
     { origin: "task-notification", originSubkind: "none", userMessageUuid: "present", userMessageAssociation: "matched-synthetic", isOriginatingUserTurn: false },
@@ -1022,6 +1070,11 @@ function selfTest(): void {
   consumeCompletedMessage(pairState, { type: "result", subtype: "success", is_error: false, user_message_uuid: "peer-turn", result: "done" });
   assert.deepEqual(pairState.resultFrames.at(-1)?.provenance, {
     origin: "absent", originSubkind: "none", userMessageUuid: "present", userMessageAssociation: "matched-non-human", isOriginatingUserTurn: false,
+  });
+  consumeCompletedMessage(pairState, { type: "user", uuid: "unattributed-turn", isSynthetic: false, shouldQuery: true, message: { content: [] } });
+  consumeCompletedMessage(pairState, { type: "result", subtype: "success", is_error: false, user_message_uuid: "unattributed-turn", origin: { kind: "human" }, result: "done" });
+  assert.deepEqual(pairState.resultFrames.at(-1)?.provenance, {
+    origin: "human", originSubkind: "none", userMessageUuid: "present", userMessageAssociation: "matched-non-human", isOriginatingUserTurn: false,
   });
 
   assert.equal(unhealthyResultText("API Error: 502 unknown provider for model"), true);
@@ -1088,7 +1141,7 @@ async function main(): Promise<void> {
   const failures = outcomes.flatMap((outcome) => outcome.failures);
   const expectedRuns = selected.length * args.repetitions;
   if (failures.length) {
-    emitJson(safeFailureReport(expectedRuns, selected.map((spec) => spec.id), failures, outcomes), privateRoots);
+    emitJson(safeFailureReport(expectedRuns, selected, failures, outcomes), privateRoots);
     process.exitCode = 1;
     return;
   }
@@ -1097,7 +1150,7 @@ async function main(): Promise<void> {
   const report: UnknownRecord = {
     probeVersion: PROBE_VERSION,
     corpusRevision: CORPUS_REVISION,
-    configuration: safeConfiguration(),
+    configuration: safeConfiguration(selected),
     resolvedModels,
     runtime: safeRuntime(),
     corpusCaseIds: selected.map((spec) => spec.id),

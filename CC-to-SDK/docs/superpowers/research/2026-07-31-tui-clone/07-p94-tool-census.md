@@ -4,8 +4,9 @@
 **Canonical run:** 2026-08-02 · SDK 0.3.220 · Node 24.18.0 · macOS · `claude-fable-5[1m]`  
 **Authentication:** `CLAUDE_CODE_OAUTH_TOKEN`, with `ANTHROPIC_API_KEY` explicitly unset  
 **Probe:** `probes/probes/94-tool-census.ts`, corpus revision `f1-p94-r3`  
-**Executed-source SHA-256:** `2d5e04271052d48475e36bd56c0fb81c13598e82a8bd8cb310ff59c5a703ff34`  
-**Committed-source SHA-256:** `8ad206c588ab121d734d0c41e7ff6e3cdf7e727a4cdab6b088b2c6310ce0370c` — only the opening completion-status comment changed after the run; executable TypeScript is identical.
+**Canonical-census executed-source SHA-256:** `2d5e04271052d48475e36bd56c0fb81c13598e82a8bd8cb310ff59c5a703ff34`
+**Review-hardened final probe-source SHA-256:** `374f1eb86a5b574b450e278c575c1573ffa68a9a395d1c6c8da57d938dd3da75`
+**Probe 94b final-source SHA-256:** `ce8ed8bd9a5414cae5b5e38d8d1273f452f441fde3f4804cc0d07a2b6c28633e`
 
 ## Verdict
 
@@ -22,7 +23,7 @@ The final contract is **structured-first per call, deterministic fallback per ca
 
 This corrects probe 77 without invalidating its block-level observation: the ordinary `tool_result` block remains flat, while structured executor output may appear on the enclosing `SDKUserMessage.tool_use_result` field.
 
-The result-frame gate is also explicit. A successful queried turn is identified by its submitted `user_message_uuid`; if a result has explicit origin, that origin must agree with the submitted turn's provenance class. SDK error variants have no user UUID, so only an explicit origin matching the FIFO-head waiter may use the fallback. Unassociated results remain lifecycle evidence and cannot complete a different turn.
+The result-frame gate is also explicit. Normal successful queried turns are owned by their submitted `user_message_uuid`; if a result has explicit origin, that origin must agree with the submitted turn's provenance class. UUID-less results may use FIFO only when their explicit origin matches the FIFO-head waiter's submitted origin. One narrower exception is live-proven for `/compact`: an origin-absent UUID-less result may settle only the FIFO-head compact waiter after that exact waiter observed its own `system/status{status:"compacting"}` or `system/compact_boundary` lifecycle marker. Ordinary origin-absent UUID-less results and errors remain frame-only.
 
 ## Canonical method
 
@@ -49,6 +50,16 @@ Both canonical runs completed with no setup, query, cleanup, pairing, coverage, 
 |---|---:|---:|---:|
 | Natural corpus | 8 | 8 | 0 |
 | Directed Write | 1 | 1 | 0 |
+
+Independent review then hardened attribution, directed-Write validation, cross-platform self-tests, clean-install typing, and emitted configuration provenance without changing the corpus, prompt text, or observation schema. The final-source validation was intentionally reported honestly rather than merged into new frequency totals:
+
+| Review-hardened final-source run | Expected | Completed | Failed |
+|---|---:|---:|---:|
+| All-corpus attempt | 8 | 7 | 1 query timeout |
+| Isolated timed-out `header-normalizer-inspection` case | 1 | 1 | 0 |
+| Directed Write | 1 | 1 | 0 |
+
+The all-corpus attempt paired 204 calls from its seven completed cases with zero unpaired uses/results; its only failure was the focused-inspection case reaching the existing 15-minute deadline. The unchanged final source then completed that case in isolation with 73 paired calls, four associated sidecars, one UUID-owned healthy human result, and no non-originating result. The final Write run reported the actual explicit `Write` selection, exactly one validated call and sidecar, and the expected empty `structuredPatch`. All three stderr files were empty. Thus every natural case plus Write passed the review-hardened gate, while the original successful 328-call run remains the sole canonical frequency census; sharded validation counts are not silently combined with it.
 
 ## Canonical 0.3.220 natural tool census
 
@@ -216,7 +227,17 @@ The canonical exact-source natural run emitted exactly one result frame per case
 
 Thus every case closed on exactly one healthy result owned by its explicit UUID-bearing root turn.
 
-A separate successful 0.3.220 natural execution, before the Write-only absolute-path correction and therefore excluded from canonical frequency totals, emitted 11 successful result frames: eight matched human results and three separate `task-notification` results with missing user UUIDs. That supplemental run is lifecycle evidence that result multiplicity can occur and that task completion must not dequeue the queried turn. The final Session prerequisite now binds every success to its submitted UUID and provenance class; explicit-origin SDK errors may settle only a FIFO-head waiter of the same submitted class.
+A separate successful 0.3.220 natural execution, before the Write-only absolute-path correction and therefore excluded from canonical frequency totals, emitted 11 successful result frames: eight matched human results and three separate `task-notification` results with missing user UUIDs. That supplemental run is lifecycle evidence that result multiplicity can occur and that task completion must not dequeue the queried turn.
+
+Permanent probe `probes/probes/94b-result-correlation.ts` then isolated the compact exception on SDK 0.3.220 with OAuth-only authentication:
+
+| Submitted second turn | Result origin | Result UUID | Compact lifecycle before result |
+|---|---|---|---|
+| human `/compact` | `human` | missing | yes |
+| automatic normal prompt | absent | exact submitted UUID | no |
+| automatic `/compact` | absent | missing | yes |
+
+All three cases completed with two healthy results and empty stderr. This proves that origin absence alone is not a FIFO ownership signal: the normal automatic turn still carries its exact UUID, while the UUID-less automatic compact result is safely distinguishable only through the compact waiter's command lifecycle. The Session prerequisite therefore uses UUID-first ownership, explicit matching-origin FIFO for UUID-less frames, and origin-absent FIFO only for a compact waiter that observed its own compact lifecycle marker. The exact automatic command `submitAutomatic("/compact")` is classified through that compact waiter route, including configurable proactive compact prompts.
 
 ## Final F1 decisions
 
@@ -229,7 +250,7 @@ A separate successful 0.3.220 natural execution, before the Write-only absolute-
 7. **Agent:** retain recognized launch/completion data. F3 owns totals display; nested and flat-only calls keep fallback source.
 8. **Internal rows:** retain `TaskCreate`, `TaskUpdate`, and `ToolSearch`, but produce no ordinary compact row.
 9. **Unknown tools:** use the generic tool row/result path. Corpus absence is never a hidden-row rule.
-10. **Result ownership:** success requires a matching submitted UUID and, when explicit, matching submitted origin. UUID-less errors require an explicit origin matching the FIFO-head waiter. Every unassociated frame remains visible as lifecycle evidence but cannot complete a different local turn, alter its limit state, or consume its compaction request.
+10. **Result ownership:** use exact submitted UUID first and require any explicit origin to match. For UUID-less frames, explicit matching-origin FIFO is allowed. Origin-absent FIFO is allowed only when the FIFO head is a compact turn that observed its own compact lifecycle marker. Every other unassociated frame remains visible as lifecycle evidence but cannot complete a different local turn, alter its limit state, or consume its compaction request.
 
 ## Scope and limitations
 
@@ -237,7 +258,8 @@ A separate successful 0.3.220 natural execution, before the Write-only absolute-
 - The corpus is generated local TypeScript-style coding work. It does not measure web, MCP, image, notebook, permission, interruption, background-output, hook, or scheduled-turn behavior. Existing P80/P84/P85 and later probes retain those gates.
 - Tool frequencies are model- and prompt-sensitive. They document this run; they are not dispatch constants.
 - Sidecar presence is per call. A renderer must never infer that later calls of the same tool will carry one.
-- The exact final natural run had no non-originating result; the separate successful 0.3.220 run supplies the task-notification multiplicity evidence.
+- The canonical natural run had no non-originating result; the separate successful 0.3.220 run supplies the task-notification multiplicity evidence.
+- The review-hardened final-source validation is sharded because one case timed out in the all-corpus attempt and then passed unchanged in isolation. It validates the gate but is not a replacement frequency census.
 
 ## Reproduction
 
@@ -253,14 +275,16 @@ Run the keyless gates:
 
 ```sh
 npx tsx probes/94-tool-census.ts --self-test
+npx tsx probes/94b-result-correlation.ts --self-test
 npx tsc --noEmit
 ```
 
 Run the natural corpus and the coverage-directed Write case separately:
 
 ```sh
+npx tsx probes/94b-result-correlation.ts
 npx tsx probes/94-tool-census.ts --repetitions=1
 npx tsx probes/94-tool-census.ts --case=write-coverage --repetitions=1
 ```
 
-The default intentionally excludes the directed Write case. The probe fails closed on SDK-version drift, unsafe output, unpaired calls/results, a missing or unhealthy originating result, missing directed-Write sidecar evidence, setup/query/cleanup failures, and privacy-guard violations.
+The default intentionally excludes the directed Write case. If an all-corpus run reports a single case timeout, retain that failed report and rerun the exact case with `--case=<case-id>`; do not merge sharded counts into the canonical frequency table. The probe fails closed on SDK-version drift, unsafe output, unpaired calls/results, a missing or unhealthy originating result, missing directed-Write sidecar evidence, setup/query/cleanup failures, and privacy-guard violations.
