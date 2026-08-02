@@ -127,7 +127,7 @@ function resultBody(normalized: NormalizedToolResult, options: ProjectionOptions
   // Both surfaces are upstream `dimColor` prompts, not failures: they are what the USER did, so they never take the
   // error colour, and the rejection is a fixed one-row box (`height: 1`) no matter what text arrived with it.
   if (normalized.status === "interrupted") return [{ text: INTERRUPTED_TEXT, dim: true }];
-  if (normalized.status === "rejected") return [{ text: (normalized.output || REJECTED_TEXT).split("\n")[0]!, dim: true }];
+  if (normalized.status === "rejected") return [{ text: REJECTED_TEXT, dim: true }];   // upstream ignores the tool's text entirely: the row is always this literal
   const lines = withoutTrailingBlanks(normalized.outputLines);
   if (!lines.length) return [];
   if (normalized.status === "error") return errorBody(lines, options.projection, resolveThemeColor(themeTokens().error));
