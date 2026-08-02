@@ -95,7 +95,7 @@ Fable delegated in six of eight cases. Counts are evidence for this exact model/
 
 ## Bash census and `Kr_`
 
-The 141 Bash calls contained 235 safely recorded command heads because calls may contain chains or pipelines:
+The 141 Bash calls contained 236 safely recorded command heads because calls may contain chains or pipelines:
 
 | Head | Count | Head | Count |
 |---|---:|---|---:|
