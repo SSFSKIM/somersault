@@ -16,6 +16,12 @@ describe("F1 structured-first results", () => {
     const malformed = { ...READ_RESULT_WITH_SIDECAR, tool_use_result: { type: "read", file: { numLines: "41" } } };
     expect(normalizeToolResult(eventFor(malformed))).toMatchObject({ source: "fallback", summary: "Read 1 line", rawContent: "export const app = 1;\n" });
   });
+  it("falls back on a finite but impossible Read line count instead of summarizing it", () => {
+    for (const numLines of [-1, 1.5]) {
+      const malformed = { ...READ_RESULT_WITH_SIDECAR, tool_use_result: { type: "read", file: { numLines } } };
+      expect(normalizeToolResult(eventFor(malformed))).toMatchObject({ source: "fallback", summary: "Read 1 line" });
+    }
+  });
   it("recognizes the exact Write sidecar and keeps input-content fallback available", () => {
     expect(normalizeToolResult(eventForPair(WRITE_CALL, WRITE_RESULT_WITH_SIDECAR))).toMatchObject({ tool: "Write", source: "structured", summary: "Wrote 3 lines" });
     expect(normalizeToolResult(eventForPair(WRITE_CALL, { ...WRITE_RESULT_WITH_SIDECAR, tool_use_result: undefined }))).toMatchObject({ tool: "Write", source: "fallback", summary: "Wrote 3 lines" });

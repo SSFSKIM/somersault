@@ -15,7 +15,7 @@ export interface NormalizedToolResult {
 /** Upstream's invisible bookkeeping/deferred-lookup tools: retained in full as source, projected as nothing. */
 const SUPPRESSED = new Set(["TaskCreate", "TaskUpdate", "ToolSearch"]);
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
-const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const lineCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;   // sidecars are unknown-typed: -1 or 1.5 must fall back, not summarize
 
 /** Rendering-only conversion, NOT a reduction of the source: a string is preserved verbatim; recognized
  *  `{type:"text", text}` blocks join in source order with `\n`. Any other block is left alone — `rawContent`
@@ -29,7 +29,7 @@ const toLines = (text: string): readonly string[] => (text.length === 0 ? [] : (
 const countLines = (n: number): string => `${n} line${n === 1 ? "" : "s"}`;
 
 // Narrow recognizers for the exact 0.3.220 sidecar shapes; each returns the sidecar itself so it is retained whole.
-const readShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && isRecord(v.file) && num(v.file.numLines) ? v : undefined);
+const readShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && isRecord(v.file) && lineCount(v.file.numLines) ? v : undefined);
 const writeShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && typeof v.filePath === "string" && typeof v.content === "string" && Array.isArray(v.structuredPatch) ? v : undefined);
 const editShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && typeof v.filePath === "string" && typeof v.oldString === "string" && typeof v.newString === "string" && Array.isArray(v.structuredPatch) ? v : undefined);
 const bashShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && typeof v.stdout === "string" && typeof v.stderr === "string" && typeof v.interrupted === "boolean" && typeof v.noOutputExpected === "boolean" && typeof v.isImage === "boolean" && (v.returnCodeInterpretation === undefined || typeof v.returnCodeInterpretation === "string") ? v : undefined);
