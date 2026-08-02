@@ -63,7 +63,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
   const { state, detailItems, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript }, deps);
-  void detailItems;   // Task 5 wires the pager onto this source-backed detail route; the interim pager below shows the compact projection
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
@@ -171,7 +170,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       {state.shortcutsOpen
         ? <ShortcutsOverlay onClose={closeShortcuts} interactive={false} />
         : transcriptOpen
-        ? <TranscriptPager items={[...state.staticItems, ...state.pendingItems]} onClose={() => setTranscriptOpen(false)} />
+        // The ONLY route from the retained document to the pager: useChat's detailItems closure re-projects
+        // it at whichever detail projection the pager currently wants. ChatApp never projects detail itself
+        // and never owns show-all state — Ctrl-E is pager-local, Ctrl-O/Escape are all this arm decides.
+        ? <TranscriptPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} />
         : state.historyOpen
         ? <HistorySearchOverlay load={loadHistory} onAccept={acceptHistory} onExecute={executeHistory} onCancel={closeHistorySearch} />
         // A confirmed rewind takes seconds (file restore + engine swap). Hold a modal until it settles:

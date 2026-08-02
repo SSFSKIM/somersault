@@ -6,7 +6,7 @@ import React, { act } from "react";
 import { tmpdir } from "node:os";
 import { render } from "ink-testing-library";
 import { ChatApp } from "../../src/tui/ChatApp.js";
-import { READ_CALL, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
+import { READ_CALL, READ_RESULT_FLAT, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
 import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
@@ -1766,8 +1766,12 @@ describe("<ChatApp>", () => {
 
 // ── F1 Task 4: the retained-source cutover, through the REAL ChatApp wiring ────────────────────────────
 // A tool header carries a real OSC-8 hyperlink (Task 3), so `Read(src/app.ts)` is NOT contiguous in the
-// raw frame — strip the escapes before any substring check. And Ink writes a `<Static>` row into ONE frame
-// and then drops it from every later frame, so a published row is asserted over the emitted stream.
+// raw frame — strip the escapes before any substring check. A published <Static> row is asserted over the
+// emitted stream (`printed`) rather than reasoned about per frame.
+// NB (corrected in Task 5, having verified it against ink-testing-library): that library renders in Ink's
+// `debug` mode, where every frame is the ACCUMULATED static output plus the current dynamic output — a row
+// Static has published therefore stays in `lastFrame` for the rest of the run. So "X is no longer shown"
+// can only ever be asserted about the dynamic region; for a published row, count it instead.
 const plain = (s: string) => s.replace(/\x1b\]8;;[^\x07]*\x07/g, "").replace(/\x1b\[[0-9;]*m/g, "");
 const printed = (stdout: { frames: string[] }) => plain(stdout.frames.join("\n"));
 async function tick() {
@@ -1842,5 +1846,47 @@ describe("<ChatApp> — retained source", () => {
     fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "post-clear", content: [{ type: "text", text: "POST-CLEAR-ROW" }] } } });
     await waitFor(() => frame(lastFrame).includes("POST-CLEAR-ROW"));
     expect(frame(lastFrame).match(/POST-CLEAR-ROW/g)).toHaveLength(1);
+  });
+  // F1 Task 5: the pager reads the RETAINED document through useChat's detailItems, so a result the compact
+  // transcript folded to three rows opens whole — and ctrl+e is the pager's OWN local knob, never app state.
+  // Per the frame-model note above, "the pager is not showing the compact form" is asserted as a COUNT of
+  // the compact hint (one published copy, never a second) rather than as its absence.
+  const longReadResult = (rows: number) => ({
+    ...READ_RESULT_FLAT,
+    message: { content: [{ type: "tool_result", tool_use_id: "read-1", content: Array.from({ length: rows }, (_, i) => `line ${i + 1}`).join("\n"), is_error: false }] },
+  });
+  const OVERFLOW = /… \+\d+ lines? \(ctrl\+o to expand\)/g;
+  it("opens retained 40-line output with Ctrl-O and toggles only pager-local Ctrl-E", async () => {
+    const fake = fakeRemote();
+    const app = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
+    await tick(); fake.pushEvent({ kind: "message", data: READ_CALL }); fake.pushEvent({ kind: "message", data: longReadResult(40) });
+    await waitFor(() => plain(frame(app.lastFrame)).includes("… +37 lines (ctrl+o to expand)"));
+    expect(plain(frame(app.lastFrame))).not.toContain("line 40");                              // compact hid rows 4–40
+    app.stdin.write("\x0f"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40"));   // detail-all, opened at the bottom
+    expect(plain(frame(app.lastFrame)).match(OVERFLOW) ?? []).toHaveLength(1);                  // only the static copy: the pager is NOT compact
+    app.stdin.write("g"); await waitFor(() => plain(frame(app.lastFrame)).includes("lines 1–"));
+    app.stdin.write("G"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40"));
+    app.stdin.write("\x05"); await waitFor(() => plain(frame(app.lastFrame)).includes("… +37 lines (ctrl+e to show all)")); expect(plain(frame(app.lastFrame))).not.toContain("line 40");
+    app.stdin.write("\x05"); app.stdin.write("G"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40")); app.stdin.write("\x1b"); await waitFor(() => !plain(frame(app.lastFrame)).includes("line 40"));
+  });
+  it("Ctrl-E toggling and closing leave exactly one compact overflow row in the emitted static stream", async () => {
+    const fake = fakeRemote();
+    const app = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
+    await tick(); fake.pushEvent({ kind: "message", data: READ_CALL }); fake.pushEvent({ kind: "message", data: longReadResult(40) });
+    await waitFor(() => plain(frame(app.lastFrame)).includes("ctrl+o to expand"));
+    // The expected row is READ OUT of the emitted frames, never copied in as a literal — the claim is about
+    // what Ink actually flushed into its append-only <Static>, so the text has to come from there.
+    const compactRow = (printed(app.stdout).match(OVERFLOW) ?? [])[0];
+    expect(compactRow).toBeTypeOf("string");
+    const before = app.stdout.frames.length;
+    app.stdin.write("\x0f"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40"));
+    app.stdin.write("\x05"); await waitFor(() => plain(frame(app.lastFrame)).includes("ctrl+e to show all"));
+    app.stdin.write("\x05"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40"));
+    app.stdin.write("\x1b"); await waitFor(() => !plain(frame(app.lastFrame)).includes("line 40"));
+    const after = app.stdout.frames.slice(before);
+    expect(after.length).toBeGreaterThan(0);
+    // Every frame the toggles and the close emitted still carries that row exactly once: never republished
+    // by a re-projection, never wiped by an accidental <Static> replacement.
+    for (const f of after) expect(plain(f).split(compactRow!)).toHaveLength(2);
   });
 });
