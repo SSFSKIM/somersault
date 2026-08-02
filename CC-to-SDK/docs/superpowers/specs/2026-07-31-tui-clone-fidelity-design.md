@@ -32,7 +32,7 @@ the research reports, or a constraint we have already paid for in a shipped wave
 
 | Evidence | What it settles | Strength |
 |---|---|---|
-| **probe 77** (`probes/probes/77-tool-result-shape.ts`, commit `19f9845555`) + **P94/94b** on the shipped SDK 0.3.220 (final SHA-256 `4e747ef99dfb17b0192c9792cb9ba6c84838878801bca64ba80e482bfb1a18d1` / `04c6d1a62c1ad665596aae385aa9eccdfaa3d498d2fff5e4c518f457669b5b79`) | Probe 77 correctly observed that the ordinary `tool_result` block is flat, but P94 found an optional separate `SDKUserMessage.tool_use_result` sidecar on 52 of 328 natural calls and the directed Write call. F1 therefore normalizes **structured-first per call with deterministic flat/input fallback**, never derived-only or sidecar-only. Recognized Edit sidecars carry `structuredPatch` absolute hunk positions; Bash sidecars carry stdout/stderr/interruption and optional string `returnCodeInterpretation`, but no numeric exit code. The live vocabulary used Bash for search/list/read behavior, no natural `Grep`/`Glob`/`LS`, and task bookkeeping through Task tools. Probe 94b additionally proves UUID-less compact successes require compact-lifecycle correlation rather than generic FIFO. Final validation used first-party Claude Code OAuth, fails closed on competing credentials or alternate provider routing, requires the SDK initialization provider to resolve to `firstParty`, and runs model-controlled tools in a credential-denying, network-denying, fixture-restricted fail-closed sandbox | direct |
+| **probe 77** (`probes/probes/77-tool-result-shape.ts`, commit `19f9845555`) + **P94/94b** on the shipped SDK 0.3.220 (final SHA-256 `ef882c088ae10ac0bbe996d3cd2c44d8a9aa8504a3cb6886c903e89e4cd1a7dc` / `6c4af1b24c3f60441b7b0df2d07c7631c3ab8de5f4ea784fb50b10c94c5e9959`) | Probe 77 correctly observed that the ordinary `tool_result` block is flat, but P94 found an optional separate `SDKUserMessage.tool_use_result` sidecar on 52 of 328 natural calls and the directed Write call. F1 therefore normalizes **structured-first per call with deterministic flat/input fallback**, never derived-only or sidecar-only. Recognized Edit sidecars carry `structuredPatch` absolute hunk positions; Bash sidecars carry stdout/stderr/interruption and optional string `returnCodeInterpretation`, but no numeric exit code. The live vocabulary used Bash for search/list/read behavior, no natural `Grep`/`Glob`/`LS`, and task bookkeeping through Task tools. Probe 94b additionally proves UUID-less compact successes require compact-lifecycle correlation rather than generic FIFO. Final validation used first-party Claude Code OAuth, fails closed on competing credentials or alternate provider routing, requires the SDK initialization provider to resolve to `firstParty`, and runs model-controlled tools in a credential-denying, network-denying, write-restricted fail-closed sandbox (credential/network/write isolation, not read containment — see the evidence report) | direct |
 | **probe 78** (`probes/probes/78-permission-wire-shape.ts`, commit `a9cd9d9272`) | `canUseTool`'s options argument carries `signal · suggestions · blockedPath · decisionReason · title · displayName · description · toolUseID · agentID · requestId`. The declared `suppress_always_allow_rule`, `decision_reason_type` and `classifier_approvable` are **absent on the live wire** — the static reading of `sdk.mjs` is confirmed. `updatedPermissions` **round-trips**: granting on the first consult produced **zero consults** on the second identical call. And the design-changing part: **the engine suggests the rule itself**, per tool, in `suggestions`, in exactly the shape the return value accepts (`{type:"addRules",rules:[{toolName,ruleContent}],behavior,destination}` for Read; `{type:"setMode",mode:"acceptEdits"}` for Write/Edit) | direct |
 | Research reports 01–06 + `00-INVENTORY.md` (2026-07-31) | 271 deduplicated gaps with per-item bundle citations; 9 structural, 8 tier-0 harm, ~38 do-not-clone, ~14 places we ship more than upstream | derived from the bundle |
 | Bundle `cli.pretty.js` — keymap `jar` L186,116 · context registry `War` L186,159 · resolver `ePt` L183,234 · scope chain `Gbp` L398,368 · dispatch `cZs` L398,121 · `keybindings.json` loader `TQr` L186,316 | Upstream's keybinding architecture: a declarative table over 19 context blocks (20 valid contexts), resolved against an **ordered** context array built by walking the focused node's parent chain, **first match wins**, `Global` always last, with `swallowAll` and `preemptiveScopes` layered above it | direct |
@@ -592,7 +592,7 @@ item whose probe has not returned is **unschedulable**, and an item whose probe 
 |---|---|---|---|
 | **77 ✅** | What is in a `tool_result`? Anything structured? | `ST3`, `LT1`, `TR23`, `TR25` — and the whole derivation premise | done |
 | **78 ✅** | Which `canUseTool` fields arrive populated? Does `updatedPermissions` round-trip? | **the entire F6 permission cluster**; also settles the inventory's P79 for the `session` destination | done |
-| **P94 ✅** | **Tool census.** Completed on the harness's SDK 0.3.220 with Fable 5 and first-party OAuth-only authentication. The natural corpus and separate Write-only case passed, every call/result paired, and every canonical result matched its submitted UUID. Read/Edit/Write/Bash/Agent/TaskOutput shapes, optional Bash `returnCodeInterpretation`, ordinary redirect classification, and the flat fallback are recorded in `../research/2026-07-31-tui-clone/07-p94-tool-census.md`. Final probe hashes are `4e747ef99dfb17b0192c9792cb9ba6c84838878801bca64ba80e482bfb1a18d1` and `04c6d1a62c1ad665596aae385aa9eccdfaa3d498d2fff5e4c518f457669b5b79`; both fail closed on competing credentials and alternate provider routes and require the resolved SDK provider to be `firstParty`; P94 additionally uses a minimal child environment plus a credential/network-denying fixture sandbox, while 94b exposes no tools. Frequencies stay in the evidence report and are never dispatch constants. | `ST3`'s structured-first/fallback vocabulary, `LT1`'s per-tool rows, `LT2`'s clause grammar | done |
+| **P94 ✅** | **Tool census.** Completed on the harness's SDK 0.3.220 with Fable 5 and first-party OAuth-only authentication. The natural corpus and separate Write-only case passed, every call/result paired, and every canonical result matched its submitted UUID. Read/Edit/Write/Bash/Agent/TaskOutput shapes, optional Bash `returnCodeInterpretation`, ordinary redirect classification, and the flat fallback are recorded in `../research/2026-07-31-tui-clone/07-p94-tool-census.md`. Final probe hashes are `ef882c088ae10ac0bbe996d3cd2c44d8a9aa8504a3cb6886c903e89e4cd1a7dc` and `6c4af1b24c3f60441b7b0df2d07c7631c3ab8de5f4ea784fb50b10c94c5e9959`; both fail closed on competing credentials and alternate provider routes and require the resolved SDK provider to be `firstParty`; P94 additionally uses a minimal child environment plus a credential/network/write-denying sandbox (read containment is explicitly not claimed), while 94b exposes no tools. Frequencies stay in the evidence report and are never dispatch constants. | `ST3`'s structured-first/fallback vocabulary, `LT1`'s per-tool rows, `LT2`'s clause grammar | done |
 | **P86** | Ink input capability matrix in our terminals: `home`/`end`/`pageup`/`pagedown`, `shift+return`, `super`/`meta` chords, mouse click and wheel, terminal focus events, bracketed-paste boundaries | **scopes F2 and F5** — separates unreachable from unbuilt | before F2; needs a pty, not the SDK, so it can run from day one |
 | **P80** | Does `[Request interrupted by user]` reach a client as a user message? Do context-limit, credit-balance and abort conditions arrive as assistant text with upstream's sentinel strings, or as SDK errors? | `LT14`, `TR38` | batch B, before F3 |
 | **P81** | Does the `compact_boundary` frame carry a summarised-message count and direction? | `TR36` | batch B |
@@ -955,8 +955,8 @@ evidence tools fail closed. A plan-mandated test or architecture is not exempt f
 most important corrections were defects copied directly from the approved plan.
 
 P94 is complete on the harness's exact SDK 0.3.220, including the separate Write-only proof and first-party
-route isolation. Its exact final source hashes are `4e747ef99dfb17b0192c9792cb9ba6c84838878801bca64ba80e482bfb1a18d1`
-and `04c6d1a62c1ad665596aae385aa9eccdfaa3d498d2fff5e4c518f457669b5b79`. The Session ownership
+route isolation. Its exact final source hashes are `ef882c088ae10ac0bbe996d3cd2c44d8a9aa8504a3cb6886c903e89e4cd1a7dc`
+and `6c4af1b24c3f60441b7b0df2d07c7631c3ab8de5f4ea784fb50b10c94c5e9959`. The Session ownership
 prerequisite now distinguishes human from automatic local turns while correlating every successful completion
 by UUID. F1 is schedulable; F1–F8 remain otherwise pending.
 
@@ -1023,8 +1023,8 @@ by UUID. F1 is schedulable; F1–F8 remain otherwise pending.
   exact Write-sidecar, portable fixture-test, and OAuth-gate defects. Live retry diagnosis then found an
   inherited custom `ANTHROPIC_BASE_URL`: the refreshed subscription token was valid against Anthropic's
   first-party endpoint but the gateway rejected it as an API key. Both probes now fail closed on custom base
-  URLs and alternate cloud-provider routes. Exact final sources `4e747ef99dfb17b0192c9792cb9ba6c84838878801bca64ba80e482bfb1a18d1`
-  and `04c6d1a62c1ad665596aae385aa9eccdfaa3d498d2fff5e4c518f457669b5b79` passed self-tests, TypeScript
+  URLs and alternate cloud-provider routes. Exact final sources `ef882c088ae10ac0bbe996d3cd2c44d8a9aa8504a3cb6886c903e89e4cd1a7dc`
+  and `6c4af1b24c3f60441b7b0df2d07c7631c3ab8de5f4ea784fb50b10c94c5e9959` passed self-tests, TypeScript
   compilation, directed Write, and all three result-correlation cases with empty stderr.
 - 2026-08-02 — whole-boundary Codex review closed seven final evidence-edge cases: P94b now rejects unhealthy
   successes, contains lifecycle failures in privacy-safe JSON, scopes compact markers to the second submitted
@@ -1042,6 +1042,24 @@ by UUID. F1 is schedulable; F1–F8 remain otherwise pending.
   native tools, and disables web/skill surfaces; a dedicated live control proved token hiding, fixture access,
   protected-read denial, and outside-write denial. P94b exposes no tools or skills. Both probes now reject
   malformed result frames before ownership; `api_error_status: null` remains valid per the SDK contract. Exact
-  final sources `4e747ef99dfb17b0192c9792cb9ba6c84838878801bca64ba80e482bfb1a18d1` and
-  `04c6d1a62c1ad665596aae385aa9eccdfaa3d498d2fff5e4c518f457669b5b79` passed secure Write, all compact
-  cases, and a natural four-Bash/one-Read sandbox run with zero malformed results and empty stderr.
+  final sources passed secure Write, all compact cases, and a natural four-Bash/one-Read sandbox run with zero
+  malformed results and empty stderr.
+- 2026-08-03 — follow-up review corrected the result-frame validator against the declared union and recorded the
+  sandbox's real limit. The first validator required a string `result` on every frame, which rejects every
+  conforming `SDKResultError` (that arm declares `errors: string[]` and no `result`) while accepting a sparse
+  three-field object as a healthy terminal success. Both probes now validate `SDKResultMessage` as a
+  discriminated union: the terminal fields both arms declare are required (finite `duration_ms`,
+  `duration_api_ms`, `num_turns`, `total_cost_usd`; string-or-null `stop_reason`; object `usage`/`modelUsage`;
+  array `permission_denials`; nonempty `uuid`/`session_id`), `success` additionally requires string `result` and
+  allows `api_error_status` only as `null` or a finite number, and the four declared error subtypes require
+  string-array `errors` without depending on `result`. Optional `user_message_uuid` keeps UUID-less compact
+  successes valid. Finite-only numeric checks stop `NaN`/infinities from passing shape validation and then
+  evading the `>= 400` health test. Exact final sources
+  `ef882c088ae10ac0bbe996d3cd2c44d8a9aa8504a3cb6886c903e89e4cd1a7dc` and
+  `6c4af1b24c3f60441b7b0df2d07c7631c3ab8de5f4ea784fb50b10c94c5e9959` were re-verified live: the directed Write
+  case reported one valid healthy originating result with zero malformed frames, and all three correlation cases
+  reported `apiProvider:"firstParty"` with six valid frames and no failures. The same review found the sandbox
+  is credential/network/write isolation rather than read containment — a live control read `/etc/hosts` from
+  sandboxed Bash and the native path gate authorizes lexically, so an in-fixture symlink is not resolved before
+  authorization. That limit is recorded in the evidence report rather than claimed closed, because the probe
+  runs trusted first-party prompts.

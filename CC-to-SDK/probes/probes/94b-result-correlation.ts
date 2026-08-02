@@ -42,6 +42,10 @@ const RESULT_ORIGIN_KINDS = new Set([
   "human", "channel", "peer", "task-notification", "coordinator", "observer",
   "auto-continuation", "observer-activity",
 ]);
+// SDKResultMessage = SDKResultSuccess | SDKResultError. The error arm declares `errors` and no `result`.
+const RESULT_ERROR_SUBTYPES = new Set([
+  "error_during_execution", "error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries",
+]);
 const ALTERNATE_PROVIDER_ENV_VARS = [
   "ANTHROPIC_BASE_URL",
   "CLAUDE_CODE_USE_ANTHROPIC_AWS",
@@ -119,15 +123,35 @@ function safeResultSubtype(value: unknown): string {
   return typeof value === "string" && /^[A-Za-z0-9_:-]{1,80}$/.test(value) ? value : "unknown";
 }
 
+function finiteNumber(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function plainRecord(value: unknown): boolean {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// Validate the whole declared union, not a lowest common denominator: a sparse frame carrying only
+// subtype/is_error/result is not a terminal result, and an error frame legitimately has no `result`.
 function validResultFrameShape(frame: Record<string, any>): boolean {
-  if (typeof frame.subtype !== "string" || typeof frame.is_error !== "boolean" || typeof frame.result !== "string") return false;
-  if (Object.hasOwn(frame, "api_error_status") && frame.api_error_status !== null && typeof frame.api_error_status !== "number") return false;
-  if (Object.hasOwn(frame, "errors") && (!Array.isArray(frame.errors) || frame.errors.some((value: unknown) => typeof value !== "string"))) return false;
-  if (Object.hasOwn(frame, "user_message_uuid") && (typeof frame.user_message_uuid !== "string" || frame.user_message_uuid.length === 0)) return false;
+  if (typeof frame.subtype !== "string" || typeof frame.is_error !== "boolean") return false;
+  if (!finiteNumber(frame.duration_ms) || !finiteNumber(frame.duration_api_ms)) return false;
+  if (!finiteNumber(frame.num_turns) || !finiteNumber(frame.total_cost_usd)) return false;
+  if (frame.stop_reason !== null && typeof frame.stop_reason !== "string") return false;
+  if (!plainRecord(frame.usage) || !plainRecord(frame.modelUsage) || !Array.isArray(frame.permission_denials)) return false;
+  if (typeof frame.uuid !== "string" || frame.uuid.length === 0) return false;
+  if (typeof frame.session_id !== "string" || frame.session_id.length === 0) return false;
   if (Object.hasOwn(frame, "origin")) {
-    if (frame.origin === null || typeof frame.origin !== "object" || typeof frame.origin.kind !== "string" || !RESULT_ORIGIN_KINDS.has(frame.origin.kind)) return false;
+    if (!plainRecord(frame.origin) || typeof frame.origin.kind !== "string" || !RESULT_ORIGIN_KINDS.has(frame.origin.kind)) return false;
   }
-  return true;
+  if (frame.subtype === "success") {
+    if (typeof frame.result !== "string") return false;
+    if (Object.hasOwn(frame, "api_error_status") && frame.api_error_status !== null && !finiteNumber(frame.api_error_status)) return false;
+    return !Object.hasOwn(frame, "user_message_uuid") || (typeof frame.user_message_uuid === "string" && frame.user_message_uuid.length > 0);
+  }
+  if (!RESULT_ERROR_SUBTYPES.has(frame.subtype)) return false;
+  if (!Array.isArray(frame.errors) || frame.errors.some((value: unknown) => typeof value !== "string")) return false;
+  return !Object.hasOwn(frame, "result") || typeof frame.result === "string";
 }
 
 function compactLifecycleMarker(frame: Record<string, any>, secondSubmitted: boolean): "status:compacting" | "compact_boundary" | undefined {
@@ -217,7 +241,7 @@ async function runCase(caseId: CaseId): Promise<CaseOutcome> {
         origin: frame.origin?.kind === "human" || frame.origin?.kind === "auto-continuation" ? frame.origin.kind : frame.origin?.kind == null ? "absent" : "other",
         userMessageAssociation: ownedBy,
         isError: frame.is_error === true,
-        ...(typeof frame.api_error_status === "number" ? { apiErrorStatus: frame.api_error_status } : {}),
+        ...(finiteNumber(frame.api_error_status) ? { apiErrorStatus: frame.api_error_status as number } : {}),
         unhealthyText: texts.some(unhealthyResultText),
         resultKind: resultKind(frame.result),
         compactLifecycleSeen,
@@ -254,11 +278,34 @@ function selfTest(): void {
   assert.equal(expectedFailures(outcome("automatic-normal", { ...baseFirst, index: 2, origin: "absent", userMessageAssociation: "second", unhealthyText: true })).includes("invalid_second_result"), true);
   assert.equal(unhealthyResultText("API Error: 401"), true);
   assert.equal(unhealthyResultText("completed normally"), false);
-  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, api_error_status: null, result: "done", origin: { kind: "human" }, user_message_uuid: "turn" }), true);
-  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, api_error_status: "401", result: "done", origin: { kind: "human" }, user_message_uuid: "turn" }), false);
-  assert.equal(validResultFrameShape({ subtype: "success", result: "done", origin: { kind: "human" }, user_message_uuid: "turn" }), false);
-  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, result: "done", origin: "human", user_message_uuid: "turn" }), false);
-  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, result: {}, user_message_uuid: "turn" }), false);
+  // Terminal frames carry every field SDKResultSuccess/SDKResultError declare; `omit` drops a key
+  // outright, which is distinct from setting it to undefined.
+  const resultFrame = (extra: Record<string, any> = {}, omit: string[] = []): Record<string, any> => {
+    const frame: Record<string, any> = {
+      type: "result", subtype: "success", is_error: false, duration_ms: 12, duration_api_ms: 8, num_turns: 1,
+      stop_reason: null, total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {},
+      permission_denials: [], uuid: "result-uuid", session_id: "session-id", result: "done", ...extra,
+    };
+    for (const key of omit) delete frame[key];
+    return frame;
+  };
+  assert.equal(validResultFrameShape(resultFrame({ api_error_status: null, origin: { kind: "human" }, user_message_uuid: "turn" })), true);
+  // A UUID-less compact success is the shape the compact route actually returns.
+  assert.equal(validResultFrameShape(resultFrame()), true);
+  assert.equal(validResultFrameShape(resultFrame({ subtype: "error_max_turns", is_error: true, errors: ["hit the cap"] }, ["result"])), true);
+  assert.equal(validResultFrameShape(resultFrame({ subtype: "error_max_turns", is_error: true }, ["result"])), false);
+  assert.equal(validResultFrameShape(resultFrame({ subtype: "surprise", errors: ["x"] }, ["result"])), false);
+  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, result: "done" }), false);
+  for (const missing of ["duration_ms", "duration_api_ms", "num_turns", "total_cost_usd", "usage", "modelUsage", "permission_denials", "uuid", "session_id", "result"]) {
+    assert.equal(validResultFrameShape(resultFrame({}, [missing])), false);
+  }
+  for (const status of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, "401"]) {
+    assert.equal(validResultFrameShape(resultFrame({ api_error_status: status })), false);
+  }
+  assert.equal(validResultFrameShape(resultFrame({ origin: "human" })), false);
+  assert.equal(validResultFrameShape(resultFrame({ origin: { kind: "invented" } })), false);
+  assert.equal(validResultFrameShape(resultFrame({ user_message_uuid: "" })), false);
+  assert.equal(validResultFrameShape(resultFrame({ result: {} })), false);
   assert.equal(expectedFailures(outcome("automatic-normal", { ...baseFirst, index: 2, validShape: false, origin: "absent", userMessageAssociation: "second" })).includes("invalid_second_result"), true);
   assert.equal(compactLifecycleMarker({ type: "system", subtype: "status", status: "compacting" }, false), undefined);
   assert.equal(compactLifecycleMarker({ type: "system", subtype: "status", status: "compacting" }, true), "status:compacting");

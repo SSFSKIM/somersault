@@ -98,6 +98,10 @@ const RESULT_ORIGIN_KINDS = new Set([
   "human", "channel", "peer", "task-notification", "coordinator", "observer",
   "auto-continuation", "observer-activity",
 ]);
+// SDKResultMessage = SDKResultSuccess | SDKResultError. The error arm declares `errors` and no `result`.
+const RESULT_ERROR_SUBTYPES = new Set([
+  "error_during_execution", "error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries",
+]);
 const ALTERNATE_PROVIDER_ENV_VARS = [
   "ANTHROPIC_BASE_URL",
   "CLAUDE_CODE_USE_ANTHROPIC_AWS",
@@ -523,15 +527,31 @@ function createFixture(): Fixture {
   }
 }
 
+function finiteNumber(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+// Validate the whole declared union, not a lowest common denominator: a sparse frame carrying only
+// subtype/is_error/result is not a terminal result, and an error frame legitimately has no `result`.
 function validResultFrameShape(message: UnknownRecord): boolean {
-  if (typeof message.subtype !== "string" || typeof message.is_error !== "boolean" || typeof message.result !== "string") return false;
-  if (Object.hasOwn(message, "api_error_status") && message.api_error_status !== null && typeof message.api_error_status !== "number") return false;
-  if (Object.hasOwn(message, "errors") && (!Array.isArray(message.errors) || message.errors.some((value) => typeof value !== "string"))) return false;
-  if (Object.hasOwn(message, "user_message_uuid") && (typeof message.user_message_uuid !== "string" || message.user_message_uuid.length === 0)) return false;
+  if (typeof message.subtype !== "string" || typeof message.is_error !== "boolean") return false;
+  if (!finiteNumber(message.duration_ms) || !finiteNumber(message.duration_api_ms)) return false;
+  if (!finiteNumber(message.num_turns) || !finiteNumber(message.total_cost_usd)) return false;
+  if (message.stop_reason !== null && typeof message.stop_reason !== "string") return false;
+  if (!isRecord(message.usage) || !isRecord(message.modelUsage) || !Array.isArray(message.permission_denials)) return false;
+  if (typeof message.uuid !== "string" || message.uuid.length === 0) return false;
+  if (typeof message.session_id !== "string" || message.session_id.length === 0) return false;
   if (Object.hasOwn(message, "origin")) {
     if (!isRecord(message.origin) || typeof message.origin.kind !== "string" || !RESULT_ORIGIN_KINDS.has(message.origin.kind)) return false;
   }
-  return true;
+  if (message.subtype === "success") {
+    if (typeof message.result !== "string") return false;
+    if (Object.hasOwn(message, "api_error_status") && message.api_error_status !== null && !finiteNumber(message.api_error_status)) return false;
+    return !Object.hasOwn(message, "user_message_uuid") || (typeof message.user_message_uuid === "string" && message.user_message_uuid.length > 0);
+  }
+  if (!RESULT_ERROR_SUBTYPES.has(message.subtype)) return false;
+  if (!Array.isArray(message.errors) || message.errors.some((value) => typeof value !== "string")) return false;
+  return !Object.hasOwn(message, "result") || typeof message.result === "string";
 }
 
 function resultOrigin(value: unknown): Pick<ResultFrameProvenance, "origin" | "originSubkind"> {
@@ -621,7 +641,7 @@ function consumeCompletedMessage(state: PairState, message: unknown): void {
       validShape,
       subtype: safeResultSubtype(message.subtype),
       isError: message.is_error === true,
-      ...(typeof message.api_error_status === "number" ? { apiErrorStatus: message.api_error_status } : {}),
+      ...(finiteNumber(message.api_error_status) ? { apiErrorStatus: message.api_error_status as number } : {}),
       unhealthyText: texts.some(unhealthyResultText),
       provenance: resultFrameProvenance(state, message, validShape),
     });
@@ -633,8 +653,7 @@ function unhealthyResultText(text: string): boolean {
 }
 
 function resultSubtypeFailure(subtype: string | undefined): string {
-  const known = new Set(["error_during_execution", "error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries"]);
-  return subtype && known.has(subtype) ? subtype : "non_success_result";
+  return subtype && RESULT_ERROR_SUBTYPES.has(subtype) ? subtype : "non_success_result";
 }
 
 async function* originatingPrompt(text: string, uuid: ReturnType<typeof randomUUID>): AsyncIterable<SDKUserMessage> {
@@ -1252,38 +1271,77 @@ function selfTest(): void {
   assert.equal(malformedPairState.structuredResultAmbiguous, 1);
   assert.equal(malformedPairState.unmatchedResults, 2);
 
+  // Terminal frames carry every field SDKResultSuccess/SDKResultError declare; `extra` varies one at a
+  // time and `omit` drops a key outright, which is distinct from setting it to undefined.
+  const resultFrame = (extra: UnknownRecord = {}, omit: string[] = []): UnknownRecord => {
+    const frame: UnknownRecord = {
+      type: "result", subtype: "success", is_error: false, duration_ms: 12, duration_api_ms: 8, num_turns: 1,
+      stop_reason: null, total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {},
+      permission_denials: [], uuid: "result-uuid", session_id: "session-id", result: "done", ...extra,
+    };
+    for (const key of omit) delete frame[key];
+    return frame;
+  };
+  const errorFrame = (extra: UnknownRecord = {}): UnknownRecord =>
+    resultFrame({ subtype: "error_max_turns", is_error: true, errors: ["hit the cap"], ...extra }, ["result"]);
   consumeCompletedMessage(pairState, { type: "user", uuid: "synthetic-turn", isSynthetic: true, shouldQuery: true, origin: { kind: "task-notification" }, message: { content: [] } });
-  consumeCompletedMessage(pairState, { type: "result", subtype: "success", is_error: false, user_message_uuid: "synthetic-turn", origin: { kind: "task-notification" }, result: "done" });
+  consumeCompletedMessage(pairState, resultFrame({ user_message_uuid: "synthetic-turn", origin: { kind: "task-notification" } }));
   pairState.userMessageRoutes.set("human-turn", { origin: "human", synthetic: false, shouldQuery: true });
   consumeCompletedMessage(pairState, { type: "user", uuid: "human-turn", isSynthetic: false, shouldQuery: true, message: { content: [] } });
   assert.deepEqual(pairState.userMessageRoutes.get("human-turn"), { origin: "human", synthetic: false, shouldQuery: true });
-  consumeCompletedMessage(pairState, { type: "result", subtype: "success", is_error: false, user_message_uuid: "human-turn", origin: { kind: "human" }, result: "done" });
+  consumeCompletedMessage(pairState, resultFrame({ user_message_uuid: "human-turn", origin: { kind: "human" } }));
   assert.deepEqual(pairState.resultFrames.map((frame) => frame.provenance), [
     { origin: "task-notification", originSubkind: "none", userMessageUuid: "present", userMessageAssociation: "matched-synthetic", isOriginatingUserTurn: false },
     { origin: "human", originSubkind: "none", userMessageUuid: "present", userMessageAssociation: "matched-query", isOriginatingUserTurn: true },
   ]);
-  consumeCompletedMessage(pairState, { type: "result", subtype: "success", is_error: false, user_message_uuid: "unseen-turn", origin: { kind: "human" }, result: "done" });
+  consumeCompletedMessage(pairState, resultFrame({ user_message_uuid: "unseen-turn", origin: { kind: "human" } }));
   assert.deepEqual(pairState.resultFrames.at(-1)?.provenance, {
     origin: "human", originSubkind: "none", userMessageUuid: "present", userMessageAssociation: "unseen", isOriginatingUserTurn: false,
   });
   consumeCompletedMessage(pairState, { type: "user", uuid: "peer-turn", isSynthetic: false, shouldQuery: true, origin: { kind: "peer" }, message: { content: [] } });
-  consumeCompletedMessage(pairState, { type: "result", subtype: "success", is_error: false, user_message_uuid: "peer-turn", result: "done" });
+  consumeCompletedMessage(pairState, resultFrame({ user_message_uuid: "peer-turn" }));
   assert.deepEqual(pairState.resultFrames.at(-1)?.provenance, {
     origin: "absent", originSubkind: "none", userMessageUuid: "present", userMessageAssociation: "matched-non-human", isOriginatingUserTurn: false,
   });
   consumeCompletedMessage(pairState, { type: "user", uuid: "unattributed-turn", isSynthetic: false, shouldQuery: true, message: { content: [] } });
-  consumeCompletedMessage(pairState, { type: "result", subtype: "success", is_error: false, user_message_uuid: "unattributed-turn", origin: { kind: "human" }, result: "done" });
+  consumeCompletedMessage(pairState, resultFrame({ user_message_uuid: "unattributed-turn", origin: { kind: "human" } }));
   assert.deepEqual(pairState.resultFrames.at(-1)?.provenance, {
     origin: "human", originSubkind: "none", userMessageUuid: "present", userMessageAssociation: "matched-non-human", isOriginatingUserTurn: false,
   });
+  // A frame that fails shape validation can never be promoted to originating evidence.
+  consumeCompletedMessage(pairState, { type: "result", subtype: "success", is_error: false, user_message_uuid: "human-turn", origin: { kind: "human" }, result: "done" });
+  assert.equal(pairState.resultFrames.at(-1)?.validShape, false);
+  assert.equal(pairState.resultFrames.at(-1)?.provenance.isOriginatingUserTurn, false);
+  consumeCompletedMessage(pairState, resultFrame({ user_message_uuid: "human-turn", origin: { kind: "human" }, api_error_status: Number.NaN }));
+  assert.equal(pairState.resultFrames.at(-1)?.validShape, false);
+  assert.equal(pairState.resultFrames.at(-1)?.apiErrorStatus, undefined);
 
   assert.equal(unhealthyResultText("API Error: 502 unknown provider for model"), true);
   for (const text of ["No tests are disabled.", "The fixture needs no API key.", "Billing is out of scope.", "completed normally"]) assert.equal(unhealthyResultText(text), false);
-  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, api_error_status: null, result: "done", origin: { kind: "human" }, user_message_uuid: "turn" }), true);
-  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, api_error_status: "401", result: "done", origin: { kind: "human" }, user_message_uuid: "turn" }), false);
-  assert.equal(validResultFrameShape({ subtype: "success", result: "done", origin: { kind: "human" }, user_message_uuid: "turn" }), false);
-  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, result: "done", origin: "human", user_message_uuid: "turn" }), false);
-  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, result: {}, user_message_uuid: "turn" }), false);
+  assert.equal(validResultFrameShape(resultFrame({ api_error_status: null, origin: { kind: "human" }, user_message_uuid: "turn" })), true);
+  assert.equal(validResultFrameShape(resultFrame({ api_error_status: 429 })), true);
+  // Compact successes omit user_message_uuid; error frames declare `errors` and no `result`.
+  assert.equal(validResultFrameShape(resultFrame()), true);
+  assert.equal(validResultFrameShape(errorFrame()), true);
+  assert.equal(validResultFrameShape(errorFrame({ subtype: "error_during_execution", errors: [] })), true);
+  assert.equal(validResultFrameShape(resultFrame({ subtype: "error_max_turns", is_error: true, errors: ["hit the cap"], result: "tolerated" })), true);
+  assert.equal(validResultFrameShape(resultFrame({ subtype: "error_max_turns", is_error: true }, ["result"])), false);
+  assert.equal(validResultFrameShape(errorFrame({ errors: [7] })), false);
+  assert.equal(validResultFrameShape(errorFrame({ subtype: "surprise" })), false);
+  // A sparse frame is not a terminal result even though every field it does carry has the right type.
+  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, result: "done" }), false);
+  for (const missing of ["duration_ms", "duration_api_ms", "num_turns", "total_cost_usd", "usage", "modelUsage", "permission_denials", "uuid", "session_id", "result"]) {
+    assert.equal(validResultFrameShape(resultFrame({}, [missing])), false);
+  }
+  for (const status of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, "401"]) {
+    assert.equal(validResultFrameShape(resultFrame({ api_error_status: status })), false);
+  }
+  assert.equal(validResultFrameShape(resultFrame({ stop_reason: 3 })), false);
+  assert.equal(validResultFrameShape(resultFrame({ uuid: "" })), false);
+  assert.equal(validResultFrameShape(resultFrame({ origin: "human" })), false);
+  assert.equal(validResultFrameShape(resultFrame({ origin: { kind: "invented" } })), false);
+  assert.equal(validResultFrameShape(resultFrame({ user_message_uuid: "" })), false);
+  assert.equal(validResultFrameShape(resultFrame({ result: {} })), false);
   assert.equal(resultSubtypeFailure("error_max_turns"), "error_max_turns");
   assert.equal(resultSubtypeFailure("custom"), "non_success_result");
   const resultSummary = summarizeResultFrames([{
