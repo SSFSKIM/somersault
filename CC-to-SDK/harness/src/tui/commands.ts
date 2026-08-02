@@ -203,7 +203,7 @@ export function parseLaunchThink(args: string[]): string | undefined {
 
 // ---- /config key=value (W3.6) ----
 // theme.ts's own id list — theme's setter (setTheme) mutates its module-level `current`/`ACCENT` state
-// BEFORE it would fail on a bad id (it indexes THEMES[id].accent only after assigning `current = id`), so
+// BEFORE it would fail on a bad id (it indexes THEMES[id].claude only after assigning `current = id`), so
 // an unvalidated bad id would corrupt currentTheme() for the rest of the process, not just this one call.
 // permissionMode needs no such list here — its row already carries `options` (settingsRows.ts's single
 // source, exported as PERMISSION_MODE_OPTIONS); model/outputStyle have no fixed domain to check (same as

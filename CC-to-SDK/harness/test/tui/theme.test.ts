@@ -44,6 +44,10 @@ describe("theme.ts", () => {
     for (const value of ["rgb(1000,0,0)", "rgb(-1,0,0)", "rgb(1,2)", "#abcd", "ansi256(1000)", "ansi:orange", "red"]) expect(isThemeColor(value)).toBe(false);
     expect(ANSI_COLOR_NAMES.size).toBe(16); expect(resolveThemeColor("ansi:whiteBright")).toBe("whiteBright"); expect(resolveThemeColor("rgb(1, 2, 3)")).toBe("#010203"); expect(resolveThemeColor("ansi256(196)")).toBe("#ff0000"); expect(resolveThemeColor("#aabbcc")).toBe("#aabbcc");
   });
+  it("resolves the ansi256 base-16 table and grayscale ramp, not only the color cube", () => {
+    expect(resolveThemeColor("ansi256(0)")).toBe("#000000"); expect(resolveThemeColor("ansi256(9)")).toBe("#ff0000");
+    expect(resolveThemeColor("ansi256(15)")).toBe("#ffffff"); expect(resolveThemeColor("ansi256(232)")).toBe("#080808"); expect(resolveThemeColor("ansi256(255)")).toBe("#eeeeee");
+  });
   it("uses the TH4 light prefix predicate", () => { expect(isLightTheme("light")).toBe(true); expect(isLightTheme("light-daltonized")).toBe(true); expect(isLightTheme("dark")).toBe(false); expect(isLightTheme("auto")).toBe(false); });
   it("makes every existing palette structurally complete with TH7", () => {
     for (const palette of Object.values(THEMES)) { expect(Object.keys(palette).sort()).toEqual([...THEME_TOKEN_NAMES].sort()); for (const value of Object.values(palette)) expect(isThemeColor(value)).toBe(true); }

@@ -28,10 +28,6 @@ import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, form
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
-
-// F1 Task 2 role map: every line useChat itself emits is themed — failures `error`, the `! command`
-// echo `bashBorder`. Read per emission so a mid-session /theme change colors the next line correctly.
-const role = (name: "error" | "bashBorder") => resolveThemeColor(themeTokens()[name]);
 import { exportMarkdown, defaultExportName, filesInContext, formatFiles, formatStats, formatSessionInfo, EXPORT_HEADER } from "./sessionTools.js";
 import { lastAssistantText } from "../sessions/rows.js";
 import type { ModelInfo } from "./ModelPicker.js";
@@ -43,6 +39,10 @@ import { shortCwd } from "./banner.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
 import type { RawContextUsage } from "../index.js";
 import { promptEntries, mergeEntries, type HistEntry, type HistoryScope } from "./historySearch.js";
+
+// F1 Task 2 role map: every line useChat itself emits is themed — failures `error`, the `! command`
+// echo `bashBorder`. Read per emission so a mid-session /theme change colors the next line correctly.
+const role = (name: "error" | "bashBorder") => resolveThemeColor(themeTokens()[name]);
 
 // ChatSession is promoted to ../session/chatSession.ts (spec A2b §2) so the lib Session and the remote
 // adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
