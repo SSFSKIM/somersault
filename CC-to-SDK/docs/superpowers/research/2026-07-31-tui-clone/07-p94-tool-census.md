@@ -1,9 +1,9 @@
 # P94 — Live Tool Census
 
-**Status:** **Complete. F1 vocabulary gate closed.**  
-**Canonical run:** 2026-08-02 · SDK 0.3.220 · Node 24.18.0 · macOS · `claude-fable-5[1m]`  
-**Authentication:** `CLAUDE_CODE_OAUTH_TOKEN`, with `ANTHROPIC_API_KEY` explicitly unset  
-**Probe:** `probes/probes/94-tool-census.ts`, corpus revision `f1-p94-r3`  
+**Status:** **Complete. F1 vocabulary gate closed.**
+**Canonical run:** 2026-08-02 · SDK 0.3.220 · Node 24.18.0 · macOS · `claude-fable-5[1m]`
+**Authentication:** `CLAUDE_CODE_OAUTH_TOKEN`, with `ANTHROPIC_API_KEY` explicitly unset
+**Probe:** `probes/probes/94-tool-census.ts`, corpus revision `f1-p94-r3`
 **Canonical-census executed-source SHA-256:** `2d5e04271052d48475e36bd56c0fb81c13598e82a8bd8cb310ff59c5a703ff34`
 **Review-hardened final probe-source SHA-256:** `374f1eb86a5b574b450e278c575c1573ffa68a9a395d1c6c8da57d938dd3da75`
 **Probe 94b final-source SHA-256:** `ce8ed8bd9a5414cae5b5e38d8d1273f452f441fde3f4804cc0d07a2b6c28633e`
@@ -174,7 +174,7 @@ Nineteen successful Bash sidecars were objects with the core shape:
   interrupted,
   noOutputExpected,
   isImage,
-  returnCodeInterpretation? 
+  returnCodeInterpretation?
 }
 ```
 
