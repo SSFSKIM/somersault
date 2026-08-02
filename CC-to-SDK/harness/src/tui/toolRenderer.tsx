@@ -51,7 +51,8 @@ export function displayPath(path: string, cwd: string, home: string): string {
 
 /** Slice to VISUAL rows first, then clip — so the overflow count is what the reader actually cannot see, not a
  *  logical-line count that undercounts a wrapped row. `revealOneExtraWithoutMarker` is upstream's four-row
- *  exception: showing a 4th row beats spending that row on "… +1 line". Errors switch it off (LT15).
+ *  exception: showing a 4th row beats spending that row on "… +1 line". This is the ORDINARY-output fold only —
+ *  errors count physical lines instead and never come through here (`errorBody`).
  *  Upstream `Omy` slices at the exact column with NO word wrapping and `trimEnd`s every emitted row (so at width 10
  *  "hello world" is "hello worl"/"d", not "hello"/"world"), and a blank input row stays a blank output row. */
 const visualRows = (line: string, width: number): string[] => wrapAnsi(line, width, { hard: true, trim: false, wordWrap: false }).split("\n").map((row) => row.trimEnd());
@@ -102,16 +103,35 @@ function headerLine(event: ToolEvent, status: ToolStatus, options: ProjectionOpt
   return { text: `${bullet.text}${event.name}(${argument})`, segments };
 }
 
+/** Upstream `y_s` `trimEnd`s the WHOLE result before it folds anything, so trailing blank rows never buy a fold slot
+ *  — and a result that is nothing but whitespace renders no body, which means no gutter block at all. Interior
+ *  blanks are content and stay exactly where they are. */
+const withoutTrailingBlanks = (lines: readonly string[]): readonly string[] => { let end = lines.length; while (end > 0 && lines[end - 1]!.trim() === "") end--; return lines.slice(0, end); };
+/** LT15: a generic error clips by PHYSICAL lines — upstream counts newlines and shows `split("\n").slice(0, 10)` —
+ *  NOT by visual rows, and with no four-row exception. So one newline-free 500-character failure stays WHOLE (it
+ *  still wraps at render; it is simply never clipped, and never counts as more than one line), while an eleven-line
+ *  one shows ten plus a marker. The marker is upstream's `bM` sibling — dim, and OUTSIDE the error-coloured Text,
+ *  so it never carries the error colour — and it appears only when the overflow is positive (`bM` returns null at
+ *  count ≤ 0). `detail-all` is unbounded, exactly as it is for ordinary output. */
+const ERROR_PHYSICAL_ROWS = 10;
+function errorBody(lines: readonly string[], projection: ResultProjection, color: string): readonly RenderLine[] {
+  const rows = (projection === "detail-all" ? lines : lines.slice(0, ERROR_PHYSICAL_ROWS)).map((line) => ({ text: line.trimEnd(), color }));
+  const overflow = projection === "detail-all" ? 0 : lines.length - ERROR_PHYSICAL_ROWS;
+  if (overflow <= 0) return rows;
+  const hint = projection === "compact" ? "ctrl+o to expand" : "ctrl+e to show all";
+  return [...rows, { text: `… +${overflow} ${overflow === 1 ? "line" : "lines"} (${hint})`, dim: true }];
+}
+
 function resultBody(normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderLine[] {
   if (normalized.status === "running") return [];
-  const failed = resolveThemeColor(themeTokens().error);
-  if (normalized.status === "interrupted") return [{ text: INTERRUPTED_TEXT, color: failed }];
-  if (normalized.status === "rejected") return [{ text: normalized.output || REJECTED_TEXT, color: failed }];
-  const error = normalized.status === "error";
-  // LT15: an error body clips at ten rows with no four-row exception, so an 11th row always gets the shared
-  // expandable marker instead of being silently revealed.
-  const rows = foldToolOutput(normalized.outputLines, options.columns, { projection: options.projection, compactRows: error ? 10 : 3, revealOneExtraWithoutMarker: !error });
-  return error ? rows.map((row) => ({ ...row, color: failed })) : rows;
+  // Both surfaces are upstream `dimColor` prompts, not failures: they are what the USER did, so they never take the
+  // error colour, and the rejection is a fixed one-row box (`height: 1`) no matter what text arrived with it.
+  if (normalized.status === "interrupted") return [{ text: INTERRUPTED_TEXT, dim: true }];
+  if (normalized.status === "rejected") return [{ text: (normalized.output || REJECTED_TEXT).split("\n")[0]!, dim: true }];
+  const lines = withoutTrailingBlanks(normalized.outputLines);
+  if (!lines.length) return [];
+  if (normalized.status === "error") return errorBody(lines, options.projection, resolveThemeColor(themeTokens().error));
+  return foldToolOutput(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true });
 }
 
 /** One retained call → its renderable items. A `suppressed` tool projects to nothing — driven by the status Task 1's

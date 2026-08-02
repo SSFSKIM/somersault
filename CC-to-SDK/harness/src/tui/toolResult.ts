@@ -40,13 +40,18 @@ const agentShape = (v: unknown): Record<string, unknown> | undefined => (isRecor
  *  redirection, a subshell, an expansion, a newline) rejects the whole input here. Rejecting only ever costs us the
  *  sed swap — it can never mis-attribute a redirection target or a second operand as "the edited file". */
 const UNQUOTED_META = /[|&;<>()$`\\\n\r]/;
+/** The same fail-closed rule applied to the OTHER half of expansion: upstream's AST only accepts
+ *  `command_name`/`word`/`string`/`raw_string`/`number`/`concatenation`, so a pathname or brace expansion is a node
+ *  type it never sees and the whole swap is rejected. An UNQUOTED `*?[]{}` (or a token-initial `~`) means the shell
+ *  decides what "the file" is at run time, and one operand can become many — quoted, the same bytes are a literal. */
+const UNQUOTED_EXPANSION = /[*?[\]{}]/;
 function simpleCommandTokens(command: string): string[] | undefined {
-  const tokens: string[] = []; let token = "", open = false, i = 0;
+  const tokens: string[] = []; let token = "", open = false, fresh = true, i = 0;
   while (i < command.length) {
     const ch = command[i];
-    if (ch === " " || ch === "\t") { if (open) { tokens.push(token); token = ""; open = false; } i++; continue; }
+    if (ch === " " || ch === "\t") { if (open) { tokens.push(token); token = ""; open = false; fresh = true; } i++; continue; }
     open = true;
-    if (ch === "'") { const end = command.indexOf("'", i + 1); if (end === -1) return undefined; token += command.slice(i + 1, end); i = end + 1; continue; }
+    if (ch === "'") { const end = command.indexOf("'", i + 1); if (end === -1) return undefined; token += command.slice(i + 1, end); i = end + 1; fresh = false; continue; }
     if (ch === '"') {
       for (i++; ; i++) {
         if (i >= command.length) return undefined;
@@ -56,10 +61,10 @@ function simpleCommandTokens(command: string): string[] | undefined {
         if (inner === "\\" && i + 1 < command.length) { token += command[i + 1]; i++; continue; }
         token += inner;
       }
-      continue;
+      fresh = false; continue;
     }
-    if (UNQUOTED_META.test(ch)) return undefined;
-    token += ch; i++;
+    if (UNQUOTED_META.test(ch) || UNQUOTED_EXPANSION.test(ch) || (ch === "~" && fresh)) return undefined;
+    token += ch; i++; fresh = false;
   }
   if (open) tokens.push(token);
   return tokens;
@@ -125,7 +130,8 @@ export function bashArgument(input: unknown, verbose: boolean): string {
 const TOOL_USE_ERROR = /<tool_use_error(?:\s[^>]*)?>([\s\S]*?)<\/tool_use_error>/i;
 export function formatGenericError(content: unknown, verbose: boolean): string {
   if (typeof content !== "string") return "Tool execution failed";
-  const stripped = (TOOL_USE_ERROR.exec(content)?.[1] || content).replace(/<sandbox_violations>[\s\S]*?<\/sandbox_violations>/g, "").replace(/<\/?error>/g, "").trim();
+  const envelope = TOOL_USE_ERROR.exec(content);                             // a MATCHED-but-empty envelope is not a no-match: falling back to
+  const stripped = (envelope ? envelope[1]! : content).replace(/<sandbox_violations>[\s\S]*?<\/sandbox_violations>/g, "").replace(/<\/?error>/g, "").trim();
   if (!stripped) return "Tool execution failed";
   if (!verbose && stripped.includes("InputValidationError: ")) return "Invalid tool parameters";
   return stripped.startsWith("Error: ") || stripped.startsWith("Cancelled: ") ? stripped : `Error: ${stripped}`;

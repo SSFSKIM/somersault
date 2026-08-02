@@ -4,7 +4,8 @@ import { render as renderInk } from "ink";
 import { render } from "ink-testing-library";
 import wrapAnsi from "wrap-ansi";
 import { describe, expect, it } from "vitest";
-import { displayPath, foldToolOutput, osc8FileLink, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER } from "../../src/tui/toolRenderer.js";
+import { displayPath, foldToolOutput, osc8FileLink, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import type { RenderLine } from "../../src/tui/render.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 
@@ -22,6 +23,8 @@ const sgr = (output: string) => output.match(/\x1b\[[0-9;]*m/g) ?? [];
 const options = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 20, projection: "compact" as const, now: 0, verbose: false };
 const read = { id: "read-1", name: "Read", input: { file_path: "/work/src/app.ts" }, callSequence: 1, route: "top-level" as const, result: { content: "a\nb\nc\nd", isError: false, resultSequence: 2 } };
 const normalized = { tool: "Read", status: "success" as const, source: "fallback" as const, rawContent: "a\nb\nc\nd", flatText: "a\nb\nc\nd", summary: "Read 4 lines", output: "a\nb\nc\nd", outputLines: ["a", "b", "c", "d"] };
+
+const bodyOf = (items: readonly RenderItem[]): readonly RenderLine[] => items.flatMap((item) => (item.kind === "gutter-block" ? item.body : []));
 
 describe("F1 shared tool renderer", () => {
   it("uses the exact OSC-8 bytes and cwd-first/home-second path display", () => {
@@ -104,6 +107,20 @@ describe("F1 shared tool renderer", () => {
       expect(renderToolEvent(evt, normalizeToolResult(evt), options)).toEqual([]);
     }
     expect(render(<RenderItemView item={renderToolEvent(read, normalized, options)[0]!} />).lastFrame()).not.toMatch(/[✓✗]/);
+  });
+  it("clips a generic error by PHYSICAL lines, so one unbroken long line stays whole and unmarked", () => {
+    const long = "e".repeat(500);
+    const body = bodyOf(renderToolEvent(read, { ...normalized, status: "error", output: long, outputLines: [long] }, { ...options, columns: 20 }));
+    expect(body).toHaveLength(1); expect(body[0]!.text).toBe(long);
+  });
+  it("drops trailing blank result lines before folding and emits no block at all for an all-blank result", () => {
+    expect(bodyOf(renderToolEvent(read, { ...normalized, output: "out\n\n  ", outputLines: ["out", "", "  "] }, options)).map((line) => line.text)).toEqual(["out"]);
+    expect(bodyOf(renderToolEvent(read, { ...normalized, status: "error", output: "boom\n  ", outputLines: ["boom", "  "] }, options)).map((line) => line.text)).toEqual(["boom"]);
+    expect(renderToolEvent(read, { ...normalized, output: "\n  ", outputLines: ["", "  "] }, options).map((item) => item.kind)).toEqual(["line"]);
+  });
+  it("renders interruption and rejection dim rather than error-coloured, and clips a rejection to one row", () => {
+    expect(bodyOf(renderToolEvent(read, { ...normalized, status: "interrupted", output: "Interrupted", outputLines: ["Interrupted"] }, options))).toEqual([{ text: "Interrupted · What should Claude do instead?", dim: true }]);
+    expect(bodyOf(renderToolEvent(read, { ...normalized, status: "rejected", output: "Tool use rejected\ntrailing detail", outputLines: ["Tool use rejected", "trailing detail"] }, options))).toEqual([{ text: "Tool use rejected", dim: true }]);
   });
   it("retains a resolved target and cwd-first label in BEL-terminated OSC-8 from the actual tool header", async () => {
     const relativeRead = { ...read, input: { file_path: "src/app.ts" } };

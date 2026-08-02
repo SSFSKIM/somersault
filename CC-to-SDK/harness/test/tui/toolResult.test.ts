@@ -48,9 +48,11 @@ describe("F1 structured-first results", () => {
     expect(bashArgument({ command: "sed -i.bak 's/a/b/g' f.txt" }, false)).toBe("f.txt");
     expect(bashArgument({ command: "sed -E -i '' -e 's/a(b)/\\1/' f.txt" }, false)).toBe("f.txt");
     expect(bashArgument({ not_command: true }, false)).toBe("");
+    expect(bashArgument({ command: "sed -i 's/a/b/' '*.ts'" }, false)).toBe("*.ts");   // quoted: a literal file name, not a glob
   });
   it("falls back to the clipped command for every unproven sed shape", () => {
-    for (const command of ["sed -i 's/x/y/' a.txt b.txt", "sed -i 's/x/y/' a.txt > log", "sed -i 's/x/y/' a.txt | cat", "sed -n -i 's/x/y/' a.txt", "sed -i 'd' f.txt", "sed -i 's/x/y/' a.txt && echo done", "sed 's/x/y/' f.txt", "sed -i 's/x/y/'", "sed -i -e 's/a/b/' -e 's/c/d/' f.txt"])
+    for (const command of ["sed -i 's/x/y/' a.txt b.txt", "sed -i 's/x/y/' a.txt > log", "sed -i 's/x/y/' a.txt | cat", "sed -n -i 's/x/y/' a.txt", "sed -i 'd' f.txt", "sed -i 's/x/y/' a.txt && echo done", "sed 's/x/y/' f.txt", "sed -i 's/x/y/'", "sed -i -e 's/a/b/' -e 's/c/d/' f.txt",
+      "sed -i 's/a/b/' *.ts", "sed -i 's/a/b/' a?.ts", "sed -i 's/a/b/' [ab].ts", "sed -i 's/a/b/' {a,b}.ts", "sed -i 's/a/b/' ~/f.ts"])
       expect(bashArgument({ command }, false)).toBe(command);
   });
   it("normalizes LT15 generic errors without losing their raw source", () => {
@@ -67,5 +69,6 @@ describe("F1 structured-first results", () => {
     expect(formatGenericError("<tool_use_error>Error: boom</tool_use_error>", false)).toBe("Error: boom");
     expect(formatGenericError("<tool_use_error><sandbox_violations>denied</sandbox_violations>boom</tool_use_error>", false)).toBe("Error: boom");
     expect(formatGenericError("prefix InputValidationError: mid-string", false)).toBe("Invalid tool parameters");
+    expect(formatGenericError("<tool_use_error></tool_use_error>", false)).toBe("Tool execution failed");   // matched-but-empty is NOT a no-match
   });
 });
