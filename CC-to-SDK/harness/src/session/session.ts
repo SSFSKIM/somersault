@@ -108,7 +108,7 @@ export class Session implements ControllableSession {
   /** Fixed route for host-generated follow-up turns; callers cannot choose another provenance class. */
   submitAutomatic(prompt: string, onMessage: (m: unknown) => void = () => {}): Promise<{ result: unknown; structuredOutput?: unknown }> {
     if (this.ended) return Promise.reject(new Error(`${this.label} is not running`));
-    return this.enqueueTurn(prompt, onMessage, "auto-continuation");
+    return prompt === "/compact" ? this.enqueueCompact("auto-continuation", onMessage) : this.enqueueTurn(prompt, onMessage, "auto-continuation");
   }
 
   /** Convenience: run one turn as an async generator. Yields the turn's streamed (non-result) messages,

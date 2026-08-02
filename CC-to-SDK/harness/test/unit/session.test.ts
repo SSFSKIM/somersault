@@ -199,6 +199,21 @@ describe("Session", () => {
     expect(seen).toEqual(["hello", "/compact", "world"]);
     expect(turns.find((t) => t.message.content === "/compact")).toMatchObject({ origin: { kind: "auto-continuation" } });
   });
+  it("settles an exact automatic /compact after lifecycle with an origin-absent UUID-less result", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.submitAutomatic("/compact").then((r) => { settled = true; return r; });
+    await nextTick();
+    try {
+      expect(turns[0]).toMatchObject({ message: expect.objectContaining({ content: "/compact" }), origin: { kind: "auto-continuation" } });
+      frames.push({ type: "system", subtype: "status", status: "compacting" });
+      frames.push({ ...successFor(turns[0], "compacted"), user_message_uuid: undefined });
+      await nextTick();
+      expect(settled).toBe(true);
+      expect((await turn).result).toBe("compacted");
+    } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
+  });
   it("settles a lifecycle-marked compact waiter for an origin-absent UUID-less result only", async () => {
     const { frames, query, turns } = framedQuery();
     const s = new Session({ query }, {});
