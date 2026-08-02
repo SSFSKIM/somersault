@@ -35,10 +35,38 @@ const editShape = (v: unknown): Record<string, unknown> | undefined => (isRecord
 const bashShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && typeof v.stdout === "string" && typeof v.stderr === "string" && typeof v.interrupted === "boolean" && typeof v.noOutputExpected === "boolean" && typeof v.isImage === "boolean" && (v.returnCodeInterpretation === undefined || typeof v.returnCodeInterpretation === "string") ? v : undefined);
 const agentShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && typeof v.agentId === "string" ? v : undefined);
 
-/** `options.verbose` is the renderer's later expansion switch (Task 3). Retention here is deliberately
- *  verbose-independent: the normalizer never truncates its own source, so collapsing stays a projection choice. */
+/** LT12: the Bash header argument, read ONLY from the complete retained input so compact and detailed projections
+ *  share one source and nothing smuggles a display header through `summary`. A recognized single-file in-place
+ *  `sed -i` reports the file it edits rather than its script; anything else is the trimmed command, clipped
+ *  (non-verbose only) to two physical lines and 160 characters including the literal final `…`. */
+export function bashArgument(input: unknown, verbose: boolean): string {
+  const command = isRecord(input) && typeof input.command === "string" ? input.command : "";
+  if (!command) return "";
+  const edited = /^\s*sed\s+(?:-i\b|--in-place\b)[^\n|&;]*?\s(\S+)\s*$/.exec(command)?.[1];
+  if (edited && !/^[-'"]/.test(edited)) return edited;
+  const trimmed = command.trim();
+  if (verbose) return trimmed;
+  const lines = trimmed.split("\n");
+  const clipped = lines.length > 2 ? `${lines.slice(0, 2).join("\n")}…` : trimmed;
+  return clipped.length > 160 ? `${clipped.slice(0, 159)}…` : clipped;
+}
+
+/** LT15: one readable line out of a generic tool failure. Purely a PROJECTION — `rawContent` (and `flatText`)
+ *  keep the faithful source, so nothing here loses evidence. Sandbox-violation ranges and the `<error>` wrapper
+ *  are upstream framing, not content; a non-verbose `InputValidationError` is the harness's own malformed-call
+ *  signal and reads as such; an existing `Error: `/`Cancelled: ` prefix is left exactly as the tool wrote it. */
+export function formatGenericError(content: unknown, verbose: boolean): string {
+  if (typeof content !== "string") return "Tool execution failed";
+  const stripped = content.replace(/<sandbox_violations>[\s\S]*?<\/sandbox_violations>/g, "").replace(/<\/?error>/g, "").trim();
+  if (!stripped) return "Tool execution failed";
+  if (!verbose && stripped.startsWith("InputValidationError: ")) return "Invalid tool parameters";
+  return stripped.startsWith("Error: ") || stripped.startsWith("Cancelled: ") ? stripped : `Error: ${stripped}`;
+}
+
+/** `options.verbose` is the renderer's expansion switch (Task 3), and the ONLY thing it changes here is the
+ *  generic-error projection. Retention stays verbose-independent: the normalizer never truncates its own
+ *  source, so collapsing stays a projection choice. */
 export function normalizeToolResult(event: ToolEvent, options?: { verbose?: boolean }): NormalizedToolResult {
-  void options;
   const tool = event.name;
   // FIRST, ahead of the open-call check and every shape guard: the suppressed tools. They stay complete source
   // records (`flatText`/`rawContent` are faithful) and only their PROJECTION is empty — the one deliberate
@@ -69,5 +97,8 @@ export function normalizeToolResult(event: ToolEvent, options?: { verbose?: bool
   } else if (tool === "Agent") {
     structured = agentShape(value);                                          // F3 owns totals; F1 stays generic
   }
-  return { tool, status, source: structured ? "structured" : "fallback", rawContent: content, flatText: flat, summary, output: outputLines.join("\n"), outputLines, ...(structured ? { structured } : {}) };
+  // A plain `error` is the one status whose PROJECTION is normalized: `interrupted` and `rejected` are their own
+  // exact surfaces and pass through untouched, and `rawContent`/`flatText` stay faithful in every case.
+  const failure = status === "error" ? formatGenericError(content, options?.verbose === true) : undefined;
+  return { tool, status, source: structured ? "structured" : "fallback", rawContent: content, flatText: flat, summary, output: failure ?? outputLines.join("\n"), outputLines: failure === undefined ? outputLines : toLines(failure), ...(structured ? { structured } : {}) };
 }

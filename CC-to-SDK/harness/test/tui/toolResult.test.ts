@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
+import { bashArgument, formatGenericError } from "../../src/tui/toolResult.js";
 import { BASH_CALL, BASH_RESULT_WITH_SIDECAR, EDIT_CALL, EDIT_RESULT_WITH_SIDECAR, READ_CALL, READ_RESULT_FLAT, READ_RESULT_WITH_SIDECAR, WRITE_CALL, WRITE_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
 
 function eventForPair(call: Record<string, unknown>, result: Record<string, unknown>) { const doc = new TranscriptDocument(); doc.appendSdk("host", call); doc.appendSdk("host", result); return doc.toolEvents()[0]!; }
@@ -38,5 +39,19 @@ describe("F1 structured-first results", () => {
   it("retains non-string flat source while rendering its recognized text blocks", () => {
     const blocks = [{ type: "text", text: "first" }, { type: "text", text: "second" }];
     expect(normalizeToolResult({ id: "agent-1", name: "Agent", input: {}, callSequence: 1, route: "top-level", result: { content: blocks, isError: false, resultSequence: 2 } })).toMatchObject({ rawContent: blocks, flatText: "first\nsecond", outputLines: ["first", "second"] });
+  });
+  it("uses the edited path for recognized sed -i and clips ordinary nonverbose Bash", () => {
+    expect(bashArgument({ command: "sed -i '' 's/old/new/' src/app.ts" }, false)).toBe("src/app.ts");
+    expect(bashArgument({ command: " first\nsecond\nthird " }, false)).toBe("first\nsecond…");
+    expect(bashArgument({ command: "x".repeat(200) }, false)).toHaveLength(160); expect(bashArgument({ command: "x".repeat(200) }, false)).toMatch(/…$/);
+    expect(bashArgument({ command: " first\nsecond\nthird " }, true)).toBe("first\nsecond\nthird");
+    expect(bashArgument({ not_command: true }, false)).toBe("");
+  });
+  it("normalizes LT15 generic errors without losing their raw source", () => {
+    expect(formatGenericError({ message: "not text" }, false)).toBe("Tool execution failed");
+    expect(formatGenericError("<error><sandbox_violations>denied</sandbox_violations>boom</error>", false)).toBe("Error: boom");
+    expect(formatGenericError("InputValidationError: malformed", false)).toBe("Invalid tool parameters");
+    expect(formatGenericError("InputValidationError: malformed", true)).toBe("Error: InputValidationError: malformed");
+    expect(formatGenericError("Error: retained", false)).toBe("Error: retained"); expect(formatGenericError("Cancelled: retained", false)).toBe("Cancelled: retained");
   });
 });
