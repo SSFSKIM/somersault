@@ -3,6 +3,11 @@
 // (whole-line bold/italic/code); a line MIXING styles carries `segments` (the <Line> view renders each span).
 import type { RenderLine, Segment } from "./render.js";
 import { highlightCode, KNOWN_LANGS } from "./highlight.js";
+import { resolveThemeColor, themeTokens } from "./theme.js";
+
+// Semantic roles (F1 Task 2 role map): inline code takes `suggestion`; a fence whose language we cannot
+// highlight is unknown code and takes `inactive`. Read per call so a mid-session setTheme() repaints.
+const role = (name: "suggestion" | "inactive") => resolveThemeColor(themeTokens()[name]);
 
 const HEADER = /^#{1,6}\s+(.*)$/;          // # .. ###### header → bold, # stripped
 const BULLET = /^[-*+]\s+(.*)$/;           // - * + bullet → "• "
@@ -27,7 +32,7 @@ function parseInline(text: string): Segment[] {
     if (m.index > last) segs.push({ text: text.slice(last, m.index) });
     if (m[1] != null || m[2] != null) segs.push({ text: m[1] ?? m[2], bold: true });
     else if (m[3] != null || m[4] != null) segs.push({ text: m[3] ?? m[4], italic: true });
-    else if (m[5] != null) segs.push({ text: m[5], color: "cyan" });
+    else if (m[5] != null) segs.push({ text: m[5], color: role("suggestion") });
     last = m.index + m[0].length;
   }
   if (last < text.length) segs.push({ text: text.slice(last) });
@@ -91,7 +96,7 @@ export function renderMarkdown(text: string): RenderLine[] {
     if ((m = raw.match(FENCE))) { flushTable(); inFence = !inFence; fenceLang = inFence ? m[1] : undefined; continue; }
     if (inFence) {
       if (fenceLang && KNOWN_LANGS.has(fenceLang)) out.push({ text: "  " + raw, segments: [{ text: "  " }, ...highlightCode(raw, fenceLang)] });
-      else out.push({ text: "  " + raw, dim: true });
+      else out.push({ text: "  " + raw, color: role("inactive"), dim: true });
       continue;
     }
     if (raw.includes("|")) { tableBuf.push(raw); continue; }            // buffer — decided once the run ends

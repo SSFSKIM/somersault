@@ -1,7 +1,11 @@
 // tui/test/liveTurn.test.ts — reducer unit tests over the probe-20 frame sequence.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { LiveTurn } from "../../src/tui/liveTurn.js";
-import { ACCENT } from "../../src/tui/theme.js";
+import { ACCENT, resolveThemeColor, setTheme, themeTokens } from "../../src/tui/theme.js";
+
+// F1 Task 2 roles for the live region: a settled/pending tool marker is `inactive`, a completed one is
+// `success`, a failed one is `error` — resolved through resolveThemeColor at snapshot time.
+const tok = (name: "inactive" | "success" | "error") => resolveThemeColor(themeTokens()[name]);
 
 const se = (event: unknown) => ({ type: "stream_event", event });
 const texts = (lt: LiveTurn) => lt.snapshot().map((l) => l.text);
@@ -67,7 +71,7 @@ describe("LiveTurn", () => {
     lt.ingest({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t4", is_error: true, content: "boom" }] } });
     const line = lt.snapshot().find((l) => l.text.startsWith("✗ Bash"));
     expect(line).toBeTruthy();
-    expect(line!.color).toBe("red");
+    expect(line!.color).toBe(tok("error"));
   });
 
   it("keeps per-message blocks distinct (message-2 text@0 does not clobber message-1 thinking@0) and never double-renders", () => {
@@ -91,7 +95,7 @@ describe("LiveTurn", () => {
     lt.fail("stream died");
     const out = lt.finalize();
     expect(out).toContainEqual({ text: "partial", gutter: { text: "● ", color: ACCENT } });
-    expect(out).toContainEqual({ text: "✗ stream died", color: "red" });
+    expect(out).toContainEqual({ text: "✗ stream died", color: tok("error") });
   });
 
   it("settles a still-running tool at finalize (no dangling ⟳)", () => {
@@ -177,5 +181,32 @@ describe("LiveTurn", () => {
     const collapsed = texts(lt);
     expect(collapsed.some((x) => /● Agent .*✓ \(1 tools? · 12s\)/.test(x))).toBe(true);
     expect(collapsed.some((x) => x.includes("the output is hi"))).toBe(false); // nested hidden after collapse
+  });
+});
+
+describe("live-region lines carry semantic tokens, never ANSI literals", () => {
+  afterEach(() => setTheme("auto"));
+  const toolTurn = (lt: LiveTurn) => {
+    lt.ingest(se({ type: "message_start" }));
+    lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "s1", name: "Read", input: {} } }));
+    lt.ingest({ type: "assistant", message: { content: [{ type: "tool_use", id: "s1", name: "Read", input: { file_path: "f.ts" } }] } });
+  };
+  it("running, settled, done and failed tool markers each read their own token", () => {
+    const lt = new LiveTurn(() => 0); toolTurn(lt);
+    expect(lt.snapshot()).toContainEqual({ text: "⟳ Read f.ts", color: tok("inactive") });      // pending
+    lt.ingest({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "s1", content: "ok" }] } });
+    expect(lt.snapshot()).toContainEqual({ text: "✓ Read f.ts  │ ok", color: tok("success") });
+    const bad = new LiveTurn(() => 0); toolTurn(bad);
+    bad.ingest({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "s1", is_error: true, content: "boom" }] } });
+    expect(bad.snapshot()).toContainEqual({ text: "✗ Read f.ts", color: tok("error") });
+    const settled = new LiveTurn(() => 0); toolTurn(settled);
+    expect(settled.finalize()).toContainEqual({ text: "· Read f.ts", color: tok("inactive"), dim: true });
+  });
+  it("repaints those markers when the theme changes mid-session (read per snapshot, not cached)", () => {
+    const lt = new LiveTurn(() => 0); toolTurn(lt);
+    const auto = lt.snapshot().find((l) => l.text.startsWith("⟳"))!.color;
+    setTheme("light");
+    expect(lt.snapshot()).toContainEqual({ text: "⟳ Read f.ts", color: tok("inactive") });
+    expect(lt.snapshot().find((l) => l.text.startsWith("⟳"))!.color).not.toBe(auto);
   });
 });

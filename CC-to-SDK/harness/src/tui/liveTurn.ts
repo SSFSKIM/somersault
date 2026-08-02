@@ -3,6 +3,12 @@
 import type { RenderLine } from "./render.js";
 import { trunc, toolTarget, toolDiffLines, withAssistantBullet } from "./render.js";
 import { renderMarkdown } from "./markdown.js";
+import { resolveThemeColor, themeTokens } from "./theme.js";
+
+// F1 Task 2 role map for the live region: a pending/settled tool marker is `inactive`, a completed one
+// `success`, a failed one `error`. Read per snapshot (never cached) so a mid-session /theme change
+// repaints the in-flight turn on the next frame.
+const role = (name: "inactive" | "success" | "error") => resolveThemeColor(themeTokens()[name]);
 
 type Block =
   | { kind: "text"; index: number; text: string }
@@ -60,7 +66,7 @@ export class LiveTurn {
   /** Current live-region lines; call after each ingest. */
   snapshot(): RenderLine[] {
     const out = [...this.committed, ...this.current].flatMap((b) => this.renderBlock(b));
-    if (this.errorLine) out.push({ text: `✗ ${this.errorLine}`, color: "red" });
+    if (this.errorLine) out.push({ text: `✗ ${this.errorLine}`, color: role("error") });
     return out;
   }
 
@@ -141,12 +147,12 @@ export class LiveTurn {
     }
     if ((b.name === "Edit" || b.name === "Write") && b.input) {
       const head = b.status === "done" ? `✓ ${label}` : b.status === "error" ? `✗ ${label}` : this.ended ? `· ${label}` : `⟳ ${label}`;
-      return [{ text: head, ...(b.status === "error" ? { color: "red" } : {}) }, ...toolDiffLines(b.name, b.input).slice(1)];   // diff body under the status header
+      return [{ text: head, color: role(b.status === "error" ? "error" : b.status === "done" ? "success" : "inactive") }, ...toolDiffLines(b.name, b.input).slice(1)];   // diff body under the status header
     }
-    if (b.status === "error") return [{ text: `✗ ${label}`, color: "red" }];
-    if (b.status === "done") return [{ text: `✓ ${label}${b.preview ? "  │ " + b.preview : ""}` }];
-    if (this.ended) return [{ text: `· ${label}`, dim: true }];               // settled after finalize
+    if (b.status === "error") return [{ text: `✗ ${label}`, color: role("error") }];
+    if (b.status === "done") return [{ text: `✓ ${label}${b.preview ? "  │ " + b.preview : ""}`, color: role("success") }];
+    if (this.ended) return [{ text: `· ${label}`, color: role("inactive"), dim: true }];   // settled after finalize
     const s = Math.floor((this.now() - b.startedAt) / 1000);
-    return [{ text: `⟳ ${label}${s >= 1 ? ` ${s}s` : ""}` }];                 // running, elapsed ≥1s
+    return [{ text: `⟳ ${label}${s >= 1 ? ` ${s}s` : ""}`, color: role("inactive") }];     // running, elapsed ≥1s
   }
 }

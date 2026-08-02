@@ -3,6 +3,11 @@
 // (a quick shell peek without leaving the REPL). runBash is the one impure bit; formatBashLines is pure.
 import { exec } from "node:child_process";
 import type { RenderLine } from "./render.js";
+import { resolveThemeColor, themeTokens } from "./theme.js";
+
+// F1 Task 2 role map: the `! command` echo takes `bashBorder` (the same token the bash-mode composer
+// border uses) and every failure line takes `error`. Read per call so a /theme change repaints.
+const role = (name: "bashBorder" | "error") => resolveThemeColor(themeTokens()[name]);
 
 export interface BashResult { code: number; output: string; timedOut?: boolean }
 
@@ -24,7 +29,7 @@ export function runBash(command: string, cwd: string): Promise<BashResult> {
   });
 }
 
-/** Dim indented output (capped) + a red `exit N` line when the command failed. (The `! command` header is
+/** Dim indented output (capped) + an `error`-token `exit N` line when the command failed. (The `! command` header is
  *  echoed separately by the caller for immediate feedback.)
  *  A quietly-successful command (mkdir/touch/cd) produces NO output, and rendering nothing at all is
  *  indistinguishable from the shell escape being broken — so success-with-no-output says so explicitly.
@@ -35,13 +40,13 @@ export function formatBashOutput(r: BashResult, cap = 40): RenderLine[] {
   if (lines.length > cap) out.push({ text: `  … ${lines.length - cap} more lines`, dim: true });
   // A timeout kills by SIGNAL, so `code` is our own synthetic 1 — a status the command never returned.
   // The timeout line is the true story; printing `exit 1` under it would just contradict it.
-  if (r.timedOut) out.push({ text: "  timed out — killed after 30s", color: "red" });
-  else if (r.code !== 0) out.push({ text: `  exit ${r.code}`, color: "red" });
+  if (r.timedOut) out.push({ text: "  timed out — killed after 30s", color: role("error") });
+  else if (r.code !== 0) out.push({ text: `  exit ${r.code}`, color: role("error") });
   else if (!lines.length) out.push({ text: "  (no output)", dim: true });
   return out;
 }
 
 /** Header + output, for callers that render the whole block at once. */
 export function formatBashLines(command: string, r: BashResult, cap = 40): RenderLine[] {
-  return [{ text: `! ${command}`, color: "magenta" }, ...formatBashOutput(r, cap)];
+  return [{ text: `! ${command}`, color: role("bashBorder") }, ...formatBashOutput(r, cap)];
 }

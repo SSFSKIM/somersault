@@ -10,6 +10,7 @@ import { useChat, type ChatSession } from "../../src/tui/useChat.js";
 import type { PermissionDecision } from "../../src/index.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
 import type { DecisionOutcome } from "../../src/permissions/types.js";
+import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 
 // Ink hard-wraps a long single-line <Text> at the terminal width, inserting a real "\n" at whichever word
 // boundary the reflow lands on — a boundary that shifts whenever earlier content in the SAME joined line
@@ -1407,5 +1408,36 @@ describe("U5b: transcript-reading commands admit when a turn is still open", () 
     api.run!("/stats");
     await waitFor(() => frame(lastFrame).includes("Session stats"));
     expect(frame(lastFrame)).not.toContain("in-flight turn");
+  });
+});
+
+describe("useChat's own emitted lines carry semantic tokens, not ANSI literals", () => {
+  const tok = (name: "error" | "bashBorder") => resolveThemeColor(themeTokens()[name]);
+  function ColorHost({ makeSession, api, deps }: { makeSession: () => ChatSession; api: { run?: (s: string) => void; colors?: () => { text: string; color?: string }[] }; deps?: Parameters<typeof useChat>[2] }) {
+    const c = useChat(makeSession, { cwd: "/proj" }, deps);
+    api.run = c.submit;
+    api.colors = () => [...c.state.lines, ...c.state.streaming];
+    return <Text>{allText(c)}</Text>;
+  }
+  it("the ! echo reads `bashBorder` and a failed command's exit line reads `error`", async () => {
+    const fake = fakeRemote();
+    const deps = { runBash: async () => ({ code: 3, output: "" }) };
+    const api: { run?: (s: string) => void; colors?: () => { text: string; color?: string }[] } = {};
+    const { lastFrame } = render(<ColorHost makeSession={() => fake} api={api} deps={deps} />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("!boom");
+    await waitFor(() => frame(lastFrame).includes("exit 3"));
+    expect(api.colors!()).toContainEqual({ text: "! boom", color: tok("bashBorder") });
+    expect(api.colors!()).toContainEqual({ text: "  exit 3", color: tok("error") });
+  });
+  it("a local command failure line reads `error`", async () => {
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void; colors?: () => { text: string; color?: string }[] } = {};
+    const { lastFrame } = render(<ColorHost makeSession={() => fake} api={api} />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("/think nonsense-level");
+    await waitFor(() => frame(lastFrame).includes("unknown level"));
+    const bad = api.colors!().find((l) => l.text.startsWith("thinking: unknown level"));
+    expect(bad!.color).toBe(tok("error"));
   });
 });

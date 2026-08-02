@@ -8,7 +8,7 @@ export interface RenderLine { text: string; color?: string; dim?: boolean; bold?
 export interface Gutter { text: string; color?: string; dim?: boolean; }
 export interface Segment { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; }
 import { renderMarkdown } from "./markdown.js";
-import { ACCENT, themeTokens } from "./theme.js";
+import { ACCENT, resolveThemeColor, themeTokens } from "./theme.js";
 
 /** Prepend `pad` to a line's leading text — to BOTH the plain fallback and the first segment (if any). */
 function indentLine(l: RenderLine, pad: string): RenderLine {
@@ -51,6 +51,7 @@ function toolUseLines(name: string, input: Record<string, unknown>): RenderLine[
  *  are not available. Write (content only, no old_string) keeps the flat all-+ body. */
 export function toolDiffLines(name: string, input: Record<string, unknown>, cap = 24): RenderLine[] {
   const tokens = themeTokens();   // read per-call, not cached: a setTheme() (incl. the /theme picker's live preview) must color the very next render
+  const added = resolveThemeColor(tokens.diffAdded), removed = resolveThemeColor(tokens.diffRemoved);
   const head: RenderLine = { text: `${name} ${path(input)}`, gutter: { text: "● " } };
   const body: RenderLine[] = [];
   const oldS = typeof input.old_string === "string" ? input.old_string : undefined;
@@ -65,26 +66,28 @@ export function toolDiffLines(name: string, input: Record<string, unknown>, cap 
     const num = (i: number) => String(i + 1).padStart(3);
     const CTX = 3;
     for (let i = Math.max(0, pre - CTX); i < pre; i++) body.push({ text: `${num(i)}  ${o[i]}`, dim: true });
-    for (let i = pre; i < o.length - suf; i++) body.push({ text: `${num(i)} - ${o[i]}`, color: tokens.diffRemove });
-    for (let i = pre; i < n.length - suf; i++) body.push({ text: `${num(i)} + ${n[i]}`, color: tokens.diffAdd });
+    for (let i = pre; i < o.length - suf; i++) body.push({ text: `${num(i)} - ${o[i]}`, color: removed });
+    for (let i = pre; i < n.length - suf; i++) body.push({ text: `${num(i)} + ${n[i]}`, color: added });
     for (let i = o.length - suf; i < Math.min(o.length, o.length - suf + CTX); i++) body.push({ text: `${num(i)}  ${o[i]}`, dim: true });
   } else if (newS !== undefined) {
-    for (const l of newS.split("\n")) body.push({ text: `  + ${l}`, color: tokens.diffAdd });
+    for (const l of newS.split("\n")) body.push({ text: `  + ${l}`, color: added });
   } else if (oldS !== undefined) {                     // removal-only shape: keep the pre-hunk all-red rendering
-    for (const l of oldS.split("\n")) body.push({ text: `  - ${l}`, color: tokens.diffRemove });
+    for (const l of oldS.split("\n")) body.push({ text: `  - ${l}`, color: removed });
   }
   if (body.length <= cap) return [head, ...body];
   return [head, ...body.slice(0, cap), { text: `  … ${body.length - cap} more lines`, dim: true }];
 }
 
-/** A failed tool_result reads as a failure: red, with a ✗ on its first line only (the tool_result block carries
- *  only `is_error` — no exit code is available — so error framing keys on that boolean alone). */
+/** A failed tool_result reads as a failure — the `error` token, with a ✗ on its first line only (the
+ *  tool_result block carries only `is_error` — no exit code is available — so error framing keys on that
+ *  boolean alone). */
 function resultLines(content: unknown, isError?: boolean): RenderLine[] {
   const text = typeof content === "string" ? content
     : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === "string" ? b.text : "")).join("") : "";
   if (!text.trim()) return [];
+  const failed = resolveThemeColor(themeTokens().error);
   return text.split("\n").slice(0, 12).map((l, i) => isError
-    ? { text: `  ⎿ ${i === 0 ? "✗ " : ""}${trunc(l, 100)}`, color: "red" }
+    ? { text: `  ⎿ ${i === 0 ? "✗ " : ""}${trunc(l, 100)}`, color: failed }
     : { text: `  ⎿ ${trunc(l, 100)}`, dim: true });
 }
 

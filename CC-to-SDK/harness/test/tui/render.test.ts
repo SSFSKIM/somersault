@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { renderMessage, trunc, toolTarget } from "../../src/tui/render.js";
-import { ACCENT } from "../../src/tui/theme.js";
+import { ACCENT, resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
+
+// F1 Task 2: diff bodies read §2.2's diffAdded/diffRemoved and failed tool_results read `error`, each
+// resolved through resolveThemeColor at projection time (render.ts does the same, per-call).
+const ADDED = () => resolveThemeColor(themeTokens().diffAdded);
+const REMOVED = () => resolveThemeColor(themeTokens().diffRemoved);
+const ERROR = () => resolveThemeColor(themeTokens().error);
 
 const asst = (content: unknown[]) => ({ type: "assistant", message: { content } });
 const BULLET = { text: "● ", color: ACCENT };
@@ -17,8 +23,8 @@ describe("renderMessage", () => {
   it("renders Edit as a numbered hunk diff", () => {
     const out = renderMessage(asst([{ type: "tool_use", name: "Edit", input: { file_path: "f.ts", old_string: "a", new_string: "b" } }]));
     expect(out[0]).toEqual({ text: "Edit f.ts", gutter: { text: "● " } });
-    expect(out).toContainEqual({ text: "  1 - a", color: "red" });
-    expect(out).toContainEqual({ text: "  1 + b", color: "green" });
+    expect(out).toContainEqual({ text: "  1 - a", color: REMOVED() });
+    expect(out).toContainEqual({ text: "  1 + b", color: ADDED() });
   });
   it("renders Bash with the ● bullet in CC's Bash(<cmd>) form", () => {
     expect(renderMessage(asst([{ type: "tool_use", name: "Bash", input: { command: "echo hi" } }]))).toEqual([
@@ -39,11 +45,11 @@ describe("renderMessage", () => {
     const m = { type: "user", message: { content: [{ type: "tool_result", content: "line1\nline2" }] } };
     expect(renderMessage(m)).toEqual([{ text: "  ⎿ line1", dim: true }, { text: "  ⎿ line2", dim: true }]);
   });
-  it("renders an is_error tool_result red, with ✗ prefixed on its first line only", () => {
+  it("renders an is_error tool_result in the `error` token, with ✗ prefixed on its first line only", () => {
     const m = { type: "user", message: { content: [{ type: "tool_result", content: "boom\nsecond line", is_error: true }] } };
     expect(renderMessage(m)).toEqual([
-      { text: "  ⎿ ✗ boom", color: "red" },
-      { text: "  ⎿ second line", color: "red" },
+      { text: "  ⎿ ✗ boom", color: ERROR() },
+      { text: "  ⎿ second line", color: ERROR() },
     ]);
   });
   it("ignores result/system messages", () => {
@@ -67,7 +73,7 @@ describe("toolDiffLines", () => {
   it("renders a single-line Edit as a numbered - / + hunk with a ● header (head stays index 0)", () => {
     expect(toolDiffLines("Edit", { file_path: "f.ts", old_string: "a", new_string: "b" })).toEqual([
       { text: "Edit f.ts", gutter: { text: "● " } },
-      { text: "  1 - a", color: "red" }, { text: "  1 + b", color: "green" },
+      { text: "  1 - a", color: REMOVED() }, { text: "  1 + b", color: ADDED() },
     ]);
   });
   it("renders a multi-line Edit hunk: dim numbered context (≤3 lines each side) around numbered - / + change rows", () => {
@@ -76,8 +82,8 @@ describe("toolDiffLines", () => {
     expect(out.slice(1)).toEqual([
       { text: "  1  a", dim: true },
       { text: "  2  b", dim: true },
-      { text: "  3 - c", color: "red" },
-      { text: "  3 + X", color: "green" },
+      { text: "  3 - c", color: REMOVED() },
+      { text: "  3 + X", color: ADDED() },
       { text: "  4  d", dim: true },
       { text: "  5  e", dim: true },
     ]);
@@ -97,7 +103,7 @@ describe("toolDiffLines", () => {
     expect(out.slice(1)).toEqual([
       { text: "  1  a", dim: true },
       { text: "  2  b", dim: true },
-      { text: "  3 - c", color: "red" },
+      { text: "  3 - c", color: REMOVED() },
     ]);
   });
   it("produces no negative-length ranges when old_string is a strict prefix of new_string (trailing addition only)", () => {
@@ -106,19 +112,19 @@ describe("toolDiffLines", () => {
     expect(out.slice(1)).toEqual([
       { text: "  1  a", dim: true },
       { text: "  2  b", dim: true },
-      { text: "  3 + c", color: "green" },
+      { text: "  3 + c", color: ADDED() },
     ]);
   });
   it("keeps the all-+ behavior for Write (content only, no old_string)", () => {
     expect(toolDiffLines("Write", { file_path: "f.ts", content: "a\nb" })).toEqual([
       { text: "Write f.ts", gutter: { text: "● " } },
-      { text: "  + a", color: "green" }, { text: "  + b", color: "green" },
+      { text: "  + a", color: ADDED() }, { text: "  + b", color: ADDED() },
     ]);
   });
   it("renders a removal-only Edit (old_string, no new_string) as an all-red body, never an empty one", () => {
     expect(toolDiffLines("Edit", { file_path: "f.ts", old_string: "a\nb" })).toEqual([
       { text: "Edit f.ts", gutter: { text: "● " } },
-      { text: "  - a", color: "red" }, { text: "  - b", color: "red" },
+      { text: "  - a", color: REMOVED() }, { text: "  - b", color: REMOVED() },
     ]);
   });
   it("caps long diffs and notes the remainder (Write, all-+ body)", () => {
@@ -134,7 +140,7 @@ describe("toolDiffLines", () => {
     const newLines = Array.from({ length: 20 }, (_, i) => `new${i}`);
     const out = toolDiffLines("Edit", { file_path: "big.ts", old_string: oldLines.join("\n"), new_string: newLines.join("\n") }, 24);
     expect(out[0]).toEqual({ text: "Edit big.ts", gutter: { text: "● " } });
-    expect(out.filter((l) => l.color === "red").length + out.filter((l) => l.color === "green").length).toBe(24); // capped at 24
+    expect(out.filter((l) => l.color === REMOVED()).length + out.filter((l) => l.color === ADDED()).length).toBe(24); // capped at 24
     expect(out.at(-1)).toEqual({ text: "  … 16 more lines", dim: true }); // 40 body lines − cap 24 = 16
   });
 });

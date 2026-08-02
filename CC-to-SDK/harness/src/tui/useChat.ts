@@ -14,7 +14,7 @@ import { mergeSettingsFile, appendToArray, type SettingsFileDeps, type SettingsT
 import { appendDenial, removeFromArray, type DenialEntry } from "./permissionsModel.js";
 import type { CcxPrefs } from "./prefs.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
-import { currentTheme, setTheme, type ThemeId } from "./theme.js";
+import { currentTheme, resolveThemeColor, setTheme, themeTokens, type ThemeId } from "./theme.js";
 import { buildRows, summarizeChanges, PERMISSION_MODE_OPTIONS, type SettingsRowCtx } from "./settingsRows.js";
 import { OUTPUT_STYLE_REDIRECT } from "./OutputStylePicker.js";
 import type { PendingDecision } from "../permissions/pending.js";
@@ -28,6 +28,10 @@ import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, form
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
+
+// F1 Task 2 role map: every line useChat itself emits is themed — failures `error`, the `! command`
+// echo `bashBorder`. Read per emission so a mid-session /theme change colors the next line correctly.
+const role = (name: "error" | "bashBorder") => resolveThemeColor(themeTokens()[name]);
 import { exportMarkdown, defaultExportName, filesInContext, formatFiles, formatStats, formatSessionInfo, EXPORT_HEADER } from "./sessionTools.js";
 import { lastAssistantText } from "../sessions/rows.js";
 import type { ModelInfo } from "./ModelPicker.js";
@@ -306,7 +310,7 @@ export function useChat(
         case "think":
           if (cmd.args) {
             const parsed = parseThinkArg(cmd.args);
-            if (!parsed) { append([{ text: `thinking: unknown level "${cmd.args}" · try off/low/medium/high/xhigh/max or a number`, color: "red" }]); break; }
+            if (!parsed) { append([{ text: `thinking: unknown level "${cmd.args}" · try off/low/medium/high/xhigh/max or a number`, color: role("error") }]); break; }
             await session.setMaxThinkingTokens(parsed.budget);
             if (!disposed.current) setThinkLevel(parsed.level);
             append(formatThink(parsed.level));
@@ -336,7 +340,7 @@ export function useChat(
           // writeFile TRUNCATES. `/export package.json` would destroy it with no prompt, so overwrite only
           // a file we can prove is a previous export of ours; anything else is the user's to lose, not ours.
           const existing = readFile(path);
-          if (existing !== null && !existing.startsWith(EXPORT_HEADER)) { append([{ text: `✗ refusing to overwrite ${path} — not a previous ccx export`, color: "red" }]); break; }
+          if (existing !== null && !existing.startsWith(EXPORT_HEADER)) { append([{ text: `✗ refusing to overwrite ${path} — not a previous ccx export`, color: role("error") }]); break; }
           writeFile(path, md);
           notice(`✓ exported to ${path}`);
           staleTurnNote();
@@ -454,12 +458,12 @@ export function useChat(
         case "detach": if (opts.detach) opts.detach(); else notice("not detachable — run with --detachable, or ccx attach from another terminal"); break;
         default: append(formatUnknown(cmd.name));
       }
-    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
 
   async function openPicker() {
     try { const sessions = await listSessions(); if (!disposed.current) setPicker({ open: true, sessions }); }
-    catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+    catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   function closePicker() { if (!disposed.current) setPicker({ open: false, sessions: [] }); }
   // Fetch the persisted transcript FIRST; only swap + replay if it has history (never drop into a broken resume).
@@ -494,7 +498,7 @@ export function useChat(
       const id = pickMostRecent(sessions);
       if (!id) { append([{ text: "No sessions to continue here", dim: true }]); return; }
       await resumeInto(id);
-    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   function pickSession(info: SessionInfo) {
     if (disposed.current) return;
@@ -509,7 +513,7 @@ export function useChat(
       const models: ModelInfo[] = (caps.models as any[]).map((m) => ({ value: String(m?.value ?? m), displayName: m?.displayName, description: m?.description }));
       if (!models.length) { append([{ text: "no models available", dim: true }]); return; }
       setModelPicker({ open: true, models });
-    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   function closeModelPicker() { if (!disposed.current) setModelPicker({ open: false, models: [] }); }
   function pickModel(m: ModelInfo) {
@@ -563,7 +567,7 @@ export function useChat(
         mergeSettingsFile("localSettings", cwd, appendToArray(["permissions", "additionalDirectories"], abs), deps.settingsFileDeps);
         append(formatAddDirResult({ kind: "addedRemembered", abs }));
       } catch (e) { append(formatAddDirResult({ kind: "addedSaveFailed", abs, err: (e as Error).message })); }
-    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   function cancelAddDir(abs?: string) {
     closeAddDir();
@@ -703,7 +707,7 @@ export function useChat(
       if (disposed.current) return;
       if (!anchors.length) { notice("nothing to rewind to"); return; }
       setRewindPicker({ open: true, anchors });
-    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+    } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   function closeRewindPicker() { if (!disposed.current) setRewindPicker({ open: false, anchors: [] }); }
   /** Rebuild the transcript from the PERSISTED session after a conversation rewind truncated it. Shared by
@@ -744,7 +748,7 @@ export function useChat(
         if (disposed.current) return;
         if (scope === "code") { notice(`⏪ code restored to before "${anchor.text.slice(0, 40)}"`); return; }
         await rebuildAfterRewind(anchor.text);
-      } catch (e) { append([{ text: `✗ rewind failed: ${(e as Error).message}`, color: "red" }]); }
+      } catch (e) { append([{ text: `✗ rewind failed: ${(e as Error).message}`, color: role("error") }]); }
       finally { if (!disposed.current) setRewinding(false); }
     })();
   }
@@ -756,7 +760,7 @@ export function useChat(
   function runTurn(prompt: string) {
     setLines((l) => [...l, { text: `› ${prompt}`, dim: true }]);
     session.submit(prompt, () => {}).catch((e) => {
-      append([{ text: `✗ ${(e as Error).message}`, color: "red" }]);
+      append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]);
       // Only reclaim busy/drain when no turn is event-owned (liveTurnRef null): a live turn — another
       // client's turn streaming, or our own turn that already started and whose end (incl. a synthetic
       // one on host death) the turn-end event arm will still deliver — owns busy/drain on its own; doing
@@ -779,15 +783,15 @@ export function useChat(
   // ! bash mode — echo the command, run it locally in cwd, append its output (no model turn; CC's shell escape).
   async function runBashMode(command: string) {
     if (disposed.current || !command) return;
-    setLines((l) => [...l, { text: `! ${command}`, color: "magenta" }]);     // immediate echo
+    setLines((l) => [...l, { text: `! ${command}`, color: role("bashBorder") }]);     // immediate echo
     try { const r = await runBash(command, cwd); if (!disposed.current) append(formatBashOutput(r)); }
-    catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+    catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   // # memory mode — append the note to the project CLAUDE.md (CC's `#` adds to a memory file).
   function memoryMode(note: string) {
     if (disposed.current || !note) return;
     try { const path = appendMemory(note, cwd); append([{ text: `✓ noted in ${shortCwd(path)}`, dim: true }]); }
-    catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: "red" }]); }
+    catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   /** Route one prompt: ! bash · # memory · /local-command · /catalog-or-prompt turn. Returns true iff it
    *  started a turn (whose finally re-drains the queue); false for non-turn ops (drainNext must re-drain). */
@@ -862,7 +866,7 @@ export function useChat(
     const lists = await Promise.all(sessions.slice(0, 15).map(async (s) => promptEntries(await getSessionMessagesIn(s.sessionId, readCwd).catch(() => [] as any[]), s.lastModified)));
     return mergeEntries(lists);
   }
-  function stopBgTask(id: string) { if (hasBgTasks(session)) void session.stopBgTask(id).catch((e) => append([{ text: `✗ ${(e as Error).message}`, color: "red" }])); }
+  function stopBgTask(id: string) { if (hasBgTasks(session)) void session.stopBgTask(id).catch((e) => append([{ text: `✗ ${(e as Error).message}`, color: role("error") }])); }
   // Ctrl-X Ctrl-K (CC chat:killAgents): double-press confirm within 3s, exactly the 2.1.220 flow —
   // "No background agents running" when idle, arm notice on the first press, stop-all on the second.
   function killAgents() {
@@ -880,7 +884,7 @@ export function useChat(
   }
   function backgroundNow() {
     if (!hasBgTasks(session)) { notice("background unsupported on this session"); return; }
-    void session.background().then((b) => { if (!b) notice("nothing to background"); }).catch((e) => append([{ text: `✗ ${(e as Error).message}`, color: "red" }]));
+    void session.background().then((b) => { if (!b) notice("nothing to background"); }).catch((e) => append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]));
   }
   // Apply a permission mode. `auto` is model-gated (probe 24): if the live model can't run auto, swap to a
   // supported one FIRST (verified to take effect at runtime) with a notice, then set the mode. Disposed-guarded

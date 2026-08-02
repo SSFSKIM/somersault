@@ -4,7 +4,7 @@
 // useEffect (which runs AFTER commit) would color this render one keypress late. Calling it inline in the
 // same handler that also moves the selection means themeTokens() read during THIS render already reflects
 // the just-selected row, with no lag and no extra render pass. The demo.js panel is the same four lines
-// real Claude Code shows, colored by the previewed theme's diffAdd/diffRemove — matching render.ts's own
+// real Claude Code shows, colored by the previewed theme's diffAdded/diffRemoved — matching render.ts's own
 // diff coloring so the preview and the transcript never disagree. Esc reverts to the theme that was live
 // when the dialog opened (captured once in a ref — navigation never touches it); Enter keeps whatever's
 // currently applied (already the highlighted row, via the same live-preview path) and persists it through
@@ -18,7 +18,7 @@
 // changes — the prop defaults to false there.
 import React, { useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
-import { THEME_LABELS, currentTheme, themeTokens, setTheme } from "./theme.js";
+import { THEME_LABELS, currentTheme, resolveThemeColor, themeTokens, setTheme } from "./theme.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
 
 const PROMPT = "Choose the text style that looks best with your terminal";
@@ -53,16 +53,17 @@ export function ThemeDialog({ onDone, savePrefs = realSavePrefs, hideEsc = false
   });
 
   const tokens = themeTokens();
+  const accent = resolveThemeColor(tokens.claude), added = resolveThemeColor(tokens.diffAdded), removed = resolveThemeColor(tokens.diffRemoved);
   return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={tokens.accent}>
+    <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={accent}>
       <Text bold>{PROMPT}</Text>
       {THEME_LABELS.map(([id, label], i) => (
-        <Text key={id} color={i === idx ? tokens.accent : undefined}>{i === idx ? "❯ " : "  "}{label}</Text>
+        <Text key={id} color={i === idx ? accent : undefined}>{i === idx ? "❯ " : "  "}{label}</Text>
       ))}
       <Text> </Text>
       <Text bold>demo.js</Text>
       {DEMO_LINES.map((line, i) => (
-        <Text key={i} color={line[0] === "-" ? tokens.diffRemove : line[0] === "+" ? tokens.diffAdd : undefined}>{line}</Text>
+        <Text key={i} color={line[0] === "-" ? removed : line[0] === "+" ? added : undefined}>{line}</Text>
       ))}
       {hideEsc ? null : <Text dimColor>{FOOTER}</Text>}
     </Box>

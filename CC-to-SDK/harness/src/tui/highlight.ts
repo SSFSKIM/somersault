@@ -5,6 +5,12 @@
 // numbers are only applied within the plain runs left between those atomic spans; leading whitespace
 // is just the start of the first plain run, so it always survives intact.
 import type { Segment } from "./render.js";
+import { resolveThemeColor, themeTokens } from "./theme.js";
+
+// Semantic roles (F1 Task 2 role map): keywords take `suggestion`, string literals `success`, numbers
+// `warning`, and comments / unrecognised languages `inactive`. Read per call, never cached at import, so a
+// mid-session setTheme() (incl. the /theme picker live preview) repaints the very next highlight pass.
+const role = (name: "suggestion" | "success" | "warning" | "inactive") => resolveThemeColor(themeTokens()[name]);
 
 const KW: Record<string, RegExp> = {
   ts: /\b(const|let|var|function|return|if|else|for|while|class|interface|type|import|export|from|new|await|async|try|catch|throw|extends|implements|readonly|public|private|switch|case|default|break|continue|typeof|instanceof|in|of|null|undefined|true|false|this)\b/g,
@@ -24,9 +30,9 @@ const QUOTES = new Set(["\"", "'", "`"]);
 function styleWords(text: string, kwRe: RegExp): Segment[] {
   const spans: { start: number; end: number; seg: Partial<Segment> }[] = [];
   kwRe.lastIndex = 0;
-  for (let m: RegExpExecArray | null; (m = kwRe.exec(text)); ) spans.push({ start: m.index, end: m.index + m[0].length, seg: { color: "cyan" } });
+  for (let m: RegExpExecArray | null; (m = kwRe.exec(text)); ) spans.push({ start: m.index, end: m.index + m[0].length, seg: { color: role("suggestion") } });
   NUMBER.lastIndex = 0;
-  for (let m: RegExpExecArray | null; (m = NUMBER.exec(text)); ) spans.push({ start: m.index, end: m.index + m[0].length, seg: { color: "yellow" } });
+  for (let m: RegExpExecArray | null; (m = NUMBER.exec(text)); ) spans.push({ start: m.index, end: m.index + m[0].length, seg: { color: role("warning") } });
   spans.sort((a, b) => a.start - b.start);
   const accepted: typeof spans = [];
   for (const s of spans) if (!accepted.length || s.start >= accepted[accepted.length - 1].end) accepted.push(s);
@@ -40,18 +46,18 @@ function styleWords(text: string, kwRe: RegExp): Segment[] {
   return out;
 }
 
-/** One fenced-code line → styled segments. Unknown lang → the whole line as a single dim segment (no
- *  highlighting dependency worth pulling in for a language we don't recognize). */
+/** One fenced-code line → styled segments. Unknown lang → the whole line as a single dim `inactive`
+ *  segment (no highlighting dependency worth pulling in for a language we don't recognize). */
 export function highlightCode(line: string, lang: string): Segment[] {
   const kwRe = LANG[lang];
-  if (!kwRe) return [{ text: line, dim: true }];
+  if (!kwRe) return [{ text: line, color: role("inactive"), dim: true }];
   const marker = COMMENT_MARK[lang];
   const out: Segment[] = [];
   let plainStart = 0;
   for (let i = 0; i < line.length; ) {
     if (marker && line.startsWith(marker, i)) {
       out.push(...styleWords(line.slice(plainStart, i), kwRe));
-      out.push({ text: line.slice(i), dim: true });
+      out.push({ text: line.slice(i), color: role("inactive"), dim: true });
       return out;
     }
     if (QUOTES.has(line[i])) {
@@ -60,7 +66,7 @@ export function highlightCode(line: string, lang: string): Segment[] {
       let j = i + 1;
       while (j < line.length && line[j] !== quote) j += line[j] === "\\" ? 2 : 1;
       j = Math.min(j + 1, line.length);
-      out.push({ text: line.slice(i, j), color: "green" });
+      out.push({ text: line.slice(i, j), color: role("success") });
       plainStart = i = j;
       continue;
     }

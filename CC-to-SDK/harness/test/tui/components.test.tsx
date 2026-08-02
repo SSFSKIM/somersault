@@ -15,6 +15,9 @@ import { ModelPicker } from "../../src/tui/ModelPicker.js";
 import { TaskPanel } from "../../src/tui/TaskPanel.js";
 import { TurnSpinner } from "../../src/tui/TurnSpinner.js";
 import type { PermissionDecision } from "../../src/index.js";
+import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
+
+const tok = (name: "success" | "warning" | "error" | "permission") => resolveThemeColor(themeTokens()[name]);
 
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
@@ -32,6 +35,14 @@ describe("<Transcript>", () => {
     const { lastFrame } = render(<Transcript lines={[{ text: "B", bold: true }, { text: "I", italic: true }]} streaming={[]} />);
     expect(lastFrame()).toContain("B");
     expect(lastFrame()).toContain("I");
+  });
+  it("resolves line, gutter, and segment TH2 colors at the common RenderLine boundary", () => {
+    const view = render(<Transcript lines={[
+      { text: "", gutter: { text: ">", color: "ansi:red" }, segments: [{ text: "segment", color: "ansi:blue" }] },
+      { text: "line", color: "ansi:green" },
+    ]} streaming={[]} />);
+    const raw = view.stdout.frames.at(-1)!;
+    expect(raw).toContain("\x1b[31m"); expect(raw).toContain("\x1b[34m"); expect(raw).toContain("\x1b[32m");
   });
 });
 describe("<PermissionDialog>", () => {
@@ -245,19 +256,19 @@ describe("TaskPanel", () => {
 });
 
 describe("modeColor", () => {
-  it("maps each permission mode to a color", () => {
-    expect(modeColor("default")).toBe("green");
-    expect(modeColor("acceptEdits")).toBe("yellow");
-    expect(modeColor("auto")).toBe("cyan");
-    expect(modeColor("bypassPermissions")).toBe("red");
+  it("maps each permission mode to its §2.2 semantic token, resolved for Ink", () => {
+    expect(modeColor("default")).toBe(tok("success"));
+    expect(modeColor("acceptEdits")).toBe(tok("warning"));
+    expect(modeColor("auto")).toBe(tok("permission"));
+    expect(modeColor("bypassPermissions")).toBe(tok("error"));
   });
 });
 
 describe("ctxColor", () => {
-  it("escalates green → yellow → red as context fills", () => {
+  it("escalates unstyled → `warning` → `error` as context fills", () => {
     expect(ctxColor(20)).toBeUndefined();
-    expect(ctxColor(60)).toBe("yellow");
-    expect(ctxColor(85)).toBe("red");
+    expect(ctxColor(60)).toBe(tok("warning"));
+    expect(ctxColor(85)).toBe(tok("error"));
   });
 });
 

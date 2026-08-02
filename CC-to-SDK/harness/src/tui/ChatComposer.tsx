@@ -7,6 +7,11 @@ import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, input
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
 import { editExternal as realEditExternal } from "./externalEditor.js";
+import { resolveThemeColor, themeTokens } from "./theme.js";
+
+// F1 Task 2 role map: the bash-mode composer takes `bashBorder`, the memory-mode composer `remember`.
+// Read per render so a mid-session /theme change repaints the border and its hint on the next frame.
+const role = (name: "bashBorder" | "remember") => resolveThemeColor(themeTokens()[name]);
 
 const realReaddir = (dir: string): DirEnt[] => {
   try { return readdirSync(dir, { withFileTypes: true }).map((d) => ({ name: d.name, isDir: d.isDirectory() })); }
@@ -249,7 +254,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   }, [needCatalog, commandCatalog]);
 
   const mode = inputMode(state);
-  const border = mode === "bash" ? "magenta" : mode === "memory" ? "blue" : undefined;
+  const border = mode === "bash" ? role("bashBorder") : mode === "memory" ? role("remember") : undefined;
   // The editor owns these affordances: derive them from this render's state so the first draft/popup
   // frame cannot inherit an out-of-date parent status-bar hint through a passive effect.
   const showFooter = mode === "normal" && !state.mention && !state.command;
@@ -263,8 +268,8 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
           ? <Box flexDirection="row"><Text inverse>{" "}</Text><Text dimColor>Ask Claude anything…</Text></Box>
           : <Box flexDirection="column">{renderBuffer(state)}</Box>}
       </Box>
-      {mode === "bash" ? <Box paddingX={1}><Text color="magenta" dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
-      {mode === "memory" ? <Box paddingX={1}><Text color="blue" dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
+      {mode === "bash" ? <Box paddingX={1}><Text color={role("bashBorder")} dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
+      {mode === "memory" ? <Box paddingX={1}><Text color={role("remember")} dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
       {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
       {clearVisible ? <Box paddingX={1}><Text dimColor>Esc again to clear</Text></Box> : null}
       {dArmed && isEmptyNow ? <Box paddingX={1}><Text dimColor>Press Ctrl-D again to exit</Text></Box> : null}

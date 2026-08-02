@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { renderMarkdown } from "../../src/tui/markdown.js";
+import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
+
+// F1 Task 2 semantic roles: inline code + keywords `suggestion`, numbers `warning`, unknown/unlabelled
+// fenced code `inactive` — resolved through resolveThemeColor exactly as the renderers do.
+const tok = (name: "suggestion" | "warning" | "inactive") => resolveThemeColor(themeTokens()[name]);
 
 describe("renderMarkdown", () => {
   it("plain text passes through unchanged, one line each", () => {
@@ -9,7 +14,7 @@ describe("renderMarkdown", () => {
     expect(renderMarkdown("**bold**")).toEqual([{ text: "bold", bold: true }]);
     expect(renderMarkdown("__bold__")).toEqual([{ text: "bold", bold: true }]);
     expect(renderMarkdown("*it*")).toEqual([{ text: "it", italic: true }]);
-    expect(renderMarkdown("`code`")).toEqual([{ text: "code", color: "cyan" }]);
+    expect(renderMarkdown("`code`")).toEqual([{ text: "code", color: tok("suggestion") }]);
   });
   it("headers become bold with the # stripped", () => {
     expect(renderMarkdown("# Title")).toEqual([{ text: "Title", bold: true }]);
@@ -23,20 +28,20 @@ describe("renderMarkdown", () => {
   it("blockquote → dim with a │ prefix", () => {
     expect(renderMarkdown("> quoted")).toEqual([{ text: "│ quoted", dim: true }]);
   });
-  it("fenced code → fences dropped, body dim + indented", () => {
-    expect(renderMarkdown("```\nconst x = 1;\n```")).toEqual([{ text: "  const x = 1;", dim: true }]);
+  it("fenced code → fences dropped, body dim `inactive` + indented", () => {
+    expect(renderMarkdown("```\nconst x = 1;\n```")).toEqual([{ text: "  const x = 1;", color: tok("inactive"), dim: true }]);
   });
   it("a mixed-style line carries per-span segments (text is the plain fallback)", () => {
     expect(renderMarkdown("**bold** and normal")).toEqual([
       { text: "bold and normal", segments: [{ text: "bold", bold: true }, { text: " and normal" }] },
     ]);
     expect(renderMarkdown("see `x` here")).toEqual([
-      { text: "see x here", segments: [{ text: "see " }, { text: "x", color: "cyan" }, { text: " here" }] },
+      { text: "see x here", segments: [{ text: "see " }, { text: "x", color: tok("suggestion") }, { text: " here" }] },
     ]);
   });
   it("a bullet with an inline span keeps the • marker as a plain leading segment", () => {
     expect(renderMarkdown("- use `foo`")).toEqual([
-      { text: "• use foo", segments: [{ text: "• " }, { text: "use " }, { text: "foo", color: "cyan" }] },
+      { text: "• use foo", segments: [{ text: "• " }, { text: "use " }, { text: "foo", color: tok("suggestion") }] },
     ]);
   });
   it("inline italic + bold mix in one line", () => {
@@ -67,13 +72,13 @@ describe("renderMarkdown", () => {
   it("a fenced ts block gets segment-styled lines (indentation + highlight)", () => {
     const out = renderMarkdown("```ts\nconst x = 1;\n```");
     expect(out).toEqual([
-      { text: "  const x = 1;", segments: [{ text: "  " }, { text: "const", color: "cyan" }, { text: " x = " }, { text: "1", color: "yellow" }, { text: ";" }] },
+      { text: "  const x = 1;", segments: [{ text: "  " }, { text: "const", color: tok("suggestion") }, { text: " x = " }, { text: "1", color: tok("warning") }, { text: ";" }] },
     ]);
   });
-  it("a fence with no language stays the current plain dim line (not segment-styled)", () => {
-    expect(renderMarkdown("```\nplain text\n```")).toEqual([{ text: "  plain text", dim: true }]);
+  it("a fence with no language stays a plain dim `inactive` line (not segment-styled)", () => {
+    expect(renderMarkdown("```\nplain text\n```")).toEqual([{ text: "  plain text", color: tok("inactive"), dim: true }]);
   });
-  it("a fence with an unrecognized language falls back to the plain dim line", () => {
-    expect(renderMarkdown("```rust\nfn main() {}\n```")).toEqual([{ text: "  fn main() {}", dim: true }]);
+  it("a fence with an unrecognized language falls back to the plain dim `inactive` line", () => {
+    expect(renderMarkdown("```rust\nfn main() {}\n```")).toEqual([{ text: "  fn main() {}", color: tok("inactive"), dim: true }]);
   });
 });
