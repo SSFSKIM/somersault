@@ -371,7 +371,7 @@ function createFixture(): Fixture {
     name: "header-parser-lab",
     private: true,
     type: "module",
-    scripts: { test: "node --test test/*.test.mjs", "test:parser": "node --test test/parser.test.mjs" },
+    scripts: { test: "node --test test/parser.test.mjs test/header-normalizer.test.mjs", "test:parser": "node --test test/parser.test.mjs" },
   }, null, 2) + "\n");
   writeFileSync(join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", noEmit: true } }, null, 2) + "\n");
   writeFileSync(join(repo, "README.md"), [
@@ -539,7 +539,7 @@ function consumeCompletedMessage(state: PairState, message: unknown): void {
   if (message.type === "assistant") {
     const content = isRecord(message.message) && Array.isArray(message.message.content) ? message.message.content : [];
     for (const block of content) {
-      if (!isRecord(block) || block.type !== "tool_use" || typeof block.id !== "string") continue;
+      if (!isRecord(block) || block.type !== "tool_use" || typeof block.id !== "string" || block.id.length === 0) continue;
       if (state.uses.has(block.id)) {
         state.duplicateUses += 1;
         continue;
@@ -553,29 +553,33 @@ function consumeCompletedMessage(state: PairState, message: unknown): void {
       state.userMessageRoutes.set(message.uuid, { origin: route.origin, synthetic: message.isSynthetic === true, shouldQuery: message.shouldQuery !== false });
     }
     const content = isRecord(message.message) && Array.isArray(message.message.content) ? message.message.content : [];
+    const toolResultBlocks = content.filter((block): block is UnknownRecord => isRecord(block) && block.type === "tool_result");
     const matchedUses: ToolUse[] = [];
-    for (const block of content) {
-      if (!isRecord(block) || block.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+    for (const block of toolResultBlocks) {
+      if (typeof block.tool_use_id !== "string" || block.tool_use_id.length === 0) {
+        state.unmatchedResults += 1;
+        continue;
+      }
       const use = state.uses.get(block.tool_use_id);
       if (!use) {
         state.unmatchedResults += 1;
         continue;
       }
-      matchedUses.push(use);
       if (use.result) {
         state.duplicateResults += 1;
         continue;
       }
       use.result = block;
+      matchedUses.push(use);
     }
     if (Object.hasOwn(message, "tool_use_result") && message.tool_use_result !== undefined) {
       state.structuredResultMessages += 1;
       const uniqueUses = [...new Set(matchedUses)];
-      if (uniqueUses.length === 1) {
+      if (toolResultBlocks.length === 1 && uniqueUses.length === 1) {
         if (uniqueUses[0]!.structuredResult !== undefined) state.duplicateStructuredResults += 1;
         else uniqueUses[0]!.structuredResult = message.tool_use_result;
       } else {
-        if (uniqueUses.length === 0) state.structuredResultUnmatched += 1;
+        if (toolResultBlocks.length === 0 || uniqueUses.length === 0) state.structuredResultUnmatched += 1;
         else state.structuredResultAmbiguous += 1;
         state.unassociatedStructuredShapes.push(valueShape(message.tool_use_result));
       }
@@ -1113,6 +1117,25 @@ function selfTest(): void {
   assert.deepEqual(pairState.uses.get("toolu-1")?.structuredResult, { file: { content: "body", lineCount: 1 } });
   assert.equal(pairState.structuredResultMessages, 1);
   assert.equal(pairState.unmatchedResults, 0);
+
+  const malformedPairState: PairState = {
+    uses: new Map(), unmatchedResults: 0, duplicateUses: 0, duplicateResults: 0,
+    structuredResultMessages: 0, structuredResultUnmatched: 0, structuredResultAmbiguous: 0,
+    duplicateStructuredResults: 0, unassociatedStructuredShapes: [],
+    userMessageRoutes: new Map(), resultFrames: [],
+  };
+  consumeCompletedMessage(malformedPairState, { type: "assistant", message: { content: [{ type: "tool_use", id: "", name: "Read", input: {} }] } });
+  consumeCompletedMessage(malformedPairState, { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "", content: "body" }] }, tool_use_result: { file: {} } });
+  assert.equal(malformedPairState.uses.size, 0);
+  assert.equal(malformedPairState.unmatchedResults, 1);
+  assert.equal(malformedPairState.structuredResultUnmatched, 1);
+
+  consumeCompletedMessage(malformedPairState, { type: "assistant", message: { content: [{ type: "tool_use", id: "toolu-2", name: "Read", input: {} }] } });
+  consumeCompletedMessage(malformedPairState, { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu-2", content: "body" }, { type: "tool_result", content: "malformed" }] }, tool_use_result: { file: {} } });
+  assert.equal(malformedPairState.uses.get("toolu-2")?.structuredResult, undefined);
+  assert.equal(malformedPairState.structuredResultAmbiguous, 1);
+  assert.equal(malformedPairState.unmatchedResults, 2);
+
   consumeCompletedMessage(pairState, { type: "user", uuid: "synthetic-turn", isSynthetic: true, shouldQuery: true, origin: { kind: "task-notification" }, message: { content: [] } });
   consumeCompletedMessage(pairState, { type: "result", subtype: "success", is_error: false, user_message_uuid: "synthetic-turn", origin: { kind: "task-notification" }, result: "done" });
   pairState.userMessageRoutes.set("human-turn", { origin: "human", synthetic: false, shouldQuery: true });

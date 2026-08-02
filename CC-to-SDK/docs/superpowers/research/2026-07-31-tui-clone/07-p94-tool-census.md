@@ -6,8 +6,8 @@
 **Probe:** `probes/probes/94-tool-census.ts`, corpus revision `f1-p94-r3`
 **Canonical-census executed-source SHA-256:** `2d5e04271052d48475e36bd56c0fb81c13598e82a8bd8cb310ff59c5a703ff34`
 **Review-hardened sharded-validation source SHA-256:** `374f1eb86a5b574b450e278c575c1573ffa68a9a395d1c6c8da57d938dd3da75`
-**Final gate probe-source SHA-256:** `cf942002b24e40ac421cebc34e139a2dd87e48ffd8b42ee55bc05f84f1f68e47`
-**Probe 94b final-source SHA-256:** `ed5f705a30c54dbee2d2a4974d81eaf36f68da6560818d0b8180dbccd540f78e`
+**Final gate probe-source SHA-256:** `b054a946ec53e57538bad2ad3ef45368467243b47bf8a1dbc7f4de5aa53a0c75`
+**Probe 94b final-source SHA-256:** `bc7b8b6f4a20a9959a13b344714e25fa99b32e75c1a8d09198daab55ed929210`
 
 ## Verdict
 
@@ -62,7 +62,9 @@ Independent review first hardened attribution, directed-Write validation, cross-
 
 The all-corpus attempt paired 204 calls from its seven completed cases with zero unpaired uses/results; its only failure was the focused-inspection case reaching the existing 15-minute deadline. The unchanged sharded-validation source then completed that case in isolation with 73 paired calls, four associated sidecars, one UUID-owned healthy human result, and no non-originating result.
 
-A final boundary review then closed five additional gate defects: dynamic object keys can no longer publish prose, paths, or IDs; Bash command substitution inside double quotes fails closed; Write requires exact create semantics; fixture tests invoke the portable Node test runner; and live execution requires OAuth-only credentials. Diagnosis of the final live retry exposed one more environment boundary: an inherited custom `ANTHROPIC_BASE_URL` routed a valid subscription token to a gateway that rejected it as an API key. The final source therefore rejects custom base URLs and alternate cloud-provider routes before querying. Its keyless self-tests and TypeScript build passed, then the exact final source completed the directed Write case against Anthropic's first-party endpoint with one validated call, one uniquely associated create sidecar, an empty `structuredPatch`, and one healthy UUID-owned result. Final probe 94b likewise completed all three correlation cases from its exact final source. All final stderr files were empty.
+A later boundary review closed five additional gate defects: dynamic object keys can no longer publish prose, paths, or IDs; Bash command substitution inside double quotes fails closed; Write requires exact create semantics; fixture tests invoke the portable Node test runner; and live execution requires OAuth-only credentials. Diagnosis of the live retry exposed one more environment boundary: an inherited custom `ANTHROPIC_BASE_URL` routed a valid subscription token to a gateway that rejected it as an API key, so the source now rejects custom base URLs and alternate cloud-provider routes before querying.
+
+The final whole-boundary Codex review found seven more edge cases and all were repaired: probe 94b now rejects unhealthy success frames, emits structured JSON for lifecycle failures, scopes compact markers to the second submitted turn, and rejects an empty `--case`; probe 94 requires nonempty IDs and exactly one unresolved `tool_result` before sidecar association; the fixture's `npm test` command names both files explicitly for Windows Node 18; and observed-family totals are correctly labeled as Bash-call counts. The exact review-fixed sources passed both self-tests, TypeScript compilation, forced safe-lifecycle and empty-case regressions, the directed Write case against Anthropic's first-party endpoint, and all three live correlation cases. Write produced one validated call, one uniquely associated create sidecar, an empty `structuredPatch`, and one healthy UUID-owned result. Every P94b result reported `unhealthyText: false`, and all final stderr files were empty.
 
 Thus every natural case plus Write passed the gate, while the original successful 328-call run remains the sole canonical frequency census; sharded and final safety-validation counts are not silently combined with it.
 
@@ -112,7 +114,7 @@ The 141 Bash calls contained 236 safely recorded command heads because calls may
 | `cut` | 1 | `true` | 1 |
 | other safe/unknown | 7 |  |  |
 
-The observer found 73 search, 7 read, 3 list, and 5 ignored command statements. `Kr_` classified 65 whole Bash calls and rejected 76 as unclassifiable. Its family tags are overlapping within a classified chain: 65 had search semantics, 5 also had read semantics, and 1 also had list semantics.
+The observer found search heads in 73 Bash calls, read heads in 7, list heads in 3, and ignored heads in 5. Each family is counted at most once per Bash call even when a command chain contains multiple matching heads. `Kr_` classified 65 whole Bash calls and rejected 76 as unclassifiable. Its family tags are overlapping within a classified chain: 65 had search semantics, 5 also had read semantics, and 1 also had list semantics.
 
 The scanner preserves ordinary redirect ownership: `rg marker > hits.txt` remains search-classifiable, while `unknown-command marker > hits.txt` remains unclassifiable. It also preserves `Kr_`'s conservative all-or-nothing rule: a recognized search/read/list head in a chain with an unknown head does not make the complete chain eligible for collapse.
 
