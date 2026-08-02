@@ -16,7 +16,7 @@ import wrapAnsi from "wrap-ansi";
 import type { RenderLine, Segment } from "./render.js";
 import { Line } from "./Transcript.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
-import { bashArgument, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
+import { bashArgument, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
 import type { ToolEvent } from "./transcriptModel.js";
 
 /** Five columns, and the FIFTH is U+00A0: upstream emits `["  ", "⎿ \xA0"]` so the cell after the connector is not a
@@ -88,9 +88,31 @@ const statusToken = (status: ToolStatus): "inactive" | "success" | "error" => (s
  *  hyperlinked). Any other tool with a `path`-named field — Grep's directory scope, an MCP tool's free-form input —
  *  keeps its own first argument and never gets an OSC-8 file link hijacked onto it. */
 const FILE_PATH_TOOLS = new Set(["Read", "Edit", "Write"]);
-function headerArgument(event: ToolEvent, options: ProjectionOptions): string {
-  if (event.name === "Bash") return bashArgument(event.input, options.verbose);
+const sedTarget = (event: ToolEvent, platform: NodeJS.Platform): string | undefined =>
+  (event.name === "Bash" && isRecord(event.input) && typeof event.input.command === "string" ? sedInPlaceTarget(event.input.command.trim(), platform) : undefined);
+/** Upstream `userFacingName`: Edit resolves through `LEo` — `old_string === ""` is a creation, anything else an
+ *  update — and a proven `sed -i` Bash command takes the same resolver with a nonempty old_string, so its row reads
+ *  `Update`. (`LEo`'s plan-path "Updated plan" variant needs plan-mode state F1 does not model.) */
+function displayName(event: ToolEvent, options: ProjectionOptions): string {
+  if (event.name === "Edit" && isRecord(event.input)) return event.input.old_string === "" ? "Create" : "Update";
+  if (sedTarget(event, options.platform) !== undefined) return "Update";
+  return event.name;
+}
+/** `undefined` (not `""`) means the header renders the bare name with NO parens — upstream's Agent row does that
+ *  whenever `description` or `prompt` is missing, because its renderToolUseMessage returns null. */
+function headerArgument(event: ToolEvent, options: ProjectionOptions): string | undefined {
   const input = isRecord(event.input) ? event.input : {};
+  if (event.name === "Bash") {
+    // Upstream `hHH`: a proven sed target renders through `wd()` (the display path), raw only when verbose.
+    const target = sedTarget(event, options.platform);
+    if (target !== undefined) return options.verbose ? target : displayPath(target, options.cwd, options.home);
+    return bashArgument(event.input, options.verbose);
+  }
+  if (event.name === "Agent") {
+    // Corpus 01#507: the description, whitespace-collapsed; null when either description or prompt is missing.
+    if (typeof input.description !== "string" || typeof input.prompt !== "string") return undefined;
+    return input.description.replace(/\s+/g, " ").trim();
+  }
   if (FILE_PATH_TOOLS.has(event.name)) {
     const path = typeof input.file_path === "string" ? input.file_path : typeof input.path === "string" ? input.path : "";
     if (path) return osc8FileLink(resolve(options.cwd, path), displayPath(path, options.cwd, options.home));
@@ -103,12 +125,14 @@ function headerArgument(event: ToolEvent, options: ProjectionOptions): string {
  *  argument. The macOS bullet is the heavier `⏺`; every other platform gets `●`. */
 function headerLine(event: ToolEvent, status: ToolStatus, options: ProjectionOptions): RenderLine {
   const color = resolveThemeColor(themeTokens()[statusToken(status)]);
-  const argument = headerArgument(event, options);
+  const name = displayName(event, options), argument = headerArgument(event, options);
   // The 600 ms pending blink: a phase function of `now`, so the caller re-renders on its own clock and the
   // projection stays pure (no timer, no cached frame).
   const bullet: Segment = { text: options.platform === "darwin" ? "⏺ " : "● ", color, ...(status === "running" ? { dim: Math.floor(options.now / 600) % 2 === 0 } : {}) };
-  const segments: Segment[] = [bullet, { text: event.name, bold: true }, { text: "(" }, { text: argument }, { text: ")" }];
-  return { text: `${bullet.text}${event.name}(${argument})`, segments };
+  const segments: Segment[] = argument === undefined
+    ? [bullet, { text: name, bold: true }]
+    : [bullet, { text: name, bold: true }, { text: "(" }, { text: argument }, { text: ")" }];
+  return { text: argument === undefined ? `${bullet.text}${name}` : `${bullet.text}${name}(${argument})`, segments };
 }
 
 /** Upstream `y_s` `trimEnd`s the WHOLE result before it folds anything, so trailing blank rows never buy a fold slot
@@ -162,7 +186,9 @@ export function renderToolEvent(event: ToolEvent, normalized: NormalizedToolResu
 /** The sole gutter owner. `start`/`end` slice the body (the Ctrl-O pager scrolls a long result without re-projecting
  *  it); `showGutter={false}` keeps the five-column indent while dropping the connector for a continuation page. */
 export function RenderItemView({ item, start, end, showGutter = true }: { item: RenderItem; start?: number; end?: number; showGutter?: boolean }): React.ReactElement {
-  if (item.kind === "line") return <Line l={item.line} />;
+  // LT10: the header row truncates at the terminal edge (upstream `wrap:"truncate-end"`) — an MCP-length name must
+  // never wrap one header into several transcript rows. Body rows keep wrapping; fold already sized them.
+  if (item.kind === "line") return <Line l={item.line} wrap="truncate-end" />;
   const body = item.body.slice(start ?? 0, end ?? item.body.length);
   return (
     <Box flexDirection="row">

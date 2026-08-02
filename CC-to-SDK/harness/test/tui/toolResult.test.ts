@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
-import { bashArgument, formatGenericError } from "../../src/tui/toolResult.js";
+import { bashArgument, formatGenericError, sedInPlaceTarget } from "../../src/tui/toolResult.js";
 import { BASH_CALL, BASH_RESULT_WITH_SIDECAR, EDIT_CALL, EDIT_RESULT_WITH_SIDECAR, READ_CALL, READ_RESULT_FLAT, READ_RESULT_WITH_SIDECAR, WRITE_CALL, WRITE_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
 
 function eventForPair(call: Record<string, unknown>, result: Record<string, unknown>) { const doc = new TranscriptDocument(); doc.appendSdk("host", call); doc.appendSdk("host", result); return doc.toolEvents()[0]!; }
@@ -57,6 +57,19 @@ describe("F1 structured-first results", () => {
     for (const command of ["sed -i 's/x/y/' a.txt b.txt", "sed -i 's/x/y/' a.txt > log", "sed -i 's/x/y/' a.txt | cat", "sed -n -i 's/x/y/' a.txt", "sed -i 'd' f.txt", "sed -i 's/x/y/' a.txt && echo done", "sed 's/x/y/' f.txt", "sed -i 's/x/y/'", "sed -i -e 's/a/b/' -e 's/c/d/' f.txt",
       "sed -i 's/a/b/' *.ts", "sed -i 's/a/b/' a?.ts", "sed -i 's/a/b/' [ab].ts", "sed -i 's/a/b/' {a,b}.ts", "sed -i 's/a/b/' ~/f.ts"])
       expect(bashArgument({ command }, false)).toBe(command);
+  });
+  it("rejects a Windows network-path sed target on win32 but accepts it on darwin", () => {
+    const command = "sed -i 's/a/b/' //server/share/f";
+    expect(sedInPlaceTarget(command, "win32")).toBeUndefined();
+    expect(sedInPlaceTarget(command, "darwin")).toBe("//server/share/f");
+    expect(sedInPlaceTarget("sed -i 's/a/b/' f.txt", "win32")).toBe("f.txt");
+  });
+  it("strips underline SGR from the error projection while rawContent keeps it", () => {
+    const content = "\u001b[4mboom\u001b[24m failed";
+    const event = { id: "u1", name: "FutureTool", input: {}, callSequence: 1, route: "top-level" as const, result: { content, isError: true, resultSequence: 2 } };
+    const result = normalizeToolResult(event);
+    expect(result.output).toBe("Error: boom\u001b[24m failed");   // only the underline-ON sequence goes; 24 (off) survives, exactly as upstream L3t leaves it
+    expect(result.rawContent).toBe(content);
   });
   it("normalizes LT15 generic errors without losing their raw source", () => {
     expect(formatGenericError({ message: "not text" }, false)).toBe("Tool execution failed");

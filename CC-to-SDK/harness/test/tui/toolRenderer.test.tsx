@@ -9,9 +9,9 @@ import type { RenderLine } from "../../src/tui/render.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 
-async function rawInk(element: React.ReactElement): Promise<string> {
+async function rawInk(element: React.ReactElement, columns = 100): Promise<string> {
   let output = "";
-  const stdout = Object.assign(new Writable({ write(chunk, _encoding, callback) { output += Buffer.from(chunk).toString("utf8"); callback(); } }), { isTTY: true, columns: 100, rows: 40, getColorDepth: () => 24, hasColors: (_count?: number) => true });
+  const stdout = Object.assign(new Writable({ write(chunk, _encoding, callback) { output += Buffer.from(chunk).toString("utf8"); callback(); } }), { isTTY: true, columns, rows: 40, getColorDepth: () => 24, hasColors: (_count?: number) => true });
   const app = renderInk(element, { stdout: stdout as unknown as NodeJS.WriteStream, exitOnCtrlC: false });
   await new Promise((resolve) => setTimeout(resolve, 20));
   app.unmount();
@@ -135,6 +135,25 @@ describe("F1 shared tool renderer", () => {
   });
   it("trims the padding on the last nonblank line so it cannot wrap into a phantom row", () => {
     expect(bodyOf(renderToolEvent(read, { ...normalized, output: "abc        ", outputLines: ["abc        "] }, options)).map((line) => line.text)).toEqual(["abc"]);
+  });
+  it("labels a proven sed -i row Update with a display path, and Edit rows Create/Update", () => {
+    const sed = { id: "b1", name: "Bash", input: { command: "sed -i '' 's/a/b/' /work/src/app.ts" }, callSequence: 1, route: "top-level" as const, result: { content: "", isError: false, resultSequence: 2 } };
+    expect(renderToolEvent(sed, { ...normalized, tool: "Bash", summary: "Bash" }, options)[0]).toMatchObject({ kind: "line", line: { segments: expect.arrayContaining([expect.objectContaining({ text: "Update", bold: true }), expect.objectContaining({ text: "src/app.ts" })]) } });
+    const create = { ...sed, id: "e1", name: "Edit", input: { file_path: "/work/a.ts", old_string: "", new_string: "x" } };
+    expect(renderToolEvent(create, { ...normalized, tool: "Edit", summary: "Edit" }, options)[0]).toMatchObject({ kind: "line", line: { segments: expect.arrayContaining([expect.objectContaining({ text: "Create", bold: true })]) } });
+    const update = { ...create, input: { file_path: "/work/a.ts", old_string: "y", new_string: "x" } };
+    expect(renderToolEvent(update, { ...normalized, tool: "Edit", summary: "Edit" }, options)[0]).toMatchObject({ kind: "line", line: { segments: expect.arrayContaining([expect.objectContaining({ text: "Update", bold: true })]) } });
+  });
+  it("collapses Agent description whitespace and drops the parens when description or prompt is missing", () => {
+    const agent = { id: "a1", name: "Agent", input: { description: "do\n  the   thing", prompt: "p" }, callSequence: 1, route: "top-level" as const };
+    expect((renderToolEvent(agent, normalizeToolResult(agent), options)[0] as { line: { text: string } }).line.text).toBe("⏺ Agent(do the thing)");
+    const bare = { ...agent, id: "a2", input: { description: "d only" } };
+    expect((renderToolEvent(bare, normalizeToolResult(bare), options)[0] as { line: { text: string } }).line.text).toBe("⏺ Agent");
+  });
+  it("truncates a long header to one terminal row instead of wrapping (LT10)", async () => {
+    const long = { ...read, input: { file_path: "/work/" + "a".repeat(300) + ".ts" } };
+    const rows = plain(await rawInk(<RenderItemView item={renderToolEvent(long, normalized, { ...options, columns: 40 })[0]!} />, 40)).split("\n").filter((row) => row.trim() !== "");
+    expect(rows).toHaveLength(1);
   });
   it("retains a resolved target and cwd-first label in BEL-terminated OSC-8 from the actual tool header", async () => {
     const relativeRead = { ...read, input: { file_path: "src/app.ts" } };

@@ -13,8 +13,8 @@ const ink = (color?: string) => (color === undefined ? undefined : resolveThemeC
 
 /** RenderLine → <Text>. Exported because PlanDialog renders renderMarkdown() output the same way — one
  *  renderer, so a styling-rule change can't silently drift between the transcript and the dialogs. */
-export const Line = ({ l }: { l: RenderLine }) => (
-  <Text>
+export const Line = ({ l, wrap }: { l: RenderLine; wrap?: "wrap" | "truncate-end" }) => (
+  <Text wrap={wrap}>
     {l.gutter ? <Text color={ink(l.gutter.color)} dimColor={l.gutter.dim}>{l.gutter.text}</Text> : null}
     {l.segments
       ? l.segments.map((s, i) => <Text key={i} color={ink(s.color)} dimColor={s.dim} bold={s.bold} italic={s.italic}>{s.text}</Text>)

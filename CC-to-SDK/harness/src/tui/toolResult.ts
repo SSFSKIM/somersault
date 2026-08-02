@@ -79,7 +79,7 @@ function simpleCommandTokens(command: string): string[] | undefined {
  *  `sed`, in-place, at most one script and it must parse as `s/pattern/replacement/flags` with sed's own flag set,
  *  and exactly one remaining operand. A second file, a redirection, a pipe, an unknown flag or a non-substitute
  *  script all keep the clipped command, because none of them edit exactly one named file. */
-function sedInPlaceTarget(command: string): string | undefined {
+export function sedInPlaceTarget(command: string, platform: string = process.platform): string | undefined {
   const tokens = simpleCommandTokens(command);
   if (!tokens || tokens[0] !== "sed") return undefined;
   const rest = tokens.slice(1);
@@ -107,7 +107,12 @@ function sedInPlaceTarget(command: string): string | undefined {
     if (ch === "/") { if (field === 2) return undefined; field++; continue; }
     fields[field] += ch;
   }
-  return field === 2 && /^[gpimIM1-9]*$/.test(fields[2]) ? file : undefined;
+  if (field !== 2 || !/^[gpimIM1-9]*$/.test(fields[2])) return undefined;
+  // Upstream `Kk` runs only on Windows: a `//server/share` or `\\server\share` target is a NETWORK path there,
+  // and the swap must not present a network write as "the edited file". On POSIX the same bytes are a legal
+  // local path and upstream accepts them.
+  if (platform === "win32" && (/^[\\/]{2}/.test(file) || /\\\\[^ \t\r\n\f\v\\/]+/.test(file) || /(?<!:)\/\/[^ \t\r\n\f\v\\/]+/.test(file))) return undefined;
+  return file;
 }
 
 /** LT12: the Bash header argument, read ONLY from the complete retained input so compact and detailed projections
@@ -134,6 +139,8 @@ export function bashArgument(input: unknown, verbose: boolean): string {
  *  its own framing routinely push it off the front) is the harness's own malformed-call signal and reads as such;
  *  an existing `Error: `/`Cancelled: ` prefix is left exactly as the tool wrote it. */
 const TOOL_USE_ERROR = /<tool_use_error(?:\s[^>]*)?>([\s\S]*?)<\/tool_use_error>/i;
+/** Upstream `L3t`, verbatim: remove any SGR sequence carrying underline-ON parameter 4 (underline-OFF 24 stays). */
+const stripUnderlineSgr = (text: string): string => text.replace(/\u001b\[([0-9]+;)*4(;[0-9]+)*m|\u001b\[4(;[0-9]+)*m|\u001b\[([0-9]+;)*4m/g, "");
 export function formatGenericError(content: unknown, verbose: boolean): string {
   if (typeof content !== "string") return "Tool execution failed";
   const envelope = TOOL_USE_ERROR.exec(content);                             // a MATCHED-but-empty envelope is not a no-match: falling back to
@@ -179,6 +186,8 @@ export function normalizeToolResult(event: ToolEvent, options?: { verbose?: bool
   }
   // A plain `error` is the one status whose PROJECTION is normalized: `interrupted` and `rejected` are their own
   // exact surfaces and pass through untouched, and `rawContent`/`flatText` stay faithful in every case.
-  const failure = status === "error" ? formatGenericError(content, options?.verbose === true) : undefined;
+  // Upstream additionally runs its underline stripper (`L3t`) over the displayed error text — underline-ON SGR
+  // sequences would stack on the semantic error styling — while underline-OFF (24) survives, exactly as it does there.
+  const failure = status === "error" ? stripUnderlineSgr(formatGenericError(content, options?.verbose === true)) : undefined;
   return { tool, status, source: structured ? "structured" : "fallback", rawContent: content, flatText: flat, summary, output: failure ?? outputLines.join("\n"), outputLines: failure === undefined ? outputLines : toLines(failure), ...(structured ? { structured } : {}) };
 }
