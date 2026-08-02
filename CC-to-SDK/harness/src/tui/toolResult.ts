@@ -58,7 +58,13 @@ function simpleCommandTokens(command: string): string[] | undefined {
         const inner = command[i];
         if (inner === '"') { i++; break; }
         if (inner === "$" || inner === "`") return undefined;               // still shell expansion inside double quotes
-        if (inner === "\\" && i + 1 < command.length) { token += command[i + 1]; i++; continue; }
+        if (inner === "\\" && i + 1 < command.length) {
+          // POSIX double quotes: backslash escapes only $ ` " \ — before anything else it is a literal character,
+          // so "foo\q" names foo\q (a Windows-ish path survives) while "fo\$o" names fo$o.
+          const next = command[i + 1]!;
+          if (next === "$" || next === "`" || next === '"' || next === "\\") { token += next; i++; } else token += inner;
+          continue;
+        }
         token += inner;
       }
       fresh = false; continue;

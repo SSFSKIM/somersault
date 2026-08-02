@@ -122,6 +122,20 @@ describe("F1 shared tool renderer", () => {
     expect(bodyOf(renderToolEvent(read, { ...normalized, status: "interrupted", output: "Interrupted", outputLines: ["Interrupted"] }, options))).toEqual([{ text: "Interrupted · What should Claude do instead?", dim: true }]);
     expect(bodyOf(renderToolEvent(read, { ...normalized, status: "rejected", output: "Tool use rejected\ntrailing detail", outputLines: ["Tool use rejected", "trailing detail"] }, options))).toEqual([{ text: "Tool use rejected", dim: true }]);
   });
+  it("still marks overflow when SGR-heavy source exceeds the bound in bytes but not in visual rows", () => {
+    const heavy = "\u001b[31m".repeat(200) + "x";                       // > 120-char bound at width 10, one visual row
+    const rows = foldToolOutput([heavy], 20, { projection: "compact", compactRows: 3, revealOneExtraWithoutMarker: true });
+    expect(rows.at(-1)!.text).toMatch(/^… \+\d+ lines \(ctrl\+o to expand\)$/);
+  });
+  it("links only file-tool paths: Grep keeps its pattern and gets no OSC-8 target", () => {
+    const grep = { id: "grep-1", name: "Grep", input: { pattern: "TODO", path: "src" }, callSequence: 1, route: "top-level" as const, result: { content: "hit", isError: false, resultSequence: 2 } };
+    const header = renderToolEvent(grep, { ...normalized, tool: "Grep", summary: "Grep" }, options)[0]!;
+    expect(header).toMatchObject({ kind: "line", line: { segments: expect.arrayContaining([expect.objectContaining({ text: "TODO" })]) } });
+    expect((header as { line: { text: string } }).line.text).not.toContain("\x1b]8;;");
+  });
+  it("trims the padding on the last nonblank line so it cannot wrap into a phantom row", () => {
+    expect(bodyOf(renderToolEvent(read, { ...normalized, output: "abc        ", outputLines: ["abc        "] }, options)).map((line) => line.text)).toEqual(["abc"]);
+  });
   it("retains a resolved target and cwd-first label in BEL-terminated OSC-8 from the actual tool header", async () => {
     const relativeRead = { ...read, input: { file_path: "src/app.ts" } };
     const header = renderToolEvent(relativeRead, normalized, { ...options, columns: 100 })[0]!;

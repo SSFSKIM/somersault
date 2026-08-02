@@ -72,7 +72,9 @@ export function foldToolOutput(lines: readonly string[], columns: number, option
     if (line.length > room) break;
   }
   const visual = prefix.flatMap((line) => visualRows(line, width));
-  if (visual.length <= options.compactRows + (options.revealOneExtraWithoutMarker ? 1 : 0)) return visual.map((text) => ({ text }));
+  // The no-marker path requires the WHOLE input inside the bound: SGR-heavy source can exceed the bound in bytes
+  // while its clipped prefix wraps to few visual rows, and returning here would silently drop the tail.
+  if (length <= bound && visual.length <= options.compactRows + (options.revealOneExtraWithoutMarker ? 1 : 0)) return visual.map((text) => ({ text }));
   const estimated = length > bound ? Math.max(lines.length, Math.ceil(length / width)) - options.compactRows : 0;
   const hidden = Math.max(visual.length - options.compactRows, estimated), hint = options.projection === "compact" ? "ctrl+o to expand" : "ctrl+e to show all";
   return [...visual.slice(0, options.compactRows).map((text) => ({ text })), { text: `… +${hidden} ${hidden === 1 ? "line" : "lines"} (${hint})`, dim: true }];
@@ -82,11 +84,17 @@ const statusToken = (status: ToolStatus): "inactive" | "success" | "error" => (s
 /** The header argument, always read from the COMPLETE retained input — never from `NormalizedToolResult.summary`,
  *  which is a typed-result row (F3's LT1), not a header. Path tools additionally carry an OSC-8 target: resolved
  *  against cwd so a relative input can never leak as a relative URL, labelled by `displayPath`. */
+/** The file-tool family whose header argument IS a local path (corpus Q4: Read/Edit/Write render `wd(file_path)`
+ *  hyperlinked). Any other tool with a `path`-named field — Grep's directory scope, an MCP tool's free-form input —
+ *  keeps its own first argument and never gets an OSC-8 file link hijacked onto it. */
+const FILE_PATH_TOOLS = new Set(["Read", "Edit", "Write"]);
 function headerArgument(event: ToolEvent, options: ProjectionOptions): string {
   if (event.name === "Bash") return bashArgument(event.input, options.verbose);
   const input = isRecord(event.input) ? event.input : {};
-  const path = typeof input.file_path === "string" ? input.file_path : typeof input.path === "string" ? input.path : "";
-  if (path) return osc8FileLink(resolve(options.cwd, path), displayPath(path, options.cwd, options.home));
+  if (FILE_PATH_TOOLS.has(event.name)) {
+    const path = typeof input.file_path === "string" ? input.file_path : typeof input.path === "string" ? input.path : "";
+    if (path) return osc8FileLink(resolve(options.cwd, path), displayPath(path, options.cwd, options.home));
+  }
   const first = Object.values(input)[0];
   return first === undefined ? "" : typeof first === "string" ? first : JSON.stringify(first);
 }
@@ -106,7 +114,14 @@ function headerLine(event: ToolEvent, status: ToolStatus, options: ProjectionOpt
 /** Upstream `y_s` `trimEnd`s the WHOLE result before it folds anything, so trailing blank rows never buy a fold slot
  *  — and a result that is nothing but whitespace renders no body, which means no gutter block at all. Interior
  *  blanks are content and stay exactly where they are. */
-const withoutTrailingBlanks = (lines: readonly string[]): readonly string[] => { let end = lines.length; while (end > 0 && lines[end - 1]!.trim() === "") end--; return lines.slice(0, end); };
+const withoutTrailingBlanks = (lines: readonly string[]): readonly string[] => {
+  let end = lines.length; while (end > 0 && lines[end - 1]!.trim() === "") end--;
+  const kept = lines.slice(0, end);
+  // Upstream trimEnd()s the WHOLE string, which also strips padding from the last nonblank line — left in place it
+  // would wrap into a phantom empty row (or a bogus marker) before the per-row trim ever saw it.
+  if (kept.length) kept[kept.length - 1] = kept[kept.length - 1]!.trimEnd();
+  return kept;
+};
 /** LT15: a generic error clips by PHYSICAL lines — upstream counts newlines and shows `split("\n").slice(0, 10)` —
  *  NOT by visual rows, and with no four-row exception. So one newline-free 500-character failure stays WHOLE (it
  *  still wraps at render; it is simply never clipped, and never counts as more than one line), while an eleven-line

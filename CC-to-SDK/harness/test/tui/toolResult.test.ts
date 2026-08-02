@@ -49,6 +49,9 @@ describe("F1 structured-first results", () => {
     expect(bashArgument({ command: "sed -E -i '' -e 's/a(b)/\\1/' f.txt" }, false)).toBe("f.txt");
     expect(bashArgument({ not_command: true }, false)).toBe("");
     expect(bashArgument({ command: "sed -i 's/a/b/' '*.ts'" }, false)).toBe("*.ts");   // quoted: a literal file name, not a glob
+    expect(bashArgument({ command: 'sed -i \'\' \'s/a/b/\' "foo\\q"' }, false)).toBe("foo\\q");   // POSIX double quotes keep a backslash before ordinary chars
+    expect(bashArgument({ command: 'sed -i \'\' \'s/a/b/\' "fo\\$o"' }, false)).toBe("fo$o");     // …but consume it before the four specials
+    expect(bashArgument({ command: 'sed -i \'\' \'s/a/b/\' "a\\\\b"' }, false)).toBe("a\\b");
   });
   it("falls back to the clipped command for every unproven sed shape", () => {
     for (const command of ["sed -i 's/x/y/' a.txt b.txt", "sed -i 's/x/y/' a.txt > log", "sed -i 's/x/y/' a.txt | cat", "sed -n -i 's/x/y/' a.txt", "sed -i 'd' f.txt", "sed -i 's/x/y/' a.txt && echo done", "sed 's/x/y/' f.txt", "sed -i 's/x/y/'", "sed -i -e 's/a/b/' -e 's/c/d/' f.txt",
