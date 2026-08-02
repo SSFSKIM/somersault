@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 type UnknownRecord = Record<string, unknown>;
@@ -41,6 +41,7 @@ type ResultFrameProvenance = {
   isOriginatingUserTurn: boolean;
 };
 type ResultFrame = {
+  validShape: boolean;
   subtype: string;
   isError: boolean;
   apiErrorStatus?: number;
@@ -90,6 +91,13 @@ const SEARCH_HEADS = new Set(["find", "grep", "rg", "ag", "ack", "locate", "whic
 const READ_HEADS = new Set(["cat", "head", "tail", "less", "more", "wc", "stat", "file", "strings", "jq", "awk", "cut", "sort", "uniq", "tr"]);
 const LIST_HEADS = new Set(["ls", "tree", "du"]);
 const IGNORED_HEADS = new Set(["echo", "printf", "true", "false", ":"]);
+const SAFE_NON_PATH_TOOLS = new Set(["Agent", "SendMessage", "TaskCreate", "TaskGet", "TaskOutput", "TaskUpdate", "ToolSearch"]);
+const REQUIRED_PATH_TOOLS = new Set(["Edit", "NotebookEdit", "Read", "Write"]);
+const OPTIONAL_PATH_TOOLS = new Set(["Glob", "Grep"]);
+const RESULT_ORIGIN_KINDS = new Set([
+  "human", "channel", "peer", "task-notification", "coordinator", "observer",
+  "auto-continuation", "observer-activity",
+]);
 const ALTERNATE_PROVIDER_ENV_VARS = [
   "ANTHROPIC_BASE_URL",
   "CLAUDE_CODE_USE_ANTHROPIC_AWS",
@@ -375,6 +383,7 @@ function createFixture(): Fixture {
   mkdirSync(join(repo, "test"), { recursive: true });
   mkdirSync(join(repo, "docs"), { recursive: true });
   mkdirSync(config, { recursive: true });
+  mkdirSync(join(root, "tmp"), { recursive: true });
   writeFileSync(join(repo, "package.json"), JSON.stringify({
     name: "header-parser-lab",
     private: true,
@@ -514,6 +523,17 @@ function createFixture(): Fixture {
   }
 }
 
+function validResultFrameShape(message: UnknownRecord): boolean {
+  if (typeof message.subtype !== "string" || typeof message.is_error !== "boolean" || typeof message.result !== "string") return false;
+  if (Object.hasOwn(message, "api_error_status") && message.api_error_status !== null && typeof message.api_error_status !== "number") return false;
+  if (Object.hasOwn(message, "errors") && (!Array.isArray(message.errors) || message.errors.some((value) => typeof value !== "string"))) return false;
+  if (Object.hasOwn(message, "user_message_uuid") && (typeof message.user_message_uuid !== "string" || message.user_message_uuid.length === 0)) return false;
+  if (Object.hasOwn(message, "origin")) {
+    if (!isRecord(message.origin) || typeof message.origin.kind !== "string" || !RESULT_ORIGIN_KINDS.has(message.origin.kind)) return false;
+  }
+  return true;
+}
+
 function resultOrigin(value: unknown): Pick<ResultFrameProvenance, "origin" | "originSubkind"> {
   if (!isRecord(value)) return { origin: "absent", originSubkind: "none" };
   const kind = value.kind;
@@ -521,7 +541,7 @@ function resultOrigin(value: unknown): Pick<ResultFrameProvenance, "origin" | "o
   return { origin, originSubkind: origin === "task-notification" && value.subkind === "scheduled-trigger" ? "scheduled-trigger" : "none" };
 }
 
-function resultFrameProvenance(state: PairState, message: UnknownRecord): ResultFrameProvenance {
+function resultFrameProvenance(state: PairState, message: UnknownRecord, validShape: boolean): ResultFrameProvenance {
   const { origin, originSubkind } = resultOrigin(message.origin);
   const userMessageUuid = typeof message.user_message_uuid === "string" && message.user_message_uuid.length > 0 ? "present" : "missing";
   const user = userMessageUuid === "present" ? state.userMessageRoutes.get(message.user_message_uuid as string) : undefined;
@@ -531,7 +551,8 @@ function resultFrameProvenance(state: PairState, message: UnknownRecord): Result
     : !user.shouldQuery ? "matched-non-query"
     : user.origin !== "human" ? "matched-non-human"
     : "matched-query";
-  const isOriginatingUserTurn = userMessageUuid === "present"
+  const isOriginatingUserTurn = validShape
+    && userMessageUuid === "present"
     && (origin === "absent" || origin === "human")
     && userMessageAssociation === "matched-query";
   return { origin, originSubkind, userMessageUuid, userMessageAssociation, isOriginatingUserTurn };
@@ -594,13 +615,15 @@ function consumeCompletedMessage(state: PairState, message: unknown): void {
     }
   }
   if (message.type === "result") {
+    const validShape = validResultFrameShape(message);
     const texts = [message.result, ...(Array.isArray(message.errors) ? message.errors : [])].filter((value): value is string => typeof value === "string");
     state.resultFrames.push({
+      validShape,
       subtype: safeResultSubtype(message.subtype),
       isError: message.is_error === true,
       ...(typeof message.api_error_status === "number" ? { apiErrorStatus: message.api_error_status } : {}),
       unhealthyText: texts.some(unhealthyResultText),
-      provenance: resultFrameProvenance(state, message),
+      provenance: resultFrameProvenance(state, message, validShape),
     });
   }
 }
@@ -673,6 +696,7 @@ async function runCase(spec: CaseSpec, repetition: number, privateRoots: string[
   try {
     fixture = createFixture();
     privateRoots.push(fixture.root);
+    const probeEnv = isolatedProbeEnv(process.env, fixture);
     const rootTurnUuid = randomUUID();
     state.userMessageRoutes.set(rootTurnUuid, { origin: "human", synthetic: false, shouldQuery: true });
     activeStage = "query";
@@ -684,12 +708,15 @@ async function runCase(spec: CaseSpec, repetition: number, privateRoots: string[
         cwd: fixture.repo,
         settingSources: [],
         tools: spec.tools ?? { type: "preset", preset: "claude_code" },
+        disallowedTools: ["WebFetch", "WebSearch"],
         permissionMode: "auto",
-        canUseTool: async (_name: string, input: unknown) => ({ behavior: "allow", updatedInput: input }),
+        canUseTool: async (name: string, input: unknown) => probeToolDecision(name, input, fixture),
         persistSession: false,
         maxTurns: MAX_TURNS,
         abortController,
-        env: { ...process.env, CLAUDE_CONFIG_DIR: fixture.config },
+        env: probeEnv,
+        sandbox: probeSandbox(probeEnv, fixture),
+        skills: [],
       } as any,
     });
     state.apiProvider = resolvedApiProvider(await q.initializationResult());
@@ -714,6 +741,7 @@ async function runCase(spec: CaseSpec, repetition: number, privateRoots: string[
   if (!failures.length) {
     if (!state.resolvedModel) failures.push({ caseId: spec.id, repetition, stage: "initialization", kind: "missing_resolved_model" });
     if (state.apiProvider !== "firstParty") failures.push({ caseId: spec.id, repetition, stage: "initialization", kind: "unexpected_api_provider" });
+    if (state.resultFrames.some((frame) => !frame.validShape)) failures.push({ caseId: spec.id, repetition, stage: "completion", kind: "malformed_result_frame" });
     const originatingResults = state.resultFrames.filter((frame) => frame.provenance.isOriginatingUserTurn);
     if (originatingResults.length === 0) failures.push({ caseId: spec.id, repetition, stage: "completion", kind: "missing_originating_user_result" });
     for (const subtype of new Set(originatingResults.map((frame) => frame.subtype).filter((value) => value !== "success"))) failures.push({ caseId: spec.id, repetition, stage: "completion", kind: resultSubtypeFailure(subtype) });
@@ -878,14 +906,16 @@ function summarizeResultFrameGroup(frames: ResultFrame[]) {
   const subtypes = new Map<string, number>();
   const apiStatuses = new Map<string, number>();
   let errors = 0;
+  let malformed = 0;
   let unhealthyText = 0;
   for (const frame of frames) {
     bump(subtypes, frame.subtype);
+    if (!frame.validShape) malformed += 1;
     if (frame.isError) errors += 1;
     if (frame.unhealthyText) unhealthyText += 1;
     if (frame.apiErrorStatus !== undefined) bump(apiStatuses, String(frame.apiErrorStatus));
   }
-  return { count: frames.length, subtypes: sortedCounts(subtypes), errors, unhealthyText, apiErrorStatuses: sortedCounts(apiStatuses) };
+  return { count: frames.length, subtypes: sortedCounts(subtypes), errors, malformed, unhealthyText, apiErrorStatuses: sortedCounts(apiStatuses) };
 }
 
 function summarizeResultFrames(outcomes: RunOutcome[]) {
@@ -947,6 +977,70 @@ function oauthCredentialFailure(env: NodeJS.ProcessEnv): string | undefined {
   return undefined;
 }
 
+function credentialEnvNames(env: NodeJS.ProcessEnv): string[] {
+  return Object.entries(env)
+    .filter(([name, value]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && Boolean(value) && /(api[_-]?key|token|secret|password|credential|auth)/i.test(name))
+    .map(([name]) => name)
+    .sort();
+}
+
+function isolatedProbeEnv(env: NodeJS.ProcessEnv, fixture: Fixture): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {};
+  for (const name of ["COLORTERM", "COMSPEC", "LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "PATH", "PATHEXT", "SHELL", "SystemRoot", "TERM", "USER", "WINDIR"]) {
+    if (env[name]) result[name] = env[name];
+  }
+  result.CLAUDE_CODE_OAUTH_TOKEN = env.CLAUDE_CODE_OAUTH_TOKEN;
+  result.CLAUDE_CONFIG_DIR = fixture.config;
+  result.HOME = fixture.root;
+  result.USERPROFILE = fixture.root;
+  const privateTmp = join(fixture.root, "tmp");
+  result.TMPDIR = privateTmp;
+  result.TEMP = privateTmp;
+  result.TMP = privateTmp;
+  result.GIT_CONFIG_NOSYSTEM = "1";
+  result.GIT_CONFIG_GLOBAL = process.platform === "win32" ? "NUL" : "/dev/null";
+  return result;
+}
+
+function pathWithin(root: string, value: string): boolean {
+  const target = resolve(root, value);
+  const rel = relative(root, target);
+  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+}
+
+function toolInputPath(input: UnknownRecord): string | undefined {
+  for (const key of ["file_path", "filePath", "notebook_path", "path"]) if (typeof input[key] === "string") return input[key];
+  return undefined;
+}
+
+function probeToolDecision(name: string, input: unknown, fixture: Fixture) {
+  const deny = { behavior: "deny" as const, message: "Probe tools are restricted to the generated fixture" };
+  if (!isRecord(input)) return deny;
+  if (name === "Bash") return input.dangerouslyDisableSandbox === true ? deny : { behavior: "allow" as const, updatedInput: input };
+  if (REQUIRED_PATH_TOOLS.has(name)) {
+    const path = toolInputPath(input);
+    return path && pathWithin(fixture.repo, path) ? { behavior: "allow" as const, updatedInput: input } : deny;
+  }
+  if (OPTIONAL_PATH_TOOLS.has(name)) {
+    const path = toolInputPath(input);
+    return !path || pathWithin(fixture.repo, path) ? { behavior: "allow" as const, updatedInput: input } : deny;
+  }
+  return SAFE_NON_PATH_TOOLS.has(name) ? { behavior: "allow" as const, updatedInput: input } : deny;
+}
+
+function probeSandbox(env: NodeJS.ProcessEnv, fixture: Fixture) {
+  return {
+    enabled: true,
+    failIfUnavailable: true,
+    autoAllowBashIfSandboxed: false,
+    allowUnsandboxedCommands: false,
+    excludedCommands: [],
+    network: { allowedDomains: [], deniedDomains: ["*"], strictAllowlist: true, allowAllUnixSockets: false, allowLocalBinding: false },
+    filesystem: { denyRead: [homedir(), tmpdir()], allowRead: [fixture.repo, fixture.config], allowWrite: [fixture.repo] },
+    credentials: { envVars: credentialEnvNames(env).map((name) => ({ name, mode: "deny" as const })) },
+  };
+}
+
 function privacyReason(output: string, privateRoots: string[], secrets: string[], home: string): string | undefined {
   if (secrets.some((secret) => output.includes(secret))) return "credential";
   if (privateRoots.some((root) => output.includes(root))) return "private_root";
@@ -975,7 +1069,19 @@ function safeConfiguration(cases: readonly CaseSpec[]) {
     const value = Array.isArray(tools) ? { type: "explicit", names: [...tools].sort() } : tools;
     return [JSON.stringify(value), value] as const;
   })).values()];
-  return { modelAlias: MODEL_ALIAS, effort: "xhigh", permissionMode: "auto", settingSources: [], tools: configurations.length === 1 ? configurations[0] : { type: "mixed", configurations }, maxTurns: MAX_TURNS, caseTimeoutMs: CASE_TIMEOUT_MS };
+  return {
+    modelAlias: MODEL_ALIAS,
+    effort: "xhigh",
+    permissionMode: "auto",
+    settingSources: [],
+    skills: [],
+    tools: configurations.length === 1 ? configurations[0] : { type: "mixed", configurations },
+    disallowedTools: ["WebFetch", "WebSearch"],
+    subprocessEnvironment: "minimal-oauth-only",
+    sandbox: { enabled: true, failIfUnavailable: true, credentialEnv: "deny", network: "deny-all", filesystem: "home-and-temp-deny-with-fixture-read-allow", unsandboxedCommands: false },
+    maxTurns: MAX_TURNS,
+    caseTimeoutMs: CASE_TIMEOUT_MS,
+  };
 }
 
 function emitJson(report: UnknownRecord, privateRoots: string[] = [], secrets: string[] = credentialValues(process.env)): boolean {
@@ -1173,13 +1279,18 @@ function selfTest(): void {
 
   assert.equal(unhealthyResultText("API Error: 502 unknown provider for model"), true);
   for (const text of ["No tests are disabled.", "The fixture needs no API key.", "Billing is out of scope.", "completed normally"]) assert.equal(unhealthyResultText(text), false);
+  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, api_error_status: null, result: "done", origin: { kind: "human" }, user_message_uuid: "turn" }), true);
+  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, api_error_status: "401", result: "done", origin: { kind: "human" }, user_message_uuid: "turn" }), false);
+  assert.equal(validResultFrameShape({ subtype: "success", result: "done", origin: { kind: "human" }, user_message_uuid: "turn" }), false);
+  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, result: "done", origin: "human", user_message_uuid: "turn" }), false);
+  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, result: {}, user_message_uuid: "turn" }), false);
   assert.equal(resultSubtypeFailure("error_max_turns"), "error_max_turns");
   assert.equal(resultSubtypeFailure("custom"), "non_success_result");
   const resultSummary = summarizeResultFrames([{
     calls: [], failures: [], structuredResult: { messages: 0, unmatched: 0, ambiguous: 0, duplicates: 0, unassociatedShapes: [] },
     resultFrames: [
-      { subtype: "success", isError: false, unhealthyText: false, provenance: { origin: "human", originSubkind: "none", userMessageUuid: "present", userMessageAssociation: "matched-query", isOriginatingUserTurn: true } },
-      { subtype: "success", isError: false, unhealthyText: false, provenance: { origin: "task-notification", originSubkind: "scheduled-trigger", userMessageUuid: "missing", userMessageAssociation: "missing", isOriginatingUserTurn: false } },
+      { validShape: true, subtype: "success", isError: false, unhealthyText: false, provenance: { origin: "human", originSubkind: "none", userMessageUuid: "present", userMessageAssociation: "matched-query", isOriginatingUserTurn: true } },
+      { validShape: true, subtype: "success", isError: false, unhealthyText: false, provenance: { origin: "task-notification", originSubkind: "scheduled-trigger", userMessageUuid: "missing", userMessageAssociation: "missing", isOriginatingUserTurn: false } },
     ],
   }]);
   assert.deepEqual(resultSummary.perRun, {
@@ -1206,6 +1317,25 @@ function selfTest(): void {
   for (const key of ALTERNATE_PROVIDER_ENV_VARS) {
     assert.equal(oauthCredentialFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth", [key]: "enabled" }), "alternate_provider_route_present");
   }
+  assert.deepEqual(credentialEnvNames({ CLAUDE_CODE_OAUTH_TOKEN: "oauth", GH_TOKEN: "github", PATH: "/bin" }), ["CLAUDE_CODE_OAUTH_TOKEN", "GH_TOKEN"]);
+  const policyRoot = join(probeTempParent(), "p94-policy-root");
+  const policyFixture: Fixture = { root: policyRoot, repo: join(policyRoot, "repo"), config: join(policyRoot, "config") };
+  const isolated = isolatedProbeEnv({ PATH: "/bin", HOME: "/host", CLAUDE_CODE_OAUTH_TOKEN: "oauth", GH_TOKEN: "github", ANTHROPIC_BASE_URL: "https://gateway.invalid" }, policyFixture);
+  assert.equal(isolated.CLAUDE_CODE_OAUTH_TOKEN, "oauth");
+  assert.equal(isolated.GH_TOKEN, undefined);
+  assert.equal(isolated.ANTHROPIC_BASE_URL, undefined);
+  assert.equal(isolated.HOME, policyRoot);
+  assert.equal(pathWithin(policyFixture.repo, join(policyFixture.repo, "src", "app.ts")), true);
+  assert.equal(pathWithin(policyFixture.repo, join(policyRoot, "outside.ts")), false);
+  assert.equal(probeToolDecision("Read", { file_path: join(policyFixture.repo, "src", "app.ts") }, policyFixture).behavior, "allow");
+  assert.equal(probeToolDecision("Read", { file_path: join(policyRoot, "outside.ts") }, policyFixture).behavior, "deny");
+  assert.equal(probeToolDecision("Bash", { command: "true", dangerouslyDisableSandbox: true }, policyFixture).behavior, "deny");
+  const sandbox = probeSandbox(isolated, policyFixture);
+  assert.equal(sandbox.enabled, true);
+  assert.equal(sandbox.failIfUnavailable, true);
+  assert.equal(sandbox.allowUnsandboxedCommands, false);
+  assert.deepEqual(sandbox.network.deniedDomains, ["*"]);
+  assert.equal(sandbox.credentials.envVars.some((entry) => entry.name === "CLAUDE_CODE_OAUTH_TOKEN" && entry.mode === "deny"), true);
 
   const fixture = createFixture();
   try {

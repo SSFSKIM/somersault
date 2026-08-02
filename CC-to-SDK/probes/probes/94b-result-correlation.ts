@@ -13,6 +13,7 @@ type Association = "first" | "second" | "other" | "missing";
 type ApiProvider = "firstParty" | "missing" | "other";
 type ObservedResult = {
   index: number;
+  validShape: boolean;
   subtype: string;
   origin: SubmittedOrigin | "absent" | "other";
   userMessageAssociation: Association;
@@ -37,6 +38,10 @@ const EXPECTED_SDK_VERSION = "0.3.220";
 const MODEL_ALIAS = "fable";
 const CASE_TIMEOUT_MS = 600_000;
 const CASE_IDS: CaseId[] = ["human-compact", "automatic-normal", "automatic-compact"];
+const RESULT_ORIGIN_KINDS = new Set([
+  "human", "channel", "peer", "task-notification", "coordinator", "observer",
+  "auto-continuation", "observer-activity",
+]);
 const ALTERNATE_PROVIDER_ENV_VARS = [
   "ANTHROPIC_BASE_URL",
   "CLAUDE_CODE_USE_ANTHROPIC_AWS",
@@ -67,6 +72,22 @@ function probeTempParent(): string {
   return parent;
 }
 
+function isolatedProbeEnv(env: NodeJS.ProcessEnv, root: string, config: string): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {};
+  for (const name of ["COLORTERM", "COMSPEC", "LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "PATH", "PATHEXT", "SHELL", "SystemRoot", "TERM", "USER", "WINDIR"]) {
+    if (env[name]) result[name] = env[name];
+  }
+  result.CLAUDE_CODE_OAUTH_TOKEN = env.CLAUDE_CODE_OAUTH_TOKEN;
+  result.CLAUDE_CONFIG_DIR = config;
+  result.HOME = root;
+  result.USERPROFILE = root;
+  const privateTmp = join(root, "tmp");
+  result.TMPDIR = privateTmp;
+  result.TEMP = privateTmp;
+  result.TMP = privateTmp;
+  return result;
+}
+
 function oauthEnvironmentFailure(env: NodeJS.ProcessEnv): string | undefined {
   if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) return "non_oauth_credentials_present";
   if (!env.CLAUDE_CODE_OAUTH_TOKEN) return "oauth_token_missing";
@@ -94,6 +115,21 @@ function unhealthyResultText(value: unknown): boolean {
   return typeof value === "string" && /^\s*API Error:/i.test(value);
 }
 
+function safeResultSubtype(value: unknown): string {
+  return typeof value === "string" && /^[A-Za-z0-9_:-]{1,80}$/.test(value) ? value : "unknown";
+}
+
+function validResultFrameShape(frame: Record<string, any>): boolean {
+  if (typeof frame.subtype !== "string" || typeof frame.is_error !== "boolean" || typeof frame.result !== "string") return false;
+  if (Object.hasOwn(frame, "api_error_status") && frame.api_error_status !== null && typeof frame.api_error_status !== "number") return false;
+  if (Object.hasOwn(frame, "errors") && (!Array.isArray(frame.errors) || frame.errors.some((value: unknown) => typeof value !== "string"))) return false;
+  if (Object.hasOwn(frame, "user_message_uuid") && (typeof frame.user_message_uuid !== "string" || frame.user_message_uuid.length === 0)) return false;
+  if (Object.hasOwn(frame, "origin")) {
+    if (frame.origin === null || typeof frame.origin !== "object" || typeof frame.origin.kind !== "string" || !RESULT_ORIGIN_KINDS.has(frame.origin.kind)) return false;
+  }
+  return true;
+}
+
 function compactLifecycleMarker(frame: Record<string, any>, secondSubmitted: boolean): "status:compacting" | "compact_boundary" | undefined {
   if (!secondSubmitted || frame.type !== "system") return undefined;
   if (frame.subtype === "status" && frame.status === "compacting") return "status:compacting";
@@ -107,8 +143,8 @@ function expectedFailures(outcome: Omit<CaseOutcome, "failures">): string[] {
   if (outcome.results.length !== 2) failures.push("expected_exactly_two_results");
   const first = outcome.results[0];
   const second = outcome.results[1];
-  if (!first || first.subtype !== "success" || first.isError || (first.apiErrorStatus ?? 0) >= 400 || first.unhealthyText || first.origin !== "human" || first.userMessageAssociation !== "first") failures.push("invalid_first_result");
-  if (!second || second.subtype !== "success" || second.isError || (second.apiErrorStatus ?? 0) >= 400 || second.unhealthyText) failures.push("invalid_second_result");
+  if (!first || !first.validShape || first.subtype !== "success" || first.isError || (first.apiErrorStatus ?? 0) >= 400 || first.unhealthyText || first.origin !== "human" || first.userMessageAssociation !== "first") failures.push("invalid_first_result");
+  if (!second || !second.validShape || second.subtype !== "success" || second.isError || (second.apiErrorStatus ?? 0) >= 400 || second.unhealthyText) failures.push("invalid_second_result");
   if (outcome.caseId === "human-compact") {
     if (!second || second.origin !== "human" || second.userMessageAssociation !== "missing") failures.push("invalid_human_compact_correlation");
     if (!second?.compactLifecycleSeen) failures.push("missing_human_compact_lifecycle");
@@ -125,7 +161,8 @@ function expectedFailures(outcome: Omit<CaseOutcome, "failures">): string[] {
 async function runCase(caseId: CaseId): Promise<CaseOutcome> {
   const root = mkdtempSync(join(probeTempParent(), "p94b-result-correlation-"));
   const cwd = join(root, "repo"), config = join(root, "config");
-  mkdirSync(cwd); mkdirSync(config);
+  mkdirSync(cwd); mkdirSync(config); mkdirSync(join(root, "tmp"));
+  const probeEnv = isolatedProbeEnv(process.env, root, config);
   const firstUuid = randomUUID(), secondUuid = randomUUID();
   const secondOrigin: SubmittedOrigin = caseId === "human-compact" ? "human" : "auto-continuation";
   const secondMode: "normal" | "compact" = caseId === "automatic-normal" ? "normal" : "compact";
@@ -152,10 +189,12 @@ async function runCase(caseId: CaseId): Promise<CaseOutcome> {
       cwd,
       permissionMode: "bypassPermissions",
       settingSources: [],
+      tools: [],
+      skills: [],
       persistSession: false,
       maxTurns: 4,
       abortController,
-      env: { ...process.env, CLAUDE_CONFIG_DIR: config },
+      env: probeEnv,
     } });
     apiProvider = resolvedApiProvider(await stream.initializationResult());
     for await (const message of stream) {
@@ -169,10 +208,12 @@ async function runCase(caseId: CaseId): Promise<CaseOutcome> {
       }
       if (frame.type !== "result") continue;
       const ownedBy = association(frame.user_message_uuid, firstUuid, secondUuid);
+      const validShape = validResultFrameShape(frame);
       const texts = [frame.result, ...(Array.isArray(frame.errors) ? frame.errors : [])];
       results.push({
         index: results.length + 1,
-        subtype: typeof frame.subtype === "string" ? frame.subtype : "missing",
+        validShape,
+        subtype: safeResultSubtype(frame.subtype),
         origin: frame.origin?.kind === "human" || frame.origin?.kind === "auto-continuation" ? frame.origin.kind : frame.origin?.kind == null ? "absent" : "other",
         userMessageAssociation: ownedBy,
         isError: frame.is_error === true,
@@ -196,7 +237,7 @@ async function runCase(caseId: CaseId): Promise<CaseOutcome> {
 }
 
 function selfTest(): void {
-  const baseFirst: ObservedResult = { index: 1, subtype: "success", origin: "human", userMessageAssociation: "first", isError: false, unhealthyText: false, resultKind: "string", compactLifecycleSeen: false };
+  const baseFirst: ObservedResult = { index: 1, validShape: true, subtype: "success", origin: "human", userMessageAssociation: "first", isError: false, unhealthyText: false, resultKind: "string", compactLifecycleSeen: false };
   const outcome = (caseId: CaseId, second: ObservedResult): Omit<CaseOutcome, "failures"> => ({
     caseId,
     apiProvider: "firstParty",
@@ -213,6 +254,12 @@ function selfTest(): void {
   assert.equal(expectedFailures(outcome("automatic-normal", { ...baseFirst, index: 2, origin: "absent", userMessageAssociation: "second", unhealthyText: true })).includes("invalid_second_result"), true);
   assert.equal(unhealthyResultText("API Error: 401"), true);
   assert.equal(unhealthyResultText("completed normally"), false);
+  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, api_error_status: null, result: "done", origin: { kind: "human" }, user_message_uuid: "turn" }), true);
+  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, api_error_status: "401", result: "done", origin: { kind: "human" }, user_message_uuid: "turn" }), false);
+  assert.equal(validResultFrameShape({ subtype: "success", result: "done", origin: { kind: "human" }, user_message_uuid: "turn" }), false);
+  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, result: "done", origin: "human", user_message_uuid: "turn" }), false);
+  assert.equal(validResultFrameShape({ subtype: "success", is_error: false, result: {}, user_message_uuid: "turn" }), false);
+  assert.equal(expectedFailures(outcome("automatic-normal", { ...baseFirst, index: 2, validShape: false, origin: "absent", userMessageAssociation: "second" })).includes("invalid_second_result"), true);
   assert.equal(compactLifecycleMarker({ type: "system", subtype: "status", status: "compacting" }, false), undefined);
   assert.equal(compactLifecycleMarker({ type: "system", subtype: "status", status: "compacting" }, true), "status:compacting");
   assert.equal(compactLifecycleMarker({ type: "system", subtype: "compact_boundary" }, true), "compact_boundary");
@@ -223,6 +270,12 @@ function selfTest(): void {
   for (const key of ALTERNATE_PROVIDER_ENV_VARS) {
     assert.equal(oauthEnvironmentFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth", [key]: "enabled" }), "alternate_provider_route_present");
   }
+  const isolatedRoot = join(probeTempParent(), "p94b-policy-root");
+  const isolated = isolatedProbeEnv({ PATH: "/bin", CLAUDE_CODE_OAUTH_TOKEN: "oauth", GH_TOKEN: "github", ANTHROPIC_BASE_URL: "https://gateway.invalid" }, isolatedRoot, join(isolatedRoot, "config"));
+  assert.equal(isolated.CLAUDE_CODE_OAUTH_TOKEN, "oauth");
+  assert.equal(isolated.GH_TOKEN, undefined);
+  assert.equal(isolated.ANTHROPIC_BASE_URL, undefined);
+  assert.equal(isolated.HOME, isolatedRoot);
   assert.equal(sdkVersion(), EXPECTED_SDK_VERSION);
   assert.equal(resolvedApiProvider({ account: { apiProvider: "firstParty" } }), "firstParty");
   assert.equal(resolvedApiProvider({ account: { apiProvider: "vertex" } }), "other");
@@ -266,6 +319,7 @@ async function main(): Promise<void> {
     sdk: actualSdkVersion,
     modelAlias: MODEL_ALIAS,
     authentication: "claude-code-oauth",
+    configuration: { tools: [], skills: [], settingSources: [], subprocessEnvironment: "minimal-oauth-only" },
     status: failures.length ? "failed" : "completed",
     outcomes,
     failures,
