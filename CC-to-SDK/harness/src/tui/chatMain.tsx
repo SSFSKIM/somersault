@@ -5,7 +5,7 @@ import { render } from "ink";
 import { remoteChatSession } from "../client/chatAdapter.js";
 import type { ChatSession } from "../session/chatSession.js";
 import { ChatApp } from "./ChatApp.js";
-import type { RenderLine } from "./render.js";
+import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import type { InitialResume } from "./commands.js";
 import { loadPrefs } from "./prefs.js";
 import { setTheme } from "./theme.js";
@@ -17,8 +17,9 @@ export interface ChatClientOpts {
   initialPrompt?: string;
   // Launch-time --resume: useChat's resumeInto owns replay + the adapter's resume op.
   initialResume?: InitialResume;
-  // Pre-rendered transcript replay (attach, Task 8) or the banner.
-  initialLines?: RenderLine[];
+  // The ONE ordered bootstrap stream (F1 Task 4): persisted disk rows and identified local notices in a
+  // single array whose order IS the total order. No parallel `initialLines`/`initialMessages` channel.
+  initialEntries?: readonly TranscriptBootstrapEntry[];
   // --permission-mode / --think, threaded so the status bar and Tab ladder start on the REAL mode.
   hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialOutputStyle?: string };
   onDetach?: () => void;
@@ -60,6 +61,21 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   };
 }
 
+/** The Static-clear seam (F1 Task 4). `useChat` must wipe Ink's append-only `<Static>` BEFORE it bumps the
+ *  static epoch on a rewind, `/clear` or a real session swap — but `app.clear()` only exists after
+ *  `render()` returns, and a launch-time reset (an `initialResume` that lands first) can ask for it before
+ *  then. The bridge coalesces every pre-bind request into ONE pending clear and delegates each later one
+ *  directly: never dropped, never replayed twice, and never a public `ChatClientOpts` field. */
+export interface DeferredClearBridge { clearStaticTranscript(): void; bind(clear: () => void): void }
+
+export function createDeferredClearBridge(): DeferredClearBridge {
+  let clearInk: (() => void) | undefined, pendingClear = false;
+  return {
+    clearStaticTranscript() { if (clearInk) clearInk(); else pendingClear = true; },
+    bind(clear) { clearInk = clear; if (pendingClear) { pendingClear = false; clearInk(); } },
+  };
+}
+
 export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   const prefs = loadPrefs();                             // W3 T4: apply a saved theme BEFORE the first render
   if (prefs.theme) setTheme(prefs.theme);
@@ -68,11 +84,14 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   const hookOpts = { ...(opts.hookOpts ?? {}), initialOutputStyle: opts.hookOpts?.initialOutputStyle ?? prefs.outputStyle ?? "default" };
   const makeSession = opts.makeSession ?? ((resume?: string) => remoteChatSession(opts.socketPath, { ...(resume ? { resume } : {}) }));
   const output = createResumeSafeStdout(process.stdout);
+  const bridge = createDeferredClearBridge();                 // created BEFORE render: useChat may ask on mount
   const app = render(
     <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}
-      initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialLines={opts.initialLines}
+      initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
+      clearStaticTranscript={bridge.clearStaticTranscript}
       hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} />,
     { exitOnCtrlC: false, stdout: output.stdout },
   );
+  bridge.bind(() => app.clear());
   await app.waitUntilExit();
 }

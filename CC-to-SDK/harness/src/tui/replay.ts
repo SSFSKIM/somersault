@@ -1,11 +1,18 @@
-// tui/src/replay.ts — pure: a resumed session's persisted messages → transcript lines (full-fidelity, reusing
-// render.ts). Skips tool_result bodies (the ⚙ marker conveys the action, matching live, which never dumps result
-// bodies); caps to the last N messages with an elision marker; indents nested (subagent) messages; frames the
-// block with resumed/live dividers. Header label/time/turns are DERIVED from the messages (no clock, no fetch).
-import { renderMessage, trunc, type RenderLine } from "./render.js";
+// tui/src/replay.ts — pure: a resumed session's persisted messages → the ONE retained `TranscriptDocument`
+// (F1 Task 4). It RETAINS raw rows — including every `tool_result` and its top-level `tool_use_result`
+// sidecar — instead of pre-rendering lines, so a resumed tool row is byte-for-byte the row the live turn
+// showed. There is no display-only message cap: retention is source, and how much of it a surface shows is
+// the projection's decision. Only the three display frames are local entries, each with a stable identity
+// derived from POSITION in the persisted array (never from its text) so replaying the same session twice
+// neither duplicates nor silently drops a row.
+import { trunc } from "./render.js";
+import type { RenderLine } from "./render.js";
+import { TranscriptDocument } from "./transcriptModel.js";
 import { rowKind, promptText } from "../sessions/rows.js";
 
-function firstUserText(messages: any[]): string {
+export interface ReplayOptions { id?: string; label?: string }
+
+function firstUserText(messages: readonly any[]): string {
   for (const m of messages) {
     if (m?.type === "user" && Array.isArray(m.message?.content)) {
       const t = m.message.content.find((b: any) => b?.type === "text");
@@ -17,35 +24,31 @@ function firstUserText(messages: any[]): string {
 const hhmm = (ts: unknown): string => (typeof ts === "string" && ts.length >= 16 && ts[10] === "T" ? ts.slice(11, 16) : "");
 const divider = (label: string): RenderLine => ({ text: `─── ${label} ───`, dim: true });
 
-export function replayLines(messages: any[], opts: { cap?: number; id?: string; label?: string } = {}): RenderLine[] {
-  const cap = opts.cap ?? 200;
-  const shown = messages.filter((m) => { const k = rowKind(m); return k !== "tool_result" && k !== "command_output" && k !== "caveat"; });
-  const elided = Math.max(0, shown.length - cap);
-  const kept = elided > 0 ? shown.slice(shown.length - cap) : shown;
-  // Only rows the shared classifier calls a real prompt — `shown` still carries command echoes and
-  // compact-summary rows (only tool_result/command_output/caveat are filtered above), and both are
-  // `type:"user"` rows that used to inflate the count: a slash-command echo or a compaction summary is
+export function replayDocument(messages: readonly unknown[], options: ReplayOptions = {}): TranscriptDocument {
+  const rows = messages as readonly any[];
+  const document = new TranscriptDocument();
+  const session = options.id ?? "session";
+  const label = options.label ?? "resumed";
+  // Only rows the shared classifier calls a real prompt: a slash-command echo or a compaction summary is
   // not a turn the human took.
-  const turns = shown.filter((m) => rowKind(m) === "prompt").length;
-  const label = trunc(firstUserText(messages) || (opts.id ? opts.id.slice(0, 8) : "session"), 40);
-  const time = hhmm(messages.at(-1)?.timestamp);
-  const head = `${opts.label ?? "resumed"}: ${label} · ${turns} turn${turns === 1 ? "" : "s"}${time ? " · " + time : ""}`;
-  const out: RenderLine[] = [divider(head)];
-  if (elided > 0) out.push({ text: `… ${elided} earlier message${elided === 1 ? "" : "s"} elided`, dim: true });
-  for (const m of kept) {
-    const k = rowKind(m);
-    if (k === "command_echo") { const name = /<command-name>\s*\/?([^<]+)</.exec(promptText(m))?.[1] ?? "command"; out.push({ text: `› /${name.trim()}`, dim: true }); continue; }
-    if (k === "compact_summary") { out.push(divider("context compacted earlier")); continue; }
-    const lines = renderMessage(m);
-    // nested (subagent) messages: indent + dim, DROP the gutter (the ● bullet belongs to the top-level turn).
-    // For segment lines the <Line> renders `segments` (ignoring line-level dim/text), so dim+indent EACH segment.
-    if (m?.parent_tool_use_id) for (const l of lines) {
-      const { gutter, segments, ...rest } = l; void gutter;
-      if (segments && segments.length) out.push({ ...rest, text: "  " + rest.text, dim: true, segments: segments.map((s, i) => ({ ...s, dim: true, text: i === 0 ? "  " + s.text : s.text })) });
-      else out.push({ ...rest, text: "  " + rest.text, dim: true });
+  const turns = rows.filter((m) => rowKind(m) === "prompt").length;
+  const title = trunc(firstUserText(rows) || (options.id ? options.id.slice(0, 8) : "session"), 40);
+  const time = hhmm(rows.at(-1)?.timestamp);
+  document.appendLocal({ kind: "resume-divider", lines: [divider(`${label}: ${title} · ${turns} turn${turns === 1 ? "" : "s"}${time ? " · " + time : ""}`)] }, `replay:${session}:head`);
+  rows.forEach((m, index) => {
+    const kind = rowKind(m);
+    if (kind === "command_output" || kind === "caveat") return;               // engine bookkeeping, never a visible row
+    if (kind === "command_echo") {
+      const name = /<command-name>\s*\/?([^<]+)</.exec(promptText(m))?.[1] ?? "command";
+      document.appendLocal({ kind: "command-echo", lines: [{ text: `› /${name.trim()}`, dim: true }] }, `replay:${session}:${index}:command_echo`);
+      return;
     }
-    else out.push(...lines);
-  }
-  out.push(divider(`${opts.label ?? "resumed"} here · live`));
-  return out;
+    if (kind === "compact_summary") {
+      document.appendLocal({ kind: "resume-divider", lines: [divider("context compacted earlier")] }, `replay:${session}:${index}:compact_summary`);
+      return;
+    }
+    document.appendSdk("disk", m);
+  });
+  document.appendLocal({ kind: "resume-divider", lines: [divider(`${label} here · live`)] }, `replay:${session}:live`);
+  return document;
 }

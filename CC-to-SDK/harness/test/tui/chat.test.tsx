@@ -2,10 +2,11 @@
 // `client: { kind, short? }` + `onDetach?`. fakeRemote() (test/tui/helpers/fakeRemote.ts) mirrors the real
 // RemoteChat wire contract (spec A2b Task 6).
 import { describe, it, expect, afterEach, vi } from "vitest";
-import React from "react";
+import React, { act } from "react";
 import { tmpdir } from "node:os";
 import { render } from "ink-testing-library";
 import { ChatApp } from "../../src/tui/ChatApp.js";
+import { READ_CALL, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
 import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
@@ -1760,5 +1761,86 @@ describe("<ChatApp>", () => {
     await waitFor(() => submitted.length === 2);
     expect(submitted[1]).toBe("queued-one\n/mod");
     expect(submitted[1]).not.toBe("/model");
+  });
+});
+
+// ── F1 Task 4: the retained-source cutover, through the REAL ChatApp wiring ────────────────────────────
+// A tool header carries a real OSC-8 hyperlink (Task 3), so `Read(src/app.ts)` is NOT contiguous in the
+// raw frame — strip the escapes before any substring check. And Ink writes a `<Static>` row into ONE frame
+// and then drops it from every later frame, so a published row is asserted over the emitted stream.
+const plain = (s: string) => s.replace(/\x1b\]8;;[^\x07]*\x07/g, "").replace(/\x1b\[[0-9;]*m/g, "");
+const printed = (stdout: { frames: string[] }) => plain(stdout.frames.join("\n"));
+async function tick() {
+  await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+}
+async function waitForFakeTimers(cond: () => boolean, timeout = 2_000) {
+  for (let elapsed = 0; elapsed <= timeout; elapsed += 5) {
+    if (cond()) return;
+    await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  }
+  throw new Error("waitForFakeTimers timeout");
+}
+
+describe("<ChatApp> — retained source", () => {
+  it("repaints an open tool at 600ms without an SDK event, then appends one final Static row", async () => {
+    const fake = fakeRemote(), { stdout, lastFrame, unmount } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
+    await tick(); vi.useFakeTimers();
+    try {
+      fake.pushEvent({ kind: "message", data: READ_CALL }); await waitForFakeTimers(() => plain(frame(lastFrame)).includes("Read(src/app.ts)"));
+      const beforeBlink = stdout.frames.at(-1)!;
+      await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+      await waitForFakeTimers(() => stdout.frames.at(-1) !== beforeBlink);
+      expect(plain(frame(lastFrame))).toContain("Read(src/app.ts)"); // No fake.pushEvent occurs between the two frames.
+      fake.pushEvent({ kind: "message", data: READ_RESULT_WITH_SIDECAR }); await waitForFakeTimers(() => plain(frame(lastFrame)).includes("export const app = 1;"));
+      expect((plain(frame(lastFrame)).match(/Read\(src\/app\.ts\)/g) ?? [])).toHaveLength(1);   // the finalized unit REPLACED the pending header
+      fake.pushEvent({ kind: "message", data: READ_RESULT_WITH_SIDECAR });                      // the same result redelivered
+      await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+      expect(plain(frame(lastFrame)).match(/export const app = 1;/g)).toHaveLength(1);          // ONE final row, never republished
+      expect(plain(frame(lastFrame))).not.toContain("Running Read");
+      unmount(); const framesAfterUnmount = stdout.frames.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_200); }); expect(stdout.frames).toHaveLength(framesAfterUnmount);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("ingests a bare truncated idle replay without opening a turn or trapping the composer", async () => {
+    const prompts: string[] = [], fake = fakeRemote({ submit: async (prompt) => { prompts.push(prompt); return { result: "done" }; } });
+    const { stdin, stdout, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "attached" }} cwd="/work" />);
+    await tick();
+    fake.pushEvent({ kind: "turn", phase: "start", truncated: true });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "idle-tail", content: [{ type: "text", text: "retained idle tail" }] } } });
+    fake.pushEvent({ kind: "state", status: { state: "working", status: "idle" } });
+    await waitFor(() => printed(stdout).includes("Earlier live output unavailable while attaching") && printed(stdout).includes("retained idle tail"));
+    expect(plain(frame(lastFrame))).not.toContain("esc to interrupt");   // never busy: no turn was opened
+    // Typed then submitted as two writes, per this file's Ink discipline: one chunked "text\r" arrives as a
+    // single key event the editor reads as literal text, so it would never reach onSubmit.
+    stdin.write("after attach"); await waitFor(() => plain(frame(lastFrame)).includes("after attach"));
+    stdin.write("\r"); await waitFor(() => prompts.includes("after attach"));
+  });
+
+  it("bootstraps [disk SDK, identified local notice, disk SDK] in order, with no second initial channel", async () => {
+    const initialEntries = [
+      { kind: "sdk" as const, source: "disk" as const, message: { type: "user", uuid: "u-first", message: { content: [{ type: "text", text: "FIRST-DISK-ROW" }] } } },
+      { kind: "local" as const, identity: "attach:no-persisted-history", event: { kind: "notice" as const, lines: [{ text: "MIDDLE-LOCAL-NOTICE", dim: true }] } },
+      { kind: "sdk" as const, source: "disk" as const, message: { type: "assistant", message: { id: "a-last", content: [{ type: "text", text: "LAST-DISK-ROW" }] } } },
+    ];
+    const { lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "attached" }} cwd="/work" initialEntries={initialEntries} />);
+    await waitFor(() => frame(lastFrame).includes("LAST-DISK-ROW"));
+    const rendered = frame(lastFrame);
+    expect(rendered.indexOf("FIRST-DISK-ROW")).toBeLessThan(rendered.indexOf("MIDDLE-LOCAL-NOTICE"));
+    expect(rendered.indexOf("MIDDLE-LOCAL-NOTICE")).toBeLessThan(rendered.indexOf("LAST-DISK-ROW"));
+  });
+
+  it("clears Ink's Static before a /clear mounts a fresh one, leaving one copy of every later row", async () => {
+    const clears: number[] = [];
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" clearStaticTranscript={() => clears.push(1)} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/help"); await waitFor(() => frame(lastFrame).includes("/help"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("/model"));
+    stdin.write("/clear"); await waitFor(() => frame(lastFrame).includes("/clear"));
+    stdin.write("\r"); await waitFor(() => clears.length === 1);
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "post-clear", content: [{ type: "text", text: "POST-CLEAR-ROW" }] } } });
+    await waitFor(() => frame(lastFrame).includes("POST-CLEAR-ROW"));
+    expect(frame(lastFrame).match(/POST-CLEAR-ROW/g)).toHaveLength(1);
   });
 });

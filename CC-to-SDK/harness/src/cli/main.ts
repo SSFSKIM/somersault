@@ -176,7 +176,7 @@ export async function attachToImpl(target: string, o: { initialPrompt?: string; 
   }
   await deps.runChatClient({
     socketPath: prep.socketPath, client: { kind: "attached", short: prep.short }, cwd: prep.cwd,
-    initialLines: prep.initialLines,
+    initialEntries: prep.initialEntries,
     ...(o.initialPrompt ? { initialPrompt: o.initialPrompt } : {}),
     onDetach: () => { console.error(`detached — session ${prep.short} keeps running · reattach: ccx attach ${prep.short}`); },
   });
@@ -218,7 +218,11 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
     await deps.runChatClient({
       socketPath: hostSocketPath(process.pid), client: { kind: "loopback" }, cwd,
       ...(inv.prompt ? { initialPrompt: inv.prompt } : {}),
-      ...(resume ? { initialResume: { kind: "id" as const, id: resume } } : { initialLines: welcomeBanner({ cwd, model: inv.config.model, mode: inv.config.permissionMode ?? "default" }) }),
+      // The welcome banner travels as the identified LOCAL entry it is — the same envelope every other
+      // notice uses — so it can never masquerade as a persisted SDK row (F1 Task 4).
+      ...(resume
+        ? { initialResume: { kind: "id" as const, id: resume } }
+        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model: inv.config.model, mode: inv.config.permissionMode ?? "default" }) } }] }),
       // initialModel mirrors resolveOptions.ts's rule (alias first, then default) so the REPL knows what the
       // engine is actually running BEFORE the first turn ends. Without it the Tab ladder's `auto` rung reads
       // an undefined model and silently downgrades the session the user asked for. `ccx attach` (above) has

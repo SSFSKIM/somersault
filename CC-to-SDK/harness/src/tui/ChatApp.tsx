@@ -17,7 +17,7 @@ import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import { suspendProcess } from "./suspend.js";
 import type { InitialResume } from "./commands.js";
-import type { RenderLine } from "./render.js";
+import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
 import { ChatComposer, type InputOwner } from "./ChatComposer.js";
 import { initialEditorState, type EditorState } from "./editor.js";
@@ -39,7 +39,7 @@ import { ThemeDialog } from "./ThemeDialog.js";
 import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialLines, deps, yankHintMs, escClearMs, suspend, resumeOutput }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, deps, yankHintMs, escClearMs, suspend, resumeOutput }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -47,7 +47,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialOutputStyle?: string };
   cwd: string;
   initialResume?: InitialResume;
-  initialLines?: RenderLine[];
+  initialEntries?: readonly TranscriptBootstrapEntry[];
+  // Internal chatMain → ChatApp → useChat boundary (never a public ChatClientOpts field): wipes Ink's
+  // append-only <Static> before a terminal boundary mounts a fresh one.
+  clearStaticTranscript?: () => void;
   deps?: Parameters<typeof useChat>[2];
   yankHintMs?: number;
   escClearMs?: number;
@@ -59,7 +62,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
-  const { state, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialLines, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined }, deps);
+  const { state, detailItems, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript }, deps);
+  void detailItems;   // Task 5 wires the pager onto this source-backed detail route; the interim pager below shows the compact projection
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
@@ -156,7 +160,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   });
   return (
     <Box flexDirection="column">
-      <Transcript key={state.clearToken} lines={state.lines} streaming={state.streaming} />
+      <Transcript key={state.staticEpoch} staticItems={state.staticItems} pendingItems={state.pendingItems} streaming={state.streaming} />
       {todosOpen ? <TaskPanel tasks={state.tasks} /> : null}
       {state.busy ? <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} /> : null}
       {state.queue.length > 0 ? (
@@ -167,7 +171,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       {state.shortcutsOpen
         ? <ShortcutsOverlay onClose={closeShortcuts} interactive={false} />
         : transcriptOpen
-        ? <TranscriptPager lines={state.lines} onClose={() => setTranscriptOpen(false)} />
+        ? <TranscriptPager items={[...state.staticItems, ...state.pendingItems]} onClose={() => setTranscriptOpen(false)} />
         : state.historyOpen
         ? <HistorySearchOverlay load={loadHistory} onAccept={acceptHistory} onExecute={executeHistory} onCancel={closeHistorySearch} />
         // A confirmed rewind takes seconds (file restore + engine swap). Hold a modal until it settles:

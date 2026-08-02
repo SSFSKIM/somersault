@@ -1,6 +1,6 @@
 // tui/test/resumeOutput.test.ts — protects the render-boundary handoff after Ctrl-Z/fg.
 import { describe, expect, it } from "vitest";
-import { createResumeSafeStdout } from "../../src/tui/chatMain.js";
+import { createDeferredClearBridge, createResumeSafeStdout } from "../../src/tui/chatMain.js";
 
 const staleErase = "\x1b[2K\x1b[1A\x1b[2K";
 
@@ -33,5 +33,14 @@ describe("createResumeSafeStdout", () => {
     expect(terminal.output).toBe("SHELL-OUTPUT\nTUI-REFRESH");
     ink.render("TUI-NEXT");
     expect(terminal.output).toBe("SHELL-OUTPUT\nTUI-REFRESH" + staleErase + "TUI-NEXT");
+  });
+});
+
+describe("createDeferredClearBridge", () => {
+  it("buffers one pre-bind Static clear and delegates every later clear to Ink", () => {
+    const bridge = createDeferredClearBridge(); let clears = 0;
+    bridge.clearStaticTranscript(); bridge.clearStaticTranscript();
+    bridge.bind(() => { clears++; }); expect(clears).toBe(1);
+    bridge.clearStaticTranscript(); expect(clears).toBe(2);
   });
 });

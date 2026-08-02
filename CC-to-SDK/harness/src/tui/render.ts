@@ -37,12 +37,6 @@ export function toolTarget(name: string, input: Record<string, unknown>): string
   return firstArg(input);
 }
 
-/** CC's bullet form for a tool-invocation row: `● Name(target)`, gutter-separated so the glyph styles
- *  independently of the text (matching the assistant bullet's gutter convention). */
-function toolUseLines(name: string, input: Record<string, unknown>): RenderLine[] {
-  return [{ text: `${name}(${toolTarget(name, input)})`, gutter: { text: "● " } }];
-}
-
 /** Truncation-aware Edit/Write diff: ● header + a real hunk body + a "… N more lines" note. Reused by liveTurn
  *  (which slices index 0 — the head — off, pairing its own status glyph with this body; that contract is unchanged).
  *  When both old_string/new_string are given (Edit) the body is a hunk: a common prefix/suffix between the two
@@ -78,20 +72,10 @@ export function toolDiffLines(name: string, input: Record<string, unknown>, cap 
   return [head, ...body.slice(0, cap), { text: `  … ${body.length - cap} more lines`, dim: true }];
 }
 
-/** A failed tool_result reads as a failure — the `error` token, with a ✗ on its first line only (the
- *  tool_result block carries only `is_error` — no exit code is available — so error framing keys on that
- *  boolean alone). */
-function resultLines(content: unknown, isError?: boolean): RenderLine[] {
-  const text = typeof content === "string" ? content
-    : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === "string" ? b.text : "")).join("") : "";
-  if (!text.trim()) return [];
-  const failed = resolveThemeColor(themeTokens().error);
-  return text.split("\n").slice(0, 12).map((l, i) => isError
-    ? { text: `  ⎿ ${i === 0 ? "✗ " : ""}${trunc(l, 100)}`, color: failed }
-    : { text: `  ⎿ ${trunc(l, 100)}`, dim: true });
-}
-
-/** Map one SDK message to renderable lines. Unknown/empty/result/system → []. */
+/** Map one SDK message to renderable lines — the NON-TOOL species only. `tool_use`/`tool_result` blocks are
+ *  deliberately absent since F1 Task 4: every tool row goes through `renderToolEvent` instead, so there is
+ *  exactly ONE tool grammar and no hand-rolled `⎿` gutter survives outside `TOOL_RESULT_GUTTER`.
+ *  Unknown/empty/result/system → []. */
 export function renderMessage(m: any): RenderLine[] {
   if (!m || typeof m !== "object") return [];
   if (m.type === "assistant") {
@@ -99,7 +83,6 @@ export function renderMessage(m: any): RenderLine[] {
     for (const b of m.message?.content ?? []) {
       if (b?.type === "text" && b.text) out.push(...withAssistantBullet(renderMarkdown(String(b.text))));
       else if (b?.type === "thinking" && b.thinking) for (const l of String(b.thinking).split("\n")) out.push({ text: l, dim: true });
-      else if (b?.type === "tool_use") out.push(...(b.name === "Edit" || b.name === "Write" ? toolDiffLines(b.name, b.input ?? {}) : toolUseLines(b.name, b.input ?? {})));
     }
     return out;
   }
@@ -107,7 +90,6 @@ export function renderMessage(m: any): RenderLine[] {
     const out: RenderLine[] = [];
     for (const b of m.message?.content ?? []) {
       if (b?.type === "text" && b.text) for (const l of String(b.text).split("\n")) out.push({ text: `› ${l}`, dim: true });
-      else if (b?.type === "tool_result") out.push(...resultLines(b.content, b.is_error === true));
     }
     return out;
   }

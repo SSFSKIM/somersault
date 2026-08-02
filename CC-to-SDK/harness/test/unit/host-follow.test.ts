@@ -135,6 +135,41 @@ describe("SessionHost.follow", () => {
     s.finish(); await turn; await host.stop();
   });
 
+  // The busy-vs-idle discriminant F1 Task 4's client depends on. It lives in SessionHost.follow, NOT in
+  // TurnBuffer: a MID-TURN truncated start carries a numeric `seq` (a live turn — the client opens a
+  // LiveTurn and goes busy), while an IDLE truncated start is BARE (a completed tail replay — it must
+  // never set busy and has no closing turn:end). This is a characterization pin so a later change to
+  // follow() cannot silently erase the distinction. TurnBuffer's limits are private and fixed
+  // (maxMessages 500 / maxBytes 1 MiB), so truncation is driven by byte volume rather than injection.
+  it("gives an idle truncated attach a bare start frame with no seq and no closing turn:end", async () => {
+    const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();                                        // same harness the block above uses: runTask needs a live session
+    const turn = host.runTask("hi");
+    s.emit({ type: "assistant", pad: "a".repeat(600_000) });
+    s.emit({ type: "assistant", pad: "b".repeat(600_000) });   // evicts the first: snapshot is truncated
+    s.finish(); await turn;                                    // turn COMPLETES, so the next attach is idle
+    const late: HostEvent[] = []; host.follow((e) => late.push(e));
+    const starts = late.filter((e) => e.kind === "turn" && e.phase === "start");
+    expect(starts).toEqual([{ kind: "turn", phase: "start", truncated: true }]);  // bare: carries no `seq`
+    expect(starts[0]).not.toHaveProperty("seq");                                  // the busy-vs-idle discriminant
+    expect(late.some((e) => e.kind === "turn" && e.phase === "end")).toBe(false);
+    await host.stop();
+  });
+
+  it("gives a MID-turn truncated attach a numeric seq, then the retained messages and the ending state frame", async () => {
+    const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();                                        // same harness the block above uses: runTask needs a live session
+    const turn = host.runTask("hi");
+    s.emit({ type: "assistant", pad: "a".repeat(600_000) });
+    s.emit({ type: "assistant", pad: "b".repeat(600_000) });
+    const late: HostEvent[] = []; host.follow((e) => late.push(e));               // attaches while the turn is STILL running
+    const start = late.find((e) => e.kind === "turn" && e.phase === "start") as any;
+    expect(start).toMatchObject({ truncated: true });
+    expect(typeof start.seq).toBe("number");
+    expect(late.at(-1)!.kind).toBe("state");                                      // the replay always ends on `state`
+    s.finish(); await turn; await host.stop();
+  });
+
   it("the buffer resets between turns, so turn two does not replay turn one", async () => {
     const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
     await host.start();

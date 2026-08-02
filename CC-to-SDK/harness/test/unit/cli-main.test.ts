@@ -6,6 +6,8 @@ import type { CcxInvocation } from "../../src/cli/args.js";
 import { spawnDetached } from "../../src/cli/spawn.js";
 import { parseHostArgv, hostOptsFrom, runHostMain } from "../../src/cli/hostMain.js";
 import type { AgentsRow } from "../../src/fleet/project.js";
+import type { prepareAttach as realPrepareAttach } from "../../src/cli/attach.js";
+import type { ChatClientOpts } from "../../src/tui/chatMain.js";
 
 // F4's -p mapping lives inside main.ts's own (unexported) default runOnce, which calls createHarness
 // directly — the only way to pin that wiring without spawning the real SDK is to mock createHarness
@@ -394,8 +396,9 @@ describe("main — lifecycle and failures", () => {
   });
 });
 
-const prep = (over: Partial<{ socketPath: string; short: string; sessionId?: string; cwd: string; initialLines: { text: string }[] }> = {}) =>
-  ({ socketPath: "/run/x.sock", short: "w1", cwd: "/repo", initialLines: [], ...over });
+const attachMessages = [{ type: "user", uuid: "u-1", message: { content: [{ type: "text", text: "hi" }] } }] as Record<string, unknown>[];
+const prep = (over: Partial<Awaited<ReturnType<typeof realPrepareAttach>>> = {}) =>
+  ({ socketPath: "/run/x.sock", short: "w1", cwd: "/repo", initialEntries: attachMessages.map((message) => ({ kind: "sdk" as const, source: "disk" as const, message })), ...over });
 
 describe("main — attach (Task 8)", () => {
   it("requires a target rather than reaching prepareAttach with undefined", async () => {
@@ -412,6 +415,15 @@ describe("main — attach (Task 8)", () => {
     })));
     expect(value).toBe(0);
     expect(clientCalls[0]).toMatchObject({ socketPath: "/run/w1.sock", client: { kind: "attached", short: "w1" } });
+  });
+  // F1 Task 4: one bootstrap channel reaches the client — no parallel initialLines/initialMessages/
+  // initialLocalEvents adapter can smuggle a second, differently-ordered history alongside it.
+  it("passes the attach ordered bootstrap stream to runChatClient without parallel adapters", async () => {
+    const messages = attachMessages;
+    const runChatClient = vi.fn(async (_o: ChatClientOpts) => {});
+    await main(["attach", "a0000001"], deps({ prepareAttach: async () => prep(), probeSocket: async () => {}, runChatClient }));
+    expect(runChatClient).toHaveBeenCalledWith(expect.objectContaining({ initialEntries: expect.arrayContaining([{ kind: "sdk", source: "disk", message: messages[0] }]) }));
+    expect(runChatClient.mock.calls[0]![0]).not.toHaveProperty("initialLines"); expect(runChatClient.mock.calls[0]![0]).not.toHaveProperty("initialMessages"); expect(runChatClient.mock.calls[0]![0]).not.toHaveProperty("initialLocalEvents");
   });
   it("a prepareAttach failure ('no session matches') is reported as a code-1 refusal, not a stack trace", async () => {
     const { err, value } = await captureLog(() => main(["attach", "nope"], deps({

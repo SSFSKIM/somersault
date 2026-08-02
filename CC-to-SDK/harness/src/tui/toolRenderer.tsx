@@ -14,17 +14,22 @@ import { pathToFileURL } from "node:url";
 import { Box, Text } from "ink";
 import wrapAnsi from "wrap-ansi";
 import type { RenderLine, Segment } from "./render.js";
-import { Line } from "./Transcript.js";
+import { renderMessage } from "./render.js";
+import { Line } from "./Line.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
-import { bashArgument, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
-import type { ToolEvent } from "./transcriptModel.js";
+import { bashArgument, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
+import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
 
 /** Five columns, and the FIFTH is U+00A0: upstream emits `["  ", "⎿ \xA0"]` so the cell after the connector is not a
  *  break opportunity and no terminal (or trailing-space trim) can eat it. Written with the escape so no editor can
  *  normalize it back to a plain space. */
 export const TOOL_RESULT_GUTTER = "  \u23bf \u00a0" as const;
+/** `wrap` is set ONLY by the tool header (LT10: upstream's `wrap:"truncate-end"` — an MCP-length name must
+ *  never wrap one header into several transcript rows). Every other line item leaves it unset and wraps
+ *  normally, which is what keeps ordinary assistant text and local notices readable now that Task 4 routes
+ *  the WHOLE transcript through `RenderItemView`. */
 export type RenderItem =
-  | { kind: "line"; id: string; line: RenderLine }
+  | { kind: "line"; id: string; line: RenderLine; wrap?: "truncate-end" }
   | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER; body: readonly RenderLine[] };
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
  *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). */
@@ -177,18 +182,127 @@ function resultBody(normalized: NormalizedToolResult, options: ProjectionOptions
  *  normalizer assigns, never by a renderer-side name check, so the suppression list has exactly one home. */
 export function renderToolEvent(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
   if (normalized.status === "suppressed") return [];
-  const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, normalized.status, options) }];
+  const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, normalized.status, options), wrap: "truncate-end" }];
   const body = resultBody(normalized, options);
   if (body.length) items.push({ kind: "gutter-block", id: `${event.id}:result`, gutter: TOOL_RESULT_GUTTER, body });
+  return items;
+}
+
+// ── F1 Task 4: the ONE projection from the retained document to renderable items ────────────────────────
+// `TranscriptDocument` stays raw/source-only and never learns about RenderItem, React or projection; this
+// module imports it instead, so live, replay, attach, resume, rewind and the Ctrl-O pager all reach a tool
+// row (and every ordinary row beside it) through exactly one boundary.
+type SdkEntry = Extract<TranscriptEntry, { kind: "sdk-message" }>;
+type LocalEntry = Extract<TranscriptEntry, { kind: "local-event" }>;
+/** Everything a surface must decide except HOW MUCH of a result it wants — the two projection knobs are
+ *  derived, never passed in, so a caller cannot request `detail-all` at `verbose:false` (or the reverse). */
+export type ProjectionContext = Omit<ProjectionOptions, "projection" | "verbose">;
+
+export const sdkItemId = (base: string, part: string): string => `sdk:${base}:${part}`;
+export const localItemId = (identity: string, lineIndex: number): string => `local:${identity}:line:${lineIndex}`;
+export const toolItemId = (toolUseId: string, resultSequence: number | "pending", part: "header" | "body"): string => `tool:${toolUseId}:${resultSequence}:${part}`;
+
+/** PROJECTION IDENTITY ONLY — never append/dedup. Task 1's `appendSdk` deliberately refuses to hash a
+ *  payload (two equal-looking calls can be genuinely distinct turns), but a retained entry with no
+ *  source-stable identity still needs a deterministic, collision-free item id; the occurrence counter is
+ *  what keeps two byte-identical retained rows from collapsing into one published item. FNV-1a. */
+function hashMessage(message: Record<string, unknown>): string {
+  const text = JSON.stringify(message) ?? "";
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(36);
+}
+export function sdkEntryBase(entry: SdkEntry, occurrence: number): string {
+  return entry.identity ?? `${hashMessage(entry.message)}:${occurrence}`;
+}
+
+/** A nested (subagent) row is retained source, but F1 never flattens it into an unrelated top-level row —
+ *  F3 owns the parent/child progress and totals route. */
+const isNested = (message: Record<string, unknown>): boolean => typeof message.parent_tool_use_id === "string" && message.parent_tool_use_id.length > 0;
+
+/** The sole non-tool completed-SDK adapter: it reuses render.ts for assistant/user text and every other
+ *  non-tool species, and SKIPS `tool_use`/`tool_result` so tools keep the one renderer route above. One
+ *  block at a time, so the item id can carry the content index that makes it stable across a rehydration. */
+export function projectMessageEntry(entry: SdkEntry, options: ProjectionContext, base?: string): readonly RenderItem[] {
+  void options;
+  const message = entry.message;
+  if (isNested(message)) return [];
+  const inner = message.message;
+  const content = isRecord(inner) && Array.isArray(inner.content) ? inner.content : [];
+  const id = base ?? sdkEntryBase(entry, 0);
+  const items: RenderItem[] = [];
+  content.forEach((block, index) => {
+    if (!isRecord(block) || block.type === "tool_use" || block.type === "tool_result") return;
+    for (const [lineIndex, line] of renderMessage({ type: message.type, message: { content: [block] } }).entries())
+      // `block:<i>:<line>` rather than the bare `block:<i>`: one markdown block legitimately renders many
+      // lines, and two items sharing an id would publish once and lose the rest.
+      items.push({ kind: "line", id: sdkItemId(id, `block:${index}:${lineIndex}`), line });
+  });
+  return items;
+}
+
+/** Every `event.lines[index]` maps straight through: the local event already owns its exact RenderLine
+ *  styling, so projection adds no second style rule (that is what makes `appendFollowGap`'s dim line
+ *  identical in compact and detail). */
+export function projectLocalEvent(entry: LocalEntry): readonly RenderItem[] {
+  return entry.event.lines.map((line, index) => ({ kind: "line" as const, id: localItemId(entry.identity, index), line }));
+}
+
+const reid = (items: readonly RenderItem[], id: string, sequence: number | "pending"): RenderItem[] =>
+  items.map((item) => (item.kind === "line" ? { ...item, id: toolItemId(id, sequence, "header") } : { ...item, id: toolItemId(id, sequence, "body") }));
+
+/** The append-only linearization rule. An open header is transient at `callSequence`; the immutable
+ *  finalized header-plus-result unit is anchored at `resultSequence`, while a local visual publishes at its
+ *  own sequence immediately — so a `/help` that lands between a call and its result enters Static first and
+ *  the finalized tool unit follows it. Rank breaks the one real tie: the user message carrying a
+ *  `tool_result` shares its sequence with the unit that result completes. */
+function projectAll(document: TranscriptDocument, options: ProjectionOptions): readonly RenderItem[] {
+  const anchored: { sequence: number; rank: number; items: readonly RenderItem[] }[] = [];
+  const occurrences = new Map<string, number>();
+  for (const entry of document.entries()) {
+    if (entry.kind === "local-event") { anchored.push({ sequence: entry.sequence, rank: 0, items: projectLocalEvent(entry) }); continue; }
+    const key = entry.identity ?? hashMessage(entry.message);
+    const occurrence = occurrences.get(key) ?? 0;
+    occurrences.set(key, occurrence + 1);
+    anchored.push({ sequence: entry.sequence, rank: 0, items: projectMessageEntry(entry, options, entry.identity ?? `${key}:${occurrence}`) });
+  }
+  for (const event of document.toolEvents()) {
+    if (event.route !== "top-level" || !event.result) continue;
+    anchored.push({ sequence: event.result.resultSequence, rank: 1, items: reid(renderToolEvent(event, normalizeToolResult(event, { verbose: options.verbose }), options), event.id, event.result.resultSequence) });
+  }
+  return anchored.sort((a, b) => a.sequence - b.sequence || a.rank - b.rank).flatMap((a) => a.items);
+}
+
+/** The transcript's finalized projection: final top-level tool units, ordinary non-tool SDK blocks, and
+ *  local visual entries, in publication order. */
+export function projectCompact(document: TranscriptDocument, options: ProjectionContext): readonly RenderItem[] {
+  return projectAll(document, { ...options, projection: "compact", verbose: false });
+}
+/** Ctrl-E toggles verbosity LOCALLY over the same retained source — full Bash arguments, uncollapsed
+ *  generic errors, full output rows — never a second mutable history mode. */
+export function projectDetail(document: TranscriptDocument, options: ProjectionContext & { projection: "detail-all" | "detail-collapsed" }): readonly RenderItem[] {
+  const { projection, ...context } = options;
+  return projectAll(document, { ...context, projection, verbose: projection === "detail-all" });
+}
+/** Open top-level calls only, selected by `!event.result` — NEVER by `status === "running"`, because a
+ *  suppressed bookkeeping call is `suppressed` while still open and would leak into the pending region. */
+export function projectPending(document: TranscriptDocument, options: ProjectionContext): readonly RenderItem[] {
+  const full: ProjectionOptions = { ...options, projection: "compact", verbose: false };
+  const items: RenderItem[] = [];
+  for (const event of document.toolEvents()) {
+    if (event.route !== "top-level" || event.result) continue;
+    items.push(...reid(renderToolEvent(event, normalizeToolResult(event, { verbose: false }), full), event.id, "pending"));
+  }
   return items;
 }
 
 /** The sole gutter owner. `start`/`end` slice the body (the Ctrl-O pager scrolls a long result without re-projecting
  *  it); `showGutter={false}` keeps the five-column indent while dropping the connector for a continuation page. */
 export function RenderItemView({ item, start, end, showGutter = true }: { item: RenderItem; start?: number; end?: number; showGutter?: boolean }): React.ReactElement {
-  // LT10: the header row truncates at the terminal edge (upstream `wrap:"truncate-end"`) — an MCP-length name must
-  // never wrap one header into several transcript rows. Body rows keep wrapping; fold already sized them.
-  if (item.kind === "line") return <Line l={item.line} wrap="truncate-end" />;
+  // LT10: a tool header truncates at the terminal edge (upstream `wrap:"truncate-end"`) — an MCP-length name
+  // must never wrap one header into several transcript rows. Ordinary line items (assistant text, local
+  // notices, dividers) carry no `wrap` and keep wrapping; body rows keep wrapping, fold already sized them.
+  if (item.kind === "line") return <Line l={item.line} wrap={item.wrap} />;
   const body = item.body.slice(start ?? 0, end ?? item.body.length);
   return (
     <Box flexDirection="row">

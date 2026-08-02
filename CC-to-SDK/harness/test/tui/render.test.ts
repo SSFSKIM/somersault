@@ -1,12 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { renderMessage, trunc, toolTarget } from "../../src/tui/render.js";
+import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
+import { replayDocument } from "../../src/tui/replay.js";
+import { projectCompact } from "../../src/tui/toolRenderer.js";
+import { READ_CALL, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
 import { ACCENT, resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 
 // F1 Task 2: diff bodies read §2.2's diffAdded/diffRemoved and failed tool_results read `error`, each
 // resolved through resolveThemeColor at projection time (render.ts does the same, per-call).
 const ADDED = () => resolveThemeColor(themeTokens().diffAdded);
 const REMOVED = () => resolveThemeColor(themeTokens().diffRemoved);
-const ERROR = () => resolveThemeColor(themeTokens().error);
 
 const asst = (content: unknown[]) => ({ type: "assistant", message: { content } });
 const BULLET = { text: "● ", color: ACCENT };
@@ -20,40 +23,34 @@ describe("renderMessage", () => {
   it("renders thinking dimmed", () => {
     expect(renderMessage(asst([{ type: "thinking", thinking: "hmm" }]))).toEqual([{ text: "hmm", dim: true }]);
   });
-  it("renders Edit as a numbered hunk diff", () => {
-    const out = renderMessage(asst([{ type: "tool_use", name: "Edit", input: { file_path: "f.ts", old_string: "a", new_string: "b" } }]));
-    expect(out[0]).toEqual({ text: "Edit f.ts", gutter: { text: "● " } });
-    expect(out).toContainEqual({ text: "  1 - a", color: REMOVED() });
-    expect(out).toContainEqual({ text: "  1 + b", color: ADDED() });
+  // F1 Task 4: renderMessage is the NON-TOOL adapter. Every tool row — call header and result body alike —
+  // goes through renderToolEvent instead, so no hand-rolled `⎿` gutter survives outside TOOL_RESULT_GUTTER.
+  it("emits nothing for a tool_use block — the shared tool renderer owns that row", () => {
+    expect(renderMessage(asst([{ type: "tool_use", name: "Read", input: { file_path: "x.ts" } }]))).toEqual([]);
+    expect(renderMessage(asst([{ type: "tool_use", name: "Edit", input: { file_path: "f.ts", old_string: "a", new_string: "b" } }]))).toEqual([]);
   });
-  it("renders Bash with the ● bullet in CC's Bash(<cmd>) form", () => {
-    expect(renderMessage(asst([{ type: "tool_use", name: "Bash", input: { command: "echo hi" } }]))).toEqual([
-      { text: "Bash(echo hi)", gutter: { text: "● " } },
-    ]);
-  });
-  it("renders Read with the ● bullet in CC's Read(<path>) form", () => {
-    expect(renderMessage(asst([{ type: "tool_use", name: "Read", input: { file_path: "x.ts" } }]))).toEqual([
-      { text: "Read(x.ts)", gutter: { text: "● " } },
-    ]);
-  });
-  it("renders an unknown tool with the generic fallback, still ● bulleted", () => {
-    expect(renderMessage(asst([{ type: "tool_use", name: "Grep", input: { pattern: "foo" } }]))).toEqual([
-      { text: "Grep(foo)", gutter: { text: "● " } },
-    ]);
-  });
-  it("renders a tool_result as a dimmed ⎿ result tree", () => {
-    const m = { type: "user", message: { content: [{ type: "tool_result", content: "line1\nline2" }] } };
-    expect(renderMessage(m)).toEqual([{ text: "  ⎿ line1", dim: true }, { text: "  ⎿ line2", dim: true }]);
-  });
-  it("renders an is_error tool_result in the `error` token, with ✗ prefixed on its first line only", () => {
-    const m = { type: "user", message: { content: [{ type: "tool_result", content: "boom\nsecond line", is_error: true }] } };
-    expect(renderMessage(m)).toEqual([
-      { text: "  ⎿ ✗ boom", color: ERROR() },
-      { text: "  ⎿ second line", color: ERROR() },
-    ]);
+  it("emits nothing for a tool_result block, and carries no ⎿ connector anywhere", () => {
+    const ok = { type: "user", message: { content: [{ type: "tool_result", content: "line1\nline2" }] } };
+    const bad = { type: "user", message: { content: [{ type: "tool_result", content: "boom", is_error: true }] } };
+    expect(renderMessage(ok)).toEqual([]);
+    expect(renderMessage(bad)).toEqual([]);
   });
   it("ignores result/system messages", () => {
     expect(renderMessage({ type: "result", result: "ok" })).toEqual([]);
+  });
+});
+
+describe("one tool grammar across live and replay", () => {
+  it("returns equal final RenderItem[] for the same fixture from a host document and a replayed one", () => {
+    const projectionOptions = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
+    const host = new TranscriptDocument();
+    host.appendSdk("host", READ_CALL); host.appendSdk("host", READ_RESULT_WITH_SIDECAR);
+    const disk = replayDocument([READ_CALL, READ_RESULT_WITH_SIDECAR], { id: "session-1" });
+    // The replay's own display dividers are local rows that shift every later resultSequence by one, so the
+    // id's sequence component is normalized away; everything else must match byte for byte.
+    const toolRows = (items: readonly { kind: string; id: string }[]) =>
+      items.filter((i) => !i.id.startsWith("local:replay:")).map((i) => ({ ...i, id: i.id.replace(/^tool:([^:]+):\d+:/, "tool:$1:") }));
+    expect(toolRows(projectCompact(host, projectionOptions))).toEqual(toolRows(projectCompact(disk, projectionOptions)));
   });
 });
 
@@ -161,9 +158,9 @@ describe("renderMessage (replay additions)", () => {
     const m = { type: "user", message: { role: "user", content: [{ type: "text", text: "fix the parser" }] } };
     expect(renderMessage(m)).toEqual([{ text: "› fix the parser", dim: true }]);
   });
-  it("renders a multi-line Write via toolDiffLines (capped at 24)", () => {
+  it("still caps a multi-line Write hunk in toolDiffLines, which is now called directly rather than through renderMessage", () => {
     const content = Array.from({ length: 30 }, (_, i) => `L${i}`).join("\n");
-    const out = renderMessage({ type: "assistant", message: { content: [{ type: "tool_use", name: "Write", input: { file_path: "b.ts", content } }] } });
+    const out = toolDiffLines("Write", { file_path: "b.ts", content });
     expect(out[0]).toEqual({ text: "Write b.ts", gutter: { text: "● " } });
     expect(out.at(-1)).toEqual({ text: "  … 6 more lines", dim: true });   // 30 added − cap 24 = 6
   });

@@ -8,6 +8,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Transcript } from "../../src/tui/Transcript.js";
+import { TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
 import { ChatStatusBar, modeColor, ctxColor } from "../../src/tui/ChatStatusBar.js";
 import { SessionPicker } from "../../src/tui/SessionPicker.js";
@@ -26,23 +27,27 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 const req = { toolName: "Edit", input: { file_path: "f.ts" }, toolUseID: "t", signal: new AbortController().signal };
 
 describe("<Transcript>", () => {
-  it("renders committed and streaming lines", () => {
-    const { lastFrame } = render(<Transcript lines={[{ text: "committed" }]} streaming={[{ text: "live" }]} />);
-    expect(lastFrame()).toContain("committed");
-    expect(lastFrame()).toContain("live");
+  // F1 Task 4: every Transcript consumer speaks RenderItem now — including Task 2's raw-color boundary,
+  // which still has to resolve a TH2 color no matter which region the item lands in.
+  it("renders immutable, pending, and streaming transcript regions through the RenderItem interface", () => {
+    const staticItems: RenderItem[] = [
+      { kind: "line", id: "committed", line: { text: "committed" } },
+      { kind: "line", id: "colored", line: { text: "", gutter: { text: ">", color: "ansi:red" }, segments: [{ text: "segment", color: "ansi:blue" }] } },
+      { kind: "line", id: "line-color", line: { text: "line", color: "ansi:green" } },
+      { kind: "line", id: "bold", line: { text: "B", bold: true } },
+      { kind: "line", id: "italic", line: { text: "I", italic: true } },
+    ];
+    const pendingItems: RenderItem[] = [{ kind: "line", id: "pending", line: { text: "pending" } }];
+    const view = render(<Transcript staticItems={staticItems} pendingItems={pendingItems} streaming={[{ text: "live" }]} />);
+    for (const text of ["committed", "pending", "live", "B", "I"]) expect(view.lastFrame()).toContain(text);
+    const raw = view.stdout.frames.at(-1)!; expect(raw).toContain("\x1b[31m"); expect(raw).toContain("\x1b[34m"); expect(raw).toContain("\x1b[32m");
   });
-  it("Transcript renders bold and italic RenderLine fields", () => {
-    const { lastFrame } = render(<Transcript lines={[{ text: "B", bold: true }, { text: "I", italic: true }]} streaming={[]} />);
-    expect(lastFrame()).toContain("B");
-    expect(lastFrame()).toContain("I");
-  });
-  it("resolves line, gutter, and segment TH2 colors at the common RenderLine boundary", () => {
-    const view = render(<Transcript lines={[
-      { text: "", gutter: { text: ">", color: "ansi:red" }, segments: [{ text: "segment", color: "ansi:blue" }] },
-      { text: "line", color: "ansi:green" },
-    ]} streaming={[]} />);
-    const raw = view.stdout.frames.at(-1)!;
-    expect(raw).toContain("\x1b[31m"); expect(raw).toContain("\x1b[34m"); expect(raw).toContain("\x1b[32m");
+  it("renders a tool result body under exactly one shared gutter, never a hand-typed connector", () => {
+    const items: RenderItem[] = [{ kind: "gutter-block", id: "b", gutter: TOOL_RESULT_GUTTER, body: [{ text: "first" }, { text: "second" }] }];
+    const view = render(<Transcript staticItems={items} pendingItems={[]} streaming={[]} />);
+    const frame = view.lastFrame() ?? "";
+    expect(frame).toContain("first"); expect(frame).toContain("second");
+    expect(frame.split("⎿")).toHaveLength(2);      // one connector for a two-row body
   });
 });
 describe("<PermissionDialog>", () => {

@@ -5,6 +5,7 @@
 // truth via state events), the bg-task panel, and idempotent teardown.
 import { useEffect, useRef, useState } from "react";
 import { writeFileSync as realWriteFileSync, readFileSync as realReadFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import type { ChatSession } from "../session/chatSession.js";
 import { hasDecisionFeed, hasBgTasks, hasSessionEvents, hasRewind, hasSettingsOps } from "../session/chatSession.js";
@@ -21,6 +22,8 @@ import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import type { RenderLine } from "./render.js";
+import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
+import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { LiveTurn } from "./liveTurn.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
@@ -31,7 +34,7 @@ import { parseThinkArg } from "./thinkLevels.js";
 import { exportMarkdown, defaultExportName, filesInContext, formatFiles, formatStats, formatSessionInfo, EXPORT_HEADER } from "./sessionTools.js";
 import { lastAssistantText } from "../sessions/rows.js";
 import type { ModelInfo } from "./ModelPicker.js";
-import { replayLines } from "./replay.js";
+import { replayDocument } from "./replay.js";
 import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bash.js";
 import { copyToClipboard as realCopyToClipboard } from "./copy.js";
 import { appendMemory as realAppendMemory } from "./memory.js";
@@ -48,7 +51,11 @@ const role = (name: "error" | "bashBorder") => resolveThemeColor(themeTokens()[n
 // adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
 export type { ChatSession };
 export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
-export interface ChatState { lines: RenderLine[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; clearToken: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend" } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[]; }
+/** The Ctrl-O detail route (Task 5 wires the pager onto it): `useChat` owns `documentRef`, ChatApp sees only
+ *  the returned state, so this closure is how a source-backed detail projection reaches the pager without
+ *  anyone reaching into the document itself. */
+export type DetailItems = (projection: "detail-all" | "detail-collapsed") => readonly RenderItem[];
+export interface ChatState { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend" } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[]; }
 
 // Tab cycles these; bypassPermissions stays off-cycle (/yolo). Single source with settingsRows.ts's own
 // permissionMode row (review finding 3) — importing it here instead of a second literal array means the
@@ -59,14 +66,40 @@ function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); retu
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
-  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialLines?: RenderLine[]; initialPrompt?: string; onExit?: () => void; detach?: () => void } = {},
-  deps: { listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; getSessionMessagesIn?: (id: string, cwd?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void } = {},
+  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void } = {},
+  deps: { now?: () => number; columns?: () => number; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; getSessionMessagesIn?: (id: string, cwd?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
-  // Seed the scrollback with the welcome banner — unless we're launching straight into a resume (the
-  // replay fills `lines` and a banner would be misleading above a rejoined transcript).
-  const [lines, setLines] = useState<RenderLine[]>(() => (opts.initialResume ? [] : opts.initialLines ?? []));
+  const cwd = opts.cwd ?? process.cwd();
+  const nowFn = deps.now ?? (() => Date.now());
+  const columnsFn = deps.columns ?? (() => process.stdout.columns ?? 80);
+  const scheduleRepaint = deps.scheduleRepaint ?? ((cb: () => void, ms: number) => { const id = setInterval(cb, ms); return () => clearInterval(id); });
+  const projectionContext = (): ProjectionContext => ({ cwd, home: homedir(), platform: process.platform, columns: columnsFn(), now: nowFn() });
+  // ── The ONE retained transcript document (F1 Task 4). Every visible row — live, replay, attach, resume,
+  // rewind, Ctrl-O — is projected from it; `publishedIds` is what makes reconciliation append-only, so a
+  // duplicate follow record, a rehydration or a redelivered bootstrap entry can never publish a row twice.
+  const publishedIds = useRef<Set<string>>(new Set());
+  const documentRef = useRef<TranscriptDocument | null>(null);
+  if (documentRef.current === null) {
+    const doc = new TranscriptDocument();
+    // Seeded with the bootstrap stream — unless we're launching straight into a resume (the replay builds
+    // the document itself and a banner would be misleading above a rejoined transcript).
+    if (!opts.initialResume) for (const entry of opts.initialEntries ?? []) {
+      if (entry.kind === "sdk") doc.appendSdk("disk", entry.message); else doc.appendLocal(entry.event, entry.identity);
+    }
+    documentRef.current = doc;
+  }
+  const [staticItems, setStaticItems] = useState<readonly RenderItem[]>(() => {
+    const items = projectCompact(documentRef.current!, projectionContext());
+    for (const item of items) publishedIds.current.add(item.id);
+    return items;
+  });
+  const [pendingItems, setPendingItems] = useState<readonly RenderItem[]>(() => projectPending(documentRef.current!, projectionContext()));
   const [streaming, setStreaming] = useState<RenderLine[]>([]);
+  const docEpoch = useRef(0);              // bumped at every terminal boundary (rewind / clear / real session swap)
+  const localSeq = useRef(0);              // monotonic within one epoch — two equal-looking /help runs stay distinct
+  const followGen = useRef(0);             // one per follow subscription: a REDELIVERED idle replay reuses its gap identity
+  const idleFollowReplay = useRef(false);  // set by a BARE truncated start, cleared by the replay-ending `state` frame
   const [pending, setPending] = useState<PendingDecision | null>(null);
   const pendingRef = useRef<PendingDecision | null>(null); pendingRef.current = pending;
   const [pendingQueue, setPendingQueue] = useState<PendingDecision[]>([]);
@@ -121,7 +154,7 @@ export function useChat(
   const [queue, setQueue] = useState<string[]>([]);   // prompts/turns submitted while busy; drained FIFO on turn end
   const queueRef = useRef<string[]>([]); queueRef.current = queue;
   const drainGen = useRef(0);                          // bumped by interrupt → invalidates any scheduled drain (no post-interrupt dispatch)
-  const [clearToken, setClearToken] = useState(0);    // bumped on clear → remounts the append-only <Static> so it truly empties
+  const [staticEpoch, setStaticEpoch] = useState(0);  // bumped at a terminal boundary → mounts a FRESH append-only <Static>
   const disposed = useRef(false);
   const listSessions = deps.listSessions ?? (() => realListSessions({ cwd: opts.cwd, limit: 30 }) as Promise<SessionInfo[]>);
   const getSessionMessages = deps.getSessionMessages ?? ((id: string) => realGetSessionMessages(id, { cwd: opts.cwd }) as Promise<any[]>);
@@ -149,45 +182,114 @@ export function useChat(
   // Real terminal clear: wipe screen + scrollback + home cursor (Static is append-only — a model reset alone
   // can't erase already-printed lines, so we also clear the terminal, exactly like CC's /clear).
   const clearScreen = deps.clearScreen ?? (() => { try { if (process.stdout.isTTY) process.stdout.write("\x1b[2J\x1b[3J\x1b[H"); } catch { /* no tty */ } });
-  const cwd = opts.cwd ?? process.cwd();
   const ranInitial = useRef(false);
   const ranInitialPrompt = useRef(false);
+
+  // ── Projection reconciliation ────────────────────────────────────────────────────────────────────────
+  /** Generic by `RenderItem.id`: filter out what is already published, append every unseen finalized item
+   *  to immutable `staticItems` in projection order, then remember those ids. Tool units, assistant text,
+   *  local visual output, dividers and later non-tool items all reconcile the same way, so a duplicate
+   *  follow event cannot append any of them again. An OPEN call is never inserted into Static. */
+  function reconcile(): void {
+    if (disposed.current) return;
+    const context = projectionContext();
+    const finalized = projectCompact(documentRef.current!, context);
+    const unseen = finalized.filter((item) => !publishedIds.current.has(item.id));
+    if (unseen.length) {
+      for (const item of unseen) publishedIds.current.add(item.id);
+      setStaticItems((s) => [...s, ...unseen]);
+    }
+    setPendingItems(projectPending(documentRef.current!, context));
+  }
+  /** The 600 ms pending-tool repaint: re-projects ONLY the transient region, so the blink phase
+   *  (`Math.floor(now / 600) % 2`) reaches Ink without an SDK message and Static history never moves. */
+  function repaintPending(): void { if (!disposed.current) setPendingItems(projectPending(documentRef.current!, projectionContext())); }
+  const openCalls = documentRef.current!.toolEvents().some((e) => e.route === "top-level" && !e.result);
+  /** Every local append/notice path (/help, /usage, /status, local Bash, welcome, errors, user/command
+   *  echo, dividers, decisions) allocates its identity HERE, exactly once — so one retransmitted event is
+   *  suppressed by document dedup while two equal-looking /help invocations still render twice. */
+  function appendNewLocal(event: LocalTranscriptEvent): void {
+    if (disposed.current) return;
+    documentRef.current!.appendLocal(event, `event:${docEpoch.current}:${++localSeq.current}:${event.kind}`);
+    reconcile();
+  }
+  /** The terminal boundary: a completed rewind, `/clear`, or a REAL session swap. Clear Ink's Static FIRST
+   *  (never reset state values into an already-mounted <Static> — it would replay the whole history), then
+   *  mount a fresh one and reconcile the new document from scratch. */
+  function replaceDocument(next: TranscriptDocument): void {
+    if (disposed.current) return;
+    opts.clearStaticTranscript?.();
+    docEpoch.current++; localSeq.current = 0; idleFollowReplay.current = false;
+    documentRef.current = next;
+    publishedIds.current = new Set();
+    setStaticItems([]); setPendingItems([]);
+    setStaticEpoch((e) => e + 1);
+    setStreaming([]);
+    reconcile();
+  }
+  /** Task 5's route to the retained source, closed over the SAME resolved context the compact projection
+   *  uses. Task 4 itself never calls it — the interim pager still shows the compact projection. */
+  const detailItems: DetailItems = (projection) => projectDetail(documentRef.current!, { ...projectionContext(), projection });
 
   // Unmount-only sentinel: mark disposed. A parked remote permission is NOT resolved here — detach ≠
   // deny (spec A2b §5): the entry stays parked on the host for another client (or the same one, re-attached)
   // to answer. Never on a session swap.
   useEffect(() => () => { disposed.current = true; }, []);
+  // The live repaint epoch: one interval while at least one top-level call is open, cleared the moment they
+  // all settle and by every session swap, resume/rewind reset and unmount (the cleanup below).
+  useEffect(() => {
+    if (!openCalls) return;
+    return scheduleRepaint(() => repaintPending(), 600);
+  }, [openCalls, session]);   // eslint-disable-line react-hooks/exhaustive-deps
   // Dispose the PREVIOUS session whenever it changes (a /resume swap) and on unmount. Must not touch `disposed`.
   useEffect(() => () => { void session.dispose().catch(() => {}); }, [session]);
   // The host event stream is the SINGLE rendering source (spec A2b §2+§5, acceptance 7): a turn started by
   // another attached client renders exactly like one started here. Keyed on session identity.
   useEffect(() => {
     if (!hasSessionEvents(session)) return;
+    followGen.current++;
     const off = session.onSessionEvent((ev) => {
       if (disposed.current) return;
-      if (ev.kind === "turn" && ev.phase === "start") { liveTurnRef.current = new LiveTurn(); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]); }
+      if (ev.kind === "turn" && ev.phase === "start") {
+        // The host has TWO truncated start shapes and they mean opposite things (host.ts's follow()).
+        // A BARE `{truncated:true}` with no seq is the completed idle tail: it must never open a LiveTurn,
+        // never set busy, and has no later turn:end — it simply ends on the trailing `state` frame.
+        if (ev.truncated && ev.seq === undefined) {
+          if (!idleFollowReplay.current) { idleFollowReplay.current = true; documentRef.current!.appendFollowGap(`follow-gap:idle:${docEpoch.current}:${followGen.current}`); reconcile(); }
+          return;
+        }
+        if (ev.truncated) { documentRef.current!.appendFollowGap(`follow-gap:${ev.seq}`); reconcile(); }
+        liveTurnRef.current = new LiveTurn(); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]);
+      }
       else if (ev.kind === "message") {
-        // Harvest bg-task metadata (command/output-file) BEFORE the no-live-turn guard: reconnect-buffer
-        // replays carry no live turn but still need to reach the (idempotent) harvest.
+        // Harvest bg-task metadata (command/output-file) first: a reconnect-buffer replay carries no live
+        // turn but still needs to reach the (idempotent) harvest.
         bgHarvest.current.ingestMessage(ev.data);
-        // Same no-live-turn guard as everything else in this arm (F5/GHOST): a message with no owning
-        // turn is a disk/buffer replay dup, not something the user is watching — so /copy must not
-        // capture text from it either, or it could copy a reply that was never actually rendered.
-        const l = liveTurnRef.current; if (!l) return;
         const data = ev.data as any;
-        if (data?.type === "assistant") {
+        taskListRef.current.ingest(ev.data); setTasks(taskListRef.current.snapshot());
+        if (data?.type === "system" && data.subtype === "compact_boundary") notice("─── context compacted ───");
+        // Retention is unconditional now: a completed record landing in the disk-read/follow window is
+        // appended even though no new active turn starts, and document dedup — not a no-live-turn guard —
+        // is what stops a redelivered copy from showing twice. /copy follows the SAME rule, so it can only
+        // capture a reply that actually entered the transcript.
+        const appended = documentRef.current!.appendSdk("host", data);
+        if (appended && data?.type === "assistant" && data.parent_tool_use_id === undefined) {
           const t = (data.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
           if (t.trim()) lastAssistant.current = t;
-        } else if (data?.type === "system" && data.subtype === "compact_boundary") notice("─── context compacted ───");
-        l.ingest(ev.data); taskListRef.current.ingest(ev.data); setStreaming(l.snapshot()); setTasks(taskListRef.current.snapshot()); setTurnTokens(l.outputTokens);
+        }
+        const l = liveTurnRef.current;
+        if (l) { l.ingest(ev.data); setStreaming(l.snapshot()); setTurnTokens(l.outputTokens); if (l.model) setModel(l.model); }
+        reconcile();
       }
       else if (ev.kind === "turn" && ev.phase === "end") {
         const l = liveTurnRef.current; liveTurnRef.current = null;
-        if (l) { if (ev.error) l.fail(ev.error); setLines((x) => [...x, ...l.finalize()]); if (l.model) setModel(l.model); }
+        if (l?.model) setModel(l.model);
+        // The turn's own failure is retained history, not a transient line: the live region dies with the
+        // turn, so an error has to enter the document to survive into Static and a later Ctrl-O.
         // No live turn to fail INTO (an idle host died, or its synthetic close arrived with nothing
-        // rendering) but the frame still carries an error: without this, an idle host's death is
-        // invisible until the next submit times out ~10s later (F5).
-        else if (ev.error) notice(`✗ connection lost: ${ev.error}`);
+        // rendering) still earns a notice — otherwise an idle host's death is invisible until the next
+        // submit times out ~10s later (F5).
+        if (ev.error) l ? append([{ text: `✗ ${ev.error}`, color: role("error") }]) : notice(`✗ connection lost: ${ev.error}`);
         setStreaming([]); setBusy(false); void refreshCtx(); void refreshUsage(); drainNext();
       }
       else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);
@@ -201,7 +303,10 @@ export function useChat(
         }
       }
       else if (ev.kind === "rewound") void rebuildAfterRewind();   // ANOTHER client rewound: rebuild from disk (no prefill — not our prompt)
-      else if (ev.kind === "state" && ev.status.permissionMode && ev.status.permissionMode !== modeRef.current) setMode(ev.status.permissionMode);
+      else if (ev.kind === "state") {
+        idleFollowReplay.current = false;                          // the trailing frame of a follow replay ends the idle-ingestion mode
+        if (ev.status.permissionMode && ev.status.permissionMode !== modeRef.current) setMode(ev.status.permissionMode);
+      }
     });
     const offDecision = hasDecisionFeed(session) ? session.onDecision((entry) => { if (!disposed.current) pushPending(entry); }) : undefined;
     const offSettled = hasDecisionFeed(session) ? session.onDecisionSettled((s) => { if (!disposed.current) dropPending(s.toolUseID, s.by, s.decision); }) : undefined;
@@ -248,8 +353,8 @@ export function useChat(
     catch { return undefined; }
   }
 
-  function append(ls: RenderLine[]) { if (!disposed.current && ls.length) setLines((l) => [...l, ...ls]); }
-  function notice(text: string) { append([{ text, dim: true }]); }
+  function append(ls: RenderLine[]) { if (ls.length) appendNewLocal({ kind: "visual", lines: ls }); }
+  function notice(text: string) { appendNewLocal({ kind: "notice", lines: [{ text, dim: true }] }); }
   /** /export, /files and /stats all read the PERSISTED transcript, which the SDK does not write mid-turn
    *  (probes 62-64). Local commands dispatch immediately even while busy, so running one during a turn
    *  answers from the last COMPLETED turn — an export that ends before the reply on screen, a token count
@@ -285,7 +390,7 @@ export function useChat(
   }
 
   async function handleCommand(cmd: ParsedCommand) {
-    setLines((l) => [...l, { text: `› /${cmd.name}${cmd.args ? " " + cmd.args : ""}`, dim: true }]);
+    appendNewLocal({ kind: "command-echo", lines: [{ text: `› /${cmd.name}${cmd.args ? " " + cmd.args : ""}`, dim: true }] });
     try {
       switch (cmd.name) {
         case "model":
@@ -479,11 +584,14 @@ export function useChat(
     try { msgs = await getSessionMessages(id); } catch { msgs = []; }
     if (disposed.current) return;
     if (!msgs.length) { append([{ text: `⚠ couldn't resume ${id.slice(0, 8)} — no history found`, dim: true }]); return; }
+    const sameSession = session.sessionId === id;
     setSession(makeSession(id));                                   // [session] effect disposes the old
-    setStreaming([]);
-    setLines(replayLines(msgs, { id }));
+    // Same conversation: APPEND the raw persisted rows into the EXISTING document and reconcile only the
+    // ids nobody has seen. Replacing it with disk-only rows would erase every prior local notice and
+    // command output from later Ctrl-O detail — a real session change is the only terminal boundary.
+    if (sameSession) { for (const m of msgs) documentRef.current!.appendSdk("disk", m); setStreaming([]); reconcile(); }
+    else replaceDocument(replayDocument(msgs, { id }));
     lastAssistant.current = lastAssistantText(msgs);            // /copy follows what is ON SCREEN, not just live turns
-    setClearToken((t) => t + 1);                                   // remount the append-only <Static> so the full replay shows (not sliced)
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
     // The old session's bg tasks died with its engine — the old subscription is already detached, and no
@@ -719,10 +827,11 @@ export function useChat(
     let msgs: any[] = [];
     if (id) { try { msgs = await getSessionMessages(id); } catch { msgs = []; } }
     if (disposed.current) return;
-    setStreaming([]);
-    setLines(msgs.length ? replayLines(msgs, { id, label: "⏪ rewound" }) : [{ text: "⏪ rewound", dim: true }]);
+    // A rewind is a deliberate session transition: the fresh document derives ONLY the restored persisted
+    // messages. (Ctrl-O never uses this path.)
+    if (msgs.length) replaceDocument(replayDocument(msgs, { id, label: "⏪ rewound" }));
+    else { const fresh = new TranscriptDocument(); fresh.appendLocal({ kind: "rewind-divider", lines: [{ text: "⏪ rewound", dim: true }] }, "rewind:empty"); replaceDocument(fresh); }
     lastAssistant.current = lastAssistantText(msgs);        // /copy follows what is on screen
-    setClearToken((t) => t + 1);
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
     if (prefill !== undefined) setComposerPrefill({ text: prefill, token: Date.now() });
@@ -732,7 +841,7 @@ export function useChat(
     return hasRewind(session) ? session.rewindDryRun(uuid) : Promise.resolve({ canRewind: false, error: "unsupported" });
   }
   // A conversation rewind ("both"/"conversation") rebuilds the transcript from the persisted session, bumps
-  // clearToken (remount the append-only <Static>), and pre-fills the composer with the rewound prompt's text —
+  // staticEpoch (mounting a FRESH append-only <Static>), and pre-fills the composer with the rewound prompt's text —
   // CC's edit-and-resend loop. A code-only rewind changes no conversation state: just a notice.
   function confirmRewind(anchor: RewindAnchor, scope: RewindScope) {
     closeRewindPicker();
@@ -758,7 +867,7 @@ export function useChat(
   // attached client renders identically (spec A2b acceptance 7). onMessage is a deliberate no-op: the
   // events, not the submit callback, own the render.
   function runTurn(prompt: string) {
-    setLines((l) => [...l, { text: `› ${prompt}`, dim: true }]);
+    appendNewLocal({ kind: "user-echo", lines: [{ text: `› ${prompt}`, dim: true }] });
     session.submit(prompt, () => {}).catch((e) => {
       append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]);
       // Only reclaim busy/drain when no turn is event-owned (liveTurnRef null): a live turn — another
@@ -783,7 +892,7 @@ export function useChat(
   // ! bash mode — echo the command, run it locally in cwd, append its output (no model turn; CC's shell escape).
   async function runBashMode(command: string) {
     if (disposed.current || !command) return;
-    setLines((l) => [...l, { text: `! ${command}`, color: role("bashBorder") }]);     // immediate echo
+    appendNewLocal({ kind: "command-echo", lines: [{ text: `! ${command}`, color: role("bashBorder") }] });   // immediate echo
     try { const r = await runBash(command, cwd); if (!disposed.current) append(formatBashOutput(r)); }
     catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
@@ -924,7 +1033,7 @@ export function useChat(
     setQueue([]);
     void session.interrupt().catch(() => {});
   }
-  function clear() { if (!disposed.current) { clearScreen(); setLines([]); setStreaming([]); setClearToken((t) => t + 1); } }   // /clear: wipe screen + model (session context kept)
+  function clear() { if (!disposed.current) { clearScreen(); replaceDocument(new TranscriptDocument()); } }   // /clear: wipe screen + model (session context kept)
 
-  return { state: { lines, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, clearToken, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials } as ChatState, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
+  return { state: { staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials } as ChatState, detailItems, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
 }

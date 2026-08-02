@@ -9,16 +9,19 @@ import { Text } from "ink";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
 import { fakeRemote, type FakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
-import { replayLines } from "../../src/tui/replay.js";
+import { replayDocument } from "../../src/tui/replay.js";
+import { projectCompact, type RenderItem } from "../../src/tui/toolRenderer.js";
 
 const frame = (f: () => string | undefined) => (f() ?? "").replace(/\n/g, " ");
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 }
-function allText(c: { state: { lines: { text: string }[]; streaming: { text: string }[] } }): string {
-  return [...c.state.lines, ...c.state.streaming].map((l) => l.text).join("|");
+const itemLines = (item: RenderItem): string[] => (item.kind === "line" ? [item.line.text] : item.body.map((l) => l.text));
+function allText(c: { state: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: { text: string }[] } }): string {
+  return [...[...c.state.staticItems, ...c.state.pendingItems].flatMap(itemLines), ...c.state.streaming.map((l) => l.text)].join("|");
 }
+const projectionOptions = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
 
 // The fake-session scaffold, extended onto the RewindOps surface (fakeRemote() alone satisfies ChatSession &
 // DecisionFeed & BgTasks & SessionEvents but has no rewind methods, so hasRewind() is false on it as-is —
@@ -182,11 +185,34 @@ describe("useChat: rewind flow", () => {
     expect(frame(lastFrame)).toContain("picker:false:0");
   });
 
-  it("8. replayLines({label}) overrides the header prefix (default 'resumed')", () => {
+  it("8. replayDocument({label}) overrides the header prefix (default 'resumed')", () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "fix it" }] }, timestamp: "2026-07-28T08:00:00.000Z" }];
-    const out = replayLines(msgs, { label: "⏪ rewound" });
-    expect(out[0].text.startsWith("─── ⏪ rewound:")).toBe(true);
-    expect(out.at(-1)!.text).toBe("─── ⏪ rewound here · live ───");
+    const out = projectCompact(replayDocument(msgs, { label: "⏪ rewound" }), projectionOptions);
+    expect((out[0] as any).line.text.startsWith("─── ⏪ rewound:")).toBe(true);
+    expect((out.at(-1) as any).line.text).toBe("─── ⏪ rewound here · live ───");
+  });
+
+  it("11. a completed rewind rebuilds the document from the RESTORED persisted messages only, and the composer stays usable", async () => {
+    const msgs = [{ type: "user", uuid: "u-keep", message: { content: [{ type: "text", text: "the surviving prompt" }] }, timestamp: "2026-07-28T08:00:00.000Z" }];
+    const session = fakeRewindSession({ rewind: async () => {} });
+    const deps = { getSessionMessages: async () => msgs };
+    const api: Parameters<typeof RewindHost>[0]["api"] & { run?: (p: string) => void } = {};
+    const submitted: string[] = [];
+    function H() {
+      const c = useChat(() => ({ ...session, submit: async (p: string) => { submitted.push(p); return { result: "ok" }; } } as any), {}, deps);
+      api.confirmRewind = (c as any).confirmRewind; (api as any).run = c.submit;
+      return <Text>epoch:{c.state.staticEpoch} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    (api as any).run!("this prompt predates the rewind");
+    await waitFor(() => frame(lastFrame).includes("this prompt predates the rewind"));
+    api.confirmRewind!(ANCHOR, "both");
+    await waitFor(() => frame(lastFrame).includes("the surviving prompt"));
+    expect(frame(lastFrame)).toContain("epoch:1");                          // a terminal boundary, fresh <Static>
+    expect(frame(lastFrame)).not.toContain("this prompt predates the rewind");   // derived ONLY from restored rows
+    (api as any).run!("after rewind");
+    await waitFor(() => submitted.includes("after rewind"));
   });
 
   it("9. a `rewound` broadcast from ANOTHER client rebuilds this follower's transcript (no prefill — not our prompt)", async () => {

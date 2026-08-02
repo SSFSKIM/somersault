@@ -6,15 +6,14 @@
 // height budgets conservatively (rows-10) instead of chasing exact terminal geometry.
 import React, { useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
-import type { RenderLine } from "./render.js";
-import { Line } from "./Transcript.js";
+import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { pagerAction, applyPager, clampOffset } from "./pager.js";
 import { ACCENT } from "./theme.js";
 
-export function TranscriptPager({ lines, onClose, height }: { lines: RenderLine[]; onClose: () => void; height?: number }) {
+export function TranscriptPager({ items, onClose, height }: { items: readonly RenderItem[]; onClose: () => void; height?: number }) {
   const { stdout } = useStdout();
   const h = height ?? Math.max(8, (stdout?.rows ?? 24) - 10);
-  const total = lines.length;
+  const total = items.length;
   const [offset, setOffset] = useState(() => Math.max(0, total - h));   // open at the bottom (most recent)
   const off = clampOffset(offset, total, h);
   useInput((input, key) => {
@@ -23,11 +22,11 @@ export function TranscriptPager({ lines, onClose, height }: { lines: RenderLine[
     if (a.kind === "exit") { onClose(); return; }
     setOffset((o) => applyPager(clampOffset(o, total, h), a, total, h));
   });
-  const visible = lines.slice(off, off + h);
+  const visible = items.slice(off, off + h);
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>Transcript <Text dimColor>{total === 0 ? "(empty)" : `lines ${off + 1}–${Math.min(off + h, total)} of ${total}`}</Text></Text>
-      {visible.map((l, i) => <Line key={off + i} l={l} />)}
+      {visible.map((item, i) => <RenderItemView key={off + i} item={item} />)}
       <Text dimColor>j/k ↑↓ line · Ctrl-U/D ½page · Ctrl-B/F b/space page · g/G top/bottom · q/Esc close</Text>
     </Box>
   );

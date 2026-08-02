@@ -11,6 +11,8 @@ import type { PermissionDecision } from "../../src/index.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
 import type { DecisionOutcome } from "../../src/permissions/types.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
+import type { RenderItem } from "../../src/tui/toolRenderer.js";
+import { READ_CALL, READ_RESULT_FLAT, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
 
 // Ink hard-wraps a long single-line <Text> at the terminal width, inserting a real "\n" at whichever word
 // boundary the reflow lands on — a boundary that shifts whenever earlier content in the SAME joined line
@@ -21,8 +23,12 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 }
-function allText(c: { state: { lines: { text: string }[]; streaming: { text: string }[] } }): string {
-  return [...c.state.lines, ...c.state.streaming].map((l) => l.text).join("|");
+// F1 Task 4: the transcript is `RenderItem[]` now — published Static rows, then the transient pending
+// region, then the in-flight partial lines, in exactly the order a reader sees them.
+const itemLines = (item: RenderItem): string[] => (item.kind === "line" ? [item.line.text] : item.body.map((l) => l.text));
+type ProjectedState = { state: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: { text: string }[] } };
+function allText(c: ProjectedState): string {
+  return [...[...c.state.staticItems, ...c.state.pendingItems].flatMap(itemLines), ...c.state.streaming.map((l) => l.text)].join("|");
 }
 function Host({ makeSession, prompt, initialPrompt }: { makeSession: () => ChatSession; prompt?: string; initialPrompt?: string }) {
   const c = useChat(makeSession, { initialPrompt });
@@ -77,7 +83,7 @@ describe("useChat: the host event stream is the single rendering source", () => 
     expect(typeof capturedOnMessage).toBe("function");
   });
 
-  it("mid-turn attach replay renders (turn start → messages → permission → state, no submit call); the idle-attach shape (messages, no start frame) renders NOTHING", async () => {
+  it("mid-turn attach replay renders (turn start → messages → permission → state, no submit call); an idle completed record still lands in the retained transcript", async () => {
     const fake = fakeRemote();
     function H() { const c = useChat(() => fake); return <Text>{c.state.busy ? "BUSY" : "IDLE"} {c.state.pending ? `PENDING:${c.state.pending.toolName}` : "NOPEND"} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
@@ -97,11 +103,16 @@ describe("useChat: the host event stream is the single rendering source", () => 
     fake.settlePermission("t9", "system", "deny");
     await waitFor(() => frame(lastFrame).includes("IDLE") && frame(lastFrame).includes("NOPEND"));
 
-    // idle-attach shape: messages with NO preceding start frame → the no-live-turn guard (disk/buffer dedup)
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "GHOST" }] } } });
-    await new Promise((r) => setTimeout(r, 30));
+    // Idle-attach shape: a COMPLETED record with no preceding start frame. F1 Task 4 retains it — a
+    // completion landing in the disk-read/follow window is real history, and identity dedup (not a
+    // no-live-turn guard) is what stops a redelivered copy showing twice — while busy stays false.
+    const late = { type: "assistant", message: { id: "late-1", content: [{ type: "text", text: "LATE-COMPLETION" }] } };
+    fake.pushEvent({ kind: "message", data: late });
+    await waitFor(() => frame(lastFrame).includes("LATE-COMPLETION"));
     expect(frame(lastFrame)).toContain("IDLE");
-    expect(frame(lastFrame)).not.toContain("GHOST");
+    fake.pushEvent({ kind: "message", data: late });                      // the same record redelivered
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame).match(/LATE-COMPLETION/g)).toHaveLength(1);   // published exactly once
   });
 
   it("a synthetic close with NO live turn (an idle host dying) surfaces a notice instead of nothing (F5)", async () => {
@@ -255,8 +266,9 @@ describe("useChat", () => {
   });
   it("seeds the welcome banner into the scrollback, but skips it when launching into a resume", async () => {
     const banner = [{ text: "✻ Welcome to Claude Code" }, { text: "  tips" }];
+    const welcome = [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: banner } }];
     function BannerHost({ resume }: { resume?: boolean }) {
-      const c = useChat(() => fakeRemote(), { initialLines: banner, ...(resume ? { initialResume: { kind: "continue" } as const } : {}) },
+      const c = useChat(() => fakeRemote(), { initialEntries: welcome, ...(resume ? { initialResume: { kind: "continue" } as const } : {}) },
         { listSessions: async () => [], getSessionMessages: async () => [] });
       return <Text>{allText(c)}</Text>;
     }
@@ -388,7 +400,7 @@ describe("useChat", () => {
   it("clear() empties the transcript and fires the terminal clear-screen", async () => {
     let cleared = 0;
     const api: { run?: (s: string) => void; clear?: () => void } = {};
-    function H() { const c = useChat(() => fakeRemote(), {}, { clearScreen: () => { cleared++; } }); api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.lines.length}</Text>; }
+    function H() { const c = useChat(() => fakeRemote(), {}, { clearScreen: () => { cleared++; } }); api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.staticItems.length}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("hi");  await waitFor(() => !frame(lastFrame).includes("L:0"));   // lines present
@@ -502,13 +514,13 @@ describe("useChat", () => {
     expect(submits).toBe(2);                       // still exactly 2 — no double-dispatch
   });
 
-  it("resuming bumps clearToken (so the append-only <Static> remounts and shows the full replay)", async () => {
+  it("resuming a DIFFERENT session bumps staticEpoch (so a fresh <Static> mounts and shows the full replay)", async () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
     let token = -1;
-    function H() { const c = useChat((_r?: string) => fakeRemote(), { initialResume: { kind: "id", id: "sess-9" } }, { getSessionMessages: async () => msgs, listSessions: async () => [] }); token = c.state.clearToken; return <Text>tok:{c.state.clearToken} {allText(c)}</Text>; }
+    function H() { const c = useChat((_r?: string) => fakeRemote(), { initialResume: { kind: "id", id: "sess-9" } }, { getSessionMessages: async () => msgs, listSessions: async () => [] }); token = c.state.staticEpoch; return <Text>tok:{c.state.staticEpoch} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await waitFor(() => frame(lastFrame).includes("prior"));   // replay landed
-    expect(token).toBeGreaterThanOrEqual(1);                   // clearToken bumped by resumeInto
+    expect(token).toBeGreaterThanOrEqual(1);                   // staticEpoch bumped by resumeInto's terminal boundary
   });
 
   it("Wave 2 final-review F2: a /resume swap clears stale bgTasks from the OLD engine (no ghost ⟳ running rows)", async () => {
@@ -923,18 +935,25 @@ describe("useChat: compact divider + /copy (Task 9)", () => {
     expect(frame(lastFrame)).toContain("─── context compacted ───");
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
   });
-  it("an assistant message with NO owning live turn (a ghost replay) is ignored — it must not leak into /copy either", async () => {
+  // F1 Task 4 inverts the old "no live turn ⇒ ignore" guard: a COMPLETED record landing in the disk-read/
+  // follow window is real history, so it is retained and shown, and /copy follows what is on screen. A
+  // REDELIVERED copy is suppressed by document identity dedup instead — which is what the guard was for.
+  it("an assistant message with NO owning live turn is retained once and reaches /copy", async () => {
     const fake = fakeRemote();
+    let copied: string | undefined;
     const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    function H() { const c = useChat(() => fake, {}, { copyText: async (t: string) => { copied = t; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "GHOST-NEVER-SHOWN" }] } } });
+    const late = { type: "assistant", message: { id: "late-copy", content: [{ type: "text", text: "LATE-COMPLETION" }] } };
+    fake.pushEvent({ kind: "message", data: late });
+    await waitFor(() => frame(lastFrame).includes("LATE-COMPLETION"));
+    fake.pushEvent({ kind: "message", data: late });                     // the same record redelivered
     await new Promise((r) => setTimeout(r, 30));
-    expect(frame(lastFrame)).not.toContain("GHOST-NEVER-SHOWN");
+    expect(frame(lastFrame).match(/LATE-COMPLETION/g)).toHaveLength(1);
     api.run!("/copy");
-    await waitFor(() => frame(lastFrame).includes("nothing to copy"));   // the ghost text never reached lastAssistant
-    expect(frame(lastFrame)).not.toContain("GHOST-NEVER-SHOWN");
+    await waitFor(() => frame(lastFrame).includes("✓ copied"));
+    expect(copied).toBe("LATE-COMPLETION");
   });
 
   it("/copy with no assistant text yet notices 'nothing to copy' and never calls the copy fn", async () => {
@@ -1416,7 +1435,7 @@ describe("useChat's own emitted lines carry semantic tokens, not ANSI literals",
   function ColorHost({ makeSession, api, deps }: { makeSession: () => ChatSession; api: { run?: (s: string) => void; colors?: () => { text: string; color?: string }[] }; deps?: Parameters<typeof useChat>[2] }) {
     const c = useChat(makeSession, { cwd: "/proj" }, deps);
     api.run = c.submit;
-    api.colors = () => [...c.state.lines, ...c.state.streaming];
+    api.colors = () => [...[...c.state.staticItems, ...c.state.pendingItems].flatMap((i) => (i.kind === "line" ? [i.line] : i.body)), ...c.state.streaming];
     return <Text>{allText(c)}</Text>;
   }
   it("the ! echo reads `bashBorder` and a failed command's exit line reads `error`", async () => {
@@ -1439,5 +1458,172 @@ describe("useChat's own emitted lines carry semantic tokens, not ANSI literals",
     await waitFor(() => frame(lastFrame).includes("unknown level"));
     const bad = api.colors!().find((l) => l.text.startsWith("thinking: unknown level"));
     expect(bad!.color).toBe(tok("error"));
+  });
+});
+
+// ── F1 Task 4: the retained-source cutover ────────────────────────────────────────────────────────────
+describe("useChat: one retained document behind every surface", () => {
+  /** A fake repaint scheduler so a test can fire the 600 ms pending tick by hand and prove that no stale
+   *  callback survives a settle, a session swap or an unmount. */
+  function fakeScheduler() {
+    const live: (() => void)[] = [];
+    let ticks = 0;
+    const schedule = (cb: () => void) => { live.push(cb); return () => { const i = live.indexOf(cb); if (i >= 0) live.splice(i, 1); }; };
+    return { schedule, tick: () => { ticks++; for (const cb of [...live]) cb(); }, get armed() { return live.length; }, get ticks() { return ticks; } };
+  }
+
+  it("renders ONE row for a complete call/result pair and keeps a typed composer draft live across a duplicate follow record", async () => {
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: READ_CALL });
+    await waitFor(() => frame(lastFrame).includes("Read("));
+    fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });
+    await waitFor(() => frame(lastFrame).includes("one"));
+    fake.pushEvent({ kind: "message", data: READ_CALL });                 // the whole pair redelivered by a follow replay
+    fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame).match(/Read\(/g)).toHaveLength(1);
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    api.run!("after the duplicate");                                      // the command channel is still live
+    await waitFor(() => frame(lastFrame).includes("› after the duplicate"));
+  });
+
+  it("publishes every stable RenderItem id exactly once — local visual, assistant text and divider alike", async () => {
+    const fake = fakeRemote();
+    let ids: string[] = [];
+    function H() { const c = useChat(() => fake); ids = [...c.state.staticItems].map((i) => i.id); return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    const text = { type: "assistant", message: { id: "stable-text", content: [{ type: "text", text: "stable reply" }] } };
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: text });
+    fake.pushEvent({ kind: "message", data: text });                      // exact duplicate
+    fake.pushEvent({ kind: "turn", phase: "start", truncated: true, seq: 4 });   // a divider-shaped local record, twice
+    fake.pushEvent({ kind: "turn", phase: "start", truncated: true, seq: 4 });
+    await waitFor(() => frame(lastFrame).includes("stable reply") && frame(lastFrame).includes("Earlier live output unavailable"));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(frame(lastFrame).match(/stable reply/g)).toHaveLength(1);
+    expect(frame(lastFrame).match(/Earlier live output unavailable/g)).toHaveLength(1);
+  });
+
+  it("gives the SAME local visual action a fresh monotonic identity each time it is invoked, so two /help runs both render", async () => {
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/help");
+    await waitFor(() => frame(lastFrame).includes("/model"));
+    const before = (frame(lastFrame).match(/› \/help/g) ?? []).length;
+    api.run!("/help");
+    await waitFor(() => (frame(lastFrame).match(/› \/help/g) ?? []).length === before + 1);
+  });
+
+  it("same-session /resume APPENDS only unseen persisted rows and keeps the pre-resume local event in detail-all", async () => {
+    const msgs = [{ type: "user", uuid: "u-prior", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    const fake = fakeRemote({ sessionId: "same-1" });
+    const api: { run?: (s: string) => void; pick?: (s: any) => void; detail?: (p: "detail-all" | "detail-collapsed") => readonly RenderItem[] } = {};
+    let epoch = -1, published: string[] = [];
+    function H() {
+      const c = useChat(() => fake, {}, { listSessions: async () => [{ sessionId: "same-1", summary: "s", lastModified: 1 }], getSessionMessages: async () => msgs });
+      api.run = c.submit; api.pick = (c as any).pickSession; api.detail = c.detailItems;
+      epoch = c.state.staticEpoch; published = [...c.state.staticItems].map((i) => i.id);
+      return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("!echo local");
+    await waitFor(() => frame(lastFrame).includes("! echo local"));
+    const beforeIds = [...published];
+    api.pick!({ sessionId: "same-1", summary: "s", lastModified: 1 });
+    await waitFor(() => frame(lastFrame).includes("› prior prompt"));
+    expect(epoch).toBe(0);                                        // NOT a terminal boundary: no fresh <Static>
+    expect(published.slice(0, beforeIds.length)).toEqual(beforeIds);   // every earlier identity preserved
+    expect(JSON.stringify(api.detail!("detail-all"))).toContain("! echo local");   // the local event survives into Ctrl-O detail
+  });
+
+  it("clears Static BEFORE the fresh projection publishes, so the final frame holds one copy of each retained row", async () => {
+    const msgs = [{ type: "user", uuid: "u-r", message: { content: [{ type: "text", text: "restored prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    const order: string[] = [];
+    const fake = fakeRemote({ sessionId: "old-1" });
+    const api: { run?: (s: string) => void; clear?: () => void } = {};
+    function H() {
+      const c = useChat(() => fake, { clearStaticTranscript: () => order.push(`clear@${c.state.staticEpoch}`) }, { listSessions: async () => [], getSessionMessages: async () => msgs });
+      api.run = c.submit; api.clear = c.clear;
+      return <Text>epoch:{c.state.staticEpoch} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/help");
+    await waitFor(() => frame(lastFrame).includes("/model"));
+    api.clear!();
+    await waitFor(() => frame(lastFrame).includes("epoch:1"));
+    expect(order).toEqual(["clear@0"]);                            // ran while the OLD epoch was still mounted
+    expect(frame(lastFrame)).not.toContain("/model");             // the fresh <Static> did not replay history
+  });
+
+  it("stops the 600 ms pending repaint when the call settles, when the session is replaced, and on unmount", async () => {
+    const scheduler = fakeScheduler();
+    const first = fakeRemote(), second = fakeRemote();
+    const msgs = [{ type: "user", uuid: "u-s", message: { content: [{ type: "text", text: "swapped" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    const api: { pick?: (s: any) => void } = {};
+    function H({ session }: { session: FakeRemote }) {
+      const c = useChat(() => session, {}, { scheduleRepaint: scheduler.schedule, listSessions: async () => [], getSessionMessages: async () => msgs });
+      api.pick = (c as any).pickSession;
+      return <Text>{allText(c)}</Text>;
+    }
+    const view = render(<H session={first} />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(scheduler.armed).toBe(0);                              // nothing open yet
+    first.pushEvent({ kind: "message", data: READ_CALL });
+    await waitFor(() => frame(view.lastFrame).includes("Read("));
+    await waitFor(() => scheduler.armed === 1);                   // Ink discipline: effects subscribe one tick after the frame
+    expect(scheduler.ticks).toBe(0);
+    scheduler.tick();                                             // a real transient re-projection, no SDK event
+    await new Promise((r) => setTimeout(r, 10));
+    first.pushEvent({ kind: "message", data: READ_RESULT_WITH_SIDECAR });
+    await waitFor(() => frame(view.lastFrame).includes("export const app = 1;"));
+    await waitFor(() => scheduler.armed === 0);                   // settled → the epoch is over
+    expect(scheduler.armed).toBe(0);
+
+    first.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "open-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/b.ts" } }] } } });
+    await waitFor(() => scheduler.armed === 1);
+    api.pick!({ sessionId: "other-1", summary: "s", lastModified: 1 });   // replace the session while a call is OPEN
+    await waitFor(() => frame(view.lastFrame).includes("› swapped"));
+    await waitFor(() => scheduler.armed === 0);                   // the swap disarmed the old epoch
+    expect(scheduler.armed).toBe(0);
+    view.unmount();
+    expect(scheduler.armed).toBe(0);
+  });
+
+  it("a BARE truncated start is an idle tail replay: it never sets busy, records the gap once, and ends on the state frame", async () => {
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", truncated: true });          // BARE: no seq
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "tail-1", content: [{ type: "text", text: "retained idle tail" }] } } });
+    fake.pushEvent({ kind: "state", status: { state: "working", status: "idle" } });
+    await waitFor(() => frame(lastFrame).includes("retained idle tail"));
+    expect(frame(lastFrame)).toContain("Earlier live output unavailable while attaching");
+    expect(frame(lastFrame)).toContain("IDLE");                                // never busy — there is no later turn:end
+    expect(frame(lastFrame).match(/Earlier live output unavailable/g)).toHaveLength(1);
+  });
+
+  it("a truncated start WITH a numeric seq is a live mid-turn replay: gap record, LiveTurn, busy", async () => {
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake); return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", truncated: true, seq: 12 });
+    await waitFor(() => frame(lastFrame).includes("BUSY") && frame(lastFrame).includes("Earlier live output unavailable while attaching"));
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 12 });
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
   });
 });
