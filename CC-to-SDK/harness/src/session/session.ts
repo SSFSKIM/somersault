@@ -20,12 +20,13 @@ export interface SessionOpts { contextTool?: boolean; compactTool?: boolean; lab
 
 type UserMessageUUID = NonNullable<SDKUserMessage["uuid"]>;
 type SubmittedOrigin = "human" | "auto-continuation";
+type TurnKind = "normal" | "compact";
 
 function userTurn(text: string, uuid: UserMessageUUID, origin: SubmittedOrigin): SDKUserMessage {
   return { type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, origin: { kind: origin }, uuid };
 }
 
-interface Waiter { uuid: UserMessageUUID; origin: SubmittedOrigin; onMessage: (m: unknown) => void; resolve: (r: { result: unknown; structuredOutput?: unknown }) => void; reject: (e: Error) => void; }
+interface Waiter { uuid: UserMessageUUID; origin: SubmittedOrigin; kind: TurnKind; compactLifecycle: boolean; onMessage: (m: unknown) => void; resolve: (r: { result: unknown; structuredOutput?: unknown }) => void; reject: (e: Error) => void; }
 
 /** One long-lived query() session. A turn is submit(prompt,onMessage) → streamed messages → resolved result.
  *  Captures the SDK session_id from the first system/init frame (stable per probe) → .sessionId. */
@@ -72,21 +73,28 @@ export class Session implements ControllableSession {
 
   /** Queue a turn + its waiter. Every turn keeps its fixed input provenance so its result cannot settle a
    *  waiter owned by another origin class. */
-  private enqueueTurn(prompt: string, onMessage: (m: unknown) => void, origin: SubmittedOrigin): Promise<{ result: unknown; structuredOutput?: unknown }> {
+  private enqueueTurn(prompt: string, onMessage: (m: unknown) => void, origin: SubmittedOrigin, kind: TurnKind = "normal"): Promise<{ result: unknown; structuredOutput?: unknown }> {
     const uuid = randomUUID();
-    return new Promise((resolve, reject) => { this.waiters.push({ uuid, origin, onMessage, resolve, reject }); this.input.push(userTurn(prompt, uuid, origin)); });
+    return new Promise((resolve, reject) => { this.waiters.push({ uuid, origin, kind, compactLifecycle: false, onMessage, resolve, reject }); this.input.push(userTurn(prompt, uuid, origin)); });
+  }
+  private enqueueCompact(origin: SubmittedOrigin, onMessage: (m: unknown) => void): Promise<{ result: unknown; structuredOutput?: unknown }> {
+    return this.enqueueTurn("/compact", onMessage, origin, "compact");
   }
 
-  /** Success results are UUID-owned; absent origin is accepted, but an explicit one must agree with the
-   *  waiter's submission. Error variants lack UUIDs, so only an explicit matching origin may settle FIFO. */
-  private resultWaiter(m: any): Waiter | undefined {
-    if (m.subtype === "success") {
-      const uuid = m.user_message_uuid;
-      const waiter = typeof uuid === "string" && uuid.length > 0 ? this.waiters.find((w) => w.uuid === uuid) : undefined;
-      return waiter && (m.origin == null || m.origin.kind === waiter.origin) ? waiter : undefined;
-    }
+  /** UUID-bearing successes are turn-owned. UUID-less results may use FIFO only with matching explicit
+   *  provenance, or for a compact waiter that has observed its own compact lifecycle marker. */
+  private fifoWaiter(m: any): Waiter | undefined {
     const waiter = this.waiters[0];
-    return waiter && m.origin != null && m.origin.kind === waiter.origin ? waiter : undefined;
+    if (!waiter) return undefined;
+    if (m.origin != null) return m.origin.kind === waiter.origin ? waiter : undefined;
+    return waiter.kind === "compact" && waiter.compactLifecycle ? waiter : undefined;
+  }
+  private resultWaiter(m: any): Waiter | undefined {
+    if (m.subtype !== "success") return this.fifoWaiter(m);
+    const uuid = m.user_message_uuid;
+    if (typeof uuid !== "string" || uuid.length === 0) return this.fifoWaiter(m);
+    const waiter = this.waiters.find((w) => w.uuid === uuid);
+    return waiter && (m.origin == null || m.origin.kind === waiter.origin) ? waiter : undefined;
   }
 
   /** Run one turn; non-result messages stream to onMessage; resolves with the turn's result (and, when the
@@ -119,10 +127,10 @@ export class Session implements ControllableSession {
   async compact(): Promise<CompactOutcome> {
     this.assertRunning();
     const frames: unknown[] = [];
-    await this.enqueueTurn("/compact", (m) => {
+    await this.enqueueCompact("human", (m) => {
       const mm = m as any;
       if (mm.type === "system" && (mm.subtype === "status" || mm.subtype === "compact_boundary")) frames.push(mm);
-    }, "human");
+    });
     return parseCompactOutcome(frames);
   }
 
@@ -232,6 +240,9 @@ export class Session implements ControllableSession {
         for (const cb of [...this.frameCbs]) { try { cb(m); } catch { /* one subscriber's failure is not another's */ } }
         const mm = m as any;
         if (mm.type === "system" && mm.subtype === "init" && !this._sessionId) this._sessionId = mm.session_id;
+        if (mm.type === "system" && ((mm.subtype === "status" && mm.status === "compacting") || mm.subtype === "compact_boundary")) {
+          const waiter = this.waiters[0]; if (waiter?.kind === "compact") waiter.compactLifecycle = true;
+        }
         if (mm.type === "system" && mm.subtype === "background_tasks_changed") this._bgTasks = mm.tasks ?? []; // REPLACE, never merge
         if (mm.type === "system" && mm.subtype === "mirror_error") { this._mirrorErrors.push({ error: mm.error, key: mm.key, at: this.now() }); if (this._mirrorErrors.length > 50) this._mirrorErrors.shift(); }
         const waiter = mm.type === "result" ? this.resultWaiter(mm) : undefined;
@@ -243,7 +254,7 @@ export class Session implements ControllableSession {
         if (waiter) {
           this.waiters.splice(this.waiters.indexOf(waiter), 1);
           waiter.resolve({ result: mm.result, structuredOutput: mm.structured_output });
-          if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.submitAutomatic("/compact").catch(() => {}); }
+          if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.enqueueCompact("auto-continuation", () => {}).catch(() => {}); }
         } else if (mm.type !== "result") this.waiters[0]?.onMessage(m);
       }
     } finally {

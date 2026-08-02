@@ -327,11 +327,11 @@ describe("DaemonSupervisor", () => {
     await sup.shutdown();
   });
 
-  it("a fired heartbeat tick submits the tickPrompt as automatic and settles from its matching result", async () => {
+  it("a fired heartbeat tick submits the tickPrompt as automatic and settles from its origin-absent matching result", async () => {
     const s = captureSched();
     const turns: any[] = [];
     const recordingQuery = ({ prompt }: any) => (async function* () {
-      for await (const t of prompt) { turns.push(t); yield { ...successFor(t, "ok"), origin: { kind: "auto-continuation" } }; }
+      for await (const t of prompt) { turns.push(t); yield successFor(t, "ok"); }
     })();
     const sup = new DaemonSupervisor({ query: recordingQuery }, { dir: dir(), scheduleRestart: s.scheduleRestart });
     const id = sup.spawn();

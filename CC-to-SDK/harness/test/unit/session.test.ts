@@ -41,7 +41,7 @@ function compactQuery(seen: string[], turns: any[] = []) {
         yield { type: "system", subtype: "status", status: "compacting" };
         yield { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 1000, post_tokens: 200 } };
         yield { type: "system", subtype: "status", status: null, compact_result: "success" };
-        yield successFor(t, "compacted", t.origin);
+        yield { ...successFor(t, "compacted", t.origin.kind === "human" ? { kind: "human" } : undefined), user_message_uuid: undefined };
       } else yield successFor(t, "did:" + text, t.origin);
     }
   })();
@@ -199,6 +199,40 @@ describe("Session", () => {
     expect(seen).toEqual(["hello", "/compact", "world"]);
     expect(turns.find((t) => t.message.content === "/compact")).toMatchObject({ origin: { kind: "auto-continuation" } });
   });
+  it("settles a lifecycle-marked compact waiter for an origin-absent UUID-less result only", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.compact().then((r) => { settled = true; return r; });
+    await nextTick();
+    try {
+      frames.push({ ...successFor(turns[0], "task", { kind: "task-notification" }), user_message_uuid: undefined });
+      await nextTick();
+      expect(settled).toBe(false);
+      frames.push({ type: "system", subtype: "status", status: "compacting" });
+      frames.push({ ...successFor(turns[0], "wrong", { kind: "auto-continuation" }), user_message_uuid: undefined });
+      await nextTick();
+      expect(settled).toBe(false);
+      frames.push({ ...successFor(turns[0], "compacted"), user_message_uuid: undefined });
+      await nextTick();
+      expect(settled).toBe(true);
+      await turn;
+    } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
+  });
+  it("settles a lifecycle-marked compact waiter for an origin-absent error", async () => {
+    const { frames, query } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.compact().then(() => { settled = true; });
+    await nextTick();
+    try {
+      frames.push({ type: "system", subtype: "compact_boundary", compact_metadata: {} });
+      frames.push(errorFor());
+      await nextTick();
+      expect(settled).toBe(true);
+      await turn;
+    } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
+  });
   it("submit() stamps its input human", async () => {
     const { frames, query, turns } = framedQuery();
     const s = new Session({ query }, {});
@@ -343,7 +377,8 @@ describe("Session", () => {
     await nextTick();
     expect(prompts).toEqual(["work", "/compact"]);
     expect(turns[1]).toMatchObject({ origin: { kind: "auto-continuation" } });
-    frames.push(successFor(turns[1], "compacted", { kind: "auto-continuation" }));
+    frames.push({ type: "system", subtype: "status", status: "compacting" });
+    frames.push({ ...successFor(turns[1], "compacted"), user_message_uuid: undefined });
     frames.close(); await s.dispose();
   });
   it("stream yields the turn's messages then a terminal result frame", async () => {
