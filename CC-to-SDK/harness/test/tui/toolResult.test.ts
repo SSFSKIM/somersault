@@ -45,7 +45,13 @@ describe("F1 structured-first results", () => {
     expect(bashArgument({ command: " first\nsecond\nthird " }, false)).toBe("first\nsecond…");
     expect(bashArgument({ command: "x".repeat(200) }, false)).toHaveLength(160); expect(bashArgument({ command: "x".repeat(200) }, false)).toMatch(/…$/);
     expect(bashArgument({ command: " first\nsecond\nthird " }, true)).toBe("first\nsecond\nthird");
+    expect(bashArgument({ command: "sed -i.bak 's/a/b/g' f.txt" }, false)).toBe("f.txt");
+    expect(bashArgument({ command: "sed -E -i '' -e 's/a(b)/\\1/' f.txt" }, false)).toBe("f.txt");
     expect(bashArgument({ not_command: true }, false)).toBe("");
+  });
+  it("falls back to the clipped command for every unproven sed shape", () => {
+    for (const command of ["sed -i 's/x/y/' a.txt b.txt", "sed -i 's/x/y/' a.txt > log", "sed -i 's/x/y/' a.txt | cat", "sed -n -i 's/x/y/' a.txt", "sed -i 'd' f.txt", "sed -i 's/x/y/' a.txt && echo done", "sed 's/x/y/' f.txt", "sed -i 's/x/y/'", "sed -i -e 's/a/b/' -e 's/c/d/' f.txt"])
+      expect(bashArgument({ command }, false)).toBe(command);
   });
   it("normalizes LT15 generic errors without losing their raw source", () => {
     expect(formatGenericError({ message: "not text" }, false)).toBe("Tool execution failed");
@@ -53,5 +59,13 @@ describe("F1 structured-first results", () => {
     expect(formatGenericError("InputValidationError: malformed", false)).toBe("Invalid tool parameters");
     expect(formatGenericError("InputValidationError: malformed", true)).toBe("Error: InputValidationError: malformed");
     expect(formatGenericError("Error: retained", false)).toBe("Error: retained"); expect(formatGenericError("Cancelled: retained", false)).toBe("Cancelled: retained");
+  });
+  it("unwraps the tool_use_error envelope the SDK actually sends and matches InputValidationError anywhere", () => {
+    expect(formatGenericError("<tool_use_error>InputValidationError: bad schema</tool_use_error>", false)).toBe("Invalid tool parameters");
+    expect(formatGenericError("<tool_use_error>InputValidationError: bad schema</tool_use_error>", true)).toBe("Error: InputValidationError: bad schema");
+    expect(formatGenericError("<tool_use_error>Cancelled: by user</tool_use_error>", false)).toBe("Cancelled: by user");
+    expect(formatGenericError("<tool_use_error>Error: boom</tool_use_error>", false)).toBe("Error: boom");
+    expect(formatGenericError("<tool_use_error><sandbox_violations>denied</sandbox_violations>boom</tool_use_error>", false)).toBe("Error: boom");
+    expect(formatGenericError("prefix InputValidationError: mid-string", false)).toBe("Invalid tool parameters");
   });
 });

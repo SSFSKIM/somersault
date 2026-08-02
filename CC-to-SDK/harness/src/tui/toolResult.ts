@@ -35,6 +35,70 @@ const editShape = (v: unknown): Record<string, unknown> | undefined => (isRecord
 const bashShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && typeof v.stdout === "string" && typeof v.stderr === "string" && typeof v.interrupted === "boolean" && typeof v.noOutputExpected === "boolean" && typeof v.isImage === "boolean" && (v.returnCodeInterpretation === undefined || typeof v.returnCodeInterpretation === "string") ? v : undefined);
 const agentShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && typeof v.agentId === "string" ? v : undefined);
 
+/** Quote-aware enough to split a SIMPLE command, and deliberately fail-closed everywhere else: upstream parses a
+ *  real shell AST and demands exactly one command node, so any unquoted metacharacter (a pipe, `&&`, `;`, a
+ *  redirection, a subshell, an expansion, a newline) rejects the whole input here. Rejecting only ever costs us the
+ *  sed swap — it can never mis-attribute a redirection target or a second operand as "the edited file". */
+const UNQUOTED_META = /[|&;<>()$`\\\n\r]/;
+function simpleCommandTokens(command: string): string[] | undefined {
+  const tokens: string[] = []; let token = "", open = false, i = 0;
+  while (i < command.length) {
+    const ch = command[i];
+    if (ch === " " || ch === "\t") { if (open) { tokens.push(token); token = ""; open = false; } i++; continue; }
+    open = true;
+    if (ch === "'") { const end = command.indexOf("'", i + 1); if (end === -1) return undefined; token += command.slice(i + 1, end); i = end + 1; continue; }
+    if (ch === '"') {
+      for (i++; ; i++) {
+        if (i >= command.length) return undefined;
+        const inner = command[i];
+        if (inner === '"') { i++; break; }
+        if (inner === "$" || inner === "`") return undefined;               // still shell expansion inside double quotes
+        if (inner === "\\" && i + 1 < command.length) { token += command[i + 1]; i++; continue; }
+        token += inner;
+      }
+      continue;
+    }
+    if (UNQUOTED_META.test(ch)) return undefined;
+    token += ch; i++;
+  }
+  if (open) tokens.push(token);
+  return tokens;
+}
+/** Upstream `c1t`: the header swaps to a file path ONLY for a proven single-file in-place substitute — one simple
+ *  `sed`, in-place, at most one script and it must parse as `s/pattern/replacement/flags` with sed's own flag set,
+ *  and exactly one remaining operand. A second file, a redirection, a pipe, an unknown flag or a non-substitute
+ *  script all keep the clipped command, because none of them edit exactly one named file. */
+function sedInPlaceTarget(command: string): string | undefined {
+  const tokens = simpleCommandTokens(command);
+  if (!tokens || tokens[0] !== "sed") return undefined;
+  const rest = tokens.slice(1);
+  let inPlace = false, script: string | undefined, file: string | undefined;
+  for (let i = 0; i < rest.length; ) {
+    const token = rest[i];
+    if (token === "-i" || token === "--in-place") {                          // an optional suffix argument: empty, or a real ".bak"
+      inPlace = true; i++; const suffix = rest[i];
+      if (suffix !== undefined && !suffix.startsWith("-") && (suffix === "" || suffix.startsWith("."))) i++;
+      continue;
+    }
+    if (token.startsWith("-i")) { inPlace = true; i++; continue; }           // the attached `-i.bak` form
+    if (token === "-E" || token === "-r" || token === "--regexp-extended") { i++; continue; }
+    if (token === "-e" || token === "--expression") { if (script !== undefined || rest[i + 1] === undefined) return undefined; script = rest[i + 1]; i += 2; continue; }
+    if (token.startsWith("--expression=")) { if (script !== undefined) return undefined; script = token.slice(13); i++; continue; }
+    if (token.startsWith("-")) return undefined;
+    if (script === undefined) script = token; else if (file === undefined) file = token; else return undefined;
+    i++;
+  }
+  if (!inPlace || !script || !file || !script.startsWith("s/")) return undefined;
+  const fields = ["", "", ""]; let field = 0;                                // pattern / replacement / flags, exactly three delimiters
+  for (let i = 2; i < script.length; i++) {
+    const ch = script[i];
+    if (ch === "\\" && i + 1 < script.length) { fields[field] += ch + script[i + 1]; i++; continue; }
+    if (ch === "/") { if (field === 2) return undefined; field++; continue; }
+    fields[field] += ch;
+  }
+  return field === 2 && /^[gpimIM1-9]*$/.test(fields[2]) ? file : undefined;
+}
+
 /** LT12: the Bash header argument, read ONLY from the complete retained input so compact and detailed projections
  *  share one source and nothing smuggles a display header through `summary`. A recognized single-file in-place
  *  `sed -i` reports the file it edits rather than its script; anything else is the trimmed command, clipped
@@ -42,9 +106,9 @@ const agentShape = (v: unknown): Record<string, unknown> | undefined => (isRecor
 export function bashArgument(input: unknown, verbose: boolean): string {
   const command = isRecord(input) && typeof input.command === "string" ? input.command : "";
   if (!command) return "";
-  const edited = /^\s*sed\s+(?:-i\b|--in-place\b)[^\n|&;]*?\s(\S+)\s*$/.exec(command)?.[1];
-  if (edited && !/^[-'"]/.test(edited)) return edited;
   const trimmed = command.trim();
+  const edited = sedInPlaceTarget(trimmed);
+  if (edited) return edited;
   if (verbose) return trimmed;
   const lines = trimmed.split("\n");
   const clipped = lines.length > 2 ? `${lines.slice(0, 2).join("\n")}…` : trimmed;
@@ -52,14 +116,18 @@ export function bashArgument(input: unknown, verbose: boolean): string {
 }
 
 /** LT15: one readable line out of a generic tool failure. Purely a PROJECTION — `rawContent` (and `flatText`)
- *  keep the faithful source, so nothing here loses evidence. Sandbox-violation ranges and the `<error>` wrapper
- *  are upstream framing, not content; a non-verbose `InputValidationError` is the harness's own malformed-call
- *  signal and reads as such; an existing `Error: `/`Cancelled: ` prefix is left exactly as the tool wrote it. */
+ *  keep the faithful source, so nothing here loses evidence. The `<tool_use_error>` envelope the SDK actually wraps
+ *  tool failures in is unwrapped FIRST (otherwise every real failure reads as `Error: <tool_use_error>…`);
+ *  sandbox-violation ranges and the `<error>` wrapper are upstream framing, not content; a non-verbose
+ *  `InputValidationError` ANYWHERE in the message (upstream uses `includes`, not a prefix test — the envelope and
+ *  its own framing routinely push it off the front) is the harness's own malformed-call signal and reads as such;
+ *  an existing `Error: `/`Cancelled: ` prefix is left exactly as the tool wrote it. */
+const TOOL_USE_ERROR = /<tool_use_error(?:\s[^>]*)?>([\s\S]*?)<\/tool_use_error>/i;
 export function formatGenericError(content: unknown, verbose: boolean): string {
   if (typeof content !== "string") return "Tool execution failed";
-  const stripped = content.replace(/<sandbox_violations>[\s\S]*?<\/sandbox_violations>/g, "").replace(/<\/?error>/g, "").trim();
+  const stripped = (TOOL_USE_ERROR.exec(content)?.[1] || content).replace(/<sandbox_violations>[\s\S]*?<\/sandbox_violations>/g, "").replace(/<\/?error>/g, "").trim();
   if (!stripped) return "Tool execution failed";
-  if (!verbose && stripped.startsWith("InputValidationError: ")) return "Invalid tool parameters";
+  if (!verbose && stripped.includes("InputValidationError: ")) return "Invalid tool parameters";
   return stripped.startsWith("Error: ") || stripped.startsWith("Cancelled: ") ? stripped : `Error: ${stripped}`;
 }
 

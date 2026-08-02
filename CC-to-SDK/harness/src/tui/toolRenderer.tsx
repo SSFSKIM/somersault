@@ -19,7 +19,10 @@ import { resolveThemeColor, themeTokens } from "./theme.js";
 import { bashArgument, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
 import type { ToolEvent } from "./transcriptModel.js";
 
-export const TOOL_RESULT_GUTTER = "  ⎿  " as const;
+/** Five columns, and the FIFTH is U+00A0: upstream emits `["  ", "⎿ \xA0"]` so the cell after the connector is not a
+ *  break opportunity and no terminal (or trailing-space trim) can eat it. Written with the escape so no editor can
+ *  normalize it back to a plain space. */
+export const TOOL_RESULT_GUTTER = "  \u23bf \u00a0" as const;
 export type RenderItem =
   | { kind: "line"; id: string; line: RenderLine }
   | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER; body: readonly RenderLine[] };
@@ -46,13 +49,31 @@ export function displayPath(path: string, cwd: string, home: string): string {
   return absolute;
 }
 
-/** Wrap to VISUAL rows first, then clip — so the overflow count is what the reader actually cannot see, not a
+/** Slice to VISUAL rows first, then clip — so the overflow count is what the reader actually cannot see, not a
  *  logical-line count that undercounts a wrapped row. `revealOneExtraWithoutMarker` is upstream's four-row
- *  exception: showing a 4th row beats spending that row on "… +1 line". Errors switch it off (LT15). */
+ *  exception: showing a 4th row beats spending that row on "… +1 line". Errors switch it off (LT15).
+ *  Upstream `Omy` slices at the exact column with NO word wrapping and `trimEnd`s every emitted row (so at width 10
+ *  "hello world" is "hello worl"/"d", not "hello"/"world"), and a blank input row stays a blank output row. */
+const visualRows = (line: string, width: number): string[] => wrapAnsi(line, width, { hard: true, trim: false, wordWrap: false }).split("\n").map((row) => row.trimEnd());
+/** A compact projection shows 3–10 rows, so wrapping a multi-megabyte result would stall Ink on rows nobody can see —
+ *  and the 600 ms blink re-renders make it recurring. Upstream `y_s` bounds the work at `compactRows * width * 4`
+ *  characters and pays for it with an ESTIMATED hidden count over the whole input, floored by the exact count the
+ *  wrapped prefix already proves. `detail-all` is the one projection that must stay unbounded. */
 export function foldToolOutput(lines: readonly string[], columns: number, options: FoldOptions): readonly RenderLine[] {
-  const visual = lines.flatMap((line) => wrapAnsi(line || " ", Math.max(columns - 10, 10), { hard: true, trim: false }).split("\n"));
-  if (options.projection === "detail-all" || visual.length <= options.compactRows + (options.revealOneExtraWithoutMarker ? 1 : 0)) return visual.map((text) => ({ text }));
-  const hidden = visual.length - options.compactRows, hint = options.projection === "compact" ? "ctrl+o to expand" : "ctrl+e to show all";
+  const width = Math.max(columns - 10, 10);
+  if (options.projection === "detail-all") return lines.flatMap((line) => visualRows(line, width)).map((text) => ({ text }));
+  const bound = options.compactRows * width * 4, length = lines.reduce((sum, line) => sum + line.length, 0) + Math.max(lines.length - 1, 0);
+  const prefix: string[] = [];                                               // exactly the logical lines of `text.slice(0, bound)`
+  for (let i = 0, used = 0; i < lines.length; i++) {
+    if (i > 0 && ++used > bound) break;                                      // the separating newline itself fell outside the bound
+    const line = lines[i], room = bound - used;
+    prefix.push(line.length > room ? line.slice(0, room) : line); used += Math.min(line.length, room);
+    if (line.length > room) break;
+  }
+  const visual = prefix.flatMap((line) => visualRows(line, width));
+  if (visual.length <= options.compactRows + (options.revealOneExtraWithoutMarker ? 1 : 0)) return visual.map((text) => ({ text }));
+  const estimated = length > bound ? Math.max(lines.length, Math.ceil(length / width)) - options.compactRows : 0;
+  const hidden = Math.max(visual.length - options.compactRows, estimated), hint = options.projection === "compact" ? "ctrl+o to expand" : "ctrl+e to show all";
   return [...visual.slice(0, options.compactRows).map((text) => ({ text })), { text: `… +${hidden} ${hidden === 1 ? "line" : "lines"} (${hint})`, dim: true }];
 }
 

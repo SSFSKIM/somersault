@@ -42,7 +42,15 @@ describe("F1 shared tool renderer", () => {
     const row = plain(await rawInk(<>{items.map((item) => <RenderItemView key={item.id} item={item} />)}</>)).split("\n").find((line) => line.includes(TOOL_RESULT_GUTTER))!;
     const bodyStart = row.indexOf("a"), gutterColumn = row.slice(0, bodyStart);
     expect(gutterColumn.startsWith(TOOL_RESULT_GUTTER)).toBe(true); expect((gutterColumn.match(/⎿/g) ?? [])).toHaveLength(1);
-    expect(wrapAnsi(`${gutterColumn}x`, 5, { hard: true, trim: false }).split("\n")).toEqual([gutterColumn, "x"]); expect(row.slice(bodyStart)).toBe("a");
+    // Six columns hold the gutter plus one body cell on one row; five cannot, and the break loses no character —
+    // so the gutter is exactly five columns wide. (An `toEqual([gutterColumn, "x"])` form would only hold for a
+    // plain-space gutter: the trailing NBSP is deliberately not a break opportunity.)
+    expect(wrapAnsi(`${gutterColumn}x`, 6, { hard: true, trim: false }).split("\n")).toEqual([`${gutterColumn}x`]);
+    const tight = wrapAnsi(`${gutterColumn}x`, 5, { hard: true, trim: false }).split("\n");
+    expect(tight).toHaveLength(2); expect(tight.join("")).toBe(`${gutterColumn}x`); expect(row.slice(bodyStart)).toBe("a");
+  });
+  it("ends the gutter constant in a non-breaking space, asserted by code point", () => {
+    expect([...TOOL_RESULT_GUTTER].map((c) => c.codePointAt(0))).toEqual([0x20, 0x20, 0x23bf, 0x20, 0xa0]);
   });
   it("emits distinct resolved success and error SGR colors from actual item views", async () => {
     const success = await rawInk(<RenderItemView item={renderToolEvent(read, normalized, options)[0]!} />);
@@ -55,6 +63,18 @@ describe("F1 shared tool renderer", () => {
     expect(foldToolOutput(Array.from({ length: 40 }, (_, i) => `line ${i + 1}`), 20, standardFold).at(-1)?.text).toBe("… +37 lines (ctrl+o to expand)");
     expect(foldToolOutput(["abcdefghijk"], 20, standardFold).map((x) => x.text)).toEqual(["abcdefghij", "k"]);
     expect(foldToolOutput(["1", "2", "3", "4", "5"], 20, { ...standardFold, projection: "detail-collapsed" }).at(-1)?.text).toBe("… +2 lines (ctrl+e to show all)");
+  });
+  it("slices at exact columns without word wrapping and trims every emitted row", () => {
+    expect(foldToolOutput(["hello world"], 20, standardFold).map((x) => x.text)).toEqual(["hello worl", "d"]);
+    expect(foldToolOutput(["aaaaaaaa  bbbb"], 20, standardFold).map((x) => x.text)).toEqual(["aaaaaaaa", "bbbb"]);
+    expect(foldToolOutput(["ab   ", "", "cd"], 20, standardFold).map((x) => x.text)).toEqual(["ab", "", "cd"]);
+  });
+  it("bounds compact folding work and estimates the hidden count beyond the bound", () => {
+    const huge = "x".repeat(1_000_000), folded = foldToolOutput([huge], 20, standardFold);
+    expect(folded).toHaveLength(4);                                            // three shown rows + one marker, never 100 000 wrapped rows
+    expect(folded.at(-1)?.text).toBe(`… +${Math.ceil(1_000_000 / 10) - 3} lines (ctrl+o to expand)`);
+    expect(folded.slice(0, 3).map((x) => x.text)).toEqual(["x".repeat(10), "x".repeat(10), "x".repeat(10)]);
+    expect(foldToolOutput(["y".repeat(5000)], 20, { ...standardFold, projection: "detail-all" })).toHaveLength(500);
   });
   it("uses LT15's ten-row error clip without the normal four-row exception", () => {
     const errors = Array.from({ length: 11 }, (_, i) => `error ${i + 1}`);
