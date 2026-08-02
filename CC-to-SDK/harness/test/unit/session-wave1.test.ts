@@ -9,7 +9,7 @@ function framesQuery(extra: (turn: number) => any[]) {
     for await (const t of prompt) {
       for (const f of extra(i)) yield f;
       i++;
-      yield { type: "result", subtype: "success", result: "did:" + t.message.content };
+      yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "did:" + t.message.content };
     }
   })();
 }
@@ -58,7 +58,7 @@ describe("Session limit tracking (W1.3)", () => {
     const results = ["You've hit your usage limit", "all good"];
     let i = 0;
     const q = ({ prompt }: any) => (async function* () {
-      for await (const _t of prompt) yield { type: "result", subtype: "success", result: results[i++] };
+      for await (const t of prompt) yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: results[i++] };
     })();
     const s = new Session({ query: q }, {});
     await s.submit("x");
@@ -70,8 +70,8 @@ describe("Session limit tracking (W1.3)", () => {
   it("a rejected rate_limit_event after the result sets rate-limit; a later allowed one clears it", async () => {
     const q = ({ prompt }: any) => (async function* () {
       let i = 0;
-      for await (const _t of prompt) {
-        yield { type: "result", subtype: "success", result: "ok" };
+      for await (const t of prompt) {
+        yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "ok" };
         yield { type: "rate_limit_event", rate_limit_info: { status: i === 0 ? "rejected" : "allowed", rateLimitType: "five_hour" } };
         i++;
       }
@@ -87,8 +87,8 @@ describe("Session limit tracking (W1.3)", () => {
   });
   it("an allowed rate event does not clear an org-policy state", async () => {
     const q = ({ prompt }: any) => (async function* () {
-      for await (const _t of prompt) {
-        yield { type: "result", subtype: "success", result: "This service is disabled for your org" };
+      for await (const t of prompt) {
+        yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "This service is disabled for your org" };
         yield { type: "rate_limit_event", rate_limit_info: { status: "allowed" } };
       }
     })();

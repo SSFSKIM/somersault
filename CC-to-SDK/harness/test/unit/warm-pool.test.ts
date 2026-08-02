@@ -22,7 +22,7 @@ class FakeHandle implements WarmHandle {
   queried: unknown | undefined;
   query(prompt: unknown) {
     this.queried = prompt;
-    return (async function* () { for await (const t of prompt as AsyncIterable<any>) yield { type: "result", subtype: "success", result: "warm:" + t.message.content }; })();
+    return (async function* () { for await (const t of prompt as AsyncIterable<any>) yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "warm:" + t.message.content }; })();
   }
   close() { this.closed = true; }
 }
@@ -125,7 +125,7 @@ describe("daemon warm path (W3.2)", () => {
   const dir = () => mkdtempSync(join(tmpdir(), "warm-daemon-"));
   const coldQuery = (sink: string[]) => ({ prompt }: any) => {
     sink.push("cold");
-    return (async function* () { for await (const t of prompt) yield { type: "result", subtype: "success", result: "cold:" + t.message.content }; })();
+    return (async function* () { for await (const t of prompt) yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "cold:" + t.message.content }; })();
   };
 
   it("a default spawn consumes a warm slot (flagged in the registry); resume spawns stay cold", async () => {

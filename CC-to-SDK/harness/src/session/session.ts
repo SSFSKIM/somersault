@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { AsyncQueue } from "../swarm/asyncQueue.js";
 import type { QueryFn } from "../swarm/types.js";
@@ -17,11 +18,13 @@ export interface MirrorErrorInfo { error: string; key: { projectKey: string; ses
 export interface SessionDeps { query: QueryFn; }
 export interface SessionOpts { contextTool?: boolean; compactTool?: boolean; label?: string; now?: () => number; }
 
-function userTurn(text: string): SDKUserMessage {
-  return { type: "user", message: { role: "user", content: text }, parent_tool_use_id: null } as SDKUserMessage;
+type UserMessageUUID = NonNullable<SDKUserMessage["uuid"]>;
+
+function userTurn(text: string, uuid: UserMessageUUID): SDKUserMessage {
+  return { type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, origin: { kind: "human" }, uuid };
 }
 
-interface Waiter { onMessage: (m: unknown) => void; resolve: (r: { result: unknown; structuredOutput?: unknown }) => void; reject: (e: Error) => void; }
+interface Waiter { uuid: UserMessageUUID; onMessage: (m: unknown) => void; resolve: (r: { result: unknown; structuredOutput?: unknown }) => void; reject: (e: Error) => void; }
 
 /** One long-lived query() session. A turn is submit(prompt,onMessage) → streamed messages → resolved result.
  *  Captures the SDK session_id from the first system/init frame (stable per probe) → .sessionId. */
@@ -30,7 +33,7 @@ export class Session implements ControllableSession {
   readonly done: Promise<void>;            // resolves when the read-loop ends (query disposed or died)
   private input = new AsyncQueue<SDKUserMessage>();
   private q: AsyncIterable<unknown>;
-  private waiters: Waiter[] = [];          // FIFO: query emits one result per submitted turn, in order
+  private waiters: Waiter[] = [];          // queued turns; success results find their matching UUID
   private ended = false;
   private compactRequested = false;        // set by the cc-compact tool; fires one /compact at the next boundary
   private now: () => number;
@@ -66,10 +69,22 @@ export class Session implements ControllableSession {
   /** Dropped sessionStore mirror batches (W3.3) — empty means the external mirror is loss-free so far. */
   get mirrorErrors(): MirrorErrorInfo[] { return this._mirrorErrors; }
 
-  /** Push a turn + its waiter onto the FIFO. Shared by submit() and compact() so every injected turn
-   *  gets its own waiter (its result resolves ITS waiter, never another turn's). */
+  /** Queue a turn + its waiter. Shared by submit() and compact() so every injected turn gets its own
+   *  UUID and waiter; success results resolve only their matching waiter. */
   private enqueueTurn(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown; structuredOutput?: unknown }> {
-    return new Promise((resolve, reject) => { this.waiters.push({ onMessage, resolve, reject }); this.input.push(userTurn(prompt)); });
+    const uuid = randomUUID();
+    return new Promise((resolve, reject) => { this.waiters.push({ uuid, onMessage, resolve, reject }); this.input.push(userTurn(prompt, uuid)); });
+  }
+
+  /** A result is terminal only when the SDK associates it with this exact user turn; error variants have
+   *  no association field, so only an explicitly-human one may use the FIFO fallback. */
+  private resultWaiter(m: any): Waiter | undefined {
+    if (m.origin != null && m.origin.kind !== "human") return undefined;
+    if (m.subtype === "success") {
+      const uuid = m.user_message_uuid;
+      return typeof uuid === "string" && uuid.length > 0 ? this.waiters.find((w) => w.uuid === uuid) : undefined;
+    }
+    return m.origin?.kind === "human" ? this.waiters[0] : undefined;
   }
 
   /** Run one turn; non-result messages stream to onMessage; resolves with the turn's result (and, when the
@@ -92,7 +107,7 @@ export class Session implements ControllableSession {
     await done;
   }
 
-  /** Inject `/compact` as a turn (its own FIFO waiter) and return the structured outcome. */
+  /** Inject `/compact` as a turn (with its own correlated waiter) and return the structured outcome. */
   async compact(): Promise<CompactOutcome> {
     this.assertRunning();
     const frames: unknown[] = [];
@@ -211,14 +226,15 @@ export class Session implements ControllableSession {
         if (mm.type === "system" && mm.subtype === "init" && !this._sessionId) this._sessionId = mm.session_id;
         if (mm.type === "system" && mm.subtype === "background_tasks_changed") this._bgTasks = mm.tasks ?? []; // REPLACE, never merge
         if (mm.type === "system" && mm.subtype === "mirror_error") { this._mirrorErrors.push({ error: mm.error, key: mm.key, at: this.now() }); if (this._mirrorErrors.length > 50) this._mirrorErrors.shift(); }
-        const turnResult = mm.type === "result" && (mm.origin == null || mm.origin.kind === "human");
-        if (turnResult) this._limit = classifyLimitMessage(mm); // clean result CLEARS
-        else if (mm.type === "rate_limit_event") {             // allowed only clears a rate-limit state
+        const waiter = mm.type === "result" ? this.resultWaiter(mm) : undefined;
+        if (waiter) this._limit = classifyLimitMessage(mm); // clean result CLEARS
+        else if (mm.type === "rate_limit_event") {          // allowed only clears a rate-limit state
           const rl = classifyLimitMessage(mm);
           if (rl) this._limit = rl; else if (this._limit?.kind === "rate-limit") this._limit = undefined;
         }
-        if (turnResult) {
-          this.waiters.shift()?.resolve({ result: mm.result, structuredOutput: mm.structured_output });
+        if (waiter) {
+          this.waiters.splice(this.waiters.indexOf(waiter), 1);
+          waiter.resolve({ result: mm.result, structuredOutput: mm.structured_output });
           if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.compact().catch(() => {}); }
         } else if (mm.type !== "result") this.waiters[0]?.onMessage(m);
       }

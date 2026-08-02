@@ -86,7 +86,7 @@ describe("mirror_error surfacing (Session)", () => {
       for await (const t of prompt) {
         for (const f of extra(i)) yield f;
         i++;
-        yield { type: "result", subtype: "success", result: "did:" + t.message.content };
+        yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "did:" + t.message.content };
       }
     })();
   }

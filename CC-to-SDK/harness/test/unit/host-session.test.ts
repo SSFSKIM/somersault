@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import type { SDKMessageOrigin } from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,10 +32,21 @@ function fakeSession() {
 }
 /** A session whose turns resolve on their own — for the multi-turn edges, where a latch would deadlock. */
 const instantSession = () => ({ submit: async () => ({ result: {} }), sessionId: "sid-1", dispose: async () => {} });
+function successFor(turn: any, result: string, origin?: SDKMessageOrigin) {
+  return {
+    type: "result", subtype: "success", duration_ms: 0, duration_api_ms: 0,
+    user_message_uuid: turn.uuid, is_error: false, num_turns: 1, result, stop_reason: null,
+    total_cost_usd: 0, usage: {}, modelUsage: {}, permission_denials: [],
+    ...(origin ? { origin } : {}), uuid: randomUUID(), session_id: "sid",
+  };
+}
 function framedSession() {
-  const frames = new AsyncQueue<unknown>();
-  const session = new Session({ query: () => ({ [Symbol.asyncIterator]: () => frames[Symbol.asyncIterator]() }) }, {});
-  return { frames, session };
+  const frames = new AsyncQueue<unknown>(), turns: any[] = [];
+  const session = new Session({ query: ({ prompt }: any) => {
+    void (async () => { for await (const turn of prompt) turns.push(turn); })();
+    return { [Symbol.asyncIterator]: () => frames[Symbol.asyncIterator]() };
+  } }, {});
+  return { frames, session, turns };
 }
 const nextTick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -72,18 +85,19 @@ describe("SessionHost", () => {
     expect(h.status()).toMatchObject({ state: "done", status: "idle" });
     await h.stop();
   });
-  it("stays busy and emits no turn end for a task-origin result until the human result", async () => {
-    const { frames, session } = framedSession();
+  it("stays busy and emits turn:end only for a correlated terminal result", async () => {
+    const { frames, session, turns } = framedSession();
     const h = new SessionHost(opts(), deps(() => session));
     const events: any[] = [];
     await h.start(); h.follow((e) => events.push(e));
     const running = h.runTask("do it");
-    frames.push({ type: "result", result: "background", origin: { kind: "task-notification" } });
+    await nextTick();
+    frames.push({ ...successFor(turns[0], "background"), user_message_uuid: undefined });
     await nextTick();
     expect(h.busy()).toBe(true);
     expect(h.status()).toMatchObject({ state: "working", status: "busy" });
     expect(events.filter((e) => e.kind === "turn" && e.phase === "end")).toHaveLength(0);
-    frames.push({ type: "result", result: "done", origin: { kind: "human" } });
+    frames.push(successFor(turns[0], "done", { kind: "human" }));
     await running;
     expect(h.busy()).toBe(false);
     expect(events.filter((e) => e.kind === "turn" && e.phase === "end")).toHaveLength(1);

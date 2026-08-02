@@ -10,8 +10,9 @@ import { NATIVE_TASK_TOOLS } from "../../src/swarm/coordinator.js";
 const CC_TASKS = ["TaskCreate", "TaskUpdate", "TaskGet", "TaskList"].map((t) => `mcp__cc-tasks__${t}`);
 
 const dir = () => mkdtempSync(join(tmpdir(), "cc-daemon-"));
+const successFor = (turn: any, result: unknown) => ({ type: "result", subtype: "success", user_message_uuid: turn.uuid, result });
 function fakeQuery({ prompt }: any) {
-  return (async function* () { for await (const t of prompt) yield { type: "result", result: "did:" + t.message.content }; })();
+  return (async function* () { for await (const t of prompt) yield successFor(t, "did:" + t.message.content); })();
 }
 function captureQuery(sink: any[]) {
   return ({ prompt, options }: any) => {
@@ -37,14 +38,14 @@ function initQuery(sid: string) {
   return ({ prompt }: any) => (async function* () {
     for await (const t of prompt) {
       yield { type: "system", subtype: "init", session_id: sid };
-      yield { type: "result", result: "did:" + t.message.content };
+      yield successFor(t, "did:" + t.message.content);
     }
   })();
 }
 // captures each session's options into `sink` AND emits an init frame so Session captures sessionId
 function captureInitQuery(sink: any[], sid: string) {
   return ({ prompt, options }: any) => { sink.push(options); return (async function* () {
-    for await (const t of prompt) { yield { type: "system", subtype: "init", session_id: sid }; yield { type: "result", result: "did:" + t.message.content }; }
+    for await (const t of prompt) { yield { type: "system", subtype: "init", session_id: sid }; yield successFor(t, "did:" + t.message.content); }
   })(); };
 }
 // seed a registry dir with a record as if a prior (dead) daemon had owned it
@@ -100,7 +101,7 @@ describe("DaemonSupervisor", () => {
   });
   it("submit to a session whose query has died rejects instead of hanging", async () => {
     // query ends after the first turn → session no longer running
-    const fq = ({ prompt }: any) => (async function* () { for await (const t of prompt) { yield { type: "result", result: "ok:" + t.message.content }; return; } })();
+    const fq = ({ prompt }: any) => (async function* () { for await (const t of prompt) { yield successFor(t, "ok:" + t.message.content); return; } })();
     const sup = new DaemonSupervisor({ query: fq }, { dir: dir() });
     const id = sup.spawn();
     expect((await sup.submit(id, "first", () => {})).result).toBe("ok:first");
@@ -120,7 +121,7 @@ describe("DaemonSupervisor", () => {
   // a query that dies immediately (yields nothing, returns) — simulates a crash
   const dyingQuery = () => (async function* () { /* ends at once */ })();
   // a query that works (one result per turn), ends only on dispose
-  const healthyQuery = ({ prompt }: any) => (async function* () { for await (const t of prompt) yield { type: "result", result: "ok:" + t.message.content }; })();
+  const healthyQuery = ({ prompt }: any) => (async function* () { for await (const t of prompt) yield successFor(t, "ok:" + t.message.content); })();
 
   it("on-failure restarts a dead session into a working one (restarting → idle, count tracked)", async () => {
     let calls = 0;
@@ -265,7 +266,7 @@ describe("DaemonSupervisor", () => {
     const fq = ({ prompt, options }: any) => {
       cap.push(options); calls++;
       if (calls === 1) return (async function* () { /* dies at once */ })();
-      return (async function* () { for await (const t of prompt) yield { type: "result", result: "ok:" + t.message.content }; })();
+      return (async function* () { for await (const t of prompt) yield successFor(t, "ok:" + t.message.content); })();
     };
     let pending: (() => void) | undefined;
     const scheduleRestart = (fn: () => void) => { pending = fn; return () => {}; };
@@ -330,7 +331,7 @@ describe("DaemonSupervisor", () => {
     const s = captureSched();
     const seen: string[] = [];
     const recordingQuery = ({ prompt }: any) => (async function* () {
-      for await (const t of prompt) { seen.push(t.message.content); yield { type: "result", result: "ok" }; }
+      for await (const t of prompt) { seen.push(t.message.content); yield successFor(t, "ok"); }
     })();
     const sup = new DaemonSupervisor({ query: recordingQuery }, { dir: dir(), scheduleRestart: s.scheduleRestart });
     const id = sup.spawn();
@@ -354,7 +355,7 @@ describe("DaemonSupervisor", () => {
   it("submit does NOT resume a heartbeat that already self-stopped (lingers in the map)", async () => {
     const s = captureSched();
     const idleQuery = ({ prompt }: any) => (async function* () {
-      for await (const _t of prompt) yield { type: "result", result: "IDLE" };
+      for await (const t of prompt) yield successFor(t, "IDLE");
     })();
     const sup = new DaemonSupervisor({ query: idleQuery }, { dir: dir(), scheduleRestart: s.scheduleRestart });
     const id = sup.spawn();
@@ -399,7 +400,7 @@ describe("DaemonSupervisor", () => {
     let t = 1000;
     const s = captureSched();
     const idleQuery = ({ prompt }: any) => (async function* () {
-      for await (const _t of prompt) yield { type: "result", result: "IDLE" };
+      for await (const t of prompt) yield successFor(t, "IDLE");
     })();
     const sup = new DaemonSupervisor({ query: idleQuery }, { dir: dir(), idleTimeoutMs: 500, now: () => t, scheduleRestart: s.scheduleRestart });
     const id = sup.spawn();
@@ -425,8 +426,8 @@ describe("DaemonSupervisor", () => {
     const cq = ({ prompt }: any) => (async function* () {
       for await (const t of prompt) {
         const text = t.message.content; seen.push(text);
-        if (text === "/compact") { yield { type: "system", subtype: "status", status: null, compact_result: "success" }; yield { type: "result", result: "c" }; }
-        else yield { type: "result", result: "did:" + text };
+        if (text === "/compact") { yield { type: "system", subtype: "status", status: null, compact_result: "success" }; yield successFor(t, "c"); }
+        else yield successFor(t, "did:" + text);
       }
     })();
     const sup = new DaemonSupervisor({ query: cq }, { dir: dir() });
@@ -489,11 +490,11 @@ describe("DaemonSupervisor", () => {
       cap.push(options); calls++;
       if (calls === 1) return (async function* () {            // life 1: capture an id, take one turn, then crash
         yield { type: "system", subtype: "init", session_id: "sdk-X" };
-        for await (const t of prompt) { yield { type: "result", result: "did:" + t.message.content }; return; }
+        for await (const t of prompt) { yield successFor(t, "did:" + t.message.content); return; }
       })();
       return (async function* () {                             // life 2 (restart): healthy
         yield { type: "system", subtype: "init", session_id: "sdk-X" };
-        for await (const t of prompt) yield { type: "result", result: "ok:" + t.message.content };
+        for await (const t of prompt) yield successFor(t, "ok:" + t.message.content);
       })();
     };
     let pending: (() => void) | undefined;
@@ -589,11 +590,11 @@ describe("DaemonSupervisor", () => {
       cap.push(options); calls++;
       if (calls === 1) return (async function* () {                // revived life: init + one turn, then crash
         yield { type: "system", subtype: "init", session_id: "sdk-1" };
-        for await (const t of prompt) { yield { type: "result", result: "did:" + t.message.content }; return; }
+        for await (const t of prompt) { yield successFor(t, "did:" + t.message.content); return; }
       })();
       return (async function* () {                                 // restart life: healthy
         yield { type: "system", subtype: "init", session_id: "sdk-1" };
-        for await (const t of prompt) yield { type: "result", result: "ok:" + t.message.content };
+        for await (const t of prompt) yield successFor(t, "ok:" + t.message.content);
       })();
     };
     let pending: (() => void) | undefined;

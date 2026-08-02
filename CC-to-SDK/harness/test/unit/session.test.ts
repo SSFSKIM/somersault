@@ -1,18 +1,37 @@
+import { randomUUID } from "node:crypto";
+import type { SDKMessageOrigin } from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, expect } from "vitest";
 import { Session } from "../../src/session/session.js";
 import { AsyncQueue } from "../../src/swarm/asyncQueue.js";
+
+function successFor(turn: any, result: string, origin?: SDKMessageOrigin) {
+  return {
+    type: "result", subtype: "success", duration_ms: 0, duration_api_ms: 0,
+    user_message_uuid: turn.uuid, is_error: false, num_turns: 1, result, stop_reason: null,
+    total_cost_usd: 0, usage: {}, modelUsage: {}, permission_denials: [],
+    ...(origin ? { origin } : {}), uuid: randomUUID(), session_id: "sid",
+  };
+}
+function errorFor(origin?: SDKMessageOrigin) {
+  return {
+    type: "result", subtype: "error_during_execution", duration_ms: 0, duration_api_ms: 0,
+    is_error: true, num_turns: 1, stop_reason: null, total_cost_usd: 0, usage: {},
+    modelUsage: {}, permission_denials: [], errors: ["failed"],
+    ...(origin ? { origin } : {}), uuid: randomUUID(), session_id: "sid",
+  };
+}
 
 function fakeQuery({ prompt }: any) {
   return (async function* () {
     for await (const turn of prompt) {
       const text = turn.message.content;
       yield { type: "assistant", message: { content: [{ type: "text", text: "ack:" + text }] } };
-      yield { type: "result", subtype: "success", result: "did:" + text };
+      yield successFor(turn, "did:" + text, { kind: "human" });
     }
   })();
 }
 function captureQuery(sink: any[]) {
-  return ({ prompt, options }: any) => { sink.push(options); return (async function* () { for await (const t of prompt) yield { type: "result", result: "ok:" + t.message.content }; })(); };
+  return ({ prompt, options }: any) => { sink.push(options); return (async function* () { for await (const t of prompt) yield successFor(t, "ok:" + t.message.content, { kind: "human" }); })(); };
 }
 function compactQuery(seen: string[]) {
   return ({ prompt }: any) => (async function* () {
@@ -22,8 +41,8 @@ function compactQuery(seen: string[]) {
         yield { type: "system", subtype: "status", status: "compacting" };
         yield { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 1000, post_tokens: 200 } };
         yield { type: "system", subtype: "status", status: null, compact_result: "success" };
-        yield { type: "result", subtype: "success", result: "compacted" };
-      } else yield { type: "result", subtype: "success", result: "did:" + text };
+        yield successFor(t, "compacted", { kind: "human" });
+      } else yield successFor(t, "did:" + text, { kind: "human" });
     }
   })();
 }
@@ -33,25 +52,25 @@ function initQuery(ids: string[]) {
     let i = 0;
     for await (const t of prompt) {
       yield { type: "system", subtype: "init", session_id: ids[Math.min(i, ids.length - 1)] }; i++;
-      yield { type: "result", subtype: "success", result: "did:" + t.message.content };
+      yield successFor(t, "did:" + t.message.content, { kind: "human" });
     }
   })();
 }
 
 function framedQuery() {
-  const frames = new AsyncQueue<unknown>(), prompts: string[] = [];
+  const frames = new AsyncQueue<unknown>(), prompts: string[] = [], turns: any[] = [];
   const query = ({ prompt }: any) => {
-    void (async () => { for await (const turn of prompt) prompts.push(turn.message.content); })();
+    void (async () => { for await (const turn of prompt) { turns.push(turn); prompts.push(turn.message.content); } })();
     return { [Symbol.asyncIterator]: () => frames[Symbol.asyncIterator]() };
   };
-  return { frames, prompts, query };
+  return { frames, prompts, turns, query };
 }
 const nextTick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 // returns a generator-object carrying the introspection control methods
 function methodQuery(rec: any) {
   return ({ prompt }: any) => {
-    const it: any = (async function* () { for await (const t of prompt) yield { type: "result", subtype: "success", result: "did:" + t.message.content }; })();
+    const it: any = (async function* () { for await (const t of prompt) yield successFor(t, "did:" + t.message.content, { kind: "human" }); })();
     it.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET = async () => ({ session: { total_cost_usd: 2 } });
     it.initializationResult = async () => ({ models: ["m"], account: {} });
     it.applyFlagSettings = async (s: any) => { rec.applied = s; };
@@ -112,7 +131,7 @@ describe("Session", () => {
   });
   it("submit resolves with structuredOutput alongside result when the SDK result carries structured_output (probe 36, additive)", async () => {
     const q = ({ prompt }: any) => (async function* () {
-      for await (const t of prompt) yield { type: "result", subtype: "success", result: "did:" + t.message.content, structured_output: { verdict: "approve" } };
+      for await (const t of prompt) yield { ...successFor(t, "did:" + t.message.content, { kind: "human" }), structured_output: { verdict: "approve" } };
     })();
     const s = new Session({ query: q }, {});
     const r: any = await s.submit("hi");
@@ -178,61 +197,106 @@ describe("Session", () => {
     await s.dispose();
     expect(seen).toEqual(["hello", "/compact", "world"]);
   });
-  it("keeps a human submit pending for task-origin results while onFrame still sees them", async () => {
-    const { frames, query } = framedQuery();
+  it("keeps a human submit pending for a task result with its UUID while onFrame still sees it", async () => {
+    const { frames, query, turns } = framedQuery();
     const s = new Session({ query }, {});
     const frameSeen: unknown[] = [], messages: unknown[] = [];
     s.onFrame((m) => frameSeen.push(m));
     let settled = false;
     const turn = s.submit("human", (m) => messages.push(m)).then((r) => { settled = true; return r; });
-    const taskResult = { type: "result", subtype: "success", result: "background", origin: { kind: "task-notification" } };
+    await nextTick();
+    expect(turns[0]).toMatchObject({ uuid: expect.any(String), origin: { kind: "human" } });
+    const taskResult = successFor(turns[0], "background", { kind: "task-notification" });
     frames.push(taskResult);
     await nextTick();
     expect(frameSeen).toEqual([taskResult]);
     expect(messages).toEqual([]);
     expect(settled).toBe(false);
-    frames.push({ type: "result", subtype: "success", result: "human", origin: { kind: "human" } });
+    frames.push(successFor(turns[0], "human", { kind: "human" }));
     expect((await turn).result).toBe("human");
     frames.close(); await s.dispose();
   });
-  it("preserves two queued human waiters across an interleaved task-origin result", async () => {
-    const { frames, query } = framedQuery();
+  it("settles only the second waiter when its success arrives first", async () => {
+    const { frames, query, turns } = framedQuery();
     const s = new Session({ query }, {});
-    let secondSettled = false;
-    const first = s.submit("one"), second = s.submit("two").then((r) => { secondSettled = true; return r; });
-    frames.push({ type: "result", result: "background", origin: { kind: "task-notification" } });
+    let firstSettled = false, secondSettled = false;
+    const first = s.submit("one").then((r) => { firstSettled = true; return r; });
+    const second = s.submit("two").then((r) => { secondSettled = true; return r; });
     await nextTick();
-    expect(secondSettled).toBe(false);
-    frames.push({ type: "result", result: "first", origin: { kind: "human" } });
+    expect(turns[0].uuid).not.toBe(turns[1].uuid);
+    frames.push(successFor(turns[1], "second", { kind: "human" }));
+    await nextTick();
+    expect(secondSettled).toBe(true);
+    expect(firstSettled).toBe(false);
+    frames.push(successFor(turns[0], "first"));
     expect((await first).result).toBe("first");
-    expect(secondSettled).toBe(false);
-    frames.push({ type: "result", result: "second", origin: { kind: "human" } });
     expect((await second).result).toBe("second");
     frames.close(); await s.dispose();
   });
-  it("keeps origin-absent result frames compatible with legacy query fakes", async () => {
-    const { frames, query } = framedQuery();
+  it("keeps an origin-absent success without a UUID pending", async () => {
+    const { frames, query, turns } = framedQuery();
     const s = new Session({ query }, {});
-    const turn = s.submit("legacy");
-    frames.push({ type: "result", result: "legacy-result" });
+    let settled = false;
+    const turn = s.submit("legacy").then((r) => { settled = true; return r; });
+    await nextTick();
+    frames.push({ ...successFor(turns[0], "legacy-result"), user_message_uuid: undefined });
+    await nextTick();
+    expect(settled).toBe(false);
+    frames.push(successFor(turns[0], "legacy-result"));
     expect((await turn).result).toBe("legacy-result");
     frames.close(); await s.dispose();
   });
-  it("does not consume a requested compaction on a task-origin result", async () => {
-    const { frames, prompts, query } = framedQuery();
+  it("keeps a human success with an unseen UUID pending and does not update limits", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.submit("human").then((r) => { settled = true; return r; });
+    await nextTick();
+    frames.push({ ...successFor(turns[0], "Credit balance is too low", { kind: "human" }), user_message_uuid: randomUUID() });
+    await nextTick();
+    expect(settled).toBe(false);
+    expect(s.limitState).toBeUndefined();
+    frames.push(successFor(turns[0], "human", { kind: "human" }));
+    expect((await turn).result).toBe("human");
+    frames.close(); await s.dispose();
+  });
+  it("keeps an origin-absent error pending", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.submit("human").then((r) => { settled = true; return r; });
+    await nextTick();
+    frames.push(errorFor());
+    await nextTick();
+    expect(settled).toBe(false);
+    frames.push(successFor(turns[0], "human", { kind: "human" }));
+    expect((await turn).result).toBe("human");
+    frames.close(); await s.dispose();
+  });
+  it("allows an explicit-human error to settle the FIFO waiter", async () => {
+    const { frames, query } = framedQuery();
+    const s = new Session({ query }, {});
+    const turn = s.submit("human");
+    await nextTick();
+    frames.push(errorFor({ kind: "human" }));
+    expect((await turn).result).toBeUndefined();
+    frames.close(); await s.dispose();
+  });
+  it("does not consume requested compaction on an unassociated success", async () => {
+    const { frames, prompts, query, turns } = framedQuery();
     const s = new Session({ query }, {});
     s.requestCompaction();
     const turn = s.submit("work");
     await nextTick();
     expect(prompts).toEqual(["work"]);
-    frames.push({ type: "result", result: "background", origin: { kind: "task-notification" } });
+    frames.push({ ...successFor(turns[0], "background"), user_message_uuid: randomUUID() });
     await nextTick();
     expect(prompts).toEqual(["work"]);
-    frames.push({ type: "result", result: "work-done", origin: { kind: "human" } });
+    frames.push(successFor(turns[0], "work-done", { kind: "human" }));
     expect((await turn).result).toBe("work-done");
     await nextTick();
     expect(prompts).toEqual(["work", "/compact"]);
-    frames.push({ type: "result", result: "compacted", origin: { kind: "human" } });
+    frames.push(successFor(turns[1], "compacted", { kind: "human" }));
     frames.close(); await s.dispose();
   });
   it("stream yields the turn's messages then a terminal result frame", async () => {
@@ -268,7 +332,7 @@ describe("Session", () => {
   });
   it("getSettings falls back to the raw response when there is no .response wrapper", async () => {
     const s = new Session({ query: ({ prompt }: any) => {
-      const it: any = (async function* () { for await (const t of prompt) yield { type: "result", subtype: "success", result: "did:" + t.message.content }; })();
+      const it: any = (async function* () { for await (const t of prompt) yield successFor(t, "did:" + t.message.content, { kind: "human" }); })();
       it.request = async () => ({ effective: { x: 1 } });   // no .response key
       return it;
     } }, {});

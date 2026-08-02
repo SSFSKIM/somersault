@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { openSession, resumeSession, Session } from "../../src/session/index.js";
 
 function captureQuery(sink: any[]) {
-  return ({ prompt, options }: any) => { sink.push(options); return (async function* () { for await (const t of prompt) yield { type: "result", result: "ok:" + t.message.content }; })(); };
+  return ({ prompt, options }: any) => { sink.push(options); return (async function* () { for await (const t of prompt) yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "ok:" + t.message.content }; })(); };
 }
 
 describe("openSession / resumeSession", () => {

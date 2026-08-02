@@ -10,16 +10,16 @@ const dir = () => mkdtempSync(join(tmpdir(), "cc-daemon-w1-"));
 // captures every session-open's options AND emits init (sessionId capture) per turn
 function captureInitQuery(sink: any[], sid: string) {
   return ({ prompt, options }: any) => { sink.push(options); return (async function* () {
-    for await (const t of prompt) { yield { type: "system", subtype: "init", session_id: sid }; yield { type: "result", result: "did:" + t.message.content }; }
+    for await (const t of prompt) { yield { type: "system", subtype: "init", session_id: sid }; yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "did:" + t.message.content }; }
   })(); };
 }
 // like captureInitQuery but each turn's result text comes from `results` in order
 function limitQuery(results: string[], sid = "sdk-lim") {
   let i = 0;
   return ({ prompt }: any) => (async function* () {
-    for await (const _t of prompt) {
+    for await (const t of prompt) {
       yield { type: "system", subtype: "init", session_id: sid };
-      yield { type: "result", subtype: "success", result: results[Math.min(i++, results.length - 1)] };
+      yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: results[Math.min(i++, results.length - 1)] };
     }
   })();
 }

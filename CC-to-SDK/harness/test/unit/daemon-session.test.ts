@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import { DaemonSession } from "../../src/daemon/session.js";
 
 function fakeQuery({ prompt }: any) {
-  return (async function* () { for await (const turn of prompt) yield { type: "result", subtype: "success", result: "did:" + turn.message.content }; })();
+  return (async function* () { for await (const turn of prompt) yield { type: "result", subtype: "success", user_message_uuid: turn.uuid, result: "did:" + turn.message.content }; })();
 }
 function captureQuery(sink: any[]) {
-  return ({ prompt, options }: any) => { sink.push(options); return (async function* () { for await (const t of prompt) yield { type: "result", result: "ok:" + t.message.content }; })(); };
+  return ({ prompt, options }: any) => { sink.push(options); return (async function* () { for await (const t of prompt) yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "ok:" + t.message.content }; })(); };
 }
 
 describe("DaemonSession (subclass of Session)", () => {

@@ -11,7 +11,7 @@ function fakeQuery({ prompt }: any) {
   return (async function* () {
     for await (const turn of prompt) {
       yield { type: "assistant", message: { content: [{ type: "text", text: "ack" }] } };
-      yield { type: "result", result: "did:" + turn.message.content };
+      yield { type: "result", subtype: "success", user_message_uuid: turn.uuid, result: "did:" + turn.message.content };
     }
   })();
 }
@@ -46,7 +46,7 @@ describe("DaemonServer over a real UDS", () => {
     const d = tmp();
     const sock = join(d, "sock");
     const initFakeQuery = ({ prompt }: any) => (async function* () {
-      for await (const t of prompt) { yield { type: "system", subtype: "init", session_id: "sdk-src" }; yield { type: "result", result: "did:" + t.message.content }; }
+      for await (const t of prompt) { yield { type: "system", subtype: "init", session_id: "sdk-src" }; yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "did:" + t.message.content }; }
     })();
     const sup = new DaemonSupervisor({ query: initFakeQuery, forkSession: async (sid: string) => ({ sessionId: "fork-" + sid }) }, { dir: join(d, "sessions") });
     const server = new DaemonServer(sup, sock);
@@ -64,7 +64,7 @@ describe("DaemonServer over a real UDS", () => {
   it("usage/init/apply_flag_settings ops delegate to the live session", async () => {
     const d = tmp(); const sock = join(d, "sock");
     const methodFakeQuery = ({ prompt }: any) => {
-      const it: any = (async function* () { for await (const t of prompt) { yield { type: "system", subtype: "init", session_id: "sdk-1" }; yield { type: "result", result: "did:" + t.message.content }; } })();
+      const it: any = (async function* () { for await (const t of prompt) { yield { type: "system", subtype: "init", session_id: "sdk-1" }; yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "did:" + t.message.content }; } })();
       it.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET = async () => ({ session: { total_cost_usd: 3 } });
       it.initializationResult = async () => ({ models: ["x"] });
       it.applyFlagSettings = async () => {};

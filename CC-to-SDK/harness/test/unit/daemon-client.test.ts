@@ -101,7 +101,7 @@ function ctlQuery({ prompt }: any) {
     for await (const t of prompt) {
       yield { type: "system", subtype: "init", session_id: "sdk-1" };
       yield { type: "assistant", message: { content: [{ type: "text", text: "ack" }] } };
-      yield { type: "result", result: "did:" + t.message.content };
+      yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "did:" + t.message.content };
     }
   })();
   gen.setModel = async () => {};
