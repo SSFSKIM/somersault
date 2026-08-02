@@ -327,17 +327,17 @@ describe("DaemonSupervisor", () => {
     await sup.shutdown();
   });
 
-  it("a fired heartbeat tick submits the tickPrompt into the session", async () => {
+  it("a fired heartbeat tick submits the tickPrompt as automatic and settles from its matching result", async () => {
     const s = captureSched();
-    const seen: string[] = [];
+    const turns: any[] = [];
     const recordingQuery = ({ prompt }: any) => (async function* () {
-      for await (const t of prompt) { seen.push(t.message.content); yield successFor(t, "ok"); }
+      for await (const t of prompt) { turns.push(t); yield { ...successFor(t, "ok"), origin: { kind: "auto-continuation" } }; }
     })();
     const sup = new DaemonSupervisor({ query: recordingQuery }, { dir: dir(), scheduleRestart: s.scheduleRestart });
     const id = sup.spawn();
     sup.startProactive(id, { tickPrompt: "HB", intervalMs: 1000 });
     await s.fire();                                  // fire the first scheduled tick
-    expect(seen).toContain("HB");
+    expect(turns).toContainEqual(expect.objectContaining({ message: expect.objectContaining({ content: "HB" }), origin: { kind: "auto-continuation" } }));
     expect(sup.proactiveStatus(id)!.tickCount).toBe(1);
     await sup.shutdown();
   });

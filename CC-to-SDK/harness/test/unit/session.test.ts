@@ -33,16 +33,16 @@ function fakeQuery({ prompt }: any) {
 function captureQuery(sink: any[]) {
   return ({ prompt, options }: any) => { sink.push(options); return (async function* () { for await (const t of prompt) yield successFor(t, "ok:" + t.message.content, { kind: "human" }); })(); };
 }
-function compactQuery(seen: string[]) {
+function compactQuery(seen: string[], turns: any[] = []) {
   return ({ prompt }: any) => (async function* () {
     for await (const t of prompt) {
-      const text = t.message.content; seen.push(text);
+      const text = t.message.content; seen.push(text); turns.push(t);
       if (text === "/compact") {
         yield { type: "system", subtype: "status", status: "compacting" };
         yield { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 1000, post_tokens: 200 } };
         yield { type: "system", subtype: "status", status: null, compact_result: "success" };
-        yield successFor(t, "compacted", { kind: "human" });
-      } else yield successFor(t, "did:" + text, { kind: "human" });
+        yield successFor(t, "compacted", t.origin);
+      } else yield successFor(t, "did:" + text, t.origin);
     }
   })();
 }
@@ -181,21 +181,67 @@ describe("Session", () => {
     expect(sink[0].allowedTools).toEqual(expect.arrayContaining(["mcp__cc-context__GetContextUsage", "mcp__cc-compact__RequestCompaction"]));
     await s.dispose();
   });
-  it("compact() injects /compact and returns the parsed outcome", async () => {
-    const seen: string[] = [];
-    const s = new Session({ query: compactQuery(seen) }, {});
+  it("direct compact() stamps its injected input human and returns the parsed outcome", async () => {
+    const seen: string[] = [], turns: any[] = [];
+    const s = new Session({ query: compactQuery(seen, turns) }, {});
     expect(await s.compact()).toEqual({ ok: true, result: "success", error: undefined, preTokens: 1000, postTokens: 200 });
     expect(seen).toEqual(["/compact"]);
+    expect(turns).toEqual([expect.objectContaining({ origin: { kind: "human" } })]);
     await s.dispose();
   });
-  it("requestCompaction fires exactly one /compact at the turn boundary; FIFO intact", async () => {
-    const seen: string[] = [];
-    const s = new Session({ query: compactQuery(seen) }, {});
+  it("requestCompaction fires exactly one automatic /compact at the turn boundary; FIFO intact", async () => {
+    const seen: string[] = [], turns: any[] = [];
+    const s = new Session({ query: compactQuery(seen, turns) }, {});
     s.requestCompaction();
     expect((await s.submit("hello")).result).toBe("did:hello");
     expect((await s.submit("world")).result).toBe("did:world");
     await s.dispose();
     expect(seen).toEqual(["hello", "/compact", "world"]);
+    expect(turns.find((t) => t.message.content === "/compact")).toMatchObject({ origin: { kind: "auto-continuation" } });
+  });
+  it("submit() stamps its input human", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    const turn = s.submit("human");
+    await nextTick();
+    expect(turns).toEqual([expect.objectContaining({ message: expect.objectContaining({ content: "human" }), origin: { kind: "human" } })]);
+    frames.push(successFor(turns[0], "done", { kind: "human" }));
+    expect((await turn).result).toBe("done");
+    frames.close(); await s.dispose();
+  });
+  it("keeps both waiters pending for correct UUID successes with mismatched origins", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let humanSettled = false, automaticSettled = false;
+    const human = s.submit("human").then((r) => { humanSettled = true; return r; });
+    const automatic = s.submitAutomatic("automatic").then((r) => { automaticSettled = true; return r; });
+    await nextTick();
+    expect(turns.map((t) => t.origin.kind)).toEqual(["human", "auto-continuation"]);
+    frames.push(successFor(turns[0], "wrong-human", { kind: "auto-continuation" }));
+    frames.push(successFor(turns[1], "wrong-automatic", { kind: "human" }));
+    frames.push(successFor(turns[1], "wrong-task", { kind: "task-notification" }));
+    await nextTick();
+    expect(humanSettled).toBe(false);
+    expect(automaticSettled).toBe(false);
+    frames.push(successFor(turns[0], "human", { kind: "human" }));
+    frames.push(successFor(turns[1], "automatic", { kind: "auto-continuation" }));
+    expect((await human).result).toBe("human");
+    expect((await automatic).result).toBe("automatic");
+    frames.close(); await s.dispose();
+  });
+  it("allows an explicit automatic error to settle the FIFO automatic waiter but leaves an unattributed error frame-only", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.submitAutomatic("automatic").then((r) => { settled = true; return r; });
+    await nextTick();
+    expect(turns[0]).toMatchObject({ origin: { kind: "auto-continuation" } });
+    frames.push(errorFor());
+    await nextTick();
+    expect(settled).toBe(false);
+    frames.push(errorFor({ kind: "auto-continuation" }));
+    expect((await turn).result).toBeUndefined();
+    frames.close(); await s.dispose();
   });
   it("keeps a human submit pending for a task result with its UUID while onFrame still sees it", async () => {
     const { frames, query, turns } = framedQuery();
@@ -296,7 +342,8 @@ describe("Session", () => {
     expect((await turn).result).toBe("work-done");
     await nextTick();
     expect(prompts).toEqual(["work", "/compact"]);
-    frames.push(successFor(turns[1], "compacted", { kind: "human" }));
+    expect(turns[1]).toMatchObject({ origin: { kind: "auto-continuation" } });
+    frames.push(successFor(turns[1], "compacted", { kind: "auto-continuation" }));
     frames.close(); await s.dispose();
   });
   it("stream yields the turn's messages then a terminal result frame", async () => {

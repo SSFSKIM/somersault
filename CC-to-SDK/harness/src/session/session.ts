@@ -19,12 +19,13 @@ export interface SessionDeps { query: QueryFn; }
 export interface SessionOpts { contextTool?: boolean; compactTool?: boolean; label?: string; now?: () => number; }
 
 type UserMessageUUID = NonNullable<SDKUserMessage["uuid"]>;
+type SubmittedOrigin = "human" | "auto-continuation";
 
-function userTurn(text: string, uuid: UserMessageUUID): SDKUserMessage {
-  return { type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, origin: { kind: "human" }, uuid };
+function userTurn(text: string, uuid: UserMessageUUID, origin: SubmittedOrigin): SDKUserMessage {
+  return { type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, origin: { kind: origin }, uuid };
 }
 
-interface Waiter { uuid: UserMessageUUID; onMessage: (m: unknown) => void; resolve: (r: { result: unknown; structuredOutput?: unknown }) => void; reject: (e: Error) => void; }
+interface Waiter { uuid: UserMessageUUID; origin: SubmittedOrigin; onMessage: (m: unknown) => void; resolve: (r: { result: unknown; structuredOutput?: unknown }) => void; reject: (e: Error) => void; }
 
 /** One long-lived query() session. A turn is submit(prompt,onMessage) → streamed messages → resolved result.
  *  Captures the SDK session_id from the first system/init frame (stable per probe) → .sessionId. */
@@ -69,22 +70,23 @@ export class Session implements ControllableSession {
   /** Dropped sessionStore mirror batches (W3.3) — empty means the external mirror is loss-free so far. */
   get mirrorErrors(): MirrorErrorInfo[] { return this._mirrorErrors; }
 
-  /** Queue a turn + its waiter. Shared by submit() and compact() so every injected turn gets its own
-   *  UUID and waiter; success results resolve only their matching waiter. */
-  private enqueueTurn(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown; structuredOutput?: unknown }> {
+  /** Queue a turn + its waiter. Every turn keeps its fixed input provenance so its result cannot settle a
+   *  waiter owned by another origin class. */
+  private enqueueTurn(prompt: string, onMessage: (m: unknown) => void, origin: SubmittedOrigin): Promise<{ result: unknown; structuredOutput?: unknown }> {
     const uuid = randomUUID();
-    return new Promise((resolve, reject) => { this.waiters.push({ uuid, onMessage, resolve, reject }); this.input.push(userTurn(prompt, uuid)); });
+    return new Promise((resolve, reject) => { this.waiters.push({ uuid, origin, onMessage, resolve, reject }); this.input.push(userTurn(prompt, uuid, origin)); });
   }
 
-  /** A result is terminal only when the SDK associates it with this exact user turn; error variants have
-   *  no association field, so only an explicitly-human one may use the FIFO fallback. */
+  /** Success results are UUID-owned; absent origin is accepted, but an explicit one must agree with the
+   *  waiter's submission. Error variants lack UUIDs, so only an explicit matching origin may settle FIFO. */
   private resultWaiter(m: any): Waiter | undefined {
-    if (m.origin != null && m.origin.kind !== "human") return undefined;
     if (m.subtype === "success") {
       const uuid = m.user_message_uuid;
-      return typeof uuid === "string" && uuid.length > 0 ? this.waiters.find((w) => w.uuid === uuid) : undefined;
+      const waiter = typeof uuid === "string" && uuid.length > 0 ? this.waiters.find((w) => w.uuid === uuid) : undefined;
+      return waiter && (m.origin == null || m.origin.kind === waiter.origin) ? waiter : undefined;
     }
-    return m.origin?.kind === "human" ? this.waiters[0] : undefined;
+    const waiter = this.waiters[0];
+    return waiter && m.origin != null && m.origin.kind === waiter.origin ? waiter : undefined;
   }
 
   /** Run one turn; non-result messages stream to onMessage; resolves with the turn's result (and, when the
@@ -92,7 +94,13 @@ export class Session implements ControllableSession {
    *  Rejects immediately if the underlying query has already ended (else the waiter would never drain). */
   submit(prompt: string, onMessage: (m: unknown) => void = () => {}): Promise<{ result: unknown; structuredOutput?: unknown }> {
     if (this.ended) return Promise.reject(new Error(`${this.label} is not running`));
-    return this.enqueueTurn(prompt, onMessage);
+    return this.enqueueTurn(prompt, onMessage, "human");
+  }
+
+  /** Fixed route for host-generated follow-up turns; callers cannot choose another provenance class. */
+  submitAutomatic(prompt: string, onMessage: (m: unknown) => void = () => {}): Promise<{ result: unknown; structuredOutput?: unknown }> {
+    if (this.ended) return Promise.reject(new Error(`${this.label} is not running`));
+    return this.enqueueTurn(prompt, onMessage, "auto-continuation");
   }
 
   /** Convenience: run one turn as an async generator. Yields the turn's streamed (non-result) messages,
@@ -114,7 +122,7 @@ export class Session implements ControllableSession {
     await this.enqueueTurn("/compact", (m) => {
       const mm = m as any;
       if (mm.type === "system" && (mm.subtype === "status" || mm.subtype === "compact_boundary")) frames.push(mm);
-    });
+    }, "human");
     return parseCompactOutcome(frames);
   }
 
@@ -235,7 +243,7 @@ export class Session implements ControllableSession {
         if (waiter) {
           this.waiters.splice(this.waiters.indexOf(waiter), 1);
           waiter.resolve({ result: mm.result, structuredOutput: mm.structured_output });
-          if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.compact().catch(() => {}); }
+          if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.submitAutomatic("/compact").catch(() => {}); }
         } else if (mm.type !== "result") this.waiters[0]?.onMessage(m);
       }
     } finally {

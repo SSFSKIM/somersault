@@ -322,7 +322,7 @@ export class DaemonSupervisor {
       const rec = this.registry.get(id);
       throw new DaemonError(rec ? `session ${id} is ${rec.status}` : `unknown session ${id}`);
     }
-    return session.submit(prompt, () => {});          // tick output discarded; result drives idleDetector
+    return session.submitAutomatic(prompt, () => {}); // tick output discarded; result drives idleDetector
   }
 
   async stop(id: string): Promise<void> {
