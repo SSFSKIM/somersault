@@ -10,6 +10,7 @@ import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 type CaseId = "human-compact" | "automatic-normal" | "automatic-compact";
 type SubmittedOrigin = "human" | "auto-continuation";
 type Association = "first" | "second" | "other" | "missing";
+type ApiProvider = "firstParty" | "missing" | "other";
 type ObservedResult = {
   index: number;
   subtype: string;
@@ -23,6 +24,7 @@ type ObservedResult = {
 };
 type CaseOutcome = {
   caseId: CaseId;
+  apiProvider: ApiProvider;
   secondOrigin: SubmittedOrigin;
   secondMode: "normal" | "compact";
   results: ObservedResult[];
@@ -50,6 +52,13 @@ function sdkVersion(): string {
   } catch {
     return "unknown";
   }
+}
+
+function resolvedApiProvider(initialization: unknown): ApiProvider {
+  const record = initialization !== null && typeof initialization === "object" ? initialization as Record<string, unknown> : undefined;
+  const account = record?.account !== null && typeof record?.account === "object" ? record.account as Record<string, unknown> : undefined;
+  if (account?.apiProvider === "firstParty") return "firstParty";
+  return account?.apiProvider == null ? "missing" : "other";
 }
 
 function probeTempParent(): string {
@@ -94,6 +103,7 @@ function compactLifecycleMarker(frame: Record<string, any>, secondSubmitted: boo
 
 function expectedFailures(outcome: Omit<CaseOutcome, "failures">): string[] {
   const failures: string[] = [];
+  if (outcome.apiProvider !== "firstParty") failures.push("unexpected_api_provider");
   if (outcome.results.length !== 2) failures.push("expected_exactly_two_results");
   const first = outcome.results[0];
   const second = outcome.results[1];
@@ -131,6 +141,7 @@ async function runCase(caseId: CaseId): Promise<CaseOutcome> {
 
   const results: ObservedResult[] = [], systemMarkers: string[] = [];
   let compactLifecycleSeen = false;
+  let apiProvider: ApiProvider = "missing";
   let stream: ReturnType<typeof query> | undefined;
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), CASE_TIMEOUT_MS);
@@ -146,6 +157,7 @@ async function runCase(caseId: CaseId): Promise<CaseOutcome> {
       abortController,
       env: { ...process.env, CLAUDE_CONFIG_DIR: config },
     } });
+    apiProvider = resolvedApiProvider(await stream.initializationResult());
     for await (const message of stream) {
       const frame = message as Record<string, any>;
       const compactMarker = compactLifecycleMarker(frame, secondSubmitted);
@@ -171,11 +183,11 @@ async function runCase(caseId: CaseId): Promise<CaseOutcome> {
       });
       if (ownedBy === "first") releaseSecond();
     }
-    const partial = { caseId, secondOrigin, secondMode, results, systemMarkers };
+    const partial = { caseId, apiProvider, secondOrigin, secondMode, results, systemMarkers };
     return { ...partial, failures: expectedFailures(partial) };
   } catch (error) {
     const kind = error instanceof Error && error.name === "AbortError" ? "timeout" : "query_failure";
-    return { caseId, secondOrigin, secondMode, results, systemMarkers, failures: [kind] };
+    return { caseId, apiProvider, secondOrigin, secondMode, results, systemMarkers, failures: [kind] };
   } finally {
     clearTimeout(timeout);
     stream?.close();
@@ -187,6 +199,7 @@ function selfTest(): void {
   const baseFirst: ObservedResult = { index: 1, subtype: "success", origin: "human", userMessageAssociation: "first", isError: false, unhealthyText: false, resultKind: "string", compactLifecycleSeen: false };
   const outcome = (caseId: CaseId, second: ObservedResult): Omit<CaseOutcome, "failures"> => ({
     caseId,
+    apiProvider: "firstParty",
     secondOrigin: caseId === "human-compact" ? "human" : "auto-continuation",
     secondMode: caseId === "automatic-normal" ? "normal" : "compact",
     results: [baseFirst, second],
@@ -211,6 +224,10 @@ function selfTest(): void {
     assert.equal(oauthEnvironmentFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth", [key]: "enabled" }), "alternate_provider_route_present");
   }
   assert.equal(sdkVersion(), EXPECTED_SDK_VERSION);
+  assert.equal(resolvedApiProvider({ account: { apiProvider: "firstParty" } }), "firstParty");
+  assert.equal(resolvedApiProvider({ account: { apiProvider: "vertex" } }), "other");
+  assert.equal(resolvedApiProvider({}), "missing");
+  assert.equal(expectedFailures({ ...outcome("automatic-normal", { ...baseFirst, index: 2, origin: "absent", userMessageAssociation: "second" }), apiProvider: "other" }).includes("unexpected_api_provider"), true);
   process.stdout.write("P94B SELF-TEST PASS\n");
 }
 

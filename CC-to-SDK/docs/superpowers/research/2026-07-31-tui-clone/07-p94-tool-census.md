@@ -6,8 +6,8 @@
 **Probe:** `probes/probes/94-tool-census.ts`, corpus revision `f1-p94-r3`
 **Canonical-census executed-source SHA-256:** `2d5e04271052d48475e36bd56c0fb81c13598e82a8bd8cb310ff59c5a703ff34`
 **Review-hardened sharded-validation source SHA-256:** `374f1eb86a5b574b450e278c575c1573ffa68a9a395d1c6c8da57d938dd3da75`
-**Final gate probe-source SHA-256:** `b054a946ec53e57538bad2ad3ef45368467243b47bf8a1dbc7f4de5aa53a0c75`
-**Probe 94b final-source SHA-256:** `bc7b8b6f4a20a9959a13b344714e25fa99b32e75c1a8d09198daab55ed929210`
+**Final gate probe-source SHA-256:** `370e1129e3464dba5738529f41b775e006e1ccc6834f5f29674166feb69f540f`
+**Probe 94b final-source SHA-256:** `c0c1ab92791faa90db83f513e1a456a770597a65ffed036a495dab0b1ac4dab9`
 
 ## Verdict
 
@@ -64,7 +64,9 @@ The all-corpus attempt paired 204 calls from its seven completed cases with zero
 
 A later boundary review closed five additional gate defects: dynamic object keys can no longer publish prose, paths, or IDs; Bash command substitution inside double quotes fails closed; Write requires exact create semantics; fixture tests invoke the portable Node test runner; and live execution requires OAuth-only credentials. Diagnosis of the live retry exposed one more environment boundary: an inherited custom `ANTHROPIC_BASE_URL` routed a valid subscription token to a gateway that rejected it as an API key, so the source now rejects custom base URLs and alternate cloud-provider routes before querying.
 
-The final whole-boundary Codex review found seven more edge cases and all were repaired: probe 94b now rejects unhealthy success frames, emits structured JSON for lifecycle failures, scopes compact markers to the second submitted turn, and rejects an empty `--case`; probe 94 requires nonempty IDs and exactly one unresolved `tool_result` before sidecar association; the fixture's `npm test` command names both files explicitly for Windows Node 18; and observed-family totals are correctly labeled as Bash-call counts. The exact review-fixed sources passed both self-tests, TypeScript compilation, forced safe-lifecycle and empty-case regressions, the directed Write case against Anthropic's first-party endpoint, and all three live correlation cases. Write produced one validated call, one uniquely associated create sidecar, an empty `structuredPatch`, and one healthy UUID-owned result. Every P94b result reported `unhealthyText: false`, and all final stderr files were empty.
+The final whole-boundary Codex review found seven more edge cases and all were repaired: probe 94b now rejects unhealthy success frames, emits structured JSON for lifecycle failures, scopes compact markers to the second submitted turn, and rejects an empty `--case`; probe 94 requires nonempty IDs and exactly one unresolved `tool_result` before sidecar association; the fixture's `npm test` command names both files explicitly for Windows Node 18; and observed-family totals are correctly labeled as Bash-call counts.
+
+Re-review found that environment denylists alone could never prove endpoint ownership. Both probes now classify the SDK initialization result as `firstParty`, `missing`, or `other` and reject every value except `firstParty`; no provider name outside that fixed vocabulary is emitted. The exact final sources passed both self-tests, TypeScript compilation, forced safe-lifecycle and empty-case regressions, the directed Write case, and all three live correlation cases. The final Write report contained `resolvedApiProviders:["firstParty"]`, one validated call, one uniquely associated create sidecar, an empty `structuredPatch`, and one healthy UUID-owned result. Every P94b case contained `apiProvider:"firstParty"`, every result reported `unhealthyText:false`, and all final stderr files were empty.
 
 Thus every natural case plus Write passed the gate, while the original successful 328-call run remains the sole canonical frequency census; sharded and final safety-validation counts are not silently combined with it.
 
@@ -296,4 +298,4 @@ npx tsx probes/94-tool-census.ts --repetitions=1
 npx tsx probes/94-tool-census.ts --case=write-coverage --repetitions=1
 ```
 
-The default intentionally excludes the directed Write case. If an all-corpus run reports a single case timeout, retain that failed report and rerun the exact case with `--case=<case-id>`; do not merge sharded counts into the canonical frequency table. The probe fails closed on SDK-version drift, competing credentials, custom or alternate provider routing, unsafe output, unpaired calls/results, a missing or unhealthy originating result, missing directed-Write sidecar evidence, setup/query/cleanup failures, and privacy-guard violations.
+The default intentionally excludes the directed Write case. If an all-corpus run reports a single case timeout, retain that failed report and rerun the exact case with `--case=<case-id>`; do not merge sharded counts into the canonical frequency table. The probe fails closed on SDK-version drift, competing credentials, custom or alternate provider routing, any resolved API provider other than `firstParty`, unsafe output, unpaired calls/results, a missing or unhealthy originating result, missing directed-Write sidecar evidence, setup/query/cleanup failures, and privacy-guard violations.

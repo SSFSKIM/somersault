@@ -31,6 +31,7 @@ type StructuredResultOutcome = {
   unassociatedShapes: string[];
 };
 type ResultOrigin = "absent" | "human" | "channel" | "peer" | "task-notification" | "coordinator" | "observer" | "auto-continuation" | "observer-activity" | "other";
+type ApiProvider = "firstParty" | "missing" | "other";
 type UserMessageRoute = { origin: ResultOrigin; synthetic: boolean; shouldQuery: boolean };
 type ResultFrameProvenance = {
   origin: ResultOrigin;
@@ -48,6 +49,7 @@ type ResultFrame = {
 };
 type PairState = {
   resolvedModel?: string;
+  apiProvider?: ApiProvider;
   uses: Map<string, ToolUse>;
   unmatchedResults: number;
   duplicateUses: number;
@@ -60,7 +62,7 @@ type PairState = {
   userMessageRoutes: Map<string, UserMessageRoute>;
   resultFrames: ResultFrame[];
 };
-type RunOutcome = { calls: ObservedCall[]; resolvedModel?: string; failures: Failure[]; structuredResult: StructuredResultOutcome; resultFrames: ResultFrame[] };
+type RunOutcome = { calls: ObservedCall[]; resolvedModel?: string; apiProvider?: ApiProvider; failures: Failure[]; structuredResult: StructuredResultOutcome; resultFrames: ResultFrame[] };
 type Fixture = { root: string; repo: string; config: string };
 type CaseSpec = { id: string; prompt: string; coverage?: "write"; tools?: string[] | { type: "preset"; preset: "claude_code" } };
 type BashClassification = {
@@ -163,6 +165,12 @@ const ALL_CASES = [...NATURAL_CASES, WRITE_COVERAGE_CASE];
 
 function isRecord(value: unknown): value is UnknownRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function resolvedApiProvider(initialization: unknown): ApiProvider {
+  const account = isRecord(initialization) && isRecord(initialization.account) ? initialization.account : undefined;
+  if (account?.apiProvider === "firstParty") return "firstParty";
+  return account?.apiProvider == null ? "missing" : "other";
 }
 
 function probeTempParent(): string {
@@ -684,7 +692,7 @@ async function runCase(spec: CaseSpec, repetition: number, privateRoots: string[
         env: { ...process.env, CLAUDE_CONFIG_DIR: fixture.config },
       } as any,
     });
-    await q.initializationResult();
+    state.apiProvider = resolvedApiProvider(await q.initializationResult());
     for await (const message of q) {
       // Do not consume partial/stream frames; assistant and user messages are completed transcript frames.
       if (isRecord(message) && (message.type === "assistant" || message.type === "user" || message.type === "system" || message.type === "result")) consumeCompletedMessage(state, message);
@@ -705,6 +713,7 @@ async function runCase(spec: CaseSpec, repetition: number, privateRoots: string[
   }
   if (!failures.length) {
     if (!state.resolvedModel) failures.push({ caseId: spec.id, repetition, stage: "initialization", kind: "missing_resolved_model" });
+    if (state.apiProvider !== "firstParty") failures.push({ caseId: spec.id, repetition, stage: "initialization", kind: "unexpected_api_provider" });
     const originatingResults = state.resultFrames.filter((frame) => frame.provenance.isOriginatingUserTurn);
     if (originatingResults.length === 0) failures.push({ caseId: spec.id, repetition, stage: "completion", kind: "missing_originating_user_result" });
     for (const subtype of new Set(originatingResults.map((frame) => frame.subtype).filter((value) => value !== "success"))) failures.push({ caseId: spec.id, repetition, stage: "completion", kind: resultSubtypeFailure(subtype) });
@@ -720,6 +729,7 @@ async function runCase(spec: CaseSpec, repetition: number, privateRoots: string[
   return {
     calls,
     resolvedModel: state.resolvedModel,
+    apiProvider: state.apiProvider,
     failures,
     structuredResult: {
       messages: state.structuredResultMessages,
@@ -1186,6 +1196,9 @@ function selfTest(): void {
   });
 
   assert.equal(sdkVersion(), EXPECTED_SDK_VERSION);
+  assert.equal(resolvedApiProvider({ account: { apiProvider: "firstParty" } }), "firstParty");
+  assert.equal(resolvedApiProvider({ account: { apiProvider: "bedrock" } }), "other");
+  assert.equal(resolvedApiProvider({}), "missing");
   assert.equal(oauthCredentialFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth" }), undefined);
   assert.equal(oauthCredentialFailure({}), "oauth_token_missing");
   assert.equal(oauthCredentialFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth", ANTHROPIC_API_KEY: "api" }), "non_oauth_credentials_present");
@@ -1244,11 +1257,13 @@ async function main(): Promise<void> {
   }
   const calls = outcomes.flatMap((outcome) => outcome.calls);
   const resolvedModels = [...new Set(outcomes.map((outcome) => outcome.resolvedModel).filter((model): model is string => Boolean(model)))].sort();
+  const resolvedApiProviders = [...new Set(outcomes.map((outcome) => outcome.apiProvider).filter((provider): provider is ApiProvider => Boolean(provider)))].sort();
   const report: UnknownRecord = {
     probeVersion: PROBE_VERSION,
     corpusRevision: CORPUS_REVISION,
     configuration: safeConfiguration(selected),
     resolvedModels,
+    resolvedApiProviders,
     runtime: safeRuntime(),
     corpusCaseIds: selected.map((spec) => spec.id),
     status: "completed",
