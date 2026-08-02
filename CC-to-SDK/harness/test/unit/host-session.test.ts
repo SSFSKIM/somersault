@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionHost } from "../../src/host/host.js";
+import { Session } from "../../src/session/session.js";
+import { AsyncQueue } from "../../src/swarm/asyncQueue.js";
 import { readRoster } from "../../src/fleet/roster.js";
 import { rosterPath } from "../../src/fleet/paths.js";
 
@@ -28,6 +30,12 @@ function fakeSession() {
 }
 /** A session whose turns resolve on their own — for the multi-turn edges, where a latch would deadlock. */
 const instantSession = () => ({ submit: async () => ({ result: {} }), sessionId: "sid-1", dispose: async () => {} });
+function framedSession() {
+  const frames = new AsyncQueue<unknown>();
+  const session = new Session({ query: () => ({ [Symbol.asyncIterator]: () => frames[Symbol.asyncIterator]() }) }, {});
+  return { frames, session };
+}
+const nextTick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("SessionHost", () => {
   it("writes a working roster row at start, before any session id exists", async () => {
@@ -63,6 +71,23 @@ describe("SessionHost", () => {
     f.finish(); await running;
     expect(h.status()).toMatchObject({ state: "done", status: "idle" });
     await h.stop();
+  });
+  it("stays busy and emits no turn end for a task-origin result until the human result", async () => {
+    const { frames, session } = framedSession();
+    const h = new SessionHost(opts(), deps(() => session));
+    const events: any[] = [];
+    await h.start(); h.follow((e) => events.push(e));
+    const running = h.runTask("do it");
+    frames.push({ type: "result", result: "background", origin: { kind: "task-notification" } });
+    await nextTick();
+    expect(h.busy()).toBe(true);
+    expect(h.status()).toMatchObject({ state: "working", status: "busy" });
+    expect(events.filter((e) => e.kind === "turn" && e.phase === "end")).toHaveLength(0);
+    frames.push({ type: "result", result: "done", origin: { kind: "human" } });
+    await running;
+    expect(h.busy()).toBe(false);
+    expect(events.filter((e) => e.kind === "turn" && e.phase === "end")).toHaveLength(1);
+    frames.close(); await h.stop();
   });
   it("finalizes the roster to done when the task completes", async () => {
     const f = fakeSession();

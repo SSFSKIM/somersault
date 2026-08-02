@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Session } from "../../src/session/session.js";
+import { AsyncQueue } from "../../src/swarm/asyncQueue.js";
 
 function fakeQuery({ prompt }: any) {
   return (async function* () {
@@ -36,6 +37,16 @@ function initQuery(ids: string[]) {
     }
   })();
 }
+
+function framedQuery() {
+  const frames = new AsyncQueue<unknown>(), prompts: string[] = [];
+  const query = ({ prompt }: any) => {
+    void (async () => { for await (const turn of prompt) prompts.push(turn.message.content); })();
+    return { [Symbol.asyncIterator]: () => frames[Symbol.asyncIterator]() };
+  };
+  return { frames, prompts, query };
+}
+const nextTick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 // returns a generator-object carrying the introspection control methods
 function methodQuery(rec: any) {
@@ -166,6 +177,63 @@ describe("Session", () => {
     expect((await s.submit("world")).result).toBe("did:world");
     await s.dispose();
     expect(seen).toEqual(["hello", "/compact", "world"]);
+  });
+  it("keeps a human submit pending for task-origin results while onFrame still sees them", async () => {
+    const { frames, query } = framedQuery();
+    const s = new Session({ query }, {});
+    const frameSeen: unknown[] = [], messages: unknown[] = [];
+    s.onFrame((m) => frameSeen.push(m));
+    let settled = false;
+    const turn = s.submit("human", (m) => messages.push(m)).then((r) => { settled = true; return r; });
+    const taskResult = { type: "result", subtype: "success", result: "background", origin: { kind: "task-notification" } };
+    frames.push(taskResult);
+    await nextTick();
+    expect(frameSeen).toEqual([taskResult]);
+    expect(messages).toEqual([]);
+    expect(settled).toBe(false);
+    frames.push({ type: "result", subtype: "success", result: "human", origin: { kind: "human" } });
+    expect((await turn).result).toBe("human");
+    frames.close(); await s.dispose();
+  });
+  it("preserves two queued human waiters across an interleaved task-origin result", async () => {
+    const { frames, query } = framedQuery();
+    const s = new Session({ query }, {});
+    let secondSettled = false;
+    const first = s.submit("one"), second = s.submit("two").then((r) => { secondSettled = true; return r; });
+    frames.push({ type: "result", result: "background", origin: { kind: "task-notification" } });
+    await nextTick();
+    expect(secondSettled).toBe(false);
+    frames.push({ type: "result", result: "first", origin: { kind: "human" } });
+    expect((await first).result).toBe("first");
+    expect(secondSettled).toBe(false);
+    frames.push({ type: "result", result: "second", origin: { kind: "human" } });
+    expect((await second).result).toBe("second");
+    frames.close(); await s.dispose();
+  });
+  it("keeps origin-absent result frames compatible with legacy query fakes", async () => {
+    const { frames, query } = framedQuery();
+    const s = new Session({ query }, {});
+    const turn = s.submit("legacy");
+    frames.push({ type: "result", result: "legacy-result" });
+    expect((await turn).result).toBe("legacy-result");
+    frames.close(); await s.dispose();
+  });
+  it("does not consume a requested compaction on a task-origin result", async () => {
+    const { frames, prompts, query } = framedQuery();
+    const s = new Session({ query }, {});
+    s.requestCompaction();
+    const turn = s.submit("work");
+    await nextTick();
+    expect(prompts).toEqual(["work"]);
+    frames.push({ type: "result", result: "background", origin: { kind: "task-notification" } });
+    await nextTick();
+    expect(prompts).toEqual(["work"]);
+    frames.push({ type: "result", result: "work-done", origin: { kind: "human" } });
+    expect((await turn).result).toBe("work-done");
+    await nextTick();
+    expect(prompts).toEqual(["work", "/compact"]);
+    frames.push({ type: "result", result: "compacted", origin: { kind: "human" } });
+    frames.close(); await s.dispose();
   });
   it("stream yields the turn's messages then a terminal result frame", async () => {
     const s = new Session({ query: fakeQuery }, {});

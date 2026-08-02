@@ -211,15 +211,16 @@ export class Session implements ControllableSession {
         if (mm.type === "system" && mm.subtype === "init" && !this._sessionId) this._sessionId = mm.session_id;
         if (mm.type === "system" && mm.subtype === "background_tasks_changed") this._bgTasks = mm.tasks ?? []; // REPLACE, never merge
         if (mm.type === "system" && mm.subtype === "mirror_error") { this._mirrorErrors.push({ error: mm.error, key: mm.key, at: this.now() }); if (this._mirrorErrors.length > 50) this._mirrorErrors.shift(); }
-        if (mm.type === "result") this._limit = classifyLimitMessage(mm); // clean result CLEARS
-        else if (mm.type === "rate_limit_event") {                        // allowed only clears a rate-limit state
+        const turnResult = mm.type === "result" && (mm.origin == null || mm.origin.kind === "human");
+        if (turnResult) this._limit = classifyLimitMessage(mm); // clean result CLEARS
+        else if (mm.type === "rate_limit_event") {             // allowed only clears a rate-limit state
           const rl = classifyLimitMessage(mm);
           if (rl) this._limit = rl; else if (this._limit?.kind === "rate-limit") this._limit = undefined;
         }
-        if (mm.type === "result") {
+        if (turnResult) {
           this.waiters.shift()?.resolve({ result: mm.result, structuredOutput: mm.structured_output });
           if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.compact().catch(() => {}); }
-        } else this.waiters[0]?.onMessage(m);
+        } else if (mm.type !== "result") this.waiters[0]?.onMessage(m);
       }
     } finally {
       this.ended = true;
