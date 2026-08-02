@@ -55,16 +55,19 @@ function uniqueCall(id: unknown, callsById: ReadonlyMap<string, readonly ToolEve
   const calls = callsById.get(id); return calls?.length === 1 ? calls[0] : undefined;
 }
 /** The sidecar association rule, evaluated against the PRE-message call state. It governs ONLY the structured
- *  `tool_use_result`; an ordinary flat `tool_result` block attaches under its own independent conditions. */
-function sidecarFor(blocks: readonly Record<string, unknown>[], callsById: ReadonlyMap<string, readonly ToolEvent[]>, value: unknown): SidecarAssociation | undefined {
+ *  `tool_use_result`; an ordinary flat `tool_result` block attaches under its own independent conditions.
+ *  `own`, when given, is the sequence of the ALREADY-retained message being upgraded: a result the call carries
+ *  from that very message is its own, not a competing earlier one, so a late richer copy can still associate. */
+function sidecarFor(blocks: readonly Record<string, unknown>[], callsById: ReadonlyMap<string, readonly ToolEvent[]>, value: unknown, own?: number): SidecarAssociation | undefined {
   if (value === undefined) return undefined;
   if (blocks.length === 0) return { scope: "message", value, reason: "no-tool-result" };
   if (blocks.length !== 1) return { scope: "message", value, reason: "ambiguous-tool-results" };
   const id = blocks[0]?.tool_use_id;
   if (typeof id !== "string" || id.length === 0) return { scope: "message", value, reason: "missing-tool-use-id" };
   const call = uniqueCall(id, callsById);
-  if (call?.result) return { scope: "message", value, reason: "duplicate-tool-result" };
-  return call ? { scope: "call", value } : { scope: "message", value, reason: callsById.has(id) ? "duplicate-tool-use" : "unmatched-tool-use" };
+  if (!call) return { scope: "message", value, reason: callsById.has(id) ? "duplicate-tool-use" : "unmatched-tool-use" };
+  const mine = own === undefined ? call.result === undefined : call.result?.resultSequence === own;
+  return mine ? { scope: "call", value } : { scope: "message", value, reason: "duplicate-tool-result" };
 }
 
 export class TranscriptDocument {
@@ -80,8 +83,9 @@ export class TranscriptDocument {
     if (!isRecord(message)) return false;
     const type = message.type;
     if (type !== "assistant" && type !== "user") return false;
+    if (type === "assistant") this.evictSuperseded(message.supersedes);   // retraction precedes dedup: a retracted uuid must stay retracted
     const identity = identityOf(message);
-    if (identity !== undefined) { if (this.identities.has(identity)) return false; this.identities.add(identity); }
+    if (identity !== undefined) { if (this.identities.has(identity)) { this.upgradeDuplicate(identity, type, message); return false; } this.identities.add(identity); }
     const sequence = ++this.seq;
     const entry: TranscriptEntry = { sequence, source, kind: "sdk-message", message, ...(identity === undefined ? {} : { identity }) };
     const blocks = contentBlocks(message);
@@ -114,6 +118,47 @@ export class TranscriptDocument {
 
   entries(): readonly TranscriptEntry[] { return this.list; }
   toolEvents(): readonly ToolEvent[] { return this.tools; }
+
+  /** Disk rows from `getSessionMessages()` never carry the structured `tool_use_result` sidecar, but the host's
+   *  live copy of the SAME uuid does — so the second delivery of a deduplicated identity can be strictly richer.
+   *  Keep that copy and associate its sidecar against the retained entry's own result blocks. Strictly an upgrade:
+   *  a copy without the sidecar changes nothing, and an already-recorded sidecar is never overwritten. */
+  private upgradeDuplicate(identity: string, type: "assistant" | "user", message: Record<string, unknown>): void {
+    if (type !== "user" || !("tool_use_result" in message) || message.tool_use_result === undefined) return;
+    const entry = this.list.find((e) => e.identity === identity);
+    if (entry?.kind !== "sdk-message" || entry.sidecar !== undefined) return;
+    if (this.tools.some((c) => c.result?.resultSequence === entry.sequence && c.result.sidecar !== undefined)) return;
+    entry.message = message;
+    const results = contentBlocks(entry.message).filter((b) => b.type === "tool_result");
+    const sidecar = sidecarFor(results, this.callsById, message.tool_use_result, entry.sequence);
+    if (sidecar?.scope === "call") { const call = uniqueCall(results[0]?.tool_use_id, this.callsById); if (call?.result) call.result.sidecar = sidecar; }
+    else if (sidecar) entry.sidecar = sidecar;
+  }
+
+  /** `SDKAssistantMessage.supersedes` (refusal fallback): the named wire uuids are RETRACTED, not history — the
+   *  list can name tombstoned `tool_result` frames as well as assistant frames. Drop each named entry with
+   *  everything it contributed (its calls, or the results it attached), and remember the uuid so a later disk
+   *  bootstrap or follow replay cannot resurrect it. */
+  private evictSuperseded(supersedes: unknown): void {
+    if (!Array.isArray(supersedes)) return;
+    for (const u of supersedes) {
+      if (!nonEmpty(u)) continue;
+      const identity = `uuid:${u}`, idx = this.list.findIndex((e) => e.identity === identity);
+      if (idx >= 0) { const [gone] = this.list.splice(idx, 1); if (gone?.kind === "sdk-message") this.retract(gone.sequence); }
+      this.identities.add(identity);
+    }
+  }
+
+  /** Undo one retained SDK message's contributions. Sequences are per-entry, so the two sweeps are disjoint: an
+   *  assistant frame only ever owns calls, a user frame only ever owns results. */
+  private retract(sequence: number): void {
+    this.tools = this.tools.filter((c) => c.callSequence !== sequence);
+    for (const [id, calls] of this.callsById) {
+      const kept = calls.filter((c) => c.callSequence !== sequence);
+      if (kept.length === 0) this.callsById.delete(id); else if (kept.length !== calls.length) this.callsById.set(id, kept);
+    }
+    for (const c of this.tools) if (c.result?.resultSequence === sequence) delete c.result;
+  }
 
   private extractCalls(message: Record<string, unknown>, blocks: readonly Record<string, unknown>[], callSequence: number): void {
     const parent = nonEmpty(message.parent_tool_use_id) ? message.parent_tool_use_id : undefined;

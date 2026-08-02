@@ -49,6 +49,62 @@ describe("F1 canonical transcript", () => {
     expect(doc.appendSdk("host", { ...READ_CALL, message: { ...READ_CALL.message, id: "assistant-2" } })).toBe(true);
     expect(doc.entries()).toHaveLength(2);
   });
+  // `getSessionMessages()` rows never carry `tool_use_result`, so a disk bootstrap followed by the live follow
+  // replay delivers the SAME uuid twice — sparse first, rich second. Dedup must keep the richer copy's structure.
+  const SPARSE_READ_RESULT = { type: "user", uuid: "user-result-1", message: { content: [{ type: "tool_result", tool_use_id: "read-1", content: "export const app = 1;\n", is_error: false }] } };
+  it("upgrades a deduplicated duplicate that carries the richer sidecar", () => {
+    const doc = new TranscriptDocument(); doc.appendSdk("host", READ_CALL);
+    expect(doc.appendSdk("disk", SPARSE_READ_RESULT)).toBe(true); expect(doc.appendSdk("host", READ_RESULT_WITH_SIDECAR)).toBe(false);
+    expect(doc.entries()).toHaveLength(2);
+    expect(doc.toolEvents()[0]?.result?.sidecar).toEqual({ scope: "call", value: READ_RESULT_WITH_SIDECAR.tool_use_result });
+    const last = doc.entries().at(-1); expect(last?.kind === "sdk-message" ? last.message : undefined).toBe(READ_RESULT_WITH_SIDECAR);
+  });
+  it("never downgrades a retained rich copy when the sparse disk copy arrives second", () => {
+    const doc = new TranscriptDocument(); doc.appendSdk("host", READ_CALL); doc.appendSdk("host", READ_RESULT_WITH_SIDECAR);
+    expect(doc.appendSdk("disk", SPARSE_READ_RESULT)).toBe(false); expect(doc.entries()).toHaveLength(2);
+    expect(doc.toolEvents()[0]?.result?.sidecar).toEqual({ scope: "call", value: READ_RESULT_WITH_SIDECAR.tool_use_result });
+    const last = doc.entries().at(-1); expect(last?.kind === "sdk-message" ? last.message : undefined).toBe(READ_RESULT_WITH_SIDECAR);
+  });
+  it("retains an upgraded sidecar at message scope when its association is ambiguous", () => {
+    const doc = new TranscriptDocument(); doc.appendSdk("host", READ_CALL);
+    doc.appendSdk("disk", { type: "user", uuid: "user-ambiguous", message: AMBIGUOUS_SIDECAR_RESULT.message });
+    expect(doc.appendSdk("host", { ...AMBIGUOUS_SIDECAR_RESULT, uuid: "user-ambiguous" })).toBe(false);
+    expect(doc.entries().at(-1)).toMatchObject({ sidecar: { scope: "message", reason: "ambiguous-tool-results" } });
+    expect(doc.toolEvents()[0]?.result?.sidecar).toBeUndefined();
+  });
+  it("never overwrites a sidecar the first delivery already associated", () => {
+    const doc = new TranscriptDocument(); doc.appendSdk("host", READ_CALL); doc.appendSdk("host", READ_RESULT_WITH_SIDECAR);
+    expect(doc.appendSdk("host", { ...READ_RESULT_WITH_SIDECAR, tool_use_result: { type: "read", file: { numLines: 2 } } })).toBe(false);
+    expect(doc.toolEvents()[0]?.result?.sidecar).toEqual({ scope: "call", value: READ_RESULT_WITH_SIDECAR.tool_use_result });
+    const last = doc.entries().at(-1); expect(last?.kind === "sdk-message" ? last.message : undefined).toBe(READ_RESULT_WITH_SIDECAR);
+  });
+  // Refusal-fallback supersede (sdk.d.ts `SDKAssistantMessage.supersedes`): the named frames are retracted, not history.
+  const REFUSED_CALL = { ...READ_CALL, uuid: "assistant-refused" };
+  const fallback = (supersedes: unknown) => ({ type: "assistant", uuid: "assistant-fallback", supersedes, message: { id: "assistant-fallback", content: [{ type: "text", text: "I can't help with that." }] } });
+  it("evicts a superseded assistant frame together with the calls it extracted", () => {
+    const doc = new TranscriptDocument(); doc.appendSdk("host", REFUSED_CALL);
+    expect(doc.appendSdk("host", fallback(["assistant-refused"]))).toBe(true);
+    expect(doc.entries()).toHaveLength(1); expect(doc.entries()[0]).toMatchObject({ identity: "uuid:assistant-fallback" });
+    expect(doc.toolEvents()).toHaveLength(0);
+  });
+  it("detaches a call result when its tombstoned tool_result frame is superseded", () => {
+    const doc = new TranscriptDocument(); doc.appendSdk("host", READ_CALL); doc.appendSdk("host", READ_RESULT_WITH_SIDECAR);
+    expect(doc.appendSdk("host", fallback(["user-result-1"]))).toBe(true);
+    expect(doc.entries().map((e) => e.identity)).toEqual(["message:assistant-1", "uuid:assistant-fallback"]);
+    expect(doc.toolEvents()[0]?.result).toBeUndefined();
+  });
+  it("cannot resurrect a retracted frame from a later replay", () => {
+    const doc = new TranscriptDocument(); doc.appendSdk("host", READ_CALL); doc.appendSdk("host", READ_RESULT_WITH_SIDECAR); doc.appendSdk("host", fallback(["user-result-1"]));
+    expect(doc.appendSdk("disk", READ_RESULT_WITH_SIDECAR)).toBe(false); expect(doc.appendSdk("disk", SPARSE_READ_RESULT)).toBe(false);
+    expect(doc.entries()).toHaveLength(2); expect(doc.toolEvents()[0]?.result).toBeUndefined();
+  });
+  it("ignores an absent or malformed supersedes list", () => {
+    const doc = new TranscriptDocument(); doc.appendSdk("host", REFUSED_CALL);
+    expect(doc.appendSdk("host", fallback("assistant-refused"))).toBe(true);
+    expect(doc.appendSdk("host", { ...fallback([42, "", null]), uuid: "assistant-fallback-2" })).toBe(true);
+    expect(doc.appendSdk("host", REFUSED_CALL)).toBe(false);   // still retained: neither list retracted it
+    expect(doc.entries()).toHaveLength(3); expect(doc.toolEvents()).toHaveLength(1);
+  });
   it("deduplicates local delivery by identity, never by equal-looking content", () => {
     const doc = new TranscriptDocument(), event = { kind: "visual" as const, lines: [{ text: "Usage: /help" }] };
     expect(doc.appendLocal(event, "event:session-1:1:visual")).toBe(true); expect(doc.appendLocal(event, "event:session-1:1:visual")).toBe(false);
