@@ -1616,6 +1616,88 @@ describe("useChat: one retained document behind every surface", () => {
     expect(frame(lastFrame).match(/Earlier live output unavailable/g)).toHaveLength(1);
   });
 
+  // Round-1 review finding 1: a compact boundary is a SYSTEM frame, which the document never retains, so
+  // document dedup cannot suppress a redelivered one — the divider's identity has to come from the boundary
+  // itself.
+  it("publishes ONE compacted divider when the same compact_boundary frame is redelivered", async () => {
+    const fake = fakeRemote();
+    let items: readonly RenderItem[] = [];
+    function H() { const c = useChat(() => fake); items = c.state.staticItems; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    const boundary = { type: "system", subtype: "compact_boundary", uuid: "compact-boundary-1" };
+    fake.pushEvent({ kind: "message", data: boundary });
+    await waitFor(() => frame(lastFrame).includes("context compacted"));
+    fake.pushEvent({ kind: "message", data: boundary });                  // the same boundary, redelivered by a follow replay
+    await new Promise((r) => setTimeout(r, 30));
+    expect(items.flatMap(itemLines).filter((t) => t.includes("context compacted"))).toHaveLength(1);
+  });
+
+  // Round-1 review finding 2 (A): a turn that ends with a call still open leaves an ORPHAN. The document
+  // keeps it verbatim (never a fabricated result), but nothing is running, so the blink epoch must end and
+  // the transient row must go.
+  it("ends the blink epoch and drops the pending row when a turn ENDS with a call still open", async () => {
+    const scheduler = fakeScheduler();
+    const fake = fakeRemote();
+    let snap!: { pendingItems: readonly RenderItem[]; busy: boolean };
+    function H() {
+      const c = useChat(() => fake, {}, { scheduleRepaint: scheduler.schedule });
+      snap = { pendingItems: c.state.pendingItems, busy: c.state.busy };
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: READ_CALL });
+    await waitFor(() => scheduler.armed === 1);
+    expect(snap.pendingItems.length).toBeGreaterThan(0);
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });               // no tool_result ever arrives
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    await waitFor(() => scheduler.armed === 0);
+    expect(snap.pendingItems).toEqual([]);
+    expect(snap.busy).toBe(false);
+  });
+
+  // Round-1 review finding 2 (B): a disk bootstrap is history, not a live turn — a dangling `tool_use` read
+  // off disk at attach must never blink or claim to be running.
+  it("never arms the blink for a DANGLING tool_use that only the disk bootstrap carries", async () => {
+    const scheduler = fakeScheduler();
+    const fake = fakeRemote();
+    let snap!: { pendingItems: readonly RenderItem[] };
+    function H() {
+      const c = useChat(() => fake, { initialEntries: [{ kind: "sdk", source: "disk", message: READ_CALL as unknown as Record<string, unknown> }] }, { scheduleRepaint: scheduler.schedule });
+      snap = { pendingItems: c.state.pendingItems };
+      return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(scheduler.armed).toBe(0);
+    expect(snap.pendingItems).toEqual([]);
+    expect(frame(lastFrame)).not.toContain("Read(");
+  });
+
+  // Round-1 review finding 2 (D): settlement is per call, not per turn.
+  it("removes ONLY the settled call from the live-open set while a second call is still running", async () => {
+    const scheduler = fakeScheduler();
+    const fake = fakeRemote();
+    let ids: string[] = [];
+    function H() {
+      const c = useChat(() => fake, {}, { scheduleRepaint: scheduler.schedule });
+      ids = [...c.state.pendingItems].map((i) => i.id);
+      return <Text>{allText(c)}</Text>;
+    }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: READ_CALL });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "assistant-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/src/b.ts" } }] } } });
+    await waitFor(() => ids.some((i) => i.includes("read-1")) && ids.some((i) => i.includes("read-2")));
+    fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });          // settles read-1 only
+    await waitFor(() => !ids.some((i) => i.includes("read-1")));
+    expect(ids.every((i) => i.includes("read-2"))).toBe(true);
+    expect(scheduler.armed).toBe(1);                                      // read-2 keeps the epoch alive
+  });
+
   it("a truncated start WITH a numeric seq is a live mid-turn replay: gap record, LiveTurn, busy", async () => {
     const fake = fakeRemote();
     function H() { const c = useChat(() => fake); return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>; }

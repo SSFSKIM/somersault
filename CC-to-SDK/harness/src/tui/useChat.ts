@@ -23,7 +23,7 @@ import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import type { RenderLine } from "./render.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
-import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
+import { projectCompact, projectDetail, projectPending, toolItemId, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { LiveTurn } from "./liveTurn.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
@@ -46,6 +46,7 @@ import { promptEntries, mergeEntries, type HistEntry, type HistoryScope } from "
 // F1 Task 2 role map: every line useChat itself emits is themed — failures `error`, the `! command`
 // echo `bashBorder`. Read per emission so a mid-session /theme change colors the next line correctly.
 const role = (name: "error" | "bashBorder") => resolveThemeColor(themeTokens()[name]);
+const nonEmptyString = (v: unknown): v is string => typeof v === "string" && v.length > 0;
 
 // ChatSession is promoted to ../session/chatSession.ts (spec A2b §2) so the lib Session and the remote
 // adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
@@ -89,12 +90,21 @@ export function useChat(
     }
     documentRef.current = doc;
   }
+  // The LIVE-open top-level calls — display state only, never written back into the source document. A call
+  // id enters when a LIVE host event delivers its `tool_use` with no result yet, leaves when its result
+  // attaches, and the whole set clears at every boundary (turn:end, an idle `state` frame, a session swap,
+  // replaceDocument). The document alone can't answer "is something running": an orphan (a turn that ended
+  // with no tool_result) and a dangling `tool_use` read off DISK at attach both stay open in it forever, and
+  // keying the blink epoch + the transient region on THEM is what left a 600 ms timer running against a row
+  // nothing was executing.
+  const liveOpenIds = useRef<Set<string>>(new Set());
+  const [liveOpen, setLiveOpen] = useState(false);   // mirror of `liveOpenIds.current.size > 0` — a ref alone can't re-run the blink effect
   const [staticItems, setStaticItems] = useState<readonly RenderItem[]>(() => {
     const items = projectCompact(documentRef.current!, projectionContext());
     for (const item of items) publishedIds.current.add(item.id);
     return items;
   });
-  const [pendingItems, setPendingItems] = useState<readonly RenderItem[]>(() => projectPending(documentRef.current!, projectionContext()));
+  const [pendingItems, setPendingItems] = useState<readonly RenderItem[]>(() => livePending());
   const [streaming, setStreaming] = useState<RenderLine[]>([]);
   const docEpoch = useRef(0);              // bumped at every terminal boundary (rewind / clear / real session swap)
   const localSeq = useRef(0);              // monotonic within one epoch — two equal-looking /help runs stay distinct
@@ -199,12 +209,37 @@ export function useChat(
       for (const item of unseen) publishedIds.current.add(item.id);
       setStaticItems((s) => [...s, ...unseen]);
     }
-    setPendingItems(projectPending(documentRef.current!, context));
+    setPendingItems(livePending(context));
+  }
+  /** The transient region: `projectPending` still selects every open top-level call off the source document,
+   *  and this keeps only the ones a live turn is actually running — so a disk-bootstrapped dangling call, or
+   *  one orphaned by a turn that ended without a result, is retained history but never a blinking row. */
+  function livePending(context: ProjectionContext = projectionContext()): readonly RenderItem[] {
+    const live = liveOpenIds.current;
+    if (live.size === 0) return [];
+    const wanted = new Set<string>();
+    for (const id of live) { wanted.add(toolItemId(id, "pending", "header")); wanted.add(toolItemId(id, "pending", "body")); }
+    return projectPending(documentRef.current!, context).filter((item) => wanted.has(item.id));
+  }
+  /** One live host message's effect on the live-open set: a top-level `tool_use` enters, and every id whose
+   *  call has since acquired a result leaves (so a redelivered call that already settled never re-enters). */
+  function syncLiveOpen(data: unknown): void {
+    const live = liveOpenIds.current, m = data as any;
+    if (m?.type === "assistant" && m.parent_tool_use_id === undefined)
+      for (const b of m.message?.content ?? []) if (b?.type === "tool_use" && typeof b.id === "string" && b.id) live.add(b.id);
+    if (live.size) for (const e of documentRef.current!.toolEvents()) if (e.result && live.has(e.id)) live.delete(e.id);
+    setLiveOpen(live.size > 0);
+  }
+  /** A live-open boundary: nothing is running any more. Ends the blink epoch and empties the transient region
+   *  — the document keeps whatever stayed open verbatim, no result is ever fabricated into it. */
+  function clearLiveOpen(): void {
+    if (liveOpenIds.current.size === 0) return;
+    liveOpenIds.current.clear();
+    if (!disposed.current) { setLiveOpen(false); setPendingItems([]); }
   }
   /** The 600 ms pending-tool repaint: re-projects ONLY the transient region, so the blink phase
    *  (`Math.floor(now / 600) % 2`) reaches Ink without an SDK message and Static history never moves. */
-  function repaintPending(): void { if (!disposed.current) setPendingItems(projectPending(documentRef.current!, projectionContext())); }
-  const openCalls = documentRef.current!.toolEvents().some((e) => e.route === "top-level" && !e.result);
+  function repaintPending(): void { if (!disposed.current) setPendingItems(livePending()); }
   /** Every local append/notice path (/help, /usage, /status, local Bash, welcome, errors, user/command
    *  echo, dividers, decisions) allocates its identity HERE, exactly once — so one retransmitted event is
    *  suppressed by document dedup while two equal-looking /help invocations still render twice. */
@@ -213,6 +248,12 @@ export function useChat(
     documentRef.current!.appendLocal(event, `event:${docEpoch.current}:${++localSeq.current}:${event.kind}`);
     reconcile();
   }
+  /** The exception to the fresh-identity rule above: a local visual whose identity comes from the SOURCE
+   *  frame that caused it, so a redelivered frame publishes it once rather than once per delivery. */
+  function appendLocalIdentified(event: LocalTranscriptEvent, identity: string): void {
+    if (disposed.current) return;
+    if (documentRef.current!.appendLocal(event, identity)) reconcile();
+  }
   /** The terminal boundary: a completed rewind, `/clear`, or a REAL session swap. Clear Ink's Static FIRST
    *  (never reset state values into an already-mounted <Static> — it would replay the whole history), then
    *  mount a fresh one and reconcile the new document from scratch. */
@@ -220,6 +261,7 @@ export function useChat(
     if (disposed.current) return;
     opts.clearStaticTranscript?.();
     docEpoch.current++; localSeq.current = 0; idleFollowReplay.current = false;
+    clearLiveOpen();
     documentRef.current = next;
     publishedIds.current = new Set();
     setStaticItems([]); setPendingItems([]);
@@ -235,12 +277,14 @@ export function useChat(
   // deny (spec A2b §5): the entry stays parked on the host for another client (or the same one, re-attached)
   // to answer. Never on a session swap.
   useEffect(() => () => { disposed.current = true; }, []);
-  // The live repaint epoch: one interval while at least one top-level call is open, cleared the moment they
-  // all settle and by every session swap, resume/rewind reset and unmount (the cleanup below).
+  // The live repaint epoch: one interval while at least one top-level call is LIVE-open, cleared the moment
+  // they all settle — and by turn end, an idle host, every session swap, resume/rewind reset and unmount
+  // (the cleanup below). Keyed on the live set, never on the document's own open calls: an orphaned or
+  // disk-bootstrapped call stays open there forever and would blink against nothing.
   useEffect(() => {
-    if (!openCalls) return;
+    if (!liveOpen) return;
     return scheduleRepaint(() => repaintPending(), 600);
-  }, [openCalls, session]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [liveOpen, session]);   // eslint-disable-line react-hooks/exhaustive-deps
   // Dispose the PREVIOUS session whenever it changes (a /resume swap) and on unmount. Must not touch `disposed`.
   useEffect(() => () => { void session.dispose().catch(() => {}); }, [session]);
   // The host event stream is the SINGLE rendering source (spec A2b §2+§5, acceptance 7): a turn started by
@@ -267,7 +311,13 @@ export function useChat(
         bgHarvest.current.ingestMessage(ev.data);
         const data = ev.data as any;
         taskListRef.current.ingest(ev.data); setTasks(taskListRef.current.snapshot());
-        if (data?.type === "system" && data.subtype === "compact_boundary") notice("─── context compacted ───");
+        // A compact boundary is a SYSTEM frame — appendSdk retains none of those, so document dedup can
+        // never suppress a redelivered one. Its identity therefore comes from the boundary itself; only a
+        // uuid-less frame (nothing stable to dedup on) falls back to a fresh monotonic identity.
+        if (data?.type === "system" && data.subtype === "compact_boundary") {
+          const divider: LocalTranscriptEvent = { kind: "notice", lines: [{ text: "─── context compacted ───", dim: true }] };
+          if (nonEmptyString(data.uuid)) appendLocalIdentified(divider, `compact-divider:${data.uuid}`); else appendNewLocal(divider);
+        }
         // Retention is unconditional now: a completed record landing in the disk-read/follow window is
         // appended even though no new active turn starts, and document dedup — not a no-live-turn guard —
         // is what stops a redelivered copy from showing twice. /copy follows the SAME rule, so it can only
@@ -279,6 +329,7 @@ export function useChat(
         }
         const l = liveTurnRef.current;
         if (l) { l.ingest(ev.data); setStreaming(l.snapshot()); setTurnTokens(l.outputTokens); if (l.model) setModel(l.model); }
+        syncLiveOpen(data);   // AFTER the append: a result delivered in this very frame has already attached
         reconcile();
       }
       else if (ev.kind === "turn" && ev.phase === "end") {
@@ -290,6 +341,9 @@ export function useChat(
         // rendering) still earns a notice — otherwise an idle host's death is invisible until the next
         // submit times out ~10s later (F5).
         if (ev.error) l ? append([{ text: `✗ ${ev.error}`, color: role("error") }]) : notice(`✗ connection lost: ${ev.error}`);
+        // A call still open at turn end is an ORPHAN (interrupted, denied, or a result that never came):
+        // the turn is over, so nothing is running — end the blink epoch instead of leaving a "running" row.
+        clearLiveOpen();
         setStreaming([]); setBusy(false); void refreshCtx(); void refreshUsage(); drainNext();
       }
       else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);
@@ -305,6 +359,7 @@ export function useChat(
       else if (ev.kind === "rewound") void rebuildAfterRewind();   // ANOTHER client rewound: rebuild from disk (no prefill — not our prompt)
       else if (ev.kind === "state") {
         idleFollowReplay.current = false;                          // the trailing frame of a follow replay ends the idle-ingestion mode
+        if (ev.status.status === "idle") clearLiveOpen();           // the host says nothing is running — no call of ours can still be live
         if (ev.status.permissionMode && ev.status.permissionMode !== modeRef.current) setMode(ev.status.permissionMode);
       }
     });
@@ -586,6 +641,7 @@ export function useChat(
     if (!msgs.length) { append([{ text: `⚠ couldn't resume ${id.slice(0, 8)} — no history found`, dim: true }]); return; }
     const sameSession = session.sessionId === id;
     setSession(makeSession(id));                                   // [session] effect disposes the old
+    clearLiveOpen();                                               // the old engine's in-flight calls died with it — nothing of ours is live now
     // Same conversation: APPEND the raw persisted rows into the EXISTING document and reconcile only the
     // ids nobody has seen. Replacing it with disk-only rows would erase every prior local notice and
     // command output from later Ctrl-O detail — a real session change is the only terminal boundary.

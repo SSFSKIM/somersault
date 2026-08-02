@@ -35,6 +35,9 @@ export class LiveTurn {
     if (e) { this.onStreamEvent(e); return; }
     const mm = m as any;
     if (mm?.type !== "assistant" && mm?.type !== "user") return;
+    // A NESTED (subagent) message rides the same stream but belongs to its own turn: it supersedes nothing
+    // here, so it must neither wipe the partials the parent is still streaming nor claim the turn's model.
+    if (typeof mm.parent_tool_use_id === "string" && mm.parent_tool_use_id) return;
     if (mm.type === "assistant" && !this.model && mm.message?.model) this.model = String(mm.message.model);
     // The document owns this message from here on — drop the partials it supersedes, or the same text
     // renders twice (once transient, once published).

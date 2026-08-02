@@ -78,6 +78,24 @@ describe("LiveTurn", () => {
     expect(lt.snapshot()).toEqual([]);                            // the document owns it from here on
   });
 
+  // Round-1 review finding 3: with subagent text forwarding, a NESTED completed message arrives on the same
+  // stream as the parent's partials. It belongs to the subagent's own turn — it supersedes nothing here, so
+  // it must not wipe what the parent is still streaming (nor claim the parent turn's model).
+  it("keeps the parent's in-flight partials when a NESTED completed message lands, and clears them on the parent's own", () => {
+    const lt = new LiveTurn();
+    lt.ingest(se({ type: "message_start" }));
+    lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
+    lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "parent still typing" } }));
+    lt.ingest({ type: "assistant", parent_tool_use_id: "agent-1", message: { model: "claude-haiku-4-5", content: [{ type: "text", text: "subagent reply" }] } });
+    expect(texts(lt).join("")).toContain("parent still typing");
+    expect(lt.model).toBeUndefined();                              // the subagent's model is not this turn's
+    lt.ingest({ type: "user", parent_tool_use_id: "agent-1", message: { content: [{ type: "tool_result", tool_use_id: "nested-1", content: "nested result" }] } });
+    expect(texts(lt).join("")).toContain("parent still typing");
+    lt.ingest({ type: "assistant", message: { model: "claude-sonnet-4-6", content: [{ type: "text", text: "parent still typing" }] } });
+    expect(lt.snapshot()).toEqual([]);                             // the parent's own completion DOES supersede
+    expect(lt.model).toBe("claude-sonnet-4-6");
+  });
+
   it("appends a red line on fail() and keeps the partial that was streaming beside it", () => {
     const lt = new LiveTurn();
     lt.ingest(se({ type: "message_start" }));
