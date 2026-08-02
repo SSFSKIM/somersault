@@ -2,11 +2,12 @@
 
 **Status:** **Complete. F1 vocabulary gate closed.**
 **Canonical run:** 2026-08-02 · SDK 0.3.220 · Node 24.18.0 · macOS · `claude-fable-5[1m]`
-**Authentication:** `CLAUDE_CODE_OAUTH_TOKEN`, with `ANTHROPIC_API_KEY` explicitly unset
+**Authentication:** first-party `CLAUDE_CODE_OAUTH_TOKEN`; `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, custom base URL, and alternate-provider routes explicitly unset
 **Probe:** `probes/probes/94-tool-census.ts`, corpus revision `f1-p94-r3`
 **Canonical-census executed-source SHA-256:** `2d5e04271052d48475e36bd56c0fb81c13598e82a8bd8cb310ff59c5a703ff34`
-**Review-hardened final probe-source SHA-256:** `374f1eb86a5b574b450e278c575c1573ffa68a9a395d1c6c8da57d938dd3da75`
-**Probe 94b final-source SHA-256:** `ce8ed8bd9a5414cae5b5e38d8d1273f452f441fde3f4804cc0d07a2b6c28633e`
+**Review-hardened sharded-validation source SHA-256:** `374f1eb86a5b574b450e278c575c1573ffa68a9a395d1c6c8da57d938dd3da75`
+**Final gate probe-source SHA-256:** `cf942002b24e40ac421cebc34e139a2dd87e48ffd8b42ee55bc05f84f1f68e47`
+**Probe 94b final-source SHA-256:** `ed5f705a30c54dbee2d2a4974d81eaf36f68da6560818d0b8180dbccd540f78e`
 
 ## Verdict
 
@@ -27,7 +28,7 @@ The result-frame gate is also explicit. Normal successful queried turns are owne
 
 ## Canonical method
 
-The probe generated a fresh private Git repository and private `CLAUDE_CONFIG_DIR` for every case. It used the unrestricted Claude Code tool preset, empty setting sources, auto permission mode with a non-interactive allow callback, disabled session persistence, a 24-turn ceiling, and a 15-minute case deadline. The eight natural prompts described coding tasks without naming or requesting a tool.
+The probe generated a fresh private Git repository and private `CLAUDE_CONFIG_DIR` for every case. It used the unrestricted Claude Code tool preset, empty setting sources, auto permission mode with a non-interactive allow callback, disabled session persistence, a 24-turn ceiling, and a 15-minute case deadline. Authentication was isolated to first-party Claude Code OAuth: competing credentials, a custom `ANTHROPIC_BASE_URL`, and alternate cloud-provider routes were absent. The eight natural prompts described coding tasks without naming or requesting a tool.
 
 The natural corpus covered:
 
@@ -51,15 +52,19 @@ Both canonical runs completed with no setup, query, cleanup, pairing, coverage, 
 | Natural corpus | 8 | 8 | 0 |
 | Directed Write | 1 | 1 | 0 |
 
-Independent review then hardened attribution, directed-Write validation, cross-platform self-tests, clean-install typing, and emitted configuration provenance without changing the corpus, prompt text, or observation schema. The final-source validation was intentionally reported honestly rather than merged into new frequency totals:
+Independent review first hardened attribution, directed-Write validation, cross-platform self-tests, clean-install typing, and emitted configuration provenance without changing the corpus, prompt text, or observation schema. That sharded validation was intentionally reported honestly rather than merged into new frequency totals:
 
-| Review-hardened final-source run | Expected | Completed | Failed |
+| Review-hardened sharded-source run | Expected | Completed | Failed |
 |---|---:|---:|---:|
 | All-corpus attempt | 8 | 7 | 1 query timeout |
 | Isolated timed-out `header-normalizer-inspection` case | 1 | 1 | 0 |
 | Directed Write | 1 | 1 | 0 |
 
-The all-corpus attempt paired 204 calls from its seven completed cases with zero unpaired uses/results; its only failure was the focused-inspection case reaching the existing 15-minute deadline. The unchanged final source then completed that case in isolation with 73 paired calls, four associated sidecars, one UUID-owned healthy human result, and no non-originating result. The final Write run reported the actual explicit `Write` selection, exactly one validated call and sidecar, and the expected empty `structuredPatch`. All three stderr files were empty. Thus every natural case plus Write passed the review-hardened gate, while the original successful 328-call run remains the sole canonical frequency census; sharded validation counts are not silently combined with it.
+The all-corpus attempt paired 204 calls from its seven completed cases with zero unpaired uses/results; its only failure was the focused-inspection case reaching the existing 15-minute deadline. The unchanged sharded-validation source then completed that case in isolation with 73 paired calls, four associated sidecars, one UUID-owned healthy human result, and no non-originating result.
+
+A final boundary review then closed five additional gate defects: dynamic object keys can no longer publish prose, paths, or IDs; Bash command substitution inside double quotes fails closed; Write requires exact create semantics; fixture tests invoke the portable Node test runner; and live execution requires OAuth-only credentials. Diagnosis of the final live retry exposed one more environment boundary: an inherited custom `ANTHROPIC_BASE_URL` routed a valid subscription token to a gateway that rejected it as an API key. The final source therefore rejects custom base URLs and alternate cloud-provider routes before querying. Its keyless self-tests and TypeScript build passed, then the exact final source completed the directed Write case against Anthropic's first-party endpoint with one validated call, one uniquely associated create sidecar, an empty `structuredPatch`, and one healthy UUID-owned result. Final probe 94b likewise completed all three correlation cases from its exact final source. All final stderr files were empty.
+
+Thus every natural case plus Write passed the gate, while the original successful 328-call run remains the sole canonical frequency census; sharded and final safety-validation counts are not silently combined with it.
 
 ## Canonical 0.3.220 natural tool census
 
@@ -267,7 +272,9 @@ From `CC-to-SDK/probes`, load OAuth only without printing or inspecting its valu
 
 ```sh
 set -a; . ../.env; set +a
-unset ANTHROPIC_API_KEY
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+unset CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_USE_BEDROCK
+unset CLAUDE_CODE_USE_FOUNDRY CLAUDE_CODE_USE_VERTEX
 test -n "${CLAUDE_CODE_OAUTH_TOKEN:-}"
 ```
 
@@ -287,4 +294,4 @@ npx tsx probes/94-tool-census.ts --repetitions=1
 npx tsx probes/94-tool-census.ts --case=write-coverage --repetitions=1
 ```
 
-The default intentionally excludes the directed Write case. If an all-corpus run reports a single case timeout, retain that failed report and rerun the exact case with `--case=<case-id>`; do not merge sharded counts into the canonical frequency table. The probe fails closed on SDK-version drift, unsafe output, unpaired calls/results, a missing or unhealthy originating result, missing directed-Write sidecar evidence, setup/query/cleanup failures, and privacy-guard violations.
+The default intentionally excludes the directed Write case. If an all-corpus run reports a single case timeout, retain that failed report and rerun the exact case with `--case=<case-id>`; do not merge sharded counts into the canonical frequency table. The probe fails closed on SDK-version drift, competing credentials, custom or alternate provider routing, unsafe output, unpaired calls/results, a missing or unhealthy originating result, missing directed-Write sidecar evidence, setup/query/cleanup failures, and privacy-guard violations.

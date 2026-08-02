@@ -88,12 +88,34 @@ const SEARCH_HEADS = new Set(["find", "grep", "rg", "ag", "ack", "locate", "whic
 const READ_HEADS = new Set(["cat", "head", "tail", "less", "more", "wc", "stat", "file", "strings", "jq", "awk", "cut", "sort", "uniq", "tr"]);
 const LIST_HEADS = new Set(["ls", "tree", "du"]);
 const IGNORED_HEADS = new Set(["echo", "printf", "true", "false", ":"]);
+const ALTERNATE_PROVIDER_ENV_VARS = [
+  "ANTHROPIC_BASE_URL",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_VERTEX",
+] as const;
 // Keep the final census at command-head granularity without publishing arbitrary executable names.
 const SAFE_BASH_HEADS = new Set([
   ...SEARCH_HEADS, ...READ_HEADS, ...LIST_HEADS, ...IGNORED_HEADS,
   "git", "node", "npm", "npx", "pnpm", "tsx", "tsc", "vitest", "sed", "perl",
   "python", "python3", "bash", "sh", "mkdir", "rmdir", "touch", "rm", "cp", "mv", "readlink",
   "dirname", "basename", "cd", "export", "unset", "wait", "chmod", "chown", "chgrp", "ln",
+]);
+// Publish only fixed SDK/tool schema vocabulary. Unknown map keys can be user prose, paths, or IDs.
+const SAFE_STRUCTURAL_KEYS = new Set([
+  "activeForm", "agentId", "agentType", "bashCount", "block", "cache_creation", "cache_creation_input_tokens",
+  "cache_read_input_tokens", "canReadOutputFile", "command", "content", "description", "editFileCount",
+  "ephemeral_1h_input_tokens", "ephemeral_5m_input_tokens", "file", "filePath", "file_path", "inference_geo",
+  "input_tokens", "interrupted", "isAsync", "isImage", "isRawTranscript", "is_error", "iterations", "lineCount",
+  "lines", "linesAdded", "linesRemoved", "model", "newLines", "newStart", "newString", "new_string",
+  "noOutputExpected", "numLines", "oldLines", "oldStart", "oldString", "old_string", "originalFile",
+  "otherToolCount", "output", "outputFile", "output_tokens", "path", "prompt", "readCount", "replaceAll",
+  "replace_all", "resolvedModel", "result", "retrieval_status", "returnCodeInterpretation", "run_in_background",
+  "searchCount", "server_tool_use", "service_tier", "speed", "startLine", "status", "stderr", "stdout",
+  "structuredPatch", "subagent_type", "subject", "task", "taskId", "task_id", "task_type", "text", "timeout",
+  "toolStats", "tool_use_id", "totalDurationMs", "totalLines", "totalTokens", "totalToolUseCount", "type", "usage",
+  "userModified", "web_fetch_requests", "web_search_requests",
 ]);
 
 const NATURAL_CASES: CaseSpec[] = [
@@ -143,6 +165,12 @@ function isRecord(value: unknown): value is UnknownRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function probeTempParent(): string {
+  const parent = process.env.CLAUDE_JOB_DIR ? join(process.env.CLAUDE_JOB_DIR, "tmp") : tmpdir();
+  mkdirSync(parent, { recursive: true });
+  return parent;
+}
+
 function sortedCounts(counts: Map<string, number>): Record<string, number> {
   return Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
 }
@@ -174,23 +202,35 @@ function stringMeasures(value: unknown, chars: number[] = [], lines: number[] = 
   return { chars, lines };
 }
 
-// Values are intentionally represented by structure and string dimensions only.
+// Values are intentionally represented by fixed schema keys, structure, and string dimensions only.
 function valueShape(value: unknown): string {
   if (value === null) return "null";
   if (typeof value === "string") return `string(chars=${value.length},newlines=${(value.match(/\n/g) ?? []).length})`;
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "undefined") return typeof value;
   if (Array.isArray(value)) return `array(len=${value.length})[${value.map(valueShape).join(",")}]`;
-  const entries = Object.entries(value as UnknownRecord).sort(([a], [b]) => a.localeCompare(b));
-  return `object{${entries.map(([key, item]) => `${key}:${valueShape(item)}`).join(",")}}`;
+  const known: string[] = [], dynamic: string[] = [];
+  for (const [key, item] of Object.entries(value as UnknownRecord)) {
+    const shape = valueShape(item);
+    if (SAFE_STRUCTURAL_KEYS.has(key)) known.push(`${key}:${shape}`);
+    else dynamic.push(`<dynamic-key>:${shape}`);
+  }
+  return `object{${[...known.sort(), ...dynamic.sort()].join(",")}}`;
+}
+
+function keySignature(value: UnknownRecord): string {
+  const known = Object.keys(value).filter((key) => SAFE_STRUCTURAL_KEYS.has(key)).sort();
+  const dynamic = Object.keys(value).length - known.length;
+  if (dynamic) known.push(`<dynamic-keys:${dynamic}>`);
+  return known.join("|") || "<empty>";
 }
 
 function inputKeySignature(input: unknown): string {
   if (!isRecord(input)) return `<${input === null ? "null" : Array.isArray(input) ? "array" : typeof input}>`;
-  return Object.keys(input).sort().join("|") || "<empty>";
+  return keySignature(input);
 }
 
 function resultKeySignature(result: UnknownRecord): string {
-  return Object.keys(result).sort().join("|") || "<empty>";
+  return keySignature(result);
 }
 
 function contentKind(value: unknown): string {
@@ -223,6 +263,7 @@ function splitSimpleCommandChain(command: string): string[] | null {
       continue;
     }
     if (quote) {
+      if (quote === '"' && (char === "`" || (char === "$" && next === "("))) return null;
       if (quote === '"' && char === "\\") escaped = true;
       else if (char === quote) quote = null;
       continue;
@@ -318,9 +359,7 @@ function classifyBash(command: string): BashClassification | null {
 }
 
 function createFixture(): Fixture {
-  const parent = process.env.CLAUDE_JOB_DIR ? join(process.env.CLAUDE_JOB_DIR, "tmp") : tmpdir();
-  mkdirSync(parent, { recursive: true });
-  const root = mkdtempSync(join(parent, "p94-tool-census-"));
+  const root = mkdtempSync(join(probeTempParent(), "p94-tool-census-"));
   const repo = join(root, "repository");
   const config = join(root, "claude-config");
   try {
@@ -598,7 +637,7 @@ function writeCoverageFailureKinds(state: PairState, expectedPath: string): stri
   if (!call.result) failures.push("missing_write_result");
   else if (call.result.is_error === true) failures.push("write_result_is_error");
   const sidecar = isRecord(call.structuredResult) ? call.structuredResult : undefined;
-  if (!sidecar || sidecar.filePath !== expectedPath || sidecar.content !== content || sidecar.originalFile !== null || !Array.isArray(sidecar.structuredPatch) || typeof sidecar.type !== "string" || typeof sidecar.userModified !== "boolean") failures.push("invalid_write_sidecar");
+  if (!sidecar || sidecar.type !== "create" || sidecar.filePath !== expectedPath || sidecar.content !== content || sidecar.originalFile !== null || !Array.isArray(sidecar.structuredPatch) || sidecar.structuredPatch.length !== 0 || sidecar.userModified !== false) failures.push("invalid_write_sidecar");
   return failures;
 }
 
@@ -887,6 +926,13 @@ function credentialValues(env: NodeJS.ProcessEnv): string[] {
     .map(([, value]) => value!);
 }
 
+function oauthCredentialFailure(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) return "non_oauth_credentials_present";
+  if (!env.CLAUDE_CODE_OAUTH_TOKEN) return "oauth_token_missing";
+  if (ALTERNATE_PROVIDER_ENV_VARS.some((key) => env[key])) return "alternate_provider_route_present";
+  return undefined;
+}
+
 function privacyReason(output: string, privateRoots: string[], secrets: string[], home: string): string | undefined {
   if (secrets.some((secret) => output.includes(secret))) return "credential";
   if (privateRoots.some((root) => output.includes(root))) return "private_root";
@@ -984,6 +1030,9 @@ function parseArgs(args: string[]): { repetitions: number; caseId?: string; self
 function selfTest(): void {
   assert.deepEqual(splitSimpleCommandChain('rg "a|b" src && cat "name;part" | wc -l'), ['rg "a|b" src', 'cat "name;part"', "wc -l"]);
   assert.equal(splitSimpleCommandChain("rg 'unterminated"), null);
+  assert.equal(splitSimpleCommandChain('cat "$(find src -type f)"'), null);
+  assert.equal(splitSimpleCommandChain('cat "`find src -type f`"'), null);
+  assert.deepEqual(splitSimpleCommandChain('cat "\\$(literal)"'), ['cat "\\$(literal)"']);
   assert.deepEqual(classifyBash('rg "a|b" src && cat "name;part" | wc -l'), {
     heads: ["rg", "cat", "wc"], classifiable: true, search: true, read: true, list: false, ignored: false,
     observedSearch: true, observedRead: true, observedList: false, observedIgnored: false,
@@ -1008,7 +1057,7 @@ function selfTest(): void {
   assert.equal(NATURAL_CASES.some((spec) => spec.id === WRITE_COVERAGE_CASE.id), false);
   assert.deepEqual(WRITE_COVERAGE_CASE.tools, ["Write"]);
   assert.equal(casePrompt(WRITE_COVERAGE_CASE, { root: "/private", repo: "/private/repo", config: "/private/config" }).includes(`absolute path \`${join("/private/repo", "write-coverage.md")}\``), true);
-  const writeRoot = mkdtempSync(join(tmpdir(), "p94-write-selftest-")), writePath = join(writeRoot, "write-coverage.md"), writeContent = "one\ntwo\nthree";
+  const writeRoot = mkdtempSync(join(probeTempParent(), "p94-write-selftest-")), writePath = join(writeRoot, "write-coverage.md"), writeContent = "one\ntwo\nthree";
   try {
     writeFileSync(writePath, writeContent);
     const validWriteState: PairState = {
@@ -1026,6 +1075,14 @@ function selfTest(): void {
     assert.equal(writeCoverageFailureKinds(validWriteState, writePath).includes("written_file_mismatch"), true);
     writeFileSync(writePath, writeContent); writeUse.structuredResult = { type: "create", filePath: writePath, content: "wrong", originalFile: null, structuredPatch: [], userModified: false };
     assert.equal(writeCoverageFailureKinds(validWriteState, writePath).includes("invalid_write_sidecar"), true);
+    for (const structuredResult of [
+      { type: "update", filePath: writePath, content: writeContent, originalFile: null, structuredPatch: [], userModified: false },
+      { type: "create", filePath: writePath, content: writeContent, originalFile: null, structuredPatch: [], userModified: true },
+      { type: "create", filePath: writePath, content: writeContent, originalFile: null, structuredPatch: [{ oldStart: 1 }], userModified: false },
+    ]) {
+      writeUse.structuredResult = structuredResult;
+      assert.equal(writeCoverageFailureKinds(validWriteState, writePath).includes("invalid_write_sidecar"), true);
+    }
   } finally {
     rmSync(writeRoot, { recursive: true, force: true });
   }
@@ -1036,6 +1093,10 @@ function selfTest(): void {
   }]);
   assert.deepEqual(structural.perTool.Read.inputKeySignatures, { path: 1 });
   assert.equal(Object.keys(structural.perTool.Read.inputValueShapeSignatures)[0]?.includes("/private/value"), false);
+  const dynamicShape = valueShape({ answers: { "Proceed with secret?": "yes" }, "/private/path": { credential: "hidden" } });
+  for (const unsafe of ["answers", "Proceed with secret?", "/private/path", "credential"]) assert.equal(dynamicShape.includes(unsafe), false);
+  assert.equal(dynamicShape.includes("<dynamic-key>"), true);
+  assert.equal(inputKeySignature({ file_path: "/private/value", "Proceed with secret?": true }), "file_path|<dynamic-keys:1>");
   assert.deepEqual(structural.perTool.Read.resultContentShapeSignatures, { "string(chars=7,newlines=1)": 1 });
   assert.deepEqual(structural.perTool.Read.resultStringChars.values, [{ value: 7, count: 1 }]);
   assert.deepEqual(stringMeasures(""), { chars: [0], lines: [0] });
@@ -1102,10 +1163,17 @@ function selfTest(): void {
   });
 
   assert.equal(sdkVersion(), EXPECTED_SDK_VERSION);
+  assert.equal(oauthCredentialFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth" }), undefined);
+  assert.equal(oauthCredentialFailure({}), "oauth_token_missing");
+  assert.equal(oauthCredentialFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth", ANTHROPIC_API_KEY: "api" }), "non_oauth_credentials_present");
+  assert.equal(oauthCredentialFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth", ANTHROPIC_AUTH_TOKEN: "auth" }), "non_oauth_credentials_present");
+  for (const key of ALTERNATE_PROVIDER_ENV_VARS) {
+    assert.equal(oauthCredentialFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth", [key]: "enabled" }), "alternate_provider_route_present");
+  }
 
   const fixture = createFixture();
   try {
-    execFileSync("npm", ["test", "--silent"], { cwd: fixture.repo, stdio: "ignore", timeout: FIXTURE_COMMAND_TIMEOUT_MS });
+    execFileSync(process.execPath, ["--test", "test/parser.test.mjs", "test/header-normalizer.test.mjs"], { cwd: fixture.repo, stdio: "ignore", timeout: FIXTURE_COMMAND_TIMEOUT_MS });
     assert.equal(execFileSync("git", ["status", "--porcelain"], { cwd: fixture.repo, encoding: "utf8", timeout: FIXTURE_COMMAND_TIMEOUT_MS }), "");
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
@@ -1131,6 +1199,12 @@ async function main(): Promise<void> {
   const actualSdkVersion = sdkVersion();
   if (actualSdkVersion !== EXPECTED_SDK_VERSION) {
     emitJson({ probeVersion: PROBE_VERSION, corpusRevision: CORPUS_REVISION, status: "failed", error: "sdk_version_mismatch", expectedSdkVersion: EXPECTED_SDK_VERSION, runtime: safeRuntime() }, [], []);
+    process.exitCode = 1;
+    return;
+  }
+  const credentialFailure = oauthCredentialFailure(process.env);
+  if (credentialFailure) {
+    emitJson({ probeVersion: PROBE_VERSION, corpusRevision: CORPUS_REVISION, status: "failed", error: credentialFailure, runtime: safeRuntime() }, [], []);
     process.exitCode = 1;
     return;
   }

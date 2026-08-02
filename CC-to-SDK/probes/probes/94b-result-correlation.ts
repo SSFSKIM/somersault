@@ -33,6 +33,13 @@ const EXPECTED_SDK_VERSION = "0.3.220";
 const MODEL_ALIAS = "fable";
 const CASE_TIMEOUT_MS = 600_000;
 const CASE_IDS: CaseId[] = ["human-compact", "automatic-normal", "automatic-compact"];
+const ALTERNATE_PROVIDER_ENV_VARS = [
+  "ANTHROPIC_BASE_URL",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_VERTEX",
+] as const;
 
 function sdkVersion(): string {
   try {
@@ -41,6 +48,19 @@ function sdkVersion(): string {
   } catch {
     return "unknown";
   }
+}
+
+function probeTempParent(): string {
+  const parent = process.env.CLAUDE_JOB_DIR ? join(process.env.CLAUDE_JOB_DIR, "tmp") : tmpdir();
+  mkdirSync(parent, { recursive: true });
+  return parent;
+}
+
+function oauthEnvironmentFailure(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) return "non_oauth_credentials_present";
+  if (!env.CLAUDE_CODE_OAUTH_TOKEN) return "oauth_token_missing";
+  if (ALTERNATE_PROVIDER_ENV_VARS.some((key) => env[key])) return "alternate_provider_route_present";
+  return undefined;
 }
 
 function userTurn(uuid: ReturnType<typeof randomUUID>, content: string, origin: SubmittedOrigin): SDKUserMessage {
@@ -80,7 +100,7 @@ function expectedFailures(outcome: Omit<CaseOutcome, "failures">): string[] {
 }
 
 async function runCase(caseId: CaseId): Promise<CaseOutcome> {
-  const root = mkdtempSync(join(tmpdir(), "p94b-result-correlation-"));
+  const root = mkdtempSync(join(probeTempParent(), "p94b-result-correlation-"));
   const cwd = join(root, "repo"), config = join(root, "config");
   mkdirSync(cwd); mkdirSync(config);
   const firstUuid = randomUUID(), secondUuid = randomUUID();
@@ -160,6 +180,13 @@ function selfTest(): void {
   assert.deepEqual(expectedFailures(outcome("automatic-normal", { ...baseFirst, index: 2, origin: "absent", userMessageAssociation: "second" })), []);
   assert.deepEqual(expectedFailures(outcome("automatic-compact", { ...baseFirst, index: 2, origin: "absent", userMessageAssociation: "missing", compactLifecycleSeen: true })), []);
   assert.equal(expectedFailures(outcome("automatic-normal", { ...baseFirst, index: 2, origin: "absent", userMessageAssociation: "missing" })).includes("invalid_automatic_normal_correlation"), true);
+  assert.equal(oauthEnvironmentFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth" }), undefined);
+  assert.equal(oauthEnvironmentFailure({}), "oauth_token_missing");
+  assert.equal(oauthEnvironmentFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth", ANTHROPIC_API_KEY: "api" }), "non_oauth_credentials_present");
+  assert.equal(oauthEnvironmentFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth", ANTHROPIC_AUTH_TOKEN: "auth" }), "non_oauth_credentials_present");
+  for (const key of ALTERNATE_PROVIDER_ENV_VARS) {
+    assert.equal(oauthEnvironmentFailure({ CLAUDE_CODE_OAUTH_TOKEN: "oauth", [key]: "enabled" }), "alternate_provider_route_present");
+  }
   assert.equal(sdkVersion(), EXPECTED_SDK_VERSION);
   process.stdout.write("P94B SELF-TEST PASS\n");
 }
@@ -185,8 +212,9 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  if (!process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY) {
-    process.stdout.write(`${JSON.stringify({ probeVersion: PROBE_VERSION, status: "failed", error: "oauth_only_credentials_required" })}\n`);
+  const environmentFailure = oauthEnvironmentFailure(process.env);
+  if (environmentFailure) {
+    process.stdout.write(`${JSON.stringify({ probeVersion: PROBE_VERSION, status: "failed", error: environmentFailure })}\n`);
     process.exitCode = 1;
     return;
   }

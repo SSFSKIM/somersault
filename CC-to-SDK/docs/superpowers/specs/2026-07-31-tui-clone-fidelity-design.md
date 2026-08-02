@@ -32,7 +32,7 @@ the research reports, or a constraint we have already paid for in a shipped wave
 
 | Evidence | What it settles | Strength |
 |---|---|---|
-| **probe 77** (`probes/probes/77-tool-result-shape.ts`, commit `19f9845555`) + **P94/94b** on the shipped SDK 0.3.220 | Probe 77 correctly observed that the ordinary `tool_result` block is flat, but P94 found an optional separate `SDKUserMessage.tool_use_result` sidecar on 52 of 328 natural calls and the directed Write call. F1 therefore normalizes **structured-first per call with deterministic flat/input fallback**, never derived-only or sidecar-only. Recognized Edit sidecars carry `structuredPatch` absolute hunk positions; Bash sidecars carry stdout/stderr/interruption and optional string `returnCodeInterpretation`, but no numeric exit code. The live vocabulary used Bash for search/list/read behavior, no natural `Grep`/`Glob`/`LS`, and task bookkeeping through Task tools. Probe 94b additionally proves UUID-less compact successes require compact-lifecycle correlation rather than generic FIFO | direct |
+| **probe 77** (`probes/probes/77-tool-result-shape.ts`, commit `19f9845555`) + **P94/94b** on the shipped SDK 0.3.220 (final SHA-256 `cf942002b24e40ac421cebc34e139a2dd87e48ffd8b42ee55bc05f84f1f68e47` / `ed5f705a30c54dbee2d2a4974d81eaf36f68da6560818d0b8180dbccd540f78e`) | Probe 77 correctly observed that the ordinary `tool_result` block is flat, but P94 found an optional separate `SDKUserMessage.tool_use_result` sidecar on 52 of 328 natural calls and the directed Write call. F1 therefore normalizes **structured-first per call with deterministic flat/input fallback**, never derived-only or sidecar-only. Recognized Edit sidecars carry `structuredPatch` absolute hunk positions; Bash sidecars carry stdout/stderr/interruption and optional string `returnCodeInterpretation`, but no numeric exit code. The live vocabulary used Bash for search/list/read behavior, no natural `Grep`/`Glob`/`LS`, and task bookkeeping through Task tools. Probe 94b additionally proves UUID-less compact successes require compact-lifecycle correlation rather than generic FIFO. Final validation used first-party Claude Code OAuth and fails closed on competing credentials or alternate provider routing | direct |
 | **probe 78** (`probes/probes/78-permission-wire-shape.ts`, commit `a9cd9d9272`) | `canUseTool`'s options argument carries `signal · suggestions · blockedPath · decisionReason · title · displayName · description · toolUseID · agentID · requestId`. The declared `suppress_always_allow_rule`, `decision_reason_type` and `classifier_approvable` are **absent on the live wire** — the static reading of `sdk.mjs` is confirmed. `updatedPermissions` **round-trips**: granting on the first consult produced **zero consults** on the second identical call. And the design-changing part: **the engine suggests the rule itself**, per tool, in `suggestions`, in exactly the shape the return value accepts (`{type:"addRules",rules:[{toolName,ruleContent}],behavior,destination}` for Read; `{type:"setMode",mode:"acceptEdits"}` for Write/Edit) | direct |
 | Research reports 01–06 + `00-INVENTORY.md` (2026-07-31) | 271 deduplicated gaps with per-item bundle citations; 9 structural, 8 tier-0 harm, ~38 do-not-clone, ~14 places we ship more than upstream | derived from the bundle |
 | Bundle `cli.pretty.js` — keymap `jar` L186,116 · context registry `War` L186,159 · resolver `ePt` L183,234 · scope chain `Gbp` L398,368 · dispatch `cZs` L398,121 · `keybindings.json` loader `TQr` L186,316 | Upstream's keybinding architecture: a declarative table over 19 context blocks (20 valid contexts), resolved against an **ordered** context array built by walking the focused node's parent chain, **first match wins**, `Global` always last, with `swallowAll` and `preemptiveScopes` layered above it | direct |
@@ -592,7 +592,7 @@ item whose probe has not returned is **unschedulable**, and an item whose probe 
 |---|---|---|---|
 | **77 ✅** | What is in a `tool_result`? Anything structured? | `ST3`, `LT1`, `TR23`, `TR25` — and the whole derivation premise | done |
 | **78 ✅** | Which `canUseTool` fields arrive populated? Does `updatedPermissions` round-trip? | **the entire F6 permission cluster**; also settles the inventory's P79 for the `session` destination | done |
-| **P94 ✅** | **Tool census.** Completed on the harness's SDK 0.3.220 with Fable 5 and OAuth-only authentication. The natural corpus and separate Write-only case passed, every call/result paired, and every canonical result matched its submitted UUID. Read/Edit/Write/Bash/Agent/TaskOutput shapes, optional Bash `returnCodeInterpretation`, ordinary redirect classification, and the flat fallback are recorded in `../research/2026-07-31-tui-clone/07-p94-tool-census.md`. Frequencies stay in that evidence report and are never dispatch constants. | `ST3`'s structured-first/fallback vocabulary, `LT1`'s per-tool rows, `LT2`'s clause grammar | done |
+| **P94 ✅** | **Tool census.** Completed on the harness's SDK 0.3.220 with Fable 5 and first-party OAuth-only authentication. The natural corpus and separate Write-only case passed, every call/result paired, and every canonical result matched its submitted UUID. Read/Edit/Write/Bash/Agent/TaskOutput shapes, optional Bash `returnCodeInterpretation`, ordinary redirect classification, and the flat fallback are recorded in `../research/2026-07-31-tui-clone/07-p94-tool-census.md`. Final probe hashes are `cf942002b24e40ac421cebc34e139a2dd87e48ffd8b42ee55bc05f84f1f68e47` and `ed5f705a30c54dbee2d2a4974d81eaf36f68da6560818d0b8180dbccd540f78e`; both fail closed on competing credentials and alternate provider routes. Frequencies stay in the evidence report and are never dispatch constants. | `ST3`'s structured-first/fallback vocabulary, `LT1`'s per-tool rows, `LT2`'s clause grammar | done |
 | **P86** | Ink input capability matrix in our terminals: `home`/`end`/`pageup`/`pagedown`, `shift+return`, `super`/`meta` chords, mouse click and wheel, terminal focus events, bracketed-paste boundaries | **scopes F2 and F5** — separates unreachable from unbuilt | before F2; needs a pty, not the SDK, so it can run from day one |
 | **P80** | Does `[Request interrupted by user]` reach a client as a user message? Do context-limit, credit-balance and abort conditions arrive as assistant text with upstream's sentinel strings, or as SDK errors? | `LT14`, `TR38` | batch B, before F3 |
 | **P81** | Does the `compact_boundary` frame carry a summarised-message count and direction? | `TR36` | batch B |
@@ -834,6 +834,11 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
   even Agent and the high-volume Read/Bash tools had flat-only calls. The enduring contract is structured-first
   with a flat/input fallback, never either premise globally. One Bash sidecar also added optional
   `returnCodeInterpretation`; it is structured source, not a numeric exit code. (2026-08-02)
+- **OAuth-only is a credential condition, not an endpoint condition.** An inherited custom
+  `ANTHROPIC_BASE_URL` routed a valid subscription token to a gateway that rejected it as an API key, while
+  `accountInfo()` still correctly reported the selected token source. P94 and 94b now reject custom base URLs
+  and alternate cloud-provider routes before starting a live turn, so their evidence is explicitly first-party.
+  (2026-08-02)
 - **One query can emit multiple successful `result` frames, and locally generated does not mean human.** The
   exact final P94 run closed each case with one UUID-matched human result; a separate successful 0.3.220 run
   also emitted task-notification successes without user UUIDs. Independent review then exposed proactive
@@ -949,9 +954,11 @@ a full state transition, sabotage every guard test against the regression it cla
 evidence tools fail closed. A plan-mandated test or architecture is not exempt from review: several of F0's
 most important corrections were defects copied directly from the approved plan.
 
-P94 is complete on the harness's exact SDK 0.3.220, including the separate Write-only proof, and the
-Session ownership prerequisite now distinguishes human from automatic local turns while correlating every
-successful completion by UUID. F1 is schedulable; F1–F8 remain otherwise pending.
+P94 is complete on the harness's exact SDK 0.3.220, including the separate Write-only proof and first-party
+route isolation. Its exact final source hashes are `cf942002b24e40ac421cebc34e139a2dd87e48ffd8b42ee55bc05f84f1f68e47`
+and `ed5f705a30c54dbee2d2a4974d81eaf36f68da6560818d0b8180dbccd540f78e`. The Session ownership
+prerequisite now distinguishes human from automatic local turns while correlating every successful completion
+by UUID. F1 is schedulable; F1–F8 remain otherwise pending.
 
 ## Revision Notes
 
@@ -1012,3 +1019,10 @@ successful completion by UUID. F1 is schedulable; F1–F8 remain otherwise pendi
   rather than a normal automatic waiter. F1 is now schedulable. The installed bundle trace separately settled ST2 as an append-only live projection plus a
   Ctrl-O detailed transcript over retained source, with transcript-local Ctrl-E show-all/collapse. LT5 moved
   to the F3 collapsed-group state that owns it.
+- 2026-08-02 — P94's final boundary review closed dynamic-key privacy, double-quoted shell-substitution,
+  exact Write-sidecar, portable fixture-test, and OAuth-gate defects. Live retry diagnosis then found an
+  inherited custom `ANTHROPIC_BASE_URL`: the refreshed subscription token was valid against Anthropic's
+  first-party endpoint but the gateway rejected it as an API key. Both probes now fail closed on custom base
+  URLs and alternate cloud-provider routes. Exact final sources `cf942002b24e40ac421cebc34e139a2dd87e48ffd8b42ee55bc05f84f1f68e47`
+  and `ed5f705a30c54dbee2d2a4974d81eaf36f68da6560818d0b8180dbccd540f78e` passed self-tests, TypeScript
+  compilation, directed Write, and all three result-correlation cases with empty stderr.
