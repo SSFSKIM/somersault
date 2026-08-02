@@ -185,18 +185,28 @@ Nothing downstream can be built twice after this lands.
 - `ST9` — the gutter and overflow primitives: `⎿` emitted **once** at five columns with the body in a
   sibling column (not prefixed to every line at four), and one `… +N {unit}` overflow component with an
   optional expand hint, replacing three ad-hoc "more" strings.
-- `ST3` — the derived result-summary layer required by probe 77, keyed on **our** tool census (P94), with
-  upstream's Bash-command classifier (`Kr_`) as the transferable part.
-- `ST2` — the verbose/collapsed flag as a rendering-wide contract, not a label: it flips summary rows to
-  per-row, suppresses truncation, and makes the expand hint itself render nothing. Ships with its first
-  consumer so it is proven end to end: `LT6` (first three wrapped lines at `cols−10`, then
-  `… +N lines (ctrl+o to expand)`, with the one-hidden-line special case).
+- `ST3` — the result-summary normalization layer grounded by completed P94 evidence on SDK 0.3.220:
+  preserve both flat `tool_result` content and the per-call `SDKUserMessage.tool_use_result` sidecar, plus
+  privacy-safe result provenance. Prefer a uniquely associated recognized sidecar shape, then fall back to
+  deterministic derivation from complete tool input plus flat result text. A successful result completes
+  only the waiter owning its `user_message_uuid`; when origin is explicit, it must match that waiter's
+  submitted provenance class. UUID-less SDK errors may use FIFO only when their explicit origin matches the
+  head waiter. Background/synthetic results remain retained records, not interchangeable completions.
+  Upstream's Bash-command classifier (`Kr_`) remains the transferable collapse predicate. Unknown,
+  forwarded, or sidecar-less calls use the generic fallback rather than guessed structure.
+- `ST2` — one canonical retained transcript source with two projections. The normal live projection stays
+  append-only and compact; `ctrl+o` opens a distinct detailed transcript over the retained messages/events,
+  untruncated by default. `ctrl+e` inside that transcript explicitly toggles show-all/collapse and never
+  mutates already printed live history. This ships with its first consumer, `LT6`: compact output shows the
+  first three wrapped lines at `cols−10`, then `… +N lines (ctrl+o to expand)` with the one-hidden-line
+  special case; the detailed show-all projection renders the complete source and no hint.
 - `ST4` — widen `ThemeTokens` from 3 to the ~30 of upstream's 72 that we actually paint, and route every
   hardcoded colour word in `render.ts`, `highlight.ts`, `markdown.ts`, `ChatStatusBar.tsx` and
   `ChatComposer.tsx` through it. Plus `TH2` (the `rgb()`/`#hex`/`ansi256()`/`ansi:<name>` value grammar
   with a validator), `TH4` (`light*` prefix drives contrast decisions), `TH7` (the six-token diff family).
-- Free riders, all S, once one renderer exists: `LT5`, `LT7`, `LT8`, `LT10`, `LT11`, `LT12`, `LT13`,
-  `LT14`, `LT15`.
+- Free riders, all S, once one renderer exists: `LT7`, `LT8`, `LT10`, `LT11`, `LT12`, `LT13`,
+  `LT15`, plus `LT14`'s interruption and rejection surfaces. `LT14`'s auto-classifier annotation remains
+  behind P85/F3, and `LT5` moves with the collapsed-group state that owns its elapsed suffix in F3.
 
 **Depends on.** F0 (soft — avoids merge conflicts in `editor.ts` / `ChatApp.tsx`). P94 (hard, for ST3's
 vocabulary).
@@ -205,13 +215,14 @@ vocabulary).
 shimmer tokens, theme repaint of history.
 
 **Acceptance.**
-1. The same Read call renders byte-identically during the turn and after `/resume` — verified by frame
-   diff, not by inspection.
+1. The same Read call renders byte-identically during the turn and after `/resume` — including a
+   sidecar-bearing live fixture and its flat-only fallback fixture — verified by frame diff, not inspection.
 2. A tool row reads `⏺ **Read**(src/app.ts)`: the bullet is `⏺` on macOS and `●` elsewhere, the name is
    bold, the parens are added by the row, and the path is cwd-relative and an OSC-8 link.
 3. A tool result shows `⎿` exactly once, at column five, with its body in a column beside it.
-4. A 40-line result shows three lines and `… +37 lines (ctrl+o to expand)`; `ctrl+o` shows all 40 and
-   the hint disappears.
+4. A 40-line compact result shows three lines and `… +37 lines (ctrl+o to expand)`; `ctrl+o` opens the
+   detailed transcript with all 40 retained source lines and no hint. Inside that view `ctrl+e` collapses
+   the result and changes the local hint to `ctrl+e to show all`; pressing it again restores all 40.
 5. A running tool shows a dim bullet blinking at 600 ms, a finished one the success colour, a failed
    one the error colour. No `✓` or `✗` appears anywhere.
 6. Switching theme visibly recolours every element of newly rendered output; grepping the five named
@@ -275,15 +286,17 @@ left dead** — that is the whole point of running the probe first.
 **Delivers.** `LT1` (per-tool typed result rows on F1's derivation layer — `Read 340 lines`,
 `Found 3 files`, `Added 2 lines, removed 3 lines`, `Wrote 42 lines`, `Received 42.1 kB (200 OK)`),
 `LT2` (collapsed read/search/list groups with a clause grammar built from **our** census — first clause
-capitalised, `", "` joins, bold counts, latch-to-max, finished group entirely dim), `LT3` (≥2 same-name
+capitalised, `", "` joins, bold counts, latch-to-max, finished group entirely dim), `LT5` (the group's
+single elapsed suffix after two seconds; never a per-row duration), `LT3` (≥2 same-name
 tool_use blocks collapse to `Running 3 agents…` / `3 agents finished`), `LT4` (the throttled live hint
 line), `LT16` and `LT17` (agent progress: last three inner rows plus `… +N tool uses (ctrl+o to expand)`,
 then `Done (7 tool uses · 24.1k tokens · 1m 12s)`), `LT18` (Write preview = first 10 highlighted lines),
 `LT20` (the `(ctrl+b to run in background)` row hint), `CH23` (the 77-entry irregular-past conjugation
 table that drives the **grouped activity line**, not the spinner).
 
-**Depends on.** F1 (hard: ST1 + ST2 + ST3 + ST9). Probe batch B (P82, P83) for `LT2`'s duration clause
-and `LT17`'s token count.
+**Depends on.** F1 (hard: ST1 + ST2 + ST3 + ST9). P82 gates `LT2`/`LT5`'s duration source. P94's
+Agent sidecar supplies exact top-level tool/token/duration totals; P83 still gates nested or flat-only
+Agent fallback and teammate identity semantics.
 
 **Non-goals.** `LT19` (Bash incremental stdout), `LT21` (hook-timing rows), `LT22` (auto-mode classifier
 annotations) — all gated on P84/P85 and all low value if those come back negative.
@@ -570,7 +583,7 @@ necessary by disagreeing with each other about our own behaviour).
 
 ## Probes
 
-Two are done. Fifteen remain, of which two are new here. A probe is not optional documentation: an
+Three are done. Fourteen remain, of which one is still new here. A probe is not optional documentation: an
 item whose probe has not returned is **unschedulable**, and an item whose probe returns negative is
 **recorded as unreachable, not built and left dead**.
 
@@ -578,12 +591,12 @@ item whose probe has not returned is **unschedulable**, and an item whose probe 
 |---|---|---|---|
 | **77 ✅** | What is in a `tool_result`? Anything structured? | `ST3`, `LT1`, `TR23`, `TR25` — and the whole derivation premise | done |
 | **78 ✅** | Which `canUseTool` fields arrive populated? Does `updatedPermissions` round-trip? | **the entire F6 permission cluster**; also settles the inventory's P79 for the `session` destination | done |
-| **P94** *(new)* | **Tool census.** Over a corpus of realistic tasks: which tools does the model actually call, at what frequency, with what argument and result-text shapes? (The steering sub-question — would disallowing Bash-as-search move the model onto Grep/Glob — is closed: owner decided 2026-07-31 the model keeps Bash; see Decision Log.) | `ST3`'s vocabulary, `LT1`'s per-tool rows, `LT2`'s clause grammar | before F1 |
+| **P94 ✅** | **Tool census.** Completed on the harness's SDK 0.3.220 with Fable 5 and OAuth-only authentication. The natural corpus and separate Write-only case passed, every call/result paired, and every canonical result matched its submitted UUID. Read/Edit/Write/Bash/Agent/TaskOutput shapes, optional Bash `returnCodeInterpretation`, ordinary redirect classification, and the flat fallback are recorded in `../research/2026-07-31-tui-clone/07-p94-tool-census.md`. Frequencies stay in that evidence report and are never dispatch constants. | `ST3`'s structured-first/fallback vocabulary, `LT1`'s per-tool rows, `LT2`'s clause grammar | done |
 | **P86** | Ink input capability matrix in our terminals: `home`/`end`/`pageup`/`pagedown`, `shift+return`, `super`/`meta` chords, mouse click and wheel, terminal focus events, bracketed-paste boundaries | **scopes F2 and F5** — separates unreachable from unbuilt | before F2; needs a pty, not the SDK, so it can run from day one |
 | **P80** | Does `[Request interrupted by user]` reach a client as a user message? Do context-limit, credit-balance and abort conditions arrive as assistant text with upstream's sentinel strings, or as SDK errors? | `LT14`, `TR38` | batch B, before F3 |
 | **P81** | Does the `compact_boundary` frame carry a summarised-message count and direction? | `TR36` | batch B |
 | **P82** | Are there per-block timestamps on the thinking stream, enough to compute `Thought for 12s`? | `TR33`, `LT2`'s first clause | batch B |
-| **P83** | Are nested assistant `usage` blocks summable into `Done (N tool uses · Xk tokens · Ys)`? Is there a name or type beyond `parent_tool_use_id`? | `LT17`, `TR39`, `DG21` | batch B |
+| **P83** | For nested/flat-only Agent calls, are assistant `usage` blocks summable and is there identity beyond `parent_tool_use_id`? P94 confirmed on 0.3.220 that recognized top-level Agent sidecars can carry exact `totalToolUseCount`, `totalTokens`, `totalDurationMs`, `toolStats`, model, status, and async/completed variants, but some Agent calls remain flat-only. | `LT17` fallback, `TR39`, `DG21` | batch B |
 | **P89** | Does `getContextUsage` expose window size, reserved output and the auto-compact point — enough for upstream's token-absolute `warn`/`compact`/`blocked` levels rather than a naive percentage? | `CH4`, and statusLine's `context_window` block | before F7 |
 | **P95** *(new)* | **statusLine payload sourcing.** Which of the 20 documented plus five undocumented fields can we actually populate — `transcript_path`, `prompt_id`, `context_window.*`, `rate_limits` (probe 55 says null under OAuth), `cost`, `output_style`, `agent`, `worktree`? | `CH11`'s fidelity claim and the degradation contract | before F7 |
 | **P84** | Does a client see incremental stdout for a running Bash? Any wire counterpart to the background affordance? | `LT19`, `LT20` | before F3 (cheap; share a session) |
@@ -794,9 +807,39 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
   the model onto Grep/Glob — changes agent behaviour, risks capability, and no longer buys fidelity.
   P94 shrinks accordingly: it is now purely the census for `ST3`/`LT2` (observed tools, frequencies,
   argument/result shapes), not a steering experiment.
+- **Tool results are structured-first per call, not derived-only per session** (P94 final SDK 0.3.220
+  evidence, 2026-08-02). `tool_result.content` remains flat while `SDKUserMessage.tool_use_result` is an
+  optional separate channel whose presence varies even within one tool. Preserve both channels, prefer a
+  uniquely associated recognized sidecar, and retain deterministic flat/input fallback. Successful result
+  completion is waiter-owned by UUID and submitted provenance class; UUID-less errors require an explicit
+  origin matching the FIFO-head waiter. Background/synthetic frames cannot complete another turn. Rejected:
+  derived-only rendering, sidecar-only rendering, and globally treating every locally injected prompt as
+  human.
+- **Ctrl-O is a second projection, not mutation of static history** (bundle trace, 2026-08-02). The live
+  log remains append-only; canonical messages/events survive underneath it. Ctrl-O opens a detailed
+  transcript that reprojects those originals untruncated, while transcript-local Ctrl-E explicitly
+  toggles show-all/collapse. Rejected: re-rendering already emitted Ink `<Static>` rows, which would replay
+  terminal history and still cannot recover facts discarded into `RenderLine[]`.
 
 ## Surprises & Discoveries
 
+- **Probe 77 was right about the block and wrong about the message.** Final SDK 0.3.220 P94 evidence confirms
+  `SDKUserMessage.tool_use_result` alongside flat `tool_result.content`, but sidecar presence varies per call:
+  even Agent and the high-volume Read/Bash tools had flat-only calls. The enduring contract is structured-first
+  with a flat/input fallback, never either premise globally. One Bash sidecar also added optional
+  `returnCodeInterpretation`; it is structured source, not a numeric exit code. (2026-08-02)
+- **One query can emit multiple successful `result` frames, and locally generated does not mean human.** The
+  exact final P94 run closed each case with one UUID-matched human result; a separate successful 0.3.220 run
+  also emitted task-notification successes without user UUIDs. Independent review then exposed proactive
+  heartbeat and tool-triggered compaction as local automatic inputs. Session completion is therefore bound to
+  both submitted UUID and provenance class, not a blanket human stamp. (2026-08-02)
+- **Current Fable tool density changes the economics of live probes.** The canonical eight-case run still
+  produced hundreds of calls and delegated in six cases, while the old Sonnet-era assumptions expected a
+  short direct sweep. Corpus probes need per-case deadlines, safe partial aggregates, explicit model/runtime
+  provenance, and frequencies confined to the evidence report rather than copied into dispatch code. (2026-08-02)
+- **`LT5` could not be an F1 free rider.** Its elapsed suffix belongs to the collapsed-group state that F1
+  explicitly excludes and F3 owns. Moving it to F3 avoids inventing a dead pre-group timer solely to satisfy
+  a misplaced inventory label. (2026-08-02)
 - **Probe 78's real finding was not the field census — it was that we do not have to build a rule
   grammar.** The engine *suggests* the permission rule itself, per tool, in exactly the shape
   `updatedPermissions` accepts, and echoing it back verbatim suppresses the next consult. It also
@@ -900,8 +943,9 @@ a full state transition, sabotage every guard test against the regression it cla
 evidence tools fail closed. A plan-mandated test or architecture is not exempt from review: several of F0's
 most important corrections were defects copied directly from the approved plan.
 
-F1–F8 remain pending. They start from the honest approximately 63% scorecard and the 3/5 divergent golden
-baseline established here.
+P94 is complete on the harness's exact SDK 0.3.220, including the separate Write-only proof, and the
+Session ownership prerequisite now distinguishes human from automatic local turns while correlating every
+successful completion by UUID. F1 is schedulable; F1–F8 remain otherwise pending.
 
 ## Revision Notes
 
@@ -946,3 +990,13 @@ baseline established here.
   identities use delimiter-based Unicode-safe component recognition. The final full Python gate exposed two
   older synthetic tracked-fixture tests that had not declared their identity-free contracts; only those test
   fixtures changed, and both complete 86-test environments plus both ten-run stability modes then passed.
+- 2026-08-02 — P94 completed against the harness's exact SDK 0.3.220 and `claude-fable-5[1m]` under
+  OAuth-only authentication. The r3 probe passed its natural corpus and separate absolute-path Write case,
+  confirmed optional per-call sidecars plus flat fallbacks, recorded safe result ownership, preserved Bash
+  redirect classification, and found optional `returnCodeInterpretation` without a numeric exit code.
+  Independent review of the Session prerequisite then caught automatic heartbeat/compaction prompts being
+  stamped human; the final rule stores each waiter's submitted provenance, matches success by UUID plus any
+  explicit origin, and permits UUID-less error FIFO only for the same explicit origin class. F1 is now
+  schedulable. The installed bundle trace separately settled ST2 as an append-only live projection plus a
+  Ctrl-O detailed transcript over retained source, with transcript-local Ctrl-E show-all/collapse. LT5 moved
+  to the F3 collapsed-group state that owns it.

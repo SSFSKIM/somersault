@@ -299,10 +299,13 @@ or LOW-priority tail items, never rows tuned to hit the target number.
 - **Transcript fidelity.** Tool-invocation rows adopt CC's `● Name(target)` bullet (`render.ts`
   `toolUseLines`, replacing `⚙`); Edit/Write diffs gain a real hunk body — up to 3 dim numbered context
   lines each side of the change, numbered `-`/`+` rows for the changed lines (`render.ts`
-  `toolDiffLines`) — numbering is **hunk-relative** (1-based within the `old_string`/`new_string`
-  snippet only; the file is never read from disk, so absolute file-line numbers are not available); a
-  failed tool_result renders red with a `✗` prefix on its first line (`render.ts` `resultLines`, keyed
-  on `is_error` — the only signal a `tool_result` carries, there is no exit code).
+  `toolDiffLines`) — the shipped numbering is **hunk-relative** (1-based within the
+  `old_string`/`new_string` snippet). **P94 complete on SDK 0.3.220:** flat `tool_result.content` and the
+  optional per-call `SDKUserMessage.tool_use_result` sidecar must both remain retained; recognized sidecars
+  improve fidelity, while flat/input fallbacks remain mandatory for sidecar-less and forwarded calls. The
+  evidence report also records UUID/provenance ownership and the separate Write proof. A failed flat
+  `tool_result` still renders red with a `✗` prefix on its first line (`render.ts` `resultLines`, keyed on
+  `is_error`) until F1 replaces the split live/replay renderer.
 - **Markdown tables** (`markdown.ts` `flushTableBuffer` — a buffered run of `|`-lines becomes a
   column-padded table only once a `|---|` separator confirms it, otherwise it's re-emitted as prose
   untouched) and a **zero-dependency syntax highlighter** (`tui/highlight.ts` — a manual regex lexer
@@ -436,8 +439,8 @@ own method note above points to, and are recorded here so a reader of the scorec
 | Markdown: inline mixed bold/italic spans | ✅ | — | **U11** per-span `segments` (bold/italic/code) rendered within a line |
 | Markdown: tables | 🟡 | — | **C5** `markdown.ts` `flushTableBuffer` — a buffered run of `\|`-lines becomes a column-padded table only once a `\|---\|` separator confirms it; otherwise re-emitted as prose untouched. **F0 correction:** upstream draws a box table with per-column alignment, three-way width fitting, a rule between every pair of data rows, a 200-row cap, and a vertical record fallback — ours has none of that |
 | Markdown: code-block syntax highlight | ✅ | — | **C5** `highlight.ts` — a zero-dependency regex lexer (keywords/strings/comments/numbers for ts/js/py/sh/json). **Not a full grammar** — a hand-rolled single-pass lexer, a recognizable-90% approximation (spec Decision Log against a ~1MB dependency), unknown langs fall back to dim |
-| Edit/Write diff | 🟡 | — | **C5** `render.ts` `toolDiffLines` — a real hunk body: up to 3 dim numbered context lines each side of the change, numbered `-`/`+` rows for the changed lines. **Numbering is hunk-relative** (1-based within the `old_string`/`new_string` snippet) — we never read the file from disk, so absolute file-line numbers are not available. **F0 correction:** honest about the numbering, but was silent on more: no add/remove counts header, **foreground colour instead of background bands**, no word diff, no wrapping, and a 24-line cap upstream does not have |
-| Bash output rendering | 🟡 | MED | **C5**: only error framing landed — a failed `tool_result` (`is_error`) renders red with a `✗` prefix on its first line (`render.ts` `resultLines`). A `tool_result` carries no exit code, so `$`/exit-code framing is not reachable; stays 🟡, not promoted |
+| Edit/Write diff | 🟡 | — | **C5** `render.ts` `toolDiffLines` — a real hunk body: up to 3 dim numbered context lines each side of the change, numbered `-`/`+` rows for the changed lines. The shipped implementation remains **hunk-relative**. **P94 correction, confirmed on 0.3.220:** recognized Edit sidecars expose absolute `structuredPatch[].oldStart/newStart`; the separate Write case exposes content/file metadata. Flat-only and forwarded calls still require input fallback. **F0 correction:** no add/remove counts header, **foreground colour instead of background bands**, no word diff, no wrapping, and a 24-line cap upstream does not have |
+| Bash output rendering | 🟡 | MED | **C5**: only error framing landed — a failed `tool_result` (`is_error`) renders red with a `✗` prefix on its first line (`render.ts` `resultLines`). **P94 correction, confirmed on 0.3.220:** some Bash calls carry structured stdout/stderr/interrupted/noOutputExpected/isImage and optional `returnCodeInterpretation`, while most remain flat-only. No numeric exit code appeared, so `$`/exit-code framing remains unreachable and the row stays 🟡 |
 | Long-output truncation + expand | 🟡 | **MED (structural)** | we cap; no interactive expand. **F0 correction:** the LOW priority was wrong — `(ctrl+o to expand)` is one mechanism that also drives collapsed groups, verbose diffs and expanded thinking; this is `ST2`, a structural gap, not a tail item |
 | Compact boundary marker | 🟡 | — | **C5** `useChat.ts` — a `system`/`compact_boundary` frame renders a `─── context compacted ───` divider notice. **F0 correction:** upstream renders a bulleted `Compact summary` with a message count and an expand affordance, not a rule |
 | Welcome banner / splash | ✅ | — | **U1** `banner.ts` — accent `✻ Welcome` box + cwd/model/mode + tips |
@@ -625,8 +628,9 @@ tool-row/diff/bash-error framing, tables, syntax highlight, the compact-boundary
 ### Remaining gaps as of C5 (pre-F0; all explicit spec non-goals or LOW-priority tail items)
 - Vim mode (`/vim` + its status indicator) — owner-deferred, the sprint's only deferral. (The
   external editor formerly listed here shipped in W1 — Ctrl-X Ctrl-E / Ctrl-G, `externalEditor.ts`.)
-- Bash output's `$`/exit-code framing — not reachable: a `tool_result` carries no exit code, only
-  `is_error` (the error-framing half already landed).
+- Bash output's `$`/exit-code framing — still not reachable: P94 confirms structured stdout/stderr,
+  interruption/no-output flags, and optional string `returnCodeInterpretation` on some calls, but no numeric
+  exit code; flat-only calls retain only result text plus `is_error` (the error-framing half already landed).
 - Long-output interactive expand, the `›` vs `>` user-echo glyph (intentional divergence), and
   focus-border/input-box styling polish.
 
