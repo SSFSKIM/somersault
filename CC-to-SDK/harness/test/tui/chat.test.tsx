@@ -1863,8 +1863,10 @@ describe("<ChatApp> — retained source", () => {
     await waitFor(() => plain(frame(app.lastFrame)).includes("… +37 lines (ctrl+o to expand)"));
     expect(plain(frame(app.lastFrame))).not.toContain("line 40");                              // compact hid rows 4–40
     app.stdin.write("\x0f"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40"));   // detail-all, opened at the bottom
-    expect(plain(frame(app.lastFrame)).match(OVERFLOW) ?? []).toHaveLength(1);                  // only the static copy: the pager is NOT compact
     app.stdin.write("g"); await waitFor(() => plain(frame(app.lastFrame)).includes("lines 1–"));
+    // Asserted at the TOP of the pager, where a wrongly-compact pager would show its own overflow row: at the
+    // bottom anchor a duplicate above the viewport is invisible and the count passes vacuously.
+    expect(plain(frame(app.lastFrame)).match(OVERFLOW) ?? []).toHaveLength(1);                  // only the static copy: the pager is NOT compact
     app.stdin.write("G"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40"));
     app.stdin.write("\x05"); await waitFor(() => plain(frame(app.lastFrame)).includes("… +37 lines (ctrl+e to show all)")); expect(plain(frame(app.lastFrame))).not.toContain("line 40");
     app.stdin.write("\x05"); app.stdin.write("G"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40")); app.stdin.write("\x1b"); await waitFor(() => !plain(frame(app.lastFrame)).includes("line 40"));

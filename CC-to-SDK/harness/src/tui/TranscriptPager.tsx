@@ -33,6 +33,9 @@ export function TranscriptPager({ makeItems, onClose, height }: TranscriptPagerP
   // the bottom of the projection it just left.
   const projectionRef = useRef(projection);
   const offsetRef = useRef(offset);
+  // State is the single writer: mirroring on every render (not only inside the handler) means a future
+  // second setter call site cannot silently desynchronize the same-tick shadow from the rendered state.
+  projectionRef.current = projection; offsetRef.current = offset;
   const items = makeItems(projection);
   const { slices, offset: off, total } = pageItemSlices(items, offset, h);
   useInput((input, key) => {
