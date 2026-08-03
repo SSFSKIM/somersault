@@ -96,6 +96,16 @@ step 6 and renders standalone:
 **R1.2 — Bash command classification (`Kr_`, L306129–306152).** The command is split into
 statements; the head word of each is looked up:
 
+> **Parser correction (2026-08-03, Task 5b review round 3).** The statement extraction is NOT
+> tree-sitter: 2.1.220 ships a hand-written JS bash parser (`SF()` → `Zqg = { parse: aVg }`,
+> L140408/L140656). Two consequences verified directly against that parser: (a) **leading**
+> redirects are part of the `command` node (`f = [...assignments, ...redirects, command_name,
+> ...args]`, L141080–141082), so `2>/dev/null rg x` has head word `2>/dev/null` and renders
+> STANDALONE — only trailing redirects on a `redirected_statement` are stripped by `OE`; and
+> (b) a double-quoted heredoc delimiter containing `` ` ``, `$`, `\` or newline **aborts the
+> whole parse** (L141326), and on abort `OE` falls back to the entire command as ONE statement
+> (L359731–359733) — so such a command classifies on its first head word alone.
+
 - ignored (never decide anything): `echo printf true false :` (`Vr_`, L306395)
 - **search**: `find grep rg ag ack locate which whereis` (`jr_`)
 - **read**: `cat head tail less more wc stat file strings jq awk cut sort uniq tr` (`Wr_`)
