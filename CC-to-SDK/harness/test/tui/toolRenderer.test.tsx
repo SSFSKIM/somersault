@@ -621,3 +621,83 @@ describe("F3 latch-to-max and the throttled hint (R3.2, R4.7)", () => {
     expect(clampHintText(long, 0, 10)).toBe(long);            // a degenerate width clamps nothing (`t < 1`)
   });
 });
+
+// ── F3 Task 7: the Agent unit (LT16 progress rows, LT17 the honest `Done (…)` row) ───────────────────────
+// The ladder itself is `agentProgress.test.ts`'s; these pin what reaches the screen — that an open Agent
+// shows `Initializing…` then its last three inner rows plus the hidden-count marker, that a completed one
+// renders the Done row as a BULLETED line rather than a `⎿` body (upstream injects it as a synthetic
+// assistant message, census 01#153), and that the nested rows the compact unit folds away are exactly what
+// ctrl+o expands to.
+describe("F3 Task 7: Agent progress and the Done row", () => {
+  const agent = (id = "agent-1", description = "review the diff") =>
+    ({ type: "assistant", message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "Agent", input: { description, prompt: "do it" } }] } }) as Record<string, unknown>;
+  const childCall = (id: string, file: string, parent = "agent-1") =>
+    ({ type: "assistant", parent_tool_use_id: parent, message: { id: `mc-${id}`, content: [{ type: "tool_use", id, name: "Read", input: { file_path: file } }] } }) as Record<string, unknown>;
+  const childResult = (id: string, parent = "agent-1") =>
+    ({ type: "user", uuid: `uc-${id}`, parent_tool_use_id: parent, message: { content: [{ type: "tool_result", tool_use_id: id, content: "one\ntwo", is_error: false }] } }) as Record<string, unknown>;
+  const agentResult = (sidecar?: unknown, id = "agent-1") =>
+    ({ type: "user", uuid: `ur-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content: "the report", is_error: false }] }, ...(sidecar === undefined ? {} : { tool_use_result: sidecar }) }) as Record<string, unknown>;
+  const COMPLETED = { agentId: "a1", agentType: "reviewer", status: "completed", totalToolUseCount: 3, totalTokens: 24100, totalDurationMs: 72000 };
+  const ASYNC = { agentId: "a1", isAsync: true, outputFile: "/tmp/o", canReadOutputFile: true, status: "async_launched" };
+  const children = (n: number) => Array.from({ length: n }, (_, i) => [childCall(`c-${i}`, `/work/f${i}.ts`), childResult(`c-${i}`)]).flat();
+  // A file-tool header carries its OSC-8 target; the rows here are about NESTING, so compare the labels.
+  const rowTexts = (items: readonly RenderItem[]) => lineTexts(items).map((t) => t.replace(/\x1b]8;;[^\x07]*\x07/g, ""));
+
+  it("shows dim `Initializing…` while the agent has produced no inner call yet", () => {
+    const items = projectPending(built(agent()), context);
+    expect(lineTexts(items)).toEqual(["⏺ Agent(review the diff)"]);
+    expect(items[1]).toMatchObject({ kind: "gutter-block", gutter: TOOL_RESULT_GUTTER, body: [{ text: "Initializing…", dim: true }] });
+  });
+
+  it("shows the last THREE inner rows plus the hidden-count marker (upstream zVp = 3)", () => {
+    const items = projectPending(built(agent(), ...children(5)), context);
+    expect(rowTexts(items)).toEqual([
+      "⏺ Agent(review the diff)",
+      "  ⏺ Read(f2.ts)", "  ⏺ Read(f3.ts)", "  ⏺ Read(f4.ts)",
+      "  … +2 tool uses (ctrl+o to expand)",
+    ]);
+    const marker = items.at(-1) as { line: RenderLine };
+    expect(marker.line).toEqual({ text: "  … +2 tool uses (ctrl+o to expand)", dim: true });
+    expect(items.every((i) => i.kind === "line")).toBe(true);                    // condensed: no inner result bodies
+    // Exactly three or fewer inner calls earn no marker at all.
+    expect(rowTexts(projectPending(built(agent(), ...children(3)), context))).toHaveLength(4);
+  });
+
+  it("renders completion as a BULLETED Done line off the sidecar's totals, never a `⎿` body", () => {
+    const doc = built(agent(), ...children(3), agentResult(COMPLETED), prose("summary"));
+    const items = projectCompact(doc, context);
+    expect(lineTexts(items)).toContain("⏺ Done (3 tool uses · 24.1k tokens · 1m 12s)  (ctrl+o to expand)");
+    expect(items.filter((i) => i.kind === "gutter-block")).toEqual([]);          // the agent's own report is not dumped
+    const done = items.find((i) => i.kind === "line" && i.line.text.includes("Done ("))! as { line: RenderLine };
+    expect(done.line.segments).toEqual([
+      { text: "⏺ ", color: resolveThemeColor(themeTokens().success) },
+      { text: "Done (3 tool uses · 24.1k tokens · 1m 12s)" },
+      { text: "  (ctrl+o to expand)", dim: true },
+    ]);
+    expect(new Set(items.map((i) => i.id)).size).toBe(items.length);             // ids stay unique through `reid`
+  });
+
+  it("falls to task_notification totals when the sidecar is a parallel dispatch's `async_launched`", () => {
+    const doc = built(agent(), ...children(2), agentResult(ASYNC), prose("summary"));
+    const meta = new Map([["agent-1", { notify: { total_tokens: 4195, tool_uses: 2, duration_ms: 4484 } }]]);
+    expect(lineTexts(projectCompact(doc, { ...context, agentMeta: meta }))).toContain("⏺ Done (2 tool uses · 4.2k tokens · 4s)  (ctrl+o to expand)");
+    // With no notification yet, an async launch says exactly that — it is NOT done, and a derived
+    // `Done (0 tool uses)` would be a lie (census 429615).
+    expect(lineTexts(projectCompact(doc, context))).toContain("⏺ Backgrounded agent (↓ to manage · ctrl+o to expand)");
+  });
+
+  it("derives the row from the children and the dispatch→result clock, with NO token clause", () => {
+    const doc = built(agent(), ...children(2), agentResult(), prose("summary"));
+    const meta = new Map([["agent-1", { dispatchedAt: 1000, resultAt: 35000 }]]);
+    expect(lineTexts(projectCompact(doc, { ...context, agentMeta: meta, now: 999999 }))).toContain("⏺ Done (2 tool uses · 34s)  (ctrl+o to expand)");
+  });
+
+  it("expands to the nested rows in the detail projections, and drops the hint there (`Bg` is null in transcript mode)", () => {
+    const doc = built(agent(), ...children(2), agentResult(COMPLETED), prose("summary"));
+    const detail = projectDetail(doc, { ...context, projection: "detail-collapsed" });
+    expect(rowTexts(detail)).toEqual(["⏺ Agent(review the diff)", "⏺ Done (3 tool uses · 24.1k tokens · 1m 12s)", "  ⏺ Read(f0.ts)", "  ⏺ Read(f1.ts)", "summary"]);
+    expect(bodyOf(detail).map((l) => l.text)).toEqual(["Read 2 lines", "Read 2 lines"]);   // the children's own typed rows
+    expect(rowTexts(projectCompact(doc, context))).not.toContain("  ⏺ Read(f0.ts)");
+    expect(new Set(detail.map((i) => i.id)).size).toBe(detail.length);
+  });
+});

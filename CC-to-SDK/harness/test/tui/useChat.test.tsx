@@ -813,20 +813,58 @@ describe("useChat: decisions, mode sync, bg tasks (Goal B task 7)", () => {
     await waitFor(() => frame(lastFrame).includes("NONE"));
   });
 
-  it("tasks_changed updates bgTasks; task frames render notices honoring skip_transcript", async () => {
+  // F3 Task 7 (reviewer I10): these two frames render NOTHING in the transcript — upstream renders nothing
+  // for them, and a local entry here is a fold BREAKER (P84: a `task_started` lands ~5 s into every
+  // foreground Bash, so the old `⚙ task started` notice was splitting fold runs mid-turn). The ↓ panel is
+  // unaffected: it reads the harvest + `tasks_changed`, never the transcript.
+  it("tasks_changed updates bgTasks; task frames render NO transcript row but still reach the bg panel", async () => {
     const fake = fakeRemote();
-    function H() { const c = useChat(() => fake); return <Text>bg:{c.state.bgTasks.length} {allText(c)}</Text>; }
+    function H() { const c = useChat(() => fake); return <Text>bg:{c.state.bgTasks.length} rows:{c.state.bgRows.length} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "t1", task_type: "bash", description: "sleep 99" }] });
     await waitFor(() => frame(lastFrame).includes("bg:1"));
-    fake.pushEvent({ kind: "task", data: { type: "task_started", description: "reviewing", task_id: "t2" } });
-    await waitFor(() => frame(lastFrame).includes("⚙ task started: reviewing"));
-    fake.pushEvent({ kind: "task", data: { type: "task_notification", status: "completed", summary: "done", task_id: "t2" } });
-    await waitFor(() => frame(lastFrame).includes("✓ task done: done"));
-    fake.pushEvent({ kind: "task", data: { type: "task_started", description: "hidden", skip_transcript: true } });
-    await new Promise((r) => setTimeout(r, 30));
-    expect(frame(lastFrame)).not.toContain("hidden");
+    fake.pushEvent({ kind: "task", data: { type: "task_started", description: "reviewing", task_id: "t2", tool_use_id: "tu2", task_type: "local_agent" } });
+    fake.pushEvent({ kind: "task", data: { type: "task_notification", status: "completed", summary: "done", task_id: "t2", tool_use_id: "tu2" } });
+    await waitFor(() => frame(lastFrame).includes("rows:2"));            // t1 live + t2 finished, both in the panel
+    expect(frame(lastFrame)).not.toContain("task started");
+    expect(frame(lastFrame)).not.toContain("task done");
+    expect(frame(lastFrame)).not.toContain("reviewing");
+  });
+
+  it("a task_started arriving mid-run does NOT break the fold: one group row, not two", async () => {
+    const fake = fakeRemote();
+    let snap!: { staticItems: readonly RenderItem[] };
+    function H() { const c = useChat(() => fake); snap = { staticItems: c.state.staticItems }; return <Text>{allText(c)}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: READ_CALL });
+    fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });
+    fake.pushEvent({ kind: "task", data: { type: "system", subtype: "task_started", task_id: "t9", tool_use_id: "read-2", task_type: "local_bash", description: "a foreground shell" } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "assistant-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/src/b.ts" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "user", uuid: "user-result-b", message: { content: [{ type: "tool_result", tool_use_id: "read-2", content: "b" }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "assistant-3", content: [{ type: "text", text: "all done" }] } } });   // the breaker that publishes the run
+    await waitFor(() => snap.staticItems.some((i) => i.id.startsWith("group:")));
+    const groups = snap.staticItems.filter((i) => i.id.startsWith("group:"));
+    expect(groups).toHaveLength(1);
+    expect(itemLines(groups[0]!)[0]).toContain("Read 2 files");
+  });
+
+  it("captures the task sidechannel so a sidecar-less Agent still gets an honest Done row (P83 rung 2)", async () => {
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake, {}, { now: () => 5000 }); return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "a-agent", content: [{ type: "tool_use", id: "agent-1", name: "Agent", input: { description: "review the diff", prompt: "go" } }] } } });
+    fake.pushEvent({ kind: "task", data: { type: "system", subtype: "task_started", task_id: "t1", tool_use_id: "agent-1", subagent_type: "reviewer", task_type: "local_agent", description: "review the diff" } });
+    await waitFor(() => frame(lastFrame).includes("Initializing…"));
+    // P83: the notification lands ~1 ms BEFORE the tool_result, which is what makes it available to the row.
+    fake.pushEvent({ kind: "task", data: { type: "system", subtype: "task_notification", task_id: "t1", tool_use_id: "agent-1", status: "completed", usage: { total_tokens: 4195, tool_uses: 2, duration_ms: 4484 } } });
+    fake.pushEvent({ kind: "message", data: { type: "user", uuid: "u-agent", message: { content: [{ type: "tool_result", tool_use_id: "agent-1", content: "the report" }] } } });
+    await waitFor(() => frame(lastFrame).includes("Done (2 tool uses · 4.2k tokens · 4s)"));
+    expect(frame(lastFrame)).not.toContain("the report");     // the agent's report is behind ctrl+o, not dumped
   });
 
   // Goal B acceptance ⑤ evidence (spec: docs/superpowers/specs/2026-07-28-control-plane-fidelity-design.md).

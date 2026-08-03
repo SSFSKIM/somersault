@@ -18,10 +18,11 @@ import { renderMessage } from "./render.js";
 import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
 import { resolveThemeColor, themeGeneration, themeTokens } from "./theme.js";
-import { bashArgument, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
+import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
 import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type GroupCounts } from "./toolFold.js";
 import { foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { summaryLines } from "./toolSummaries.js";
+import { agentChildren, agentDoneText, agentTotals, AGENT_INITIALIZING, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentMeta } from "./agentProgress.js";
 import type { FoldPendingHooks } from "./foldPendingState.js";
 import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
@@ -62,7 +63,13 @@ export type { ResultProjection };
  *  `useChat` (see `foldPendingState.ts`) rather than in this otherwise-pure projection, and it is consulted
  *  ONLY for a group row the pending region owns: an immutable published Static row is the settled truth and
  *  must never be re-derived from live maxima. */
-export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; }
+/** `agentMeta` (F3 Task 7) is the caller's capture of the `system/task_*` sidechannel, keyed by the Agent
+ *  `tool_use_id` — the totals ladder's second rung plus the local arrival stamps its third rung measures
+ *  against. Like `thoughtMs` it is a projection INPUT rather than document state: those frames are retained
+ *  nowhere on disk, so a rewound/resumed/attached document must fall through to what it can derive.
+ *  `toolEvents` is injected by the projections themselves (never by a caller): an Agent's progress rows are
+ *  its NESTED calls, which live in the document beside it rather than on the event. */
+export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; }
 
 /** Upstream's exact interruption surface — the row is a prompt, not a copy of whatever partial output arrived. */
 const INTERRUPTED_TEXT = "Interrupted · What should Claude do instead?";
@@ -165,11 +172,67 @@ function resultBody(event: ToolEvent, normalized: NormalizedToolResult, options:
   return foldToolOutput(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true });
 }
 
+// ── F3 Task 7: the Agent unit (LT16 / LT17) ────────────────────────────────────────────────────────────
+/** The inner rows sit one step in from their agent, exactly as upstream's progress block does. Only the
+ *  LINE items are indented — a result body already lives behind the five-column `⎿` gutter, which is deeper
+ *  still, so the two-column header indent keeps the same header→body relationship a top-level row has. */
+const AGENT_INDENT = "  ";
+/** Census 429615: what a PARALLEL dispatch's `async_launched` sidecar renders as while its
+ *  `task_notification` totals do not exist yet. Emphatically NOT a `Done (0 tool uses)` row — the agent has
+ *  not finished, and its child frames arrive AFTER its result (P83 [Q4]), so the derived rung would be
+ *  counting an empty list. */
+const BACKGROUNDED_TEXT = "Backgrounded agent", BACKGROUNDED_HINT = " (↓ to manage · ctrl+o to expand)";
+const isAsyncLaunch = (event: ToolEvent): boolean => callSidecar(event)?.status === "async_launched";
+/** The child rows, rendered through the SAME renderer as any other call (so a nested Read reads exactly as
+ *  a top-level one) at the width the indent leaves them. `linesOnly` is the condensed progress form:
+ *  upstream's running block shows what the agent is DOING, one row per call, not each result. */
+function nestedItems(children: readonly ToolEvent[], options: ProjectionOptions, linesOnly: boolean): RenderItem[] {
+  const condensed: ProjectionOptions = { ...options, columns: Math.max(options.columns - AGENT_INDENT.length, 10) };
+  const items: RenderItem[] = [];
+  for (const child of children)
+    for (const item of renderToolEvent(child, normalizeToolResult(child, { verbose: options.verbose }), condensed)) {
+      if (item.kind === "line") items.push({ ...item, line: indentRenderLine(item.line, AGENT_INDENT) });
+      else if (!linesOnly) items.push(item);
+    }
+  return items;
+}
+/** The synthetic assistant row upstream injects on completion (census 01#153): a BULLETED line, not a `⎿`
+ *  body. The bullet is this renderer's own status-coloured tool bullet rather than a second palette rule —
+ *  upstream's is the ordinary `⏺` of an assistant message, and an errored agent must not paint green. */
+function agentBulletLine(text: string, hint: string, status: ToolStatus, options: ProjectionOptions): RenderLine {
+  const bullet: Segment = { text: options.platform === "darwin" ? "⏺ " : "● ", color: resolveThemeColor(themeTokens()[statusToken(status)]) };
+  // `Bg` returns null inside the transcript/verbose contexts, so the expand hint is compact-only — the same
+  // rule `foundRow` follows, and the detail projections ARE that verbose form (R6.3).
+  const segments: Segment[] = options.projection === "compact" ? [bullet, { text }, { text: hint, dim: true }] : [bullet, { text }];
+  return { text: segments.map((segment) => segment.text).join(""), segments };
+}
+function agentItems(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
+  const children = agentChildren(options.toolEvents ?? [], event.id);
+  if (normalized.status === "running") {
+    // Upstream `KVp` (429822): nothing has come back yet, so the block is a placeholder, not an empty list.
+    if (children.length === 0) return [{ kind: "gutter-block", id: `${event.id}:progress`, gutter: TOOL_RESULT_GUTTER, body: [{ text: AGENT_INITIALIZING, dim: true }] }];
+    const shown = children.slice(-AGENT_PROGRESS_ROWS), hidden = children.length - shown.length;
+    const items = nestedItems(shown, options, /* linesOnly */ true);
+    if (hidden > 0) items.push({ kind: "line", id: `${event.id}:progress-hidden`, line: indentRenderLine(hiddenToolUsesLine(hidden), AGENT_INDENT) });
+    return items;
+  }
+  const totals = agentTotals(event, options.agentMeta?.get(event.id), children, options.now);
+  const launched = totals.source === "derived" && isAsyncLaunch(event);
+  const head: RenderItem = { kind: "line", id: `${event.id}:done`, line: launched
+    ? agentBulletLine(BACKGROUNDED_TEXT, BACKGROUNDED_HINT, normalized.status, options)
+    : agentBulletLine(agentDoneText(totals), `  ${EXPAND_HINT}`, normalized.status, options) };
+  // What ctrl+o expands TO: the nested rows the compact unit folds away, with their own typed result rows.
+  return options.projection === "compact" ? [head] : [head, ...nestedItems(children, options, /* linesOnly */ false)];
+}
+
 /** One retained call → its renderable items. A `suppressed` tool projects to nothing — driven by the status Task 1's
  *  normalizer assigns, never by a renderer-side name check, so the suppression list has exactly one home. */
 export function renderToolEvent(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
   if (normalized.status === "suppressed") return [];
   const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, normalized.status, options), wrap: "truncate-end" }];
+  // F3 Task 7 owns the Agent's two live surfaces (the progress rows and the Done row). Its OTHER statuses —
+  // `error`, `interrupted`, `rejected` — are exact surfaces the generic body already paints.
+  if (isAgentTool(event.name) && (normalized.status === "running" || normalized.status === "success")) return [...items, ...agentItems(event, normalized, options)];
   const body = resultBody(event, normalized, options);
   if (body.length) items.push({ kind: "gutter-block", id: `${event.id}:result`, gutter: TOOL_RESULT_GUTTER, body });
   return items;
@@ -187,7 +250,10 @@ export type ProjectionContext = Omit<ProjectionOptions, "projection" | "verbose"
 
 export const sdkItemId = (base: string, part: string): string => `sdk:${base}:${part}`;
 export const localItemId = (identity: string, lineIndex: number): string => `local:${identity}:line:${lineIndex}`;
-export const toolItemId = (toolUseId: string, resultSequence: number | "pending", part: "header" | "body"): string => `tool:${toolUseId}:${resultSequence}:${part}`;
+/** `part` is a free string since F3 Task 7: an Agent unit projects MORE than a header and a body (its Done
+ *  row, its nested progress rows), and two items sharing an id would publish once into Static and lose the
+ *  rest. `header`/`body` stay the names of the first two so every earlier id is byte-identical. */
+export const toolItemId = (toolUseId: string, resultSequence: number | "pending", part: string): string => `tool:${toolUseId}:${resultSequence}:${part}`;
 /** A fold group's identity is its MEMBERSHIP, with no sequence component: the member tool-use ids are already
  *  unique and stable, and a document that gains two replay dividers (which shift every later sequence) must
  *  still project the very same group id — that is what lets Static publish a settled group exactly once. */
@@ -239,8 +305,12 @@ export function projectLocalEvent(entry: LocalEntry): readonly RenderItem[] {
   return entry.event.lines.map((line, index) => ({ kind: "line" as const, id: localItemId(entry.identity, index), line }));
 }
 
+/** Re-key one call's items onto its ANCHOR (the call id + the sequence it publishes at), which is what keeps
+ *  the open and the finalized copies of the same row distinct. The first line is the header and the first
+ *  gutter-block the body; anything beyond that (Task 7's Agent rows) takes its ORDINAL, because the id is
+ *  Static's append-once key and a collision there silently drops a row. */
 const reid = (items: readonly RenderItem[], id: string, sequence: number | "pending"): RenderItem[] =>
-  items.map((item) => (item.kind === "line" ? { ...item, id: toolItemId(id, sequence, "header") } : { ...item, id: toolItemId(id, sequence, "body") }));
+  items.map((item, index) => ({ ...item, id: toolItemId(id, sequence, index === 0 ? "header" : index === 1 && item.kind === "gutter-block" ? "body" : `part:${index}`) }));
 
 // ── F1 Task 5c: the DEFAULT view's collapsed group row ──────────────────────────────────────────────────
 // Task 5b's pure model decides WHAT a run collapses to; everything below decides how that reads on screen.
@@ -464,13 +534,16 @@ function anchoredEntries(document: TranscriptDocument, options: ProjectionOption
 const bySequence = (a: Anchored, b: Anchored) => a.sequence - b.sequence || a.rank - b.rank;
 
 function projectAll(document: TranscriptDocument, options: ProjectionOptions): readonly RenderItem[] {
-  const anchored = anchoredEntries(document, options);
+  // The nested calls travel WITH the options (Task 7): an Agent's rows are derived from the document's other
+  // events, and injecting them here keeps `renderToolEvent` a pure function of one call plus its context.
+  const full: ProjectionOptions = { ...options, toolEvents: document.toolEvents() };
+  const anchored = anchoredEntries(document, full);
   for (const event of document.toolEvents()) {
     if (event.route !== "top-level" || !event.result) continue;
-    anchored.push({ sequence: event.result.resultSequence, rank: 1, event, items: reid(renderToolEvent(event, normalizeToolResult(event, { verbose: options.verbose }), options), event.id, event.result.resultSequence) });
+    anchored.push({ sequence: event.result.resultSequence, rank: 1, event, items: reid(renderToolEvent(event, normalizeToolResult(event, { verbose: full.verbose }), full), event.id, event.result.resultSequence) });
   }
   anchored.sort(bySequence);
-  return options.projection === "compact" && !options.verbose ? foldAnchored(anchored, options) : anchored.flatMap((a) => a.items);
+  return full.projection === "compact" && !full.verbose ? foldAnchored(anchored, full) : anchored.flatMap((a) => a.items);
 }
 
 /** The one atom builder both folded projections share. A tool anchor is a `tool` atom — EXCEPT for the tools
@@ -563,7 +636,7 @@ export function projectDetail(document: TranscriptDocument, options: ProjectionC
  *  a still-open member of that same run folds on alone — which is what keeps a live row on screen without
  *  double-counting the members Static already shows. */
 export function projectPending(document: TranscriptDocument, options: ProjectionContext, liveIds?: ReadonlySet<string>): readonly RenderItem[] {
-  const full: ProjectionOptions = { ...options, projection: "compact", verbose: false };
+  const full: ProjectionOptions = { ...options, projection: "compact", verbose: false, toolEvents: document.toolEvents() };
   const anchored = anchoredEntries(document, full);
   for (const event of document.toolEvents()) {
     if (event.route !== "top-level") continue;

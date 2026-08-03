@@ -26,6 +26,7 @@ import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrap
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { LiveTurn } from "./liveTurn.js";
 import { FoldPendingState } from "./foldPendingState.js";
+import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgress.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
@@ -83,7 +84,7 @@ export function useChat(
   const columnsFn = deps.columns ?? (() => process.stdout.columns ?? 80);
   const scheduleRepaint = deps.scheduleRepaint ?? ((cb: () => void, ms: number) => { const id = setInterval(cb, ms); return () => clearInterval(id); });
   const home = deps.home ?? homedir(), platform = deps.platform ?? process.platform;
-  const projectionContext = (): ProjectionContext => ({ cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current! });
+  const projectionContext = (): ProjectionContext => ({ cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current });
   // ── The ONE retained transcript document (F1 Task 4). Every visible row — live, replay, attach, resume,
   // rewind, Ctrl-O — is projected from it; `publishedIds` is what makes reconciliation append-only, so a
   // duplicate follow record, a rehydration or a redelivered bootstrap entry can never publish a row twice.
@@ -117,6 +118,12 @@ export function useChat(
   // a document swap (rewind/resume/clear) — which IS P82's replay rule: durations exist nowhere on the
   // wire or on disk, so a rebuilt transcript must show no clause rather than a fabricated one.
   const thoughtMsRef = useRef<Map<string, number>>(new Map());
+  // F3 Task 7: the Agent totals ladder's non-document inputs — the `system/task_*` sidechannel (P83: keyed
+  // by the Agent `tool_use_id`, and the ONLY totals source for a parallel dispatch) plus the local
+  // dispatch/result arrival stamps its derived rung measures against. Same lifetime rule as the thinking
+  // clock above: live-only, keyed by tool-use id, and dropped on a document swap, because a rewound or
+  // attached transcript never replays those frames and must fall back to what it can derive.
+  const agentMetaRef = useRef<Map<string, AgentMeta>>(new Map());
   // F3 Task 4: the pending region's time-dependent group-row state — the ratcheted counters (R3.2) and the
   // throttled/lingering `⎿` hint (R4.7 steps 4–5). Upstream keeps both in refs INSIDE the row component,
   // whose instance survives a growing run's re-renders; our projection is rebuilt from scratch on every
@@ -312,6 +319,7 @@ export function useChat(
     documentRef.current = next;
     publishedIds.current = new Set();
     thoughtMsRef.current = new Map();   // P82: a rebuilt transcript has no duration source — show none
+    agentMetaRef.current = new Map();   // P83, same rule: the task sidechannel is live-only and its stamps are arrivals
     // Same rule for the latched counters and the held hint (F3 Task 4): a rebuilt transcript reuses the very
     // same tool-use ids as anchors, so a maximum latched before the swap would ride onto a run re-read from disk.
     pendingStateRef.current!.reset();
@@ -377,6 +385,7 @@ export function useChat(
         // appended even though no new active turn starts, and document dedup — not a no-live-turn guard —
         // is what stops a redelivered copy from showing twice. /copy follows the SAME rule, so it can only
         // capture a reply that actually entered the transcript.
+        stampAgentCalls(agentMetaRef.current, data, nowFn());   // BEFORE the append: the stamp is arrival, not retention
         const appended = documentRef.current!.appendSdk("host", data);
         if (appended && data?.type === "assistant" && data.parent_tool_use_id === undefined) {
           const t = (data.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
@@ -404,13 +413,17 @@ export function useChat(
       }
       else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);
       else if (ev.kind === "task") {
+        // These frames render NO transcript row (upstream renders none either). They used to become local
+        // notices, and every local entry is a fold BREAKER — P84 shows a `task_started` arriving ~5 s into
+        // every foreground Bash, so the notice was splitting fold runs mid-turn. Background-task visibility
+        // is unaffected: the ↓ panel reads `bgHarvest`/`tasks_changed`, never the transcript.
         bgHarvest.current.ingestTask(ev.data);
-        const t = ev.data as any;
-        const sub = t?.type === "system" ? t.subtype : t?.type;
-        if (!t?.skip_transcript) {
-          if (sub === "task_started") notice(`⚙ task started: ${t.description ?? t.task_id}`);
-          else if (sub === "task_notification") notice(t.status === "failed" ? `✗ task failed: ${t.summary ?? t.task_id}` : `${t.status === "stopped" ? "◼ task stopped" : "✓ task done"}: ${t.summary ?? t.task_id}`);
-        }
+        ingestTaskFrame(agentMetaRef.current, ev.data, nowFn());
+        // Repaint on EVERY task frame, not just the ones that wrote agent meta: `bgRows` is derived at render
+        // time from the harvest ref, so without a render the ↓ panel would show stale rows — which is the one
+        // thing the deleted notices were incidentally providing. It also lets a `task_notification` arriving
+        // after its result reach an Agent row that has already settled.
+        reconcile();
       }
       else if (ev.kind === "rewound") void rebuildAfterRewind();   // ANOTHER client rewound: rebuild from disk (no prefill — not our prompt)
       else if (ev.kind === "state") {

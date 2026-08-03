@@ -29,6 +29,12 @@ export function formatFileSize(bytes: number): string {
   return `${(mb / 1024).toFixed(1).replace(/\.0$/, "")}GB`;
 }
 
+/** Upstream `_d` (L107091): `Intl` compact notation, LOWERCASED — `24100` reads `24.1k`, `1200000` reads
+ *  `1.2m`. One fraction digit is what produces the census's own `12.4k` (the Intl default would round that
+ *  to `12k`). Used by the Agent `Done (…)` row's token clause. */
+export const formatCompactNumber = (value: number): string =>
+  new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value).toLowerCase();
+
 /** Upstream `Et` (L15084): the ordinary pluralizer — `1` keeps the singular, everything else (including 0)
  *  takes the plural. Read's own rows use explicit `=== 1` ternaries that agree with it; Edit's diff summary
  *  deliberately does NOT (it pluralizes with `> 1`, so `0` reads `lines`), and `$Wo` strips a trailing `s`
