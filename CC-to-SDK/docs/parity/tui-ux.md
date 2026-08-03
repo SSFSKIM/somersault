@@ -628,6 +628,16 @@ literal of every hinted action, so a chord typed back in fails the build. Still 
   cannot reach a lookup: it is called from `useChat.ts:26`, a hook, through an existing
   `ProjectionContext` parameter, so one could be threaded in without touching the module's purity. It is
   recorded here so it stays a decision rather than a gap.
+- **ChatApp's two double-press notices** (`Press Ctrl-C again to exit`, `Press Esc again to rewind`)
+  are still literal too, and ChatApp is not in the derivation guard's grep set — recorded here (t10
+  re-review) so the exception is a decision, not an unnoticed gap.
+
+One honesty caveat on the derivation itself (t10 re-review): the composer's double-press arm hints
+(`Esc again to clear`, `Press Ctrl-D again to exit`) DO follow the user's keymap now, but the handlers
+behind `chat:cancel`, `chat:clearInput` and `app:exit` still re-derive from physical key flags
+(`ChatComposer.tsx` site comment) — so under a full rebind those hints confidently name a key that does
+nothing, a slightly worse failure than the old stale literal, which at least named a key that worked.
+Registering those three the way `chat:cycleMode` was in t10-fix is the open follow-up.
 
 The editor's own keys (`⏎`, `\⏎`, the readline set, `Ctrl-_`, `Ctrl-S`, the `!`/`#`/`@`/`/` prefixes)
 are literal by design: `editor.ts` is the keymap's FALLBACK and no context binds them, so there is no
