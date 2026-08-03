@@ -27,15 +27,54 @@ const HINT_LIMIT = 300;
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const stringField = (input: unknown, key: string): string | undefined => { const v = isRecord(input) ? input[key] : undefined; return typeof v === "string" ? v : undefined; };
 
+/** Heredoc delimiter after a `<<`/`<<-` operator at `i`: the raw source to keep in the statement text plus the
+ *  UNQUOTED terminator word, since `<<'EOF'`, `<<"EOF"` and `<<\EOF` all terminate on a bare `EOF`. `undefined` when
+ *  no word follows (a bare `<<` is then left as ordinary text). */
+function heredocDelimiter(command: string, i: number): { raw: string; delimiter: string; next: number } | undefined {
+  let j = i, raw = "", delimiter = "";
+  while (j < command.length && (command[j] === " " || command[j] === "\t")) { raw += command[j]!; j++; }
+  while (j < command.length) {
+    const ch = command[j]!;
+    if (ch === "'" || ch === '"') {
+      raw += ch; j++;
+      while (j < command.length && command[j] !== ch) { delimiter += command[j]!; raw += command[j]!; j++; }
+      if (j < command.length) { raw += ch; j++; }
+      continue;
+    }
+    if (/[\s;&|<>()`]/.test(ch)) break;
+    if (ch === "\\" && j + 1 < command.length) { raw += ch + command[j + 1]!; delimiter += command[j + 1]!; j += 2; continue; }
+    delimiter += ch; raw += ch; j++;
+  }
+  return delimiter === "" ? undefined : { raw, delimiter, next: j };
+}
+/** Consume one heredoc body from `i` (a line start): every line up to and INCLUDING the terminator line, which
+ *  `<<-` may indent with tabs. An unterminated body eats the rest of the command. */
+function skipHeredocBody(command: string, i: number, delimiter: string, stripTabs: boolean): number {
+  let j = i;
+  while (j < command.length) {
+    const nl = command.indexOf("\n", j), end = nl === -1 ? command.length : nl;
+    const line = command.slice(j, end), candidate = stripTabs ? line.replace(/^\t+/, "") : line;
+    j = nl === -1 ? end : nl + 1;
+    if (candidate === delimiter) break;
+  }
+  return j;
+}
+
 /** Port of upstream `OE` (L359726) without a bash grammar. `OE` walks the tree-sitter parse, descends through
  *  `program`/`list`/`pipeline`, drops the operator tokens `&& || | ; & |&` + newline and comments, and pushes every
  *  other node's text whole — so a subshell, an `if`, a `for` all arrive as ONE statement whose head word is `(ls;`
  *  / `if` / `for` and therefore poisons the command. Splitting on those same operators at depth zero, with quotes,
- *  `$( )`, backticks and braces opaque, reproduces that list for every command whose classification can differ. */
+ *  `$( )`, backticks and braces opaque, reproduces that list for every command whose classification can differ.
+ *  Heredocs are the one place a raw depth-zero newline is NOT a separator: `OE` keeps only the non-`*_redirect`
+ *  children of a `redirected_statement` (L359737–359741), so the whole `heredoc_redirect` — body and terminator —
+ *  never becomes a statement and `cat <<EOF … EOF` classifies as plain `cat`. We reproduce that by queueing every
+ *  `<<`/`<<-` delimiter seen on a line (bash order) and skipping their bodies when that line ends. `<<<` is a
+ *  herestring, not a redirect of this shape, and stays ordinary text. */
 function splitStatements(command: string): string[] {
   if (!command) return [];
   if (command.length > PARSE_LIMIT) return [command];
-  const out: string[] = []; let buf = "", quote: string | undefined, depth = 0, i = 0;
+  const out: string[] = []; const heredocs: { delimiter: string; stripTabs: boolean }[] = [];
+  let buf = "", quote: string | undefined, depth = 0, i = 0;
   const flush = () => { const statement = buf.trim(); if (statement !== "") out.push(statement); buf = ""; };
   while (i < command.length) {
     const ch = command[i]!;
@@ -49,7 +88,15 @@ function splitStatements(command: string): string[] {
     if (ch === ")" || ch === "}") { if (depth > 0) depth--; buf += ch; i++; continue; }
     if (depth > 0) { buf += ch; i++; continue; }
     if (ch === "#" && (buf === "" || /\s$/.test(buf))) { while (i < command.length && command[i] !== "\n") i++; continue; }
-    if (ch === "\n" || ch === ";") { flush(); i++; continue; }
+    if (ch === "<" && command[i + 1] === "<" && command[i + 2] !== "<") {
+      const stripTabs = command[i + 2] === "-", operator = stripTabs ? "<<-" : "<<", word = heredocDelimiter(command, i + operator.length);
+      if (word !== undefined) { heredocs.push({ delimiter: word.delimiter, stripTabs }); buf += operator + word.raw; i = word.next; continue; }
+    }
+    if (ch === "\n" || ch === ";") {
+      flush(); i++;
+      if (ch === "\n") for (const heredoc of heredocs.splice(0)) i = skipHeredocBody(command, i, heredoc.delimiter, heredoc.stripTabs);
+      continue;
+    }
     if (ch === "&" || ch === "|") { flush(); i += command[i + 1] === ch || (ch === "|" && command[i + 1] === "&") ? 2 : 1; continue; }
     buf += ch; i++;
   }

@@ -53,6 +53,21 @@ describe("F1 fold classifier (R1.1–R1.3)", () => {
     expect(classifyToolEvent({ name: "Bash", input: { command: "cat $(ls | head -1)" } })).toEqual({ collapsible: true, kind: "read" });
     expect(classifyToolEvent({ name: "Bash", input: { command: "(ls; cat a)" } })).toEqual({ collapsible: false });
   });
+  it("drops a heredoc body instead of reading statements out of it", () => {
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<EOF\npayload with npm test words\nEOF" } })).toEqual({ collapsible: true, kind: "read" });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<-EOF\n\tnpm test\n\tEOF" } })).toEqual({ collapsible: true, kind: "read" });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<'EOF'\n$x npm test\nEOF" } })).toEqual({ collapsible: true, kind: "read" });
+  });
+  it("keeps splitting after a heredoc terminator, and swallows an unterminated body", () => {
+    // `grep` still lands as its own statement, so read AND search are both set and search wins the kind.
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<EOF\nbody\nEOF\ngrep x f" } })).toEqual({ collapsible: true, kind: "search" });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<EOF\nbody\nEOF\nnpm test" } })).toEqual({ collapsible: false });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<EOF\nbody" } })).toEqual({ collapsible: true, kind: "read" });
+  });
+  it("never mistakes a herestring for a heredoc", () => {
+    expect(classifyToolEvent({ name: "Bash", input: { command: "wc -l <<<hi; npm test" } })).toEqual({ collapsible: false });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "wc -l <<<hi" } })).toEqual({ collapsible: true, kind: "read" });
+  });
   it("drops comments and blank statements", () => {
     expect(classifyToolEvent({ name: "Bash", input: { command: "# look around\nls -la\n" } })).toEqual({ collapsible: true, kind: "list" });
   });
