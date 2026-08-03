@@ -76,6 +76,27 @@ describe("ctrl+- canonicalizes to ctrl+_", () => {
     expect(spec("-").name).toBe("-");
     expect(spec("alt+-").name).toBe("-");
   });
+  it("the shift+ spellings collapse too — the parser reports \\x1f with shift FALSE, so a ctrl+shift+- binding must not be dead", () => {
+    expect(spec("ctrl+shift+-")).toEqual(spec("ctrl+_"));
+    expect(spec("ctrl+shift+_")).toEqual(spec("ctrl+_"));
+    expect(eventMatches(ev("_", { ctrl: true }), spec("ctrl+shift+-"))).toBe(true);
+  });
+});
+
+describe("hostile spec tokens", () => {
+  it("prototype-chain words are not modifiers and never resolve through Object.prototype", () => {
+    expect(parseKeySpec("constructor+p")).toBeNull();
+    expect(parseKeySpec("toString+p")).toBeNull();
+  });
+  it("__proto__ as a name stays a harmless string, not an object", () => {
+    const k = spec("__proto__");
+    expect(typeof k.name).toBe("string");
+    expect(specKey(k)).toBe("__proto__");
+  });
+  it("a leading + glued to a name is garbage, not a key", () => {
+    expect(parseKeySpec("+p")).toBeNull();
+    expect(parseKeySpec("ctrl++p")).toBeNull();
+  });
 });
 
 describe("an uppercase letter implies shift", () => {
@@ -127,6 +148,8 @@ describe("chords split on whitespace", () => {
 });
 
 describe("eventMatches is strict on name + all four modifiers", () => {
+  it("a shift+g event does not fire a plain g binding (the brief's literal direction)", () =>
+    expect(eventMatches(ev("g", { shift: true }), spec("g"))).toBe(false));
   it("every modifier must agree", () => {
     expect(eventMatches(ev("p", { ctrl: true }), spec("ctrl+p"))).toBe(true);
     expect(eventMatches(ev("p", { ctrl: true, alt: true }), spec("ctrl+p"))).toBe(false);

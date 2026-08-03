@@ -14,17 +14,18 @@ export interface KeySpec { name: string; ctrl: boolean; alt: boolean; shift: boo
 type ModName = "ctrl" | "alt" | "shift" | "super";
 /** Modifier words. `meta`/`opt`/`option` fold into `alt` (the parser does not distinguish them); `cmd`/`command`/
  *  `win` fold into `super` (the xterm bit-8 modifier), which stays spellable as itself. */
-const MODIFIERS: Record<string, ModName> = {
+const MODIFIERS: Record<string, ModName> = Object.assign(Object.create(null), {
   ctrl: "ctrl", control: "ctrl",
   alt: "alt", meta: "alt", opt: "alt", option: "alt",
   shift: "shift",
   super: "super", cmd: "super", command: "super", win: "super",
-};
+});
 /** Name spellings that are not already the parser's name. Anything else passes through as written (lowercased) —
- *  tables legitimately name keys the parser never emits, e.g. the reserved `capslock`. */
-const NAMES: Record<string, string> = {
+ *  tables legitimately name keys the parser never emits, e.g. the reserved `capslock`. Null-prototype (like
+ *  MODIFIERS) so `constructor+p` / `__proto__` cannot resolve through Object.prototype into a bogus spec. */
+const NAMES: Record<string, string> = Object.assign(Object.create(null), {
   esc: "escape", return: "enter", del: "delete", "↑": "up", "↓": "down", "←": "left", "→": "right",
-};
+});
 
 /** Split a spec on `+`, treating a `+` that opens a token as the literal plus key (`ctrl++` → ctrl and `+`).
  *  A trailing separator therefore yields an empty final token, which the caller rejects as garbage. */
@@ -55,9 +56,12 @@ export function parseKeySpec(spec: string): KeySpec | null {
   }
   // A single uppercase letter is shorthand for shift+<letter>, matching how the parser reports one: `ctrl+B` and
   // `ctrl+shift+b` are the same key. Longer names are just case-insensitive (`ESC` is not shift+escape).
+  if (raw.length > 1 && raw.includes("+")) return null;   // a leading `+` glued to a name ("+p") is no keyboard key
   if (raw.length === 1 && raw >= "A" && raw <= "Z") { out.name = raw.toLowerCase(); out.shift = true; }
   else { const lower = raw.toLowerCase(); out.name = NAMES[lower] ?? lower; }
-  if (out.ctrl && out.name === "-") out.name = "_";   // one byte (\x1f) for both; the parser calls it `_`
+  // ctrl+- / ctrl+_ / their shift+ spellings are all one byte (\x1f), which the parser reports as ctrl+`_` with
+  // shift FALSE — canonicalize all four so upstream's undo aliases fire instead of being silently dead.
+  if (out.ctrl && (out.name === "-" || out.name === "_")) { out.name = "_"; out.shift = false; }
   return out;
 }
 
