@@ -1185,6 +1185,19 @@ behind those rows — all forty `K1`–`K40` research rows, re-scored — sits a
 
 ## Revision Notes
 
+- 2026-08-04 — **Census 01#153 corrected during Task 7 review: the Agent `Done (…)` row is a `⎿`
+  gutter row, not a bulleted line.** Direct bundle read of `Vha` (L429640–429654): all three Agent
+  result rows — `Cloud agent launched`, `Backgrounded agent`, and the completed `Done (…)` — render
+  inside `Cr height:1` (the standard result gutter), the completed one wrapping its synthetic
+  message with `shouldShowDot: false` and a SIBLING dim `  (ctrl+o to expand)` line (compact only).
+  The census's "rendered with the standard ⏺ bullet, not as a ⎿ row" was wrong; the fix round also
+  verified upstream's mandatory fraction digit in `_d` at ≥1000 (`12.0k`, never `12k`) and its
+  no-fabrication rule (`status !== "completed"` → null — never a `Done (0 tool uses)`). Two
+  deliberate divergences recorded: we UPGRADE `Backgrounded agent` to `Done (…)` when a
+  `task_notification` arrives pre-publication (upstream keeps the launch row; ours is strictly more
+  honest), and our detail projection orders Done-then-nested where upstream's transcript mode orders
+  prompt → nested → content → Done (left for Task 10 triage with the running-branch/short-terminal
+  gaps).
 - 2026-08-04 — **F3 acceptance #2's Write clause corrected during Task 6 review.** The census
   (01#58–62) shows upstream's DEFAULT create render is the 10-line highlighted preview alone with a
   bare `… +N lines` marker; `Wrote N lines` belongs to the condensed/scratchpad styles this clone

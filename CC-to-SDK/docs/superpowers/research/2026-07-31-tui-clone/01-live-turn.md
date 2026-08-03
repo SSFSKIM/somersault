@@ -154,8 +154,13 @@ Errors: `File not found` or `Error searching files`.
 
 The `completed` text is assembled at 429620:
 `` `Done (${[l === 1 ? "1 tool use" : `${l} tool uses`, _d(c) + " tokens", ra(a)].join(" · ")})` ``
-— so `Done (7 tool uses · 24.1k tokens · 1m 12s)`. It is injected as a synthetic assistant message
-and rendered with the standard `⏺` bullet, not as a `⎿` row.
+— so `Done (7 tool uses · 24.1k tokens · 1m 12s)`.
+**CORRECTED 2026-08-04 (F3 Task 7 review, direct bundle read of `Vha` L429640–429654):** the earlier
+claim here that this is "rendered with the standard `⏺` bullet, not as a `⎿` row" is WRONG. All three
+result rows (`remote_launched`, `async_launched`, `completed`) render inside `Cr height:1` — the
+standard `⎿` gutter — and the completed one wraps its synthetic message with `shouldShowDot: false`
+(no bullet), followed by a SIBLING dim `  (ctrl+o to expand)` line, compact mode only. Also verified:
+`_d` sets `minimumFractionDigits: 1` at ≥1000 (`12.0k`), and `status !== "completed"` returns null.
 
 Progress, while the agent runs (`RXe`, 429702):
 - no progress messages yet → dim `Initializing…` (`KVp`, 429822)
