@@ -4,7 +4,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { tmpdir } from "node:os";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 // F2 task 6: ChatApp/ChatComposer read stdin through <KeymapProvider> now, not `useInput` — rendered bare
 // they have no input path at all, so every render here goes through the provider wrapper.
@@ -21,6 +21,13 @@ import { createNoticeBridge } from "../../src/tui/chatMain.js";
 // test, so a /theme test that previews or persists a theme must not leak it into a later test in this
 // file — reset after every test, not just the theme-specific ones.
 afterEach(() => setTheme("auto"));
+
+// Every fake home this file makes, removed after the test that made it — the /keybindings tests inject one so
+// the REAL ~/.claude is never touched, and a leaked mkdtemp dir per run is still litter (matches the
+// dirs/afterEach pattern in keys-user-bindings.test.ts).
+const homes: string[] = [];
+const tmpHome = (): string => { const d = mkdtempSync(join(tmpdir(), "ccx-kb-home-")); homes.push(d); return d; };
+afterEach(() => { for (const d of homes.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 const frame = (f: () => string | undefined) => f() ?? "";
 async function waitFor(cond: () => boolean, timeout = 2000) {
@@ -1429,7 +1436,7 @@ describe("<ChatApp>", () => {
   // assertion below reads the frame with escapes stripped and whitespace runs collapsed.
   const flat = (lastFrame: () => string | undefined) => frame(lastFrame).replace(/\x1b\[[0-9;]*m/g, "").replace(/\s+/g, " ");
   it("/keybindings opens ~/.claude/keybindings.json in $VISUAL/$EDITOR, seeding the starter file first", async () => {
-    const home = mkdtempSync(join(tmpdir(), "ccx-kb-home-"));
+    const home = tmpHome();
     const written: [string, string][] = [];
     const openEditor = vi.fn((_file: string, prepare: () => void) => { prepare(); return "opened" as const });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
@@ -1445,6 +1452,27 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");           // the read-only overlay is the FALLBACK, not the result
   });
 
+  // The fresh-machine path, and the one case the recorder-fake above cannot catch: `~/.claude` does not exist
+  // yet (the session connects lazily, so a first-launch `/keybindings` can beat everything that would create
+  // it). readFile/writeFile are the REAL ones here on purpose — without a mkdir the seed write throws ENOENT
+  // into the dispatcher's catch and the transcript shows a raw errno instead of an editor. `home` is a
+  // mkdtemp dir, so every real fs call this test makes stays inside it.
+  it("/keybindings creates ~/.claude before seeding, on a home that has no .claude yet", async () => {
+    const home = tmpHome();
+    const openEditor = vi.fn((_file: string, prepare: () => void) => { prepare(); return "opened" as const });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
+      deps={{ home, openEditor }} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    expect(existsSync(join(home, ".claude"))).toBe(false);                  // the precondition the bug needs
+    stdin.write("/keybindings"); await waitFor(() => frame(lastFrame).includes("/keybindings"));
+    stdin.write("\r");
+    await waitFor(() => flat(lastFrame).includes("saved changes apply live"));
+    expect(flat(lastFrame)).not.toContain("ENOENT");
+    const file = join(home, ".claude", "keybindings.json");
+    expect(existsSync(file)).toBe(true);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ bindings: [] });
+  });
+
   it("a noticeBridge notification reaches the transcript — queued BEFORE mount and pushed after", async () => {
     const bridge = createNoticeBridge();
     bridge.notify("⚠ keybindings.json: 1 problem");                        // the launch case: no transcript exists yet
@@ -1455,7 +1483,7 @@ describe("<ChatApp>", () => {
   });
 
   it("/keybindings falls back to the read-only keymap when neither $VISUAL nor $EDITOR is set", async () => {
-    const home = mkdtempSync(join(tmpdir(), "ccx-kb-home-"));
+    const home = tmpHome();
     const written: string[] = [];
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
       deps={{ home, openEditor: () => "no-editor", readFile: () => null, writeFile: (p) => { written.push(p); } }} />);

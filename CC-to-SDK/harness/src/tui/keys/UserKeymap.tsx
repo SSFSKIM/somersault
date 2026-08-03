@@ -28,12 +28,25 @@ export function UserKeymap({ file, onIssues, deps, children }: {
 }): React.ReactElement {
   // Loaded during the FIRST render, not in an effect: the very first keypress can arrive before passive effects
   // flush, and it must already resolve against the user's table rather than the bare defaults.
+  // NB for whoever makes `file` configurable: this ref-guard makes the first load once-per-MOUNT, and the effect
+  // below only re-*watches* on a `file` change — a new path would keep the old file's layers and issues until its
+  // first save. Re-load here (or key the component on `file`) at the same time.
   const first = useRef<UserBindingsResult>(); if (!first.current) first.current = (deps?.load ?? loadUserBindings)(file);
   const [layers, setLayers] = useState<readonly ContextBindings[]>(first.current.layers);
   const onIssuesRef = useRef(onIssues); onIssuesRef.current = onIssues;
   const depsRef = useRef(deps); depsRef.current = deps;
+  // The last issue set we reported, as a signature. Autosave editors re-save on every pause, so a standing
+  // warning the user has chosen to live with would otherwise append the same block to the transcript on each
+  // one. A reload that CHANGES the set reports; a reload that clears it resets the memo (nothing printed), so
+  // the same problem reintroduced later is announced again.
+  const reportedRef = useRef("");
   useEffect(() => {
-    const report = (issues: readonly BindingIssue[]) => { if (issues.length > 0) onIssuesRef.current?.(issues); };
+    const report = (issues: readonly BindingIssue[]) => {
+      const sig = JSON.stringify(issues.map((i) => [i.type, i.detail]));
+      if (sig === reportedRef.current) return;
+      reportedRef.current = sig;
+      if (issues.length > 0) onIssuesRef.current?.(issues);
+    };
     report(first.current!.issues);                        // the startup file's problems, reported once the transcript exists
     const watch = depsRef.current?.watch ?? ((f: string, cb: (r: UserBindingsResult) => void) => watchUserBindings(f, cb));
     return watch(file, (result) => { setLayers(result.layers); report(result.issues); });

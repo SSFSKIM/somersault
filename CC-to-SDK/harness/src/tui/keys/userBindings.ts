@@ -132,8 +132,19 @@ function readEntries(bindings: unknown, context: string, issues: BindingIssue[])
   }
   const out: [string, unknown][] = [];
   bindings.forEach((entry, i) => {
-    if (isRecord(entry) && typeof entry.key === "string") { out.push([entry.key, entry.action ?? null]); return; }
-    issues.push({ type: "parse_error", detail: `${context}: binding ${i + 1} has no "key" string — binding ignored` });
+    if (!isRecord(entry) || typeof entry.key !== "string") {
+      issues.push({ type: "parse_error", detail: `${context}: binding ${i + 1} has no "key" string — binding ignored` });
+      return;
+    }
+    // A MISSING `action` is a half-typed entry, not an unbind. `entry.action ?? null` would have turned the
+    // plausible typo `{ "key": "ctrl+g" }` into a silent unbind of ctrl+g — the loudest outcome from the
+    // quietest mistake. Only an EXPLICIT null unbinds, which is what the object map already requires. Own
+    // property, not `in`: a file naming "constructor" must not read an action off Object.prototype.
+    if (!Object.prototype.hasOwnProperty.call(entry, "action")) {
+      issues.push({ type: "invalid_action", detail: `${context} ${JSON.stringify(entry.key)}: binding ${i + 1} has no "action" — binding ignored (write "action": null to unbind)` });
+      return;
+    }
+    out.push([entry.key, entry.action]);
   });
   return out;
 }

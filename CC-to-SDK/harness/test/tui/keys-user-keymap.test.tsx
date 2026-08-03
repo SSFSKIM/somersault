@@ -85,6 +85,55 @@ describe("<UserKeymap>", () => {
     h.unmount();
   });
 
+  // An editor with autosave reloads the file on every keystroke-pause. A user who has decided to live with one
+  // `suspicious_key` warning must not get that warning appended to the transcript again on each of them — the
+  // report is deduped against the LAST issue set, not suppressed forever.
+  it("does not re-report an unchanged issue set across reloads, but reports a changed one", async () => {
+    const onIssues = vi.fn();
+    const { state, watch } = fakeWatch();
+    const standing: BindingIssue[] = [{ type: "suspicious_key", detail: "Chat \"ctrl+j\": unknown key name" }];
+    const h = render(
+      <UserKeymap file="/fake/keybindings.json" onIssues={onIssues} deps={{ load: () => result([], standing), watch }}>
+        <Probe actions={{}} />
+      </UserKeymap>,
+    );
+    await tick();
+    expect(onIssues).toHaveBeenCalledTimes(1);
+    state.push!(result([], [{ ...standing[0] }]));                 // saved again, same problem — a fresh object, same content
+    await tick();
+    state.push!(result([], [{ ...standing[0] }]));
+    await tick();
+    expect(onIssues).toHaveBeenCalledTimes(1);                     // still just the one report
+    const changed: BindingIssue[] = [...standing, { type: "duplicate", detail: "Chat \"ctrl+g\" is bound twice" }];
+    state.push!(result([], changed));                              // a NEW problem appeared — say so
+    await tick();
+    expect(onIssues).toHaveBeenCalledTimes(2);
+    expect(onIssues.mock.calls[1][0]).toEqual(changed);
+    h.unmount();
+  });
+
+  // The transient case the dedup must not swallow: fix the file, break it the same way again, and the warning
+  // has to come back — a clean reload RESETS the memo rather than leaving the old set standing.
+  it("reports the same issues again after a clean reload in between", async () => {
+    const onIssues = vi.fn();
+    const { state, watch } = fakeWatch();
+    const broken: BindingIssue[] = [{ type: "parse_error", detail: "not valid JSON: Unexpected token" }];
+    const h = render(
+      <UserKeymap file="/fake/keybindings.json" onIssues={onIssues} deps={{ load: () => result([], broken), watch }}>
+        <Probe actions={{}} />
+      </UserKeymap>,
+    );
+    await tick();
+    expect(onIssues).toHaveBeenCalledTimes(1);
+    state.push!(result([]));                                       // saved mid-edit, now valid — nothing to say
+    await tick();
+    expect(onIssues).toHaveBeenCalledTimes(1);
+    state.push!(result([], [{ ...broken[0] }]));                   // broken again the same way
+    await tick();
+    expect(onIssues).toHaveBeenCalledTimes(2);
+    h.unmount();
+  });
+
   it("says nothing when the file is clean", async () => {
     const onIssues = vi.fn();
     const { state, watch } = fakeWatch();

@@ -146,6 +146,26 @@ describe("validation: each rule drops ONLY the offending entry", () => {
     expect(types(issues)).toEqual(["invalid_action", "invalid_action"]);
     expect(layers).toEqual([]);
   });
+  // The array form's own hole: `{ "key": "ctrl+g" }` is a plausible half-typed entry, and treating a MISSING
+  // `action` as null would silently unbind ctrl+g — the loudest possible outcome from the quietest typo. Only an
+  // EXPLICIT null means unbind, in both inner forms.
+  it("invalid_action: an array entry with no `action` property is a typo, not an unbind", () => {
+    const { layers, issues } = loadUserBindings(fileWith({ bindings: [
+      { context: "Chat", bindings: [{ key: "ctrl+g" }, { key: "alt+g", action: "chat:externalEditor" }] },
+    ] }));
+    expect(types(issues)).toEqual(["invalid_action"]);
+    expect(issues[0].detail).toContain("ctrl+g");
+    expect(layers).toEqual([{ context: "Chat", bindings: { "alt+g": "chat:externalEditor" } }]);
+    expect(resolve(layers, ctrl("g"), ["Chat", "Global"])).not.toEqual({ type: "unbound" });   // NOT unbound behind our back
+  });
+  it("an EXPLICIT null action still unbinds, in the array form as well as the object map", () => {
+    const arr = loadUserBindings(fileWith({ bindings: [{ context: "Chat", bindings: [{ key: "ctrl+o", action: null }] }] }));
+    const map = loadUserBindings(fileWith({ bindings: [{ context: "Chat", bindings: { "ctrl+o": null } }] }));
+    expect(arr.issues).toEqual([]);
+    expect(map.issues).toEqual([]);
+    expect(arr.layers).toEqual(map.layers);
+    expect(resolve(arr.layers, ctrl("o"), ["Chat", "Global"])).toEqual({ type: "unbound" });
+  });
   it("duplicate: the SAME key under two spellings in one block — later wins, issue recorded", () => {
     const { layers, issues } = loadUserBindings(fileWith({ bindings: [
       { context: "Chat", bindings: [{ key: "ctrl+-", action: "chat:clearInput" }, { key: "ctrl+_", action: "chat:cancel" }] },

@@ -4,9 +4,9 @@
 // only. Owns the transcript, the streaming turn, the decision queue, mode switching (Tab ladder + host
 // truth via state events), the bg-task panel, and idempotent teardown.
 import { useEffect, useRef, useState } from "react";
-import { writeFileSync as realWriteFileSync, readFileSync as realReadFileSync } from "node:fs";
+import { mkdirSync, writeFileSync as realWriteFileSync, readFileSync as realReadFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve as resolvePath } from "node:path";
+import { dirname, resolve as resolvePath } from "node:path";
 import type { ChatSession } from "../session/chatSession.js";
 import { hasDecisionFeed, hasBgTasks, hasSessionEvents, hasRewind, hasSettingsOps } from "../session/chatSession.js";
 import type { RewindAnchor, RewindScope, RewindDryRun } from "../session/chatSession.js";
@@ -627,7 +627,12 @@ export function useChat(
         // W3 divergence line ("customization isn't supported yet") is retired — it no longer holds.
         case "keybindings": {
           const file = userBindingsPath({ home });
-          const result = openEditor(file, () => { if (readFile(file) === null) writeFile(file, STARTER_KEYBINDINGS); });
+          // mkdir -p BEFORE the seed write, the same way prefs.ts and settingsFile.ts do it: on a fresh
+          // machine `~/.claude` may not exist at all (the session connects lazily, so a first-launch
+          // /keybindings beats everything that would create it) and a bare writeFileSync would throw ENOENT
+          // into the catch below — a raw errno where the editor should have been. Not injected: `home` above
+          // already is, so a test's mkdir lands in its own mkdtemp dir.
+          const result = openEditor(file, () => { if (readFile(file) === null) { mkdirSync(dirname(file), { recursive: true }); writeFile(file, STARTER_KEYBINDINGS); } });
           if (result === "no-editor") { notice(`set $VISUAL or $EDITOR to edit ${file} — showing the built-in keymap instead`); openShortcuts(); break; }
           if (result === "failed") { notice(`✗ couldn't open ${file} in your editor`); break; }
           notice(`${file} — saved changes apply live`);

@@ -42,11 +42,11 @@ export function openInEditor(file: string, io: EditorIO = {}): "no-editor" | "op
 export function editExternal(text: string, io: EditorIO = {}): string | null {
   const spawn = io.spawn ?? spawnSync;
   const setRaw = io.setRaw ?? ((on: boolean) => { try { if (process.stdin.isTTY) process.stdin.setRawMode(on); } catch { /* no tty */ } });
-  // `||`, not `??`: an exported-but-EMPTY VISUAL/EDITOR means "unset" in every shell, and `??` would
-  // accept it — leaving `cmd` undefined so spawnSync throws ERR_INVALID_ARG_TYPE straight into ink's
-  // useInput handler (ChatComposer calls this with no try/catch, so that crashes the whole REPL).
-  // The destructuring default catches the residue: a whitespace-only value splits to no tokens at all.
-  const [cmd = "vi", ...args] = (io.editorCmd || process.env.VISUAL || process.env.EDITOR || "vi").split(/\s+/).filter(Boolean);
+  // One resolver, shared with openInEditor — including its `||`-not-`??` handling of an exported-but-EMPTY
+  // VISUAL/EDITOR. That case matters here specifically: an undefined `cmd` makes spawnSync throw
+  // ERR_INVALID_ARG_TYPE straight into ink's useInput handler (ChatComposer calls this with no try/catch, so
+  // it crashes the whole REPL). The `vi` default is this function's alone — openInEditor deliberately has none.
+  const [cmd, ...args] = editorArgv(io) ?? ["vi"];
   const dir = mkdtempSync(join(tmpdir(), "ccx-edit-"));
   const file = join(dir, "PROMPT.md");
   writeFileSync(file, text);
