@@ -310,7 +310,10 @@ describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
     // The golden's per-cell story for `⏺ Reading 1 file…`: glyph dim+grey, " Reading " dim, "1" dim+bold,
     // " file…" PLAIN. Ink drops the run's own `\x1b[2m` as a no-op — the leader already opened dim.
     expect(activeFrame).toContain("\x1b[38;2;153;153;153m\x1b[2m⏺\x1b[39m Reading \x1b[1m1\x1b[22m file…");
-    expect(activeFrame).not.toContain("\x1b[22m\x1b[2m file");                   // the dim is NOT re-opened after the count
+    // The dim is NOT re-opened after the count. Regex, not a literal: under a re-open sabotage Ink
+    // NORMALIZES `\x1b[22m\x1b[2m` to a bare `\x1b[2m` (review finding — the literal form was unmatchable
+    // and the guard vacuous), so match any dim-open between the count's closer and the tail.
+    expect(activeFrame).not.toMatch(/1(?:\x1b\[22m)?\x1b\[2m file/);
     const settled = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
     // Settled keeps the grey through the tail — `\x1b[22m` clears faint, not colour — exactly as upstream's
     // outer `<Text color dimColor>` does.
