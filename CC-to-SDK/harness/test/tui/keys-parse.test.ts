@@ -87,10 +87,16 @@ describe("escape & meta", () => {
   });
 });
 
+/** The full four-modifier record, so a spuriously-set extra modifier fails the assertion. */
+const mods = (m: { ctrl?: boolean; alt?: boolean; shift?: boolean; super?: boolean } = {}) =>
+  ({ ctrl: !!m.ctrl, alt: !!m.alt, shift: !!m.shift, super: !!m.super });
+
 describe("CSI-u (kitty/iTerm2)", () => {
-  it.each<[string, string, Record<string, boolean>]>([["\x1b[13;2u","enter",{shift:true}],["\x1b[13;5u","enter",{ctrl:true}],
-           ["\x1b[98;6u","b",{ctrl:true,shift:true}],["\x1b[107;9u","k",{super:true}],["\x1b[112;9u","p",{super:true}]])
-    ("%s", (b, n, mods) => expect(one(b)).toMatchObject({ kind: "key", name: n, ...mods }));
+  it.each<[string, string, Record<string, boolean>]>([["\x1b[13;2u","enter",mods({shift:true})],["\x1b[13;5u","enter",mods({ctrl:true})],
+           ["\x1b[98;6u","b",mods({ctrl:true,shift:true})],["\x1b[107;9u","k",mods({super:true})],["\x1b[112;9u","p",mods({super:true})]])
+    ("%s", (b, n, m) => expect(one(b)).toMatchObject({ kind: "key", name: n, ...m }));
+  it("an out-of-range CSI-u codepoint is ignored, not thrown on", () =>
+    expect(one("\x1b[9999999u")).toMatchObject({ kind: "ignored", reason: "unknown-sequence" }));
   it("unmodified CSI-u and the named codes", () => {
     expect(one("\x1b[97u")).toMatchObject({ name: "a", ctrl: false, shift: false, alt: false, super: false });
     expect(one("\x1b[9;5u")).toMatchObject({ name: "tab", ctrl: true });
@@ -112,6 +118,34 @@ describe("non-key sequences never leak as text", () => {
     expect(one("\x1b[M\x20")).toMatchObject({ kind: "ignored", reason: "mouse", raw: "\x1b[M\x20" }));
   it("a stray paste close marker is ignored, not inserted", () =>
     expect(one("\x1b[201~")).toMatchObject({ kind: "ignored", reason: "unknown-sequence" }));
+  it("an unrecognised private-parameter CSI stops at its final byte and does not eat the next key", () => {
+    const ev = parseBytes("\x1b[?1;2cA");                                   // a DA reply arriving mid-typing
+    expect(ev.map(e => e.kind)).toEqual(["ignored", "key"]);
+    expect(ev[0]).toMatchObject({ reason: "unknown-sequence", raw: "\x1b[?1;2c" });
+    expect(ev[1]).toMatchObject({ name: "a", shift: true });
+  });
+  it("a CSI with intermediate bytes (a DECRQM mode report) stops at its final byte too", () => {
+    const ev = parseBytes("\x1b[?2004;1$y\r");
+    expect(ev.map(e => e.kind)).toEqual(["ignored", "key"]);
+    expect(ev[0]).toMatchObject({ reason: "unknown-sequence", raw: "\x1b[?2004;1$y" });
+    expect(ev[1]).toMatchObject({ name: "enter" });
+  });
+  it("an OSC string is consumed through its BEL terminator, not leaked as alt+] plus text", () => {
+    const ev = parseBytes("\x1b]8;;http://x\x07k");
+    expect(ev.map(e => e.kind)).toEqual(["ignored", "key"]);
+    expect(ev[0]).toMatchObject({ reason: "unknown-sequence", raw: "\x1b]8;;http://x\x07" });
+    expect(ev[1]).toMatchObject({ name: "k" });
+  });
+  it("a DCS string is consumed through its ST terminator, not leaked as alt+p plus text", () => {
+    const ev = parseBytes("\x1bP1$r\x1b\\q");
+    expect(ev.map(e => e.kind)).toEqual(["ignored", "key"]);
+    expect(ev[0]).toMatchObject({ reason: "unknown-sequence", raw: "\x1bP1$r\x1b\\" });
+    expect(ev[1]).toMatchObject({ name: "q" });
+  });
+  it.each([["\x1b_payload\x1b\\","APC"],["\x1b^payload\x1b\\","PM"]])("%s (%s) is ignored whole", (b) =>
+    expect(one(b)).toMatchObject({ kind: "ignored", reason: "unknown-sequence", raw: b }));
+  it("a string sequence with no terminator in this chunk takes the rest of the chunk", () =>
+    expect(one("\x1b]0;title-with-no-st")).toMatchObject({ kind: "ignored", reason: "unknown-sequence" }));
   it("an X10 report followed by text does not swallow the text", () => {
     const ev = parseBytes("\x1b[M\x20\x2a\x2ahi");
     expect(ev.map(e => e.kind)).toEqual(["ignored", "text"]);
@@ -124,6 +158,14 @@ describe("text, paste, chunking", () => {
     expect(one("a")).toMatchObject({ kind: "key", name: "a" });
     expect(one("G")).toMatchObject({ kind: "key", name: "g", shift: true });
     expect(one("abc")).toMatchObject({ kind: "text", text: "abc" });
+  });
+  it("a lone space is name:\"space\", the same spelling ctrl+space and CSI-u 32 use", () => {
+    expect(one(" ")).toMatchObject({ kind: "key", name: "space", ctrl: false, alt: false, shift: false, super: false });
+    expect(one("\x1b ")).toMatchObject({ kind: "key", name: "space", alt: true });
+  });
+  it("a space inside a text run stays a literal space", () => {
+    const e = one("a b");
+    expect(e).toMatchObject({ kind: "text", text: "a b" });
   });
   it("bracketed-paste markers are stripped; payload is one text event", () =>
     expect(one("\x1b[200~hello\nworld\x1b[201~")).toMatchObject({ kind: "text", text: "hello\nworld" }));

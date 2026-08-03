@@ -9,13 +9,13 @@
 //
 // One chunk = one call. Ink has no escape timeout and neither do we (§1.10): a trailing lone ESC is `escape`,
 // and a sequence torn across a read boundary parses as whatever each half looks like on its own.
-import type { InputEvent, KeyEvent } from "./types.js";
+import type { IgnoredEvent, InputEvent, KeyEvent } from "./types.js";
 
 interface Mods { ctrl?: boolean; alt?: boolean; shift?: boolean; super?: boolean }
 
 const key = (name: string, raw: string, m: Mods = {}): KeyEvent =>
   ({ kind: "key", name, ctrl: !!m.ctrl, alt: !!m.alt, shift: !!m.shift, super: !!m.super, raw });
-const ignored = (reason: "mouse" | "focus" | "unknown-sequence", raw: string): InputEvent => ({ kind: "ignored", reason, raw });
+const ignored = (reason: IgnoredEvent["reason"], raw: string): IgnoredEvent => ({ kind: "ignored", reason, raw });
 
 /** xterm's `1;N` modifier param: N-1 is a bitfield. */
 const decodeMods = (param?: string): Mods => {
@@ -28,8 +28,11 @@ const decodeMods = (param?: string): Mods => {
  *  latin1 stdin encoding (the P86 §1.8 fix for lossless bytes) survives as one text run instead of splitting. */
 const isPrintable = (code: number): boolean => code >= 0x20 && code !== 0x7f;
 
-/** A literal character as a key: name is the lowercased char, uppercase implies shift. */
+/** A literal character as a key: name is the lowercased char, uppercase implies shift. A lone space is named
+ *  `space`, not `" "` — \x00 (ctrl+space) and CSI-u 32 already spell it that way, and six upstream bindings are
+ *  written `space`, so the one physical key must not carry two names. Spaces inside a text run stay literal. */
 const printableKey = (ch: string, raw: string, m: Mods = {}): KeyEvent => {
+  if (ch === " ") return key("space", raw, m);
   const lower = ch.toLowerCase();
   return key(lower, raw, { ...m, shift: !!m.shift || lower !== ch });
 };
@@ -45,6 +48,10 @@ const SS3: Record<string, string> = { A: "up", B: "down", C: "right", D: "left",
 /** CSI-u codepoints that name a key rather than insert a character. */
 const CSIU_NAMED: Record<number, string> = { 9: "tab", 13: "enter", 27: "escape", 32: "space", 127: "backspace" };
 
+/** ESC-introduced *string* sequences (payload up to a terminator, never a key press). Without these, a terminal
+ *  reply like an OSC 8 hyperlink or a DCS DECRQM answer parses as alt+] / alt+p followed by its payload as text. */
+const STRING_INTRODUCER: Record<string, "osc" | "st-only"> = { "]": "osc", P: "st-only", _: "st-only", "^": "st-only" };
+const ST = "\x1b\\";
 const PASTE_END = "\x1b[201~";
 const CSI_RE = /^\x1b\[([\d;]*)([A-Za-z~])/;
 const SGR_MOUSE_RE = /^\x1b\[<[\d;]*[Mm]/;
@@ -84,6 +91,7 @@ function parseEscape(s: string, i: number, out: InputEvent[]): number {
   if (next === undefined || next === "\x1b") { out.push(key("escape", s.slice(i, i + 1))); return 1; }
   if (next === "[") return parseCsi(s, i, out);
   if (next === "O") return parseSs3(s, i, out);
+  if (next in STRING_INTRODUCER) return parseStringSeq(s, i, out);
   if (next === "\r") { out.push(key("enter", s.slice(i, i + 2), { shift: true })); return 2; }   // /terminal-setup's shift+enter
   if (next === "\x7f") { out.push(key("backspace", s.slice(i, i + 2), { alt: true })); return 2; }
   if (isPrintable(s.charCodeAt(i + 1))) { out.push(printableKey(next, s.slice(i, i + 2), { alt: true })); return 2; }
@@ -95,12 +103,12 @@ function parseCsi(s: string, i: number, out: InputEvent[]): number {
   const rest = s.slice(i);
   if (rest[2] === "<") {                                    // SGR mouse (?1006h) — the only mouse encoding we ask for
     const m = SGR_MOUSE_RE.exec(rest);
-    if (!m) { out.push(ignored("unknown-sequence", rest)); return rest.length; }
+    if (!m) return skipCsi(rest, out);
     out.push(ignored("mouse", m[0])); return m[0].length;
   }
   if (rest[2] === "M") { const raw = rest.slice(0, 6); out.push(ignored("mouse", raw)); return raw.length; }  // X10: 3 payload bytes
   const m = CSI_RE.exec(rest);
-  if (!m) { out.push(ignored("unknown-sequence", rest)); return rest.length; }   // truncated at the chunk boundary
+  if (!m) return skipCsi(rest, out);
   const [raw, params, final] = m;
   const parts = params.split(";");
   if (final === "~") {
@@ -113,10 +121,11 @@ function parseCsi(s: string, i: number, out: InputEvent[]): number {
   }
   if (final === "u") {                                      // kitty/iTerm2 CSI-u; Ink 5 has no support at all
     const code = Number(parts[0]);
-    if (parts[0] === "" || !Number.isFinite(code)) { out.push(ignored("unknown-sequence", raw)); return raw.length; }
+    // The upper bound keeps `fromCodePoint` from throwing on a garbage/oversized param — this parser never throws.
+    if (parts[0] === "" || !Number.isInteger(code) || code > 0x10ffff) { out.push(ignored("unknown-sequence", raw)); return raw.length; }
     const mods = decodeMods(parts[1]);
     const named = CSIU_NAMED[code];
-    out.push(named ? key(named, raw, mods) : printableKey(String.fromCharCode(code), raw, mods));
+    out.push(named ? key(named, raw, mods) : printableKey(String.fromCodePoint(code), raw, mods));
     return raw.length;
   }
   if (final === "Z") { out.push(key("tab", raw, { ...decodeMods(parts[1]), shift: true })); return raw.length; }
@@ -125,6 +134,36 @@ function parseCsi(s: string, i: number, out: InputEvent[]): number {
   if (!name) { out.push(ignored("unknown-sequence", raw)); return raw.length; }
   out.push(key(name, raw, decodeMods(parts[1])));
   return raw.length;
+}
+
+/** A CSI we don't recognise, consumed to its ECMA-48 boundary and no further: parameter bytes 0x30–0x3f, then
+ *  intermediates 0x20–0x2f, then exactly one final byte 0x40–0x7e. Consuming the whole remaining chunk instead
+ *  would let one unsolicited terminal reply (a `\x1b[?1;2c` DA answer, a `\x1b[?2004;1$y` mode report) swallow
+ *  every keystroke that happened to arrive in the same read. Only a sequence with no final byte in this chunk is
+ *  a real truncation; a byte outside both ranges ends it early so that byte still gets parsed on its own. */
+function skipCsi(rest: string, out: InputEvent[]): number {
+  let j = 2;
+  while (j < rest.length) {
+    const c = rest.charCodeAt(j);
+    if (c >= 0x40 && c <= 0x7e) break;        // final byte: part of the sequence
+    if (c < 0x20 || c > 0x3f) { j -= 1; break; }   // neither param nor intermediate: sequence ends before it
+    j += 1;
+  }
+  const raw = rest.slice(0, Math.min(j + 1, rest.length));
+  out.push(ignored("unknown-sequence", raw));
+  return raw.length;
+}
+
+/** OSC / DCS / APC / PM: a payload string running to a terminator — ST (`\x1b\\`) for all four, and BEL for OSC
+ *  as well. Consumed whole, so an `\x1b]8;;url\x07` hyperlink reply cannot reach the composer as alt+] plus its
+ *  payload as insertable text. No terminator in this chunk means the payload is still arriving: take the rest. */
+function parseStringSeq(s: string, i: number, out: InputEvent[]): number {
+  const st = s.indexOf(ST, i + 2);
+  const bel = STRING_INTRODUCER[s[i + 1]] === "osc" ? s.indexOf("\x07", i + 2) : -1;
+  const end = st === -1 ? bel : bel === -1 ? st : Math.min(st, bel);
+  const consumed = end === -1 ? s.length - i : end - i + (s[end] === "\x07" ? 1 : ST.length);
+  out.push(ignored("unknown-sequence", s.slice(i, i + consumed)));
+  return consumed;
 }
 
 /** `\x1b[200~ … \x1b[201~` → one text event, markers stripped. An unterminated paste takes the rest of the
