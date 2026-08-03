@@ -9,7 +9,9 @@
 import type { KeyContextName, KeyEvent, TextEvent } from "./types.js";
 
 export interface ScopeEntry { seq: number; name: KeyContextName; active: boolean; preemptive: boolean }
-export interface ActionEntry { seq: number; handlers: Record<string, (e: KeyEvent) => void> }
+/** Handlers take the matched ACTION as a second argument, which only a family handler (below) reads. */
+export type ActionHandler = (e: KeyEvent, action: string) => void;
+export interface ActionEntry { seq: number; handlers: Record<string, ActionHandler> }
 export interface FallbackEntry { seq: number; handler: (e: KeyEvent | TextEvent) => void }
 export interface SwallowEntry { seq: number; active: boolean }
 export interface SuspendEntry { seq: number; handler: () => void }
@@ -55,9 +57,21 @@ export function swallowContexts(reg: Registry): KeyContextName[] | null {
 }
 
 /** The innermost live handler for a matched action, or undefined — which is NOT an error: an action nobody
- *  handles yet falls through to the fallback so a half-migrated tree has no dead keys. */
+ *  handles yet falls through to the fallback so a half-migrated tree has no dead keys.
+ *
+ *  A handler may also register for a whole FAMILY by name (`"command:*"`), which is how the open-ended
+ *  `command:<name>` form works: the user names the slash command, so no component can enumerate the handlers
+ *  ahead of time. Exact beats family within one entry; an inner entry's family beats an outer entry's exact,
+ *  because "innermost wins" is the rule everything else here follows. */
 export function handlerFor(reg: Registry, action: string): ((e: KeyEvent) => void) | undefined {
-  for (const entry of newestFirst(reg.actions)) { const h = entry.handlers[action]; if (h) return h; }
+  const colon = action.indexOf(":");
+  const family = colon > 0 ? `${action.slice(0, colon + 1)}*` : null;
+  for (const entry of newestFirst(reg.actions)) {
+    const h = entry.handlers[action];
+    if (h) return (e) => h(e, action);
+    const f = family ? entry.handlers[family] : undefined;
+    if (f) return (e) => f(e, action);
+  }
   return undefined;
 }
 

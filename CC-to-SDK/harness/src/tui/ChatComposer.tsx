@@ -8,7 +8,8 @@ import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
 import { editExternal as realEditExternal } from "./externalEditor.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
-import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
+import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
+import { formatBindings } from "./keys/hints.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
 
@@ -179,6 +180,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // arriving in ONE chunk (no render in between, so the scope flag is one render stale) correct.
   useKeyScope("Chat");
   useKeyScope("Autocomplete", { active: !!(state.command || state.mention) });
+  const bindings = useBindingLookup();                 // the footer ladder below reads its chords from here
   // Read stateRef.current (NOT the closure `state`): the provider dispatches from a listener attached in a
   // passive effect that flushes after commit, so a closure read lags one render and would submit stale text.
   // The ref updates every render.
@@ -256,6 +258,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     "chat:cancel": handleKey, "chat:clearInput": handleKey, "chat:cycleMode": handleKey, "app:exit": handleKey,
     "autocomplete:dismiss": handleKey, "autocomplete:accept": handleKey,
     "chat:killAgents": () => { if (interceptChord()) onKillAgentsRef.current?.(); },
+    // K6 (F2 task 10): `"ctrl+k": "command:clear"` in the user's keybindings.json runs `/clear` exactly as if
+    // it had been typed here — same submit seam, so local commands, catalog commands and the unknown-name
+    // notice all behave identically to typing them. The buffer is deliberately left alone: the key ran a
+    // command, it did not send what the user was drafting. Registered as the `command:` FAMILY because the
+    // name comes from the user's file; without it the resolver consumed the key and nothing ran it.
+    "command:*": (_e, action) => { if (interceptChord()) onSubmitRef.current("/" + action.slice("command:".length)); },
     "chat:externalEditor": () => {
       const ended = interceptChord();
       if (!ended) return;
@@ -289,7 +297,13 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // The editor owns these affordances: derive them from this render's state so the first draft/popup
   // frame cannot inherit an out-of-date parent status-bar hint through a passive effect.
   const showFooter = mode === "normal" && !state.mention && !state.command;
-  const keyboardHint = busy ? "Esc interrupt" : isEmptyNow ? "Esc rewind · ? help" : "Esc clear";
+  // F2 task 10: the two chords in this ladder come from the LIVE table, not from literals typed here — rebind
+  // chat:cycleMode and the rung follows it; unbind it and the rung says `(unbound)` instead of promising a key
+  // that no longer works. The rest of the ladder is editor-owned (`⏎`, `\⏎`, the `@`/`/`/`!` prefixes, `?`),
+  // which no context binds, so those stay literal by design.
+  const cycleKey = formatBindings(bindings("chat:cycleMode"));
+  const escKey = formatBindings(bindings("chat:cancel"));
+  const keyboardHint = busy ? `${escKey} interrupt` : isEmptyNow ? `${escKey} rewind · ? help` : `${escKey} clear`;
   const clearVisible = clearArmed && clearArm.current !== 0 && !busy;
   return (
     <Box flexDirection="column">
@@ -304,7 +318,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
       {clearVisible ? <Box paddingX={1}><Text dimColor>Esc again to clear</Text></Box> : null}
       {dArmed && isEmptyNow ? <Box paddingX={1}><Text dimColor>Press Ctrl-D again to exit</Text></Box> : null}
-      {showFooter ? <Box paddingX={1}><Text dimColor>{isEmptyNow ? "⏎ send · \\⏎ newline · @ files · / commands · ! bash · ⇧Tab mode · ? help" : "⏎ send · \\⏎ newline · @ files · / commands · ! bash · ⇧Tab mode"}</Text></Box> : null}
+      {showFooter ? <Box paddingX={1}><Text dimColor>{`⏎ send · \\⏎ newline · @ files · / commands · ! bash · ${cycleKey} mode${isEmptyNow ? " · ? help" : ""}`}</Text></Box> : null}
       {showFooter ? <Box paddingX={1}><Text dimColor>{keyboardHint}</Text></Box> : null}
       {state.mention ? <MentionPopup state={state} /> : null}
       {state.command ? <CommandPopup state={state} /> : null}

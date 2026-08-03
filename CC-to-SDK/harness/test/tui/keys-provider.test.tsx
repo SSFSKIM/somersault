@@ -13,7 +13,8 @@ import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { useKeyScope, useKeyActions, useKeyFallback, useSwallowKeys, useBinding } from "../../src/tui/keys/KeymapProvider.js";
 import type { KeyContextName, KeyEvent, TextEvent } from "../../src/tui/keys/types.js";
 
-type Handlers = Record<string, (e: KeyEvent) => void>;
+// The matched ACTION is the second argument (only a `family:*` handler reads it — see the family block below).
+type Handlers = Record<string, (e: KeyEvent, action: string) => void>;
 const NONE: Handlers = {};
 const noop = () => {};
 
@@ -376,6 +377,51 @@ describe("KeymapProvider — stdin ownership", () => {
     h.unmount();
     h.stdin.write(ESC);
     expect(cancel).not.toHaveBeenCalled();
+  });
+});
+
+// K6 (task 10): `command:<name>` actions come from the USER's file, so no component can enumerate their
+// handlers — a family registration catches them all and is told which one matched. The precedence has to be
+// the same as everywhere else here (innermost wins), or a dialog's family handler would swallow a key the
+// composer explicitly owns.
+describe("KeymapProvider — family handlers (`family:*`)", () => {
+  it("dispatches an action nobody registered by name, passing the matched action", async () => {
+    const seen: string[] = [];
+    const h = renderWithKeymap(
+      <Probe scope="Chat" actions={{ "command:*": (_e, action) => { seen.push(action); } }} />,
+      { userLayers: [{ context: "Chat", bindings: { "ctrl+q": "command:clear" } }] },
+    );
+    await tick();
+    h.stdin.write("\x11");                                        // ctrl+q
+    expect(seen).toEqual(["command:clear"]);
+    h.unmount();
+  });
+
+  it("an exact handler beats the family, and a fallback still gets a key nothing claims", async () => {
+    const exact = vi.fn(), family = vi.fn(), fallback = vi.fn();
+    const h = renderWithKeymap(
+      <Probe scope="Chat" actions={{ "command:clear": exact, "command:*": family }} fallback={fallback} />,
+      { userLayers: [{ context: "Chat", bindings: { "ctrl+q": "command:clear" } }] },
+    );
+    await tick();
+    h.stdin.write("\x11");
+    expect(exact).toHaveBeenCalledTimes(1);
+    expect(family).not.toHaveBeenCalled();
+    expect(fallback).not.toHaveBeenCalled();
+    h.unmount();
+  });
+
+  it("an INNER family handler outranks an outer exact one (innermost wins, as for every other action)", async () => {
+    const outer = vi.fn(), inner = vi.fn();
+    const h = renderWithKeymap(
+      <><Probe scope="Chat" actions={{ "command:clear": outer }} /><Probe scope="Select" actions={{ "command:*": inner }} /></>,
+      { userLayers: [{ context: "Select", bindings: { "ctrl+q": "command:clear" } }] },
+    );
+    await tick();
+    h.stdin.write("\x11");
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(outer).not.toHaveBeenCalled();
+    h.unmount();
   });
 });
 

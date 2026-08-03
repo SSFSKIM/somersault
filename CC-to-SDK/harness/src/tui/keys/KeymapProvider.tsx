@@ -20,10 +20,11 @@ import { useStdin } from "ink";
 import { parseBytes } from "./parse.js";
 import type { InputEvent, KeyContextName, KeyEvent, TextEvent } from "./types.js";
 import { DEFAULT_BINDINGS, type ContextBindings } from "./bindings.js";
-import { bindingFor, compileBindings, resolveKey, type CompiledTable } from "./resolver.js";
+import { bindingFor, bindingsFor, compileBindings, resolveKey, type CompiledTable } from "./resolver.js";
+import { defaultLookup } from "./hints.js";
 import type { KeySpec } from "./normalize.js";
 import { activeContexts, createRegistry, fallbackHandler, handlerFor, nextSeq, suspendHandler, swallowContexts,
-  type ActionEntry, type FallbackEntry, type Registry, type ScopeEntry, type SuspendEntry, type SwallowEntry } from "./registry.js";
+  type ActionEntry, type ActionHandler, type FallbackEntry, type Registry, type ScopeEntry, type SuspendEntry, type SwallowEntry } from "./registry.js";
 
 export interface KeymapDeps {
   now?: () => number; setTimeout?: typeof setTimeout; clearTimeout?: typeof clearTimeout;
@@ -178,8 +179,10 @@ export function useKeyScope(name: KeyContextName, opts?: { active?: boolean; pre
 }
 
 /** Handlers for matched actions. Innermost registration wins per action; an action nobody registers falls
- *  through to the fallback rather than dying. */
-export function useKeyActions(handlers: Record<string, (e: KeyEvent) => void>): void {
+ *  through to the fallback rather than dying. A key of the form `"family:*"` catches every action in that
+ *  family and receives the matched name as its second argument — the open-ended `command:<name>` form (K6)
+ *  is the one user of it, because the ACTION comes from the user's file and cannot be enumerated here. */
+export function useKeyActions(handlers: Record<string, ActionHandler>): void {
   const ctx = useContext(KeymapCtx);
   useRegistration<ActionEntry>(ctx?.reg.actions, () => ({ seq: nextSeq(), handlers }), (e) => { e.handlers = handlers; });
 }
@@ -205,13 +208,35 @@ export function useSwallowKeys(active: boolean): void {
   useRegistration<SwallowEntry>(ctx?.reg.swallows, () => ({ seq: nextSeq(), active }), (e) => { e.active = active; });
 }
 
-/** The display string of the live binding for `action` (e.g. `"shift+tab"`), or null — so a hint prints what
- *  the user's keymap actually says instead of a hardcoded guess (task 10). */
+/** What every user-visible key hint reads from (task 10): `lookup(action)` returns the canonical keys bound to
+ *  it RIGHT NOW, so a hint prints the user's own keymap instead of a hardcoded guess, and prints nothing at all
+ *  for an action they unbound. One hook, not one per hint, so a component can resolve a whole row list without
+ *  calling hooks in a loop.
+ *
+ *  Ordering: live scopes first (an action bound in two contexts hints the key that would actually fire HERE),
+ *  then the rest of the table — so a hint rendered outside its own scope still resolves. `{ live: true }` drops
+ *  that second half: it is how a hint stays honest about OWNERSHIP (the status bar must not advertise the
+ *  composer's mode key while a dialog owns the keyboard — F0's "a status hint is only honest relative to its
+ *  focused owner").
+ *
+ *  With no provider above (a component rendered bare), the DEFAULT table answers. That is the truthful answer
+ *  for a tree with no user layer, and a component with no provider has no input path at all, so the alternative
+ *  — printing "(unbound)" for every key — would be a worse lie than the defaults. */
+export type BindingLookup = (action: string, opts?: { live?: boolean }) => string[];
+
+export function useBindingLookup(): BindingLookup {
+  const ctx = useContext(KeymapCtx);
+  if (!ctx) return (action) => defaultLookup(action);
+  const live = activeContexts(ctx.reg);
+  const rest = ([...ctx.table.contexts.keys()] as KeyContextName[]).filter((c) => !live.includes(c));
+  return (action, opts) => bindingsFor(ctx.table, action, opts?.live ? live : [...live, ...rest]);
+}
+
+/** The single display key for `action` (e.g. `"shift+tab"`), or null. Sugar over `useBindingLookup` for the
+ *  call sites that want exactly one key; the plain-key-beats-chord rule lives in the resolver. */
 export function useBinding(action: string): string | null {
   const ctx = useContext(KeymapCtx);
   if (!ctx) return null;
-  // Live scopes first (so an action bound in two contexts hints the key that would actually fire HERE), then
-  // the rest of the table so a hint rendered outside its scope (footer while a dialog is up) still resolves.
   const live = activeContexts(ctx.reg);
   const rest = ([...ctx.table.contexts.keys()] as KeyContextName[]).filter((c) => !live.includes(c));
   return bindingFor(ctx.table, action, [...live, ...rest]);

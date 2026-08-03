@@ -104,22 +104,26 @@ export function resolveKey(e: KeyEvent, activeContexts: readonly KeyContextName[
   return { type: "no-match" };
 }
 
-/** The display string of the first live binding for `action` — what a hint or the shortcuts overlay prints (task
- *  10). Searches `contexts` in the order given (so a hint can ask "what does this do HERE first"), else every
- *  compiled context in table order. Null-bound (explicitly unbound) entries are never reported. */
-export function bindingFor(table: CompiledTable, action: string, contexts?: readonly KeyContextName[]): string | null {
+/** EVERY canonical key bound to `action`, in context order then declaration order, deduped — the raw material
+ *  every hint string is built from (task 10). Searches `contexts` in the order given (so a hint can ask "what
+ *  does this do HERE first"), else every compiled context in table order. Null-bound (explicitly unbound)
+ *  entries are never reported: an unbind is the absence of a binding, not a binding to nothing. */
+export function bindingsFor(table: CompiledTable, action: string, contexts?: readonly KeyContextName[]): string[] {
   const order = contexts ?? [...table.contexts.keys()];
-  let chordHit: string | null = null;
+  const out: string[] = [];
   for (const context of order) {
     const c = table.contexts.get(context);
     if (!c) continue;
-    for (const [key, bound] of c.keys) {
-      if (bound !== action) continue;
-      // Keys are stored canonical (specKey at compile time), so `key` IS the display string — no re-parse.
-      // A single key beats a chord for hint purposes: printing "ctrl+x ctrl+e" when "ctrl+g" exists is noise.
-      if (!key.includes(" ")) return key;
-      chordHit ??= key;
-    }
+    // Keys are stored canonical (specKey at compile time), so `key` IS the display string — no re-parse.
+    for (const [key, bound] of c.keys) if (bound === action && !out.includes(key)) out.push(key);
   }
-  return chordHit;
+  return out;
+}
+
+/** The ONE key a single-key hint should print: the first plain key, else the first chord. A single key beats a
+ *  chord because printing "ctrl+x ctrl+e" when "ctrl+g" exists is noise. Null when the action is unbound —
+ *  which the caller must render as unbound rather than falling back to a literal (that is the whole point). */
+export function bindingFor(table: CompiledTable, action: string, contexts?: readonly KeyContextName[]): string | null {
+  const keys = bindingsFor(table, action, contexts);
+  return keys.find((k) => !k.includes(" ")) ?? keys[0] ?? null;
 }

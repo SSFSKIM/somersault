@@ -62,9 +62,14 @@ export function userBindingsPath(deps?: { home?: string }): string {
 }
 
 /** What `/keybindings` writes when the file does not exist yet, so the editor opens something that explains
- *  itself. JSON has no comments, so the guidance rides in a `$docs` key (unknown top-level keys are ignored). */
+ *  itself. JSON has no comments, so the guidance rides in `$docs` keys (unknown top-level keys are ignored).
+ *  Both inner forms are documented because both are accepted (`readEntries`) and a user who copies upstream's
+ *  schema writes the array one — being shown only the object map would read as "the other form is wrong". */
 export const STARTER_KEYBINDINGS = `{
-  "$docs": "Each block is { \\"context\\": one of Global|Chat|Autocomplete|Confirmation|Help|Transcript|HistorySearch|Task|Settings|Tabs|MessageSelector|Select, \\"bindings\\": { \\"<key>\\": \\"<action>\\" | null } }. null unbinds a default. Chords are space-separated (\\"ctrl+x ctrl+e\\"). Modifiers: ctrl, alt (= meta/opt), shift, super (= cmd). Edits apply live.",
+  "$docs": "Each block is { \\"context\\": one of Global|Chat|Autocomplete|Confirmation|Help|Transcript|HistorySearch|Task|Settings|Tabs|MessageSelector|Select, \\"bindings\\": <object map or array> }. Chords are space-separated (\\"ctrl+x ctrl+e\\"). Modifiers: ctrl, alt (= meta/opt), shift, super (= cmd); a capital letter means shift (\\"ctrl+G\\" is ctrl+shift+g). Edits apply live.",
+  "$docs-forms": "Object map: { \\"ctrl+g\\": \\"chat:externalEditor\\" }. Array: [ { \\"key\\": \\"ctrl+g\\", \\"action\\": \\"chat:externalEditor\\" } ]. Both accept the same keys and actions.",
+  "$docs-unbind": "\\"action\\": null unbinds a default IN THAT CONTEXT, and the key stops there — the next context down does not inherit it. User bindings are additive, so to MOVE a binding, unbind the old key with null and bind the new one. In the array form an entry with no \\"action\\" at all is a typo, not an unbind, and is ignored.",
+  "$docs-example": "[ { \\"context\\": \\"Chat\\", \\"bindings\\": { \\"shift+tab\\": null, \\"alt+m\\": \\"chat:cycleMode\\", \\"ctrl+k\\": \\"command:clear\\" } } ]",
   "bindings": [
   ]
 }
@@ -174,7 +179,10 @@ function checkEntry(context: string, rawKey: string, action: unknown, issues: Bi
   for (const member of chord) {
     const name = member.name;
     if (name.length === 1 || KNOWN_NAMES.has(name) || FUNCTION_KEY.test(name)) continue;
-    issues.push({ type: "suspicious_key", detail: `${where}: unknown key name ${JSON.stringify(name)} — binding kept, but nothing will match it unless your terminal sends that key` });
+    // Honest about WHY it will not match: the old wording ("unless your terminal sends that key") promised a
+    // recovery that does not exist — even a terminal that sends the key gives us bytes our parser names
+    // differently, so the binding stays dead until the spec is spelled the way parse.ts names it.
+    issues.push({ type: "suspicious_key", detail: `${where}: unknown key name ${JSON.stringify(name)} — binding kept, but nothing will match it: that is not a name this keypress parser produces` });
   }
   return { key, action: action as string | null };
 }

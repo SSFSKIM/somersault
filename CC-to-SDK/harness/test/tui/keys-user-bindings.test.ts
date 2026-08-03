@@ -251,6 +251,11 @@ describe("suspicious specs warn but stay live", () => {
     const { layers, issues } = loadUserBindings(fileWith({ bindings: [{ context: "Chat", bindings: { "ctrl+ecsape": "chat:clearInput" } }] }));
     expect(types(issues)).toEqual(["suspicious_key"]);
     expect(issues[0].detail).toContain("ecsape");
+    // …and says why it will never match without promising a terminal could rescue it: even a keyboard that
+    // sends the key gives us bytes this parser names differently, so "unless your terminal sends that key"
+    // (the pre-task-10 wording) was an escape hatch that does not exist.
+    expect(issues[0].detail).toContain("not a name this keypress parser produces");
+    expect(issues[0].detail).not.toContain("unless your terminal sends");
     expect(layers).toEqual([{ context: "Chat", bindings: { "ctrl+ecsape": "chat:clearInput" } }]);
   });
   it("real key names — including the ones only some terminals send — never warn", () => {
@@ -384,5 +389,27 @@ describe("the starter file", () => {
     const { layers, issues } = loadUserBindings(fileWith(STARTER_KEYBINDINGS));
     expect(issues).toEqual([]);
     expect(layers).toEqual([]);
+  });
+
+  // The template is the ONLY documentation most users will read, so it has to cover what the validator
+  // actually accepts — both inner forms and the unbind rule. Task 10: it documented only the object map,
+  // which reads as "the array form is wrong" to anyone who copied upstream's own schema.
+  it("documents both binding forms, the null unbind, and the additive-merge consequence", () => {
+    const docs = Object.entries(JSON.parse(STARTER_KEYBINDINGS) as Record<string, unknown>)
+      .filter(([k]) => k.startsWith("$docs")).map(([, v]) => String(v)).join("\n");
+    expect(docs).toContain("{ \"key\": \"ctrl+g\", \"action\": \"chat:externalEditor\" }");   // the array form
+    expect(docs).toContain("{ \"ctrl+g\": \"chat:externalEditor\" }");                        // the object map
+    expect(docs).toContain("\"action\": null");
+    expect(docs).toMatch(/unbind the old key/);                                               // how to MOVE a binding
+    expect(docs).toMatch(/does not inherit/);                                                 // the null stops the search
+  });
+
+  // Everything the template shows must be legal — a starter file that teaches a rejected spelling is worse
+  // than none. The example block is loaded through the real validator here, not eyeballed.
+  it("the example it prints is accepted by the validator it documents", () => {
+    const example = JSON.parse(String((JSON.parse(STARTER_KEYBINDINGS) as Record<string, unknown>)["$docs-example"]));
+    const { layers, issues } = loadUserBindings(fileWith({ bindings: example }));
+    expect(issues).toEqual([]);
+    expect(layers).toEqual([{ context: "Chat", bindings: { "shift+tab": null, "alt+m": "chat:cycleMode", "ctrl+k": "command:clear" } }]);
   });
 });
