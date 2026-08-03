@@ -759,6 +759,18 @@ describe("F3 Task 8: same-message agent batches", () => {
     expect(lineTexts(projectPending(built(pair()), { ...context, platform: "linux" }))[0]!.startsWith("● ")).toBe(true);
   });
 
+  it("forms ONE unit when the parallel dispatch arrives SPLIT across frames — one API id, two uuids (t8 review)", () => {
+    // The live-wire shape P82/P83 make normal: one frame per content block, so two same-message Agent
+    // dispatches land as two frames with distinct uuids sharing one `message.id`. Retention keeps both
+    // (identity prefers uuid); the batch key must be the API id or the unit never assembles live.
+    const frameA = { type: "assistant", uuid: "fa-1", message: { id: "m-split", content: [{ type: "tool_use", id: "ag-1", name: "Agent", input: { description: "review the diff", prompt: "p" } }] } } as Record<string, unknown>;
+    const frameB = { type: "assistant", uuid: "fb-2", message: { id: "m-split", content: [{ type: "tool_use", id: "ag-2", name: "Agent", input: { description: "write the tests", prompt: "p" } }] } } as Record<string, unknown>;
+    const items = projectPending(built(frameA, frameB), context);
+    expect(lineTexts(items)[0]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");
+    expect(items[0]!.id).toBe("agents:ag-1,ag-2:pending-header");
+    expect(lineTexts(items).some((t) => t.startsWith("⏺ Agent("))).toBe(false);
+  });
+
   it("publishes NOTHING while one member is still open — no partial unit, no duplicate", () => {
     const doc = built(pair(), settle("ag-1", COMPLETED));
     expect(projectCompact(doc, context).filter((i) => i.id.startsWith("agents:"))).toEqual([]);

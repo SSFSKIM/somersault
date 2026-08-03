@@ -29,6 +29,11 @@ export type TranscriptEntry =
   | { sequence: number; source: "local"; kind: "local-event"; identity: string; event: LocalTranscriptEvent };
 export interface ToolEvent {
   id: string; name: string; input: unknown; callSequence: number;
+  /** The API message id (`message.message.id`) the call arrived under. The engine emits one FRAME per
+   *  content block (P82/P83), so two same-API-message tool_use blocks can land as two frames with distinct
+   *  uuids and distinct callSequences — this is the one field that still says "same assistant message",
+   *  which is what upstream keys its agent batches on (`${message.id}:${tool.name}`, bdf L452555). */
+  apiMessageId?: string;
   route: "top-level" | "nested"; parent_tool_use_id?: string;
   result?: { content: unknown; isError: boolean; resultSequence: number; sidecar?: SidecarAssociation };
 }
@@ -169,10 +174,11 @@ export class TranscriptDocument {
 
   private extractCalls(message: Record<string, unknown>, blocks: readonly Record<string, unknown>[], callSequence: number): void {
     const parent = nonEmpty(message.parent_tool_use_id) ? message.parent_tool_use_id : undefined;
+    const inner = message.message, apiMessageId = isRecord(inner) && nonEmpty(inner.id) ? inner.id : undefined;
     for (const b of blocks) {
       if (b.type !== "tool_use") continue;
       const id = typeof b.id === "string" ? b.id : "";
-      const call: ToolEvent = { id, name: typeof b.name === "string" ? b.name : "", input: b.input, callSequence, route: parent === undefined ? "top-level" : "nested", ...(parent === undefined ? {} : { parent_tool_use_id: parent }) };
+      const call: ToolEvent = { id, name: typeof b.name === "string" ? b.name : "", input: b.input, callSequence, ...(apiMessageId === undefined ? {} : { apiMessageId }), route: parent === undefined ? "top-level" : "nested", ...(parent === undefined ? {} : { parent_tool_use_id: parent }) };
       this.tools.push(call);
       if (id) this.callsById.set(id, [...(this.callsById.get(id) ?? []), call]);
     }

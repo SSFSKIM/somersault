@@ -47,7 +47,11 @@ const span = (v: unknown): number | undefined => (typeof v === "number" && Numbe
 export const isAgentTool = (name: string): boolean => name === "Agent";
 /** Upstream groups same-message tool calls on `${message.id}:${tool.name}` (census 01#253–257); our retained
  *  equivalent of "one assistant message" is the callSequence. Task 8's batch detection keys on this. */
-export const agentBatchKey = (event: ToolEvent): string => `${event.callSequence}:${event.name}`;
+/** Upstream keys on `${message.id}:${tool.name}` (bdf L452555) — and that API id is load-bearing on OUR wire
+ *  too: the engine emits one FRAME per content block (P82/P83, t8 review), so a parallel dispatch's two
+ *  tool_use blocks can arrive as two frames with two callSequences under ONE `message.id`. A frame with no
+ *  API id (synthetic/test fixtures) falls back to its callSequence, which can never collide with a real id. */
+export const agentBatchKey = (event: ToolEvent): string => `${event.apiMessageId ?? event.callSequence}:${event.name}`;
 /** Upstream `zVp` (429740): how many inner rows an open Agent shows before the hidden-count marker. */
 export const AGENT_PROGRESS_ROWS = 3;
 /** Upstream `KVp` (429822): the pre-first-progress-message placeholder. */

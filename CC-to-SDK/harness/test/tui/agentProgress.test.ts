@@ -166,6 +166,19 @@ describe("F3 Task 8: batch detection", () => {
   it("keys on the assistant message AND the tool name (census 01#253–257)", () => {
     expect(agentBatchKey(dispatch("a1", 4))).toBe("4:Agent");
     expect(agentBatchKey(dispatch("b1", 4, {}, "Bash"))).toBe("4:Bash");
+    // The API id outranks the frame sequence: the engine emits one FRAME per content block (P82/P83), so
+    // a real parallel dispatch is two frames — two callSequences — under ONE `message.id` (t8 review).
+    expect(agentBatchKey({ ...dispatch("a1", 4), apiMessageId: "msg_1" })).toBe("msg_1:Agent");
+  });
+
+  it("forms the batch across frame boundaries — two frames, two callSequences, one API message id (t8 review)", () => {
+    const split = [{ ...dispatch("a1", 4), apiMessageId: "msg_1" }, { ...dispatch("a2", 5), apiMessageId: "msg_1" }];
+    const batches = agentBatches(split);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]!.memberIds).toEqual(["a1", "a2"]);
+    // Distinct API messages never merge, even at equal callSequences (defensive: sequences are unique in
+    // practice; the API id is the truth either way).
+    expect(agentBatches([{ ...dispatch("a1", 4), apiMessageId: "msg_1" }, { ...dispatch("a2", 4), apiMessageId: "msg_2" }])).toEqual([]);
   });
 
   it("batches two Agents that shared one message, and NOTHING else", () => {
