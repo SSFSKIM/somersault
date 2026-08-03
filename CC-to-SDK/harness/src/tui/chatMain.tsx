@@ -5,6 +5,7 @@ import { render } from "ink";
 import { remoteChatSession } from "../client/chatAdapter.js";
 import type { ChatSession } from "../session/chatSession.js";
 import { ChatApp } from "./ChatApp.js";
+import { KeymapProvider } from "./keys/KeymapProvider.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import type { InitialResume } from "./commands.js";
 import { loadPrefs } from "./prefs.js";
@@ -85,11 +86,17 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   const makeSession = opts.makeSession ?? ((resume?: string) => remoteChatSession(opts.socketPath, { ...(resume ? { resume } : {}) }));
   const output = createResumeSafeStdout(process.stdout);
   const bridge = createDeferredClearBridge();                 // created BEFORE render: useChat may ask on mount
+  // F2 task 5: the keymap owns raw stdin for the whole tree (its own parser + binding table + chord machine),
+  // which is only safe because this render already passes `exitOnCtrlC: false` — Ink must not exit underneath
+  // the table's own ctrl+c semantics. Components below register scopes/actions/fallbacks; ctrl+z stays
+  // pre-table and routes to the same suspendProcess path ChatApp uses (deps.suspend is the seam).
   const app = render(
-    <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}
-      initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
-      clearStaticTranscript={bridge.clearStaticTranscript}
-      hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} />,
+    <KeymapProvider>
+      <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}
+        initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
+        clearStaticTranscript={bridge.clearStaticTranscript}
+        hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} />
+    </KeymapProvider>,
     { exitOnCtrlC: false, stdout: output.stdout },
   );
   bridge.bind(() => app.clear());
