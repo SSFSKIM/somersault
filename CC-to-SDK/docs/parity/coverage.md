@@ -126,14 +126,23 @@
 >   numbered permission dialog, `/cost`+`/status`, and a context-threshold warning. Overall TUI/UX parity
 >   **~46% → ~82%**; **entirely `tui/`-side** (one tiny harness-agnostic addition: none — no `harness/src`
 >   change). Domain 10 below.
-> - **TUI clone fidelity waves F0–F2 (2026-08-02 → 2026-08-04)** — the ~82% above was measured against a
+> - **TUI clone fidelity waves F0–F3 (2026-08-02 → 2026-08-04)** — the ~82% above was measured against a
 >   stale February reference; re-derived against the real 2.1.220 bundle it is **~63%**, and the fidelity
 >   waves are the work of closing that honestly. F0 removed the user-harm cases, F1 unified the renderer on
->   one retained transcript document, and **F2 replaced every `useInput` callback with a declarative keymap**
+>   one retained transcript document, **F2 replaced every `useInput` callback with a declarative keymap**
 >   — one binding table, an ordered-context resolver, generic chords, `~/.claude/keybindings.json` with hot
->   reload, and hint strings derived from the live binding rather than typed beside the handler. TUI/UX parity
->   now **~65%**; the keybinding detail (including the keys a terminal cannot deliver at all) is
->   `tui-ux.md` §1a. Still `tui/`-side only — no `harness/src` capability change, so no domain score below
+>   reload, and hint strings derived from the live binding rather than typed beside the handler — and
+>   **F3 rebuilt the live turn**: the fold row's genuinely bold count via a raw-SGR writer, a thinking clock
+>   that outlives its turn, 19 typed result-row templates, the Write create preview, the subagent unit with
+>   an honest sidecar→notification→derived totals ladder, same-API-message Agent batches, and the
+>   `ctrl+b` background hint. TUI/UX parity now **~65%** — unchanged across F3 by arithmetic, because the
+>   five upstream surfaces F3 gave §2 rows for enlarged the denominator by exactly as much as the wave
+>   closed, and one over-shipped §8 row was deleted; see `tui-ux.md`'s F3 recount for the split. F3 also
+>   recorded **six upstream behaviours as provably unreachable** (probes 84/85 plus two bundle reads:
+>   Bash stdout is wire-silent, hooks execute invisibly, the auto-classifier annotates nothing, and the
+>   elapsed suffix and conjugation table are fullscreen-only dead code) — those are excluded from the
+>   denominator rather than approximated. The keybinding detail is `tui-ux.md` §1a; the live-turn detail is
+>   its F3 section. Still `tui/`-side only — no `harness/src` capability change, so no domain score below
 >   moves. Spec `docs/superpowers/specs/2026-07-31-tui-clone-fidelity-design.md`.
 
 > - **SDK 0.3.211 bump + Workflow surfacing** (2026-07-17) — all four packages bumped ^0.3.178→^0.3.211

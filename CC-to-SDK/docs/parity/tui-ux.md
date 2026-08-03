@@ -47,16 +47,16 @@ polish* that makes CC instantly recognizable: **no welcome banner, a non-CC spin
 glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input modes, no queued input, no
 `/cost`, and thin terminal-native editor ergonomics** (Ctrl-A/E/K/U/W, Ctrl-L, Ctrl-C-twice).
 
-| Category | Parity (start) | Parity (pre-C5) | Parity (pre-F0, post–sprint-W3) | Parity (now, post-F2) |
-|---|---|---|---|---|
-| 1. Input / composer ergonomics | ~45% | ~88% | ~95% | **~86%** (was ~78% post-F0; F2 landed the keymap — see §1a) |
-| 2. Transcript / message rendering | ~50% | ~74% | ~83% | **~57%** |
-| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% | **~36%** |
-| 4. Modals / overlays | ~60% | ~88% | ~88% (4 new W3 rows — see W3 recount note) | **~50%** |
-| 5. Slash commands | ~55% | ~70% | ~86% (6 new W3 rows — see W3 recount note) | **~88%** (F2: `/keybindings` 🟡→✅ — it opens the real file now) |
-| 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% | **~61%** |
-| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~80% (untouched in W3) | **~75%** |
-| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* | **~65%**<br>*(plain row count)* |
+| Category | Parity (start) | Parity (pre-C5) | Parity (pre-F0, post–sprint-W3) | Parity (post-F2) | Parity (now, post-F3) |
+|---|---|---|---|---|---|
+| 1. Input / composer ergonomics | ~45% | ~88% | ~95% | ~86% (was ~78% post-F0; F2 landed the keymap — see §1a) | **~86%** (untouched by F3) |
+| 2. Transcript / message rendering | ~50% | ~74% | ~83% | ~57% | **~63%** (F1 substrate rows scored at last, +5 new F3 rows — see the F3 recount) |
+| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% | ~36% | **~36%** (untouched by F3) |
+| 4. Modals / overlays | ~60% | ~88% | ~88% (4 new W3 rows — see W3 recount note) | ~50% | **~50%** (untouched by F3) |
+| 5. Slash commands | ~55% | ~70% | ~86% (6 new W3 rows — see W3 recount note) | ~88% (F2: `/keybindings` 🟡→✅ — it opens the real file now) | **~88%** (untouched by F3) |
+| 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% | ~61% | **~61%** (untouched by F3) |
+| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~80% (untouched in W3) | ~75% | **~72%** (F3 deleted an over-shipped row — see §8) |
+| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* | ~65%<br>*(plain row count)* | **~65%**<br>*(plain row count)* |
 
 **F0 correction note (2026-07-31) — the headline fell from ~88% to ~63%, and this is the point of the
 exercise, not a regression to explain away.** Nothing that worked on 2026-07-30 stopped working; the
@@ -119,6 +119,36 @@ The three new §1 rows are upstream features we previously had no row for (`06 K
 upstream's own "every hint string generated from the live binding"), not credit for inventions of ours.
 The hint row is honestly 🟡, not ✅: three surfaces derive, two footers and one fold marker do not — §1a
 names them.
+
+**F3 recount (2026-08-04, the live-turn wave).** Two categories move. §2's movement is deliberately split
+into two steps, because conflating them would credit F3 with work F1 did:
+
+*Step A — F1 substrate rows scored at last (NOT F3's credit).* F1 shipped the unified live/replay
+renderer and the single five-column `⎿` gutter, and its section explicitly left §2's table alone. Both
+§2 rows still carried F0 notes that are now **factually false** about the shipped code, so they are
+corrected and scored here rather than left wrong:
+
+| Category | ✅ | 🟡 | ❌ | non-🚫 rows | Score | what moved |
+|---|---|---|---|---|---|---|
+| 2. Transcript | 5 | 9 | 1 | 15 | 9.5/15 = 63.3% | "Tool-use rows" and "Tool result tree glyph" 🟡→✅ — the live/replay disagreement and the per-line connector the F0 notes describe were both fixed by F1 |
+
+*Step B — F3's own movement.* Five new rows enter §2 for upstream features the file had no row for, and
+§8 retires one:
+
+| Category | ✅ | 🟡 | ❌ | non-🚫 rows | Score | what moved |
+|---|---|---|---|---|---|---|
+| 2. Transcript | 6 | 13 | 1 | 20 | 12.5/20 = 62.5% | +5 new rows: Write create preview ✅; typed result rows, the Agent unit, Agent batches and the `ctrl+b` hint each 🟡 with their divergences named. The "Thinking blocks" row keeps 🟡 (the duration is now real; the two glyphs are not) |
+| 7. Control plane (§8) | 4 | 5 | 0 | 9 | 6.5/9 = 72.2% | "Task lifecycle notices" ✅ **retired**: F3 deleted the transcript notices because upstream renders none, so the row leaves the denominator rather than scoring a ✅ for an over-ship |
+| **Overall (unweighted avg of the 7 categories)** | | | | | **≈ 65.1% → ~65%** | (85.7 + 62.5 + 36.1 + 50.0 + 88.1 + 61.1 + 72.2) ÷ 7 |
+
+**Read the headline honestly: F3 shipped a great deal and the overall number did not move** (64.7% →
+65.1%). That is the measurement method working, not a wasted wave. Three effects cancel: F1's two
+substrate rows lift §2 by +6.6 points; F3's five new rows *lower* §2 again to 62.5%, because four of them
+enter at 🟡 and every one of them enlarges the denominator with a gap the file previously could not see;
+and §7 gives back 2.8 points for a row we deleted on purpose. The wave's real output is that the live
+turn now has rows at all — twelve upstream behaviours went from invisible to either built, deliberately
+diverged, or **provably unreachable** (six of those, excluded from the denominator with probe or bundle
+citations, in the F3 section below).
 
 The spec that ordered this correction estimated the fall would land "into the low 70s"; the computed
 number lands lower, at ~63%. That is not a contradiction to paper over: the spec's figure was a
@@ -458,13 +488,97 @@ and validated by a row-scoped required-state contract under `capture-frames.py -
 
 | Item | State | Owner |
 |---|---|---|
-| Bold count in the folded row | **Regression against the contract, not fixable in this Ink.** R3.5 says the count stays bold inside the dim run ("Ink composes dim+bold"). Probed: Ink drops `bold` outright when `dimColor` is set on the same `<Text>` (`<Text dimColor bold>1</Text>` emits `\x1b[2m1\x1b[22m`), and embedding raw SGR is rewritten by chalk's nested-close handling. The count therefore renders dim-not-bold today | F3 — needs a raw-SGR line writer or dim hoisted onto the parent `<Text>` with a bold child (which also reproduces upstream's own `\x1b[22m` tail artifact) |
-| `" file…"` plain in the golden | Deliberately not reproduced. Everything after upstream's bold count renders bright because the count's `\x1b[22m` closer clears faint as well as bold. Emitting a broken reset to match would be fabricating a bug | recorded, no owner |
+| Bold count in the folded row | **CLOSED by F3 (Tasks 1–2).** The diagnosis stood: Ink drops `bold` when `dimColor` rides the same `<Text>`, and chalk rewrites embedded SGR. The fix was the raw-SGR line writer this row called for — a `preStyled` segment renders through a **bare** `<Text>`, so `sgrFoldRow.composeFoldRun` emits the clause run's bytes itself (`\x1b[2mReading \x1b[1m3\x1b[22m files…\x1b[22m`) and the count is genuinely bold inside the dim run. Ink re-emits a *normalized* stream, so frame assertions pin the rendered attributes, never byte-identity (`sgr-passthrough.test.tsx`, `sgr-foldrow.test.ts`, `toolRenderer.test.tsx -t "genuinely BOLD count"`) | closed |
+| `" file…"` plain in the golden | **REVERSED by F3 (Task 2), deliberately.** F1 read this as a bug it would be dishonest to copy; F3's Decision Log settled the opposite way — it is upstream's *emitted artifact*, produced by the same one-`<Text dimColor>`-with-a-nested-`<Text bold>` markup the count needs, and reproducing the markup faithfully reproduces the tail for free. The writer never re-opens dim after a count, so the tail (ellipsis included, since it rides the run) is plain, exactly as the golden's cells are | closed |
 | Settled group row colour | **Resolved 2026-08-03.** A dedicated settled-state probe against installed 2.1.220, run under the tracked capture environment (pinned `TERM=xterm-256color`/`COLORTERM=truecolor`, wrapper and palette vars removed), paints the settled row `#999999` — the same grey as the active row. The `#949494` first recorded in the live-confirmation note was that earlier probe environment's ambient-palette variant (`COLORFGBG` present), not a second upstream colour. The settled clause run now carries the `inactive` token; see the render contract § 0 pin | closed |
-| Nested (`parent_tool_use_id`) replay rows | **Deliberate, tested deferral — a shipped behaviour that is gone.** `replay.ts:42–46` used to render subagent rows indented and dimmed; F1 Task 4 drops them from the top-level projection instead of flattening them into unrelated rows | F3 (subagent grouping, parent/child progress and totals) |
-| String-content user rows render nothing | `render.ts`'s user branch only iterates array `content`, but `sessions/rows.ts` `promptText` shows persisted rows can carry a bare string — such a row projects to no line at all | F3/F4 |
-| Fullscreen-only clauses, grouped Agent batches, typed result summaries, elapsed `· Ns` | Not built. All are `ds()`-gated fullscreen-only or need parent/child state F1 does not model; a substitute would be fabrication, not fidelity | F3 |
+| Nested (`parent_tool_use_id`) replay rows | **CLOSED by F3 (Task 7).** They come back as the Agent unit's own nested rows — last three plus a hidden-count marker in compact, the full list under ctrl+o — attributed to their parent rather than flattened into unrelated rows (§2 row `LT16`/`LT17`) | closed |
+| String-content user rows render nothing | `render.ts`'s user branch only iterates array `content`, but `sessions/rows.ts` `promptText` shows persisted rows can carry a bare string — such a row projects to no line at all | F4 (untouched by F3) |
+| Fullscreen-only clauses, grouped Agent batches, typed result summaries, elapsed `· Ns` | **Split by F3.** Grouped Agent batches (`LT3`) and typed result summaries (`LT1`) are **built** — both are new §2 rows. The `ds()`-gated fullscreen-only clauses and the elapsed `· Ns` suffix are **unreachable**, not deferred: see the F3 "Unreachable" table below | partly closed, partly 🚫 |
 | Markdown/diff closure | Not built | F4 |
+
+---
+
+## F3 (2026-08-04) — the live turn
+
+F1 built the substrate (one retained document, one projection); F2 built the keymap; **F3 is what the
+transcript says while a turn is actually running.** Nine tasks shipped the fold row's real bold count, a
+thinking clock that survives its own turn, typed result rows for every recognized tool, the Write create
+preview, the subagent (Agent) unit with an honest totals ladder, same-message Agent batches, and the
+`ctrl+b` background hint — plus wire-true interrupt classification. The scored rows all live in §2 above
+and in the recount under the headline; this section carries the detail, the evidence, and — the part
+that matters most on a cloning scorecard — **what upstream does that we deliberately did not build, and
+why**.
+
+The wave's governing discipline was live-probe-first, and it earned its keep twice. P84/P85 turned three
+planned features into recorded impossibilities before a line was written (below). And the batch key
+shipped in Task 8 keyed on the wrong field: `callSequence` looked right against the bundle and would
+**never have fired on the real wire**, because the engine emits one frame per content block. The keyed
+live run caught it (`test/live/f3-live-turn.e2e.test.ts`, `split=true` observed) — declared ≠ reachable,
+again.
+
+### Now faithful
+
+| Row | What shipped | Evidence |
+|---|---|---|
+| Real bold count in the fold row (`LT2`) | A `preStyled` segment renders through a bare `<Text>`, so `sgrFoldRow.composeFoldRun` writes the clause run's SGR itself: dim run, a genuine `\x1b[1m…\x1b[22m` count, no dim re-open after it (upstream's own tail artifact), and the settled run additionally wrapped in the `inactive` grey. Closes F1's one recorded regression | `test/tui/sgr-passthrough.test.tsx` (5), `test/tui/sgr-foldrow.test.ts` (10), `test/tui/toolRenderer.test.tsx -t "genuinely BOLD count"` |
+| Thinking clock (`LT4`, reachable half) | Thinking time measured from local `content_block_start`/`stop` arrival stamps, keyed `(msgId, blockIdx)`, thinking-ness **latched at start** (a `content_block_stop` carries no block type — P82); the duration outlives the `LiveTurn` that produced it in a `useChat`-owned map and merges at every repaint and at turn end; a held thought attaches to the open-or-next run. The REPL now enables `includePartialMessages` for **interactive** sessions at the `SessionHost` seam, so both front doors (foreground REPL and `--detachable`/`attach`) get partials while headless is untouched | `test/tui/liveTurn.test.ts`, `test/tui/useChat.test.tsx`, `test/tui/foldPendingState.test.ts`, `test/live/f3-live-turn.e2e.test.ts` (a) |
+| Pending-region latch + hint debounce (`LT4`) | Upstream's exact four ref-held counters ratchet per anchor, a 700 ms first-immediate debounce on the `⎿` hint, and a 3 s linger on the thinking summary; the published row **peeks** the latched maximum so an on-screen row never downgrades at settle, while a fresh replay recomputes honestly | `test/tui/foldPendingState.test.ts` |
+| Typed result rows (`LT1`) | 19 templates, sidecar-first with honest fallbacks; suppressed and interrupted/rejected route ahead of them; the per-call `⏺ Read(path)` header is the ctrl+o form and never carries file content | `test/tui/toolSummaries.test.ts`, `test/tui/toolResult.test.ts`, `test/tui/toolRenderer.test.tsx` |
+| Write create preview (`LT18`) | First 10 lines highlighted, bare `… +N lines` marker, preview alone | `test/tui/toolSummaries.test.ts` § "the Write create preview" |
+| Agent unit + honest totals (`LT16`/`LT17`) | `Initializing…` → last-3 rows + `… +N tool uses (ctrl+o to expand)` → a `⎿` gutter `Done (…)` row with a sidecar → notification → derived ladder. **Derived totals omit the token clause rather than fabricate one**, and an unrecognized terminal shape gets no `Done` row at all (upstream returns null there too) | `test/tui/agentProgress.test.ts`, `test/tui/toolRenderer.test.tsx` § "F3 Task 7" |
+| Same-message Agent batches (`LT3`) | `Running N agents…` / `N agents finished`, keyed on the API `message.id`, published only when every member has a result, absorbed members render nothing, verbose never groups | `test/tui/toolRenderer.test.tsx` § "F3 Task 8", `test/live/f3-live-turn.e2e.test.ts` (c) |
+| `ctrl+b` background hint (`LT20`) | `task_started`-gated, `local_bash`-only, keymap-derived, tmux-doubled only when the resolved chord is still `ctrl+b`, and short-circuited on `run_in_background: true` | `test/tui/toolRenderer.test.tsx` § "F3 Task 9", `test/tui/keys-hints.test.ts` |
+| Interrupt classification (`LT14`) | Classified off the **retained sidecar string** `"User rejected tool use"` rather than off screen text; the bracketed sentinel user frame renders nothing **and** breaks fold runs | `test/tui/toolRenderer.test.tsx` § "F3 Task 9 — the interrupt sentinel user frame" |
+| Acceptance #1 composite | Three consecutive reads → one `Read 3 files` row, bold count inside the dim run, and **no elapsed anywhere** — on the group row, the active row, or the ctrl+o per-call rows | `test/tui/f3-acceptance.test.tsx` (4) |
+
+### Unreachable — recorded, not built
+
+Upstream behaviours this wave proved we cannot reproduce honestly. They are **🚫, excluded from the
+denominator**, exactly like the unreachable keys in §1a: building a substitute would be fabrication, not
+fidelity. Each cites the probe or bundle read that settled it.
+
+| Upstream behaviour | Why it is unreachable | Evidence |
+|---|---|---|
+| `LT19` — live last-5-lines box and `(elapsed · timeout)` progress under a running Bash | The wire is **silent** for a foreground Bash's whole runtime: between `tool_use` and `tool_result` there is only a `system/task_started` arriving ~5 s late and a `task_notification` at completion. No stdout, no `tool_progress`. There is nothing to render | probe `84-bash-stdout-background.ts`; report `research/2026-07-31-tui-clone/12-p84-p85-bash-hooks-wire.md` |
+| Bash progress suffix (`R4.11`) | Same silence, same conclusion — and its anchor is `ds()`-gated besides | P84; bundle `R4.6`/`R4.11` |
+| `LT21` — `Ran N PreToolUse hooks (Xms)` rows | Both hook species execute **invisibly**: no `hook_started`/`hook_progress`/`hook_response`/`tool_use_summary` frames reach the client stream | probe `85-hook-timing-classifier.ts` |
+| `LT22` — `Allowed/Denied by auto mode classifier` annotations | No classifier verdict is annotated anywhere. Across five permission paths there is no `system/permission_denied`; a genuine denial leaves only prose in the model-facing `tool_result` and a **reason-less** `result.permission_denials` entry | probe `85-hook-timing-classifier.ts` |
+| `LT5` — the ` · 12s` elapsed suffix on a collapsed group | Upstream computes its anchor only inside `if (s && ds())` (bundle L427963–427974), i.e. **fullscreen/brief mode only**. The tracked default view (`ds() === false`, R2.1) shows none. Now pinned by an executable guard, not just prose | bundle read 2026-08-04; `test/tui/f3-acceptance.test.tsx` |
+| `CH23` — the 77-entry agent-clause conjugation table | `s8p` has exactly one call site (L428041), and the default finalizer `ke_` (L302123) never sets `agentCount`/`agentDescriptions` — so the table is **dead code** in the default view | bundle read 2026-08-04 |
+
+### Deliberate divergences from upstream
+
+Each of these is a place where we know what 2.1.220 does and chose something else. Recorded here so the
+choice is auditable rather than invisible; each is one line of the 🟡 on its §2 row.
+
+| Divergence | Upstream | Ours, and why |
+|---|---|---|
+| Derived Agent totals omit the token clause | `Done (N tool uses · X tokens · Ts)` | When neither the sidecar nor a `task_notification` supplies a token count, we derive tool uses and duration from the children and **drop the token clause** rather than invent a number. Fabricating a total to match a shape would be the exact dishonesty the P83 rule exists to prevent |
+| `Backgrounded agent` → `Done` upgrade | The launch row stays a launch row | A `task_notification` that arrives **before** publication upgrades the row to the real `Done (…)`. More honest than leaving a stale "backgrounded" claim on a finished agent |
+| Agent detail row ordering | prompt → nested rows → content → `Done` | Ours is `Done` first, then the nested rows. A cosmetic ordering divergence in the ctrl+o view only; the compact view matches |
+| The `ctrl+b` hint under a running **sync** Agent | Upstream shows the same 2-second-timer hint under a synchronous Agent (bundle 281153), skipping it only when async | Ours is Bash-only. Whether the Agent unit should grow it is a decision for that surface's owner, not something to bolt on mid-wave |
+| Thinking-summary linger with no clear | Upstream's 3 s linger is only observable **after** the producer clears the summary | Ours hands the summary back 3 s after its last change even while the producer keeps supplying it — the only self-consistent reading of a ratchet that is never cleared |
+| Grep/Glob expand hint | Present in both projections | **Compact-only.** Upstream's verbose branch genuinely has no `Bg` component, so showing it there would be ours, not theirs |
+| `TaskStop` 160-char clip | Clipped on **display width** (`Ut`) | Clipped on code units. Differs only for wide/combining characters in a stop reason |
+| Bash timeout source | Read from the progress message | Read from the call input — the progress message does not exist on our wire (P84, above) |
+| Running fold run in transcript (ctrl+o) mode | A running branch shows a reduced row set | Ours shows all rows and no hidden-count marker in the detail projection |
+| Short-terminal Agent fallback | An `In-progress` fallback row when the terminal is too short | Not implemented |
+| `hideType` teammate-name suppression in batches | Suppresses the agent type when the member's name is a teammate name | Not modelled — we have no teammate-name concept |
+| Write `condensed`/scratchpad/plan variants, Edit `previewHint`/`collapsed` | Distinct row forms | Skipped: each needs client state we do not model. Named on the `LT1` row rather than approximated |
+| TMUX detection for the hint's doubled chord | Gated on `TERM_PROGRAM` | Ours is broader (any `TMUX` evidence). Arguably more correct; recorded because it is still a difference |
+
+### Open evidence gaps (honest closure candidates, not claims)
+
+- **Multi-open-call interrupt frame shape is UNOBSERVED.** P80 § A dumped a single-Bash interrupt only, so
+  what the wire looks like when several calls are open at once is unknown. Task 9 deliberately did **not**
+  widen the classifier on speculation. A micro-probe that interrupts two concurrent calls would settle it.
+- **Eight tools' sidecar shapes were bundle-read, not live-observed.** They fail closed to the flat
+  fallback, so the failure mode is a plainer row, never a wrong one — but a probe that actually selects
+  those eight would convert a reading into evidence.
+- **The pyte golden re-baseline is still owed** (F2 residue). It now also covers the fold row's new raw-SGR
+  bytes and every new F3 row, so `scripts/capture-frames.py` goldens under
+  `test/fixtures/upstream-frames/` are further behind the shipped renderer than they were at F2. The
+  binding-check contract still passes; the whole-frame diff remains a diagnostic, not a gate.
 
 ---
 
@@ -666,15 +780,20 @@ live binding to derive. `test/tui/honesty.test.tsx` pins every one of them to an
 |---|---|---|---|
 | User prompt echo | 🟡 | LOW | we show `› text` dim (intentional clean variant). **F0 correction:** the note was wrong, not just the score — upstream does not use plain `>`, it uses **`❯ ` (U+276F)** in the `subtle` colour on a `userMessageBackground` band |
 | Assistant message identity (`●` bullet, accent) | 🟡 | — | **U3** accent `●` gutter + aligned continuation (live + replay). **F0 correction:** two divergences under one ✅ — upstream's bullet is **`⏺`** on macOS (not `●`), and its colour is the plain `text` token, **not an accent** |
-| Thinking blocks (stream + collapse) | 🟡 | — | `liveTurn.ts` `✦ Thinking`; CC `✻`/token count. **F0 correction:** upstream shows a **duration**, not a token count; the streaming glyph is `✻` but the content gutter is `∴`; and the content is **hidden by default** |
-| Tool-use rows | 🟡 | — | **C5** `render.ts` `toolUseLines` — CC's `● Name(target)` bullet form (was `⚙`); live turn status glyphs unchanged. **F0 correction (`ST1`):** only the **replay** path renders `● Name(target)` — the live path renders `Name target`, no parens, no bold. Upstream bolds the name and the row adds the parens; two paths disagreeing about the same tool call is itself the defect |
-| Tool result tree glyph (`⎿`) | 🟡 | — | **U3** dim `⎿` result tree. **F0 correction:** ours prefixes `  ⎿ ` (4 cols) to **every** line of a multi-line result; upstream emits it **once** at 5 columns, with the content in a sibling flex column |
+| Thinking blocks (stream + collapse) | 🟡 | — | `liveTurn.ts` `✦ Thinking`; CC `✻`/token count. **F0 correction:** upstream shows a **duration**, not a token count; the streaming glyph is `✻` but the content gutter is `∴`; and the content is **hidden by default**. **F3 update (Tasks 3–4):** the duration half is now real and honest — thinking time is measured from local `content_block_start`/`stop` arrival stamps (thinking-ness latched at start, since `content_block_stop` carries no block type — P82), survives past the `LiveTurn` that produced it in a `useChat`-owned map, and surfaces as the fold run's `Thought for Ns` clause. Content stays hidden by default. Still 🟡: the two **glyph** divergences (`✻` streaming, `∴` content gutter) are untouched |
+| Tool-use rows | ✅ | — | **C5** `render.ts` `toolUseLines`, then **F1** `toolRenderer.tsx`. **F0 correction (`ST1`) now CLOSED by F1, scored here for the first time:** the live/replay split that made this 🟡 is gone — one retained transcript document and one projection serve live, replay, attach, resume, rewind and the ctrl+o pager, so both paths render the identical bolded `⏺ Read(src/app.ts)` form with parens and an OSC-8 target. Evidence `test/tui/f1-frame-parity.test.tsx` + `test/tui/toolRenderer.test.tsx -t "bold name-only segments"` (which also pins the single sibling gutter). *This movement is F1's credit, not F3's — see the split arithmetic under the F3 recount* |
+| Tool result tree glyph (`⎿`) | ✅ | — | **U3**, corrected by **F1**. **F0 correction now CLOSED by F1, scored here for the first time:** `RenderItemView` is the sole owner of the connector and emits it exactly **once** per result in a fixed five-column sibling box, with the body in the sibling flex column — never prefixed per line. Evidence `test/tui/toolRenderer.test.tsx -t "one sibling gutter"` / `-t "places the one gutter in a five-column sibling"`. *F1's credit, not F3's* |
 | Markdown: headers/lists/quote/fenced | 🟡 | — | `markdown.ts` (lightweight). **F0 correction:** no links, no images, no strikethrough, no `hr`, no task lists, no nested lists, no depth-varying heading style, no block separation — not a ✅ |
 | Markdown: inline mixed bold/italic spans | ✅ | — | **U11** per-span `segments` (bold/italic/code) rendered within a line |
 | Markdown: tables | 🟡 | — | **C5** `markdown.ts` `flushTableBuffer` — a buffered run of `\|`-lines becomes a column-padded table only once a `\|---\|` separator confirms it; otherwise re-emitted as prose untouched. **F0 correction:** upstream draws a box table with per-column alignment, three-way width fitting, a rule between every pair of data rows, a 200-row cap, and a vertical record fallback — ours has none of that |
 | Markdown: code-block syntax highlight | ✅ | — | **C5** `highlight.ts` — a zero-dependency regex lexer (keywords/strings/comments/numbers for ts/js/py/sh/json). **Not a full grammar** — a hand-rolled single-pass lexer, a recognizable-90% approximation (spec Decision Log against a ~1MB dependency), unknown langs fall back to dim |
 | Edit/Write diff | 🟡 | — | **C5** `render.ts` `toolDiffLines` — a real hunk body: up to 3 dim numbered context lines each side of the change, numbered `-`/`+` rows for the changed lines. The shipped implementation remains **hunk-relative**. **P94 correction, confirmed on 0.3.220:** recognized Edit sidecars expose absolute `structuredPatch[].oldStart/newStart`; the separate Write case exposes content/file metadata. Flat-only and forwarded calls still require input fallback. **F0 correction:** no add/remove counts header, **foreground colour instead of background bands**, no word diff, no wrapping, and a 24-line cap upstream does not have |
 | Bash output rendering | 🟡 | MED | **C5**: only error framing landed — a failed `tool_result` (`is_error`) renders red with a `✗` prefix on its first line (`render.ts` `resultLines`). **P94 correction, confirmed on 0.3.220:** some Bash calls carry structured stdout/stderr/interrupted/noOutputExpected/isImage and optional `returnCodeInterpretation`, while most remain flat-only. No numeric exit code appeared, so `$`/exit-code framing remains unreachable and the row stays 🟡 |
+| Typed result summary rows (`LT1`) | 🟡 | — | **F3 — new row, no prior row existed.** Upstream never dumps a tool's raw output into the default transcript: every recognized tool gets a one-line typed summary in the `⎿` gutter (`Read 340 lines`, `Found 3 files`, `Added 2 lines, removed 3 lines`, `Wrote 42 lines`, …). `toolSummaries.ts` ships **19 templates**, sidecar-first with an honest input/flat fallback, routed identically in both projections (`toolSummaries.test.ts`, `toolRenderer.test.tsx`). Named remaining gaps keep it 🟡: Write's `condensed`/scratchpad/plan variants and Edit's `previewHint`/`collapsed` forms are **not built** (they need state we do not model), `TaskStop`'s 160-char clip counts code units where upstream counts display width, `Bash`'s timeout is sourced from the call input rather than upstream's progress message, and **8 tools' sidecar shapes were bundle-read, not live-observed** (they fail closed to the fallback; an honest closure would be a probe that selects them) |
+| Write create preview (`LT18`) | ✅ | — | **F3 — new row, no prior row existed.** A `Write` that creates a file previews its **first 10 lines**, syntax-highlighted, followed by a bare `… +N lines` marker with no expand affordance — and the preview renders **alone**, with no count header above it (upstream `jme` L423783, `C8o = 10`; census 01#58–62). `Wrote N lines` survives only as the fallback when no content is available anywhere. An unknown extension renders **plain**, not dim — the rows *are* the content. Evidence `test/tui/toolSummaries.test.ts` § "the Write create preview" |
+| Subagent (Agent) unit — progress rows + `Done (…)` (`LT16`/`LT17`) | 🟡 | — | **F3 — new row; supersedes F1's recorded deferral of nested `parent_tool_use_id` rows.** A running `Agent` shows dim `Initializing…`, then its **last three** inner tool rows plus a dim `… +N tool uses (ctrl+o to expand)` marker (upstream `zVp = 3`); ctrl+o expands to the full nested list. Completion is a `⎿` **gutter** row with the bullet suppressed (bundle `Vha` 429640 — census 01#153 was wrong and was corrected in this wave) carrying `Done (7 tool uses · 24.1k tokens · 1m 12s)` from a three-rung honesty ladder: sidecar → `task_notification` → derived-from-children. Evidence `test/tui/agentProgress.test.ts`, `toolRenderer.test.tsx` § "F3 Task 7". 🟡 for five named divergences listed in the F3 divergence table below (derived totals omit the token clause rather than fabricate one; Backgrounded→Done upgrade; detail ordering; running-branch transcript-mode row set; no short-terminal `In-progress` fallback) |
+| Grouped Agent batches (`LT3`) | 🟡 | — | **F3 — new row, no prior row existed.** Same-name `Agent` calls dispatched in **one API message** render as one unit — `Running 3 agents…` / `3 agents finished` — keyed on the API `message.id` (the engine emits one wire frame per content block, so a `callSequence` key would never have fired; the split-frame case is live-proven, `apiMessageIds=msg_011CdggL8MApN9DTU7LQgH1n`, `callSequences=2,4`). Publishes only when every member has a result; verbose never groups. Evidence `toolRenderer.test.tsx` § "F3 Task 8" + `test/live/f3-live-turn.e2e.test.ts`. 🟡: upstream's `hideType` suppression when a member's name is a teammate name is not modelled |
+| Bash background hint (`LT20`) | 🟡 | — | **F3 — new row, no prior row existed.** A running foreground `Bash` grows a dim `(ctrl+b to run in background)` line at a five-column indent, gated on that call's own `task_started` frame (upstream registers the task and starts the hint timer in the same statement), never on `run_in_background: true`, with the chord derived from the **live** keymap (tmux doubling only when the resolved chord is still `ctrl+b`; unbound → no hint). Evidence `toolRenderer.test.tsx` § "F3 Task 9", `test/tui/keys-hints.test.ts`. 🟡: upstream renders the same hint under a running **synchronous Agent** too (bundle 281153); ours is Bash-only |
 | Long-output truncation + expand | 🟡 | **MED (structural)** | we cap; no interactive expand. **F0 correction:** the LOW priority was wrong — `(ctrl+o to expand)` is one mechanism that also drives collapsed groups, verbose diffs and expanded thinking; this is `ST2`, a structural gap, not a tail item |
 | Compact boundary marker | 🟡 | — | **C5** `useChat.ts` — a `system`/`compact_boundary` frame renders a `─── context compacted ───` divider notice. **F0 correction:** upstream renders a bulleted `Compact summary` with a message count and an expand affordance, not a rule |
 | Welcome banner / splash | ✅ | — | **U1** `banner.ts` — accent `✻ Welcome` box + cwd/model/mode + tips |
@@ -785,11 +904,16 @@ live binding to derive. `test/tui/honesty.test.tsx` pins every one of them to an
 | `/bg` panel | 🟡 | — | **GB10 + W2** `BgTasksPanel.tsx` — one row per background task with **status glyph + command line** (harvest-enriched `BgTaskRow`), plus up to 5 recently-finished rows (dim, with final status); ↑↓ select, `k`/`x` stop (running rows only), Esc close. Divergence: the command is **`/bg`**, not `/tasks` — `/tasks` would collide with the existing `TaskPanel.tsx` (the model's todo checklist), a deliberate rename recorded in the spec's Decision Log |
 | Background task **output** reachable (Enter-to-tail) | ✅ | — | **W2** probe-74 mechanism: the backgrounded tool_result names the output file ("Output is being written to: <path>"); `bgTaskMeta.ts` harvests path+command+status client-side from frames the REPL already receives (zero host/wire change — works identically over `ccx attach`), and Enter on a panel row tails the file's last 12 lines in-panel (Enter again re-reads; `local_agent` rows deliberately not tailed) |
 | Ctrl-X Ctrl-K kill agents | ✅ | — | **W2** — 2.1.220 `chat:killAgents` flow verbatim: "No background agents running" when idle; first press arms ("Press Ctrl-X Ctrl-K again to stop background agents"), second within 3s stops all |
-| Task lifecycle notices | ✅ | — | **GB7** `task_started`/`task_notification` frames render as one-line transcript notices (`⚙ task started: …` / `✓ task done: …` / `✗ task failed: …` / `◼ task stopped: …`), honoring `skip_transcript` |
+| ~~Task lifecycle notices~~ | 🚫 **retired** | — | **GB7 shipped this; F3 Task 7 DELETED it, and the row leaves the denominator rather than staying a ✅ for a behaviour that no longer exists.** `task_started`/`task_notification` frames used to render one-line transcript notices (`⚙ task started: …` / `✓ task done: …`). **Upstream renders none** — the lifecycle surfaces on the Agent unit's own rows (§2, `LT16`/`LT17`) and in the `/bg` panel — so the ✅ was an over-ship against the stale reference. It was also actively harmful: P84 shows a `task_started` arriving ~5 s into *every* foreground Bash, and each local notice is a fold **breaker**, so the notice was splitting fold runs mid-turn. The frames are still ingested (`bgHarvest` + `agentMeta`) and still repaint the ↓ panel; only the transcript line is gone (`useChat.ts`, `ev.kind === "task"`) |
 | Subagent attribution on dialogs | 🟡 | — | **GB5** a host-side correlation map (`parentToolUseID` from nested frames → `subagentType` from `task_started` frames) stamps `Subagent (<type>) asks:` on the Question/Plan/Permission dialogs when known; **best-effort** — a miss renders unattributed and never blocks (no per-subagent drill-in transcript view — spec Non-goals). **F0 correction:** upstream renders this as a **frame-header suffix** (`· from the <name> agent`), not a separate line above, and colours subagents from 8 reserved theme tokens |
 | Status-bar mode truth | ✅ | — | **GB5** the host intercepts the CLI's own `system`/`status` frames and pushes the real `permissionMode` on every `state` event (one field, last-write-wins between the CLI's own flip and the host's setter calls); closes the previously recorded "status bar starts at `default`" quirk — see the `full-use-checklist.md` A1 note, updated alongside this |
 
-**Score: ~75% (F0 recount: 5✅ + 5🟡 of 10 rows = 7.5/10).** The previous ~80% (W2's first plain recount:
+**Score: ~72% (F3 recount: 4✅ + 5🟡 of 9 rows = 6.5/9 = 72.2%).** The single change from the F0 recount
+below is the **retirement of "Task lifecycle notices"** — see that row: F3 deleted the behaviour because
+upstream has none of it, so the row leaves the denominator instead of holding a ✅. Nothing else in this
+section moved, and nothing regressed in capability. The F0 recount it replaces read:
+
+**~75% (F0 recount: 5✅ + 5🟡 of 10 rows = 7.5/10).** The previous ~80% (W2's first plain recount:
 6✅+4🟡) is not wrong about capability — nothing regressed — but one of the six ✅ rows, Plan-mode
 approval dialog, was scored against the wrong reference (see the F0 correction on that row above: 3
 fixed options against upstream's up to 6 conditional ones, including a clear-context/re-seed family we
