@@ -86,6 +86,14 @@ export function callSidecar(event: ToolEvent): Record<string, unknown> | undefin
   return isRecord(value) ? value : undefined;
 }
 
+/** LT14, the WIRE discriminator (P80 § A frame 1, `vld` in the bundle). `query.interrupt()` mid-tool-call
+ *  emits the rejected `tool_result` as a user frame carrying this literal as a TOP-LEVEL `tool_use_result`
+ *  STRING — and transcriptModel's association rule is value-agnostic, so it lands on the call as a
+ *  `scope:"call"` sidecar exactly like a structured one would. That field, NOT any text in the result body, is
+ *  what says "interrupted": the `[Request interrupted by user…]` sentinel rides a SEPARATE user frame (which
+ *  toolRenderer suppresses), and this frame's own content is empty. */
+export const USER_REJECTED_TOOL_USE = "User rejected tool use";
+
 /** Upstream `NHH`/`FHH` (L423879–423884): the diff summary counts per-line `+`/`-` prefixes summed across hunks —
  *  NOT hunk `newLines`/`oldLines`, which include the context rows. Any hunk that is not `{lines: string[]}`
  *  rejects the WHOLE patch: half a count would read as a real number on screen. */
@@ -238,7 +246,11 @@ export function normalizeToolResult(event: ToolEvent, options?: { verbose?: bool
   const value = sidecar?.scope === "call" ? sidecar.value : undefined;       // only a uniquely associated sidecar is usable
   const flat = flatText(content), outputLines = textLines(flat), trimmed = flat.trim();
   const input = isRecord(event.input) ? event.input : {};
-  let status: ToolStatus = trimmed === "Interrupted" ? "interrupted" : trimmed === "Tool use rejected" ? "rejected" : isError ? "error" : "success";
+  // The wire field FIRST: it is the engine's own annotation, while the two flat-text tests below are shapes a
+  // tool happened to write. (`Interrupted` stays: a Bash killed by its own timeout reports it that way, with
+  // no `tool_use_result` at all.)
+  let status: ToolStatus = value === USER_REJECTED_TOOL_USE ? "interrupted"
+    : trimmed === "Interrupted" ? "interrupted" : trimmed === "Tool use rejected" ? "rejected" : isError ? "error" : "success";
   let structured: Record<string, unknown> | undefined;
   let summary = tool;                                                        // generic default; unknown tools keep exactly this
   if (tool === "Read") {

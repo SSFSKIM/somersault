@@ -42,6 +42,52 @@ function formatMember(member: string): string {
   return `${mods.has("ctrl") ? "Ctrl-" : ""}${mods.has("alt") ? "Alt-" : ""}${mods.has("shift") ? "⇧" : ""}${mods.has("super") ? SUPER : ""}${shown}`;
 }
 
+/** Upstream ships TWO display grammars, and this is the OTHER one: `Hp_.default` with `keyCase:"lower"`
+ *  (bundle 231308541) — modifiers lowercase joined with `+`, chord members joined with a space, and a short
+ *  lower-case name table where the title-case one prints words. `BackgroundHint` renders its chord through it,
+ *  so the hint reads `(ctrl+b to run in background)` where the shortcuts grid would print `Ctrl-B`. The
+ *  modifier ORDER stays our canonical one (`specKey`: ctrl·alt·shift·super) rather than upstream's
+ *  ctrl·shift·alt·super — a difference only a multi-modifier rebind can show, and one spelling per key is
+ *  worth more here than reproducing a second ordering. */
+const LOWER_NAMES: Record<string, string> = Object.assign(Object.create(null), {
+  enter: "enter", escape: "esc", tab: "tab", space: "space", backspace: "backspace", delete: "delete",
+  up: "↑", down: "↓", left: "←", right: "→", pageup: "pgup", pagedown: "pgdn", home: "home", end: "end",
+});
+function formatMemberLower(member: string, platform: NodeJS.Platform): string {
+  const tokens = member.split("+");
+  let name = tokens.pop() ?? "";
+  if (name === "" && tokens.length > 0) { name = "+"; tokens.pop(); }
+  const mods = new Set(tokens), macos = platform === "darwin";
+  const out: string[] = [];
+  if (mods.has("ctrl")) out.push("ctrl");
+  if (mods.has("alt")) out.push(macos ? "opt" : "alt");
+  if (mods.has("shift")) out.push("shift");
+  if (mods.has("super")) out.push(macos ? "cmd" : "super");
+  out.push(LOWER_NAMES[name] ?? name);                                   // `charCase:"preserve"` — a single letter stays as typed
+  return out.join("+");
+}
+/** The lower-case display form of one canonical binding. `""` for absent, NOT `(unbound)`: the one caller
+ *  renders no row at all rather than a parenthetical announcing its own emptiness. */
+export function formatBindingLower(key: string | null | undefined, platform: NodeJS.Platform = process.platform): string {
+  if (!key) return "";
+  return key.trim().split(/\s+/).map((member) => formatMemberLower(member, platform)).join(" ");
+}
+
+/** LT20, upstream `BackgroundHint` (bundle 240646037): a dim `(ctrl+b to run in background)` under a running
+ *  foreground Bash. `$e({parens:true})` composes exactly `("(", chord, " to ", action, ")")`, and the tmux
+ *  branch is `Z.terminal==="tmux" && chord==="ctrl+b" ? "ctrl+b ctrl+b (twice)" : chord` — so a REBOUND chord
+ *  is never doubled (tmux's own prefix is ctrl+b; nothing else collides with it). `undefined` when the action
+ *  is unbound: upstream returns `null` there, and `(unbound)` inside this sentence would read as a key name. */
+export const BACKGROUND_HINT_ACTION = "run in background";
+export const TMUX_BACKGROUND_CHORD = "ctrl+b ctrl+b (twice)";
+export function backgroundHintText(keys: readonly string[], tmux: boolean, platform: NodeJS.Platform = process.platform): string | undefined {
+  const key = keys.find((k) => !k.includes(" ")) ?? keys[0];             // plain beats chord, the resolver's own rule
+  if (key === undefined) return undefined;
+  const chord = formatBindingLower(key, platform);
+  if (chord === "") return undefined;
+  return `(${tmux && chord === "ctrl+b" ? TMUX_BACKGROUND_CHORD : chord} to ${BACKGROUND_HINT_ACTION})`;
+}
+
 /** A canonical binding (a chord is space-separated) → its display string. `null`/absent → `(unbound)`. */
 export function formatBinding(key: string | null | undefined): string {
   if (!key) return UNBOUND;

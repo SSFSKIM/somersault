@@ -69,7 +69,12 @@ export type { ResultProjection };
  *  nowhere on disk, so a rewound/resumed/attached document must fall through to what it can derive.
  *  `toolEvents` is injected by the projections themselves (never by a caller): an Agent's progress rows are
  *  its NESTED calls, which live in the document beside it rather than on the event. */
-export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; }
+/** `bashHint` (F3 Task 9, LT20) is the RESOLVED background-hint sentence — `keys/hints.ts`'s
+ *  `backgroundHintText` applied to the live binding table and the live `$TMUX`. It arrives pre-composed for
+ *  the same reason `thoughtMs` does: this projection is pure, and reading a React keymap context (or
+ *  `process.env`) from inside it would make a row depend on where it was rendered. `undefined` means the
+ *  caller found `task:background` unbound — and then there is no row at all, never `(unbound)`. */
+export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; }
 
 /** Upstream's exact interruption surface — the row is a prompt, not a copy of whatever partial output arrived. */
 const INTERRUPTED_TEXT = "Interrupted · What should Claude do instead?";
@@ -299,11 +304,30 @@ function agentBatchItems(batch: AgentBatch, form: "published" | "pending", optio
   return items;
 }
 
+// ── F3 Task 9: the background hint under a running foreground Bash (LT20) ───────────────────────────────
+/** Upstream `iwr` (bundle 240646037) renders it as a `<Box paddingLeft:5>` sibling of the progress body, so
+ *  it is five plain columns — NOT the `⎿` gutter, which is a five-column box with a connector in it. */
+const BACKGROUND_HINT_INDENT = "     ";
+/** The gate is the CALL'S OWN `system/task_started` with `task_type:"local_bash"` (P84): the engine only
+ *  becomes able to background a shell once that frame lands, so drawing the hint from the first frame of the
+ *  call would advertise a key that does nothing for the seconds before it. An Agent dispatch's `task_started`
+ *  (`local_agent`) is a different task type on the same sidechannel and must not light this row. Compact-only,
+ *  like every other hint: the detail projections ARE upstream's verbose form, where `Ug`/`Bg` return null. */
+function backgroundHintItem(event: ToolEvent, options: ProjectionOptions): RenderItem | undefined {
+  if (event.name !== "Bash" || event.route !== "top-level" || options.projection !== "compact" || options.verbose) return undefined;
+  if (options.bashHint === undefined || options.agentMeta?.get(event.id)?.taskType !== "local_bash") return undefined;
+  return { kind: "line", id: `${event.id}:background-hint`, line: { text: `${BACKGROUND_HINT_INDENT}${options.bashHint}`, dim: true } };
+}
+
 /** One retained call → its renderable items. A `suppressed` tool projects to nothing — driven by the status Task 1's
  *  normalizer assigns, never by a renderer-side name check, so the suppression list has exactly one home. */
 export function renderToolEvent(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
   if (normalized.status === "suppressed") return [];
   const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, normalized.status, options), wrap: "truncate-end" }];
+  if (normalized.status === "running") {
+    const hint = backgroundHintItem(event, options);
+    if (hint !== undefined) items.push(hint);
+  }
   // F3 Task 7 owns the Agent's two live surfaces (the progress rows and the Done row). Its OTHER statuses —
   // `error`, `interrupted`, `rejected` — are exact surfaces the generic body already paints, and so is a
   // terminal shape `Vha` does not recognise (`agentTerminalItems` returns `undefined` and we fall through).
@@ -361,13 +385,29 @@ export function sdkEntryBase(entry: SdkEntry, occurrence: number): string {
  *  F3 owns the parent/child progress and totals route. */
 const isNested = (message: Record<string, unknown>): boolean => typeof message.parent_tool_use_id === "string" && message.parent_tool_use_id.length > 0;
 
+/** LT14. `query.interrupt()` puts the interrupt on the wire as a plain `user` frame whose sole content block is
+ *  the bracketed sentinel (P80 § A frame 2) — no subtype, no `isMeta`, nothing but the text to go on. The SDK's
+ *  own first-prompt extractor filters it with this very regex (P80's static half, `sdk.mjs`), which is both the
+ *  precedent for matching on text and the proof upstream expects it as a USER row. We RETAIN it (it is source)
+ *  and render nothing for it: its surface is the preceding tool row's `Interrupted · What should Claude do
+ *  instead?`, and a second `❯ [Request interrupted by user]` line would say the same thing twice. Anchored at
+ *  both ends and one block only, so a user who quotes the sentence inside a longer prompt still gets their row. */
+const INTERRUPT_SENTINEL = /^\[Request interrupted by user[^\]]*\]$/;
+function isInterruptSentinel(message: Record<string, unknown>): boolean {
+  if (message.type !== "user") return false;
+  const inner = message.message, content = isRecord(inner) && Array.isArray(inner.content) ? inner.content : [];
+  if (content.length !== 1) return false;
+  const block = content[0];
+  return isRecord(block) && block.type === "text" && typeof block.text === "string" && INTERRUPT_SENTINEL.test(block.text.trim());
+}
+
 /** The sole non-tool completed-SDK adapter: it reuses render.ts for assistant/user text and every other
  *  non-tool species, and SKIPS `tool_use`/`tool_result` so tools keep the one renderer route above. One
  *  block at a time, so the item id can carry the content index that makes it stable across a rehydration. */
 export function projectMessageEntry(entry: SdkEntry, options: ProjectionContext, base?: string): readonly RenderItem[] {
   void options;
   const message = entry.message;
-  if (isNested(message)) return [];
+  if (isNested(message) || isInterruptSentinel(message)) return [];
   const inner = message.message;
   const content = isRecord(inner) && Array.isArray(inner.content) ? inner.content : [];
   const id = base ?? sdkEntryBase(entry, 0);
@@ -528,6 +568,12 @@ const SENTINEL_TEXT = new Set(["(no content)", "No response requested."]);
  *  message carrying only a `tool_result` (which renders nothing of its own) is neutral too. */
 function entryAtom(entry: TranscriptEntry, items: readonly RenderItem[]): "breaker" | "neutral" {
   if (entry.kind === "local-event") return "breaker";
+  // The suppressed interrupt sentinel is the one entry whose ATOM and whose ITEMS disagree, and deliberately:
+  // upstream's rule is that any user message which is not a bare `tool_result` carrier breaks the run, and an
+  // interrupt is the most emphatic break there is. Reading it off `items.length` (zero ⇒ neutral) would let the
+  // reads before an interrupt and the reads after it merge into ONE summary row with the interrupt invisible
+  // inside it — so the predicate is asked directly here rather than inferred from what projected.
+  if (isInterruptSentinel(entry.message)) return "breaker";
   if (items.length === 0) return "neutral";
   const inner = entry.message.message, content = isRecord(inner) && Array.isArray(inner.content) ? inner.content : [];
   const rendered = content.filter((block) => isRecord(block) && block.type !== "tool_use" && block.type !== "tool_result");

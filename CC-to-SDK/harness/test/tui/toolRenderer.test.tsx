@@ -884,3 +884,85 @@ describe("F3 Task 8: same-message agent batches", () => {
     expect(projectPending(doc, context, new Set(["someone-else"]))).toEqual([]);
   });
 });
+
+// ── F3 Task 9 (LT20 / LT14): the wire truths ──────────────────────────────────────────────────────────────
+// Two fidelity fixes the probe round settled, both keyed off wire facts rather than off text on screen.
+describe("F3 Task 9 — the Bash background hint (LT20)", () => {
+  const openBash = (id = "bash-1") => ({ id, name: "Bash", input: { command: "npm test" }, callSequence: 1, route: "top-level" as const });
+  const running = (event: { name: string }) => normalizeToolResult(event as never);
+  const started = (id: string, taskType: string) => new Map([[id, { taskType, startedAt: 10 }]]);
+  const hint = "(ctrl+b to run in background)";
+
+  it("renders NO hint before the call's own task_started arrives — backgrounding cannot work yet (P84)", () => {
+    const event = openBash();
+    const items = renderToolEvent(event, running(event), { ...options, bashHint: hint });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: "line" });
+  });
+
+  it("renders the dim hint at a five-column indent once task_started says local_bash", () => {
+    const event = openBash();
+    const items = renderToolEvent(event, running(event), { ...options, bashHint: hint, agentMeta: started("bash-1", "local_bash") });
+    expect(items).toHaveLength(2);
+    expect(items[1]).toEqual({ kind: "line", id: "bash-1:background-hint", line: { text: "     (ctrl+b to run in background)", dim: true } });
+  });
+
+  it("takes its text from the caller's LIVE keymap derivation, and renders nothing when the action is unbound", () => {
+    const event = openBash(), meta = started("bash-1", "local_bash");
+    expect(renderToolEvent(event, running(event), { ...options, bashHint: "(ctrl+k to run in background)", agentMeta: meta })[1])
+      .toMatchObject({ line: { text: "     (ctrl+k to run in background)" } });
+    expect(renderToolEvent(event, running(event), { ...options, bashHint: "(ctrl+b ctrl+b (twice) to run in background)", agentMeta: meta })[1])
+      .toMatchObject({ line: { text: "     (ctrl+b ctrl+b (twice) to run in background)" } });
+    expect(renderToolEvent(event, running(event), { ...options, agentMeta: meta })).toHaveLength(1);
+  });
+
+  it("is a BASH surface: an Agent's task_started never grows one, and neither does a local_agent task type", () => {
+    const agent = { id: "agent-1", name: "Agent", input: { description: "explore", prompt: "go" }, callSequence: 1, route: "top-level" as const };
+    const agentItems = renderToolEvent(agent, normalizeToolResult(agent as never), { ...options, bashHint: hint, agentMeta: started("agent-1", "local_agent") });
+    expect(agentItems.filter((item) => item.kind === "line" && item.line.text.includes("run in background"))).toEqual([]);
+    const event = openBash();
+    expect(renderToolEvent(event, running(event), { ...options, bashHint: hint, agentMeta: started("bash-1", "local_agent") })).toHaveLength(1);
+  });
+
+  it("is gone the moment the call completes, and never appears in the detail projections", () => {
+    const done = { ...openBash(), result: { content: "ok", isError: false, resultSequence: 2 } };
+    expect(renderToolEvent(done, normalizeToolResult(done), { ...options, bashHint: hint, agentMeta: started("bash-1", "local_bash") })
+      .filter((item) => item.kind === "line" && item.line.text.includes("run in background"))).toEqual([]);
+    const event = openBash();
+    expect(renderToolEvent(event, running(event), { ...options, projection: "detail-all", verbose: true, bashHint: hint, agentMeta: started("bash-1", "local_bash") })).toHaveLength(1);
+  });
+
+  it("reaches the screen through projectPending, under the open row it belongs to", () => {
+    const doc = new TranscriptDocument();
+    doc.appendSdk("host", { type: "assistant", uuid: "a1", message: { id: "m1", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "npm test" } }] } });
+    const items = projectPending(doc, { cwd: "/work", home: "/home/me", platform: "darwin", columns: 100, now: 0, bashHint: hint, agentMeta: started("bash-1", "local_bash") });
+    expect(items.map((item) => (item.kind === "line" ? item.line.text : ""))).toEqual(["⏺ Bash(npm test)", "     (ctrl+b to run in background)"]);
+  });
+});
+
+describe("F3 Task 9 — the interrupt sentinel user frame (LT14)", () => {
+  const readPair = (n: number) => [
+    { type: "assistant", uuid: `a${n}`, message: { id: `m${n}`, content: [{ type: "tool_use", id: `r${n}`, name: "Read", input: { file_path: `/work/f${n}.ts` } }] } },
+    { type: "user", uuid: `u${n}`, message: { content: [{ type: "tool_result", tool_use_id: `r${n}`, content: "x" }] } },
+  ];
+  // P80 § A frame 2, verbatim in shape: no subtype, no marker field — the bracketed text is the ONLY signal.
+  const SENTINEL = { type: "user", uuid: "sentinel", parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user for tool use]" }] } };
+  const context = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
+
+  it("projects NO items: its surface is the tool row's own Interrupted prompt, not a second ❯ row", () => {
+    const doc = new TranscriptDocument();
+    doc.appendSdk("host", SENTINEL);
+    expect(projectCompact(doc, context)).toEqual([]);
+    doc.appendSdk("host", { type: "user", uuid: "real", message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user for tool use] and then some" }] } });
+    expect(projectCompact(doc, context).length).toBeGreaterThan(0);   // only a frame whose SOLE text IS the sentinel is suppressed
+  });
+
+  it("still BREAKS the fold run, so a read run either side of it renders as two group rows", () => {
+    const doc = new TranscriptDocument();
+    for (const frame of [...readPair(1), ...readPair(2), SENTINEL, ...readPair(3), ...readPair(4)]) doc.appendSdk("host", frame);
+    doc.appendSdk("host", { type: "assistant", uuid: "a9", message: { id: "m9", content: [{ type: "text", text: "done" }] } });   // closes the trailing run
+    const groups = projectCompact(doc, context).filter((item) => item.id.startsWith("group:"));
+    expect(groups).toHaveLength(2);
+    expect(groups.map((item) => (item.kind === "line" ? item.line.text : ""))).toEqual(["  Read 2 files (ctrl+o to expand)", "  Read 2 files (ctrl+o to expand)"]);
+  });
+});

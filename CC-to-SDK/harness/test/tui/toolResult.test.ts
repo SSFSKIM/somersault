@@ -87,4 +87,28 @@ describe("F1 structured-first results", () => {
     expect(formatGenericError("prefix InputValidationError: mid-string", false)).toBe("Invalid tool parameters");
     expect(formatGenericError("<tool_use_error></tool_use_error>", false)).toBe("Tool execution failed");   // matched-but-empty is NOT a no-match
   });
+
+  // ── F3 Task 9 (LT14): the WIRE discriminator, exactly as P80 recorded it ───────────────────────────────
+  // `query.interrupt()` mid-tool-call emits the rejected `tool_result` as a user frame carrying a TOP-LEVEL
+  // `tool_use_result:"User rejected tool use"` STRING (report 13 § A frame 1). transcriptModel's sidecar rule
+  // is value-agnostic, so that string lands on the call as `event.result.sidecar` with scope "call" — which is
+  // the only place classification may read it. The sentinel TEXT never rides this frame; it arrives as its own
+  // separate user frame (rendered by toolRenderer), so matching content text here would classify nothing.
+  it("classifies the interrupt off the wire field, not off any sentinel text in the result", () => {
+    const rejected = { type: "user", uuid: "user-bash-interrupt", message: { content: [{ type: "tool_result", tool_use_id: "bash-1", content: "", is_error: true }] }, tool_use_result: "User rejected tool use" };
+    const event = eventForPair(BASH_CALL, rejected);
+    expect(event.result?.sidecar).toEqual({ scope: "call", value: "User rejected tool use" });
+    const normalized = normalizeToolResult(event);
+    expect(normalized.status).toBe("interrupted");
+    expect(normalized.source).toBe("fallback");        // a STRING sidecar is not a recognized Bash shape
+    expect(normalized.rawContent).toBe("");            // the source stays faithful; the row is a prompt, not a copy
+  });
+  it("does not read a message-scope or unrelated sidecar string as an interrupt", () => {
+    const flat = { type: "user", uuid: "user-bash-ok", message: { content: [{ type: "tool_result", tool_use_id: "bash-1", content: "boom", is_error: true }] }, tool_use_result: "User approved tool use" };
+    expect(normalizeToolResult(eventForPair(BASH_CALL, flat)).status).toBe("error");
+  });
+  it("keeps the Bash sidecar `Interrupted` flat-text path the wire field does not cover", () => {
+    const event = { id: "b9", name: "Bash", input: { command: "sleep 9" }, callSequence: 1, route: "top-level" as const, result: { content: "Interrupted", isError: true, resultSequence: 2 } };
+    expect(normalizeToolResult(event).status).toBe("interrupted");
+  });
 });
