@@ -25,8 +25,9 @@
 import type { RenderLine, Segment } from "./render.js";
 import type { ProjectionOptions } from "./toolRenderer.js";     // type-only: erased, so there is no import cycle
 import { foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
-import { callSidecar, countTextLines, patchLineCounts, readVariant, type NormalizedToolResult } from "./toolResult.js";
+import { callSidecar, countTextLines, patchLineCounts, readVariant, textLines, type NormalizedToolResult } from "./toolResult.js";
 import { formatDuration, formatFileSize, plural } from "./format.js";
+import { highlightCode, KNOWN_LANGS } from "./highlight.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import type { ToolEvent } from "./transcriptModel.js";
 
@@ -96,16 +97,44 @@ const editRows = (normalized: NormalizedToolResult): readonly RenderLine[] | und
   const summary = counts === undefined ? undefined : diffSummaryRow(counts.added, counts.removed);
   return summary === undefined ? undefined : [summary];
 };
+/** Upstream `jme` (L423783) with `C8o = 10` (L423857): the create row's default (non-condensed, non-scratchpad,
+ *  non-plan) form is a syntax-highlighted preview of the written content's first ten lines, then `bM({count:
+ *  total - 10})`. Census 01 (L60–62) records that `bM` call WITHOUT `expandable` — so this is the one marker in
+ *  the census that is the BARE `… +{N} lines`, with no `(ctrl+o to expand)` suffix. The census records no verbose
+ *  variant of `jme` either (the three branches above it are the only `verbose` tests), so the cap holds in the
+ *  detail projections too; that is the census's silence, not a verified expansion.
+ *  Highlighting is keyed off the file extension. An extension `highlight.ts` does not know renders PLAIN, not
+ *  dim: `highlightCode`'s own unknown-language fallback is a dim `inactive` line, which is markdown's
+ *  fenced-code polarity (an unrecognised fence reads as inert) — here the rows ARE the result body, and dimming
+ *  a whole file because it is `.md` would say "less important" about the only content on screen. */
+const WRITE_PREVIEW_LINES = 10;
+const extensionOf = (path: string | undefined): string => {
+  const name = path === undefined ? "" : basename(path), dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+};
+function previewRows(written: string, filePath: string | undefined): readonly RenderLine[] {
+  const lines = textLines(written), lang = extensionOf(filePath), known = KNOWN_LANGS.has(lang);
+  const shown = lines.slice(0, WRITE_PREVIEW_LINES).map((line) => {
+    const segments = known ? highlightCode(line, lang) : [];
+    return row(...(segments.length > 0 ? segments : [plain(line)]));           // an empty line highlights to nothing
+  });
+  const hidden = lines.length - WRITE_PREVIEW_LINES;
+  return hidden > 0 ? [...shown, dim(`… +${hidden} ${plural(hidden, "line")}`)] : shown;
+}
 function writeRows(event: ToolEvent, normalized: NormalizedToolResult): readonly RenderLine[] | undefined {
   const structured = normalized.structured;
   if (structured?.type === "update") return editRows(normalized);
   // `create`: recognized sidecar content first, the complete retained input second (P94 decision 5). Upstream's
-  // default create row is the highlighted 10-line preview — F3 Task 6 adds it on top of this count; its
-  // condensed-style (` to {relativePath}`), scratchpad (`… (ctrl+o to expand)`) and plan-mode (`/plan to
-  // preview`) variants need style/scratchpad/plan state this clone does not model, and are recorded as skipped.
-  const written = str(structured?.content) ?? str(isRecord(event.input) ? event.input.content : undefined);
+  // default create row is the preview ALONE; the count row we keep above it is this clone's stand-in for the
+  // condensed variant (` to {relativePath}`) we cannot model — it, the scratchpad (`… (ctrl+o to expand)`) and
+  // plan-mode (`/plan to preview`) forms all need style/scratchpad/plan state we do not have, and are recorded
+  // as skipped. With no content anywhere there is nothing honest to preview, so the count row stands alone.
+  const input = isRecord(event.input) ? event.input : {};
+  const written = str(structured?.content) ?? str(input.content);
   const lines = written === undefined ? normalized.outputLines.length : countTextLines(written);
-  return [row(plain("Wrote "), bold(String(lines)), plain(` ${plural(lines, "line")}`))];
+  const head = row(plain("Wrote "), bold(String(lines)), plain(` ${plural(lines, "line")}`));
+  if (written === undefined) return [head];
+  return [head, ...previewRows(written, str(structured?.filePath) ?? str(input.file_path))];
 }
 
 // ── Grep / Glob (upstream `$Wo` L421481, `ola` L421541) ────────────────────────────────────────────────

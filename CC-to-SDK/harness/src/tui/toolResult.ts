@@ -28,10 +28,11 @@ export function flatText(content: unknown): string {
   if (!Array.isArray(content)) return "";
   return content.filter((b): b is Record<string, unknown> => isRecord(b) && b.type === "text" && typeof b.text === "string").map((b) => b.text as string).join("\n");
 }
-const toLines = (text: string): readonly string[] => (text.length === 0 ? [] : (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n"));
-/** Upstream `bbn` (L424186): newline-delimited lines of a written/returned body, minus the trailing newline's
- *  phantom row. Exported because F3's `Wrote {N} lines` row must count EXACTLY what the normalizer counts. */
-export const countTextLines = (text: string): number => toLines(text).length;
+/** Upstream `bbn` (L424186): the newline-delimited lines of a written/returned body, minus the trailing
+ *  newline's phantom row. Exported whole (not just its length) because F3 Task 6's Write preview must show
+ *  EXACTLY the rows the `Wrote {N} lines` count promises — one split, so the two can never disagree. */
+export const textLines = (text: string): readonly string[] => (text.length === 0 ? [] : (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n"));
+export const countTextLines = (text: string): number => textLines(text).length;
 const countLines = (n: number): string => `${n} line${n === 1 ? "" : "s"}`;
 
 // Narrow recognizers for the exact 0.3.220 sidecar shapes; each returns the sidecar itself so it is retained whole.
@@ -235,7 +236,7 @@ export function normalizeToolResult(event: ToolEvent, options?: { verbose?: bool
 
   const { content, isError, sidecar } = event.result;
   const value = sidecar?.scope === "call" ? sidecar.value : undefined;       // only a uniquely associated sidecar is usable
-  const flat = flatText(content), outputLines = toLines(flat), trimmed = flat.trim();
+  const flat = flatText(content), outputLines = textLines(flat), trimmed = flat.trim();
   const input = isRecord(event.input) ? event.input : {};
   let status: ToolStatus = trimmed === "Interrupted" ? "interrupted" : trimmed === "Tool use rejected" ? "rejected" : isError ? "error" : "success";
   let structured: Record<string, unknown> | undefined;
@@ -249,7 +250,7 @@ export function normalizeToolResult(event: ToolEvent, options?: { verbose?: bool
   } else if (tool === "Write") {
     structured = writeShape(value);
     const written = structured ? String(structured.content) : typeof input.content === "string" ? input.content : undefined;
-    summary = `Wrote ${countLines(written === undefined ? outputLines.length : toLines(written).length)}`;
+    summary = `Wrote ${countLines(written === undefined ? outputLines.length : textLines(written).length)}`;
   } else if (tool === "Edit") {
     structured = editShape(value);                                           // absolute hunk positions retained for F4; F1 emits no diff
   } else if (tool === "Bash") {
@@ -263,5 +264,5 @@ export function normalizeToolResult(event: ToolEvent, options?: { verbose?: bool
   // Upstream additionally runs its underline stripper (`L3t`) over the displayed error text — underline-ON SGR
   // sequences would stack on the semantic error styling — while underline-OFF (24) survives, exactly as it does there.
   const failure = status === "error" ? stripUnderlineSgr(formatGenericError(content, options?.verbose === true)) : undefined;
-  return { tool, status, source: structured ? "structured" : "fallback", rawContent: content, flatText: flat, summary, output: failure ?? outputLines.join("\n"), outputLines: failure === undefined ? outputLines : toLines(failure), ...(structured ? { structured } : {}) };
+  return { tool, status, source: structured ? "structured" : "fallback", rawContent: content, flatText: flat, summary, output: failure ?? outputLines.join("\n"), outputLines: failure === undefined ? outputLines : textLines(failure), ...(structured ? { structured } : {}) };
 }
