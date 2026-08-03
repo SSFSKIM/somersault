@@ -164,6 +164,32 @@ describe("bindingFor — the display string task 10 hints with", () => {
     const t3 = compileBindings([layer("Chat", { "ctrl+l": "x" }), layer("Chat", { "ctrl+l": null })]);
     expect(bindingFor(t3, "x")).toBeNull();
   });
+  it("prefers a single key over a chord when both bind the action (hints print ctrl+g, not ctrl+x ctrl+e)", () => {
+    expect(bindingFor(t, "chat:externalEditor")).toBe("ctrl+g");
+    const t4 = compileBindings([layer("Chat", { "ctrl+x ctrl+e": "ed" })]);
+    expect(bindingFor(t4, "ed")).toBe("ctrl+x ctrl+e");   // chord still reported when it is all there is
+  });
+});
+
+describe("a null-unbound chord must not arm its head (merge can never delete, so an armed null would eat the key forever)", () => {
+  it("the plain key stays reachable in a lower context", () => {
+    const t = compileBindings([
+      layer("Chat", { "ctrl+x ctrl+k": "kill" }), layer("Global", { "ctrl+x": "app:interrupt" }),
+      layer("Chat", { "ctrl+x ctrl+k": null }),
+    ]);
+    expect(resolveKey(ctrl("x"), ["Chat", "Global"], t, [])).toEqual({ type: "match", action: "app:interrupt", context: "Global" });
+  });
+  it("with nothing below, the head simply no-matches instead of swallowing the next key", () => {
+    const t = compileBindings([layer("Chat", { "ctrl+x ctrl+k": null })]);
+    expect(resolveKey(ctrl("x"), ["Chat"], t, [])).toEqual({ type: "no-match" });
+  });
+  it("cross-context shadowing still works: a live chord below arms, and the null above wins the completion as unbound", () => {
+    const t = compileBindings([layer("Global", { "ctrl+x ctrl+k": "kill" }), layer("Chat", { "ctrl+x ctrl+k": null })]);
+    const armed = resolveKey(ctrl("x"), ["Chat", "Global"], t, []);
+    expect(armed.type).toBe("chord-started");
+    if (armed.type !== "chord-started") return;
+    expect(resolveKey(ctrl("k"), ["Chat", "Global"], t, armed.pending)).toEqual({ type: "unbound" });
+  });
 });
 
 describe("against the REAL default table", () => {

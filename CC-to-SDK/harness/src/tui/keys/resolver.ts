@@ -19,7 +19,7 @@
 import type { KeyContextName, KeyEvent } from "./types.js";
 import type { ContextBindings } from "./bindings.js";
 import { VALID_CONTEXTS } from "./bindings.js";
-import { formatChord, parseChordSpec, specKey, type KeySpec } from "./normalize.js";
+import { parseChordSpec, specKey, type KeySpec } from "./normalize.js";
 
 /** One context's compiled bindings: canonical chord string → action (or null = explicitly unbound), plus the set of
  *  strict prefixes of its multi-key chords, so "does anything here extend what has been typed?" is a Set hit. */
@@ -54,10 +54,13 @@ export function compileBindings(layers: readonly ContextBindings[]): CompiledTab
     }
   }
   // Prefixes are derived once the key set is final (a later layer can only add keys or change an action, never
-  // remove a key — a null action keeps the entry, and an unbound chord still arms its prefix so that completing it
-  // reports `unbound` rather than silently leaking the head key through as no-match).
+  // remove a key). A null-bound chord does NOT arm its prefix: merge can never delete an entry, so if the null
+  // armed, a user who unbinds `ctrl+x ctrl+k` could never free plain `ctrl+x` — the head would eat the next
+  // keypress forever. Cross-context shadowing doesn't need the null to arm either: the pending path still checks
+  // exact completions per context, so a chord unbound ABOVE a live lower one resolves `unbound` as required.
   for (const c of contexts.values()) {
-    for (const key of c.keys.keys()) {
+    for (const [key, action] of c.keys) {
+      if (action === null) continue;
       const parts = key.split(" ");
       for (let i = 1; i < parts.length; i++) c.prefixes.add(parts.slice(0, i).join(" "));
     }
@@ -106,14 +109,17 @@ export function resolveKey(e: KeyEvent, activeContexts: readonly KeyContextName[
  *  compiled context in table order. Null-bound (explicitly unbound) entries are never reported. */
 export function bindingFor(table: CompiledTable, action: string, contexts?: readonly KeyContextName[]): string | null {
   const order = contexts ?? [...table.contexts.keys()];
+  let chordHit: string | null = null;
   for (const context of order) {
     const c = table.contexts.get(context);
     if (!c) continue;
     for (const [key, bound] of c.keys) {
       if (bound !== action) continue;
-      const chord = parseChordSpec(key);
-      if (chord) return formatChord(chord);
+      // Keys are stored canonical (specKey at compile time), so `key` IS the display string — no re-parse.
+      // A single key beats a chord for hint purposes: printing "ctrl+x ctrl+e" when "ctrl+g" exists is noise.
+      if (!key.includes(" ")) return key;
+      chordHit ??= key;
     }
   }
-  return null;
+  return chordHit;
 }
