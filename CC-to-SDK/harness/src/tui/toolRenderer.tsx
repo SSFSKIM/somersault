@@ -35,7 +35,10 @@ export const GROUP_HINT_GUTTER = "  \u23bf  " as const;
  *  the WHOLE transcript through `RenderItemView`. */
 export type RenderItem =
   | { kind: "line"; id: string; line: RenderLine; wrap?: "truncate-end" }
-  | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[] };
+  // `gutterStyle` styles the CONNECTOR cells themselves (the five-column sibling Box), which is otherwise
+  // plain text. Only the active group's hint gutter uses it today: the tracked 2.1.220 golden renders
+  // `  ⎿  src/app.ts` as ONE dim `#999999` run across connector and path alike, with no artifact in it.
+  | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean } };
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
  *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). */
 export type ResultProjection = "compact" | "detail-all" | "detail-collapsed";
@@ -278,18 +281,38 @@ function clauseSegments(clauses: readonly FoldClause[], dim: boolean): Segment[]
 }
 /** R3.3's row geometry. Settled: an EMPTY two-column box (so two literal spaces, no glyph and no colour —
  *  R3.4) then the whole dim text run. Active: `ile`'s single glyph BLINKING on a 600 ms period (glyph for one
- *  half, a bare space for the other — R4.1), dim and uncoloured while unresolved (R4.2), then the
- *  present-participle clauses undimmed, the separate `…`, one literal space and the always-dim expand hint
- *  (R3.6). The blink is a pure phase function of `options.now`, exactly like the standalone header's, so the
- *  caller owns the clock and a test can pin any frame. No elapsed `· Ns` suffix and no 700 ms hint debounce:
- *  both are `ds()`-gated fullscreen-only (R4.10) and a substitute would be a fabrication, not fidelity. */
+ *  half, a bare space for the other — R4.1), then the present-participle clauses undimmed, the separate `…`,
+ *  one literal space and the always-dim expand hint (R3.6). The blink is a pure phase function of
+ *  `options.now`, exactly like the standalone header's, so the caller owns the clock and a test can pin any
+ *  frame. No elapsed `· Ns` suffix and no 700 ms hint debounce: both are `ds()`-gated fullscreen-only (R4.10)
+ *  and a substitute would be a fabrication, not fidelity.
+ *
+ *  TASK 7 CORRECTIONS. Evidence: the tracked 2.1.220 golden `f1-tool-rendering/01-read-complete.ansi`, an
+ *  ACTIVE single-read frame whose per-cell attributes the pyte capture reconstructs exactly. Where the
+ *  shipping binary contradicts the static reading, the binary wins (theme.ts's doctrine) — so both of these
+ *  are adopted here and noted in the contract rather than explained away:
+ *    · R4.2's "dimColor with NO color" is wrong: the active leader glyph is dim AND `#999999` (our
+ *      `inactive` token), and so is the `(ctrl+o to expand)` hint. Only the GLYPH cell is coloured — the
+ *      space after it is dim and uncoloured — which is why the leader is two segments rather than one. The
+ *      hint is one component on both rows (R3.6), so its colour is the same settled.
+ *    · R3.5's `dimColor={!isActive}` has its polarity backwards for the active row: the golden's " Reading "
+ *      and its bold count are BOTH dim. The active run is therefore dim here too, which cuts that row's
+ *      divergence from the golden from eleven cells to six.
+ *  The six that remain are upstream's own escape-sequence artifact, deliberately NOT reproduced: everything
+ *  after the bold count (" file…") renders PLAIN in the golden because the count's `\x1b[22m` closer clears
+ *  faint as well as bold, breaking the outer dim run. Our `Line` renders each segment as its own sibling
+ *  `<Text>`, so nothing here nests — emitting a broken reset to match would be fabricating a bug.
+ *  Still OPEN: the settled row's own colour. The live-confirmation note records it as grey `#949494`, a
+ *  DIFFERENT grey from this frame's `#999999`, and no settled golden exists yet — so the settled clause run
+ *  stays dim-and-uncoloured until one does. */
 function groupRowLine(group: FoldGroup, active: boolean, options: ProjectionOptions): RenderLine {
-  const leader = active
-    ? dimmed(Math.floor(options.now / 600) % 2 === 0 ? (options.platform === "darwin" ? "⏺ " : "● ") : "  ", true)
-    : { text: "  " };
-  const segments: Segment[] = [leader, ...clauseSegments(foldClauses(group.counts, active), !active)];
-  if (active) segments.push({ text: "…" });
-  segments.push(dimmed(" ", !active), { text: EXPAND_HINT, dim: true });
+  const grey = resolveThemeColor(themeTokens().inactive);
+  const leader: Segment[] = active
+    ? [{ text: Math.floor(options.now / 600) % 2 === 0 ? (options.platform === "darwin" ? "⏺" : "●") : " ", dim: true, color: grey }, { text: " ", dim: true }]
+    : [{ text: "  " }];
+  const segments: Segment[] = [...leader, ...clauseSegments(foldClauses(group.counts, active), true)];
+  if (active) segments.push({ text: "…", dim: true });
+  segments.push(dimmed(" ", true), { text: EXPAND_HINT, dim: true, color: grey });
   return { text: segments.map((segment) => segment.text).join(""), segments };
 }
 /** The three lives of one group row. `published` is the immutable Static row; `active` and `unclosed` are the
@@ -306,8 +329,10 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
   const id = toolGroupItemId(group.memberIds, GROUP_PART[form]);
   const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(group, active, options) }];
   // R3.7: the hint gutter is ACTIVE-ONLY — `latestDisplayHint` rides on the settled message but never renders.
-  if (active && group.hint !== undefined)
-    items.push({ kind: "gutter-block", id: toolGroupItemId(group.memberIds, "pending-hint"), gutter: GROUP_HINT_GUTTER, body: group.hint.split("\n").map((text) => ({ text, dim: true })) });
+  if (active && group.hint !== undefined) {
+    const grey = resolveThemeColor(themeTokens().inactive);
+    items.push({ kind: "gutter-block", id: toolGroupItemId(group.memberIds, "pending-hint"), gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body: group.hint.split("\n").map((text) => ({ text, dim: true, color: grey })) });
+  }
   return items;
 }
 
@@ -513,7 +538,7 @@ export function RenderItemView({ item, start, end, showGutter = true }: { item: 
   const body = item.body.slice(start ?? 0, end ?? item.body.length);
   return (
     <Box flexDirection="row">
-      <Box width={item.gutter.length}><Text>{showGutter ? item.gutter : ""}</Text></Box>
+      <Box width={item.gutter.length}><Text color={item.gutterStyle?.color} dimColor={item.gutterStyle?.dim}>{showGutter ? item.gutter : ""}</Text></Box>
       <Box flexDirection="column">{body.map((line, i) => <Line key={i} l={line} />)}</Box>
     </Box>
   );

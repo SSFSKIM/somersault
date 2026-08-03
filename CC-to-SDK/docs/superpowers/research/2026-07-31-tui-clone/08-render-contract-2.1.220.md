@@ -279,6 +279,28 @@ no glyph and no color (**L428062**). Active leader is the `ile` component (§4.1
 **R3.5 The entire text run is `dimColor` when settled** (`dimColor: !s`, L428062) and **not dim when
 active**. Counts nested inside stay `bold` (Ink composes dim+bold).
 
+> **F1 Task 7 correction (2026-08-03), measured on the tracked golden**
+> `harness/test/fixtures/upstream-frames/f1-tool-rendering/01-read-complete.ansi` — a real 2.1.220 ACTIVE
+> single-read frame whose per-cell attributes the pyte capture reconstructs exactly. Its cells read:
+> `⏺` dim+`#999999` · `" Reading "` dim · `1` bold+dim · `" file…"` PLAIN · `" "` dim ·
+> `"(ctrl+o to expand)"` dim+`#999999`.
+>
+> 1. **R3.5's polarity is backwards for the active row.** The active text run IS dim. The plain `" file…"`
+>    is not evidence against that: it is the bold count's own `\x1b[22m` closer clearing faint as well as
+>    bold, i.e. one outer dim run broken mid-way — which also tells us upstream renders the count as a
+>    bold child inside a dim parent rather than as a sibling.
+> 2. **R4.2's "dimColor with no color" is wrong.** The leader glyph carries `#999999`, and only the glyph
+>    cell does — the space after it is dim and uncoloured. The `(ctrl+o to expand)` hint carries the same
+>    colour, and since `Bg` is one component on both rows (R3.6) its colour is the same settled.
+> 3. **R4.6's hint gutter is dim+`#999999` across the connector too**, not plain text with a dim body.
+> 4. **"Ink composes dim+bold" is false for this Ink.** Probed: `<Text dimColor bold>1</Text>` emits
+>    `\x1b[2m1\x1b[22m` with no `\x1b[1m`, and a raw `\x1b[1m…\x1b[22m` embedded in a dim `<Text>` is
+>    rewritten by chalk's nested-close handling into a bold run that never closes. Getting bold+dim
+>    requires the nesting shape in (1).
+>
+> Still open: the SETTLED row's own colour. §0's live-confirmation note records it as grey `#949494`,
+> a DIFFERENT grey from this frame's `#999999`, and there is no settled golden yet.
+
 **R3.6 The `(ctrl+o to expand)` hint is on BOTH the active and the settled row**, separated by exactly
 one literal space (`" ", <Bg/>` at L428062). `Bg` (**L421333–421348**) renders
 `<Text dimColor><$e chord={pc("app:toggleTranscript","Global","ctrl+o")} action="expand" parens

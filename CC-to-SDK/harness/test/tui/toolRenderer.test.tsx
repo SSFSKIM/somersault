@@ -185,10 +185,15 @@ describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
     expect(rows).toHaveLength(1);
     const line = (rows[0] as { line: RenderLine }).line;
     expect(line.text).toBe("  Read 1 file (ctrl+o to expand)");
+    // The expand hint is ONE component (`Bg`) rendered on both the active and the settled row (R3.6), so its
+    // dim `inactive` colour — measured on the tracked golden's active row — is the same on both. The settled
+    // clause text staying dim-uncoloured is unchanged and still open: the live-confirmation note records the
+    // settled row as grey `#949494`, which is a DIFFERENT grey from the active row's `#999999` and needs its
+    // own settled golden before it can be adopted.
     expect(line.segments).toEqual([
       { text: "  " },
       { text: "Read ", dim: true }, { text: "1", dim: true, bold: true }, { text: " file", dim: true },
-      { text: " ", dim: true }, { text: "(ctrl+o to expand)", dim: true },
+      { text: " ", dim: true }, { text: "(ctrl+o to expand)", dim: true, color: resolveThemeColor(themeTokens().inactive) },
     ]);
     expect(items.some((i) => i.kind === "gutter-block")).toBe(false);            // R3.7: the ⎿ hint line is ACTIVE-only
     expect(JSON.stringify(items)).not.toContain("export const app = 1;");        // the result body belongs to ctrl+o
@@ -248,12 +253,19 @@ describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
     const line = (items[0] as { line: RenderLine }).line;
     expect(items[0]!.id).toBe("group:read-1:pending-row");
     expect(line.text).toBe("⏺ Reading 1 file… (ctrl+o to expand)");
+    // Task 7 corrections, both measured on the tracked 2.1.220 golden (see groupRowLine's header): the
+    // leader GLYPH and the expand hint are dim AND `inactive` (#999999), with only the glyph cell coloured
+    // — which is why the leader is two segments — and the active clause run is DIM, not bright. What we
+    // deliberately do not copy is the golden's plain " file…", upstream's own `\x1b[22m` artifact.
+    const grey = resolveThemeColor(themeTokens().inactive);
     expect(line.segments).toEqual([
-      { text: "⏺ ", dim: true },
-      { text: "Reading " }, { text: "1", bold: true }, { text: " file" },
-      { text: "…" }, { text: " " }, { text: "(ctrl+o to expand)", dim: true },
+      { text: "⏺", dim: true, color: grey }, { text: " ", dim: true },
+      { text: "Reading ", dim: true }, { text: "1", dim: true, bold: true }, { text: " file", dim: true },
+      { text: "…", dim: true }, { text: " ", dim: true }, { text: "(ctrl+o to expand)", dim: true, color: grey },
     ]);
-    expect(items[1]).toEqual({ kind: "gutter-block", id: "group:read-1:pending-hint", gutter: GROUP_HINT_GUTTER, body: [{ text: "src/app.ts", dim: true }] });
+    // The golden paints `  ⎿  src/app.ts` as ONE dim #999999 run — connector included, which is why the
+    // gutter cells carry their own style here rather than staying plain text.
+    expect(items[1]).toEqual({ kind: "gutter-block", id: "group:read-1:pending-hint", gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body: [{ text: "src/app.ts", dim: true, color: grey }] });
     // R4.1: a single glyph BLINKING on a 600 ms period — glyph for one half, a bare 2-column gap for the other.
     const off = projectPending(doc, { ...context, now: 600 });
     expect((off[0] as { line: RenderLine }).line.text).toBe("  Reading 1 file… (ctrl+o to expand)");   // the glyph, not the box, blinks away
