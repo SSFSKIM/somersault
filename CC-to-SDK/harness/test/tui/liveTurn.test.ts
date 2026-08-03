@@ -65,7 +65,9 @@ describe("LiveTurn", () => {
     expect(texts(lt)).toEqual([]);                                // the partial tool_use is not a live line
     lt.ingest(READ_CALL); doc.appendSdk("host", READ_CALL);
     expect(texts(lt)).toEqual([]);
-    expect(JSON.stringify(projectPending(doc, projectionOptions))).toContain("Read(");
+    // Task 5c: the default view folds an open read into ONE blinking active group row — the per-call
+    // `⏺ Read(src/app.ts)` header it replaced is upstream's ctrl+o VERBOSE form, and lives on in projectDetail.
+    expect((projectPending(doc, projectionOptions)[0] as { line: { text: string } }).line.text).toBe("⏺ Reading 1 file… (ctrl+o to expand)");
   });
 
   it("drops the partial blocks a COMPLETE message supersedes, so the same text never renders twice", () => {
@@ -149,11 +151,14 @@ describe("live and replay share ONE tool grammar", () => {
   afterEach(() => setTheme("auto"));
   // The cutover's whole point: the same fixture, ingested live off the host event stream or read back off
   // disk, yields byte-identical final RenderItem[].
+  // The closing prose is load-bearing since Task 5c: a fold run that nothing has closed yet is still growable,
+  // so the compact projection deliberately withholds its summary row (Static is append-only).
+  const CLOSED = { type: "assistant", message: { id: "assistant-done", content: [{ type: "text", text: "done" }] } };
   it("returns equal final RenderItem[] for the same fixture from a live document and a replayed one", () => {
     const lt = new LiveTurn(); const live = new TranscriptDocument();
-    for (const message of [READ_CALL, READ_RESULT_WITH_SIDECAR]) { lt.ingest(message); live.appendSdk("host", message); }
+    for (const message of [READ_CALL, READ_RESULT_WITH_SIDECAR, CLOSED]) { lt.ingest(message); live.appendSdk("host", message); }
     expect(lt.snapshot()).toEqual([]);                                   // nothing rendered twice
-    const disk = replayDocument([READ_CALL, READ_RESULT_WITH_SIDECAR], { id: "session-1" });
+    const disk = replayDocument([READ_CALL, READ_RESULT_WITH_SIDECAR, CLOSED], { id: "session-1" });
     // The replay's own display dividers shift every later resultSequence, so the id's sequence component is
     // normalized away; everything else — header segments, gutter, body — must match byte for byte.
     const toolRows = (items: readonly { kind: string; id: string }[]) =>

@@ -19,19 +19,23 @@ import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import { bashArgument, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
+import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldClause, type FoldGroup } from "./toolFold.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
 
 /** Five columns, and the FIFTH is U+00A0: upstream emits `["  ", "⎿ \xA0"]` so the cell after the connector is not a
  *  break opportunity and no terminal (or trailing-space trim) can eat it. Written with the escape so no editor can
  *  normalize it back to a plain space. */
 export const TOOL_RESULT_GUTTER = "  \u23bf \u00a0" as const;
+/** The ACTIVE group row's own hint gutter (R4.6, `X8o = 5`): 2 spaces, the connector, 2 PLAIN spaces. Upstream
+ *  keeps it distinct from the tool-result gutter above (which ends in the NBSP); both are exactly five columns. */
+export const GROUP_HINT_GUTTER = "  \u23bf  " as const;
 /** `wrap` is set ONLY by the tool header (LT10: upstream's `wrap:"truncate-end"` — an MCP-length name must
  *  never wrap one header into several transcript rows). Every other line item leaves it unset and wraps
  *  normally, which is what keeps ordinary assistant text and local notices readable now that Task 4 routes
  *  the WHOLE transcript through `RenderItemView`. */
 export type RenderItem =
   | { kind: "line"; id: string; line: RenderLine; wrap?: "truncate-end" }
-  | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER; body: readonly RenderLine[] };
+  | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[] };
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
  *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). */
 export type ResultProjection = "compact" | "detail-all" | "detail-collapsed";
@@ -196,6 +200,10 @@ export type ProjectionContext = Omit<ProjectionOptions, "projection" | "verbose"
 export const sdkItemId = (base: string, part: string): string => `sdk:${base}:${part}`;
 export const localItemId = (identity: string, lineIndex: number): string => `local:${identity}:line:${lineIndex}`;
 export const toolItemId = (toolUseId: string, resultSequence: number | "pending", part: "header" | "body"): string => `tool:${toolUseId}:${resultSequence}:${part}`;
+/** A fold group's identity is its MEMBERSHIP, with no sequence component: the member tool-use ids are already
+ *  unique and stable, and a document that gains two replay dividers (which shift every later sequence) must
+ *  still project the very same group id — that is what lets Static publish a settled group exactly once. */
+export const toolGroupItemId = (memberIds: readonly string[], part: "row" | "pending-row" | "pending-hint"): string => `group:${memberIds.join(",")}:${part}`;
 
 /** PROJECTION IDENTITY ONLY — never append/dedup. Task 1's `appendSdk` deliberately refuses to hash a
  *  payload (two equal-looking calls can be genuinely distinct turns), but a retained entry with no
@@ -246,26 +254,136 @@ export function projectLocalEvent(entry: LocalEntry): readonly RenderItem[] {
 const reid = (items: readonly RenderItem[], id: string, sequence: number | "pending"): RenderItem[] =>
   items.map((item) => (item.kind === "line" ? { ...item, id: toolItemId(id, sequence, "header") } : { ...item, id: toolItemId(id, sequence, "body") }));
 
+// ── F1 Task 5c: the DEFAULT view's collapsed group row ──────────────────────────────────────────────────
+// Task 5b's pure model decides WHAT a run collapses to; everything below decides how that reads on screen.
+// Only `projection === "compact" && !verbose` folds — both detail projections (and therefore the Ctrl-O
+// pager) keep the per-call `⏺ Read(a.ts)` rows, because those ARE upstream's ctrl+o verbose form (R6).
+const EXPAND_HINT = "(ctrl+o to expand)";
+const dimmed = (text: string, dim: boolean): Segment => ({ text, ...(dim ? { dim: true } : {}) });
+/** Clauses joined by the literal `", "` (R3.8), with each `boldRanges` span emitted as its own bold segment —
+ *  Ink composes dim+bold, so a settled count is bold AND dim (R3.5). */
+function clauseSegments(clauses: readonly FoldClause[], dim: boolean): Segment[] {
+  const out: Segment[] = [];
+  for (const [index, clause] of clauses.entries()) {
+    if (index > 0) out.push(dimmed(", ", dim));
+    let cursor = 0;
+    for (const [start, end] of clause.boldRanges) {
+      if (start > cursor) out.push(dimmed(clause.text.slice(cursor, start), dim));
+      out.push({ ...dimmed(clause.text.slice(start, end), dim), bold: true });
+      cursor = end;
+    }
+    if (cursor < clause.text.length) out.push(dimmed(clause.text.slice(cursor), dim));
+  }
+  return out;
+}
+/** R3.3's row geometry. Settled: an EMPTY two-column box (so two literal spaces, no glyph and no colour —
+ *  R3.4) then the whole dim text run. Active: `ile`'s single glyph BLINKING on a 600 ms period (glyph for one
+ *  half, a bare space for the other — R4.1), dim and uncoloured while unresolved (R4.2), then the
+ *  present-participle clauses undimmed, the separate `…`, one literal space and the always-dim expand hint
+ *  (R3.6). The blink is a pure phase function of `options.now`, exactly like the standalone header's, so the
+ *  caller owns the clock and a test can pin any frame. No elapsed `· Ns` suffix and no 700 ms hint debounce:
+ *  both are `ds()`-gated fullscreen-only (R4.10) and a substitute would be a fabrication, not fidelity. */
+function groupRowLine(group: FoldGroup, active: boolean, options: ProjectionOptions): RenderLine {
+  const leader = active
+    ? dimmed(Math.floor(options.now / 600) % 2 === 0 ? (options.platform === "darwin" ? "⏺ " : "● ") : "  ", true)
+    : { text: "  " };
+  const segments: Segment[] = [leader, ...clauseSegments(foldClauses(group.counts, active), !active)];
+  if (active) segments.push({ text: "…" });
+  segments.push(dimmed(" ", !active), { text: EXPAND_HINT, dim: true });
+  return { text: segments.map((segment) => segment.text).join(""), segments };
+}
+/** R3.1's early exit: a run whose clauses all came out empty renders NOTHING at all. */
+function groupItems(group: FoldGroup, active: boolean, options: ProjectionOptions): readonly RenderItem[] {
+  if (foldClauses(group.counts, active).length === 0) return [];
+  const id = toolGroupItemId(group.memberIds, active ? "pending-row" : "row");
+  const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(group, active, options) }];
+  // R3.7: the hint gutter is ACTIVE-ONLY — `latestDisplayHint` rides on the settled message but never renders.
+  if (active && group.hint !== undefined)
+    items.push({ kind: "gutter-block", id: toolGroupItemId(group.memberIds, "pending-hint"), gutter: GROUP_HINT_GUTTER, body: group.hint.split("\n").map((text) => ({ text, dim: true })) });
+  return items;
+}
+
 /** The append-only linearization rule. An open header is transient at `callSequence`; the immutable
  *  finalized header-plus-result unit is anchored at `resultSequence`, while a local visual publishes at its
  *  own sequence immediately — so a `/help` that lands between a call and its result enters Static first and
  *  the finalized tool unit follows it. Rank breaks the one real tie: the user message carrying a
  *  `tool_result` shares its sequence with the unit that result completes. */
-function projectAll(document: TranscriptDocument, options: ProjectionOptions): readonly RenderItem[] {
-  const anchored: { sequence: number; rank: number; items: readonly RenderItem[] }[] = [];
+type Anchored = { sequence: number; rank: number; items: readonly RenderItem[]; atom?: "breaker" | "neutral"; event?: ToolEvent };
+/** The sentinels upstream renders in place of a reply: they are chatter, never the "real assistant text" that
+ *  ends a run (§1.3). */
+const SENTINEL_TEXT = new Set(["(no content)", "No response requested."]);
+/** Which fold atom a retained entry is. A local visual and a user prompt always break a run; an assistant
+ *  message breaks it only when it rendered something that is not purely thinking or a sentinel — so the
+ *  ubiquitous `[thinking, tool_use]` message is NEUTRAL and stays inside the run it belongs to, and a user
+ *  message carrying only a `tool_result` (which renders nothing of its own) is neutral too. */
+function entryAtom(entry: TranscriptEntry, items: readonly RenderItem[]): "breaker" | "neutral" {
+  if (entry.kind === "local-event") return "breaker";
+  if (items.length === 0) return "neutral";
+  const inner = entry.message.message, content = isRecord(inner) && Array.isArray(inner.content) ? inner.content : [];
+  const rendered = content.filter((block) => isRecord(block) && block.type !== "tool_use" && block.type !== "tool_result");
+  const real = rendered.some((block) => {
+    const b = block as Record<string, unknown>;
+    if (b.type === "thinking") return false;
+    return !(typeof b.text === "string" && SENTINEL_TEXT.has(b.text.trim()));
+  });
+  return real ? "breaker" : "neutral";
+}
+
+function anchoredEntries(document: TranscriptDocument, options: ProjectionOptions): Anchored[] {
+  const anchored: Anchored[] = [];
   const occurrences = new Map<string, number>();
   for (const entry of document.entries()) {
-    if (entry.kind === "local-event") { anchored.push({ sequence: entry.sequence, rank: 0, items: projectLocalEvent(entry) }); continue; }
+    if (entry.kind === "local-event") { anchored.push({ sequence: entry.sequence, rank: 0, items: projectLocalEvent(entry), atom: "breaker" }); continue; }
     const key = entry.identity ?? hashMessage(entry.message);
     const occurrence = occurrences.get(key) ?? 0;
     occurrences.set(key, occurrence + 1);
-    anchored.push({ sequence: entry.sequence, rank: 0, items: projectMessageEntry(entry, options, entry.identity ?? `${key}:${occurrence}`) });
+    const items = projectMessageEntry(entry, options, entry.identity ?? `${key}:${occurrence}`);
+    anchored.push({ sequence: entry.sequence, rank: 0, items, atom: entryAtom(entry, items) });
   }
+  return anchored;
+}
+
+function projectAll(document: TranscriptDocument, options: ProjectionOptions): readonly RenderItem[] {
+  const anchored = anchoredEntries(document, options);
   for (const event of document.toolEvents()) {
     if (event.route !== "top-level" || !event.result) continue;
-    anchored.push({ sequence: event.result.resultSequence, rank: 1, items: reid(renderToolEvent(event, normalizeToolResult(event, { verbose: options.verbose }), options), event.id, event.result.resultSequence) });
+    anchored.push({ sequence: event.result.resultSequence, rank: 1, event, items: reid(renderToolEvent(event, normalizeToolResult(event, { verbose: options.verbose }), options), event.id, event.result.resultSequence) });
   }
-  return anchored.sort((a, b) => a.sequence - b.sequence || a.rank - b.rank).flatMap((a) => a.items);
+  anchored.sort((a, b) => a.sequence - b.sequence || a.rank - b.rank);
+  return options.projection === "compact" && !options.verbose ? foldAnchored(anchored, options) : anchored.flatMap((a) => a.items);
+}
+
+/** The trailing run is the one accumulator `segmentRuns` flushes at the very end, and it is still GROWABLE:
+ *  the next collapsible call joins it and would change its counts, its clause text and its membership-derived
+ *  id. Ink's `<Static>` is append-only, so publishing it now and re-publishing it later would leave BOTH rows
+ *  on screen — it (and the neutral items it deferred, which `segmentRuns` replays straight after it) must
+ *  wait for the prose or standalone tool that closes the run. While it is open the ACTIVE row carries it in
+ *  the transient region instead (`projectPending`). */
+function trailingRunCut(atoms: readonly FoldAtom[], items: readonly { kind: string }[]): number {
+  let growing = false;
+  for (const atom of atoms) {
+    if (atom.kind === "neutral") continue;
+    growing = atom.kind === "tool" && classifyToolEvent(atom.event).collapsible;
+  }
+  if (!growing) return items.length;
+  for (let i = items.length - 1; i >= 0; i--) if (items[i]!.kind === "group") return i;
+  return items.length;
+}
+
+/** Compact-only (R6.1's inverse): the sorted anchor list becomes a fold-atom stream — index-keyed so a
+ *  `passthrough` maps straight back to the entry's already-projected items — and `segmentRuns` decides which
+ *  contiguous runs collapse. */
+function foldAnchored(anchored: readonly Anchored[], options: ProjectionOptions): readonly RenderItem[] {
+  const atoms: FoldAtom[] = anchored.map((a, index) => (a.event ? { kind: "tool", event: a.event } : { kind: a.atom ?? "neutral", sequence: index }));
+  const standalone = new Map<ToolEvent, readonly RenderItem[]>(anchored.flatMap((a) => (a.event ? [[a.event, a.items] as const] : [])));
+  const folded = segmentRuns(atoms, { cwd: options.cwd, home: options.home });
+  const out: RenderItem[] = [];
+  for (const item of folded.slice(0, trailingRunCut(atoms, folded))) {
+    if (item.kind === "group") { out.push(...groupItems(item.group, false, options)); continue; }
+    if (item.kind === "passthrough") { out.push(...(anchored[item.sequence]?.items ?? [])); continue; }
+    out.push(...(standalone.get(item.event) ?? []));
+  }
+  return out;
 }
 
 /** The transcript's finalized projection: final top-level tool units, ordinary non-tool SDK blocks, and
@@ -280,13 +398,21 @@ export function projectDetail(document: TranscriptDocument, options: ProjectionC
   return projectAll(document, { ...context, projection, verbose: projection === "detail-all" });
 }
 /** Open top-level calls only, selected by `!event.result` — NEVER by `status === "running"`, because a
- *  suppressed bookkeeping call is `suppressed` while still open and would leak into the pending region. */
-export function projectPending(document: TranscriptDocument, options: ProjectionContext): readonly RenderItem[] {
+ *  suppressed bookkeeping call is `suppressed` while still open and would leak into the pending region.
+ *  `liveIds`, when given, keeps only the calls a live turn is actually running (useChat's rule: a
+ *  disk-bootstrapped dangling call is retained history, not something that blinks). Open COLLAPSIBLE calls
+ *  become one active group row per contiguous run; everything else keeps its own per-call pending row. */
+export function projectPending(document: TranscriptDocument, options: ProjectionContext, liveIds?: ReadonlySet<string>): readonly RenderItem[] {
   const full: ProjectionOptions = { ...options, projection: "compact", verbose: false };
-  const items: RenderItem[] = [];
+  const atoms: FoldAtom[] = [];
   for (const event of document.toolEvents()) {
-    if (event.route !== "top-level" || event.result) continue;
-    items.push(...reid(renderToolEvent(event, normalizeToolResult(event, { verbose: false }), full), event.id, "pending"));
+    if (event.route !== "top-level" || event.result || (liveIds !== undefined && !liveIds.has(event.id))) continue;
+    atoms.push({ kind: "tool", event });
+  }
+  const items: RenderItem[] = [];
+  for (const item of segmentRuns(atoms, { cwd: options.cwd, home: options.home })) {
+    if (item.kind === "group") { items.push(...groupItems(item.group, true, full)); continue; }
+    if (item.kind === "tool") items.push(...reid(renderToolEvent(item.event, normalizeToolResult(item.event, { verbose: false }), full), item.event.id, "pending"));
   }
   return items;
 }
@@ -301,7 +427,7 @@ export function RenderItemView({ item, start, end, showGutter = true }: { item: 
   const body = item.body.slice(start ?? 0, end ?? item.body.length);
   return (
     <Box flexDirection="row">
-      <Box width={TOOL_RESULT_GUTTER.length}><Text>{showGutter ? item.gutter : ""}</Text></Box>
+      <Box width={item.gutter.length}><Text>{showGutter ? item.gutter : ""}</Text></Box>
       <Box flexDirection="column">{body.map((line, i) => <Line key={i} l={line} />)}</Box>
     </Box>
   );

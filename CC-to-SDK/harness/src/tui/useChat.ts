@@ -23,7 +23,7 @@ import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import type { RenderLine } from "./render.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
-import { projectCompact, projectDetail, projectPending, toolItemId, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
+import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { LiveTurn } from "./liveTurn.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
@@ -211,15 +211,16 @@ export function useChat(
     }
     setPendingItems(livePending(context));
   }
-  /** The transient region: `projectPending` still selects every open top-level call off the source document,
-   *  and this keeps only the ones a live turn is actually running — so a disk-bootstrapped dangling call, or
-   *  one orphaned by a turn that ended without a result, is retained history but never a blinking row. */
+  /** The transient region: `projectPending` selects every open top-level call off the source document, and the
+   *  live-open set narrows it to the ones a live turn is actually running — so a disk-bootstrapped dangling
+   *  call, or one orphaned by a turn that ended without a result, is retained history but never a blinking row.
+   *  The set is passed INTO the projection rather than used to filter its output: since Task 5c a contiguous
+   *  run of open collapsible calls projects to ONE active group row whose id is derived from its membership,
+   *  so an id-equality filter out here could no longer recognise it. */
   function livePending(context: ProjectionContext = projectionContext()): readonly RenderItem[] {
     const live = liveOpenIds.current;
     if (live.size === 0) return [];
-    const wanted = new Set<string>();
-    for (const id of live) { wanted.add(toolItemId(id, "pending", "header")); wanted.add(toolItemId(id, "pending", "body")); }
-    return projectPending(documentRef.current!, context).filter((item) => wanted.has(item.id));
+    return projectPending(documentRef.current!, context, live);
   }
   /** One live host message's effect on the live-open set: a top-level `tool_use` enters, and every id whose
    *  call has since acquired a result leaves (so a redelivered call that already settled never re-enters). */

@@ -1462,6 +1462,9 @@ describe("useChat's own emitted lines carry semantic tokens, not ANSI literals",
 });
 
 // ── F1 Task 4: the retained-source cutover ────────────────────────────────────────────────────────────
+/** Since Task 5c the default view collapses a contiguous read/search/list/MCP run into ONE summary row, and
+ *  withholds it while the run is still growable — real assistant prose is what closes the run and publishes it. */
+const CLOSING_PROSE = { type: "assistant", message: { id: "assistant-closes-run", content: [{ type: "text", text: "all done" }] } };
 describe("useChat: one retained document behind every surface", () => {
   /** A fake repaint scheduler so a test can fire the 600 ms pending tick by hand and prove that no stale
    *  callback survives a settle, a session swap or an unmount. */
@@ -1480,13 +1483,14 @@ describe("useChat: one retained document behind every surface", () => {
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     fake.pushEvent({ kind: "message", data: READ_CALL });
-    await waitFor(() => frame(lastFrame).includes("Read("));
+    await waitFor(() => frame(lastFrame).includes("Reading 1 file"));     // Task 5c: the ACTIVE group row, transient
     fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });
-    await waitFor(() => frame(lastFrame).includes("one"));
+    fake.pushEvent({ kind: "message", data: CLOSING_PROSE });             // real prose closes the run → the settled row publishes
+    await waitFor(() => frame(lastFrame).includes("Read 1 file (ctrl+o to expand)"));
     fake.pushEvent({ kind: "message", data: READ_CALL });                 // the whole pair redelivered by a follow replay
     fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });
     await new Promise((r) => setTimeout(r, 30));
-    expect(frame(lastFrame).match(/Read\(/g)).toHaveLength(1);
+    expect(frame(lastFrame).match(/Read 1 file/g)).toHaveLength(1);
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     await waitFor(() => frame(lastFrame).includes("IDLE"));
     api.run!("after the duplicate");                                      // the command channel is still live
@@ -1581,13 +1585,15 @@ describe("useChat: one retained document behind every surface", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(scheduler.armed).toBe(0);                              // nothing open yet
     first.pushEvent({ kind: "message", data: READ_CALL });
-    await waitFor(() => frame(view.lastFrame).includes("Read("));
+    await waitFor(() => frame(view.lastFrame).includes("Reading 1 file"));
     await waitFor(() => scheduler.armed === 1);                   // Ink discipline: effects subscribe one tick after the frame
     expect(scheduler.ticks).toBe(0);
     scheduler.tick();                                             // a real transient re-projection, no SDK event
     await new Promise((r) => setTimeout(r, 10));
     first.pushEvent({ kind: "message", data: READ_RESULT_WITH_SIDECAR });
-    await waitFor(() => frame(view.lastFrame).includes("export const app = 1;"));
+    first.pushEvent({ kind: "message", data: CLOSING_PROSE });
+    await waitFor(() => frame(view.lastFrame).includes("Read 1 file (ctrl+o to expand)"));
+    expect(frame(view.lastFrame)).not.toContain("Reading 1 file");   // the active row left the transient region
     await waitFor(() => scheduler.armed === 0);                   // settled → the epoch is over
     expect(scheduler.armed).toBe(0);
 
@@ -1674,6 +1680,7 @@ describe("useChat: one retained document behind every surface", () => {
     expect(scheduler.armed).toBe(0);
     expect(snap.pendingItems).toEqual([]);
     expect(frame(lastFrame)).not.toContain("Read(");
+    expect(frame(lastFrame)).not.toContain("Reading 1 file");     // nor the Task 5c active group row
   });
 
   // Round-1 review finding 2 (D): settlement is per call, not per turn.

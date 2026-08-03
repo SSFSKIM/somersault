@@ -43,9 +43,12 @@ describe("renderMessage", () => {
 describe("one tool grammar across live and replay", () => {
   it("returns equal final RenderItem[] for the same fixture from a host document and a replayed one", () => {
     const projectionOptions = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
+    // The closing prose is load-bearing since Task 5c: a fold run nothing has closed yet is still growable, so
+    // the compact projection deliberately withholds its summary row (Static is append-only).
+    const closed = { type: "assistant", message: { id: "assistant-done", content: [{ type: "text", text: "done" }] } };
     const host = new TranscriptDocument();
-    host.appendSdk("host", READ_CALL); host.appendSdk("host", READ_RESULT_WITH_SIDECAR);
-    const disk = replayDocument([READ_CALL, READ_RESULT_WITH_SIDECAR], { id: "session-1" });
+    host.appendSdk("host", READ_CALL); host.appendSdk("host", READ_RESULT_WITH_SIDECAR); host.appendSdk("host", closed);
+    const disk = replayDocument([READ_CALL, READ_RESULT_WITH_SIDECAR, closed], { id: "session-1" });
     // The replay's own display dividers are local rows that shift every later resultSequence by one, so the
     // id's sequence component is normalized away; everything else must match byte for byte.
     const toolRows = (items: readonly { kind: string; id: string }[]) =>

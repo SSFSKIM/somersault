@@ -1786,20 +1786,23 @@ async function waitForFakeTimers(cond: () => boolean, timeout = 2_000) {
 }
 
 describe("<ChatApp> — retained source", () => {
+  /** Task 5c: a read run collapses to ONE dim summary row, and the projection withholds it while the run is
+   *  still growable — real assistant prose is what closes the run and publishes it into Static. */
+  const CLOSING_PROSE = { type: "assistant", message: { id: "assistant-closes-run", content: [{ type: "text", text: "all done" }] } };
   it("repaints an open tool at 600ms without an SDK event, then appends one final Static row", async () => {
     const fake = fakeRemote(), { stdout, lastFrame, unmount } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
     await tick(); vi.useFakeTimers();
     try {
-      fake.pushEvent({ kind: "message", data: READ_CALL }); await waitForFakeTimers(() => plain(frame(lastFrame)).includes("Read(src/app.ts)"));
+      fake.pushEvent({ kind: "message", data: READ_CALL }); await waitForFakeTimers(() => plain(frame(lastFrame)).includes("Reading 1 file"));
       const beforeBlink = stdout.frames.at(-1)!;
       await act(async () => { await vi.advanceTimersByTimeAsync(600); });
       await waitForFakeTimers(() => stdout.frames.at(-1) !== beforeBlink);
-      expect(plain(frame(lastFrame))).toContain("Read(src/app.ts)"); // No fake.pushEvent occurs between the two frames.
-      fake.pushEvent({ kind: "message", data: READ_RESULT_WITH_SIDECAR }); await waitForFakeTimers(() => plain(frame(lastFrame)).includes("export const app = 1;"));
-      expect((plain(frame(lastFrame)).match(/Read\(src\/app\.ts\)/g) ?? [])).toHaveLength(1);   // the finalized unit REPLACED the pending header
+      expect(plain(frame(lastFrame))).toContain("Reading 1 file"); // only the leader glyph blinked away; no fake.pushEvent between the two frames.
+      fake.pushEvent({ kind: "message", data: READ_RESULT_WITH_SIDECAR }); fake.pushEvent({ kind: "message", data: CLOSING_PROSE });
+      await waitForFakeTimers(() => plain(frame(lastFrame)).includes("Read 1 file (ctrl+o to expand)"));
       fake.pushEvent({ kind: "message", data: READ_RESULT_WITH_SIDECAR });                      // the same result redelivered
       await act(async () => { await vi.advanceTimersByTimeAsync(600); });
-      expect(plain(frame(lastFrame)).match(/export const app = 1;/g)).toHaveLength(1);          // ONE final row, never republished
+      expect(plain(frame(lastFrame)).match(/Read 1 file \(ctrl\+o to expand\)/g)).toHaveLength(1);   // ONE final row, never republished
       expect(plain(frame(lastFrame))).not.toContain("Running Read");
       unmount(); const framesAfterUnmount = stdout.frames.length;
       await act(async () => { await vi.advanceTimersByTimeAsync(1_200); }); expect(stdout.frames).toHaveLength(framesAfterUnmount);
@@ -1851,15 +1854,19 @@ describe("<ChatApp> — retained source", () => {
   // transcript folded to three rows opens whole — and ctrl+e is the pager's OWN local knob, never app state.
   // Per the frame-model note above, "the pager is not showing the compact form" is asserted as a COUNT of
   // the compact hint (one published copy, never a second) rather than as its absence.
+  // A NON-collapsible tool since Task 5c: the default view folds every read/search/list/MCP run into one
+  // summary row and drops its result body entirely, so the compact three-row-plus-overflow shape this pager
+  // pair is about only survives on a standalone row. Nothing else here changed.
+  const LONG_CALL = { type: "assistant", message: { id: "assistant-long", content: [{ type: "tool_use", id: "long-1", name: "Bash", input: { command: "echo hi" } }] } };
   const longReadResult = (rows: number) => ({
-    ...READ_RESULT_FLAT,
-    message: { content: [{ type: "tool_result", tool_use_id: "read-1", content: Array.from({ length: rows }, (_, i) => `line ${i + 1}`).join("\n"), is_error: false }] },
+    type: "user", uuid: "user-long",
+    message: { content: [{ type: "tool_result", tool_use_id: "long-1", content: Array.from({ length: rows }, (_, i) => `line ${i + 1}`).join("\n"), is_error: false }] },
   });
   const OVERFLOW = /… \+\d+ lines? \(ctrl\+o to expand\)/g;
   it("opens retained 40-line output with Ctrl-O and toggles only pager-local Ctrl-E", async () => {
     const fake = fakeRemote();
     const app = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
-    await tick(); fake.pushEvent({ kind: "message", data: READ_CALL }); fake.pushEvent({ kind: "message", data: longReadResult(40) });
+    await tick(); fake.pushEvent({ kind: "message", data: LONG_CALL }); fake.pushEvent({ kind: "message", data: longReadResult(40) });
     await waitFor(() => plain(frame(app.lastFrame)).includes("… +37 lines (ctrl+o to expand)"));
     expect(plain(frame(app.lastFrame))).not.toContain("line 40");                              // compact hid rows 4–40
     app.stdin.write("\x0f"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40"));   // detail-all, opened at the bottom
@@ -1874,7 +1881,7 @@ describe("<ChatApp> — retained source", () => {
   it("Ctrl-E toggling and closing leave exactly one compact overflow row in the emitted static stream", async () => {
     const fake = fakeRemote();
     const app = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
-    await tick(); fake.pushEvent({ kind: "message", data: READ_CALL }); fake.pushEvent({ kind: "message", data: longReadResult(40) });
+    await tick(); fake.pushEvent({ kind: "message", data: LONG_CALL }); fake.pushEvent({ kind: "message", data: longReadResult(40) });
     await waitFor(() => plain(frame(app.lastFrame)).includes("ctrl+o to expand"));
     // The expected row is READ OUT of the emitted frames, never copied in as a literal — the claim is about
     // what Ink actually flushed into its append-only <Static>, so the text has to come from there.

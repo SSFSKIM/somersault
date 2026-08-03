@@ -4,10 +4,11 @@ import { render as renderInk } from "ink";
 import { render } from "ink-testing-library";
 import wrapAnsi from "wrap-ansi";
 import { describe, expect, it } from "vitest";
-import { displayPath, foldToolOutput, osc8FileLink, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { displayPath, foldToolOutput, GROUP_HINT_GUTTER, osc8FileLink, projectCompact, projectDetail, projectPending, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
+import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 
 async function rawInk(element: React.ReactElement, columns = 100): Promise<string> {
   let output = "";
@@ -159,5 +160,123 @@ describe("F1 shared tool renderer", () => {
     const relativeRead = { ...read, input: { file_path: "src/app.ts" } };
     const header = renderToolEvent(relativeRead, normalized, { ...options, columns: 100 })[0]!;
     expect(await rawInk(<RenderItemView item={header} />)).toContain("\x1b]8;;file:///work/src/app.ts\x07src/app.ts\x1b]8;;\x07");
+  });
+});
+
+// ── F1 Task 5c: the DEFAULT view's collapsed group row over Task 5b's fold model ────────────────────────
+// Upstream's default transcript renders one dim summary per contiguous read/search/list/MCP run — our
+// committed per-call `⏺ Read(a.ts)` row is upstream's ctrl+o VERBOSE form, so it stays byte-identical in
+// both detail projections and only `projectCompact`/`projectPending` fold.
+const context = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
+const call = (id: string, name: string, input: unknown, messageId = `m-${id}`) =>
+  ({ type: "assistant", message: { id: messageId, content: [{ type: "tool_use", id, name, input }] } }) as Record<string, unknown>;
+const result = (id: string, content = "body", isError = false) =>
+  ({ type: "user", uuid: `u-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error: isError }] } }) as Record<string, unknown>;
+const prose = (text: string, id = `t-${text.slice(0, 6)}`) =>
+  ({ type: "assistant", message: { id, content: [{ type: "text", text }] } }) as Record<string, unknown>;
+const built = (...messages: Record<string, unknown>[]) => { const doc = new TranscriptDocument(); for (const m of messages) doc.appendSdk("host", m); return doc; };
+const lineTexts = (items: readonly RenderItem[]) => items.filter((i) => i.kind === "line").map((i) => (i as { line: RenderLine }).line.text);
+const groupRows = (items: readonly RenderItem[]) => items.filter((i) => i.id.startsWith("group:"));
+
+describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
+  it("collapses one settled read into a single dim row with a bold count, no bullet and no result body", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/src/app.ts" }), result("read-1", "export const app = 1;"), prose("done"));
+    const items = projectCompact(doc, context), rows = groupRows(items);
+    expect(rows).toHaveLength(1);
+    const line = (rows[0] as { line: RenderLine }).line;
+    expect(line.text).toBe("  Read 1 file (ctrl+o to expand)");
+    expect(line.segments).toEqual([
+      { text: "  " },
+      { text: "Read ", dim: true }, { text: "1", dim: true, bold: true }, { text: " file", dim: true },
+      { text: " ", dim: true }, { text: "(ctrl+o to expand)", dim: true },
+    ]);
+    expect(items.some((i) => i.kind === "gutter-block")).toBe(false);            // R3.7: the ⎿ hint line is ACTIVE-only
+    expect(JSON.stringify(items)).not.toContain("export const app = 1;");        // the result body belongs to ctrl+o
+    expect(rows[0]!.id).toBe("group:read-1:row");
+  });
+
+  it("collapses a contiguous run of two reads into ONE row that counts distinct file paths", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-2"), prose("done"));
+    expect(lineTexts(groupRows(projectCompact(doc, context)))).toEqual(["  Read 2 files (ctrl+o to expand)"]);
+  });
+
+  it("flushes the run at a standalone tool: the fold row publishes BEFORE the Bash row it broke on", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("bash-1", "Bash", { command: "echo hi" }), result("bash-1", "hi"), prose("done"));
+    const texts = lineTexts(projectCompact(doc, context));
+    expect(texts).toContain("  Read 1 file (ctrl+o to expand)");
+    expect(texts).toContain("⏺ Bash(echo hi)");
+    expect(texts.indexOf("  Read 1 file (ctrl+o to expand)")).toBeLessThan(texts.indexOf("⏺ Bash(echo hi)"));
+  });
+
+  it("splits a run at real assistant prose into two independent fold rows", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("mid", "t-mid"),
+      call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-2"), prose("end", "t-end"));
+    expect(lineTexts(groupRows(projectCompact(doc, context)))).toEqual(["  Read 1 file (ctrl+o to expand)", "  Read 1 file (ctrl+o to expand)"]);
+    expect(groupRows(projectCompact(doc, context)).map((i) => i.id)).toEqual(["group:read-1:row", "group:read-2:row"]);
+  });
+
+  it("never folds either detail projection: both keep today's per-call header plus gutter block", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/src/app.ts" }), result("read-1", "one\ntwo"), prose("done"));
+    for (const projection of ["detail-all", "detail-collapsed"] as const) {
+      const items = projectDetail(doc, { ...context, projection });
+      expect(items.filter((i) => i.id.startsWith("group:"))).toEqual([]);
+      expect(items.some((i) => i.kind === "line" && (i as { line: RenderLine }).line.text.startsWith("⏺ Read("))).toBe(true);
+      expect(items.some((i) => i.kind === "gutter-block")).toBe(true);
+    }
+  });
+
+  it("holds a still-growable trailing run out of the projection entirely (append-only Static discipline)", () => {
+    const settled = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"));
+    expect(groupRows(projectCompact(settled, context))).toEqual([]);              // nothing has closed the run yet
+    const closed = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
+    expect(groupRows(projectCompact(closed, context))).toHaveLength(1);
+  });
+
+  it("gives an errored read exactly the settled row a successful one gets (R5.2: no glyph, colour or count change)", () => {
+    const ok = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1", "fine", false), prose("done"));
+    const bad = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1", "ENOENT", true), prose("done"));
+    expect(groupRows(projectCompact(bad, context))).toEqual(groupRows(projectCompact(ok, context)));
+    expect(JSON.stringify(groupRows(projectCompact(bad, context)))).not.toContain(resolveThemeColor(themeTokens().error));
+  });
+
+  it("renders ONE blinking active group row for open collapsible calls, with the ⎿ hint below it", () => {
+    const doc = built(call("read-1", "Read", { file_path: "src/app.ts" }));
+    const items = projectPending(doc, context);
+    expect(items).toHaveLength(2);
+    const line = (items[0] as { line: RenderLine }).line;
+    expect(items[0]!.id).toBe("group:read-1:pending-row");
+    expect(line.text).toBe("⏺ Reading 1 file… (ctrl+o to expand)");
+    expect(line.segments).toEqual([
+      { text: "⏺ ", dim: true },
+      { text: "Reading " }, { text: "1", bold: true }, { text: " file" },
+      { text: "…" }, { text: " " }, { text: "(ctrl+o to expand)", dim: true },
+    ]);
+    expect(items[1]).toEqual({ kind: "gutter-block", id: "group:read-1:pending-hint", gutter: GROUP_HINT_GUTTER, body: [{ text: "src/app.ts", dim: true }] });
+    // R4.1: a single glyph BLINKING on a 600 ms period — glyph for one half, a bare 2-column gap for the other.
+    const off = projectPending(doc, { ...context, now: 600 });
+    expect((off[0] as { line: RenderLine }).line.text).toBe("  Reading 1 file… (ctrl+o to expand)");   // the glyph, not the box, blinks away
+    expect((projectPending(doc, { ...context, now: 1200 })[0] as { line: RenderLine }).line.text).toBe(line.text);
+    expect((projectPending(doc, { ...context, platform: "linux" })[0] as { line: RenderLine }).line.text.startsWith("● ")).toBe(true);
+  });
+
+  it("keeps a NON-collapsible open call on its own per-call pending row, and folds two open reads into one row", () => {
+    const bash = built(call("bash-1", "Bash", { command: "echo hi" }));
+    expect(lineTexts(projectPending(bash, context))).toEqual(["⏺ Bash(echo hi)"]);
+    const reads = built(call("read-1", "Read", { file_path: "/work/a.ts" }), call("read-2", "Read", { file_path: "/work/b.ts" }));
+    const items = projectPending(reads, context);
+    expect(items[0]!.id).toBe("group:read-1,read-2:pending-row");
+    expect((items[0] as { line: RenderLine }).line.text).toBe("⏺ Reading 2 files… (ctrl+o to expand)");
+    expect(projectPending(reads, context, new Set(["read-2"]))[0]!.id).toBe("group:read-2:pending-row");
+  });
+
+  it("matches the Task 6 golden masks for an open single-read group in a real Ink frame", () => {
+    const doc = built(call("read-1", "Read", { file_path: "src/app.ts" }));
+    const items = projectPending(doc, context);
+    // The masks are read off the plain frame: the bold count and the dim runs put SGR bytes INSIDE the clause.
+    const frame = plain(render(<>{items.map((item) => <RenderItemView key={item.id} item={item} />)}</>).lastFrame()!);
+    expect(frame).toMatch(/Read(?:ing)? \d+ file/);
+    expect(frame).toMatch(/⎿.*src\/app\.ts/);
   });
 });

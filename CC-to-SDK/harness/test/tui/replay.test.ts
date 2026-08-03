@@ -37,9 +37,14 @@ describe("replayDocument", () => {
     expect(doc.toolEvents()).toHaveLength(1);
     const rendered = compactText(doc);
     expect(rendered).toContain("› add a flag");
-    expect(rendered).toContain("Read(");
-    expect(rendered).toContain("one");            // the result BODY, which replayLines used to discard
+    // Task 5c: the DEFAULT view collapses the read into one summary row and shows no result body at all —
+    // the per-call header and the body are upstream's ctrl+o form, so they must still be there under detail.
+    expect(rendered).toContain("Read 1 file (ctrl+o to expand)");
+    expect(rendered).not.toContain("one");
     expect(rendered).toContain("added");
+    const detail = JSON.stringify(projectDetail(doc, { ...projectionOptions, projection: "detail-all" }));
+    expect(detail).toContain("Read(");
+    expect(detail).toContain("one");              // the result BODY, which replayLines used to discard
   });
   it("hides command stdout/caveat rows, renders command echoes as dim slash lines, and marks compact summaries", () => {
     const msgs = [
@@ -80,8 +85,11 @@ describe("replayDocument", () => {
   });
 
   it("projects flat-only raw tool results identically from disk and host documents", () => {
-    const disk = replayDocument([READ_CALL, READ_RESULT_FLAT], replayOptions);
-    const host = new TranscriptDocument(); host.appendSdk("host", READ_CALL); host.appendSdk("host", READ_RESULT_FLAT);
+    // The trailing prose is load-bearing since Task 5c: an unclosed fold run is still growable, so its summary
+    // row is deliberately withheld from the compact projection (Static is append-only).
+    const closed = asstText("done", "a-done");
+    const disk = replayDocument([READ_CALL, READ_RESULT_FLAT, closed], replayOptions);
+    const host = new TranscriptDocument(); host.appendSdk("host", READ_CALL); host.appendSdk("host", READ_RESULT_FLAT); host.appendSdk("host", closed);
     expect(toolRows(projectCompact(disk, projectionOptions))).toEqual(toolRows(projectCompact(host, projectionOptions)));
   });
   it("adapts ordinary completed SDK text with stable item IDs without competing with tool projection", () => {
@@ -96,12 +104,16 @@ describe("replayDocument", () => {
       expect(items).toEqual(expect.arrayContaining([{ kind: "line", id: "local:follow-gap:7:line:0", line: { text: "Earlier live output unavailable while attaching", dim: true } }, { kind: "line", id: "local:help:7:line:0", line: { text: "Usage: /help" } }, { kind: "line", id: "local:help:7:line:1", line: { text: "second", dim: true } }]));
     }
   });
-  it("publishes local visual output before the later result-anchored tool unit in compact and detail", () => {
+  it("publishes local visual output before the later result-anchored tool row in compact and detail", () => {
     const doc = new TranscriptDocument(); doc.appendSdk("disk", READ_CALL);
     doc.appendLocal({ kind: "visual", lines: [{ text: "Usage: /help" }] }, "help-after-call"); doc.appendSdk("disk", READ_RESULT_FLAT);
-    for (const projection of [projectCompact(doc, projectionOptions), projectDetail(doc, { ...projectionOptions, projection: "detail-all" })]) {
-      const rendered = JSON.stringify(projection); expect(rendered.indexOf("Usage: /help")).toBeLessThan(rendered.indexOf("Read(")); expect(rendered.indexOf("Read(")).toBeLessThan(rendered.lastIndexOf("one"));
-    }
+    doc.appendSdk("disk", asstText("done", "a-done"));   // closes the fold run so its compact summary row publishes
+    // A fold group anchors where its LAST member's result did, so a `/help` that landed between the call and
+    // its result still enters Static first — the same append-only guarantee the per-call detail row gives.
+    const compact = JSON.stringify(projectCompact(doc, projectionOptions));
+    expect(compact.indexOf("Usage: /help")).toBeLessThan(compact.indexOf("Read 1 file"));
+    const detail = JSON.stringify(projectDetail(doc, { ...projectionOptions, projection: "detail-all" }));
+    expect(detail.indexOf("Usage: /help")).toBeLessThan(detail.indexOf("Read(")); expect(detail.indexOf("Read(")).toBeLessThan(detail.lastIndexOf("one"));
   });
   it("retains a nested Agent call but does not emit it as an ordinary top-level row", () => {
     const doc = new TranscriptDocument(); doc.appendSdk("host", NESTED_READ_CALL);
