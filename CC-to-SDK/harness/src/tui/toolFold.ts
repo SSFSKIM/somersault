@@ -28,8 +28,10 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 const stringField = (input: unknown, key: string): string | undefined => { const v = isRecord(input) ? input[key] : undefined; return typeof v === "string" ? v : undefined; };
 
 /** Heredoc delimiter after a `<<`/`<<-` operator at `i`: the raw source to keep in the statement text plus the
- *  UNQUOTED terminator word, since `<<'EOF'`, `<<"EOF"` and `<<\EOF` all terminate on a bare `EOF`. `undefined` when
- *  no word follows (a bare `<<` is then left as ordinary text). */
+ *  UNQUOTED terminator word, since `<<'EOF'`, `<<"EOF"` and `<<\EOF` all terminate on a bare `EOF`. Quote removal
+ *  runs WHILE parsing, so an escape inside the delimiter (`<<"E\"OF"` → `E"OF`) neither truncates the word nor keeps
+ *  its backslash — otherwise the terminator line never matches and the rest of the command is eaten as body.
+ *  `undefined` when no word follows (a bare `<<` is then left as ordinary text). */
 function heredocDelimiter(command: string, i: number): { raw: string; delimiter: string; next: number } | undefined {
   let j = i, raw = "", delimiter = "";
   while (j < command.length && (command[j] === " " || command[j] === "\t")) { raw += command[j]!; j++; }
@@ -37,7 +39,11 @@ function heredocDelimiter(command: string, i: number): { raw: string; delimiter:
     const ch = command[j]!;
     if (ch === "'" || ch === '"') {
       raw += ch; j++;
-      while (j < command.length && command[j] !== ch) { delimiter += command[j]!; raw += command[j]!; j++; }
+      while (j < command.length && command[j] !== ch) {
+        // Inside `"`, `\"` and `\\` collapse to one character; single-quoted content is literal all the way through.
+        if (ch === '"' && command[j] === "\\" && (command[j + 1] === '"' || command[j + 1] === "\\")) { raw += command[j]! + command[j + 1]!; delimiter += command[j + 1]!; j += 2; continue; }
+        delimiter += command[j]!; raw += command[j]!; j++;
+      }
       if (j < command.length) { raw += ch; j++; }
       continue;
     }
@@ -65,8 +71,11 @@ function skipHeredocBody(command: string, i: number, delimiter: string, stripTab
  *  other node's text whole — so a subshell, an `if`, a `for` all arrive as ONE statement whose head word is `(ls;`
  *  / `if` / `for` and therefore poisons the command. Splitting on those same operators at depth zero, with quotes,
  *  `$( )`, backticks and braces opaque, reproduces that list for every command whose classification can differ.
- *  Heredocs are the one place a raw depth-zero newline is NOT a separator: `OE` keeps only the non-`*_redirect`
- *  children of a `redirected_statement` (L359737–359741), so the whole `heredoc_redirect` — body and terminator —
+ *  Redirections never reach that list at all: `OE` keeps only the non-`*_redirect` children of a
+ *  `redirected_statement` (L359737–359741), so `cat a 2>&1` is the single statement `cat a` upstream and the `&`/`|`
+ *  buried in a redirect operator must be glued to the current statement rather than split on (see the branch below).
+ *  Heredocs are the one place a raw depth-zero newline is NOT a separator: by that same drop (L359737–359741)
+ *  the whole `heredoc_redirect` — body and terminator —
  *  never becomes a statement and `cat <<EOF … EOF` classifies as plain `cat`. We reproduce that by queueing every
  *  `<<`/`<<-` delimiter seen on a line (bash order) and skipping their bodies when that line ends. `<<<` is a
  *  herestring, not a redirect of this shape, and stays ordinary text. */
@@ -97,6 +106,10 @@ function splitStatements(command: string): string[] {
       if (ch === "\n") for (const heredoc of heredocs.splice(0)) i = skipHeredocBody(command, i, heredoc.delimiter, heredoc.stripTabs);
       continue;
     }
+    // Redirect glue before the separator branches: `OE` drops every `*_redirect` child whole (L359737–359741), so an
+    // `&`/`|` that is part of a redirection OPERATOR — `2>&1`, `<&3`, `>|out` (follows a `>`/`<`) or `&>`/`&>>`
+    // (precedes a `>`) — never separates statements. The real `&& || | |&` and a background `&` still do.
+    if ((ch === "&" || ch === "|") && (/[<>]$/.test(buf) || (ch === "&" && command[i + 1] === ">"))) { buf += ch; i++; continue; }
     if (ch === "&" || ch === "|") { flush(); i += command[i + 1] === ch || (ch === "|" && command[i + 1] === "&") ? 2 : 1; continue; }
     buf += ch; i++;
   }

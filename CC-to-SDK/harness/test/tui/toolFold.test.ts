@@ -44,6 +44,17 @@ describe("F1 fold classifier (R1.1–R1.3)", () => {
     expect(classifyToolEvent({ name: "Bash", input: { command: "npm test" } })).toEqual({ collapsible: false });
     expect(classifyToolEvent({ name: "Bash", input: { command: "cat a > b; rm b" } })).toEqual({ collapsible: false });
   });
+  it("glues a redirection to its statement instead of splitting on its `&`/`|`", () => {
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat a 2>&1" } })).toEqual({ collapsible: true, kind: "read" });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat a &>out" } })).toEqual({ collapsible: true, kind: "read" });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat a >|out" } })).toEqual({ collapsible: true, kind: "read" });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat f <&3" } })).toEqual({ collapsible: true, kind: "read" });
+  });
+  it("still separates on a real `&&`, background `&` and `|&`", () => {
+    expect(classifyToolEvent({ name: "Bash", input: { command: "grep x f 2>/dev/null && npm test" } })).toEqual({ collapsible: false });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "sleep 1 & cat f" } })).toEqual({ collapsible: false });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "ls |& wc -l" } })).toEqual({ collapsible: true, kind: "list" });
+  });
   it("prefers list over search over read when one command is several kinds", () => {
     expect(classifyToolEvent({ name: "Bash", input: { command: "ls | wc -l" } })).toEqual({ collapsible: true, kind: "list" });
     expect(classifyToolEvent({ name: "Bash", input: { command: "grep x a | wc -l" } })).toEqual({ collapsible: true, kind: "search" });
@@ -63,6 +74,10 @@ describe("F1 fold classifier (R1.1–R1.3)", () => {
     expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<EOF\nbody\nEOF\ngrep x f" } })).toEqual({ collapsible: true, kind: "search" });
     expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<EOF\nbody\nEOF\nnpm test" } })).toEqual({ collapsible: false });
     expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<EOF\nbody" } })).toEqual({ collapsible: true, kind: "read" });
+  });
+  it("removes shell quoting from a heredoc delimiter so its terminator still matches", () => {
+    expect(classifyToolEvent({ name: "Bash", input: { command: 'cat <<"E\\"OF"\nbody\nE"OF\nnpm test' } })).toEqual({ collapsible: false });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<'EOF'\nlog 2>&1\nrun && npm test\nEOF" } })).toEqual({ collapsible: true, kind: "read" });
   });
   it("never mistakes a herestring for a heredoc", () => {
     expect(classifyToolEvent({ name: "Bash", input: { command: "wc -l <<<hi; npm test" } })).toEqual({ collapsible: false });
