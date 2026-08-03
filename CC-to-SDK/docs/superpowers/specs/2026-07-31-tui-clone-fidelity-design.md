@@ -315,7 +315,9 @@ note 2026-08-04; supersedes their listing as deliverables here).
    inside the dim run (byte-shape matching upstream's golden, post-count dim loss included). **No
    per-row elapsed appears anywhere, and no group elapsed suffix in default mode** (R4.10).
 2. A Read shows `⎿ Read 340 lines`; a Bash used as a search shows `Found 3 files`; a Write shows
-   `Wrote 42 lines`; an Edit shows `Added 2 lines, removed 3 lines`.
+   its 10-line highlighted preview + bare `… +N lines` marker (the census's default create form —
+   `Wrote 42 lines` renders only when no content is available to preview; revision note 2026-08-04);
+   an Edit shows `Added 2 lines, removed 3 lines`.
 3. A `TaskCreate` renders nothing at all, and a `ToolSearch` contributes no visible row and no clause.
 4. A running subagent shows its last three rows plus `… +12 tool uses (ctrl+o to expand)`; `ctrl+o`
    expands it; on finish the row reads `Done (…)` with a token count.
@@ -1183,6 +1185,11 @@ behind those rows — all forty `K1`–`K40` research rows, re-scored — sits a
 
 ## Revision Notes
 
+- 2026-08-04 — **F3 acceptance #2's Write clause corrected during Task 6 review.** The census
+  (01#58–62) shows upstream's DEFAULT create render is the 10-line highlighted preview alone with a
+  bare `… +N lines` marker; `Wrote N lines` belongs to the condensed/scratchpad styles this clone
+  does not model. The stacked count-plus-preview the plan first specified was an invention and was
+  dropped; the count row survives as the honest no-content fallback only.
 - 2026-08-04 — **F3 probe round complete (P80–P85) and four F3 amendments recorded.** (1) Acceptance
   #1's ` · 12s` group elapsed suffix removed: R4.10 is bundle-verified (`V8p`'s anchor computed only
   under `if (s && ds())`, L427963–427974) — the suffix is fullscreen-only and the tracked default is

@@ -125,16 +125,18 @@ function writeRows(event: ToolEvent, normalized: NormalizedToolResult): readonly
   const structured = normalized.structured;
   if (structured?.type === "update") return editRows(normalized);
   // `create`: recognized sidecar content first, the complete retained input second (P94 decision 5). Upstream's
-  // default create row is the preview ALONE; the count row we keep above it is this clone's stand-in for the
-  // condensed variant (` to {relativePath}`) we cannot model — it, the scratchpad (`… (ctrl+o to expand)`) and
-  // plan-mode (`/plan to preview`) forms all need style/scratchpad/plan state we do not have, and are recorded
-  // as skipped. With no content anywhere there is nothing honest to preview, so the count row stands alone.
+  // default create row is the preview ALONE (census 01#58–62; controller review of t6 dropped the stacked
+  // `Wrote N lines` header — upstream reserves that row for the condensed/scratchpad styles this clone does not
+  // model, and inventing a stacked form fails the fidelity brief). The count row survives ONLY as the honest
+  // no-content fallback, where there is nothing to preview. The condensed (` to {relativePath}`), scratchpad
+  // (`… (ctrl+o to expand)`) and plan-mode (`/plan to preview`) variants stay recorded as skipped.
   const input = isRecord(event.input) ? event.input : {};
   const written = str(structured?.content) ?? str(input.content);
-  const lines = written === undefined ? normalized.outputLines.length : countTextLines(written);
-  const head = row(plain("Wrote "), bold(String(lines)), plain(` ${plural(lines, "line")}`));
-  if (written === undefined) return [head];
-  return [head, ...previewRows(written, str(structured?.filePath) ?? str(input.file_path))];
+  if (written === undefined) {
+    const lines = normalized.outputLines.length;
+    return [row(plain("Wrote "), bold(String(lines)), plain(` ${plural(lines, "line")}`))];
+  }
+  return [...previewRows(written, str(structured?.filePath) ?? str(input.file_path))];
 }
 
 // ── Grep / Glob (upstream `$Wo` L421481, `ola` L421541) ────────────────────────────────────────────────

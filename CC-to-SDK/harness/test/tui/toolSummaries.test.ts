@@ -81,9 +81,9 @@ describe("F3 typed result rows — Edit and Write", () => {
   });
   it("counts a Write create from the sidecar content first and the complete input second", () => {
     const sidecar = eventFor("Write", { file_path: "/work/n.md", content: "ignored" }, "Created", { type: "create", filePath: "/work/n.md", content: "one\ntwo\nthree\n", originalFile: null, structuredPatch: [], userModified: false });
-    expect(one(sidecar)).toBe("Wrote 3 lines\none\ntwo\nthree"); expect(bolds(sidecar)).toEqual(["3"]);   // sidecar content, not the input's `ignored`
-    expect(one(eventFor("Write", { file_path: "/work/n.md", content: "a\nb" }, "Created"))).toBe("Wrote 2 lines\na\nb");
-    expect(one(eventFor("Write", { file_path: "/work/n.md", content: "solo" }, "Created"))).toBe("Wrote 1 line\nsolo");
+    expect(one(sidecar)).toBe("one\ntwo\nthree"); expect(bolds(sidecar)).toEqual([]);   // preview ALONE (census 01#58-62; t6 controller review) — sidecar content, not the input's `ignored`
+    expect(one(eventFor("Write", { file_path: "/work/n.md", content: "a\nb" }, "Created"))).toBe("a\nb");
+    expect(one(eventFor("Write", { file_path: "/work/n.md", content: "solo" }, "Created"))).toBe("solo");
     expect(one(eventFor("Write", { file_path: "/work/n.md" }, "Created"))).toBe("Wrote 1 line");           // no content anywhere ⇒ no preview
   });
   it("routes a Write UPDATE through the same diff summary as Edit", () => {
@@ -97,36 +97,35 @@ describe("F3 typed result rows — Edit and Write", () => {
 describe("F3 typed result rows — the Write create preview", () => {
   const ts = (n: number) => Array.from({ length: n }, (_, i) => `const v${i} = ${i};`).join("\n");
   const write = (content: string, path = "/work/a.ts") => eventFor("Write", { file_path: path, content }, "Created");
-  const preview = (event: ToolEvent, projection?: ResultProjection) => texts(event, projection).slice(1);
+  const preview = (event: ToolEvent, projection?: ResultProjection) => texts(event, projection);
   it("shows the first ten lines then the BARE overflow marker — no expand hint", () => {
     const lines = rows(write(ts(12)))!;
-    expect(lines).toHaveLength(12);                                            // count row + 10 preview + marker
-    expect(lines[0]!.text).toBe("Wrote 12 lines");
-    expect(lines.slice(1, 11).map((l) => l.text)).toEqual(Array.from({ length: 10 }, (_, i) => `const v${i} = ${i};`));
-    expect(lines[11]).toEqual({ text: "… +2 lines", dim: true });
+    expect(lines).toHaveLength(11);                                            // 10 preview rows + marker; NO count head (preview alone, census 01#58-62)
+    expect(lines.slice(0, 10).map((l) => l.text)).toEqual(Array.from({ length: 10 }, (_, i) => `const v${i} = ${i};`));
+    expect(lines[10]).toEqual({ text: "… +2 lines", dim: true });
     expect(rows(write(ts(11)))!.at(-1)).toEqual({ text: "… +1 line", dim: true });   // `bM` pluralizes on its own count
   });
   it("shows every line and NO marker at exactly ten, and counts the trailing newline the way the count row does", () => {
     expect(preview(write(ts(10)))).toEqual(Array.from({ length: 10 }, (_, i) => `const v${i} = ${i};`));
-    expect(rows(write(ts(10)))).toHaveLength(11);
-    expect(one(write("a\nb\n"))).toBe("Wrote 2 lines\na\nb");                  // the phantom trailing row is neither counted nor previewed
-    expect(preview(write("", "/work/empty.ts"))).toEqual([]);                  // empty content is no content (Task 5's `str` guard): no preview rows
+    expect(rows(write(ts(10)))).toHaveLength(10);
+    expect(one(write("a\nb\n"))).toBe("a\nb");                                  // the phantom trailing row is neither counted nor previewed
+    expect(preview(write("", "/work/empty.ts"))).toEqual(["Wrote 1 line"]);      // empty content is no content (Task 5's `str` guard): the honest count fallback stands alone
   });
   it("syntax-highlights on the file extension and leaves an unknown extension PLAIN, not dim", () => {
-    const highlighted = rows(write("const x = 42;"))![1]!;
+    const highlighted = rows(write("const x = 42;"))![0]!;
     expect(highlighted.segments?.find((s) => s.text === "const")?.color).toBe(resolveThemeColor(themeTokens().suggestion));
     expect(highlighted.segments?.find((s) => s.text === "42")?.color).toBe(resolveThemeColor(themeTokens().warning));
     expect(highlighted.dim).toBeUndefined();
-    const python = rows(eventFor("Write", { file_path: "/work/s.py", content: "def go():" }, "Created"))![1]!;
+    const python = rows(eventFor("Write", { file_path: "/work/s.py", content: "def go():" }, "Created"))![0]!;
     expect(python.segments?.find((s) => s.text === "def")?.color).toBe(resolveThemeColor(themeTokens().suggestion));
-    const unknown = rows(write("const x = 42;", "/work/notes.md"))![1]!;       // `highlightCode` would dim this; the preview must not
+    const unknown = rows(write("const x = 42;", "/work/notes.md"))![0]!;       // `highlightCode` would dim this; the preview must not
     expect(unknown).toEqual({ text: "const x = 42;", segments: [{ text: "const x = 42;" }] });
   });
   it("previews the sidecar content ahead of the input content, keyed on the sidecar's own path", () => {
     const sidecar = eventFor("Write", { file_path: "/work/a.md", content: "input\ncontent" }, "Created",
       { type: "create", filePath: "/work/real.ts", content: "const y = 1;\n", originalFile: null, structuredPatch: [], userModified: false });
     expect(preview(sidecar)).toEqual(["const y = 1;"]);
-    expect(rows(sidecar)![1]!.segments?.find((s) => s.text === "const")?.color).toBe(resolveThemeColor(themeTokens().suggestion));
+    expect(rows(sidecar)![0]!.segments?.find((s) => s.text === "const")?.color).toBe(resolveThemeColor(themeTokens().suggestion));
   });
   it("keeps the ten-line cap in the detail projections — the census records no verbose expansion of `jme`", () => {
     expect(preview(write(ts(12)), "detail-all")).toEqual([...Array.from({ length: 10 }, (_, i) => `const v${i} = ${i};`), "… +2 lines"]);
