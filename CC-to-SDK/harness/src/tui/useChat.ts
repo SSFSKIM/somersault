@@ -38,6 +38,8 @@ import { replayDocument } from "./replay.js";
 import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bash.js";
 import { copyToClipboard as realCopyToClipboard } from "./copy.js";
 import { appendMemory as realAppendMemory } from "./memory.js";
+import { openInEditor } from "./externalEditor.js";
+import { STARTER_KEYBINDINGS, userBindingsPath } from "./keys/userBindings.js";
 import { shortCwd } from "./banner.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
 import type { RawContextUsage } from "../index.js";
@@ -67,12 +69,12 @@ function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); retu
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
-  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void } = {},
+  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void } } = {},
   // `home`/`platform` are injectable for the same reason `now`/`columns` are: the frame-capture fixture has
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
   // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
-  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; getSessionMessagesIn?: (id: string, cwd?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void } = {},
+  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; getSessionMessagesIn?: (id: string, cwd?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed" } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
@@ -189,6 +191,9 @@ export function useChat(
     try { return realReadFileSync(p, "utf8"); }
     catch (e) { return (e as NodeJS.ErrnoException).code === "ENOENT" ? null : ""; }
   });
+  // /keybindings' file opener. One seam, not two: `prepare` runs inside it, so "no editor configured" never
+  // creates the starter file for an editor that was never going to open.
+  const openEditor = deps.openEditor ?? ((file: string, prepare: () => void) => openInEditor(file, { prepare }));
   const renameSessionFn = deps.renameSession ?? ((id: string, t: string) => realRenameSession(id, t, { cwd: opts.cwd }));
   const tagSessionFn = deps.tagSession ?? ((id: string, t: string | null) => realTagSession(id, t, { cwd: opts.cwd }));
   const getSessionInfoFn = deps.getSessionInfo ?? ((id: string) => realGetSessionInfo(id, { cwd: opts.cwd }));
@@ -419,6 +424,10 @@ export function useChat(
 
   function append(ls: RenderLine[]) { if (ls.length) appendNewLocal({ kind: "visual", lines: ls }); }
   function notice(text: string) { appendNewLocal({ kind: "notice", lines: [{ text, dim: true }] }); }
+  // F2 task 9: text from ABOVE this tree (the keybindings.json watcher) becomes a normal transcript notice.
+  // Bound once on mount — `notice` only reads refs and setState, so the mount-time closure stays correct for
+  // the life of the component, and after unmount `appendNewLocal`'s `disposed` guard drops the call.
+  useEffect(() => { opts.noticeBridge?.bind((text) => notice(text)); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   /** /export, /files and /stats all read the PERSISTED transcript, which the SDK does not write mid-turn
    *  (probes 62-64). Local commands dispatch immediately even while busy, so running one during a turn
    *  answers from the last COMPLETED turn — an export that ends before the reply on screen, a token count
@@ -610,14 +619,20 @@ export function useChat(
         // print the exact redirect line, then open Settings AT Config (openSettings always does), never the
         // picker directly (Global Constraints line 33).
         case "output-style": notice(OUTPUT_STYLE_REDIRECT); openSettings(); break;
-        // /keybindings (W3 T6): upstream opens ~/.claude/keybindings.json in $EDITOR — a file opener, no
-        // in-app UI. We have no keybinding-CUSTOMIZATION mechanism to open a file for, so this opens the
-        // existing read-only `?` keymap viewer instead and says so up front (recorded divergence, Global
-        // Constraints line 35 — a viewer standing in for an editor-opener, not a bug).
-        case "keybindings":
-          notice("keybinding customization isn't supported yet — showing the built-in keymap (upstream opens ~/.claude/keybindings.json in your editor)");
-          openShortcuts();
+        // /keybindings (F2 task 9): upstream's own "Open your keyboard shortcuts file", and now literally
+        // that — the file IS the customization surface (~/.claude/keybindings.json, merged over the defaults
+        // and hot-reloaded, so the edit applies the moment it is saved; no restart, no confirm step). The
+        // starter template is written only when an editor exists to open it. The read-only `?` keymap is the
+        // fallback for a shell with neither $VISUAL nor $EDITOR set: there is nothing to open there, and the
+        // W3 divergence line ("customization isn't supported yet") is retired — it no longer holds.
+        case "keybindings": {
+          const file = userBindingsPath({ home });
+          const result = openEditor(file, () => { if (readFile(file) === null) writeFile(file, STARTER_KEYBINDINGS); });
+          if (result === "no-editor") { notice(`set $VISUAL or $EDITOR to edit ${file} — showing the built-in keymap instead`); openShortcuts(); break; }
+          if (result === "failed") { notice(`✗ couldn't open ${file} in your editor`); break; }
+          notice(`${file} — saved changes apply live`);
           break;
+        }
         // Same exit the Ctrl-D / Ctrl-C-twice keys use — the host owns the actual unmount (opts.onExit).
         case "exit": case "quit": opts.onExit?.(); break;
         // F0 KB5: detach moved off the Ctrl-Z chord onto this command. opts.detach is only set for an

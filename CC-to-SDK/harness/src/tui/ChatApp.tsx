@@ -71,7 +71,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, deps, yankHintMs, escClearMs, suspend, resumeOutput }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, suspend, resumeOutput }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -83,6 +83,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // Internal chatMain → ChatApp → useChat boundary (never a public ChatClientOpts field): wipes Ink's
   // append-only <Static> before a terminal boundary mounts a fresh one.
   clearStaticTranscript?: () => void;
+  // The same kind of boundary in the other direction (F2 task 9): text from ABOVE the tree — today the
+  // keybindings.json watcher's validation findings — landing in the transcript as notices.
+  noticeBridge?: { bind(push: (text: string) => void): void };
   deps?: Parameters<typeof useChat>[2];
   yankHintMs?: number;
   escClearMs?: number;
@@ -94,7 +97,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
-  const { state, detailItems, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript }, deps);
+  const { state, detailItems, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(false);

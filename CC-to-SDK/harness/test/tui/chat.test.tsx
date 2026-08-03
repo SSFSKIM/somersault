@@ -4,6 +4,8 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { tmpdir } from "node:os";
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
 // F2 task 6: ChatApp/ChatComposer read stdin through <KeymapProvider> now, not `useInput` — rendered bare
 // they have no input path at all, so every render here goes through the provider wrapper.
 import { renderWithKeymap as render } from "./keysTestUtil.js";
@@ -13,6 +15,7 @@ import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
 import { currentTheme, setTheme } from "../../src/tui/theme.js";
+import { createNoticeBridge } from "../../src/tui/chatMain.js";
 
 // W3 T4: theme.ts's ACCENT/current live binding is module-scoped and vitest isolates per FILE, not per
 // test, so a /theme test that previews or persists a theme must not leak it into a later test in this
@@ -1419,20 +1422,49 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("Preferred output style");
   });
 
-  it("/keybindings opens the shortcuts overlay and prints the honesty line disclosing the file-opener divergence", async () => {
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+  // F2 task 9: /keybindings is upstream's own file-opener now — the keymap IS customizable (the file merges
+  // over the defaults and hot-reloads), so the W3 "not supported yet" honesty line is retired. Both tests
+  // drive the editor through the injected seam, never $EDITOR: the machine running them has its own.
+  // Ink word-wraps a long dim <Text> and re-opens the dim SGR codes around EACH physical line, so every
+  // assertion below reads the frame with escapes stripped and whitespace runs collapsed.
+  const flat = (lastFrame: () => string | undefined) => frame(lastFrame).replace(/\x1b\[[0-9;]*m/g, "").replace(/\s+/g, " ");
+  it("/keybindings opens ~/.claude/keybindings.json in $VISUAL/$EDITOR, seeding the starter file first", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ccx-kb-home-"));
+    const written: [string, string][] = [];
+    const openEditor = vi.fn((_file: string, prepare: () => void) => { prepare(); return "opened" as const });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
+      deps={{ home, openEditor, readFile: () => null, writeFile: (p, t) => { written.push([p, t]); } }} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("/keybindings"); await waitFor(() => frame(lastFrame).includes("/keybindings"));
+    stdin.write("\r");
+    await waitFor(() => flat(lastFrame).includes("saved changes apply live"));
+    expect(openEditor.mock.calls[0][0]).toBe(join(home, ".claude", "keybindings.json"));
+    expect(written).toHaveLength(1);                                        // seeded once, by `prepare`, before the spawn
+    expect(written[0][0]).toBe(join(home, ".claude", "keybindings.json"));
+    expect(JSON.parse(written[0][1])).toMatchObject({ bindings: [] });      // the documented starter, valid JSON
+    expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");           // the read-only overlay is the FALLBACK, not the result
+  });
+
+  it("a noticeBridge notification reaches the transcript — queued BEFORE mount and pushed after", async () => {
+    const bridge = createNoticeBridge();
+    bridge.notify("⚠ keybindings.json: 1 problem");                        // the launch case: no transcript exists yet
+    const { lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} noticeBridge={bridge} />);
+    await waitFor(() => flat(lastFrame).includes("⚠ keybindings.json: 1 problem"));
+    bridge.notify("⚠ reloaded: 2 problems");                               // the hot-reload case, mid-session
+    await waitFor(() => flat(lastFrame).includes("⚠ reloaded: 2 problems"));
+  });
+
+  it("/keybindings falls back to the read-only keymap when neither $VISUAL nor $EDITOR is set", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ccx-kb-home-"));
+    const written: string[] = [];
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
+      deps={{ home, openEditor: () => "no-editor", readFile: () => null, writeFile: (p) => { written.push(p); } }} />);
     await waitFor(() => frame(lastFrame).includes("›"));
     stdin.write("/keybindings"); await waitFor(() => frame(lastFrame).includes("/keybindings"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));   // ShortcutsOverlay is up
-    // Ink word-wraps this long single dim <Text> at the terminal width AND re-opens/closes the dim escape
-    // codes around EACH wrapped physical line (not just once around the whole logical line), and the wrap
-    // happens to land right after the line's own trailing space ("...opens ") — so a naive "\n"→" " swap
-    // leaves a DOUBLE space at the boundary on top of the (harmless, but real) dim-code bytes in between.
-    // Strip all SGR escapes (mirroring ShortcutsOverlay.test.tsx's own stripAnsi helper) and collapse all
-    // whitespace runs to one space — confirmed by dumping the raw frame while diagnosing this test.
-    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
-    expect(stripAnsi(frame(lastFrame)).replace(/\s+/g, " ")).toContain("keybinding customization isn't supported yet — showing the built-in keymap (upstream opens ~/.claude/keybindings.json in your editor)");
+    expect(flat(lastFrame)).toContain("set $VISUAL or $EDITOR");
+    expect(written).toEqual([]);                                            // nothing was created for an editor that never runs
   });
 
   it("help owns immediate keys before its passive handler mounts, and Escape closes without opening pager", async () => {

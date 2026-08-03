@@ -1,7 +1,7 @@
 // tui/test/externalEditor.test.ts — editExternal round-trips the buffer through a fake $EDITOR.
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync, writeFileSync, rmSync } from "node:fs";
-import { editExternal } from "../../src/tui/externalEditor.js";
+import { editExternal, openInEditor } from "../../src/tui/externalEditor.js";
 
 describe("editExternal", () => {
   it("writes the buffer to the temp file, runs the editor, returns the edited text, restores raw mode", () => {
@@ -43,6 +43,44 @@ describe("editExternal", () => {
     editExternal("x", { spawn: ((c: string, a: string[]) => { seen = [c, a]; return { status: 0 } as any; }) as any, setRaw: () => {}, editorCmd: "code --wait" });
     expect(seen![0]).toBe("code");
     expect(seen![1][0]).toBe("--wait");
+  });
+});
+
+// F2 task 9: /keybindings opens the user's OWN file in place. Unlike editExternal there is deliberately no `vi`
+// default — the caller (a read-only keymap overlay) has to be able to tell "no editor configured" apart.
+describe("openInEditor", () => {
+  const saved = { VISUAL: process.env.VISUAL, EDITOR: process.env.EDITOR };
+  afterEach(() => {
+    if (saved.VISUAL === undefined) delete process.env.VISUAL; else process.env.VISUAL = saved.VISUAL;
+    if (saved.EDITOR === undefined) delete process.env.EDITOR; else process.env.EDITOR = saved.EDITOR;
+  });
+  it("spawns the editor on the file itself, releasing and restoring raw mode around it", () => {
+    const rawCalls: boolean[] = []; let seen: [string, string[]] | undefined;
+    const result = openInEditor("/home/u/.claude/keybindings.json", {
+      spawn: ((c: string, a: string[]) => { seen = [c, a]; return { status: 0 } as any; }) as any,
+      setRaw: (on) => rawCalls.push(on), editorCmd: "code --wait",
+    });
+    expect(result).toBe("opened");
+    expect(seen).toEqual(["code", ["--wait", "/home/u/.claude/keybindings.json"]]);
+    expect(rawCalls).toEqual([false, true]);
+  });
+  it("runs `prepare` once an editor is known to exist — never before", () => {
+    let prepared = 0;
+    openInEditor("/f", { spawn: (() => ({ status: 0 })) as any, setRaw: () => {}, editorCmd: "e", prepare: () => { prepared++; } });
+    expect(prepared).toBe(1);
+    process.env.VISUAL = ""; process.env.EDITOR = "";
+    expect(openInEditor("/f", { spawn: (() => ({ status: 0 })) as any, setRaw: () => {}, prepare: () => { prepared++; } })).toBe("no-editor");
+    expect(prepared).toBe(1);                                 // the file is NOT created for an editor that never runs
+  });
+  it("reports a failed editor without pretending it opened", () => {
+    expect(openInEditor("/f", { spawn: (() => ({ status: 1 })) as any, setRaw: () => {}, editorCmd: "e" })).toBe("failed");
+    expect(openInEditor("/f", { spawn: (() => ({ error: new Error("ENOENT"), status: null })) as any, setRaw: () => {}, editorCmd: "e" })).toBe("failed");
+  });
+  it("treats an exported-but-empty VISUAL/EDITOR as unset, like editExternal does", () => {
+    process.env.VISUAL = ""; process.env.EDITOR = "nano";
+    let seen: string | undefined;
+    expect(openInEditor("/f", { spawn: ((c: string) => { seen = c; return { status: 0 } as any; }) as any, setRaw: () => {} })).toBe("opened");
+    expect(seen).toBe("nano");
   });
 });
 

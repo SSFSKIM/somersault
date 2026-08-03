@@ -1,6 +1,6 @@
 // tui/test/resumeOutput.test.ts — protects the render-boundary handoff after Ctrl-Z/fg.
 import { describe, expect, it } from "vitest";
-import { createDeferredClearBridge, createResumeSafeStdout } from "../../src/tui/chatMain.js";
+import { createDeferredClearBridge, createNoticeBridge, createResumeSafeStdout } from "../../src/tui/chatMain.js";
 
 const staleErase = "\x1b[2K\x1b[1A\x1b[2K";
 
@@ -42,5 +42,27 @@ describe("createDeferredClearBridge", () => {
     bridge.clearStaticTranscript(); bridge.clearStaticTranscript();
     bridge.bind(() => { clears++; }); expect(clears).toBe(1);
     bridge.clearStaticTranscript(); expect(clears).toBe(2);
+  });
+});
+
+// F2 task 9: the keybindings.json watcher lives ABOVE useChat, so its findings need a way INTO the transcript —
+// including the ones produced before the transcript exists (a broken file at launch).
+describe("createNoticeBridge", () => {
+  it("queues every pre-bind notice IN ORDER and replays them once the transcript is live", () => {
+    const bridge = createNoticeBridge(); const seen: string[] = [];
+    bridge.notify("first"); bridge.notify("second");
+    expect(seen).toEqual([]);
+    bridge.bind((t) => seen.push(t));
+    expect(seen).toEqual(["first", "second"]);
+    bridge.notify("third");                                   // and delegates directly from then on
+    expect(seen).toEqual(["first", "second", "third"]);
+  });
+  it("replays the queue only once, even if a second client binds later", () => {
+    const bridge = createNoticeBridge(); const first: string[] = [], second: string[] = [];
+    bridge.notify("only once");
+    bridge.bind((t) => first.push(t));
+    bridge.bind((t) => second.push(t));
+    expect(first).toEqual(["only once"]);
+    expect(second).toEqual([]);
   });
 });

@@ -7,7 +7,35 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export interface EditorIO { spawn?: typeof spawnSync; setRaw?: (on: boolean) => void; editorCmd?: string }
+export interface EditorIO { spawn?: typeof spawnSync; setRaw?: (on: boolean) => void; editorCmd?: string;
+  /** Run once an editor is known to exist, before it is spawned — `/keybindings` writes its starter file here.
+   *  Inside `openInEditor` rather than at the call site so that "no editor configured" creates nothing at all. */
+  prepare?: () => void }
+
+/** The editor command as the user configured it, or null when neither variable is set. `||`, not `??`, for the
+ *  reason spelled out in `editExternal` below: an exported-but-empty VISUAL/EDITOR means "unset" in every shell. */
+const editorArgv = (io: EditorIO): string[] | null => {
+  const argv = (io.editorCmd || process.env.VISUAL || process.env.EDITOR || "").split(/\s+/).filter(Boolean);
+  return argv.length > 0 ? argv : null;
+};
+
+/** Open an EXISTING file in the user's editor, in place — no temp round-trip, nothing read back (`/keybindings`,
+ *  which hands the user their own `~/.claude/keybindings.json`; the watcher picks the edit up on save). Unlike
+ *  `editExternal` there is NO `vi` default: a caller that has a read-only fallback surface must be able to tell
+ *  "the user has no editor configured" apart from "the editor ran". Same raw-mode handoff discipline. */
+export function openInEditor(file: string, io: EditorIO = {}): "no-editor" | "opened" | "failed" {
+  const argv = editorArgv(io);
+  if (!argv) return "no-editor";
+  const spawn = io.spawn ?? spawnSync;
+  const setRaw = io.setRaw ?? ((on: boolean) => { try { if (process.stdin.isTTY) process.stdin.setRawMode(on); } catch { /* no tty */ } });
+  const [cmd, ...args] = argv;
+  io.prepare?.();
+  try {
+    setRaw(false);
+    const r = spawn(cmd, [...args, file], { stdio: "inherit" });
+    return r.error || r.status !== 0 ? "failed" : "opened";
+  } finally { setRaw(true); }
+}
 
 /** Round-trip `text` through the user's editor. Returns the edited text (trailing newline stripped),
  *  or null when the editor errored/exited non-zero — the caller keeps the original buffer. */

@@ -5,7 +5,8 @@ import { render } from "ink";
 import { remoteChatSession } from "../client/chatAdapter.js";
 import type { ChatSession } from "../session/chatSession.js";
 import { ChatApp } from "./ChatApp.js";
-import { KeymapProvider } from "./keys/KeymapProvider.js";
+import { UserKeymap } from "./keys/UserKeymap.js";
+import { formatIssues, userBindingsPath } from "./keys/userBindings.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import type { InitialResume } from "./commands.js";
 import { loadPrefs } from "./prefs.js";
@@ -77,6 +78,20 @@ export function createDeferredClearBridge(): DeferredClearBridge {
   };
 }
 
+/** The same shape for TEXT going the other way (F2 task 9): the `~/.claude/keybindings.json` watcher sits above
+ *  the tree and has findings to report — at launch, before `useChat` has a transcript at all, and again on every
+ *  edit while the REPL runs. `console.error` is not an option (it would corrupt the live Ink frame), so notices
+ *  queue here until the transcript binds, then go straight through. Ordered, replayed exactly once. */
+export interface NoticeBridge { notify(text: string): void; bind(push: (text: string) => void): void }
+
+export function createNoticeBridge(): NoticeBridge {
+  let push: ((text: string) => void) | undefined; const queued: string[] = [];
+  return {
+    notify(text) { if (push) push(text); else queued.push(text); },
+    bind(next) { push = next; for (const text of queued.splice(0)) next(text); },
+  };
+}
+
 export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   const prefs = loadPrefs();                             // W3 T4: apply a saved theme BEFORE the first render
   if (prefs.theme) setTheme(prefs.theme);
@@ -93,13 +108,20 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // (`useKeySuspend`, task 6), since building the SuspendDeps needs the real tty from `useStdin`/`useStdout`
   // plus the resumeOutput repaint owner, none of which exist up here. `KeymapDeps.suspend` stays the
   // provider-level fallback for trees that render no ChatApp.
+  // F2 task 9: the USER layer. <UserKeymap> loads ~/.claude/keybindings.json (upstream's own path, so an
+  // existing Claude Code keymap applies here) before the first render, keeps watching it, and feeds the live
+  // layers to the provider — an edit applies to the next keypress. Its validation findings are transcript
+  // notices, which is why they route through a bridge: at launch there is no transcript yet, and on a reload
+  // there is no console to print into.
+  const keybindingsFile = userBindingsPath();
+  const notices = createNoticeBridge();
   const app = render(
-    <KeymapProvider>
+    <UserKeymap file={keybindingsFile} onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
       <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}
         initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
-        clearStaticTranscript={bridge.clearStaticTranscript}
+        clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
         hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} />
-    </KeymapProvider>,
+    </UserKeymap>,
     { exitOnCtrlC: false, stdout: output.stdout },
   );
   bridge.bind(() => app.clear());
