@@ -826,6 +826,12 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
   transcript that reprojects those originals untruncated, while transcript-local Ctrl-E explicitly
   toggles show-all/collapse. Rejected: re-rendering already emitted Ink `<Static>` rows, which would replay
   terminal history and still cannot recover facts discarded into `RenderLine[]`.
+- **The folded row's count MUST render bold in F3 — the flat count is rejected** (owner, 2026-08-03).
+  The Ink `<Text dimColor bold>` limitation (Surprises, 2026-08-03) does not downgrade the requirement;
+  F3 ships a mechanism that produces a real bold count inside the dim row. Mechanism choice is delegated
+  to F3 design — candidates are a raw-SGR line writer for fold rows, or upstream's own shape (bold child
+  nested inside a dim parent, accepting upstream's post-count dim loss, which the golden shows is what
+  2.1.220 actually emits). Rejected: shipping the count unbolded.
 
 ## Surprises & Discoveries
 
