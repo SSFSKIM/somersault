@@ -16,12 +16,13 @@ import type { KeyEvent, TextEvent } from "./types.js";
 
 /** Named keys → the reducer's boolean. Names with no editor meaning (home/end/f1…) are absent on purpose:
  *  they arrive as an empty `input` with no flag set, which `applyKeyInner` returns unchanged. */
-const NAMED: Record<string, keyof KeyFlags> = {
+const NAMED: Record<string, keyof KeyFlags> = Object.assign(Object.create(null), {
   enter: "return", escape: "escape", tab: "tab", backspace: "backspace", delete: "delete",
   up: "upArrow", down: "downArrow", left: "leftArrow", right: "rightArrow",
-};
-/** Raw C0 bytes the reducer matches on directly, flags and all stripped (see the header). */
-const RAW: Record<string, string> = { "_": "\x1f", j: "\n" };
+});
+/** Raw C0 bytes the reducer matches on directly, flags and all stripped (see the header). Null-prototype like
+ *  the t2 spec tables: `e.name in RAW` must never see Object.prototype. */
+const RAW: Record<string, string> = Object.assign(Object.create(null), { "_": "\x1f", j: "\n" });
 
 export function toKeyFlags(e: KeyEvent | TextEvent): { input: string; key: KeyFlags } {
   if (e.kind === "text") return { input: e.text, key: {} };

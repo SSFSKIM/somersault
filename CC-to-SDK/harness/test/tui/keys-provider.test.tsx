@@ -306,6 +306,19 @@ describe("KeymapProvider — byte-stream hygiene", () => {
     h.unmount();
   });
 
+  it("a text event breaks a pending chord — ctrl+x, fast-typed text, ctrl+k must not fire killAgents", async () => {
+    const kill = vi.fn();
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" actions={{ "chat:killAgents": kill }} fallback={fallback} />);
+    await tick();
+    h.stdin.write(CTRL_X);
+    h.stdin.write("hello");                               // one chunk → one text event, inside the 1 s window
+    h.stdin.write(CTRL_K);
+    expect(kill).not.toHaveBeenCalled();
+    expect(fallback.mock.calls.map((c) => c[0].kind)).toEqual(["text", "key"]);   // text delivered, ctrl+k reaches the editor path
+    h.unmount();
+  });
+
   it("…and IS applied once a consumer registers during render", async () => {
     const h = renderWithKeymap(<Probe scope="Chat" />);
     const spy = vi.fn();

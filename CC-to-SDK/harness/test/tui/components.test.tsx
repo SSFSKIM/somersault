@@ -407,6 +407,7 @@ describe("ChatComposer", () => {
       view.stdin.write("\x18");
       await new Promise((r) => setTimeout(r, 20));
       expect(editorStateRef.current.lines).toEqual(makeYankedState().lines);
+      expect(editorStateRef.current.yankSite).not.toBeNull();   // the swallowed prefix must not end the yank run
       view.unmount();
     }
 

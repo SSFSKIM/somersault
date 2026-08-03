@@ -82,6 +82,9 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     if (ev.kind === "key" && ev.ctrl && ev.name === "z") { (suspendHandler(reg) ?? depsRef.current?.suspend)?.(); return; }
     const swallowed = swallowContexts(reg);
     if (ev.kind === "text") {
+      // Text is keypresses: it breaks a pending chord like any non-extension key would. Without this,
+      // `ctrl+x`, a fast-typed word, then `ctrl+k` within the window would fire chat:killAgents.
+      clearChord();
       if (swallowed) return;
       fallbackHandler(reg)?.({ ...ev, text: decodeText(ev.text) });
       return;
