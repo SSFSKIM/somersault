@@ -19,7 +19,8 @@ import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
 import { resolveThemeColor, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
-import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldClause, type FoldGroup } from "./toolFold.js";
+import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup } from "./toolFold.js";
+import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
 
 /** Five columns, and the FIFTH is U+00A0: upstream emits `["  ", "⎿ \xA0"]` so the cell after the connector is not a
@@ -265,22 +266,6 @@ const EXPAND_HINT = "(ctrl+o to expand)";
 /** Every segment on a group row is dim (R3.5 as corrected below), so the only remaining axis is colour:
  *  the settled clause run carries the row grey, the active one is dim-and-uncoloured like the golden's. */
 const dimmed = (text: string, color?: string): Segment => ({ text, dim: true, ...(color === undefined ? {} : { color }) });
-/** Clauses joined by the literal `", "` (R3.8), with each `boldRanges` span emitted as its own bold segment —
- *  Ink composes dim+bold, so a settled count is bold AND dim (R3.5). */
-function clauseSegments(clauses: readonly FoldClause[], color?: string): Segment[] {
-  const out: Segment[] = [];
-  for (const [index, clause] of clauses.entries()) {
-    if (index > 0) out.push(dimmed(", ", color));
-    let cursor = 0;
-    for (const [start, end] of clause.boldRanges) {
-      if (start > cursor) out.push(dimmed(clause.text.slice(cursor, start), color));
-      out.push({ ...dimmed(clause.text.slice(start, end), color), bold: true });
-      cursor = end;
-    }
-    if (cursor < clause.text.length) out.push(dimmed(clause.text.slice(cursor), color));
-  }
-  return out;
-}
 /** R3.3's row geometry. Settled: an EMPTY two-column box (so two literal spaces, no glyph and no colour —
  *  R3.4) then the whole dim text run. Active: `ile`'s single glyph BLINKING on a 600 ms period (glyph for one
  *  half, a bare space for the other — R4.1), then the present-participle clauses undimmed, the separate `…`,
@@ -300,10 +285,14 @@ function clauseSegments(clauses: readonly FoldClause[], color?: string): Segment
  *    · R3.5's `dimColor={!isActive}` has its polarity backwards for the active row: the golden's " Reading "
  *      and its bold count are BOTH dim. The active run is therefore dim here too, which cuts that row's
  *      divergence from the golden from eleven cells to six.
- *  The six that remain are upstream's own escape-sequence artifact, deliberately NOT reproduced: everything
- *  after the bold count (" file…") renders PLAIN in the golden because the count's `\x1b[22m` closer clears
- *  faint as well as bold, breaking the outer dim run. Our `Line` renders each segment as its own sibling
- *  `<Text>`, so nothing here nests — emitting a broken reset to match would be fabricating a bug.
+ *  F3 TASK 2 SUPERSEDES the last of those six (spec Decision Log 2026-08-04). Task 7 left the clause run as
+ *  ordinary styled segments and recorded the golden's PLAIN " file…" tail as an upstream artifact we would
+ *  not reproduce — and with it the count's boldness, which `<Text dimColor bold>` silently drops. Both are
+ *  now fixed at once: the whole clause run (including the active `…`) is ONE `preStyled` segment carrying
+ *  upstream's exact bytes from `composeFoldRun` — dim open, `\x1b[1m{count}\x1b[22m` per count, and NO dim
+ *  re-open afterwards, because upstream's nested `<Text bold>` closes with a `\x1b[22m` that clears faint
+ *  too. The leader glyph, the joining space and the expand hint stay ordinary segments: the golden paints
+ *  each with its own attributes, which is exactly what sibling `<Text>`s produce.
  *  SETTLED-ROW GREY, pinned 2026-08-03 (Task 7 closeout, render contract § 0). A dedicated settled-state
  *  probe against installed 2.1.220 under the tracked capture environment shows the settled row rendering
  *  `#999999` — the SAME grey as this frame's active row. The `#949494` the live-confirmation note first
@@ -316,10 +305,11 @@ function groupRowLine(group: FoldGroup, active: boolean, options: ProjectionOpti
   const leader: Segment[] = active
     ? [{ text: Math.floor(options.now / 600) % 2 === 0 ? (options.platform === "darwin" ? "⏺" : "●") : " ", dim: true, color: grey }, { text: " ", dim: true }]
     : [{ text: "  " }];
-  const segments: Segment[] = [...leader, ...clauseSegments(foldClauses(group.counts, active), active ? undefined : grey)];
-  if (active) segments.push({ text: "…", dim: true });
-  segments.push(dimmed(" "), { text: EXPAND_HINT, dim: true, color: grey });
-  return { text: segments.map((segment) => segment.text).join(""), segments };
+  const run = composeFoldRun(foldClauses(group.counts, active), active ? "active" : "settled", { ellipsis: active });
+  const segments: Segment[] = [...leader, { text: run, preStyled: true }, dimmed(" "), { text: EXPAND_HINT, dim: true, color: grey }];
+  // `run` is the ONE segment whose `text` carries SGR bytes, so the line's plain text is stripped rather
+  // than joined raw — width math, the pager and every text assertion must still see the bare sentence.
+  return { text: segments.map((segment) => (segment.preStyled === true ? stripSgr(segment.text) : segment.text)).join(""), segments };
 }
 /** The three lives of one group row. `published` is the immutable Static row; `active` and `unclosed` are the
  *  DYNAMIC region's two forms of a run Static cannot have yet — active while a member is still running,

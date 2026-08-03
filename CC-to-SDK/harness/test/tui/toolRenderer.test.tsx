@@ -191,12 +191,17 @@ describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
     // the settled row `#999999` under the tracked capture environment, the same grey as the active row (the
     // `#949494` first recorded in the live-confirmation note was that probe environment's ambient-palette
     // variant). The leader box stays two bare spaces — no glyph, no dim, no colour (R3.4).
+    // F3 TASK 2 (plan 2026-08-04-tui-clone-f3, spec Decision Log 2026-08-04): the clause run is no longer
+    // styled segments but ONE pre-styled string of upstream's exact bytes — colour, dim, a real
+    // `\x1b[1m…\x1b[22m` count, and NO dim re-open after it (upstream's own dim loss). `line.text` is
+    // unchanged: it is the SGR-stripped sentence.
     const grey = resolveThemeColor(themeTokens().inactive);
     expect(line.segments).toEqual([
       { text: "  " },
-      { text: "Read ", dim: true, color: grey }, { text: "1", dim: true, color: grey, bold: true }, { text: " file", dim: true, color: grey },
+      { text: "\x1b[38;2;153;153;153m\x1b[2mRead \x1b[1m1\x1b[22m file\x1b[22m\x1b[39m", preStyled: true },
       { text: " ", dim: true }, { text: "(ctrl+o to expand)", dim: true, color: grey },
     ]);
+    expect(grey).toBe("#999999");                                                // the bytes above are that colour
     expect(items.some((i) => i.kind === "gutter-block")).toBe(false);            // R3.7: the ⎿ hint line is ACTIVE-only
     expect(JSON.stringify(items)).not.toContain("export const app = 1;");        // the result body belongs to ctrl+o
     expect(rows[0]!.id).toBe("group:read-1:row");
@@ -257,13 +262,15 @@ describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
     expect(line.text).toBe("⏺ Reading 1 file… (ctrl+o to expand)");
     // Task 7 corrections, both measured on the tracked 2.1.220 golden (see groupRowLine's header): the
     // leader GLYPH and the expand hint are dim AND `inactive` (#999999), with only the glyph cell coloured
-    // — which is why the leader is two segments — and the active clause run is DIM, not bright. What we
-    // deliberately do not copy is the golden's plain " file…", upstream's own `\x1b[22m` artifact.
+    // — which is why the leader is two segments — and the active clause run is DIM, not bright. F3 TASK 2
+    // (plan 2026-08-04-tui-clone-f3) adds the last piece: the run — the trailing `…` included, since the
+    // golden's ellipsis rides the broken-dim tail — is ONE pre-styled string carrying the golden's plain
+    // " file…" verbatim, which is what buys the genuinely bold count.
     const grey = resolveThemeColor(themeTokens().inactive);
     expect(line.segments).toEqual([
       { text: "⏺", dim: true, color: grey }, { text: " ", dim: true },
-      { text: "Reading ", dim: true }, { text: "1", dim: true, bold: true }, { text: " file", dim: true },
-      { text: "…", dim: true }, { text: " ", dim: true }, { text: "(ctrl+o to expand)", dim: true, color: grey },
+      { text: "\x1b[2mReading \x1b[1m1\x1b[22m file…\x1b[22m", preStyled: true },
+      { text: " ", dim: true }, { text: "(ctrl+o to expand)", dim: true, color: grey },
     ]);
     // The golden paints `  ⎿  src/app.ts` as ONE dim #999999 run — connector included, which is why the
     // gutter cells carry their own style here rather than staying plain text.
@@ -292,6 +299,22 @@ describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
     const frame = plain(render(<>{items.map((item) => <RenderItemView key={item.id} item={item} />)}</>).lastFrame()!);
     expect(frame).toMatch(/Read(?:ing)? \d+ file/);
     expect(frame).toMatch(/⎿.*src\/app\.ts/);
+  });
+
+  it("paints a genuinely BOLD count inside the dim run, with upstream's plain post-count tail (F3 Task 2)", () => {
+    // These assertions read RAW frame bytes, which are Ink's NORMALIZED re-emit of what the writer produced
+    // (F3 Task 1: no-op codes dropped, missing closers appended) — so they pin the rendered ATTRIBUTE story,
+    // never byte-identity with `composeFoldRun`'s output. That identity is sgr-foldrow.test.ts's job.
+    const raw = (items: readonly RenderItem[]) => render(<>{items.map((item) => <RenderItemView key={item.id} item={item} />)}</>).lastFrame()!;
+    const activeFrame = raw(projectPending(built(call("read-1", "Read", { file_path: "src/app.ts" })), context));
+    // The golden's per-cell story for `⏺ Reading 1 file…`: glyph dim+grey, " Reading " dim, "1" dim+bold,
+    // " file…" PLAIN. Ink drops the run's own `\x1b[2m` as a no-op — the leader already opened dim.
+    expect(activeFrame).toContain("\x1b[38;2;153;153;153m\x1b[2m⏺\x1b[39m Reading \x1b[1m1\x1b[22m file…");
+    expect(activeFrame).not.toContain("\x1b[22m\x1b[2m file");                   // the dim is NOT re-opened after the count
+    const settled = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
+    // Settled keeps the grey through the tail — `\x1b[22m` clears faint, not colour — exactly as upstream's
+    // outer `<Text color dimColor>` does.
+    expect(raw(groupRows(projectCompact(settled, context)))).toContain("\x1b[38;2;153;153;153m\x1b[2mRead \x1b[1m1\x1b[22m file");
   });
 });
 
