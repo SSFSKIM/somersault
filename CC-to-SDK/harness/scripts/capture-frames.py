@@ -13,7 +13,10 @@ Run every invocation of this script with that interpreter: "$CLAUDE_JOB_DIR/tmp/
 
 Key-script grammar (one action per line, # comments and blank lines ignored):
     wait:<seconds>      sleep while pumping output
-    wait-output:<text>  wait for a raw pty marker emitted after this action begins
+    wait-output:<text>[:<seconds>]
+                        wait for a raw pty marker emitted after this action begins; the optional
+                        numeric tail bounds the wait (default FIRST_FRAME_READY_SECONDS, 1 s — too
+                        short for anything that must outlast a real model turn plus a tool call)
     type:<text>         write text verbatim (no Enter)
     enter               write \r
     key:<name>          esc | tab | up | down | ctrl-<letter> | a raw \xNN escape
@@ -30,6 +33,7 @@ Omitting --bin runs OUR binary: node --import tsx src/cli/bin.ts --cwd <cwd>, fr
 """
 import argparse
 import fcntl
+import math
 import os
 import pty
 import re
@@ -43,6 +47,7 @@ import sys
 import tempfile
 import termios
 import time
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -82,6 +87,12 @@ HEX6 = re.compile(r"^[0-9a-fA-F]{6}$")
 # context, so the child gets a scrubbed environment: everything CLAUDE*-prefixed is dropped except the
 # one var untracked scratch capture may use to authenticate. All ANTHROPIC_* variables stay out: their
 # credentials, profile, base URL, headers, and model overrides would supersede or perturb OAuth capture.
+# Tracked capture is credential-free by default and stays that way. --tracked-oauth is the single, explicit
+# exception, for a golden that can only exist if a real model turn runs: it preserves CLAUDE_CODE_OAUTH_TOKEN
+# and nothing else — every competing credential (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN), every alternate
+# provider route (ANTHROPIC_BASE_URL, CLAUDE_CODE_USE_*), every other CLAUDE*/ANTHROPIC_* value, and AI_AGENT
+# are still removed, so the capture is first-party OAuth or it does not run. That preserved literal is also
+# the one string that must never reach a published frame; see frame_contains_secret.
 KEEP_CLAUDE_ENV = {"CLAUDE_CODE_OAUTH_TOKEN"}
 RECOGNIZED_AUTH_ENV = {"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
 # Tracked ANSI goldens need the renderer's truecolor branch independently of the invoking terminal.
@@ -91,6 +102,15 @@ TRACKED_TERMINAL_UNSET = {
     "CIRCLECI", "TRAVIS", "APPVEYOR", "GITLAB_CI", "BUILDKITE", "DRONE", "CI_NAME",
     "TEAMCITY_VERSION", "TMUX", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORFGBG",
 }
+# The publication guard's normalizers; see secret_scan_corpora. ANSI_ESCAPE_RE covers CSI, OSC, the
+# string-terminated families and the two-character escapes — an unterminated OSC deliberately does not
+# match, so a truncated sequence cannot swallow (and hide) the text that follows it.
+ANSI_ESCAPE_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[P^_X][^\x1b]*\x1b\\|[@-Z\\-_])")
+CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+# Shortest run of a credential that still counts as leaked; a real token's 16 chars are unguessable.
+SECRET_FRAGMENT_LENGTH = 16
+# Rolling window of raw pty bytes retained for the stream layer, so a long capture cannot grow unbounded.
+RAW_SCAN_TAIL_BYTES = 1 << 20
 ONBOARDING_COMPLETE_CONFIG = '{"hasCompletedOnboarding":true}\n'
 # One second absorbs scheduler pressure before the first rendered cell; later frames use a 20 ms drain.
 FIRST_FRAME_READY_SECONDS = 1.0
@@ -103,7 +123,18 @@ PROCESS_GROUP_READY_SECONDS = 0.2
 PROCESS_GROUP_POLL_SECONDS = 0.005
 
 
-def clean_child_env(tracked_fixture: bool) -> dict[str, str]:
+def validate_tracked_oauth(tracked_fixture: bool, tracked_oauth: bool, env: Mapping[str, str]) -> str | None:
+    if not tracked_oauth:
+        return None
+    if not tracked_fixture:
+        return "--tracked-oauth requires tracked golden output"
+    if not env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return "--tracked-oauth requires CLAUDE_CODE_OAUTH_TOKEN"
+    return None
+
+
+def clean_child_env(tracked_fixture: bool, tracked_oauth: bool = False) -> dict[str, str]:
+    oauth = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") if tracked_oauth else None
     env = {
         name: value for name, value in os.environ.items()
         if name in KEEP_CLAUDE_ENV or (
@@ -119,7 +150,73 @@ def clean_child_env(tracked_fixture: bool) -> dict[str, str]:
             if name == "CONTINUOUS_INTEGRATION" or name.startswith("CI_"):
                 env.pop(name)
         env.update(TRACKED_TERMINAL_ENV)
+        # Re-added last, after the unconditional credential scrub above, so the exception is additive
+        # to the logged-out contract rather than a hole punched through it.
+        if oauth:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth
     return env
+
+
+def secret_fragments(secret: str) -> tuple[str, ...]:
+    """Every SECRET_FRAGMENT_LENGTH-char window of the literal (the literal itself when it is shorter).
+    A reconstructable run of a credential is as publishable as the whole one, so the guard matches
+    fragments, not just the intact string."""
+    if len(secret) <= SECRET_FRAGMENT_LENGTH:
+        return (secret,)
+    return tuple(secret[i:i + SECRET_FRAGMENT_LENGTH] for i in range(len(secret) - SECRET_FRAGMENT_LENGTH + 1))
+
+
+def secret_scan_corpora(text: str) -> tuple[str, ...]:
+    """A rendered screen is not flat text: render_line opens an SGR run at every style boundary and
+    render_screen joins rows with newlines, so a credential that soft-wraps at the terminal width or
+    straddles a style run is fragmented and an exact substring test misses it. Normalize into three
+    corpora — escapes stripped; rows re-joined with the control bytes (newlines included) dropped, so a
+    token wrapped across any number of rows is contiguous; and that with all whitespace removed, so
+    padding cells inside a row cannot split it either."""
+    plain = ANSI_ESCAPE_RE.sub("", text)
+    joined = CONTROL_CHAR_RE.sub("", plain)
+    return (plain, joined, "".join(joined.split()))
+
+
+def text_contains_secret(text: str, secrets: Iterable[str]) -> bool:
+    corpora: tuple[str, ...] | None = None
+    for secret in secrets:
+        if not secret:
+            continue
+        if corpora is None:  # normalize lazily: a capture with nothing to protect pays nothing
+            corpora = secret_scan_corpora(text)
+        if any(fragment in corpus for corpus in corpora for fragment in secret_fragments(secret)):
+            return True
+    return False
+
+
+def frame_contains_secret(rendered: str, secrets: Iterable[str]) -> bool:
+    return text_contains_secret(rendered, secrets)
+
+
+def stream_contains_secret(raw: bytes, secrets: Iterable[str]) -> bool:
+    """Second layer: the raw pty bytes the emulator consumed. The grid can scroll, overwrite, or never
+    display what the child actually wrote, so a credential absent from the screen may still have crossed
+    the wire; either layer finding one fails the capture closed."""
+    return text_contains_secret(bytes(raw).decode("utf-8", "replace"), secrets)
+
+
+def parse_wait_output(value: str) -> tuple[str, float] | None:
+    """`marker` or `marker:seconds`. Markers may contain ':', so only a numeric tail counts.
+    A numeric tail with an empty head (":30") is a missing marker, not a marker named ":30".
+    The timeout must be finite and positive: float() accepts 'inf' and 'nan', and an infinite
+    bound would make pump() loop until the pty closes — a hang instead of a failure."""
+    head, sep, tail = value.rpartition(":")
+    if sep:
+        try:
+            seconds = float(tail)
+        except ValueError:
+            pass
+        else:
+            if not head or not math.isfinite(seconds) or seconds <= 0:
+                return None
+            return (head, seconds)
+    return (value, FIRST_FRAME_READY_SECONDS) if value else None
 
 
 def capture_temp_dir() -> str | None:
@@ -353,6 +450,7 @@ def parse_args():
     p.add_argument("--rows", type=int, default=40)
     p.add_argument("--redact-masks", default=None, help="mask file required when writing under test/fixtures/upstream-frames")
     p.add_argument("--expected-version", default=None, help="exact --version output required for tracked golden captures")
+    p.add_argument("--tracked-oauth", action="store_true", help="tracked capture only: preserve CLAUDE_CODE_OAUTH_TOKEN (and nothing else) so a model-driven golden can run first-party")
     return p.parse_args()
 
 
@@ -437,6 +535,14 @@ def main() -> int:
             sys.stderr.write(f"capture-frames: tracked golden output has no required state contract for: {', '.join(missing_state)}\n")
             return 2
 
+    oauth_error = validate_tracked_oauth(tracked_relative is not None, args.tracked_oauth, os.environ)
+    if oauth_error:
+        sys.stderr.write(f"capture-frames: {oauth_error}\n")
+        return 2
+    # The one credential this mode forwards is also the one literal that must never reach a published
+    # frame. Held in memory only: never logged, never serialized, never part of a diagnostic.
+    publication_secrets = (os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""),) if args.tracked_oauth else ()
+
     try:
         stage_dir = tempfile.mkdtemp(prefix=".capture-", dir=nearest_existing_canonical_ancestor(args.out))
     except (OSError, ValueError) as error:
@@ -449,7 +555,7 @@ def main() -> int:
 
     config_dir: str | None = None
     try:
-        child_env = clean_child_env(tracked_relative is not None)
+        child_env = clean_child_env(tracked_relative is not None, args.tracked_oauth)
         config_dir = tempfile.mkdtemp(prefix=".claude-config-", dir=capture_temp_dir())
         (Path(config_dir) / ".claude.json").write_text(ONBOARDING_COMPLETE_CONFIG, encoding="utf-8")
         child_env["CLAUDE_CONFIG_DIR"] = config_dir
@@ -495,6 +601,17 @@ def main() -> int:
         shutil.rmtree(stage_dir, ignore_errors=True)
         return 1
 
+    raw_tail = bytearray()
+
+    def retain_raw(data: bytes) -> None:
+        """Keep a bounded tail of the bytes fed to the emulator for the guard's raw-stream layer. Nothing
+        is retained when no credential is forwarded, so an ordinary capture keeps no pty bytes at all."""
+        if not publication_secrets:
+            return
+        raw_tail.extend(data)
+        if len(raw_tail) > RAW_SCAN_TAIL_BYTES:
+            del raw_tail[:len(raw_tail) - RAW_SCAN_TAIL_BYTES]
+
     def pump(seconds: float, until_content: bool = False, until_output: bytes | None = None, output_generation: bytearray | None = None) -> bool:
         """Collect output for `seconds`; False means the child closed the pty before the script finished."""
         nonlocal seen_meaningful_screen
@@ -512,6 +629,7 @@ def main() -> int:
                 return False
             if output_generation is not None:
                 output_generation[:] = (output_generation + data)[-65536:]
+            retain_raw(data)
             stream.feed(data)
             seen_meaningful_screen = seen_meaningful_screen or has_visible_content(screen)
             if until_output is not None and output_generation is not None and until_output in output_generation:
@@ -528,6 +646,7 @@ def main() -> int:
                 return False
             if output_generation is not None:
                 output_generation[:] = (output_generation + data)[-65536:]
+            retain_raw(data)
             stream.feed(data)
             seen_meaningful_screen = seen_meaningful_screen or has_visible_content(screen)
             if until_output is not None and output_generation is not None and until_output in output_generation:
@@ -559,12 +678,14 @@ def main() -> int:
                     fail(f"pty closed during {line!r}")
                     break
             elif action == "wait-output":
-                marker = value.encode()
-                if not marker:
+                parsed = parse_wait_output(value)
+                if parsed is None:
                     fail("wait-output requires a nonempty marker")
                     break
+                marker_text, marker_seconds = parsed
+                marker = marker_text.encode()
                 output_generation = bytearray()
-                if not pump(FIRST_FRAME_READY_SECONDS, until_output=marker, output_generation=output_generation) or marker not in output_generation:
+                if not pump(marker_seconds, until_output=marker, output_generation=output_generation) or marker not in output_generation:
                     fail("wait-output marker not received")
                     break
             elif action in ("type", "enter", "key"):
@@ -589,6 +710,13 @@ def main() -> int:
                 seq += 1
                 out_name = f"{seq:02d}-{value}.ansi"
                 rendered = render_screen(screen)
+                # Before any state check or substitution: a preserved credential fails the whole capture,
+                # whether it is reconstructable from the rendered screen (wrapped rows, SGR-split runs) or
+                # merely crossed the pty. The diagnostic names the frame, never the literal; staged output is
+                # discarded below, so the tracked directory keeps its prior bytes.
+                if frame_contains_secret(rendered, publication_secrets) or stream_contains_secret(raw_tail, publication_secrets):
+                    fail(f"credential leak in tracked frame {frame_key(args.out, out_name)}")
+                    break
                 state_failures = []
                 if tracked_relative is not None:
                     state_failures = validate_required_state(rendered, required_states[out_name])

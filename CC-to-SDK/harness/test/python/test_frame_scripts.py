@@ -18,6 +18,7 @@ CAPTURE_PATH = ROOT / "scripts" / "capture-frames.py"
 DIFF_PATH = ROOT / "scripts" / "frame-diff.py"
 MASKS_PATH = ROOT / "scripts" / "frames" / "masks.json"
 FRAME_REQUIREMENTS_PATH = ROOT / "scripts" / "frames" / "requirements.txt"
+F1_UPSTREAM_READ_KEYS = ROOT / "scripts" / "frames" / "f1-upstream-read.keys"
 F0_PLAN_PATH = ROOT.parent / "docs" / "superpowers" / "plans" / "2026-07-31-tui-clone-f0.md"
 LIVE_CHILD_KEEPALIVE_SECONDS = 5
 PARTIAL_CHILD_KEEPALIVE_SECONDS = 0.15
@@ -63,7 +64,7 @@ class FrameScriptsTest(unittest.TestCase):
         version = subprocess.run([sys.executable, "--version"], text=True, capture_output=True, check=True)
         return (version.stdout or version.stderr).strip()
 
-    def run_capture(self, script: str, binary: str, out: Path, redact_masks: Path | None = None, script_parent: Path | None = None, cwd: Path | None = None, expected_version: str | None = None, env: dict[str, str] | None = None, cols: int = 100, rows: int = 40):
+    def run_capture(self, script: str, binary: str, out: Path, redact_masks: Path | None = None, script_parent: Path | None = None, cwd: Path | None = None, expected_version: str | None = None, env: dict[str, str] | None = None, cols: int = 100, rows: int = 40, tracked_oauth: bool = False):
         script_path = (script_parent or out.parent) / "case.keys"
         script_path.parent.mkdir(parents=True, exist_ok=True)
         script_path.write_text(textwrap.dedent(script), encoding="utf-8")
@@ -72,6 +73,8 @@ class FrameScriptsTest(unittest.TestCase):
             args += ["--redact-masks", str(redact_masks)]
         if expected_version is not None:
             args += ["--expected-version", expected_version]
+        if tracked_oauth:
+            args += ["--tracked-oauth"]
         return subprocess.run(args, text=True, capture_output=True, env=env)
 
     def run_diff(self, golden: Path, ours: Path, allowlist: Path | None = None, masks: Path = MASKS_PATH):
@@ -455,6 +458,7 @@ class FrameScriptsTest(unittest.TestCase):
             "composer-basics/03-cleared.ansi": " · ? for shortcuts · ← for agents",
             "composer-basics/04-killed.ansi": " · ? for shortcuts · ← for agents",
             "composer-basics/05-yanked.ansi": "",
+            "f1-tool-rendering/01-read-complete.ansi": "",
         }
         self.assertEqual(set(fixture_footers), {str(path.relative_to(fixture_root)) for path in fixture_root.glob("*/*.ansi")})
         for fixture, footer in fixture_footers.items():
@@ -802,6 +806,34 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertIn("SECOND-READY", second)
             self.assertNotIn("SECOND-PENDING", second)
 
+    def test_wait_output_accepts_an_explicit_timeout_and_defaults_to_the_first_frame_bound(self):
+        # `wait-output` used to hard-pass FIRST_FRAME_READY_SECONDS (1.0s) into pump(), which no real
+        # model turn can meet, so an authenticated capture would always fail "marker not received".
+        self.assertEqual(capture.parse_wait_output("⎿"), ("⎿", capture.FIRST_FRAME_READY_SECONDS))
+        self.assertEqual(capture.parse_wait_output("⎿:120"), ("⎿", 120.0))
+        self.assertEqual(capture.parse_wait_output("a:b"), ("a:b", capture.FIRST_FRAME_READY_SECONDS))
+        self.assertEqual(capture.parse_wait_output("a:b:2.5"), ("a:b", 2.5))
+        self.assertIsNone(capture.parse_wait_output(""))
+        self.assertIsNone(capture.parse_wait_output(":30"))
+        # float() accepts these; an infinite bound would hang pump() instead of failing.
+        for bad in ("x:inf", "x:nan", "x:-5", "x:0"):
+            self.assertIsNone(capture.parse_wait_output(bad))
+
+    def test_capture_waits_past_the_default_bound_for_an_explicit_wait_output_timeout(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            late = "LATE-MARKER"
+            slow = f"import sys,time; time.sleep(1.4); sys.stdout.write('{late}'); sys.stdout.flush()"
+            missed = self.run_capture(f"wait-output:{late}\nframe:late\n", self.live_child_command(slow), root / "missed")
+            self.assertNotEqual(missed.returncode, 0)
+            self.assertIn("wait-output marker not received", missed.stderr)
+            waited = self.run_capture(f"wait-output:{late}:8\nframe:late\n", self.live_child_command(slow), root / "waited")
+            self.assertEqual(waited.returncode, 0, waited.stderr)
+            self.assertIn(late, (root / "waited" / "01-late.ansi").read_text(encoding="utf-8"))
+            empty = self.run_capture("wait-output::30\nframe:late\n", self.live_child_command(slow), root / "empty")
+            self.assertNotEqual(empty.returncode, 0)
+            self.assertIn("wait-output requires a nonempty marker", empty.stderr)
+
     def test_capture_seeds_a_private_claude_config_without_ambient_auth_or_config(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -986,6 +1018,213 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertEqual(captured.returncode, 0, captured.stderr)
             self.assertEqual(json.loads(report.read_text(encoding="utf-8")), ambient)
 
+    def test_tracked_oauth_is_explicit_and_preserves_only_the_oauth_token(self):
+        env = {
+            "PATH": os.environ["PATH"], "CLAUDE_CODE_OAUTH_TOKEN": "oauth-fixture-secret",
+            "ANTHROPIC_API_KEY": "api-fixture-secret", "ANTHROPIC_AUTH_TOKEN": "auth-fixture-secret",
+            "ANTHROPIC_BASE_URL": "https://gateway.example.invalid", "CLAUDE_CODE_USE_VERTEX": "1",
+            "CLAUDE_CODE_SESSION_ID": "parent", "AI_AGENT": "1",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(capture.validate_tracked_oauth(True, False, os.environ), None)
+            self.assertEqual(capture.validate_tracked_oauth(True, True, os.environ), None)
+            child = capture.clean_child_env(True, True)
+            logged_out = capture.clean_child_env(True)
+        self.assertEqual(child.get("CLAUDE_CODE_OAUTH_TOKEN"), "oauth-fixture-secret")
+        self.assertEqual(child.get("COLORTERM"), "truecolor")
+        for name in (
+            "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+            "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_SESSION_ID", "AI_AGENT",
+        ):
+            self.assertNotIn(name, child)
+        # The default tracked contract is unchanged: still logged out, still credential-free.
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", logged_out)
+        self.assertEqual(child, {**logged_out, "CLAUDE_CODE_OAUTH_TOKEN": "oauth-fixture-secret"})
+
+    def test_tracked_oauth_rejects_untracked_or_missing_credentials(self):
+        self.assertIn("tracked", capture.validate_tracked_oauth(False, True, {}))
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", capture.validate_tracked_oauth(True, True, {}))
+        self.assertIsNone(capture.validate_tracked_oauth(False, False, {}))
+        self.assertIsNone(capture.validate_tracked_oauth(True, True, {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-fixture-secret"}))
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", capture.validate_tracked_oauth(True, True, {"CLAUDE_CODE_OAUTH_TOKEN": ""}))
+
+    def test_frame_secret_guard_matches_only_nonempty_preserved_literals(self):
+        self.assertTrue(capture.frame_contains_secret("prefix oauth-fixture-secret suffix", ["oauth-fixture-secret"]))
+        self.assertFalse(capture.frame_contains_secret("safe", ["", "oauth-fixture-secret"]))
+        self.assertFalse(capture.frame_contains_secret("oauth-fixture-secret", []))
+
+    def test_frame_secret_guard_defeats_row_wraps_style_runs_and_partial_fragments(self):
+        # A rendered screen carries row boundaries and SGR runs, so an exact substring test misses a
+        # credential the reader can still reconstruct. Every case below is invisible to that test.
+        token = "oauth-fixture-secret-0123456789abcdef"
+        half = len(token) // 2
+
+        wrapped = capture.DimScreen(20, 4)
+        capture.pyte.ByteStream(wrapped).feed(f"see {token} end".encode())
+        rendered = capture.render_screen(wrapped)
+        self.assertNotIn(token, rendered)
+        self.assertTrue(capture.frame_contains_secret(rendered, [token]))
+
+        styled = capture.DimScreen(120, 2)
+        capture.pyte.ByteStream(styled).feed(f"see {token[:half]}\x1b[1m{token[half:]} end".encode())
+        rendered = capture.render_screen(styled)
+        self.assertNotIn(token, rendered)
+        self.assertIn("\x1b[0;1m", rendered)
+        self.assertTrue(capture.frame_contains_secret(rendered, [token]))
+
+        fragment = capture.DimScreen(120, 2)
+        capture.pyte.ByteStream(fragment).feed(f"see {token[:capture.SECRET_FRAGMENT_LENGTH]} end".encode())
+        rendered = capture.render_screen(fragment)
+        self.assertNotIn(token, rendered)
+        self.assertTrue(capture.frame_contains_secret(rendered, [token]))
+        # One character below the threshold is not a reconstructable credential. (Nothing follows the
+        # fragment: whitespace-stripped scanning joins neighbours, so a trailing word could complete it.)
+        self.assertFalse(capture.frame_contains_secret(f"see {token[:capture.SECRET_FRAGMENT_LENGTH - 1]}", [token]))
+
+        clean = capture.DimScreen(20, 4)
+        capture.pyte.ByteStream(clean).feed(b"\x1b[1mno credential here\x1b[0m, only wrapped and styled text")
+        self.assertFalse(capture.frame_contains_secret(capture.render_screen(clean), [token]))
+
+    def test_stream_secret_guard_scans_the_retained_pty_tail_after_normalization(self):
+        token = "oauth-fixture-secret-0123456789abcdef"
+        half = len(token) // 2
+        for label, raw in (
+            ("intact", token.encode()),
+            ("sgr-split", f"{token[:half]}\x1b[1m{token[half:]}".encode()),
+            ("row-split", f"{token[:half]}\r\n{token[half:]}".encode()),
+            ("padded", f"{token[:half]}   {token[half:]}".encode()),
+            ("fragment-only", token[:capture.SECRET_FRAGMENT_LENGTH].encode()),
+        ):
+            with self.subTest(raw=label):
+                self.assertTrue(capture.stream_contains_secret(bytearray(raw), [token]))
+        self.assertFalse(capture.stream_contains_secret(bytearray(b"\x1b[2J\x1b[Hclean pty bytes\r\n"), [token]))
+        self.assertFalse(capture.stream_contains_secret(bytearray(token.encode()), []))
+        self.assertFalse(capture.stream_contains_secret(bytearray(b"\xff\xfe undecodable bytes still scan"), [token]))
+
+    def test_tracked_oauth_capture_refuses_wrapped_and_scrolled_off_credentials(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # Long enough to wrap at 20 columns, so the literal never appears intact in the rendered frame.
+            oauth = "oauth-fixture-secret-0123456789abcdef"
+            job_dir = root / "job"; job_dir.mkdir()
+            masks = root / "wrap-masks.json"
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    "wrapped/01-leak.ansi": {"patterns": [], "minimum_matches": 0},
+                    "scrolled/01-leak.ansi": {"patterns": [], "minimum_matches": 0},
+                },
+                "required_state_by_frame": {
+                    **synthetic_required_state(("wrapped/01-leak.ansi",), "leak-probe"),
+                    **synthetic_required_state(("scrolled/01-leak.ansi",), "leak-probe"),
+                },
+            }), encoding="utf-8")
+            base_env = {"PATH": os.defpath, "CLAUDE_JOB_DIR": str(job_dir), "CLAUDE_CODE_OAUTH_TOKEN": oauth}
+            cases = {
+                # Screen layer: the credential is on the grid but broken across rows.
+                "wrapped": f"import sys; sys.stdout.write('leak-probe {oauth}'); sys.stdout.flush()",
+                # Stream layer: the credential crossed the pty and was then erased off the grid.
+                "scrolled": (
+                    f"import sys; sys.stdout.write('{oauth}' + chr(27) + '[2J' + chr(27) + '[Hleak-probe'); "
+                    "sys.stdout.flush()"
+                ),
+            }
+            for name, code in cases.items():
+                with self.subTest(layer=name):
+                    tracked = root / "test" / "fixtures" / "upstream-frames" / name
+                    tracked.mkdir(parents=True)
+                    (tracked / "01-leak.ansi").write_bytes(b"preserved tracked bytes\n")
+                    before = {path.name: path.read_bytes() for path in tracked.iterdir()}
+                    refused = self.run_capture(
+                        "frame:leak\n", self.live_child_command(code), tracked, masks,
+                        expected_version=self.synthetic_version(), env=base_env,
+                        cols=20, rows=6, tracked_oauth=True,
+                    )
+                    self.assertEqual(refused.returncode, 1)
+                    self.assertIn("credential leak", refused.stderr)
+                    self.assertNotIn(oauth, refused.stdout + refused.stderr)
+                    self.assertEqual({path.name: path.read_bytes() for path in tracked.iterdir()}, before)
+                    self.assertFalse(list(root.glob(".capture-*")))
+
+    def test_tracked_oauth_capture_forwards_only_oauth_and_never_leaks_a_literal(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            oauth, api = "oauth-fixture-secret", "api-fixture-secret"
+            job_dir = root / "job"; job_dir.mkdir()
+            base_env = {
+                "PATH": os.defpath, "CLAUDE_JOB_DIR": str(job_dir),
+                "CLAUDE_CODE_OAUTH_TOKEN": oauth, "ANTHROPIC_API_KEY": api,
+            }
+            masks = root / "oauth-masks.json"
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {
+                    "oauth/01-authenticated.ansi": {"patterns": [], "minimum_matches": 0},
+                    "leak/01-leak.ansi": {"patterns": [], "minimum_matches": 0},
+                },
+                "required_state_by_frame": {
+                    **synthetic_required_state(("oauth/01-authenticated.ansi",), "oauth=yes api=no"),
+                    **synthetic_required_state(("leak/01-leak.ansi",), "leak-probe"),
+                },
+            }), encoding="utf-8")
+
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "oauth"
+            authenticated = self.live_child_command(
+                "import os,sys; sys.stdout.write('oauth=%s api=%s' % ("
+                "'yes' if os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') else 'no', "
+                "'yes' if os.environ.get('ANTHROPIC_API_KEY') else 'no')); sys.stdout.flush()"
+            )
+            captured = self.run_capture(
+                "frame:authenticated\n", authenticated, tracked, masks,
+                expected_version=self.synthetic_version(), env=base_env, tracked_oauth=True,
+            )
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            frame = (tracked / "01-authenticated.ansi").read_text(encoding="utf-8")
+            self.assertIn("oauth=yes api=no", frame)
+            for secret in (oauth, api):
+                self.assertNotIn(secret, frame)
+                self.assertNotIn(secret, captured.stdout + captured.stderr)
+
+            leaked = root / "test" / "fixtures" / "upstream-frames" / "leak"
+            leaked.mkdir(parents=True)
+            (leaked / "01-leak.ansi").write_bytes(b"preserved tracked bytes\n")
+            before = {path.name: path.read_bytes() for path in leaked.iterdir()}
+            refused = self.run_capture(
+                "frame:leak\n", self.live_child_command(f"import sys; sys.stdout.write('leak-probe {oauth}'); sys.stdout.flush()"),
+                leaked, masks, expected_version=self.synthetic_version(), env=base_env, tracked_oauth=True,
+            )
+            self.assertEqual(refused.returncode, 1)
+            self.assertIn("credential leak", refused.stderr)
+            self.assertNotIn(oauth, refused.stdout + refused.stderr)
+            self.assertEqual({path.name: path.read_bytes() for path in leaked.iterdir()}, before)
+            self.assertFalse(list(root.glob(".capture-*")))
+
+    def test_tracked_oauth_requires_a_tracked_destination_and_a_present_token(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            job_dir = root / "job"; job_dir.mkdir()
+            child = self.live_child_command("import sys; sys.stdout.write('ready'); sys.stdout.flush()")
+            masks = root / "masks.json"
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {"needs-token/01-boot.ansi": {"patterns": [], "minimum_matches": 0}},
+                "required_state_by_frame": synthetic_required_state(("needs-token/01-boot.ansi",), "ready"),
+            }), encoding="utf-8")
+            untracked = self.run_capture(
+                "frame:boot\n", child, root / "scratch",
+                env={"PATH": os.defpath, "CLAUDE_JOB_DIR": str(job_dir), "CLAUDE_CODE_OAUTH_TOKEN": "oauth-fixture-secret"},
+                tracked_oauth=True,
+            )
+            self.assertEqual(untracked.returncode, 2)
+            self.assertIn("--tracked-oauth requires tracked golden output", untracked.stderr)
+            self.assertFalse((root / "scratch").exists())
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "needs-token"
+            keyless = self.run_capture(
+                "frame:boot\n", child, tracked, masks, expected_version=self.synthetic_version(),
+                env={"PATH": os.defpath, "CLAUDE_JOB_DIR": str(job_dir)}, tracked_oauth=True,
+            )
+            self.assertEqual(keyless.returncode, 2)
+            self.assertIn("--tracked-oauth requires CLAUDE_CODE_OAUTH_TOKEN", keyless.stderr)
+            self.assertFalse(tracked.exists())
+            self.assertFalse(list(root.glob(".capture-*")))
+
     def test_required_state_rules_require_positive_non_boolean_match_counts(self):
         with tempfile.TemporaryDirectory() as td:
             masks = Path(td) / "state-masks.json"
@@ -1004,6 +1243,72 @@ class FrameScriptsTest(unittest.TestCase):
                     }), encoding="utf-8")
                     with self.assertRaisesRegex(ValueError, "must be a positive integer"):
                         capture.load_required_state_contract(str(masks), "stateful/01-frame.ansi")
+
+    def test_f1_upstream_read_scenario_declares_its_key_and_binding_frame_contract(self):
+        key = "f1-tool-rendering/01-read-complete.ansi"
+        script = F1_UPSTREAM_READ_KEYS.read_text(encoding="utf-8")
+        self.assertEqual(script, (
+            "# Authenticated, version-pinned tracked capture. Bash remains available; the prompt selects Read explicitly.\n"
+            "wait:4\n"
+            "enter\n"
+            "wait:2\n"
+            "type:Use the Read tool to read src/app.ts, then stop without adding an assistant response.\n"
+            "# A beat between type and enter: coalesced into one chunk, the CLI's paste detection would treat the\n"
+            "# trailing CR as pasted content rather than a submit keypress, leaving the prompt in the composer.\n"
+            "wait:0.5\n"
+            "enter\n"
+            "# A real model turn plus a Read tool call takes seconds; the default 1s bound would always miss.\n"
+            "wait-output:⎿:120\n"
+            "wait:0.2\n"
+            "frame:read-complete\n"
+        ))
+        actions = [line for line in script.splitlines() if line.strip() and not line.startswith("#")]
+        # The declared mask key is derived from the script's own frame name; a drift between the two would
+        # only surface as a pre-spawn refusal during an authenticated capture.
+        frames = [line for line in actions if line.startswith("frame:")]
+        self.assertEqual([f"f1-tool-rendering/{i:02d}-{line.partition(':')[2]}.ansi" for i, line in enumerate(frames, 1)], [key])
+        waits = [line.partition(":")[2] for line in actions if line.startswith("wait-output:")]
+        self.assertEqual([capture.parse_wait_output(value) for value in waits], [("⎿", 120.0)])
+        self.assertGreater(120.0, capture.FIRST_FRAME_READY_SECONDS)
+
+        self.assertTrue(capture.load_redaction_contract(str(MASKS_PATH), key).declared)
+        contract = capture.load_required_state_contract(str(MASKS_PATH), key)
+        self.assertTrue(contract.declared)
+        self.assertEqual([(rule.name, rule.minimum_matches) for rule in contract.required], [
+            ("user-prompt", 1), ("read-progress", 1), ("gutter-path", 1),
+        ])
+        self.assertEqual([rule.name for rule in contract.forbidden], ["logged-out-footer", "tool-rejected"])
+
+        # The real 2.1.220 render (owner-confirmed): a grouped file-operation summary — the header is a file
+        # COUNT ("Reading 1 file…" live, "Read 1 file" once condensed), and the PATH sits in the dim ⎿ gutter,
+        # not a `Read(path)` header. The contract therefore binds the gutter-path and the count header, the two
+        # elements stable across the model's nondeterministic prose and timing.
+        prompt = "Use the Read tool to read src/app.ts, then stop without adding an assistant response."
+        header = "\x1b[0;32m⏺\x1b[0m Reading 1 file…\x1b[0m"
+        gutter = "\x1b[0m  \x1b[0;2m⎿  src/app.ts\x1b[0m"
+        accepted = f"\x1b[0m> {prompt}\x1b[0m\n{header}\n{gutter}\n"
+        self.assertEqual(capture.validate_required_state(accepted, contract), [])
+        for label, frame, expected in (
+            ("changed-path", accepted.replace("⎿  src/app.ts", "⎿  src/other.ts"), "gutter-path"),
+            ("changed-header", accepted.replace("Reading 1 file…", "Frobnicating widgets"), "read-progress"),
+            ("missing-gutter", f"\x1b[0m> {prompt}\x1b[0m\n{header}\n", "gutter-path"),
+            ("missing-prompt", f"{header}\n{gutter}\n", "user-prompt"),
+            ("logged-out", accepted + "\x1b[0mNot logged in · Run /login\x1b[0m\n", "logged-out-footer"),
+            ("rejected", accepted + "\x1b[0mTool use rejected\x1b[0m\n", "tool-rejected"),
+        ):
+            with self.subTest(case=label):
+                failures = capture.validate_required_state(frame, contract)
+                self.assertEqual(len(failures), 1, failures)
+                self.assertIn(expected, failures[0])
+        # An SGR transition inside the gutter path must not defeat the contract, and comparison masks must still
+        # collapse the same quota/cost nondeterminism they collapse for the stock scenarios.
+        split = accepted.replace("src/app.ts", "src/\x1b[0;1mapp\x1b[0m.ts")
+        self.assertEqual(capture.validate_required_state(split, contract), [])
+        scoped = diff.load_masks(str(MASKS_PATH), key)
+        quota_a = "\x1b[0m                            \x1b[0;38;2;255;193;7mYou've used 98% of your weekly limit · resets Aug 5 at 1pm (Asia/Seoul)\x1b[0m"
+        quota_b = "\x1b[0m                            \x1b[0;38;2;255;193;7mYou've used 2% of your weekly limit · resets Sep 30 at 11pm (UTC)\x1b[0m"
+        self.assertEqual(diff.mask_text(quota_a, scoped), diff.mask_text(quota_b, scoped))
+        self.assertNotEqual(diff.mask_text("⎿  src/app.ts", scoped), diff.mask_text("⎿  src/other.ts", scoped))
 
     def test_tracked_capture_rejects_mixed_state_atomically_before_publication(self):
         with tempfile.TemporaryDirectory() as td:
@@ -2266,7 +2571,7 @@ class FrameScriptsTest(unittest.TestCase):
         self.assertRegex(version, r"immediately if seeding\s+fails before a child starts")
         self.assertIn('"/tmp/frame-scratch"', version)
         expected_version_flag = '--expected-version "2.1.220 (Claude Code)"'
-        self.assertEqual(version.count(expected_version_flag), 2)
+        self.assertEqual(version.count(expected_version_flag), 3)
         plan = F0_PLAN_PATH.read_text(encoding="utf-8")
         for documented in (version, plan):
             self.assertIn(pinned_python, documented)
@@ -2302,7 +2607,7 @@ class FrameScriptsTest(unittest.TestCase):
         source = Path(__file__).read_text(encoding="utf-8")
         self.assertIn("LIVE_CHILD_KEEPALIVE_SECONDS = 5", source)
         self.assertIn("PARTIAL_CHILD_KEEPALIVE_SECONDS = 0.15", source)
-        self.assertEqual(len(re.findall(r"self\.live_child_command\(", source)), 35)
+        self.assertEqual(len(re.findall(r"self\.live_child_command\(", source)), 42)
         self.assertEqual(len(re.findall(r"self\.partial_child_command\(", source)), 2)
         self.assertIn("self.dead_child_command()", source)
         self.assertNotIn("self." + "child_command(", source)

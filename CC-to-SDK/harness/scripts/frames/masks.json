@@ -71,6 +71,42 @@
         }
       ],
       "minimum_matches": 0
+    },
+    "f1-tool-rendering/01-read-complete.ansi": {
+      "patterns": [
+        {
+          "name": "greeting",
+          "pattern": "Welcome back [^!\\x1b]*!(?=\\x1b\\[0m\\s+\\x1b\\[[0-9;]*m│\\x1b\\[0m Ask Claude to create)",
+          "replacement": "▒",
+          "minimum_matches": 0
+        },
+        {
+          "name": "organization-email",
+          "pattern": "(?:\\x1b\\[[0-9;]*m)?[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}(?:\\x1b\\[[0-9;]*m)?(?='s Organization\\x1b\\[0m +\\x1b\\[[0-9;]*m│\\x1b\\[0m {1,2}\\x1b\\[0;(?:2;)?3;[0-9;]*m/release-notes)",
+          "replacement": "▒",
+          "minimum_matches": 0
+        }
+      ],
+      "dashboard_status": {
+        "name": "status-user-host",
+        "identity_pattern": "(?<=\\x1b\\[0m  )(?:\\x1b\\[[0-9;]*m)?[^\\s@:/\\x1b]+@[^\\s@:/\\x1b]+(?=(?:\\x1b\\[[0-9;]*m)?:(?:\\x1b\\[[0-9;]*m)?/)",
+        "semantic_identity_pattern": "(?:^|\\n) {2,}[^\\s@:/]+(?:\\n+[^\\s@:/]+)*(?:\\n+)?@(?:\\n+)?[^\\s@:/]+(?:\\n+[^\\s@:/]+)*(?=(?:\\n+)?:(?:\\n+)?/)",
+        "mode_pattern": "  (?:⏸ (?:manual|plan) mode on|⏵⏵ (?:accept edits|bypass permissions|don't ask|auto mode) on)(?: \\(shift\\+tab to cycle\\))?(?: · (?:← for agents|\\? for short(?:c(?:u(?:t(?:s(?:(?: …)?|(?: · ← for agents)?)?)?)?)?)?))?(?: {2,}Not logged in · Run /login)? *",
+        "marker_pattern": "  (?:⏸|⏵⏵) [^\\n]* on(?: \\(shift\\+tab to cycle\\))?(?: · (?:← for agents|\\? for short(?:c(?:u(?:t(?:s(?:(?: …)?|(?: · ← for agents)?)?)?)?)?)?))?(?: {2,}Not logged in · Run /login)? *",
+        "replacement": "▒",
+        "minimum_matches": 0
+      },
+      "identity_guards": [
+        {
+          "name": "greeting",
+          "pattern": "Welcome back [^!\\x1b▒]+!"
+        },
+        {
+          "name": "organization-email",
+          "pattern": "[A-Za-z0-9._%+-]+(?:\\n+[A-Za-z0-9._%+-]+)*(?:\\n+)?@(?:\\n+)?[A-Za-z0-9.-]+(?:\\n+[A-Za-z0-9.-]+)*(?:\\n+)?\\.(?:\\n+)?[A-Za-z]{2,}(?=(?:\\n+)?'s(?:[ A-Za-z]|\\n)*│(?:[ /A-Za-z-]|\\n)*release-notes)"
+        }
+      ],
+      "minimum_matches": 0
     }
   },
   "required_state_by_frame": {
@@ -131,6 +167,35 @@
           "pattern": "[A-Za-z0-9._%+-]+(?:\\n+[A-Za-z0-9._%+-]+)*(?:\\n+)?@(?:\\n+)?[A-Za-z0-9.-]+(?:\\n+[A-Za-z0-9.-]+)*(?:\\n+)?\\.(?:\\n+)?[A-Za-z]{2,}(?=(?:\\n+)?'s(?:[ A-Za-z]|\\n)*│(?:[ /A-Za-z-]|\\n)*release-notes)"
         }
       ]
+    },
+    "f1-tool-rendering/01-read-complete.ansi": {
+      "required": [
+        {
+          "name": "user-prompt",
+          "pattern": "Use the Read tool to read src/app\\.ts, then stop without adding an assistant response\\.",
+          "minimum_matches": 1
+        },
+        {
+          "name": "read-progress",
+          "pattern": "Read(?:ing)? \\d+ file",
+          "minimum_matches": 1
+        },
+        {
+          "name": "gutter-path",
+          "pattern": "⎿.*src/app\\.ts",
+          "minimum_matches": 1
+        }
+      ],
+      "forbidden": [
+        {
+          "name": "logged-out-footer",
+          "pattern": "Not logged in · Run /login"
+        },
+        {
+          "name": "tool-rejected",
+          "pattern": "Tool use rejected"
+        }
+      ]
     }
   },
   "by_frame": {
@@ -145,6 +210,16 @@
       }
     ],
     "composer-basics/*.ansi": [
+      {
+        "pattern": "(^\\x1b\\[0m {28}\\x1b\\[[0-9;]*mYou've used )\\d+%( of your weekly limit · resets )[^\\x1b\\n]+(\\x1b\\[0m$)",
+        "replacement": "\\g<1>▒\\g<2>▒\\g<3>"
+      },
+      {
+        "pattern": "(\\x1b\\[[0-9;]*m\\[[^\\]\\x1b]+\\]\\x1b\\[[0-9;]*m \\x1b\\[[0-9;]*m)\\$\\d+(?:\\.\\d+)?(\\x1b\\[[0-9;]*m · \\x1b\\[[0-9;]*m)\\d+(?:\\.\\d+)?s(?=\\x1b\\[0m$)",
+        "replacement": "\\g<1>▒\\g<2>▒"
+      }
+    ],
+    "f1-tool-rendering/01-read-complete.ansi": [
       {
         "pattern": "(^\\x1b\\[0m {28}\\x1b\\[[0-9;]*mYou've used )\\d+%( of your weekly limit · resets )[^\\x1b\\n]+(\\x1b\\[0m$)",
         "replacement": "\\g<1>▒\\g<2>▒\\g<3>"

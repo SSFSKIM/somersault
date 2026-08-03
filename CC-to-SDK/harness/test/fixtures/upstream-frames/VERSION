@@ -78,3 +78,22 @@ percentages, token counts, or timestamps. `by_frame` contains separate, dashboar
 status nondeterminism. Automated tests prove that identity-free stock frames are accepted, identities are redacted
 when present, and an authenticated, missing, mixed, changed-ANSI-boundary, or unmatched-required-state capture fails
 without persisting any tracked frame.
+
+f1-tool-rendering/01-read-complete.ansi — captured 2026-08-03 — 100x40 — TERM=xterm-256color — the one
+authenticated tracked golden: a real model turn's live Read (`⏺ Reading 1 file… (ctrl+o to expand)` with the
+transient `⎿  src/app.ts` hint gutter), captured with `--tracked-oauth` (first-party OAuth forwarded to the
+child and nothing else; the publication guard scans normalized screen text, a whitespace-stripped variant,
+and a rolling raw pty tail for any ≥16-char credential fragment and fails closed). The key script pauses
+`wait:0.5` between `type:` and `enter` — coalesced into one chunk, the CLI's paste detection would treat the
+trailing CR as pasted content and never submit. Recapture from `CC-to-SDK/harness/` with a workspace
+containing only `src/app.ts` (`export const app = 1;`):
+
+```sh
+mkdir -p /tmp/frame-scratch-f1/src && printf 'export const app = 1;\n' > /tmp/frame-scratch-f1/src/app.ts
+CLAUDE_CODE_OAUTH_TOKEN=... "$VENV/bin/python3" scripts/capture-frames.py \
+  --script scripts/frames/f1-upstream-read.keys \
+  --out test/fixtures/upstream-frames/f1-tool-rendering \
+  --bin "claude" --cwd "/tmp/frame-scratch-f1" --cols 100 --rows 40 \
+  --redact-masks scripts/frames/masks.json \
+  --expected-version "2.1.220 (Claude Code)" --tracked-oauth
+```
