@@ -170,11 +170,13 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     await waitFor(() => background.mock.calls.length === 1);
   });
 
-  it("(i) neither ChatApp nor ChatComposer calls useInput any more", async () => {
+  it("(i) neither ChatApp nor ChatComposer calls useInput any more — nor, as of task 7, the four overlays", async () => {
     const { readFileSync } = await import("node:fs");
-    for (const file of ["../../src/tui/ChatApp.tsx", "../../src/tui/ChatComposer.tsx"]) {
+    for (const file of ["../../src/tui/ChatApp.tsx", "../../src/tui/ChatComposer.tsx",
+      "../../src/tui/ShortcutsOverlay.tsx", "../../src/tui/TranscriptPager.tsx",
+      "../../src/tui/HistorySearchOverlay.tsx", "../../src/tui/RewindPicker.tsx"]) {
       const src = readFileSync(new URL(file, import.meta.url), "utf8");
-      expect(src).not.toMatch(/useInput\(/);
+      expect(src, `${file} still calls useInput`).not.toMatch(/useInput\(/);
     }
   });
 });

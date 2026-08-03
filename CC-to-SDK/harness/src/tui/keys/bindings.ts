@@ -57,8 +57,13 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "space": "scroll:fullPageDown", "b": "scroll:fullPageUp",
     "up": "scroll:lineUp", "down": "scroll:lineDown", "pageup": "scroll:pageUp", "pagedown": "scroll:pageDown",
     "home": "scroll:top", "end": "scroll:bottom",   // NEW — deliverable now (P86: parser-level identity)
-    "ctrl+e": "transcript:toggleShowAll",           // F1-shipped (pager.ts:28, TranscriptPager.tsx:45-49) — MUST stay bound
-    "ctrl+o": "transcript:exit",                    // preserves ctrl+o-closes-the-pager (today ChatApp.tsx handles it; Global's toggleTranscript only opens)
+    "ctrl+e": "transcript:toggleShowAll",           // F1-shipped (TranscriptPager.tsx) — MUST stay bound
+    "ctrl+o": "transcript:exit",                    // preserves ctrl+o-closes-the-pager (Global's toggleTranscript only opens)
+    // The pager was an owner-gated surface: ChatApp killed every root global inside it except its own ctrl+o
+    // close arm. Four of the six are rebound above as pager operations; these two were simply dead, and must
+    // say so — otherwise moving the pager onto the scope stack (task 7) would NEWLY fire history-search and
+    // the todo panel from inside it, through Global.
+    "ctrl+r": null, "ctrl+t": null,
   }},
   { context: "HistorySearch", bindings: {
     "ctrl+r": "historySearch:next", "escape": "historySearch:accept", "tab": "historySearch:accept",

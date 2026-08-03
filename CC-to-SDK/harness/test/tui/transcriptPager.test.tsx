@@ -2,9 +2,14 @@
 // j/k/Ctrl-U/Ctrl-D/space/b/g/G navigate via the pure pager.ts reducer, q/Esc/Ctrl-C all close.
 // Task 5 migrated the prop a second time (Task 4: `lines` → `items`; here: `items` → `makeItems`), because
 // the pager now asks the retained source for a projection instead of being handed one frozen list.
+//
+// F2 task 7: the pager stopped calling `useInput` — it pushes the `Transcript` context and registers the
+// bundle's scroll/exit/toggle ACTIONS, so a key only reaches it through <KeymapProvider>. Rendered bare it
+// has no input path at all, hence `renderWithKeymap`. home/end are new here (P86: Ink's `useInput` cannot
+// tell them apart from insert or F1–F12, so they were unreachable before the parser).
 import React from "react";
 import { describe, it, expect } from "vitest";
-import { render } from "ink-testing-library";
+import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { TranscriptPager } from "../../src/tui/TranscriptPager.js";
 import { pageItemSlices } from "../../src/tui/pager.js";
 import { TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
@@ -37,6 +42,18 @@ describe("TranscriptPager", () => {
     r.stdin.write("G"); await tick();
     expect(r.lastFrame()).toContain("41–50 of 50");
   });
+  it("home jumps to the top and end back to the bottom (NEW — the keys Ink's useInput could not name)", async () => {
+    const r = render(<TranscriptPager makeItems={always(mkLines(50))} onClose={() => {}} height={10} />);
+    await tick();
+    r.stdin.write("\x1b[H"); await tick();                // home
+    expect(r.lastFrame()).toContain("1–10 of 50");
+    r.stdin.write("\x1b[F"); await tick();                // end
+    expect(r.lastFrame()).toContain("41–50 of 50");
+    r.stdin.write("\x1b[1~"); await tick();               // the tilde spelling of home is the same key
+    expect(r.lastFrame()).toContain("1–10 of 50");
+    r.stdin.write("\x1b[4~"); await tick();               // …and of end
+    expect(r.lastFrame()).toContain("41–50 of 50");
+  });
   it("Ctrl-U scrolls half a page up; space a full page down", async () => {
     const r = render(<TranscriptPager makeItems={always(mkLines(50))} onClose={() => {}} height={10} />);
     await tick();
@@ -45,8 +62,10 @@ describe("TranscriptPager", () => {
     r.stdin.write(" "); await tick();
     expect(r.lastFrame()).toContain("41–50 of 50");       // clamped at bottom
   });
-  it("q, Esc and Ctrl-C all close", async () => {
-    for (const keyByte of ["q", "\x1b", "\x03"]) {
+  // Ctrl-O is new to the pager itself: ChatApp used to special-case it as "the pager's close arm" behind the
+  // owner gate; the Transcript context binds it to transcript:exit now, so the pager owns all four.
+  it("q, Esc, Ctrl-C and Ctrl-O all close", async () => {
+    for (const keyByte of ["q", "\x1b", "\x03", "\x0f"]) {
       let closed = 0;
       const r = render(<TranscriptPager makeItems={always(mkLines(5))} onClose={() => { closed++; }} height={10} />);
       await tick();

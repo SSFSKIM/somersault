@@ -19,12 +19,15 @@
 //  * `useKeySuspend` — ctrl+z, still PRE-table (it must fire under Help's swallow and mid-chord), still
 //    built here because suspendProcess needs the real tty from `useStdin`/`useStdout` plus the `suspend`
 //    and `resumeOutput` test seams, none of which the provider can see.
-//  * `useKeyActions` — the six root globals plus alt+p/alt+t (KB8) and the `?`-overlay's Escape.
+//  * `useKeyActions` — the six root globals plus alt+p/alt+t (KB8).
 //  * `useKeyScope("Task", {active: busy})` — makes ctrl+x ctrl+b (KB18) resolve only during a turn.
-// The one thing the table cannot express YET is the owner gate: overlays still run their own `useInput`
-// until tasks 7/8 push their scopes (whose null bindings then unbind these globals declaratively), so
-// `rootOwned()` below keeps the old early-returns alive as a guard on the handlers themselves. It is
-// deliberately temporary; the `inputOwnerRef` ternary keeps its RENDERING job either way.
+// F2 TASK 7 — the four overlays (`?` help, the pager, history search, the rewind picker) now own their own
+// keys: Help pushes its context AND swallows, the other three push Transcript / HistorySearch /
+// MessageSelector, whose null bindings unbind the root globals declaratively. So none of them appears in
+// `gatedRef` below any more, and neither does the `?`-overlay's Escape (ShortcutsOverlay registers
+// help:dismiss itself). What `gatedRef` still covers is the surfaces that run `useInput` to this day — the
+// dialogs task 8 will take — plus the keyless “⏪ restoring…” modal. It is deliberately temporary;
+// `inputOwnerRef` is a different question (which surface is VISIBLE) and keeps its own two jobs.
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
@@ -85,7 +88,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const editorStateRef = useRef<EditorState>(initialEditorState());
   const consumedPrefillTokenRef = useRef(0);
   // Input subscriptions are passive. This ref changes during render, before the visible owner swaps, so a
-  // retiring composer can reject the next key even before Ink has removed its listener.
+  // retiring composer can reject the next key even before Ink has removed its listener. It names the VISIBLE
+  // surface, migrated ones included — a different question from `gatedRef` below, and the composer's guard is
+  // its only reader.
   const inputOwnerRef = useRef<InputOwner>("composer");
   inputOwnerRef.current = state.shortcutsOpen
     ? "shortcuts"
@@ -96,16 +101,24 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         : state.pending
           ? "decision"
           : "composer";
-  // …and this one is the owner as of the last FLUSHED commit. Both are needed for as long as any surface
-  // still runs `useInput` (tasks 7/8): Ink reads stdin on "readable", the keymap listens for "data", and the
-  // stream emits readable FIRST — so a key that an unmigrated overlay/dialog handles by closing itself has
-  // already re-rendered the tree (swapping the visible owner) by the time our handlers see that same key,
-  // which would otherwise act for the surface the key just revealed (Escape denying a dialog and THEN arming
-  // rewind on the composer beneath it). Passive effects do not flush inside that window, so `settledOwner`
-  // still names the surface the key was actually pressed on. `inputOwnerRef` keeps its own opposite job:
-  // updated during render, it lets a RETIRING owner reject a key before its listener is gone.
-  const settledOwnerRef = useRef<InputOwner>(inputOwnerRef.current);
-  useEffect(() => { settledOwnerRef.current = inputOwnerRef.current; });
+  // TEMPORARY (task 8), and deliberately NOT the same thing as `inputOwnerRef` above. This one answers only
+  // "is a surface that still runs its own `useInput` up?", which is the sole remaining reason ChatApp's
+  // handlers below have to guard themselves at all. The four surfaces task 7 migrated are absent on purpose:
+  // Help swallows every key at the provider, and Transcript/HistorySearch/MessageSelector push scopes whose
+  // null bindings unbind the root globals declaratively — naming them here too would gate one key with two
+  // mechanisms, which is how a key goes silently dead. `state.pending` is absent for the older reason the
+  // bundle records: the root globals stay live over a VISIBLE decision dialog.
+  const gatedRef = useRef(false);
+  gatedRef.current = state.rewinding || state.bgPanelOpen || state.modelPicker.open || state.settings.open
+    || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open;
+  // …and this one is that answer as of the last FLUSHED commit. Both are needed for as long as any surface
+  // still runs `useInput`: Ink reads stdin on "readable", the keymap listens for "data", and the stream emits
+  // readable FIRST — so a key an unmigrated dialog handles by closing itself has already re-rendered the tree
+  // by the time our handlers see that same key, which would otherwise act for the surface the key just
+  // revealed (Escape denying a dialog and THEN arming rewind on the composer beneath it). Passive effects do
+  // not flush inside that window, so this ref still describes the surface the key was actually pressed on.
+  const settledGatedRef = useRef(gatedRef.current);
+  useEffect(() => { settledGatedRef.current = gatedRef.current; });
   // The keymap dispatches from a stdin listener the provider attached in a passive effect, so — exactly as
   // with the old `useInput` — a key can arrive after a newer render has already painted. Keep every
   // state/callback value these handlers consume current synchronously.
@@ -113,7 +126,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const exitArmedRef = useRef(exitArmed); exitArmedRef.current = exitArmed;
   const suspendRef = useRef(suspend); suspendRef.current = suspend;
   const resumeOutputRef = useRef(resumeOutput); resumeOutputRef.current = resumeOutput;
-  const closeShortcutsRef = useRef(closeShortcuts); closeShortcutsRef.current = closeShortcuts;
   const openHistorySearchRef = useRef(openHistorySearch); openHistorySearchRef.current = openHistorySearch;
   const interruptRef = useRef(interrupt); interruptRef.current = interrupt;
   const backgroundNowRef = useRef(backgroundNow); backgroundNowRef.current = backgroundNow;
@@ -153,26 +165,19 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       if (output) output.repaint(repaint); else repaint();
     } });
   });
-  // Ctrl-O closes only Transcript or opens it only from Composer; Ctrl-R/T/B are Composer-only. Ctrl-C is
-  // allowed from Composer and a visible decision dialog, but never from an ordinary overlay hidden behind a
-  // decision. Shift+Tab/Esc are the composer's (Chat context) — it fires onCycleMode on Shift+Tab even with
-  // a `/`/`@` popup open (matches 2.1.220) and routes Esc to onInterrupt only when no popup is open.
-  // Ctrl-L lives in the editor now (Task 2), not here.
-  const rootLive = (owner: InputOwner) => owner === "composer" || owner === "decision";
-  const rootOwned = () => rootLive(inputOwnerRef.current) && rootLive(settledOwnerRef.current);
-  // Escape reaches help:dismiss through a PREEMPTIVE scope: the retiring composer's own Chat scope is
-  // removed in a passive effect, so for one sub-tick it would otherwise still outrank Help by mount order
-  // and swallow the Escape that closes the overlay. Preemptive is mount-order-independent by definition.
-  useKeyScope("Help", { active: state.shortcutsOpen, preemptive: true });
+  // Ctrl-O opens the pager (the PAGER owns closing it — Transcript's own ctrl+o → transcript:exit, task 7);
+  // Ctrl-R/T/B are Composer-only. Ctrl-C is allowed from Composer and a visible decision dialog, but never
+  // from an ordinary overlay hidden behind a decision. Shift+Tab/Esc are the composer's (Chat context) — it
+  // fires onCycleMode on Shift+Tab even with a `/`/`@` popup open (matches 2.1.220) and routes Esc to
+  // onInterrupt only when no popup is open. Ctrl-L lives in the editor now (Task 2), not here.
+  const rootOwned = () => !gatedRef.current && !settledGatedRef.current;
   useKeyScope("Task", { active: state.busy });                  // KB18: ctrl+x ctrl+b only while a turn runs
   useKeyActions({
-    "help:dismiss": () => closeShortcutsRef.current(),
     // Both open arms are gated on !rewinding (F3, final review): a confirmed rewind is a multi-second
     // engine swap held behind the “⏪ restoring…” modal so a mid-rewind prompt isn't lost — Ctrl-R/Ctrl-O
     // opening another overlay (or, for history, Enter-executing straight into the busy host) would
     // reintroduce exactly the loss mode that modal exists to prevent.
     "app:toggleTranscript": () => {
-      if (inputOwnerRef.current === "transcript" && settledOwnerRef.current === "transcript") { setTranscriptOpen(false); disarm(); return; }   // the pager's Ctrl-O close arm
       if (!rootOwned() || rootStateRef.current.rewinding) return;
       setTranscriptOpen(true); disarm();
     },
@@ -207,7 +212,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         </Box>
       ) : null}
       {state.shortcutsOpen
-        ? <ShortcutsOverlay onClose={closeShortcuts} interactive={false} />
+        ? <ShortcutsOverlay onClose={closeShortcuts} />
         : transcriptOpen
         // The ONLY route from the retained document to the pager: useChat's detailItems closure re-projects
         // it at whichever detail projection the pager currently wants. ChatApp never projects detail itself

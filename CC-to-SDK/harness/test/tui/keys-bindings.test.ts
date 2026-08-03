@@ -126,6 +126,19 @@ describe("overlay gating, expressed as null bindings", () => {
     expect(b["ctrl+r"]).toBe("historySearch:next");
     expect(b["ctrl+c"]).toBe("historySearch:cancel");
   });
+  // F2 task 7 carry-forward: the pager used to be gated by owner === "transcript", which killed every root
+  // global except ChatApp's own ctrl+o close arm. Transcript rebinds four of the six to pager operations, so
+  // the remaining two MUST be explicit unbinds — otherwise migrating the pager onto the scope stack would
+  // newly fire history-search and the todo panel from inside it, through Global.
+  it("Transcript rebinds four Global keys to pager operations and unbinds the other two", () => {
+    const b = block("Transcript").bindings;
+    expect(b["ctrl+c"]).toBe("transcript:exit");
+    expect(b["ctrl+o"]).toBe("transcript:exit");
+    expect(b["ctrl+d"]).toBe("scroll:halfPageDown");
+    expect(b["ctrl+b"]).toBe("scroll:fullPageUp");
+    for (const k of ["ctrl+r", "ctrl+t"]) expect(b[k], `Transcript ${k} must be null`).toBeNull();
+    for (const k of GLOBAL_KEYS) expect(b, `Transcript ${k} must be spoken for`).toHaveProperty(k);
+  });
   it("Confirmation is the decision owner: the gate deliberately keeps the root globals live", () => {
     const b = block("Confirmation").bindings;
     for (const k of ["ctrl+c", "ctrl+o", "ctrl+t", "ctrl+r", "ctrl+b"]) expect(b, `Confirmation must not touch ${k}`).not.toHaveProperty(k);

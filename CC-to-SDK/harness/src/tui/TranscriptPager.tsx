@@ -9,10 +9,17 @@
 // retained document at the projection it asks for, so Ctrl-E ("transcript:toggleShowAll") is a purely
 // LOCAL state flip here — `detail-all` ⇄ `detail-collapsed` — and never a second mutable history mode in
 // ChatApp. Scrolling is by physical row (pageItemSlices), so a long result pages through its own body.
+//
+// F2 Task 7: the pager stopped calling `useInput`. It pushes the `Transcript` context for as long as it is
+// mounted — it IS the innermost surface then, so mount-order precedence puts it above everything beneath —
+// and registers that context's actions. Two consequences worth stating: `home`/`end` finally work (Ink's
+// `useInput` could not tell them from insert or F1–F12, P86 §1.1), and Ctrl-O closing the pager is the
+// Transcript context's `transcript:exit`, not a special case in ChatApp's owner gate any more.
 import React, { useRef, useState } from "react";
-import { Box, Text, useInput, useStdout } from "ink";
+import { Box, Text, useStdout } from "ink";
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";
-import { pagerAction, applyPager, pageItemSlices } from "./pager.js";
+import { PAGER_ACTIONS, applyPager, pageItemSlices, type PagerAction } from "./pager.js";
+import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
 import { ACCENT } from "./theme.js";
 
 export interface TranscriptPagerProps { makeItems(projection: "detail-all" | "detail-collapsed"): readonly RenderItem[]; onClose(): void; height?: number }
@@ -26,11 +33,11 @@ export function TranscriptPager({ makeItems, onClose, height }: TranscriptPagerP
   // Infinity means "the bottom, whatever the current total is" — a toggle changes the physical-row count
   // under us, and clamping (not a stored row number) is what keeps both projections anchored sanely.
   const [offset, setOffset] = useState<number>(() => Number.POSITIVE_INFINITY);
-  // Ink's useInput is a PASSIVE subscription, so two keys can land in one tick with no render between them
-  // — a Ctrl-E followed immediately by G is exactly that. Both scroll inputs therefore read the projection
-  // and offset from refs the handler itself updates synchronously, and re-derive the row count from them,
-  // rather than closing over the last render's `total`: a G after a same-tick toggle otherwise scrolls to
-  // the bottom of the projection it just left.
+  // The keymap dispatches from a stdin listener the provider attached in a passive effect, so two keys can
+  // land in one tick with no render between them — a Ctrl-E followed immediately by G is exactly that. Both
+  // scroll inputs therefore read the projection and offset from refs the handler itself updates
+  // synchronously, and re-derive the row count from them, rather than closing over the last render's
+  // `total`: a G after a same-tick toggle otherwise scrolls to the bottom of the projection it just left.
   const projectionRef = useRef(projection);
   const offsetRef = useRef(offset);
   // State is the single writer: mirroring on every render (not only inside the handler) means a future
@@ -38,18 +45,19 @@ export function TranscriptPager({ makeItems, onClose, height }: TranscriptPagerP
   projectionRef.current = projection; offsetRef.current = offset;
   const items = makeItems(projection);
   const { slices, offset: off, total } = pageItemSlices(items, offset, h);
-  useInput((input, key) => {
-    const a = pagerAction(input, key);
-    if (!a) return;
-    if (a.kind === "exit") { onClose(); return; }
-    if (a.kind === "toggleShowAll") {
-      projectionRef.current = projectionRef.current === "detail-all" ? "detail-collapsed" : "detail-all";
-      setProjection(projectionRef.current);
-      return;
-    }
+  const scroll = (a: PagerAction) => {
     const view = pageItemSlices(makeItems(projectionRef.current), offsetRef.current, h);
     offsetRef.current = applyPager(view.offset, a, view.total, h);
     setOffset(offsetRef.current);
+  };
+  useKeyScope("Transcript");
+  useKeyActions({
+    "transcript:exit": () => onClose(),
+    "transcript:toggleShowAll": () => {
+      projectionRef.current = projectionRef.current === "detail-all" ? "detail-collapsed" : "detail-all";
+      setProjection(projectionRef.current);
+    },
+    ...Object.fromEntries(Object.entries(PAGER_ACTIONS).map(([action, a]) => [action, () => scroll(a)])),
   });
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>

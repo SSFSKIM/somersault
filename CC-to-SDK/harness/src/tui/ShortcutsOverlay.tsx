@@ -6,8 +6,16 @@
 // and ChatComposer.tsx (⇧Tab/!/#/@// prefixes, Ctrl-D, Ctrl-X Ctrl-E / Ctrl-G external editor). A help row
 // for a binding we don't implement would be a false promise, so nothing is listed here that isn't wired
 // elsewhere in this package.
-import React, { useRef } from "react";
-import { Box, Text, useInput } from "ink";
+//
+// F2 Task 7: "swallowed" is no longer a promise this component's own `useInput` had to keep by inspecting
+// each key. It pushes the `Help` context and calls `useSwallowKeys(true)`; from there the PROVIDER drops
+// everything Help does not bind — Global's own bindings included, which is the ctrl+o double-fire stated
+// structurally. Ctrl-Z still suspends, because the provider handles it above the table (F0 contract).
+// The scope and the swallow live HERE, together, on purpose: the swallower is identified as the innermost
+// live scope (keys/registry.ts), and this component — mounted last, with nothing inside it — is exactly that.
+import React from "react";
+import { Box, Text } from "ink";
+import { useKeyActions, useKeyScope, useSwallowKeys } from "./keys/KeymapProvider.js";
 import { ACCENT } from "./theme.js";
 
 const BASE_ROWS: [string, string][] = [
@@ -41,9 +49,10 @@ const BASE_ROWS: [string, string][] = [
 
 export const ROWS: [string, string][] = process.platform === "win32" ? BASE_ROWS.filter(([key]) => key !== "Ctrl-Z") : BASE_ROWS;
 
-export function ShortcutsOverlay({ onClose, interactive = true }: { onClose: () => void; interactive?: boolean }) {
-  const onCloseRef = useRef(onClose); onCloseRef.current = onClose;
-  useInput((_input, key) => { if (interactive && key.escape) onCloseRef.current(); });   // KB6: standalone overlay owns Escape; ChatApp owns it during the mount race
+export function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
+  useKeyScope("Help");
+  useSwallowKeys(true);
+  useKeyActions({ "help:dismiss": () => onClose() });    // KB6: Escape, and only Escape, closes the overlay
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>Keyboard shortcuts  <Text dimColor>(esc closes)</Text></Text>

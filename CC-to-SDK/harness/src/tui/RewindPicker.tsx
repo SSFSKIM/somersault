@@ -2,9 +2,18 @@
 // anchors newest-first; selecting one runs a lazy dryRun and opens stage 2 with CC's three restore
 // choices. Two anchors per row (probe 68c): uuid drives file restore, prevUuid drives conversation
 // restore; a null prevUuid (first prompt / first-after-compact) disables the conversation rows.
+//
+// F2 Task 7: the picker stopped calling `useInput`. It pushes the `MessageSelector` context, so stage 1's
+// navigation is that context's action set — which is wider than the ↑/↓/Enter/Esc this component used to
+// read: KB14 adds j/k, ctrl+n/ctrl+p, and shift/ctrl/alt+↑↓ plus shift+k/shift+j as jumps to the first/last
+// anchor. Stage 2's 1/2/3 stay in the component's own FALLBACK: they are digits, bound in no context, and
+// they mean nothing outside the scope stage. Every action arm below no-ops in the stage it does not belong
+// to, so one context can serve both stages without the scope going stale between them.
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../session/chatSession.js";
+import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
+import type { KeyEvent, TextEvent } from "./keys/types.js";
 import { ACCENT } from "./theme.js";
 import { trunc } from "./render.js";
 
@@ -28,18 +37,25 @@ export function RewindPicker({ anchors, onDryRun, onConfirm, onClose }: {
 
   const codeOk = !!dry?.canRewind;                                  // gated until the dryRun lands
   const convOk = sel?.prevUuid != null;
-  useInput((input, key) => {
-    if (!sel) {
-      if (key.escape) { onClose(); return; }
-      if (key.upArrow) setIdx((i) => Math.max(0, i - 1));
-      else if (key.downArrow) setIdx((i) => Math.min(anchors.length - 1, i + 1));
-      else if (key.return && anchors[idx]) setSel(anchors[idx]);
-      return;
-    }
-    if (key.escape) { setSel(null); setDry(null); return; }          // back to the list, not out
-    if (input === "1" && codeOk && convOk) onConfirm(sel, "both");
-    else if (input === "2" && convOk) onConfirm(sel, "conversation");
-    else if (input === "3" && codeOk) onConfirm(sel, "code");
+  // `anchors.length - 1` IS the last selectable anchor: stage 1 renders the list it was handed and every row
+  // in it opens the scope stage, so KB14's "jump to the last selectable" needs no separate predicate.
+  const inList = (f: () => void) => { if (!sel) f(); };
+  useKeyScope("MessageSelector");
+  useKeyActions({
+    "messageSelector:up": () => inList(() => setIdx((i) => Math.max(0, i - 1))),
+    "messageSelector:down": () => inList(() => setIdx((i) => Math.min(anchors.length - 1, i + 1))),
+    "messageSelector:top": () => inList(() => setIdx(0)),
+    "messageSelector:bottom": () => inList(() => setIdx(Math.max(0, anchors.length - 1))),
+    "messageSelector:select": () => inList(() => { if (anchors[idx]) setSel(anchors[idx]); }),
+    // Escape is two different keys depending on the stage: out of the picker from the list, back TO the list
+    // from the scope stage (never straight out — that would lose the selection silently).
+    "messageSelector:dismiss": () => { if (sel) { setSel(null); setDry(null); } else onClose(); },
+  });
+  useKeyFallback((e: KeyEvent | TextEvent) => {
+    if (!sel || e.kind !== "key") return;
+    if (e.name === "1" && codeOk && convOk) onConfirm(sel, "both");
+    else if (e.name === "2" && convOk) onConfirm(sel, "conversation");
+    else if (e.name === "3" && codeOk) onConfirm(sel, "code");
   });
 
   if (!sel) return (

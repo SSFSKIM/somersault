@@ -1,9 +1,14 @@
 // tui/test/historySearchOverlay.test.tsx — the Ctrl-R history-search overlay (Wave 2 task 7): loads the
 // initial "everywhere" scope, incremental filter via rankHistory, Enter EXECUTES, Esc/Tab ACCEPTS into
 // the composer, Ctrl-C cancels, Ctrl-R cycles the match, Ctrl-S cycles scope and reloads.
+//
+// F2 task 7: the overlay stopped calling `useInput`. Its six bundle keys are ACTIONS on the `HistorySearch`
+// context; everything else — the search field's own text — arrives through the keymap FALLBACK, as single-key
+// events for one character and as one text event for a multi-character run. Rendered bare it has no input
+// path at all, hence `renderWithKeymap`.
 import React from "react";
 import { describe, it, expect } from "vitest";
-import { render } from "ink-testing-library";
+import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { HistorySearchOverlay } from "../../src/tui/HistorySearchOverlay.js";
 import type { HistEntry, HistoryScope } from "../../src/tui/historySearch.js";
 
@@ -31,6 +36,19 @@ describe("HistorySearchOverlay", () => {
     expect(r.lastFrame()).not.toContain("fix the tests");
     r.stdin.write("\r"); await tick();
     expect(runs).toEqual(["run typecheck"]);
+  });
+
+  it("the search field still takes typed characters: one key, a backspace, and a multi-character run", async () => {
+    const r = render(<HistorySearchOverlay load={loadOk} onAccept={() => {}} onExecute={() => {}} onCancel={() => {}} />);
+    await tick();
+    r.stdin.write("u"); await tick();                    // a single printable arrives as a KEY event, not text
+    expect(r.lastFrame()).toContain("run typecheck");
+    expect(r.lastFrame()).not.toContain("fix the tests");
+    r.stdin.write("\x7f"); await tick();                 // backspace clears the query again
+    expect(r.lastFrame()).toContain("fix the tests");
+    r.stdin.write("type"); await tick();                 // a run arrives as ONE text event
+    expect(r.lastFrame()).not.toContain("fix the tests");
+    expect(r.lastFrame()).toContain("run typecheck");
   });
 
   it("Esc ACCEPTS into the composer (bundle historySearch:accept), Ctrl-C cancels", async () => {

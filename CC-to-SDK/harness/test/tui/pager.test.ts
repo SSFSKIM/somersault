@@ -1,27 +1,27 @@
+// F2 task 7: `pagerAction(input, key)` is gone. Which KEY scrolls the pager is the binding table's business
+// now (keys/bindings.ts, the `Transcript` context); pager.ts keeps only what an ACTION means, as PAGER_ACTIONS.
+// So the invariant worth pinning flipped: every scroll action the Transcript context binds must have an entry
+// here, and nothing may be listed that the table never names — a one-sided map is how a live key goes dead.
 import { describe, it, expect } from "vitest";
-import { pagerAction, applyPager, clampOffset, type PagerKey } from "../../src/tui/pager.js";
+import { PAGER_ACTIONS, applyPager, clampOffset } from "../../src/tui/pager.js";
+import { DEFAULT_BINDINGS } from "../../src/tui/keys/bindings.js";
 
-describe("pagerAction — the bundle Transcript context, key for key", () => {
+const transcript = DEFAULT_BINDINGS.find((b) => b.context === "Transcript")!;
+const boundScrolls = new Set(Object.values(transcript.bindings).filter((a): a is string => !!a && a.startsWith("scroll:")));
+
+describe("PAGER_ACTIONS — the bundle Transcript context, action for action", () => {
+  it("covers exactly the scroll actions the Transcript context binds", () =>
+    expect(Object.keys(PAGER_ACTIONS).sort()).toEqual([...boundScrolls].sort()));
   it.each([
-    ["ctrl-u", "u", { ctrl: true }, { kind: "pages", n: -0.5 }], ["ctrl-d", "d", { ctrl: true }, { kind: "pages", n: 0.5 }],
-    ["ctrl-b", "b", { ctrl: true }, { kind: "pages", n: -1 }], ["ctrl-f", "f", { ctrl: true }, { kind: "pages", n: 1 }],
-    ["ctrl-n", "n", { ctrl: true }, { kind: "lines", n: 1 }], ["ctrl-p", "p", { ctrl: true }, { kind: "lines", n: -1 }],
-    ["arrow-up", "", { upArrow: true }, { kind: "lines", n: -1 }], ["arrow-down", "", { downArrow: true }, { kind: "lines", n: 1 }],
-    ["page-up", "", { pageUp: true }, { kind: "pages", n: -1 }], ["page-down", "", { pageDown: true }, { kind: "pages", n: 1 }],
-    ["j", "j", {}, { kind: "lines", n: 1 }], ["k", "k", {}, { kind: "lines", n: -1 }], ["space", " ", {}, { kind: "pages", n: 1 }], ["b", "b", {}, { kind: "pages", n: -1 }],
-    ["g", "g", {}, { kind: "top" }], ["G", "G", {}, { kind: "bottom" }],
-    // The three exits are part of the contract this table claims to preserve; the previous table had 19 rows
-    // including them, so omitting them here would silently drop coverage rather than preserve it.
-    ["q", "q", {}, { kind: "exit" }], ["escape", "", { escape: true }, { kind: "exit" }], ["ctrl-c", "c", { ctrl: true }, { kind: "exit" }],
-    ["ctrl-e", "e", { ctrl: true }, { kind: "toggleShowAll" }],
-  ] as const)("preserves %s binding", (_name, input, key, expected) => expect(pagerAction(input as string, key as PagerKey)).toEqual(expected));
-  it("unbound keys return null (never swallow)", () => {
-    expect(pagerAction("z", {})).toBeNull();
-  });
-  it("g goes top and G goes bottom — Shift+G arrives as input 'G', never as key.shift (KB23)", () => {
-    expect(pagerAction("g", {})).toEqual({ kind: "top" });
-    expect(pagerAction("g", { shift: true } as any)).toEqual({ kind: "top" });   // the old dead branch returned bottom here
-    expect(pagerAction("G", {})).toEqual({ kind: "bottom" });
+    ["scroll:halfPageUp", { kind: "pages", n: -0.5 }], ["scroll:halfPageDown", { kind: "pages", n: 0.5 }],
+    ["scroll:fullPageUp", { kind: "pages", n: -1 }], ["scroll:fullPageDown", { kind: "pages", n: 1 }],
+    ["scroll:pageUp", { kind: "pages", n: -1 }], ["scroll:pageDown", { kind: "pages", n: 1 }],
+    ["scroll:lineUp", { kind: "lines", n: -1 }], ["scroll:lineDown", { kind: "lines", n: 1 }],
+    ["scroll:top", { kind: "top" }], ["scroll:bottom", { kind: "bottom" }],
+  ] as const)("preserves %s", (action, expected) => expect(PAGER_ACTIONS[action]).toEqual(expected));
+  it("g/G and home/end are the same two operations, reached by four keys", () => {
+    expect(transcript.bindings["g"]).toBe("scroll:top"); expect(transcript.bindings["home"]).toBe("scroll:top");
+    expect(transcript.bindings["shift+g"]).toBe("scroll:bottom"); expect(transcript.bindings["end"]).toBe("scroll:bottom");
   });
 });
 

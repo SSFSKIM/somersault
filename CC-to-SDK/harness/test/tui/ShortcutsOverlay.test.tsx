@@ -3,9 +3,16 @@
 // into whatever's underneath. Rows are checked only against bindings that actually exist in this codebase
 // (ChatApp.tsx / editor.ts / ChatComposer.tsx) — a row for a binding we don't implement would be a false
 // promise. Mirrors RewindPicker.test.tsx's waitFor-before-keys discipline.
-import { describe, it, expect } from "vitest";
+//
+// F2 task 7: "swallowed" stopped being a promise the overlay's own `useInput` had to keep. The overlay pushes
+// the `Help` context and calls `useSwallowKeys(true)`, so the PROVIDER drops every key that Help does not
+// bind — including `Global`'s own bindings, which is the F0 ctrl+o double-fire regression stated structurally
+// rather than by inspection. The sibling probe below stands in for the tree underneath (ChatApp's globals +
+// the retiring composer's fallback): registered BEFORE the overlay, it is exactly what a leak would reach.
+import { describe, it, expect, vi } from "vitest";
 import React from "react";
-import { render } from "ink-testing-library";
+import { renderWithKeymap as render, tick as flush } from "./keysTestUtil.js";
+import { useKeyActions, useKeyFallback } from "../../src/tui/keys/KeymapProvider.js";
 import { ShortcutsOverlay } from "../../src/tui/ShortcutsOverlay.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
@@ -49,6 +56,29 @@ describe("<ShortcutsOverlay>", () => {
     expect(closed).toBe(0);
     expect(frame(lastFrame)).toContain("esc closes");
     stdin.write("\x1b");
+    await waitFor(() => closed === 1);
+  });
+
+  it("swallows the tree underneath — a Global binding and plain text reach neither action nor fallback (F0 acceptance 5)", async () => {
+    const toggleTranscript = vi.fn(), toggleTodos = vi.fn(), fallback = vi.fn();
+    let closed = 0;
+    const Underneath = () => {
+      useKeyActions({ "app:toggleTranscript": toggleTranscript, "app:toggleTodos": toggleTodos });
+      useKeyFallback(fallback);
+      return null;
+    };
+    const { stdin } = render(<><Underneath /><ShortcutsOverlay onClose={() => { closed++; }} /></>);
+    await flush();
+    stdin.write("\x0f");                                       // Ctrl-O: Global's app:toggleTranscript
+    stdin.write("\x14");                                       // Ctrl-T: Global's app:toggleTodos
+    stdin.write("x");                                          // a single printable key
+    stdin.write("typed run");                                  // a multi-character text event
+    await flush();
+    expect(toggleTranscript).not.toHaveBeenCalled();
+    expect(toggleTodos).not.toHaveBeenCalled();
+    expect(fallback).not.toHaveBeenCalled();
+    expect(closed).toBe(0);
+    stdin.write("\x1b");                                       // Help's own binding still resolves
     await waitFor(() => closed === 1);
   });
 });

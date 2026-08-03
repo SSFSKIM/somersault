@@ -817,6 +817,34 @@ describe("<ChatApp>", () => {
     await waitFor(() => !frame(lastFrame).includes("☐ todo-item-one"));
   });
 
+  // F2 task 7: the owner gate used to kill every key inside the pager except ChatApp's own Ctrl-O close arm.
+  // With the pager on the scope stack, `Transcript` has to say so declaratively — hence the two null bindings.
+  // Without them Global would newly fire history-search and the todo panel from inside the pager.
+  it("Ctrl-R inside the transcript pager opens nothing (the Transcript null binding, not the old owner gate)", async () => {
+    const fakeDeps = {
+      getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
+      getSessionMessagesIn: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
+      listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
+    };
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("\x0f");                                              // Ctrl-O opens the pager
+    await waitFor(() => frame(lastFrame).includes("Transcript"));
+    stdin.write("\x12");                                              // Ctrl-R must NOT open history search here
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).toContain("Transcript");                 // the pager is still the visible surface
+    stdin.write("\x0f");                                              // the pager's own Ctrl-O still closes it
+    await waitFor(() => !frame(lastFrame).includes("Transcript"));
+    // The load-bearing assertion: the pager arm outranks the history arm in ChatApp's render chain, so
+    // "Search prompts" being absent WHILE the pager is up proves nothing at all — a Ctrl-R that leaked would
+    // have set historyOpen behind it and be revealed right here, the moment the pager unmounts.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).not.toContain("Search prompts");
+    expect(frame(lastFrame)).toContain("›");                          // the composer, not a history overlay
+    stdin.write("\x12");                                              // …and Ctrl-R works again once the pager is gone
+    await waitFor(() => frame(lastFrame).includes("Search prompts"));
+  });
+
   // W3 T3: /add-dir
   it("/add-dir with no arg opens the entry phase; Esc with no path cancels with the no-path message", async () => {
     const fake = fakeSettingsRemote();

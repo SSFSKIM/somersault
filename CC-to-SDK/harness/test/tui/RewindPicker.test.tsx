@@ -3,9 +3,14 @@
 // by the lazy dryRun result (probe 68d: canRewind:false disables code choices) and the anchor's null
 // prevUuid (probe 68c: first prompt / first-after-compact disables conversation choices). Mirrors
 // planDialog.test.tsx's waitFor-before-keys discipline (useInput subscribes in a passive effect).
+//
+// F2 task 7: the picker stopped calling `useInput`. It pushes the `MessageSelector` context, so stage 1's
+// navigation is the bundle's action set (up/down/enter/escape plus the KB14 aliases j/k, ctrl+n/ctrl+p and
+// the shift/ctrl/alt top-bottom jumps); the scope stage's 1/2/3 stay in the component's own fallback. Rendered
+// bare it has no input path at all, hence `renderWithKeymap`.
 import { describe, it, expect } from "vitest";
 import React from "react";
-import { render } from "ink-testing-library";
+import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { RewindPicker } from "../../src/tui/RewindPicker.js";
 import type { RewindAnchor, RewindDryRun } from "../../src/session/chatSession.js";
 
@@ -42,6 +47,30 @@ describe("<RewindPicker>", () => {
     await waitFor(() => frame(lastFrame).match(/\x1b\[7m[^\x1b]*first prompt/) !== null);   // selection moved
     stdin.write("\x1b");                                                             // esc on the list → onClose
     await waitFor(() => closed === 1);
+  });
+
+  // KB14: the bundle's MessageSelector context binds far more than ↑/↓. Three anchors, so a top/bottom jump
+  // is distinguishable from a single step in either direction.
+  it("KB14 aliases: j/k step, ctrl+n/ctrl+p step, shift+j/shift+k jump to the last/first selectable anchor", async () => {
+    const three = [
+      { uuid: "uC", prevUuid: "uB", text: "third prompt", index: 4 },
+      { uuid: "uB", prevUuid: "uA", text: "second prompt", index: 2 },
+      { uuid: "uA", prevUuid: null, text: "first prompt", index: 0 },
+    ];
+    const selected = (label: string) => frame(lastFrame).match(new RegExp(`\\x1b\\[7m[^\\x1b]*${label}`)) !== null;
+    const { stdin, lastFrame } = render(
+      <RewindPicker anchors={three} onDryRun={() => new Promise(() => {})} onConfirm={() => {}} onClose={() => {}} />,
+    );
+    await waitFor(() => frame(lastFrame).includes("third prompt"));
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("j"); await waitFor(() => selected("second prompt"));
+    stdin.write("k"); await waitFor(() => selected("third prompt"));
+    stdin.write("\x0e"); await waitFor(() => selected("second prompt"));      // ctrl+n
+    stdin.write("\x10"); await waitFor(() => selected("third prompt"));       // ctrl+p
+    stdin.write("J"); await waitFor(() => selected("first prompt"));          // shift+j → bottom, not one step
+    stdin.write("K"); await waitFor(() => selected("third prompt"));          // shift+k → top
+    stdin.write("\x1b[1;2B"); await waitFor(() => selected("first prompt"));  // shift+↓ → bottom
+    stdin.write("\x1b[1;5A"); await waitFor(() => selected("third prompt"));  // ctrl+↑ → top
   });
 
   it("Enter on an anchor calls onDryRun(uuid); while unresolved the scope stage shows 'checking file changes…' and 1/3 do nothing", async () => {
