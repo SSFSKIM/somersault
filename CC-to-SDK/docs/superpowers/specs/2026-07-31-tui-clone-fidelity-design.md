@@ -924,9 +924,23 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
   R4.2 says the unresolved leader glyph is "dimColor with no color"; the golden's cells are dim **and**
   `#999999`, and so is the `(ctrl+o to expand)` hint and the whole `  ⎿  <path>` hint row, connector
   included. R3.5's `dimColor={!isActive}` also has its polarity backwards for the active row. Both were
-  adopted from the capture and the divergence on that row fell from eleven cells to six. The one grey the
-  golden cannot settle is the SETTLED row's: the live-confirmation note records `#949494`, a different grey,
-  and no settled golden exists yet. (2026-08-03)
+  adopted from the capture and the divergence on that row fell from eleven cells to six. (2026-08-03)
+- **The settled row's grey is the same `#999999` as the active row's; the `#949494` was ambient palette.**
+  The one colour the ACTIVE golden could not settle was the settled row's own, and the live-confirmation
+  note recorded a different grey (`#949494`) for it — which read as two upstream colours and kept the
+  settled clause run dim-and-uncoloured. A dedicated settled-state probe run under the *tracked capture
+  environment* (pinned `TERM=xterm-256color`/`COLORTERM=truecolor`, wrapper and palette variables removed)
+  paints `#999999`. The `#949494` was the ambient-palette variant of the earlier probe's own environment
+  (`COLORFGBG` present), not a second upstream value. The settled clause run now carries the `inactive`
+  token. The lesson generalizes: a colour measured outside the pinned capture environment is a measurement
+  of that environment, and cannot be compared against one taken inside it. (2026-08-03)
+- **A persisted user row whose `content` is a bare string projects to no line at all, and the naive fix is
+  worse than the gap.** `render.ts`'s user branch iterates array `content` only, while `sessions/rows.ts`
+  `promptText` explicitly handles the string shape — so the two disagree about what a persisted prompt
+  looks like, and F1's upstream comparison fixture paints no prompt row. It was left unfixed deliberately:
+  simply rendering string content would also start painting `<command-name>` / `<local-command-*>` envelope
+  rows raw on the attach path, which `replayDocument` filters but the `initialEntries` bootstrap does not.
+  The fix belongs with a shared bootstrap filter, not with the renderer. (2026-08-03)
 - **Frame comparison is sensitive to repaint history, not just to the projection.** The live route reaches a
   settled screen by shrinking (active row plus hint gutter into one settled row), and Ink's incremental
   erase sequences inherit whatever SGR is current — so the live screen's blank padding cells kept a `dim`
@@ -1020,8 +1034,11 @@ upstream key. The residual whole-frame divergence is chrome F1 does not own plus
 artifact, both recorded in the parity scorecard rather than registered.
 
 All seven F1 acceptance contracts pass with the named evidence. Final verification covers typecheck, package
-build, 44 tracked TUI files and 817 tests, 1,245 unit tests, 17 integration tests, 7 contract tests, the
-105-test Python suite, `verify:pack`, and a clean `git diff --check`.
+build, the TUI suite (817 tests over the keyless files), 1,245 unit tests, 17 integration tests, 7 contract
+tests, the Python suite, `verify:pack`, and a clean `git diff --check`. The tracked TUI test inventory is
+**54 files** — `git ls-files 'test/tui/*.test.*'`, whose `*` crosses `/`, so that is 45 keyless files plus
+the 9 credential-gated `test/tui/live/*.e2e.test.ts`; the "44" recorded here at closeout was neither.
+(The Python suite stands at 108 tests / 144 subtests after the closeout review fixes.)
 
 ## Revision Notes
 
@@ -1047,8 +1064,9 @@ build, 44 tracked TUI files and 817 tests, 1,245 unit tests, 17 integration test
   upstream's own `\x1b[22m` artifact — the bold count's closer clears faint as well as bold. R3.5's
   "Ink composes dim+bold" is separately false for our renderer (probe: `<Text dimColor bold>` drops bold
   entirely), so the folded row's count is not bold today; that is an F3 item, recorded in
-  `../../parity/tui-ux.md`. The settled row's own grey (`#949494` per the live-confirmation note, a
-  different grey from this active frame's `#999999`) stays unadopted until a settled golden exists.
+  `../../parity/tui-ux.md`. The settled row's own grey is `#999999` as well — pinned by a dedicated
+  settled-state probe under the tracked capture environment, which also identified the note's `#949494` as
+  that probe environment's ambient-palette variant — and the settled clause run carries `inactive`.
   Instrument change: `scripts/capture-frames.py --require-state` extends required-state loading, the
   missing-contract preflight and per-frame validation to untracked output, so a row-scoped contract can
   gate a scratch capture; tracked behaviour is unchanged with or without the flag.

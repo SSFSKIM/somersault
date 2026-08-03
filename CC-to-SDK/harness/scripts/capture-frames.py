@@ -56,6 +56,7 @@ from frame_masks import (
     RedactionContract,
     RequiredStateContract,
     canonical_path,
+    contract_is_vacuous,
     frame_key,
     load_redaction_contract,
     load_required_state_contract,
@@ -523,6 +524,13 @@ def main() -> int:
     entry = os.path.join(root, "src", "cli", "bin.ts")
     if not args.bin and not os.path.exists(entry):
         sys.exit(f"run me from harness/ — {entry} not found")
+    # Required-state contracts are loaded from the mask file, so the flag is meaningless without it — and
+    # worse than meaningless: per-frame validation would look up a contract that was never loaded and die
+    # with a traceback mid-capture, after a `.capture-*` staging directory already existed in the output
+    # parent. Refuse the combination here, before anything is staged or spawned.
+    if args.require_state and args.redact_masks is None:
+        sys.stderr.write("capture-frames: --require-state requires --redact-masks\n")
+        return 2
 
     with open(args.script, encoding="utf-8") as f:
         script_lines = [ln.rstrip("\n") for ln in f if ln.strip() and not ln.strip().startswith("#")]
@@ -553,6 +561,13 @@ def main() -> int:
         missing = [frame_key(args.out, name) for name, contract in redactions.items() if not contract.declared]
         if missing:
             sys.stderr.write(f"capture-frames: tracked golden output has no redaction contract for: {', '.join(missing)}\n")
+            return 2
+        # `declared` alone is claimable: a comparison-only entry (empty patterns, empty identity_guards) is
+        # written for untracked scratch keys, and a tracked directory that later matched that glob would
+        # pass the check above while redacting nothing and guarding nothing. Demand substance, not presence.
+        vacuous = [frame_key(args.out, name) for name, contract in redactions.items() if contract_is_vacuous(contract)]
+        if vacuous:
+            sys.stderr.write(f"capture-frames: tracked golden output has an empty redaction contract (no patterns, no identity guards) for: {', '.join(vacuous)}\n")
             return 2
         version_error = validate_tracked_child_version(args.bin, args.expected_version, args.cwd)
         if version_error:
@@ -777,6 +792,12 @@ def main() -> int:
                 break
     except (OSError, ValueError) as error:
         fail(f"pty/action error: {error}")
+    except BaseException:
+        # The sweep for anything the loop does not anticipate (a KeyError from a contract that was never
+        # loaded, a Ctrl-C): the staged frames are discarded rather than left behind as a `.capture-*`
+        # directory in the caller's output parent. The `finally` below still reaps child, fd and config.
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        raise
     finally:
         terminate_captured_process_group(pid)
         try:

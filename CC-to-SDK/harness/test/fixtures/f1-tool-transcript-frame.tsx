@@ -24,19 +24,26 @@
 // Determinism: the clock is pinned at 0 (so the 600 ms blink phase is always the glyph half), the column
 // count is pinned at 100, the theme is pinned to `dark`, and the blink repaint scheduler is a no-op — the
 // projection is a pure function of `now`, so the repaint would only rewrite an identical frame, and a
-// capture that never races a repaint cannot tear one.
+// capture that never races a repaint cannot tear one. `home` and `platform` are pinned through the same
+// deps seam: without them `useChat` read `homedir()`/`process.platform` live, so a `~`-shortened path
+// carried the RUNNER's home into the frame and the active leader glyph was `⏺` only on macOS.
 import React from "react";
 import { render } from "ink";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { setTheme } from "../../src/tui/theme.js";
 import type { TranscriptBootstrapEntry } from "../../src/tui/transcriptModel.js";
 import { fakeRemote } from "../tui/helpers/fakeRemote.js";
-import { READ_CALL, READ_RESULT_FLAT, READ_RESULT_UPSTREAM, READ_RESULT_WITH_SIDECAR, UPSTREAM_READ_PROMPT } from "./f1-tool-transcript.js";
+import { parseFrameArgs, READ_CALL, READ_RESULT_FLAT, READ_RESULT_UPSTREAM, READ_RESULT_WITH_SIDECAR, UPSTREAM_READ_PROMPT } from "./f1-tool-transcript.js";
 
-const route = process.argv[2] === "live" ? "live" : "replay";
-const shape = process.argv[3] ?? "sidecar";
+// Both axes are validated exactly (`parseFrameArgs`, unit-tested in test/tui/f1-frame-parity.test.tsx) and
+// neither has a default: a mistyped route that fell back to `replay` would capture replay-vs-replay and the
+// frame diff would report "clean" having compared nothing.
+const parsed = parseFrameArgs(process.argv);
+if (!parsed.ok) { process.stderr.write(`f1-tool-transcript-frame: ${parsed.error}\n`); process.exit(2); }
+const { route, shape } = parsed;
+// `upstream` deliberately never delivers this result (see the header) — it is still selected here so the
+// three shapes read as one table.
 const result = shape === "flat" ? READ_RESULT_FLAT : shape === "upstream" ? READ_RESULT_UPSTREAM : READ_RESULT_WITH_SIDECAR;
-void result;   // named for the reader: `upstream` deliberately never delivers its result (see the header)
 
 const disk = (message: Record<string, unknown>): TranscriptBootstrapEntry => ({ kind: "sdk", source: "disk", message });
 // The ordered bootstrap. `upstream` seeds only the prompt; `replay` seeds the whole settled pair.
@@ -49,7 +56,7 @@ setTheme("dark");
 const session = fakeRemote();
 const app = render(
   <ChatApp makeSession={() => session} client={{ kind: "loopback" }} cwd="/work" initialEntries={initialEntries}
-    deps={{ now: () => 0, columns: () => 100, scheduleRepaint: () => () => {} }} />,
+    deps={{ now: () => 0, columns: () => 100, home: "/home/me", platform: "darwin", scheduleRepaint: () => () => {} }} />,
   { exitOnCtrlC: false },
 );
 // Live host events go out AFTER the tree is mounted; the fake buffers anything that beats the subscription

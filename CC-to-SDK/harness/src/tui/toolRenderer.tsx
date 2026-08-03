@@ -262,20 +262,22 @@ const reid = (items: readonly RenderItem[], id: string, sequence: number | "pend
 // Only `projection === "compact" && !verbose` folds — both detail projections (and therefore the Ctrl-O
 // pager) keep the per-call `⏺ Read(a.ts)` rows, because those ARE upstream's ctrl+o verbose form (R6).
 const EXPAND_HINT = "(ctrl+o to expand)";
-const dimmed = (text: string, dim: boolean): Segment => ({ text, ...(dim ? { dim: true } : {}) });
+/** Every segment on a group row is dim (R3.5 as corrected below), so the only remaining axis is colour:
+ *  the settled clause run carries the row grey, the active one is dim-and-uncoloured like the golden's. */
+const dimmed = (text: string, color?: string): Segment => ({ text, dim: true, ...(color === undefined ? {} : { color }) });
 /** Clauses joined by the literal `", "` (R3.8), with each `boldRanges` span emitted as its own bold segment —
  *  Ink composes dim+bold, so a settled count is bold AND dim (R3.5). */
-function clauseSegments(clauses: readonly FoldClause[], dim: boolean): Segment[] {
+function clauseSegments(clauses: readonly FoldClause[], color?: string): Segment[] {
   const out: Segment[] = [];
   for (const [index, clause] of clauses.entries()) {
-    if (index > 0) out.push(dimmed(", ", dim));
+    if (index > 0) out.push(dimmed(", ", color));
     let cursor = 0;
     for (const [start, end] of clause.boldRanges) {
-      if (start > cursor) out.push(dimmed(clause.text.slice(cursor, start), dim));
-      out.push({ ...dimmed(clause.text.slice(start, end), dim), bold: true });
+      if (start > cursor) out.push(dimmed(clause.text.slice(cursor, start), color));
+      out.push({ ...dimmed(clause.text.slice(start, end), color), bold: true });
       cursor = end;
     }
-    if (cursor < clause.text.length) out.push(dimmed(clause.text.slice(cursor), dim));
+    if (cursor < clause.text.length) out.push(dimmed(clause.text.slice(cursor), color));
   }
   return out;
 }
@@ -302,17 +304,21 @@ function clauseSegments(clauses: readonly FoldClause[], dim: boolean): Segment[]
  *  after the bold count (" file…") renders PLAIN in the golden because the count's `\x1b[22m` closer clears
  *  faint as well as bold, breaking the outer dim run. Our `Line` renders each segment as its own sibling
  *  `<Text>`, so nothing here nests — emitting a broken reset to match would be fabricating a bug.
- *  Still OPEN: the settled row's own colour. The live-confirmation note records it as grey `#949494`, a
- *  DIFFERENT grey from this frame's `#999999`, and no settled golden exists yet — so the settled clause run
- *  stays dim-and-uncoloured until one does. */
+ *  SETTLED-ROW GREY, pinned 2026-08-03 (Task 7 closeout, render contract § 0). A dedicated settled-state
+ *  probe against installed 2.1.220 under the tracked capture environment shows the settled row rendering
+ *  `#999999` — the SAME grey as this frame's active row. The `#949494` the live-confirmation note first
+ *  recorded was the ambient-palette variant of that probe's environment (`COLORFGBG` present), not a second
+ *  upstream colour. So the settled clause run carries `inactive` too. The active clause run stays
+ *  dim-and-uncoloured: the golden paints `" Reading "` as a bare `\x1b[0;2m` run, and only the leader glyph
+ *  and the expand hint carry the colour explicitly. */
 function groupRowLine(group: FoldGroup, active: boolean, options: ProjectionOptions): RenderLine {
   const grey = resolveThemeColor(themeTokens().inactive);
   const leader: Segment[] = active
     ? [{ text: Math.floor(options.now / 600) % 2 === 0 ? (options.platform === "darwin" ? "⏺" : "●") : " ", dim: true, color: grey }, { text: " ", dim: true }]
     : [{ text: "  " }];
-  const segments: Segment[] = [...leader, ...clauseSegments(foldClauses(group.counts, active), true)];
+  const segments: Segment[] = [...leader, ...clauseSegments(foldClauses(group.counts, active), active ? undefined : grey)];
   if (active) segments.push({ text: "…", dim: true });
-  segments.push(dimmed(" ", true), { text: EXPAND_HINT, dim: true, color: grey });
+  segments.push(dimmed(" "), { text: EXPAND_HINT, dim: true, color: grey });
   return { text: segments.map((segment) => segment.text).join(""), segments };
 }
 /** The three lives of one group row. `published` is the immutable Static row; `active` and `unclosed` are the

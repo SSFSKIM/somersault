@@ -18,11 +18,13 @@ import { Writable } from "node:stream";
 import { render as renderInk } from "ink";
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
+import { ChatApp } from "../../src/tui/ChatApp.js";
 import { Transcript } from "../../src/tui/Transcript.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import { setTheme } from "../../src/tui/theme.js";
 import { projectCompact, projectDetail, projectPending, RenderItemView, type RenderItem } from "../../src/tui/toolRenderer.js";
-import { READ_CALL, READ_RESULT_FLAT, READ_RESULT_UPSTREAM, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
+import { parseFrameArgs, READ_CALL, READ_RESULT_FLAT, READ_RESULT_UPSTREAM, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
+import { fakeRemote } from "./helpers/fakeRemote.js";
 
 async function rawInk(element: React.ReactElement): Promise<string> {
   let output = "";
@@ -75,5 +77,42 @@ describe("F1 frame parity", () => {
       setTheme("light"); const light = await rawInk(itemsView(detail("host", READ_RESULT_WITH_SIDECAR)));
       expect(visible(light)).toBe(visible(dark)); expect(sgr(light)).not.toEqual(sgr(dark));
     } finally { setTheme("auto"); }
+  });
+});
+
+// ── The capture fixture's own two safety rails ─────────────────────────────────────────────────────────
+describe("F1 capture fixture contract", () => {
+  it("accepts exactly the six documented argv pairs and rejects everything else", () => {
+    for (const route of ["live", "replay"] as const)
+      for (const shape of ["sidecar", "flat", "upstream"] as const)
+        expect(parseFrameArgs(["node", "frame.tsx", route, shape])).toEqual({ ok: true, route, shape });
+    // The hole this closes: `liv` used to fall through to `replay`, so a mistyped capture diffed replay
+    // against replay and printed a "clean" that proved nothing. Both axes now fail loud instead.
+    for (const argv of [["node", "f", "liv", "sidecar"], ["node", "f", "LIVE", "sidecar"], ["node", "f", "", "sidecar"], ["node", "f"]])
+      expect(parseFrameArgs(argv)).toMatchObject({ ok: false, error: expect.stringContaining("argv[2] (route)") });
+    for (const argv of [["node", "f", "live", "sidcar"], ["node", "f", "live", "Upstream"], ["node", "f", "live"]])
+      expect(parseFrameArgs(argv)).toMatchObject({ ok: false, error: expect.stringContaining("argv[3] (shape)") });
+  });
+
+  it("threads the fixture's pinned home and platform through useChat into the projection context", async () => {
+    // Before the deps seam existed, `useChat` read `homedir()`/`process.platform` live: the `~`-shortened
+    // hint path carried the RUNNER's home and the leader glyph was `⏺` only on macOS, so the golden
+    // comparison was unpinnable off Darwin. Pinning a NON-host platform is what makes this test real.
+    const session = fakeRemote();
+    const { lastFrame } = render(
+      <ChatApp makeSession={() => session} client={{ kind: "loopback" }} cwd="/work"
+        deps={{ now: () => 0, columns: () => 100, home: "/home/me", platform: "linux", scheduleRepaint: () => () => {} }} />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    session.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "a-home", content: [{ type: "tool_use", id: "read-home", name: "Read", input: { file_path: "/home/me/notes.ts" } }] } } });
+    const start = Date.now();
+    while (!visible(lastFrame() ?? "").includes("~/notes.ts")) {
+      if (Date.now() - start > 2000) throw new Error(`pinned projection never rendered: ${JSON.stringify(lastFrame())}`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const painted = visible(lastFrame() ?? "");
+    expect(painted).toContain("● Reading");     // `platform: "linux"` — darwin would paint `⏺`
+    expect(painted).not.toContain("⏺");
+    expect(painted).toContain("~/notes.ts");    // `home: "/home/me"` — the runner's real home would not shorten
   });
 });

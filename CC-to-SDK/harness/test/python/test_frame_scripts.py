@@ -54,6 +54,14 @@ capture = load_module(CAPTURE_PATH, "capture_frames")
 diff = load_module(DIFF_PATH, "frame_diff")
 
 
+# A TRACKED redaction contract must carry substance — at least one pattern or one identity guard — or the
+# preflight refuses the capture (`frame_masks.contract_is_vacuous`; an entry that redacts nothing and guards
+# nothing cannot be allowed to satisfy "this tracked scenario has a contract"). The synthetic tracked
+# fixtures below deliberately redact nothing, so they declare this never-matching guard to clear that bar
+# without changing what any of them is actually testing.
+SYNTHETIC_TRACKED_GUARD = [{"name": "synthetic-identity", "pattern": "NEVER-A-REAL-IDENTITY@nowhere"}]
+
+
 def synthetic_required_state(frame_keys: tuple[str, ...], marker: str) -> dict[str, object]:
     return {
         key: {"required": [{"name": "synthetic-logged-out", "pattern": marker, "minimum_matches": 1}]}
@@ -1130,8 +1138,8 @@ class FrameScriptsTest(unittest.TestCase):
             masks = root / "wrap-masks.json"
             masks.write_text(json.dumps({
                 "redactions_by_frame": {
-                    "wrapped/01-leak.ansi": {"patterns": [], "minimum_matches": 0},
-                    "scrolled/01-leak.ansi": {"patterns": [], "minimum_matches": 0},
+                    "wrapped/01-leak.ansi": {"patterns": [], "identity_guards": SYNTHETIC_TRACKED_GUARD, "minimum_matches": 0},
+                    "scrolled/01-leak.ansi": {"patterns": [], "identity_guards": SYNTHETIC_TRACKED_GUARD, "minimum_matches": 0},
                 },
                 "required_state_by_frame": {
                     **synthetic_required_state(("wrapped/01-leak.ansi",), "leak-probe"),
@@ -1177,8 +1185,8 @@ class FrameScriptsTest(unittest.TestCase):
             masks = root / "oauth-masks.json"
             masks.write_text(json.dumps({
                 "redactions_by_frame": {
-                    "oauth/01-authenticated.ansi": {"patterns": [], "minimum_matches": 0},
-                    "leak/01-leak.ansi": {"patterns": [], "minimum_matches": 0},
+                    "oauth/01-authenticated.ansi": {"patterns": [], "identity_guards": SYNTHETIC_TRACKED_GUARD, "minimum_matches": 0},
+                    "leak/01-leak.ansi": {"patterns": [], "identity_guards": SYNTHETIC_TRACKED_GUARD, "minimum_matches": 0},
                 },
                 "required_state_by_frame": {
                     **synthetic_required_state(("oauth/01-authenticated.ansi",), "oauth=yes api=no"),
@@ -1224,7 +1232,7 @@ class FrameScriptsTest(unittest.TestCase):
             child = self.live_child_command("import sys; sys.stdout.write('ready'); sys.stdout.flush()")
             masks = root / "masks.json"
             masks.write_text(json.dumps({
-                "redactions_by_frame": {"needs-token/01-boot.ansi": {"patterns": [], "minimum_matches": 0}},
+                "redactions_by_frame": {"needs-token/01-boot.ansi": {"patterns": [], "identity_guards": SYNTHETIC_TRACKED_GUARD, "minimum_matches": 0}},
                 "required_state_by_frame": synthetic_required_state(("needs-token/01-boot.ansi",), "ready"),
             }), encoding="utf-8")
             untracked = self.run_capture(
@@ -1582,6 +1590,73 @@ class FrameScriptsTest(unittest.TestCase):
             undeclared_redaction = self.run_capture("frame:boot\n", child, root / "scratch2", bare, script_parent=root, require_state=True)
             self.assertEqual(undeclared_redaction.returncode, 0, undeclared_redaction.stderr)
 
+    def test_require_state_without_redact_masks_is_refused_before_staging_or_spawning(self):
+        """Required-state contracts are loaded from the mask file, so the flag alone had nothing to load and
+        per-frame validation looked up a contract that never existed: a KeyError traceback mid-capture,
+        after a `.capture-*` staging directory already sat in the caller's output parent. It is now an
+        argument-combination error, refused before either happens."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            marker = root / "child-ran"
+            child = self.live_child_command(f"from pathlib import Path; import sys; Path({str(marker)!r}).write_text('yes'); sys.stdout.write('ready'); sys.stdout.flush()")
+            refused = self.run_capture("frame:boot\n", child, root / "scratch", script_parent=root, require_state=True)
+            self.assertEqual(refused.returncode, 2, refused.stderr)
+            self.assertEqual(refused.stderr.strip(), "capture-frames: --require-state requires --redact-masks")
+            self.assertNotIn("Traceback", refused.stderr)
+            self.assertFalse(marker.exists())
+            self.assertEqual([path.name for path in root.iterdir() if path.name.startswith(".capture-")], [])
+            self.assertFalse((root / "scratch").exists())
+
+    def test_tracked_capture_refuses_a_claimable_empty_redaction_contract(self):
+        """`declared` is claimable. A comparison-only entry (no patterns, no identity guards) is legitimate
+        for untracked scratch keys — two fixture frames diffed against each other need no privacy contract —
+        but a tracked directory whose name matched that glob would then satisfy the "has a contract"
+        preflight while redacting nothing and guarding nothing. Substance, not presence."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tracked = root / "test" / "fixtures" / "upstream-frames" / "claimable"
+            marker = root / "child-ran"
+            child = self.live_child_command(f"from pathlib import Path; import sys; Path({str(marker)!r}).write_text('yes'); sys.stdout.write('ready'); sys.stdout.flush()")
+            state = synthetic_required_state(("claimable/01-boot.ansi",), "ready")
+            empty = root / "empty-masks.json"
+            empty.write_text(json.dumps({
+                "redactions_by_frame": {"claimable/*.ansi": {"patterns": [], "identity_guards": [], "minimum_matches": 0}},
+                "required_state_by_frame": state,
+            }), encoding="utf-8")
+            refused = self.run_capture("frame:boot\n", child, tracked, empty, script_parent=root, cwd=root, expected_version=self.synthetic_version())
+            self.assertEqual(refused.returncode, 2, refused.stderr)
+            self.assertIn("empty redaction contract", refused.stderr)
+            self.assertIn("claimable/01-boot.ansi", refused.stderr)
+            self.assertFalse(marker.exists())                                        # pre-spawn
+            self.assertFalse(tracked.exists())
+            self.assertEqual(list(root.rglob(".capture-*")), [])
+            # One identity guard is the whole bar, and nothing else about the capture changes.
+            guarded = root / "guarded-masks.json"
+            guarded.write_text(json.dumps({
+                "redactions_by_frame": {"claimable/*.ansi": {"patterns": [], "identity_guards": SYNTHETIC_TRACKED_GUARD, "minimum_matches": 0}},
+                "required_state_by_frame": state,
+            }), encoding="utf-8")
+            accepted = self.run_capture("frame:boot\n", child, tracked, guarded, script_parent=root, cwd=root, expected_version=self.synthetic_version())
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertTrue((tracked / "01-boot.ansi").exists())
+            self.assertEqual(list(root.rglob(".capture-*")), [])
+
+    def test_shipped_masks_keep_substance_on_tracked_keys_and_emptiness_only_on_scratch_ones(self):
+        """The shipped contract file, read against the same rule. Every key a TRACKED scenario captures
+        carries patterns or guards; the F1 Task 7 comparison-only keys are empty by design and are exactly
+        the ones that write to untracked scratch."""
+        for key in ("help-overlay/01-boot.ansi", "composer-basics/01-boot.ansi", F1_KEY):
+            with self.subTest(tracked=key):
+                contract = capture.load_redaction_contract(str(MASKS_PATH), key)
+                self.assertTrue(contract.declared)
+                self.assertFalse(capture.contract_is_vacuous(contract))
+        for key in ("f1-tool-transcript-sidecar-live/01-tool-detail.ansi", "f1-tool-rendering-ccx/01-read-complete.ansi"):
+            with self.subTest(scratch=key):
+                contract = capture.load_redaction_contract(str(MASKS_PATH), key)
+                self.assertTrue(contract.declared)
+                self.assertTrue(capture.contract_is_vacuous(contract))
+                self.assertIsNone(capture.tracked_fixture_relative(str(ROOT / "tmp" / key.split("/")[0])))
+
     def test_tracked_capture_rejects_mixed_state_atomically_before_publication(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -1592,8 +1667,8 @@ class FrameScriptsTest(unittest.TestCase):
             masks = root / "state-masks.json"
             masks.write_text(json.dumps({
                 "redactions_by_frame": {
-                    "stateful/01-first.ansi": {"patterns": [], "minimum_matches": 0},
-                    "stateful/02-second.ansi": {"patterns": [], "minimum_matches": 0},
+                    "stateful/01-first.ansi": {"patterns": [], "identity_guards": SYNTHETIC_TRACKED_GUARD, "minimum_matches": 0},
+                    "stateful/02-second.ansi": {"patterns": [], "identity_guards": SYNTHETIC_TRACKED_GUARD, "minimum_matches": 0},
                 },
                 "required_state_by_frame": {
                     "stateful/*.ansi": {
@@ -1993,7 +2068,7 @@ class FrameScriptsTest(unittest.TestCase):
             masks = root / "masks.json"
             masks.write_text(json.dumps({
                 "redactions_by_frame": {
-                    key: {"patterns": [], "minimum_matches": 0}
+                    key: {"patterns": [], "identity_guards": SYNTHETIC_TRACKED_GUARD, "minimum_matches": 0}
                     for key in (
                         "version/missing/01-boot.ansi",
                         "version/correct/01-boot.ansi",
@@ -2341,7 +2416,7 @@ class FrameScriptsTest(unittest.TestCase):
                         ],
                         "minimum_matches": 2,
                     },
-                    "safe/01-safe.ansi": {"patterns": [], "minimum_matches": 0},
+                    "safe/01-safe.ansi": {"patterns": [], "identity_guards": SYNTHETIC_TRACKED_GUARD, "minimum_matches": 0},
                 },
                 "required_state_by_frame": {
                     **synthetic_required_state(("covered/01-identities.ansi",), "FAKE-GREETING"),
@@ -2921,7 +2996,7 @@ class FrameScriptsTest(unittest.TestCase):
         source = Path(__file__).read_text(encoding="utf-8")
         self.assertIn("LIVE_CHILD_KEEPALIVE_SECONDS = 5", source)
         self.assertIn("PARTIAL_CHILD_KEEPALIVE_SECONDS = 0.15", source)
-        self.assertEqual(len(re.findall(r"self\.live_child_command\(", source)), 47)
+        self.assertEqual(len(re.findall(r"self\.live_child_command\(", source)), 49)
         self.assertEqual(len(re.findall(r"self\.partial_child_command\(", source)), 2)
         self.assertIn("self.dead_child_command()", source)
         self.assertNotIn("self." + "child_command(", source)

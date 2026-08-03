@@ -187,13 +187,15 @@ describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
     expect(line.text).toBe("  Read 1 file (ctrl+o to expand)");
     // The expand hint is ONE component (`Bg`) rendered on both the active and the settled row (R3.6), so its
     // dim `inactive` colour — measured on the tracked golden's active row — is the same on both. The settled
-    // clause text staying dim-uncoloured is unchanged and still open: the live-confirmation note records the
-    // settled row as grey `#949494`, which is a DIFFERENT grey from the active row's `#999999` and needs its
-    // own settled golden before it can be adopted.
+    // CLAUSE run carries that colour too: the settled-state probe pinned 2026-08-03 shows upstream painting
+    // the settled row `#999999` under the tracked capture environment, the same grey as the active row (the
+    // `#949494` first recorded in the live-confirmation note was that probe environment's ambient-palette
+    // variant). The leader box stays two bare spaces — no glyph, no dim, no colour (R3.4).
+    const grey = resolveThemeColor(themeTokens().inactive);
     expect(line.segments).toEqual([
       { text: "  " },
-      { text: "Read ", dim: true }, { text: "1", dim: true, bold: true }, { text: " file", dim: true },
-      { text: " ", dim: true }, { text: "(ctrl+o to expand)", dim: true, color: resolveThemeColor(themeTokens().inactive) },
+      { text: "Read ", dim: true, color: grey }, { text: "1", dim: true, color: grey, bold: true }, { text: " file", dim: true, color: grey },
+      { text: " ", dim: true }, { text: "(ctrl+o to expand)", dim: true, color: grey },
     ]);
     expect(items.some((i) => i.kind === "gutter-block")).toBe(false);            // R3.7: the ⎿ hint line is ACTIVE-only
     expect(JSON.stringify(items)).not.toContain("export const app = 1;");        // the result body belongs to ctrl+o

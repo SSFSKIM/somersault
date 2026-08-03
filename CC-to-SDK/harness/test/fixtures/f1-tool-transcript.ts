@@ -15,3 +15,22 @@ export const EDIT_CALL = { type: "assistant", message: { id: "assistant-edit", c
 export const EDIT_RESULT_WITH_SIDECAR = { type: "user", uuid: "user-edit", message: { content: [{ type: "tool_result", tool_use_id: "edit-1", content: "Updated /work/a.ts" }] }, tool_use_result: { filePath: "/work/a.ts", oldString: "old", newString: "new", originalFile: "old", replaceAll: false, userModified: false, structuredPatch: [{ oldStart: 7, oldLines: 1, newStart: 7, newLines: 1, lines: ["-old", "+new"] }] } } as const;
 export const BASH_CALL = { type: "assistant", message: { id: "assistant-bash", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "printf ok" } }] } } as const;
 export const BASH_RESULT_WITH_SIDECAR = { type: "user", uuid: "user-bash", message: { content: [{ type: "tool_result", tool_use_id: "bash-1", content: "ok" }] }, tool_use_result: { stdout: "ok", stderr: "", interrupted: false, noOutputExpected: false, isImage: false, returnCodeInterpretation: "fixture-status" } } as const;
+
+// ── The capture entry's argv grammar ───────────────────────────────────────────────────────────────────
+// Kept in THIS module, not in `f1-tool-transcript-frame.tsx`, because importing that file mounts Ink — a
+// pure parser here is the unit-testable seam. Neither axis may fall back to a default: the capture's whole
+// value is a live-vs-replay (or sidecar-vs-flat) diff, so a typo like `liv` silently selecting `replay`
+// would compare replay against replay and report a vacuous "clean".
+export const FRAME_ROUTES = ["live", "replay"] as const;
+export const FRAME_SHAPES = ["sidecar", "flat", "upstream"] as const;
+export type FrameRoute = (typeof FRAME_ROUTES)[number];
+export type FrameShape = (typeof FRAME_SHAPES)[number];
+export type FrameArgs = { ok: true; route: FrameRoute; shape: FrameShape } | { ok: false; error: string };
+const oneOf = <T extends string>(allowed: readonly T[], value: string | undefined): value is T => (allowed as readonly (string | undefined)[]).includes(value);
+/** `argv` is a whole `process.argv`: positions 2 and 3 are the route and the shape. */
+export function parseFrameArgs(argv: readonly string[]): FrameArgs {
+  const route = argv[2], shape = argv[3];
+  if (!oneOf(FRAME_ROUTES, route)) return { ok: false, error: `argv[2] (route) must be exactly one of ${FRAME_ROUTES.join("|")}, got ${JSON.stringify(route)}` };
+  if (!oneOf(FRAME_SHAPES, shape)) return { ok: false, error: `argv[3] (shape) must be exactly one of ${FRAME_SHAPES.join("|")}, got ${JSON.stringify(shape)}` };
+  return { ok: true, route, shape };
+}

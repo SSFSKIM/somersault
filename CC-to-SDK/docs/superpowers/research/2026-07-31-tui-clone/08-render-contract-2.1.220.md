@@ -302,8 +302,11 @@ active**. Counts nested inside stay `bold` (Ink composes dim+bold).
 >    rewritten by chalk's nested-close handling into a bold run that never closes. Getting bold+dim
 >    requires the nesting shape in (1).
 >
-> Still open: the SETTLED row's own colour. §0's live-confirmation note records it as grey `#949494`,
-> a DIFFERENT grey from this frame's `#999999`, and there is no settled golden yet.
+> 5. **The SETTLED row's colour is the SAME `#999999`** (resolved 2026-08-03 — see §0's pin). The
+>    `#949494` §0 first recorded was the ambient-palette variant of that probe's environment
+>    (`COLORFGBG` present); under the tracked capture environment a dedicated settled-state probe paints
+>    the settled row `#999999` too. The settled clause run carries the `inactive` token accordingly. The
+>    ACTIVE clause run stays dim-and-uncoloured, matching this frame's bare `\x1b[0;2m` run for `" Reading "`.
 
 **R3.6 The `(ctrl+o to expand)` hint is on BOTH the active and the settled row**, separated by exactly
 one literal space (`" ", <Bg/>` at L428062). `Bg` (**L421333–421348**) renders

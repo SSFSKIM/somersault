@@ -202,6 +202,17 @@ def load_redaction_contract(path: str, frame_key: str | None) -> RedactionContra
     return RedactionContract(masks, identity_guards, dashboard_statuses, minimum_matches, declared)
 
 
+def contract_is_vacuous(contract: RedactionContract) -> bool:
+    """True for a contract that redacts nothing and guards nothing.
+
+    Such an entry is legitimate for an UNTRACKED comparison-only capture (two scratch frames diffed against
+    each other need no privacy contract at all). It must never satisfy the tracked-output preflight: a
+    tracked directory whose name happened to match the glob would then publish real bytes while claiming a
+    redaction contract that cannot fail. Declaring one pattern or one identity guard is the whole bar.
+    """
+    return not contract.masks and not contract.identity_guards and not contract.dashboard_statuses
+
+
 def load_required_state_contract(path: str, frame_key: str | None) -> RequiredStateContract:
     data = read_config(path)
     if frame_key is None:

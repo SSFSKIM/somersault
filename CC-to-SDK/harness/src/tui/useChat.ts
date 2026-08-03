@@ -68,14 +68,19 @@ function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); retu
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
   opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void } = {},
-  deps: { now?: () => number; columns?: () => number; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; getSessionMessagesIn?: (id: string, cwd?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void } = {},
+  // `home`/`platform` are injectable for the same reason `now`/`columns` are: the frame-capture fixture has
+  // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
+  // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
+  // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
+  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; getSessionMessagesIn?: (id: string, cwd?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
   const nowFn = deps.now ?? (() => Date.now());
   const columnsFn = deps.columns ?? (() => process.stdout.columns ?? 80);
   const scheduleRepaint = deps.scheduleRepaint ?? ((cb: () => void, ms: number) => { const id = setInterval(cb, ms); return () => clearInterval(id); });
-  const projectionContext = (): ProjectionContext => ({ cwd, home: homedir(), platform: process.platform, columns: columnsFn(), now: nowFn() });
+  const home = deps.home ?? homedir(), platform = deps.platform ?? process.platform;
+  const projectionContext = (): ProjectionContext => ({ cwd, home, platform, columns: columnsFn(), now: nowFn() });
   // ── The ONE retained transcript document (F1 Task 4). Every visible row — live, replay, attach, resume,
   // rewind, Ctrl-O — is projected from it; `publishedIds` is what makes reconciliation append-only, so a
   // duplicate follow record, a rehydration or a redelivered bootstrap entry can never publish a row twice.
