@@ -76,6 +76,7 @@ export class TranscriptDocument {
   private callsById = new Map<string, ToolEvent[]>();
   private identities = new Set<string>();
   private seq = 0;
+  private rev = 0;
 
   /** Retain one COMPLETE SDK message. Returns false when it is not a completed assistant/user message, or when
    *  its source-stable identity was already retained (disk bootstrap vs. live follow repetition). */
@@ -97,7 +98,7 @@ export class TranscriptDocument {
       if (sidecar?.scope === "call") { const call = uniqueCall(results[0]?.tool_use_id, this.callsById); if (call?.result) call.result.sidecar = sidecar; }
       else if (sidecar) entry.sidecar = sidecar;
     }
-    this.list.push(entry);
+    this.list.push(entry); this.rev++;
     return true;
   }
 
@@ -106,7 +107,7 @@ export class TranscriptDocument {
   appendLocal(event: LocalTranscriptEvent, identity: string): boolean {
     if (this.identities.has(identity)) return false;
     this.identities.add(identity);
-    this.list.push({ sequence: ++this.seq, source: "local", kind: "local-event", identity, event });
+    this.list.push({ sequence: ++this.seq, source: "local", kind: "local-event", identity, event }); this.rev++;
     return true;
   }
 
@@ -118,6 +119,12 @@ export class TranscriptDocument {
 
   entries(): readonly TranscriptEntry[] { return this.list; }
   toolEvents(): readonly ToolEvent[] { return this.tools; }
+  /** A monotonic mutation counter bumped by EVERY write to the retained document — a retained append, a
+   *  superseded eviction, a duplicate upgrade. It exists so a projection can cache its derivation of this
+   *  document and know exactly when to rebuild; `entries().length` cannot serve, because `upgradeDuplicate`
+   *  REPLACES a retained entry's payload in place (no length change) and `evictSuperseded` can remove one
+   *  entry while a later append restores the count. Never decreases and never resets. */
+  revision(): number { return this.rev; }
 
   /** Disk rows from `getSessionMessages()` never carry the structured `tool_use_result` sidecar, but the host's
    *  live copy of the SAME uuid does — so the second delivery of a deduplicated identity can be strictly richer.
@@ -128,7 +135,7 @@ export class TranscriptDocument {
     const entry = this.list.find((e) => e.identity === identity);
     if (entry?.kind !== "sdk-message" || entry.sidecar !== undefined) return;
     if (this.tools.some((c) => c.result?.resultSequence === entry.sequence && c.result.sidecar !== undefined)) return;
-    entry.message = message;
+    entry.message = message; this.rev++;
     const results = contentBlocks(entry.message).filter((b) => b.type === "tool_result");
     const sidecar = sidecarFor(results, this.callsById, message.tool_use_result, entry.sequence);
     if (sidecar?.scope === "call") { const call = uniqueCall(results[0]?.tool_use_id, this.callsById); if (call?.result) call.result.sidecar = sidecar; }
@@ -144,7 +151,7 @@ export class TranscriptDocument {
     for (const u of supersedes) {
       if (!nonEmpty(u)) continue;
       const identity = `uuid:${u}`, idx = this.list.findIndex((e) => e.identity === identity);
-      if (idx >= 0) { const [gone] = this.list.splice(idx, 1); if (gone?.kind === "sdk-message") this.retract(gone.sequence); }
+      if (idx >= 0) { const [gone] = this.list.splice(idx, 1); this.rev++; if (gone?.kind === "sdk-message") this.retract(gone.sequence); }
       this.identities.add(identity);
     }
   }

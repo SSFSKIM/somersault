@@ -337,7 +337,7 @@ function entryAtom(entry: TranscriptEntry, items: readonly RenderItem[]): "break
   return real ? "breaker" : "neutral";
 }
 
-function anchoredEntries(document: TranscriptDocument, options: ProjectionOptions): Anchored[] {
+function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionOptions): Anchored[] {
   const anchored: Anchored[] = [];
   const occurrences = new Map<string, number>();
   for (const entry of document.entries()) {
@@ -349,6 +349,33 @@ function anchoredEntries(document: TranscriptDocument, options: ProjectionOption
     anchored.push({ sequence: entry.sequence, rank: 0, items, atom: entryAtom(entry, items) });
   }
   return anchored;
+}
+
+/** The blink repaint (`useChat` re-projects the transient region every 600 ms while a tool is open) calls
+ *  `projectPending`, which folds the WHOLE anchored stream — so without a cache every frame re-renders every
+ *  retained message, markdown and all, and a long resumed/attached transcript pays that per blink.
+ *
+ *  The stream is cacheable because it is a pure function of the DOCUMENT ALONE — verified, not assumed:
+ *  `projectLocalEvent` takes no options at all, and `projectMessageEntry` `void`s them, its one renderer
+ *  (`renderMessage`) being a single-argument function of the message. Nothing here reads cwd, home, platform,
+ *  columns, now, verbose or projection; those enter strictly LATER, in `renderToolEvent`, `groupItems` and
+ *  `segmentRuns`, all of which stay uncached. So the document's `revision()` is the entire key.
+ *
+ *  Keyed by document in a WeakMap, so a replaced document (rewind, resume) drops its entry with itself. The
+ *  cached array is copied out because callers own their list — `projectAll`/`projectPending` push tool anchors
+ *  onto it and sort it in place — while the `Anchored` records inside it are never mutated and are shared. */
+const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; anchored: readonly Anchored[] }>();
+/** DI-by-deps test seam: the builder is reached through this record, so a test can count rebuilds without
+ *  reading the cache itself. Production never reassigns it. */
+export const projectionDeps = { buildAnchored: buildAnchoredEntries };
+
+function anchoredEntries(document: TranscriptDocument, options: ProjectionOptions): Anchored[] {
+  const revision = document.revision();
+  const hit = anchoredCache.get(document);
+  if (hit !== undefined && hit.revision === revision) return [...hit.anchored];
+  const anchored = projectionDeps.buildAnchored(document, options);
+  anchoredCache.set(document, { revision, anchored });
+  return [...anchored];
 }
 
 const bySequence = (a: Anchored, b: Anchored) => a.sequence - b.sequence || a.rank - b.rank;

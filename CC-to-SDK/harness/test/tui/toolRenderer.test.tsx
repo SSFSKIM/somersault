@@ -3,8 +3,8 @@ import { Writable } from "node:stream";
 import { render as renderInk } from "ink";
 import { render } from "ink-testing-library";
 import wrapAnsi from "wrap-ansi";
-import { describe, expect, it } from "vitest";
-import { displayPath, foldToolOutput, GROUP_HINT_GUTTER, osc8FileLink, projectCompact, projectDetail, projectPending, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { displayPath, foldToolOutput, GROUP_HINT_GUTTER, osc8FileLink, projectCompact, projectDetail, projectionDeps, projectPending, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
@@ -348,5 +348,54 @@ describe("F1 5c fixes: silent absorption and the unclosed trailing group", () =>
     const doc = built(call("bash-1", "Bash", { command: "npm test" }), result("bash-1", "ok"), prose("mid"),
       call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), call("bash-2", "Bash", { command: "npm run build" }));
     expect(lineTexts(projectPending(doc, context))).toEqual(["  Read 1 file (ctrl+o to expand)", "⏺ Bash(npm run build)"]);
+  });
+});
+
+// ── The blink path's memoized anchored stream ───────────────────────────────────────────────────────────
+// `useChat` re-projects the transient region every 600 ms while a tool is open, and `projectPending` folds the
+// WHOLE anchored stream — so an unmemoized build re-renders every retained message (markdown included) per
+// blink frame. The stream depends on the document ALONE, so it is cached against `TranscriptDocument.revision()`.
+describe("F1 anchored-stream memoization", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("builds the anchored stream once per revision while the blink repaints on a moving clock", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
+    const spy = vi.spyOn(projectionDeps, "buildAnchored");
+    // Two consecutive frames of the same 600 ms blink: `now` moves, the document does not.
+    expect(lineTexts(projectPending(doc, context))).toEqual(["⏺ Reading 1 file… (ctrl+o to expand)"]);
+    expect(lineTexts(projectPending(doc, { ...context, now: 600 }))).toEqual(["  Reading 1 file… (ctrl+o to expand)"]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    // Every other projection of the same document shares the one cache entry — including the detail (ctrl+o)
+    // and compact reads, whose columns/verbose/projection knobs never reach this stage.
+    projectCompact(doc, context); projectDetail(doc, { ...context, projection: "detail-all", columns: 40 });
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("rebuilds when a retained append changes the document, and the projection follows", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
+    const spy = vi.spyOn(projectionDeps, "buildAnchored");
+    expect(lineTexts(projectPending(doc, context))).toEqual(["⏺ Reading 1 file… (ctrl+o to expand)"]);
+    doc.appendSdk("host", result("read-1"));
+    expect(lineTexts(projectPending(doc, context))).toEqual(["  Read 1 file (ctrl+o to expand)"]);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("rebuilds on an in-place sidecar upgrade — the mutation no entry COUNT can see", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
+    doc.appendSdk("disk", result("read-1"));                                  // the disk copy: no structured sidecar
+    const before = lineTexts(projectCompact(doc, context));
+    const spy = vi.spyOn(projectionDeps, "buildAnchored");
+    expect(lineTexts(projectCompact(doc, context))).toEqual(before);
+    expect(spy).toHaveBeenCalledTimes(0);
+    // The host's live copy of the SAME uuid: deduplicated (appendSdk returns false) yet it REPLACES the retained
+    // payload in place, so the entry count is untouched while what projection must render changed.
+    const richer = { type: "user", uuid: "u-read-1", tool_use_result: { file: { numLines: 1 } },
+      message: { content: [{ type: "tool_result", tool_use_id: "read-1", content: "body" }, { type: "text", text: "upgraded note" }] } } as Record<string, unknown>;
+    const entries = doc.entries().length, revision = doc.revision();
+    expect(doc.appendSdk("host", richer)).toBe(false);
+    expect(doc.entries().length).toBe(entries); expect(doc.revision()).toBe(revision + 1);
+    const after = lineTexts(projectCompact(doc, context));
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(before).not.toContain("› upgraded note"); expect(after).toContain("› upgraded note");
   });
 });
