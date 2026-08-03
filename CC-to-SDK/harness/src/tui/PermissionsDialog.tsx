@@ -6,10 +6,11 @@
 // same convention as every other dialog in this package) — this component owns only the keys, the tab/row
 // cursor, and which sub-view (if any) is showing.
 //
-// F2 Task 8: no `useInput`. Like SettingsDialog it pushes `Settings` + `Tabs` and routes every one of their
-// actions back into ONE `onKey` — the old handler body verbatim on the re-projected event — so the rule-entry
-// sub-view can keep receiving `j`, `k`, space and `/` as literal text while the contexts' null bindings keep
-// the six root globals unbound. The single exception is the embedded AddDirDialog: its entry phase needs the
+// F2 Task 8 (+ final review): no `useInput`. Like SettingsDialog it pushes `Settings` + `Tabs`, so the
+// rule-entry sub-view keeps receiving `j`, `k`, space and `/` as literal text while the contexts' null
+// bindings keep the six root globals unbound. Also like SettingsDialog, the split follows the SURFACE: the
+// navigable TOP LEVEL dispatches on the ACTION (a rebind that resolves has to actually move something), while
+// every sub-view keeps the physical body — see `onSubKey`. The single exception is the embedded AddDirDialog: its entry phase needs the
 // keymap FALLBACK for the path it is typing, and an action handler always CONSUMES, so while that sub-view is
 // up this component registers NO action handlers at all (the scopes stay, and with them the nulls) and the
 // unhandled actions fall through to the child's fallback.
@@ -145,7 +146,13 @@ export function PermissionsDialog({
   const clampedIdx = Math.min(idx, Math.max(0, items.length - 1));
   const selectedItem = items[clampedIdx];
 
-  const onKey = (e: KeyEvent | TextEvent) => {
+  /** The six sub-views, verbatim from the pre-review handler and deliberately still PHYSICAL (final review):
+   *  two of them are text entry (the rule name), and the other four are modal prompts whose only keys are the
+   *  `Enter`/`Esc` their own footers spell out — while `select:accept` is bound to {enter, SPACE}, so
+   *  dispatching them on the ACTION would newly delete a permission rule, or remove a workspace directory, on
+   *  a stray space. The navigable top level is the surface a rebind is actually about, and that is where the
+   *  action dispatch went. */
+  const onSubKey = (e: KeyEvent | TextEvent) => {
     const sub = subRef.current;                      // shadows the render value ON PURPOSE: a handler must branch
                                                      // on the LIVE sub-view, not the one this render was built from
     if (sub === "addDir") return;                    // the embedded AddDirDialog owns every key while it's showing
@@ -187,33 +194,46 @@ export function PermissionsDialog({
       }
       return;
     }
-    // top level (sub === "none")
-    if (key.escape) { onDone(); return; }
-    if (key.tab && key.shift) { cycleTab(-1); return; }
-    if (key.tab) { cycleTab(1); return; }
-    if (key.leftArrow) { cycleTab(-1); return; }
-    if (key.rightArrow) { cycleTab(1); return; }
-    if (key.upArrow) { setIdx((i) => Math.max(0, i - 1)); return; }
-    if (key.downArrow) { setIdx((i) => Math.min(Math.max(0, items.length - 1), i + 1)); return; }
-    if (key.return) {
-      const item = items[clampedIdx];
-      if (!item) return;
-      if (item.kind === "addRule") { setRuleText(""); setSub("addRuleText"); return; }
-      if (item.kind === "addDir") { setSub("addDir"); return; }
-      if (item.kind === "rule") { setSelectedRule(item.row); setSub(item.row.readOnly ? "ruleDetails" : "deleteConfirm"); return; }
-      if (item.kind === "dir") { if (item.d.source === "session") { setSelectedDir(item.d.path); setSub("removeDirConfirm"); } return; }
-      // denial: no live park is left to act on once a decision has already settled — this tab is a READ-
-      // ONLY log. Enter intentionally falls through to a no-op here (↑/↓ still moves the cursor above);
-      // the footer no longer claims otherwise (RECENT_FOOTER, Finding 2 divergence note).
-    }
+  };
+  /** Every registration below goes through this: a sub-view keeps the physical body above, the top level gets
+   *  the semantic op. Branching on the LIVE ref, never the render value — one stdin chunk dispatches several
+   *  events with no render in between. */
+  const route = (op: () => void) => (e: KeyEvent | TextEvent) => {
+    if (subRef.current === "addDir") return;
+    if (subRef.current !== "none") { onSubKey(e); return; }
+    op();
+  };
+  const activate = () => {
+    const item = items[clampedIdx];
+    if (!item) return;
+    if (item.kind === "addRule") { setRuleText(""); setSub("addRuleText"); return; }
+    if (item.kind === "addDir") { setSub("addDir"); return; }
+    if (item.kind === "rule") { setSelectedRule(item.row); setSub(item.row.readOnly ? "ruleDetails" : "deleteConfirm"); return; }
+    if (item.kind === "dir") { if (item.d.source === "session") { setSelectedDir(item.d.path); setSub("removeDirConfirm"); } return; }
+    // denial: no live park is left to act on once a decision has already settled — this tab is a READ-ONLY
+    // log. Accepting is intentionally a no-op here (↑/↓ still moves the cursor); the footer no longer claims
+    // otherwise (RECENT_FOOTER, Finding 2 divergence note).
   };
   useKeyScope("Settings");
   useKeyScope("Tabs");
+  // Each top-level handler performs its own operation instead of re-reading the physical key out of a shared
+  // body — that re-read is what made a user's `"x": "select:next"` resolve, match, reach this component and
+  // move nothing (final review, P2). One deliberate widening comes with it: `select:accept` is bound to
+  // {enter, space}, so space now takes the highlighted row here as it always has in SettingsDialog, where the
+  // old hand-rolled branch tested `key.return` alone. Nothing destructive is one keypress away — every
+  // delete/remove still needs its own Enter inside the modal prompt that opens.
   useKeyActions(sub === "addDir" ? NO_ACTIONS : {
-    "select:previous": onKey, "select:next": onKey, "select:accept": onKey,
-    "confirm:no": onKey, "settings:search": onKey, "tabs:next": onKey, "tabs:previous": onKey,
+    "select:previous": route(() => setIdx((i) => Math.max(0, i - 1))),
+    "select:next": route(() => setIdx((i) => Math.min(Math.max(0, items.length - 1), i + 1))),
+    "select:accept": route(activate),
+    "confirm:no": route(() => onDone()),
+    "settings:search": route(() => {}),                // `/` opens no query here — this dialog has no search
+    "tabs:next": route(() => cycleTab(1)),
+    "tabs:previous": route(() => cycleTab(-1)),
   });
-  useKeyFallback(onKey);
+  // The top level has no key the table does not name, so the fallback exists purely to feed the sub-views'
+  // text entry (and to be swallowed while the embedded AddDirDialog owns the keyboard).
+  useKeyFallback(route(() => {}));
 
   if (sub === "addRuleText") return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>

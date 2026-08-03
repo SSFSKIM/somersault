@@ -132,6 +132,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const openBgPanelRef = useRef(openBgPanel); openBgPanelRef.current = openBgPanel;
   const exitRef = useRef(exit); exitRef.current = exit;
   const openModelPickerRef = useRef(openModelPicker); openModelPickerRef.current = openModelPicker;
+  const openShortcutsRef = useRef(openShortcuts); openShortcutsRef.current = openShortcuts;
   const setThinkRef = useRef(setThink); setThinkRef.current = setThink;
   const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disarm = () => { setExitArmed(false); if (disarmTimer.current) { clearTimeout(disarmTimer.current); disarmTimer.current = null; } };
@@ -188,6 +189,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       setExitArmed(true); if (disarmTimer.current) clearTimeout(disarmTimer.current); disarmTimer.current = setTimeout(() => setExitArmed(false), 2000);
     },
     "task:background": () => { rootStateRef.current.busy ? backgroundNowRef.current() : openBgPanelRef.current(); disarm(); },
+    // `help:show` is bound to NOTHING by default — the `?` that opens this overlay is composer-local, gated on
+    // an empty buffer because it is a printable character the composer must otherwise insert. The action is
+    // still declared (a user may name it in keybindings.json), and until the final review it had no handler
+    // anywhere: the rebind validated, resolved, matched — and then fell through to the composer and typed.
+    // It lands here because this is where the overlay's state lives, on the SAME `openShortcuts` seam the
+    // composer's `?` calls (`onHelp` below). It does NOT inherit that key's empty-buffer gate: the gate exists
+    // to keep a printable character insertable, and a key the user dedicated to help has nothing to insert.
+    // No `disarm()` either — the composer's `?` leaves the Ctrl-C exit arm alone, and this is the same door.
+    "help:show": () => { openShortcutsRef.current(); },
     "chat:modelPicker": () => { void openModelPickerRef.current(); },                               // KB8 (alt+p)
     // KB8 (alt+t): the Settings Thinking-mode row's flow — setThink is /think's own mechanism
     // (session.setMaxThinkingTokens) with the off/default pair the row toggles between.

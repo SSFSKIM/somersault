@@ -170,6 +170,38 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     await waitFor(() => background.mock.calls.length === 1);
   });
 
+  // F2 final whole-branch review, P2: `help:show` is declared in VALID_ACTIONS and bound to nothing by default
+  // — the `?` that opens the overlay is composer-local, gated on an empty buffer, because it is a printable
+  // character. Validation and resolution both accepted a user binding for it, and then nobody handled it: the
+  // key fell through to the composer and typed. It has a root registration now, on the SAME `openShortcuts`
+  // seam the composer's `?` calls.
+  it("(j) a user layer's `help:show` opens the shortcuts overlay (the rebind-only action has a handler)", async () => {
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
+      { userLayers: [{ context: "Global", bindings: { "alt+/": "help:show" } }] },
+    );
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("\x1b/");                                     // alt+/
+    await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
+    stdin.write("\x1b");                                      // Help's own escape still closes it
+    await waitFor(() => !frame(lastFrame).includes("Keyboard shortcuts"));
+  });
+
+  // …and it opens over a NON-empty buffer, which the composer's `?` deliberately cannot: a dedicated key has no
+  // reason to inherit the gate that exists only to keep a printable character insertable.
+  it("(j2) the rebound help key works with text in the composer, and never types itself", async () => {
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
+      { userLayers: [{ context: "Global", bindings: { "alt+/": "help:show" } }] },
+    );
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("draft"); await waitFor(() => frame(lastFrame).includes("draft"));
+    stdin.write("\x1b/");
+    await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
+    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("draft"));
+    expect(frame(lastFrame), "the key opened the overlay instead of inserting").not.toContain("draft/");
+  });
+
   // Task 8 turned this from a per-file list into a directory sweep: the migration is finished, so the honest
   // gate is "NOTHING under src/tui subscribes to Ink's input any more". Prose mentioning `useInput` survives in
   // several headers (it is the history these files explain) — the gate is on CALLS and IMPORTS, not comments.

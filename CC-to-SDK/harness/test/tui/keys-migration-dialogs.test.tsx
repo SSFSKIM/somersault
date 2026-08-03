@@ -11,9 +11,11 @@
 //   * QuestionDialog's free-text row keeps `y`/`n`/`enter` LITERAL while typing (the Confirmation scope is
 //     gated off there), which is the one place the table would otherwise eat a user's answer.
 // Rendered bare these components have no input path at all — every render goes through `renderWithKeymap`.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
+import { SettingsDialog } from "../../src/tui/SettingsDialog.js";
+import { PermissionsDialog } from "../../src/tui/PermissionsDialog.js";
 import { SessionPicker } from "../../src/tui/SessionPicker.js";
 import { ModelPicker } from "../../src/tui/ModelPicker.js";
 import { OutputStylePicker } from "../../src/tui/OutputStylePicker.js";
@@ -389,6 +391,30 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
     expect(confirmed).toEqual(["/tmp/x", true]);
   });
 
+  // Final review (deferred t8 minor). The pager REBOUND ctrl+b to scroll:fullPageUp, so its chord alias was the
+  // one key still reaching `Task` from inside the overlay: `ctrl+x ctrl+b` backgrounded the running turn from a
+  // surface that owns every other key on screen. `Transcript` nulls the alias now, as MessageSelector and
+  // HistorySearch do — the table half is pinned in keys-bindings.test.ts, this is the behavior half.
+  it("the transcript pager does not background the running turn through ctrl+b's chord alias", async () => {
+    const background = vi.fn(async () => ({ ok: true }));
+    let fake: ReturnType<typeof fakeRemote>;
+    fake = fakeRemote({
+      submit: async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); return new Promise(() => {}); },
+      background,
+    });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("go");   await waitFor(() => frame(lastFrame).includes("go"));
+    stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("⟳"));
+    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Transcript"));   // ctrl+o opens the pager
+    stdin.write("\x18"); stdin.write("\x02");                                            // ctrl+x ctrl+b inside it
+    await new Promise((r) => setTimeout(r, 30));
+    expect(background, "the pager must not background the turn").not.toHaveBeenCalled();
+    stdin.write("\x1b"); await waitFor(() => !frame(lastFrame).includes("Transcript"));   // esc leaves the pager…
+    stdin.write("\x18"); stdin.write("\x02");                                            // …and the chord works again
+    await waitFor(() => background.mock.calls.length === 1);
+  });
+
   it("the ⏪ restoring hold swallows everything for as long as the rewind runs", async () => {
     let release: () => void = () => {};
     const held = new Promise<void>((r) => { release = r; });
@@ -414,5 +440,81 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
     expect(frame(lastFrame)).not.toContain("Background tasks");     // ctrl+x ctrl+b did not survive it either
     release();
     await waitFor(() => !frame(lastFrame).includes("restoring"));
+  });
+});
+
+// F2 final whole-branch review, P2: a rebind that RESOLVES must also DO something. The three dialogs that route
+// every one of their actions into a single `onKey` re-checked the PHYSICAL key inside that body, so a user's
+// `"x": "select:next"` resolved to the action, reached the handler, and moved nothing — the exact split (a key
+// the table honours and the component ignores) the whole wave exists to remove. Each dialog's NAVIGABLE surface
+// dispatches on the action now; its text-entry and modal-prompt phases stay physical, which is what keeps the
+// default keys byte-identical (each component's header records the line).
+describe("F2 final review — a custom rebind drives the dialogs' semantic ops, not just their default keys", () => {
+  const settingsLayer = (bindings: Record<string, string | null>) => [{ context: "Settings" as const, bindings }];
+  const settingsProps = () => ({
+    tab: "Config", onTabChange: () => {}, mode: "default", thinkLevel: "default", outputStyle: "default",
+    onDone: () => {}, applyMode: async () => {}, setThink: async () => {}, applyOutputStyle: async () => {},
+    fetchStatus: async () => [], fetchUsage: async () => [], fetchStats: async () => [],
+    onOpenModelPicker: () => {}, savePrefs: () => {},
+  });
+  const permProps = () => ({
+    tab: "Allow", onTabChange: () => {}, denials: [], cwd: "/tmp",
+    fetchSettings: async () => ({ sources: [{ source: "userSettings", settings: { permissions: { allow: ["Bash(ls)", "WebFetch"] } } }] }),
+    fetchDirs: async () => [],
+    addRule: async () => {}, removeRule: async () => {}, removeDir: async () => {},
+    addDirValidate: async () => ({ kind: "missing", abs: "" }) as AddDirVerdict,
+    confirmAddDir: async () => {}, cancelAddDir: () => {}, onDone: () => {},
+  });
+
+  it("SettingsDialog: `x` bound to select:next moves the row cursor (and `z` to select:previous moves it back)", async () => {
+    const { stdin, lastFrame } = render(<SettingsDialog {...settingsProps()} />, { userLayers: settingsLayer({ x: "select:next", z: "select:previous" }) });
+    await waitFor(() => frame(lastFrame).includes("❯ Theme"));
+    stdin.write("x"); await waitFor(() => frame(lastFrame).includes("❯ Model"));
+    stdin.write("x"); await waitFor(() => frame(lastFrame).includes("❯ Output style"));
+    stdin.write("z"); await waitFor(() => frame(lastFrame).includes("❯ Model"));
+  });
+
+  it("SettingsDialog: the rebound key is still LITERAL TEXT inside the `/` search query (the mode branch stays physical)", async () => {
+    const { stdin, lastFrame } = render(<SettingsDialog {...settingsProps()} />, { userLayers: settingsLayer({ x: "select:next", z: "select:previous" }) });
+    await waitFor(() => frame(lastFrame).includes("❯ Theme"));
+    stdin.write("/"); await waitFor(() => frame(lastFrame).includes("Search settings…"));
+    stdin.write("x"); await waitFor(() => frame(lastFrame).includes("Type to filter"));
+    expect(frame(lastFrame), "the query accumulated the character").toContain("x");
+    expect(frame(lastFrame), "…and no row cursor moved under it").not.toContain("❯ Model");
+  });
+
+  it("PermissionsDialog: `x` bound to select:next moves the row cursor", async () => {
+    const { stdin, lastFrame } = render(<PermissionsDialog {...permProps()} />, { userLayers: settingsLayer({ x: "select:next" }) });
+    await waitFor(() => frame(lastFrame).includes("❯ Add a new rule…"));
+    stdin.write("x"); await waitFor(() => frame(lastFrame).includes("❯ Bash(ls)"));
+    stdin.write("x"); await waitFor(() => frame(lastFrame).includes("❯ WebFetch"));
+  });
+
+  it("PermissionsDialog: the rebound key is still LITERAL TEXT in the add-rule prompt (the sub-view stays physical)", async () => {
+    const { stdin, lastFrame } = render(<PermissionsDialog {...permProps()} />, { userLayers: settingsLayer({ x: "select:next" }) });
+    await waitFor(() => frame(lastFrame).includes("❯ Add a new rule…"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Enter permission rule…"));
+    for (const ch of "xx") { stdin.write(ch); await tick(); }
+    await waitFor(() => frame(lastFrame).includes("Add allow permission rule"));
+    expect(frame(lastFrame)).toContain("xx");
+  });
+
+  it("AddDirDialog: `x` bound to select:next moves the confirm menu, and is still path text in the entry phase", async () => {
+    const layer = [{ context: "Select" as const, bindings: { x: "select:next" } }];
+    const b = render(<AddDirDialog prefill="/tmp/x" onValidate={async () => ({ kind: "missing", abs: "" }) as AddDirVerdict}
+      onConfirm={() => {}} onCancel={() => {}} />, { userLayers: layer });
+    await waitFor(() => frame(b.lastFrame).includes("❯ Yes, for this session"));
+    b.stdin.write("x"); await waitFor(() => frame(b.lastFrame).includes("❯ Yes, and remember this directory"));
+    b.stdin.write("x"); await waitFor(() => frame(b.lastFrame).includes("❯ No"));
+    b.unmount();
+
+    const validated: string[] = [];
+    const a = render(<AddDirDialog onValidate={async (raw) => { validated.push(raw); return { kind: "missing", abs: raw } as AddDirVerdict; }}
+      onConfirm={() => {}} onCancel={() => {}} />, { userLayers: layer });
+    await waitFor(() => frame(a.lastFrame).includes("Enter the path to the directory:"));
+    for (const ch of "/x") { a.stdin.write(ch); await tick(); }
+    await waitFor(() => frame(a.lastFrame).includes("/x"));
+    a.stdin.write("\r"); await waitFor(() => validated.length === 1);
+    expect(validated[0], "the entry phase types the rebound key instead of navigating").toBe("/x");
   });
 });

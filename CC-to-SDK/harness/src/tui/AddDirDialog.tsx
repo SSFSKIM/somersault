@@ -12,11 +12,12 @@
 // ctrl+c/o/t/r/b never reached either phase, and a scope gated off during entry revived all six over a half-typed
 // path — Ctrl-R or Ctrl-B there renders history search or the bg panel ABOVE the addDir arm, unmounting this
 // component and discarding what was typed. `Select` is the natural context: the confirm phase is literally a
-// three-row list, and the entry phase is covered because every one of Select's actions is routed back into the
-// single `onKey` below, which branches on the phase — so `j`/`k` (and, when PermissionsDialog embeds this
-// component, the `space` and `/` its `Settings` scope binds) are typed into the path instead of navigating.
-// That is the SettingsDialog shape, adopted here for exactly the reason recorded there. Free text the table
-// never matched still arrives at the keymap FALLBACK, which is the same `onKey`.
+// three-row list. The entry phase is covered because every one of Select's actions is ROUTED BY PHASE (see
+// `route` below) — during entry they all land in the physical `onEntryKey`, so `j`/`k` (and, when
+// PermissionsDialog embeds this component, the `space` and `/` its `Settings` scope binds) are typed into the
+// path instead of navigating. Free text the table never matched arrives at the keymap FALLBACK, routed the
+// same way. F2 final review changed only the other half: the confirm phase's handlers now perform their own
+// operation instead of re-reading the physical key, so a rebound key actually moves the menu (P2).
 //
 // Enter/Escape therefore mean the phase's own thing (validate/submit vs. pick/cancel), and the bare y/n of the
 // `Confirmation` context are gone with it — deliberately: the confirm phase's footer only ever advertised
@@ -66,33 +67,39 @@ export function AddDirDialog({ prefill, onValidate, onConfirm, onCancel }: {
     else if (idx === 1) onConfirm(abs, true);
     else onCancel(abs);                                            // "No" behaves exactly like Esc
   };
-  // The one handler both routes land on — Select's actions and the fallback alike (see the header). It reads the
-  // re-projected event, never "which action fired", so the two paths cannot drift apart.
-  const onKey = (e: KeyEvent | TextEvent) => {
+  // The ENTRY phase is a text prompt, so it keeps the physical body: `j`, `k` and space are characters in a
+  // path, and they arrive as Select actions (and, embedded under PermissionsDialog, as Settings ones) — only
+  // the event can say what they are. Both routes land here, actions and fallback alike (see the header).
+  const onEntryKey = (e: KeyEvent | TextEvent) => {
     const { input, key } = toKeyFlags(e);
-    if (phase === "confirm") {                                     // a three-row menu: only the list keys mean anything
-      if (key.escape) { onCancel(abs); return; }                   // "No" and Esc are the same outcome
-      if (key.return) { pick(); return; }
-      if (key.upArrow || input === "k" || (key.ctrl && input === "p")) { setIdx((i) => Math.max(0, i - 1)); return; }
-      if (key.downArrow || input === "j" || (key.ctrl && input === "n")) { setIdx((i) => Math.min(OPTIONS.length - 1, i + 1)); return; }
-      return;
-    }
     if (validating) return;                                        // ignore keys mid-validate (no double-submit)
     if (key.escape) { onCancel(); return; }
     if (key.return) { submitPath(); return; }
     if (key.backspace || key.delete) { setText(textRef.current.slice(0, -1)); return; }
     if (input && input >= " " && !key.ctrl && !key.meta) setText(textRef.current + input);
   };
-  // Jumps have no `toKeyFlags` projection (home/end/pageup/pagedown all flatten to an empty input), so they are
-  // the one pair `onKey` cannot serve — and on a three-row list a page IS the list. Inert during entry.
+  /** The CONFIRM phase is a three-row list and nothing else, so its actions perform their own operation —
+   *  a `"x": "select:next"` in the user's file has to move the cursor, not resolve into a body that then
+   *  re-checks for `j` (final review, P2). Embedded under PermissionsDialog the Settings context adds `space`
+   *  to select:accept, so space takes the highlighted row here too; standalone, Select never binds it. */
+  const route = (op: () => void) => (e: KeyEvent | TextEvent) => {
+    if (phase === "entry") { onEntryKey(e); return; }
+    op();
+  };
+  // Jumps never had a `toKeyFlags` projection to re-read (home/end/pageup/pagedown all flatten to an empty
+  // input) — on a three-row list a page IS the list. Inert during entry, like every other confirm-phase op.
   const jump = (to: number) => () => { if (phase === "confirm") setIdx(Math.max(0, Math.min(OPTIONS.length - 1, to))); };
   useKeyScope("Select");
   useKeyActions({
-    "select:previous": onKey, "select:next": onKey, "select:accept": onKey, "select:cancel": onKey,
+    "select:previous": route(() => setIdx((i) => Math.max(0, i - 1))),
+    "select:next": route(() => setIdx((i) => Math.min(OPTIONS.length - 1, i + 1))),
+    "select:accept": route(pick),
+    "select:cancel": route(() => onCancel(abs)),                   // "No" and Esc are the same outcome
     "select:first": jump(0), "select:pageUp": jump(0),
     "select:last": jump(OPTIONS.length - 1), "select:pageDown": jump(OPTIONS.length - 1),
   });
-  useKeyFallback(onKey);
+  // Confirm-phase keys the table does not name mean nothing here; entry-phase ones are the typed path.
+  useKeyFallback(route(() => {}));
 
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>

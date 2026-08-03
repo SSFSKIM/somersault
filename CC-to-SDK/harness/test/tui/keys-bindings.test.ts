@@ -125,7 +125,11 @@ describe("overlay gating, expressed as null bindings", () => {
   // or /config — one key unbound while its alias worked, exactly the split this table exists to remove.
   // Costs the overlay nothing: a null-bound chord does not arm its own prefix (resolver.ts's compile step), it
   // is only consulted during the pending walk — keys-resolver.test.ts pins that half.
-  it.each(["Select", "Settings"])("%s unbinds task:background's chord alias too, not just the plain ctrl+b", (context) => {
+  // Final review (deferred t8 minor), extended to the other three surfaces the same split reached:
+  // MessageSelector and HistorySearch nulled the plain key and stopped there, and Transcript REBOUND ctrl+b to
+  // scroll:fullPageUp while leaving the alias to fall through to `Task` — a pager whose ctrl+b scrolls and
+  // whose ctrl+x ctrl+b backgrounds the running turn from inside it.
+  it.each(["Select", "Settings", "MessageSelector", "HistorySearch", "Transcript"])("%s unbinds task:background's chord alias too, not just the plain ctrl+b", (context) => {
     expect(block(context).bindings["ctrl+x ctrl+b"], `${context} ctrl+x ctrl+b must be null`).toBeNull();
   });
   it("HistorySearch is an overlay owner too, but rebinds ctrl+r/ctrl+c instead of unbinding them", () => {

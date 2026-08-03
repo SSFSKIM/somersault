@@ -67,6 +67,10 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // Chat's alt+p/alt+t (model picker / thinking) could otherwise fire through a still-registered Chat scope
     // in the passive-flush sub-tick after this overlay mounts (two keys in one chunk) — t7 review.
     "alt+p": null, "alt+t": null,
+    // ctrl+b is REBOUND above (scroll:fullPageUp), which left its chord alias as the one Global-family key still
+    // reaching `Task` from inside the pager: `ctrl+x ctrl+b` backgrounded the running turn from a surface that
+    // owns every other key on screen (final review, deferred t8 minor). Same null, same zero cost, as Select's.
+    "ctrl+x ctrl+b": null,
   }},
   { context: "HistorySearch", bindings: {
     "ctrl+r": "historySearch:next", "escape": "historySearch:accept", "tab": "historySearch:accept",
@@ -75,6 +79,7 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // ctrl+r/ctrl+c above are rebindings, not survivals; the remaining four are dead today and stay dead.
     "ctrl+o": null, "ctrl+t": null, "ctrl+b": null, "ctrl+d": null,
     "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
+    "ctrl+x ctrl+b": null,          // …and ctrl+b's chord alias with it (final review; see Select)
   }},
   { context: "MessageSelector", bindings: {
     "up": "messageSelector:up", "down": "messageSelector:down", "enter": "messageSelector:select",
@@ -86,6 +91,7 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // RewindPicker is an "overlay" owner (state.rewindPicker.open) — same total suppression as Select/Settings.
     "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
+    "ctrl+x ctrl+b": null,          // …and ctrl+b's chord alias with it (final review; see Select)
   }},
   { context: "Select", bindings: {
     "up": "select:previous", "down": "select:next", "j": "select:next", "k": "select:previous",
@@ -131,7 +137,8 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
 ];
 
 /** Exactly the action names the table uses, plus `help:show` — bound to nothing by default (the `?` that opens the
- *  overlay is composer-local) but nameable in a user rebinding, so it must validate. */
+ *  overlay is composer-local) but nameable in a user rebinding, so it must validate. ChatApp registers its handler
+ *  (final review): an action that validates and resolves but reaches nobody is a rebind that silently does nothing. */
 export const VALID_ACTIONS: readonly string[] = [
   "app:interrupt", "app:exit", "app:toggleTranscript", "app:toggleTodos", "history:search", "task:background",
   "chat:cancel", "chat:clearInput", "chat:cycleMode", "chat:killAgents", "chat:externalEditor", "chat:modelPicker", "chat:thinkingToggle",

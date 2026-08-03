@@ -6,13 +6,17 @@
 // is a callback injected by useChat.ts, same convention as AddDirDialog/ThemeDialog.
 //
 // F2 Task 8: no `useInput`. This dialog pushes TWO contexts — `Settings` (escape, the row cursor incl. j/k and
-// ctrl+p/ctrl+n, enter/space to change, `/` to search) and `Tabs` (tab/shift+tab/left/right) — and routes
-// EVERY one of their actions back into the single `onKey` below, which is the old handler body verbatim on
-// the re-projected event. ChatComposer established that shape for the same reason: the action bodies were
-// already branches of it, and one path cannot drift from itself. Search mode is why the scopes stay pushed
-// while typing rather than being gated off: `/`, `j`, `k` and space must reach the query as literal text, but
-// the six root globals must stay unbound — and the nulls live in the context, so dropping it would revive
-// them. Routing the actions through `onKey` gets both.
+// ctrl+p/ctrl+n, enter/space to change, `/` to search) and `Tabs` (tab/shift+tab/left/right). Search mode is
+// why the scopes stay pushed while typing rather than being gated off: `/`, `j`, `k` and space must reach the
+// query as literal text, but the six root globals must stay unbound — and the nulls live in the context, so
+// dropping it would revive them.
+//
+// F2 final review: task 8 routed every one of those actions into ONE `onKey` that then re-read the physical
+// key, which quietly made the actions physical again — `"x": "select:next"` in a user's keybindings.json
+// resolved, matched, reached this component and moved nothing. The split follows the SURFACE now, not the key:
+// browsing dispatches on the ACTION (one closure per handler, below), and the `/` query keeps the physical
+// body, because there a rebound printable key must type itself like every other character and only the event
+// can tell `up` (exit the query) from `k` (a `k`).
 //
 // Theme and Output-style rows are EMBEDDED sub-views (this component swaps its own render to the
 // sub-component, no nested border) — Esc/Enter inside them return to the Config list via `onDone`/`onPick`/
@@ -99,49 +103,63 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
     onTabChange(TABS[(i + delta + TABS.length) % TABS.length]);
   }
 
-  const onKey = (e: KeyEvent | TextEvent) => {
-    if (subRef.current !== "none") return;   // the embedded Theme/OutputStyle sub-view owns every key while it's showing
+  // The `/` search query is a TEXT-ENTRY surface: while it is open EVERY route — action handler or keymap
+  // fallback — lands here and is read as characters, which is the whole reason the scopes stay pushed while
+  // typing (`j`, `k`, space and `/` must reach the query, while the six root globals stay unbound). This body
+  // is the pre-review handler's search branch verbatim, physical flags and all: `up` exits the query while `k`
+  // types a `k`, and the two are the same ACTION, so only the event can tell them apart.
+  const onSearchKey = (e: KeyEvent | TextEvent) => {
     const { input, key } = toKeyFlags(e);
-    const q = searchRef.current;
-    if (q !== null) {
-      if (key.escape) { setSearch(null); return; }                    // "Esc to clear" — stays on Config, just exits search
-      if (key.upArrow) { setSearch(null); return; }                   // "↑ to tabs" — simplified: no header-focus mode shipped (Global Constraints line 28)
-      if (key.return || key.downArrow) {
-        const picked = filterRows(rows, q)[0];                        // re-filtered from the LIVE query, not this render's
-        setSearch(null);
-        if (picked) { const i = rows.findIndex((r) => r.id === picked.id); if (i >= 0) setIdx(i); }
-        return;
-      }
-      if (key.backspace || key.delete) { setSearch(q.slice(0, -1)); return; }
-      if (input && input >= " " && !key.ctrl && !key.meta) setSearch(q + input);
+    const q = searchRef.current ?? "";
+    if (key.escape) { setSearch(null); return; }                    // "Esc to clear" — stays on Config, just exits search
+    if (key.upArrow) { setSearch(null); return; }                   // "↑ to tabs" — simplified: no header-focus mode shipped (Global Constraints line 28)
+    if (key.return || key.downArrow) {
+      const picked = filterRows(rows, q)[0];                        // re-filtered from the LIVE query, not this render's
+      setSearch(null);
+      if (picked) { const i = rows.findIndex((r) => r.id === picked.id); if (i >= 0) setIdx(i); }
       return;
     }
-    if (key.escape) { onDone(); return; }
-    if (key.tab && key.shift) { cycleTab(-1); return; }
-    if (key.tab) { cycleTab(1); return; }
-    if (key.leftArrow) { cycleTab(-1); return; }                       // left/right always switch tabs — enum rows
-    if (key.rightArrow) { cycleTab(1); return; }                       // cycle via enter/space only (recorded simplification)
-    if (activeTab !== "Config") return;                                 // rows/search only exist on the Config tab
-    if (input === "/") { setSearch(""); return; }
-    if (key.upArrow || input === "k" || (key.ctrl && input === "p")) { setIdx((i) => Math.max(0, i - 1)); return; }
-    if (key.downArrow || input === "j" || (key.ctrl && input === "n")) { setIdx((i) => Math.min(rows.length - 1, i + 1)); return; }
-    if (key.return || input === " ") {
-      const row = rows[idx]; if (!row) return;
-      if (row.type === "boolean") { setThinkingTouched(true); void setThink(row.value === "true" ? "off" : "default"); }
-      else if (row.type === "enum") { void applyMode(cycleEnum(row)); }
-      else if (row.id === "theme") setSub("theme");
-      else if (row.id === "model") onOpenModelPicker();
-      else if (row.id === "outputStyle") setSub("outputStyle");
-    }
+    if (key.backspace || key.delete) { setSearch(q.slice(0, -1)); return; }
+    if (input && input >= " " && !key.ctrl && !key.meta) setSearch(q + input);
   };
-  // The scopes stay pushed in every state (their null bindings are this overlay's gate); `onKey` decides.
+  /** Every registration below goes through this. Two states are not an action's to decide, and both branch on
+   *  the LIVE ref (one stdin chunk dispatches several events with no render in between): the embedded
+   *  Theme/Output-style sub-view owns every key while it shows, and the search query reads them all as text. */
+  const route = (op: () => void) => (e: KeyEvent | TextEvent) => {
+    if (subRef.current !== "none") return;
+    if (searchRef.current !== null) { onSearchKey(e); return; }
+    op();
+  };
+  /** Rows and the search box exist only on the Config tab — the other three render a formatter's output. */
+  const onConfig = (op: () => void) => () => { if (activeTab === "Config") op(); };
+  const acceptRow = () => {
+    const row = rows[idx]; if (!row) return;
+    if (row.type === "boolean") { setThinkingTouched(true); void setThink(row.value === "true" ? "off" : "default"); }
+    else if (row.type === "enum") { void applyMode(cycleEnum(row)); }
+    else if (row.id === "theme") setSub("theme");
+    else if (row.id === "model") onOpenModelPicker();
+    else if (row.id === "outputStyle") setSub("outputStyle");
+  };
+  // The scopes stay pushed in every state (their null bindings are this overlay's gate).
   useKeyScope("Settings");
   useKeyScope("Tabs");
+  // Each handler performs its OWN operation now instead of re-reading the physical key out of a shared body:
+  // that re-read is what made `"x": "select:next"` in a user's keybindings.json resolve, match, reach this
+  // component and move nothing (final review, P2). Browsing is byte-identical under the defaults because each
+  // op takes exactly the keys its action is bound to — `select:accept` is {enter, space}, which is the pair
+  // the old accept branch tested for by hand.
   useKeyActions({
-    "select:previous": onKey, "select:next": onKey, "select:accept": onKey,
-    "confirm:no": onKey, "settings:search": onKey, "tabs:next": onKey, "tabs:previous": onKey,
+    "select:previous": route(onConfig(() => setIdx((i) => Math.max(0, i - 1)))),
+    "select:next": route(onConfig(() => setIdx((i) => Math.min(rows.length - 1, i + 1)))),
+    "select:accept": route(onConfig(acceptRow)),
+    "settings:search": route(onConfig(() => setSearch(""))),
+    "confirm:no": route(() => onDone()),
+    "tabs:next": route(() => cycleTab(1)),                             // left/right always switch tabs — enum rows
+    "tabs:previous": route(() => cycleTab(-1)),                        // cycle via enter/space only (recorded simplification)
   });
-  useKeyFallback(onKey);
+  // Nothing else is this dialog's: browsing has no key the table does not name, so the fallback exists purely
+  // to feed the search query (and to be swallowed while a sub-view is up).
+  useKeyFallback(route(() => {}));
 
   if (sub === "theme") return <ThemeDialog hideEsc onDone={() => setSub("none")} savePrefs={savePrefs} />;
   if (sub === "outputStyle") return <OutputStylePicker current={outputStyle} onPick={(id) => { void applyOutputStyle(id); setSub("none"); }} onCancel={() => setSub("none")} />;
