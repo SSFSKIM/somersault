@@ -1421,7 +1421,18 @@ class FrameScriptsTest(unittest.TestCase):
         self.assertIn("· /effort", visible_text(diff.mask_text(footer, masks)))
         self.assertIn("esc to interrupt", visible_text(diff.mask_text(footer, masks)))
 
-        rerun = raw.replace(spinner, rerun_spinner).replace(footer, rerun_footer)
+        # The active-row leader blinks on a 600 ms phase, so a recapture can land on the off frame:
+        # glyph and space at that cell must sanitize equal, while the row's text stays significant.
+        header = next(line for line in raw.splitlines() if "Reading" in visible_text(line))
+        self.assertIn("⏺", header)
+        blink_off = header.replace("⏺", " ", 1)
+        self.assertEqual(diff.mask_text(header, masks), diff.mask_text(blink_off, masks))
+        self.assertNotEqual(
+            diff.mask_text(header, masks),
+            diff.mask_text(header.replace("Reading", "Sensing"), masks),
+        )
+
+        rerun = raw.replace(spinner, rerun_spinner).replace(footer, rerun_footer).replace(header, blink_off)
         base_lines, base_failures = diff.sanitize_frame_for_comparison(raw, contract, masks)
         rerun_lines, rerun_failures = diff.sanitize_frame_for_comparison(rerun, contract, masks)
         self.assertEqual(base_failures, [])
