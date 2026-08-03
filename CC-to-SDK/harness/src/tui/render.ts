@@ -6,7 +6,12 @@
 // and `text` is the plain fallback. `gutter` is a leading styled marker (the CC `●` bullet / `⎿` connector).
 export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; gutter?: Gutter; segments?: Segment[]; }
 export interface Gutter { text: string; color?: string; dim?: boolean; }
-export interface Segment { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; }
+// `preStyled` (F3 Task 1, the bold-count mechanism of spec Decision Log 2026-08-04): the segment's `text`
+// is ALREADY a raw-SGR byte string and the <Line> view must render it through an UNSTYLED <Text> — no
+// color/dim/bold/italic props. F1 proved `<Text dimColor bold>` never emits `\x1b[1m` (bold is dropped) and
+// that chalk REWRITES a raw `\x1b[22m` nested inside a styled <Text> into `\x1b[2m` (a plain tail comes out
+// dim). Passthrough is the only way to put bold inside a dim run. Style fields are ignored when set.
+export interface Segment { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; preStyled?: true; }
 import { renderMarkdown } from "./markdown.js";
 import { ACCENT, resolveThemeColor, themeTokens } from "./theme.js";
 
