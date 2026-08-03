@@ -970,8 +970,11 @@ by UUID. F1 is schedulable; F1–F8 remain otherwise pending.
   collapse layer the F1 golden could not be faithful. The full normative contract, bundle-line-tagged
   and live-confirmed, is `../research/2026-07-31-tui-clone/08-render-contract-2.1.220.md`. Still in
   F3: fullscreen-only (`ds()`) clauses, `grouped_tool_use` Agent batches, typed result summaries,
-  totals. A related upstream fact recorded there for later waves: errored reads are invisible on a
-  settled summary row.
+  totals. Related upstream facts recorded there for later waves: errored reads are invisible on a
+  settled summary row; and click-to-expand of collapsed blocks is **fullscreen-mode-only** (contract
+  § 12 — mouse reporting mounts only behind `ds()`, expansion is per-item verbose keyed by tool-use
+  id, there is no keyboard equivalent for a single block, and fullscreen strips the textual
+  `(ctrl+o to expand)` hint in favor of hover+click), so it belongs to the fullscreen wave, not F1.
 - 2026-07-31 — created from the six-report research inventory
 - 2026-07-31 — Task 6 review corrected three plan-authored values against upstream: the suspend
   implementation (Ink's ref-counted `setRawMode` and the dead repaint counter), the Ctrl-D double-press

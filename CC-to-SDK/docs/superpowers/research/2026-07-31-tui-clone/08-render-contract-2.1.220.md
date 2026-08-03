@@ -648,3 +648,170 @@ It has **nothing to do with rendering or collapsing.**
 9. ctrl+o replaces the row with per-call `⏺ Tool(args)` + result blocks, thinking blocks,
    hook lines, and memory recalls — never with the summary line (R6.1–R6.4).
 10. `grouped_tool_use` is the parallel-`Agent` batch only, with its own header + per-agent rows (R7.2–R7.3).
+
+
+## 12. Click-to-expand
+
+The `/tui` switch announcement advertises `· Click to expand collapsed tool results` (**L453184**;
+the steady-state variant at **L454487** words it `· Click to move your cursor or expand collapsed
+results`). This section resolves what actually backs that line.
+
+### 12.1 Availability — fullscreen only
+
+**R12.1 Mouse reporting is emitted only by the alt-screen component `uet`.** On mount it writes
+`pVe() + AUe(mouseTracking)` (**L535814**) and on unmount `Gpe` (the disable bundle) (**L535817,
+L535820**). `AUe` (**L177057–177066**) maps the mode string to DECSET bundles built at **L177070**:
+
+| mode | sequence | modes set |
+|---|---|---|
+| `"full"` | `rcy` | `1000` MOUSE_NORMAL + `1002` MOUSE_BUTTON + `1003` MOUSE_ANY + `1006` MOUSE_SGR |
+| `"scroll"` | `ncy` | `1000` MOUSE_NORMAL + `1006` MOUSE_SGR |
+| `"off"` | `""` | none |
+| (teardown) | `Gpe` | disables `1006`, `1003`, `1002`, `1000` |
+
+**R12.2 The mode comes from `bHe()` (L110210–110216):** `"off"` when `CLAUDE_CODE_DISABLE_MOUSE` is
+set truthy, `"scroll"` when `CLAUDE_CODE_DISABLE_MOUSE_CLICKS` is set truthy, otherwise **`"full"`**.
+So click reporting is on by default *wherever the alt screen is on*, and `CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1`
+is the documented way to keep wheel-scroll but kill click-to-expand.
+
+**R12.3 `uet` is mounted only in fullscreen.** Three gates, all `ds()`-derived:
+
+- main chat screen: `if (ds()) return Xge(YU(fNn)); return YU(fNn);` (**L549519–549521**), where
+  `Xge` (**L549377–549381**) is `embedded ? <Box …> : <uet mouseTracking={bHe()}>`
+- transcript screen: `if (_t) return Xge(YU(jn)); return YU(jn);` (**L549391–549393**) with
+  `_t = embedded || (ds() && !searchBarOpen && !disableRenderCap) ? scrollRef : undefined` (**L549385**)
+- every other top-level screen: `Qhi` (**L555070–555084**) — `if (!ds()) return children;` before
+  wrapping in `<uet mouseTracking={bHe()}>`
+
+**R12.4 A second, independent gate:** click handlers exist only on the virtualized list `Ohf`, which
+`czH` renders only when `re = scrollRef != null && !CLAUDE_CODE_DISABLE_VIRTUAL_SCROLL`
+(**L456875, L456997**); the non-virtual path is a plain `Ze.flatMap(Wr)` with no click plumbing.
+In the chat view the scrollRef is supplied when `ds() || HVe()` (**L549395**). `HVe()`
+(**L181553–181569**) is the DECSTBM scroll-region renderer — it returns `false` whenever `ds()` is
+true (**L181562–181563**) and is gated on `CLAUDE_CODE_DECSTBM` or GrowthBook `tengu_marlin_porch`
+(default `false`). Under `HVe` the list *is* virtualized and the `onClick` props *are* attached, but
+no `uet` is mounted, so no mouse reports are ever received and nothing is clickable in practice.
+
+**R12.5 Verdict: click-to-expand does not exist in the default (`ds() === false`) renderer.**
+It requires the flicker-free/alt-screen path — `/tui fullscreen`, `CLAUDE_CODE_NO_FLICKER=1`,
+`CLAUDE_CODE_SESSION_KIND=bg`, or one of the two GrowthBook gates in `ds()` (§2).
+
+**R12.6 Corollary for the summary row.** The virtual list wraps its children in
+`<q3e.Provider value={true}>` (**L456997**), and `Bg` returns `null` under that context
+(**L421334–421336**). Likewise `y_s` drops the ` (ctrl+o to expand)` suffix from truncated tool
+output when the same flag is passed (**L186490**: `vt.dim(Bst(u) + (r ? "" : \` ${Pmy()}\`))`, called
+as `y_s(content, columns, useContext(q3e))` at **L420192**). So **in fullscreen the textual
+`(ctrl+o to expand)` hint disappears from both the collapsed summary row and truncated results** —
+the mouse affordance replaces it. A clone that ships both must swap them the same way.
+
+### 12.2 What a click changes
+
+**R12.7 Per-item expansion state is a `Set` of keys held by `czH`** (**L456924–456934**):
+
+```js
+let [expandedKeys, setExpandedKeys] = useState(() => new Set);
+let onItemClick = useCallback((msg) => {                    // L456924
+  let k = Zhf(msg);
+  setExpandedKeys(prev => { let n = new Set(prev);
+                            n.has(k) ? n.delete(k) : n.add(k); return n; });
+}, []);
+let isItemExpanded = useCallback(                            // L456934
+  (msg) => expandedKeys.size > 0 && expandedKeys.has(Zhf(msg)), [expandedKeys]);
+```
+
+It is a **toggle**, not a one-way expand, and it is component-local state — not persisted, reset
+when the transcript component remounts.
+
+**R12.8 The key is `Zhf(msg)` (L456788–456790):**
+`(msg.type === "assistant" || msg.type === "user" ? t3e(msg) : null) ?? msg.uuid` — the **tool-use
+id** for assistant/user messages (so a tool_use and its tool_result share one key), and the plain
+`uuid` for synthetic nodes. For a collapsed row that uuid is `collapsed-<firstMessageUuid>`
+(**L302123**); for a grouped row, `grouped-<firstMessageUuid>` (**L452591**).
+
+**R12.9 Expansion is implemented as per-item verbose.** The row factory passes
+`verbose: n || isItemExpanded(msg)` into the message wrapper (**L456975**), which forwards it to
+`yre`, whose collapsed branch computes `verbose = verboseProp || isTranscriptMode` (**L429333**).
+So an expanded `collapsed_read_search` renders **exactly the §6 verbose layout**: one `W8p`
+`⏺ ToolName(args)` + result block per call, plus thinking blocks, the `⎿ Ran N PreToolUse hooks`
+lines, and recalled-memory blocks — and **the summary line is replaced, not supplemented**
+(`Ima` returns from the verbose branch at **L427923–427943** before the summary row is built).
+
+For a truncated tool result the same `verbose` flag makes `p2` skip `y_s` and render the full body
+(**L420181**: `dF0 = verbose || …`), i.e. the folded output rows unfold in place.
+
+**R12.10 Expanded rows also change container styling** (`KVH`, **L456313**):
+`backgroundColor: "userMessageBackgroundHover"` and `paddingBottom: 1`.
+
+**R12.11 What is clickable** — `isItemClickable` (**L456938–456960**), in order:
+
+| Message | Line | Clickable? |
+|---|---|---|
+| `collapsed_read_search` | 456939–456940 | **always** |
+| `attachment` with `goal_status` + `reason` | 456941–456945 | yes, but only when **not** verbose and **not** the transcript screen |
+| `assistant` whose `content[0]` is `advisor_tool_result` / `advisor_result` | 456946–456949 | yes |
+| `user` tool_result with `is_error` | 456955–456956 | yes iff `o3p(content)` (content is long enough to fold) |
+| `user` tool_result, non-error | 456957–456960 | yes iff the owning tool's `isResultTruncated(result, {columns})` is true |
+| anything else | 456950–456951 | no |
+
+Note `grouped_tool_use` is **not** in that list — a parallel-Agent batch is not click-expandable.
+
+**R12.12 Blank-cell and hyperlink rules** (**L456313–456317**):
+
+```jsx
+onClick: clickable ? (ev) => { if (ev.hyperlinkUrl) return ev.allowDefault();
+                               onClickK(msg, ev.cellIsBlank); } : undefined
+```
+and `onClickK` ignores the event when `cellIsBlank` is true (**L456542–456545**). So clicking the
+padding to the right of the text does nothing while collapsed; once expanded,
+`hoverIgnoresBlankCells: !expanded` (**L456317**) relaxes the *hover* rule. Clicking a rendered
+hyperlink defers to the terminal's default (open URL) instead of toggling.
+
+**R12.13 Hover affordance.** `KVH` wraps children in `<Xho.Provider value={hovered && !expanded}>`
+(**L456317**); the `Text` component reads that context and, when hovered, **stops applying the dim
+color** (`rdy = dimColor && !hovered ? theme.inactive : color`, **L181678–181680**). Since a settled
+collapsed row is entirely `dimColor` (R3.5), hovering it brightens the whole row. That is the only
+visual "this is clickable" cue — there is no cursor change and no added text.
+
+### 12.3 Hit-testing
+
+**R12.14 Yes — a real geometric hit-test against the laid-out Ink tree.**
+`Ksr(node, col, row, depth)` (**L178113–178145**) tests the click cell against each node's computed
+rect from the layout map `bS`, descending children last-to-first (topmost wins) and honoring
+`hasAbsoluteDescendant`; it bails at `MAX_TREE_DEPTH = 256` (**L178108, L178114–178115**).
+
+**R12.15 Dispatch** — `gBu(root, col, row, cellIsBlank, hyperlinkUrl)` (**L178167–178196**):
+hit-test, move focus to the nearest ancestor with a `tabIndex` (**L178171–178180**), then construct
+a `vJr` event carrying `{col, row, localCol, localRow, cellIsBlank, hyperlinkUrl, allowDefault()}`
+(**L178086–178101**) and **bubble `onClick` from the hit node up the parent chain**, recomputing
+`localCol/localRow` per handler (**L178185–178187**). Hover uses the same hit-test in `yBu`
+(**L178197–178213**), which honors `hoverIgnoresBlankCells` (**L178201**).
+
+**R12.16 Where row geometry is maintained.** Each rendered item registers a measurement ref
+`measureRef(itemKey)` on its wrapper Box (**L456313**), and the virtual-scroll hook `Imf`
+(**L456320**) owns the derived map: `offsets`, `getItemTop(idx)`, `getItemElement(idx)`,
+`scrollToIndex`, plus the mounted `range` and the top/bottom spacer heights. `Ohf` keeps a live
+mirror in a ref (**L456323–456324**) for the imperative paths. So the click path does **not** consult
+that map — the Ink layout rects (`bS`) are the source of truth for hit-testing; `Imf`'s offsets are
+for scrolling and search-jump (`scanElement`/`setPositions`, **L456370, L456347**).
+
+### 12.4 Keyboard equivalent
+
+**R12.17 There is none.** The full default keybinding table (**L186118**) exposes, in the
+`Transcript` context, only `ctrl+e → transcript:toggleShowAll`, `ctrl+c`/`escape`/`q →
+transcript:exit`, and the `scroll:*` family; globally only `ctrl+o → app:toggleTranscript` and
+`ctrl+shift+b → app:toggleBrief`. The exhaustive action allowlist `f_s` (**L186160**) contains no
+per-block expand action at all. Expanding **one** collapsed block is mouse-only; the keyboard can
+only expand **everything** (ctrl+o, which flips the whole transcript to `isTranscriptMode` and
+therefore renders every collapsed row verbose per R6.1).
+
+### 12.5 Clone checklist addendum
+
+11. Gate click-to-expand behind the same flag as fullscreen; expose a `disableMouseClicks` escape
+    hatch that downgrades mouse mode to wheel-only (R12.1–R12.5).
+12. Keep expansion state as a local `Set` keyed by tool-use-id-or-uuid, toggled per click (R12.7–R12.8).
+13. Render an expanded item by re-rendering it with `verbose = true` — the summary line is
+    *replaced* by the per-call rows, not appended to (R12.9).
+14. Suppress the textual `(ctrl+o to expand)` hint wherever click is available (R12.6).
+15. Un-dim on hover is the only affordance; ignore clicks on blank cells; let hyperlink clicks
+    through (R12.12–R12.13).
+16. Do not offer a single-block keyboard expand — that would be a divergence, not parity (R12.17).
