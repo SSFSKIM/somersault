@@ -49,7 +49,10 @@ test("the styled path mangles the same bytes — which is why preStyled exists",
   // " files" is written PLAIN (the `\x1b[22m` closes the dim). Through a styled <Text> chalk rewrites that
   // closer into `\x1b[2m` to restore its own dim, so the tail comes out dim — the author's intent lost.
   const raw = `${DIM}Read ${BOLD}3${B_OFF} files`;
-  const bare = render(<Line l={{ text: raw, segments: [{ text: raw, preStyled: true }] }} />).lastFrame();
+  // The ride-along `dim: true` is the guard's teeth (review finding): preStyled must WIN over it. Without
+  // the ride-along, deleting the preStyled branch sends this segment down the styled path with every prop
+  // undefined — an identical frame, and the contrast proves nothing.
+  const bare = render(<Line l={{ text: raw, segments: [{ text: raw, preStyled: true, dim: true }] }} />).lastFrame();
   const styled = render(<Line l={{ text: raw, segments: [{ text: raw, dim: true }] }} />).lastFrame();
   expect(bare).toContain(`${BOLD}3${B_OFF} files`);
   expect(styled).toContain(`${BOLD}3${DIM} files`);
