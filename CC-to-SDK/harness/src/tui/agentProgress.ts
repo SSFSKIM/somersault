@@ -83,7 +83,8 @@ export function agentTotals(event: ToolEvent, meta: AgentMeta | undefined, child
   return { toolUses: children.length, ...(durationMs === undefined ? {} : { durationMs }), source: "derived" };
 }
 
-/** Census 429620 verbatim: `` `Done (${[l === 1 ? "1 tool use" : `${l} tool uses`, _d(c) + " tokens", ra(a)].join(" · ")})` ``
+/** Bundle 429650 verbatim: `` `Done (${[l === 1 ? "1 tool use" : `${l} tool uses`, yd(c) + " tokens", ra(a)].join(" · ")})` ``
+ *  (`yd` is the census's `_d`; the row itself is a `⎿` gutter block with the bullet suppressed — see `Vha`)
  *  — with the clauses we have no source for simply absent from the join, which is the same assembly upstream
  *  performs and the only honest shape for the derived rung. */
 export function agentDoneText(totals: AgentTotals): string {

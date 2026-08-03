@@ -177,12 +177,14 @@ function resultBody(event: ToolEvent, normalized: NormalizedToolResult, options:
  *  LINE items are indented — a result body already lives behind the five-column `⎿` gutter, which is deeper
  *  still, so the two-column header indent keeps the same header→body relationship a top-level row has. */
 const AGENT_INDENT = "  ";
-/** Census 429615: what a PARALLEL dispatch's `async_launched` sidecar renders as while its
+/** Bundle 429646: what a PARALLEL dispatch's `async_launched` sidecar renders as while its
  *  `task_notification` totals do not exist yet. Emphatically NOT a `Done (0 tool uses)` row — the agent has
  *  not finished, and its child frames arrive AFTER its result (P83 [Q4]), so the derived rung would be
  *  counting an empty list. */
 const BACKGROUNDED_TEXT = "Backgrounded agent", BACKGROUNDED_HINT = " (↓ to manage · ctrl+o to expand)";
-const isAsyncLaunch = (event: ToolEvent): boolean => callSidecar(event)?.status === "async_launched";
+/** Bundle 429641, the OTHER launch surface: a cloud dispatch, with its identifiers dim behind a plain space. */
+const CLOUD_LAUNCHED_TEXT = "Cloud agent launched";
+const sidecarStatus = (event: ToolEvent): string | undefined => { const status = callSidecar(event)?.status; return typeof status === "string" ? status : undefined; };
 /** The child rows, rendered through the SAME renderer as any other call (so a nested Read reads exactly as
  *  a top-level one) at the width the indent leaves them. `linesOnly` is the condensed progress form:
  *  upstream's running block shows what the agent is DOING, one row per call, not each result. */
@@ -196,33 +198,48 @@ function nestedItems(children: readonly ToolEvent[], options: ProjectionOptions,
     }
   return items;
 }
-/** The synthetic assistant row upstream injects on completion (census 01#153): a BULLETED line, not a `⎿`
- *  body. The bullet is this renderer's own status-coloured tool bullet rather than a second palette rule —
- *  upstream's is the ordinary `⏺` of an assistant message, and an errored agent must not paint green. */
-function agentBulletLine(text: string, hint: string, status: ToolStatus, options: ProjectionOptions): RenderLine {
-  const bullet: Segment = { text: options.platform === "darwin" ? "⏺ " : "● ", color: resolveThemeColor(themeTokens()[statusToken(status)]) };
-  // `Bg` returns null inside the transcript/verbose contexts, so the expand hint is compact-only — the same
-  // rule `foundRow` follows, and the detail projections ARE that verbose form (R6.3).
-  const segments: Segment[] = options.projection === "compact" ? [bullet, { text }, { text: hint, dim: true }] : [bullet, { text }];
-  return { text: segments.map((segment) => segment.text).join(""), segments };
+/** EVERY row upstream `Vha` (429640–429654) paints is an `Rr height:1` block — `Rr` (bundle 239068023) is the
+ *  very `⎿` gutter component a tool result body uses. That includes the `Done (…)` row, which wraps the
+ *  synthetic assistant message with `shouldShowDot:!1`, i.e. the bullet is explicitly SUPPRESSED. (Census
+ *  01#153 read that row as a `⏺` bulleted line; direct bundle read corrects it.) */
+const agentGutter = (id: string, body: readonly RenderLine[]): RenderItem => ({ kind: "gutter-block", id, gutter: TOOL_RESULT_GUTTER, body });
+const segmented = (segments: readonly Segment[]): RenderLine => ({ text: segments.map((segment) => segment.text).join(""), segments: [...segments] });
+/** `Cloud agent launched` + a plain space + the dim `· {taskId} · {sessionUrl}` (429641). A field the sidecar
+ *  did not carry is simply absent from the tail rather than printed as `undefined`. */
+function cloudLaunchedLine(event: ToolEvent): RenderLine {
+  const sidecar = callSidecar(event) ?? {};
+  const tail = [sidecar.taskId, sidecar.sessionUrl].filter((v): v is string => typeof v === "string" && v.length > 0);
+  if (tail.length === 0) return { text: CLOUD_LAUNCHED_TEXT };
+  return segmented([{ text: `${CLOUD_LAUNCHED_TEXT} ` }, { text: `· ${tail.join(" · ")}`, dim: true }]);
 }
-function agentItems(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
+function agentProgressItems(event: ToolEvent, options: ProjectionOptions): readonly RenderItem[] {
   const children = agentChildren(options.toolEvents ?? [], event.id);
-  if (normalized.status === "running") {
-    // Upstream `KVp` (429822): nothing has come back yet, so the block is a placeholder, not an empty list.
-    if (children.length === 0) return [{ kind: "gutter-block", id: `${event.id}:progress`, gutter: TOOL_RESULT_GUTTER, body: [{ text: AGENT_INITIALIZING, dim: true }] }];
-    const shown = children.slice(-AGENT_PROGRESS_ROWS), hidden = children.length - shown.length;
-    const items = nestedItems(shown, options, /* linesOnly */ true);
-    if (hidden > 0) items.push({ kind: "line", id: `${event.id}:progress-hidden`, line: indentRenderLine(hiddenToolUsesLine(hidden), AGENT_INDENT) });
-    return items;
-  }
+  // Upstream `KVp` (429822): nothing has come back yet, so the block is a placeholder, not an empty list.
+  if (children.length === 0) return [agentGutter(`${event.id}:progress`, [{ text: AGENT_INITIALIZING, dim: true }])];
+  const shown = children.slice(-AGENT_PROGRESS_ROWS), hidden = children.length - shown.length;
+  const items = nestedItems(shown, options, /* linesOnly */ true);
+  if (hidden > 0) items.push({ kind: "line", id: `${event.id}:progress-hidden`, line: indentRenderLine(hiddenToolUsesLine(hidden), AGENT_INDENT) });
+  return items;
+}
+/** `undefined` means `Vha`'s `return null` (429649): a terminal shape it does not recognise paints NO typed
+ *  row, and the caller falls through to the generic body. A derived rung with zero observed children is that
+ *  same nothing — `Done (0 tool uses)` is a number we do not have, and Static would freeze the lie on screen. */
+function agentTerminalItems(event: ToolEvent, options: ProjectionOptions): readonly RenderItem[] | undefined {
+  const status = sidecarStatus(event);
+  if (status === "remote_launched") return [agentGutter(`${event.id}:launched`, [cloudLaunchedLine(event)])];
+  const children = agentChildren(options.toolEvents ?? [], event.id);
   const totals = agentTotals(event, options.agentMeta?.get(event.id), children, options.now);
-  const launched = totals.source === "derived" && isAsyncLaunch(event);
-  const head: RenderItem = { kind: "line", id: `${event.id}:done`, line: launched
-    ? agentBulletLine(BACKGROUNDED_TEXT, BACKGROUNDED_HINT, normalized.status, options)
-    : agentBulletLine(agentDoneText(totals), `  ${EXPAND_HINT}`, normalized.status, options) };
+  // The hint (`Ug`, 240583440) returns null inside the transcript/verbose contexts, so it is compact-only —
+  // the same rule `foundRow` follows, and the detail projections ARE that verbose form (R6.3).
+  const compact = options.projection === "compact";
+  if (status === "async_launched" && totals.source === "derived")
+    return [agentGutter(`${event.id}:launched`, [{ text: compact ? `${BACKGROUNDED_TEXT}${BACKGROUNDED_HINT}` : BACKGROUNDED_TEXT }])];
+  if (totals.source === "derived" && children.length === 0) return undefined;
+  const items: RenderItem[] = [agentGutter(`${event.id}:done`, [{ text: agentDoneText(totals) }])];
+  // The hint is a SIBLING of the block, two literal spaces then `(ctrl+o to expand)` (429654).
+  if (compact) return [...items, { kind: "line", id: `${event.id}:done-hint`, line: { text: `  ${EXPAND_HINT}`, dim: true } }];
   // What ctrl+o expands TO: the nested rows the compact unit folds away, with their own typed result rows.
-  return options.projection === "compact" ? [head] : [head, ...nestedItems(children, options, /* linesOnly */ false)];
+  return [...items, ...nestedItems(children, options, /* linesOnly */ false)];
 }
 
 /** One retained call → its renderable items. A `suppressed` tool projects to nothing — driven by the status Task 1's
@@ -231,8 +248,13 @@ export function renderToolEvent(event: ToolEvent, normalized: NormalizedToolResu
   if (normalized.status === "suppressed") return [];
   const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, normalized.status, options), wrap: "truncate-end" }];
   // F3 Task 7 owns the Agent's two live surfaces (the progress rows and the Done row). Its OTHER statuses —
-  // `error`, `interrupted`, `rejected` — are exact surfaces the generic body already paints.
-  if (isAgentTool(event.name) && (normalized.status === "running" || normalized.status === "success")) return [...items, ...agentItems(event, normalized, options)];
+  // `error`, `interrupted`, `rejected` — are exact surfaces the generic body already paints, and so is a
+  // terminal shape `Vha` does not recognise (`agentTerminalItems` returns `undefined` and we fall through).
+  if (isAgentTool(event.name) && normalized.status === "running") return [...items, ...agentProgressItems(event, options)];
+  if (isAgentTool(event.name) && normalized.status === "success") {
+    const agent = agentTerminalItems(event, options);
+    if (agent !== undefined) return [...items, ...agent];
+  }
   const body = resultBody(event, normalized, options);
   if (body.length) items.push({ kind: "gutter-block", id: `${event.id}:result`, gutter: TOOL_RESULT_GUTTER, body });
   return items;

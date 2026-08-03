@@ -29,11 +29,16 @@ export function formatFileSize(bytes: number): string {
   return `${(mb / 1024).toFixed(1).replace(/\.0$/, "")}GB`;
 }
 
-/** Upstream `_d` (L107091): `Intl` compact notation, LOWERCASED — `24100` reads `24.1k`, `1200000` reads
- *  `1.2m`. One fraction digit is what produces the census's own `12.4k` (the Intl default would round that
- *  to `12k`). Used by the Agent `Done (…)` row's token clause. */
-export const formatCompactNumber = (value: number): string =>
-  new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value).toLowerCase();
+/** Upstream `yd` (bundle 229070611, the census's `_d`): `Intl` compact notation, LOWERCASED — `24100` reads
+ *  `24.1k`, `1200000` reads `1.2m`. The fraction digit is not merely ALLOWED, it is MANDATORY at or above
+ *  1000: `yd(e){let t=e>=1000;return fOg(t).format(e).toLowerCase()}` picks between two cached formatters
+ *  (`fOg`, 229072863) that differ only in `minimumFractionDigits` — `1` above the threshold, `0` below it. So
+ *  `12000` reads `12.0k` (NOT `12k`) while `907` stays `907`. Used by the Agent `Done (…)` token clause. */
+const compactFormats = [
+  new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1, minimumFractionDigits: 0 }),
+  new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1, minimumFractionDigits: 1 }),
+];
+export const formatCompactNumber = (value: number): string => compactFormats[value >= 1000 ? 1 : 0]!.format(value).toLowerCase();
 
 /** Upstream `Et` (L15084): the ordinary pluralizer — `1` keeps the singular, everything else (including 0)
  *  takes the plural. Read's own rows use explicit `=== 1` ternaries that agree with it; Edit's diff summary

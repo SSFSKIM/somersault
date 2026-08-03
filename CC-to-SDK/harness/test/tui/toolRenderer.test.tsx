@@ -624,10 +624,14 @@ describe("F3 latch-to-max and the throttled hint (R3.2, R4.7)", () => {
 
 // ── F3 Task 7: the Agent unit (LT16 progress rows, LT17 the honest `Done (…)` row) ───────────────────────
 // The ladder itself is `agentProgress.test.ts`'s; these pin what reaches the screen — that an open Agent
-// shows `Initializing…` then its last three inner rows plus the hidden-count marker, that a completed one
-// renders the Done row as a BULLETED line rather than a `⎿` body (upstream injects it as a synthetic
-// assistant message, census 01#153), and that the nested rows the compact unit folds away are exactly what
-// ctrl+o expands to.
+// shows `Initializing…` then its last three inner rows plus the hidden-count marker, that EVERY terminal row
+// upstream `Vha` paints is a `⎿` GUTTER row, and that the nested rows the compact unit folds away are exactly
+// what ctrl+o expands to.
+//
+// bundle `Vha` 429640, direct read — census 01#153 CORRECTED: the Done row is `Rr height:1` (the same `⎿`
+// gutter component every tool result uses) wrapping the synthetic assistant message with `shouldShowDot:!1`,
+// i.e. the bullet is explicitly SUPPRESSED. The `  (ctrl+o to expand)` hint is a SIBLING dim line after that
+// block (`!i&&h dimColor ["  ",Ug]`), not a segment on the row. Same for the two launch rows.
 describe("F3 Task 7: Agent progress and the Done row", () => {
   const agent = (id = "agent-1", description = "review the diff") =>
     ({ type: "assistant", message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "Agent", input: { description, prompt: "do it" } }] } }) as Record<string, unknown>;
@@ -663,40 +667,61 @@ describe("F3 Task 7: Agent progress and the Done row", () => {
     expect(rowTexts(projectPending(built(agent(), ...children(3)), context))).toHaveLength(4);
   });
 
-  it("renders completion as a BULLETED Done line off the sidecar's totals, never a `⎿` body", () => {
+  it("renders completion as a `⎿` GUTTER row with the bullet suppressed, plus a sibling dim hint line", () => {
     const doc = built(agent(), ...children(3), agentResult(COMPLETED), prose("summary"));
     const items = projectCompact(doc, context);
-    expect(lineTexts(items)).toContain("⏺ Done (3 tool uses · 24.1k tokens · 1m 12s)  (ctrl+o to expand)");
-    expect(items.filter((i) => i.kind === "gutter-block")).toEqual([]);          // the agent's own report is not dumped
-    const done = items.find((i) => i.kind === "line" && i.line.text.includes("Done ("))! as { line: RenderLine };
-    expect(done.line.segments).toEqual([
-      { text: "⏺ ", color: resolveThemeColor(themeTokens().success) },
-      { text: "Done (3 tool uses · 24.1k tokens · 1m 12s)" },
-      { text: "  (ctrl+o to expand)", dim: true },
-    ]);
+    // bundle Vha 429652, shouldShowDot:false — census 01#153 corrected: no `⏺` on the Done row.
+    expect(lineTexts(items)).not.toContain("⏺ Done (3 tool uses · 24.1k tokens · 1m 12s)  (ctrl+o to expand)");
+    const done = items.find((i) => i.kind === "gutter-block" && i.body.some((l) => l.text.startsWith("Done (")))!;
+    expect(done).toMatchObject({ kind: "gutter-block", gutter: TOOL_RESULT_GUTTER, body: [{ text: "Done (3 tool uses · 24.1k tokens · 1m 12s)" }] });
+    expect(bodyOf(items).map((l) => l.text)).toEqual(["Done (3 tool uses · 24.1k tokens · 1m 12s)"]);   // the agent's own report is not dumped
+    // The hint is its OWN row after the block (`!i&&h dimColor ["  ",Ug]`), two leading spaces, no bullet.
+    expect(items[items.indexOf(done) + 1]).toMatchObject({ kind: "line", line: { text: "  (ctrl+o to expand)", dim: true } });
     expect(new Set(items.map((i) => i.id)).size).toBe(items.length);             // ids stay unique through `reid`
   });
 
   it("falls to task_notification totals when the sidecar is a parallel dispatch's `async_launched`", () => {
     const doc = built(agent(), ...children(2), agentResult(ASYNC), prose("summary"));
     const meta = new Map([["agent-1", { notify: { total_tokens: 4195, tool_uses: 2, duration_ms: 4484 } }]]);
-    expect(lineTexts(projectCompact(doc, { ...context, agentMeta: meta }))).toContain("⏺ Done (2 tool uses · 4.2k tokens · 4s)  (ctrl+o to expand)");
+    expect(bodyOf(projectCompact(doc, { ...context, agentMeta: meta })).map((l) => l.text)).toContain("Done (2 tool uses · 4.2k tokens · 4s)");
     // With no notification yet, an async launch says exactly that — it is NOT done, and a derived
-    // `Done (0 tool uses)` would be a lie (census 429615).
-    expect(lineTexts(projectCompact(doc, context))).toContain("⏺ Backgrounded agent (↓ to manage · ctrl+o to expand)");
+    // `Done (0 tool uses)` would be a lie (census 429615). Gutter row, no bullet (bundle Vha 429646).
+    const launched = projectCompact(doc, context);
+    expect(bodyOf(launched).map((l) => l.text)).toEqual(["Backgrounded agent (↓ to manage · ctrl+o to expand)"]);
+    expect(lineTexts(launched).some((t) => t.includes("Backgrounded"))).toBe(false);
+  });
+
+  it("renders a `remote_launched` cloud dispatch as its own gutter row with the dim task id and url", () => {
+    const remote = { agentId: "a1", status: "remote_launched", taskId: "task_42", sessionUrl: "https://cloud/x" };
+    const items = projectCompact(built(agent(), agentResult(remote), prose("summary")), context);
+    const row = bodyOf(items)[0]!;                                               // bundle Vha 429641
+    expect(row.text).toBe("Cloud agent launched · task_42 · https://cloud/x");
+    expect(row.segments).toEqual([{ text: "Cloud agent launched " }, { text: "· task_42 · https://cloud/x", dim: true }]);
   });
 
   it("derives the row from the children and the dispatch→result clock, with NO token clause", () => {
     const doc = built(agent(), ...children(2), agentResult(), prose("summary"));
     const meta = new Map([["agent-1", { dispatchedAt: 1000, resultAt: 35000 }]]);
-    expect(lineTexts(projectCompact(doc, { ...context, agentMeta: meta, now: 999999 }))).toContain("⏺ Done (2 tool uses · 34s)  (ctrl+o to expand)");
+    expect(bodyOf(projectCompact(doc, { ...context, agentMeta: meta, now: 999999 })).map((l) => l.text)).toContain("Done (2 tool uses · 34s)");
+  });
+
+  it("never fabricates `Done (0 tool uses)`: an unrecognised terminal shape with no children renders no typed row", () => {
+    // `Vha` returns null for every status it does not recognise (bundle 429649, `if(e.status!=="completed")
+    // return null`), and the derived rung has nothing to count — so this falls through to the generic body.
+    const doc = built(agent(), agentResult(), prose("summary"));
+    const items = projectCompact(doc, context);
+    expect([...lineTexts(items), ...bodyOf(items).map((l) => l.text)].some((t) => t.includes("Done ("))).toBe(false);
+    expect(bodyOf(items).map((l) => l.text)).toEqual(["the report"]);
+    const unknown = built(agent(), agentResult({ agentId: "a1", status: "teammate_spawned" }), prose("summary"));
+    expect(bodyOf(projectCompact(unknown, context)).map((l) => l.text).some((t) => t.includes("Done ("))).toBe(false);
   });
 
   it("expands to the nested rows in the detail projections, and drops the hint there (`Bg` is null in transcript mode)", () => {
     const doc = built(agent(), ...children(2), agentResult(COMPLETED), prose("summary"));
     const detail = projectDetail(doc, { ...context, projection: "detail-collapsed" });
-    expect(rowTexts(detail)).toEqual(["⏺ Agent(review the diff)", "⏺ Done (3 tool uses · 24.1k tokens · 1m 12s)", "  ⏺ Read(f0.ts)", "  ⏺ Read(f1.ts)", "summary"]);
-    expect(bodyOf(detail).map((l) => l.text)).toEqual(["Read 2 lines", "Read 2 lines"]);   // the children's own typed rows
+    expect(rowTexts(detail)).toEqual(["⏺ Agent(review the diff)", "  ⏺ Read(f0.ts)", "  ⏺ Read(f1.ts)", "summary"]);
+    expect(bodyOf(detail).map((l) => l.text)).toEqual(["Done (3 tool uses · 24.1k tokens · 1m 12s)", "Read 2 lines", "Read 2 lines"]);
+    expect(rowTexts(detail).some((t) => t.includes("ctrl+o to expand"))).toBe(false);
     expect(rowTexts(projectCompact(doc, context))).not.toContain("  ⏺ Read(f0.ts)");
     expect(new Set(detail.map((i) => i.id)).size).toBe(detail.length);
   });
