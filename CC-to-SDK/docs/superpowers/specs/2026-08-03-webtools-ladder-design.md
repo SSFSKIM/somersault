@@ -119,7 +119,13 @@ seam), with a message naming both `webTools.apiKey` and `CCX_WEB_API_KEY`. Not i
 ### `webtools/fetchTool.ts` — raw local fetch (tiers 1+2)
 
 Pipeline: validate URL (https upgrade, reject credentials-in-URL, dotless hosts) → domain
-allow/deny check (`webFetchDomains`) → GET with 10 MB / 30 s caps and the harness UA →
+allow/deny check (`webFetchDomains`) → **SSRF gate** (external review 2026-08-04, P1): the fetch
+runs in the HARNESS process, outside `sandbox.network`, so a model-controlled URL must not reach
+internal services — resolve the host and reject non-public addresses (loopback, RFC1918,
+link-local/`169.254.0.0/16` incl. cloud metadata, `0.0.0.0/8`, IPv6 loopback/ULA/link-local),
+reject literal IPs unless explicitly allowlisted in `webFetchDomains`, pin the fetch to the
+resolved-and-checked address (no TOCTOU re-resolve), and re-run the gate on EVERY redirect hop →
+GET with 10 MB / 30 s caps and the harness UA →
 content-type branch: HTML → Turndown → markdown; text types pass through; binary → typed refusal
 naming the content type → truncate to `fetchMaxChars` with an explicit `[truncated at N chars —
 re-fetch with a narrower URL or raise fetchMaxChars]` marker → return **raw text, no model in the
@@ -167,9 +173,12 @@ used only inside `searchTool`'s fetch, never logged. Two concrete leak paths are
 
 1. **Env spread**: `resolveOptions` builds `options.env = { ...process.env, ...env }`, so a
    process-level `CCX_WEB_API_KEY` would land in the SDK subprocess where the model can read it
-   via `Bash`. `withWebTools` therefore **always deletes `CCX_WEB_API_KEY` from `options.env`**
-   (forcing an explicit env object when one wasn't otherwise needed) — and this scrub applies in
-   every mode, including `native`, whenever the variable is present.
+   via `Bash`. The scrub therefore lives in **`resolveOptions` itself** — every produced env
+   deletes `CCX_WEB_API_KEY` unconditionally, whether or not a `webTools` block exists —
+   because the Reach rule above only invokes `withWebTools` when `config.webTools` is present,
+   and a config-less session with the variable exported would otherwise leak it (external
+   review 2026-08-04, P1). `withWebTools` keeps its own delete as belt-and-braces, but the
+   "every mode" guarantee is `resolveOptions`'s, not the wrapper's.
 2. **UDS transit**: `apiKey` is excluded from `SpawnConfig` (above); daemon-side resolution is
    env-var-only.
 
@@ -283,3 +292,11 @@ Pending — written at finish.
   no-tools control + header capture (8), acceptance restated as `resolveTools` assertions +
   domain-rule suppression (9), `cc-web` rename (10), evidence label softened (11), zero-search
   contract (12), sandbox-bypass note (13), `maxSearchCalls` ceiling (15).
+- 2026-08-04 — external whole-branch review (codex gpt-5.6-sol) returned two P1s against this
+  spec, both folded in: (1) the key scrub moved from `withWebTools` to `resolveOptions`
+  unconditionally — the Reach rule only applied the wrapper when a `webTools` block existed, so a
+  config-less session with `CCX_WEB_API_KEY` exported would have spread it into the subprocess
+  env; (2) the raw-fetch pipeline gained an SSRF gate — resolve-and-reject non-public addresses
+  (loopback/RFC1918/link-local/metadata/IPv6 equivalents), literal IPs allowlist-only, address
+  pinning, re-checked per redirect hop — because the fetch runs in the harness process outside
+  `sandbox.network`.
