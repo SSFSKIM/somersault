@@ -120,6 +120,14 @@ describe("overlay gating, expressed as null bindings", () => {
     const b = block(context).bindings;
     for (const k of GLOBAL_KEYS) expect(b[k], `${context} ${k} must be null`).toBeNull();
   });
+  // t8 review, Minor B: `Task` stays pushed for the whole turn and sits BELOW any overlay, so unbinding plain
+  // ctrl+b without its chord alias left `ctrl+x ctrl+b` still backgrounding the turn from inside the bg panel
+  // or /config — one key unbound while its alias worked, exactly the split this table exists to remove.
+  // Costs the overlay nothing: a null-bound chord does not arm its own prefix (resolver.ts's compile step), it
+  // is only consulted during the pending walk — keys-resolver.test.ts pins that half.
+  it.each(["Select", "Settings"])("%s unbinds task:background's chord alias too, not just the plain ctrl+b", (context) => {
+    expect(block(context).bindings["ctrl+x ctrl+b"], `${context} ctrl+x ctrl+b must be null`).toBeNull();
+  });
   it("HistorySearch is an overlay owner too, but rebinds ctrl+r/ctrl+c instead of unbinding them", () => {
     const b = block("HistorySearch").bindings;
     for (const k of ["ctrl+o", "ctrl+t", "ctrl+b", "ctrl+d"]) expect(b[k], `HistorySearch ${k} must be null`).toBeNull();

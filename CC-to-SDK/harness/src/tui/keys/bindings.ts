@@ -97,6 +97,11 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // its owner check is the composer's (ChatComposer.tsx:165), and the composer is unmounted behind an overlay.
     "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
+    // …and ctrl+b's CHORD ALIAS with it (t8 review). `Task` stays pushed for the whole turn and sits below
+    // every overlay, so unbinding only the plain key left `ctrl+x ctrl+b` backgrounding the turn from inside
+    // the picker — one key dead while its alias fired, the split this table exists to remove. Free: a null
+    // chord never arms its own prefix (resolver.ts), it is only consulted during the pending walk.
+    "ctrl+x ctrl+b": null,
   }},
   { context: "Confirmation", bindings: {
     "enter": "confirm:yes", "escape": "confirm:no", "up": "confirm:previous", "down": "confirm:next",
@@ -118,6 +123,7 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // SettingsDialog (with PermissionsDialog/ThemeDialog/AddDirDialog) is an "overlay" owner — same suppression.
     "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
+    "ctrl+x ctrl+b": null,          // ctrl+b's chord alias, dead here for the same reason (see Select)
   }},
   { context: "Tabs", bindings: {
     "tab": "tabs:next", "shift+tab": "tabs:previous", "right": "tabs:next", "left": "tabs:previous",

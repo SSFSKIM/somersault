@@ -4,11 +4,18 @@
 // reports the human's choice. Reject opens a one-line feedback input (deny message the model sees).
 //
 // F2 Task 8: no `useInput`. The choosing view pushes the `Confirmation` context — ↑/↓ scroll the plan window,
-// Esc/`n` open the feedback line, Enter/`y` approve. Enter/`y` are NEW here (the old handler read only 1/2/3
-// and Esc) and deliberately map to the CONSERVATIVE approval, "yes, and manually approve edits": granting
-// auto-accept must stay an explicit "1". The three digits stay in the component's own FALLBACK. The feedback
-// line is free text, so — exactly like QuestionDialog's Other row — the scope is gated off while typing or
-// `y`/`n`/`enter` would be eaten out of the user's message.
+// Esc/`n` open the feedback line, `y` approves. `y` is NEW here (the old handler read only 1/2/3 and Esc) and
+// deliberately maps to the CONSERVATIVE approval, "yes, and manually approve edits": granting auto-accept must
+// stay an explicit "1". The three digits stay in the component's own FALLBACK. The feedback line is free text,
+// so — exactly like QuestionDialog's Other row — the scope is gated off while typing or `y`/`n`/`enter` would
+// be eaten out of the user's message.
+//
+// Enter is the ONE Confirmation key this dialog leaves dead (t8 review, Important 2), which is why `confirm:yes`
+// below is gated on the key that fired it. A dialog replaces the composer, so a user mid-sentence when the plan
+// arrives presses Enter to send and would otherwise approve the plan and drop out of plan mode — under the old
+// handler that Enter was harmless. And unlike PermissionDialog, this dialog has no row cursor (↑/↓ scroll the
+// plan text), so Enter has no visible target to take: picking option 2 for it would be an invention, and
+// inventing a default for an approval gate is the wrong direction. The footer says `y approve`, not Enter.
 import React, { useMemo, useState } from "react";
 import { Box, Text } from "ink";
 import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
@@ -38,11 +45,17 @@ export function PlanDialog({ req, onDecision }: {
   // the rest of the chunk still dispatches here, and a second embedded newline must not reject twice.
   const reject = (v: string) => { setFeedback(null); onDecision({ kind: "plan_reject", ...(v ? { feedback: v } : {}) }); };
   useKeyScope("Confirmation", { active: feedback === null });
+  // The scope flag is one render stale inside a single stdin chunk (several events dispatch with no render in
+  // between), so every action re-checks the LIVE ref. Consequence worth naming: a `y` arriving in the same chunk
+  // that just opened the feedback line still MATCHES `confirm:yes` — and an action always consumes — so it is
+  // dropped rather than typed into the message. A lost character, never a wrong decision; same class as
+  // PermissionsDialog's NO_ACTIONS sub-tick.
   const choosing = (f: () => void) => { if (feedbackRef.current === null) f(); };
   useKeyActions({
     "confirm:previous": () => choosing(() => setTop((t) => Math.max(0, t - 1))),
     "confirm:next": () => choosing(() => setTop((t) => Math.min(maxTop, t + 1))),
-    "confirm:yes": () => choosing(() => onDecision({ kind: "plan_approve", acceptEdits: false })),   // enter / y
+    // `y` only — Enter is deliberately dead at the choosing state (see the header).
+    "confirm:yes": (e) => { if (e.name !== "enter") choosing(() => onDecision({ kind: "plan_approve", acceptEdits: false })); },
     "confirm:no": () => choosing(() => setFeedback("")),                                             // escape / n
   });
   useKeyFallback((e: KeyEvent | TextEvent) => {

@@ -26,9 +26,14 @@ import type { AddDirVerdict } from "../../src/tui/addDir.js";
 import type { BgTaskRow } from "../../src/tui/bgTaskMeta.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
+import type { HostEvent } from "../../src/host/wire.js";
 import type { RewindAnchor, RewindDryRun } from "../../src/session/chatSession.js";
+import { tmpdir } from "node:os";
 
 const frame = (f: () => string | undefined) => f() ?? "";
+/** Ink word-wraps, and a tmpdir() path is long enough to be split across two lines — match against the frame
+ *  with newlines flattened when the needle is a path (chat.test.tsx uses the same trick). */
+const flat = (f: () => string | undefined) => frame(f).replace(/\n/g, "");
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await tick(); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
@@ -160,6 +165,25 @@ describe("F2 task 8 — Confirmation family: what the table adds, and what free 
     b.stdin.write("n"); await waitFor(() => frame(b.lastFrame).includes("What should Claude do differently?"));
   });
 
+  // t8 review, Important 2. Enter STAYS DEAD at the choosing state, unlike everywhere else in the Confirmation
+  // family: a dialog replaces the composer, so a user mid-sentence when the plan arrives presses Enter to send
+  // and would otherwise approve the plan and leave plan mode. There is no row cursor here (↑/↓ scroll the plan
+  // text), so Enter has no visible target to "take" the way PermissionDialog's highlighted row does — and the
+  // footer advertises `y approve`, not Enter. Gating it keeps the screen and the behavior saying the same thing.
+  it("PlanDialog: Enter at the choosing state approves NOTHING (only `y` does)", async () => {
+    const decisions: unknown[] = [];
+    const { stdin, lastFrame } = render(<PlanDialog req={PLAN} onDecision={(o) => decisions.push(o)} />);
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    expect(frame(lastFrame)).not.toContain("enter approve");            // the footer never promised it
+    stdin.write("\r"); await new Promise((r) => setTimeout(r, 30));
+    expect(decisions, "Enter must not decide anything").toEqual([]);
+    // …and it did not leak sideways either: still choosing, not typing feedback.
+    expect(frame(lastFrame)).not.toContain("What should Claude do differently?");
+    expect(frame(lastFrame)).toContain("1. Yes, and auto-accept edits");
+    stdin.write("y"); await waitFor(() => decisions.length === 1);      // the advertised key still works
+    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: false });
+  });
+
   it("PlanDialog: y/n typed into the feedback line are TEXT (the scope is gated off while typing)", async () => {
     const decisions: unknown[] = [];
     const { stdin, lastFrame } = render(<PlanDialog req={PLAN} onDecision={(o) => decisions.push(o)} />);
@@ -237,10 +261,44 @@ describe("F2 task 8 — QuestionDialog's free-text row keeps the Confirmation ke
 // no keys at all, a swallow). These drive the REAL ChatApp so that the replacement is tested where the
 // deletion happened, not just in the table.
 const ROOT_GLOBALS = ["\x12", "\x0f", "\x14", "\x02", "\x03", "\x1bp", "\x1bt"];   // ctrl+r/o/t/b/c, alt+p, alt+t
+const TODO_ROW = "☐ a seeded todo";
+/** ChatApp's TaskPanel renders NULL on an empty list, so with no task seeded a resurrected Ctrl-T toggles a
+ *  panel nobody can see and the loop below stays blind to it (t8 review, Minor A). Two host frames, exactly the
+ *  shape the engine sends: TaskCreate names the subject, its tool_result carries the id (taskList.ts). */
+/** `/add-dir` refuses a session with no SettingsOps (useChat's hasSettingsOps gate) and fakeRemote has none —
+ *  the same seven no-op methods chat.test.tsx's own fakeSettingsRemote supplies, kept local to this file. */
+const settingsRemote = () => Object.assign(fakeRemote(), {
+  getSettings: async () => ({}),
+  listDirs: async () => [{ path: process.cwd(), source: "cwd" as const }],
+  addDir: async () => {}, removeDir: async () => {}, setOutputStyle: async () => {},
+  addRule: async () => {}, removeRule: async () => {},
+});
+function seedTodo(fake: { pushEvent: (ev: HostEvent) => void }) {
+  const msg = (data: unknown) => fake.pushEvent({ kind: "message", data } as HostEvent);
+  msg({ type: "assistant", message: { content: [{ type: "tool_use", id: "tu-seed", name: "TaskCreate", input: { subject: "a seeded todo" } }] } });
+  msg({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-seed", content: "Task #1 created successfully: a seeded todo" }] } });
+}
+/** Seed the todo, watch the row appear (ChatApp opens the panel by default), then close the panel with a Ctrl-T
+ *  the composer is still allowed to have. Two jobs: it settles the seed before the loop snapshots the frame, and
+ *  it leaves the row HIDDEN with a live task behind it — so the loop's `not.toContain(TODO_ROW)` is a claim with
+ *  teeth (Ctrl-T demonstrably renders that row the moment anything lets it through). */
+async function armTodoRow(fake: { pushEvent: (ev: HostEvent) => void }, stdin: { write: (s: string) => void }, lastFrame: () => string | undefined) {
+  seedTodo(fake);
+  await waitFor(() => frame(lastFrame).includes(TODO_ROW));                        // the seeded task renders…
+  stdin.write("\x14"); await waitFor(() => !frame(lastFrame).includes(TODO_ROW));   // …and ctrl+t closes the panel
+}
 /** Assert after EVERY key, never once at the end: pressed as a batch these keys cancel each other's damage
  *  (a leaked Ctrl-R opens history search, and the Ctrl-C two keys later closes it again), so a single
- *  end-state check passes against a table with its null bindings deleted. Sabotage-verified. */
+ *  end-state check passes against a table with its null bindings deleted. Sabotage-verified.
+ *
+ *  The four named negatives are not enough on their own (t8 review, Minor A): a resurrected Ctrl-T only opens
+ *  the todo panel and a resurrected Ctrl-B may re-open a panel that is already open — neither moves any of
+ *  them. So the loop ALSO pins the whole frame against the pre-loop snapshot: an inert key changes nothing at
+ *  all, which is a claim every single-key regression has to break. Callers seed a todo first (see `seedTodo`)
+ *  so that "nothing changed" has something to say about Ctrl-T. */
 async function eachRootGlobalIsInert(stdin: { write: (s: string) => void }, lastFrame: () => string | undefined, marker: string) {
+  const before = frame(lastFrame);
+  expect(before, "the marker must be on screen before the loop starts").toContain(marker);
   for (const k of ROOT_GLOBALS) {
     stdin.write(k);
     await new Promise((r) => setTimeout(r, 20));
@@ -250,13 +308,17 @@ async function eachRootGlobalIsInert(stdin: { write: (s: string) => void }, last
     expect(f, at).not.toContain("Transcript");                        // ctrl+o → the pager
     expect(f, at).not.toContain("switch model");                      // alt+p → the model picker
     expect(f, at).not.toContain("Press Ctrl-C again to exit");        // ctrl+c → the exit arm
+    expect(f, at).not.toContain(TODO_ROW);                            // ctrl+t → the todo panel
+    expect(f, at).toBe(before);                                       // …and nothing else moved either
   }
 }
 
 describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven through the real ChatApp)", () => {
   it("a Select overlay (the bg panel) is deaf to every root global, and the composer gets them back on close", async () => {
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
+    await armTodoRow(fake, stdin, lastFrame);
     stdin.write("\x02");                                            // ctrl+b while idle opens the panel
     await waitFor(() => frame(lastFrame).includes("Background tasks"));
     await eachRootGlobalIsInert(stdin, lastFrame, "Background tasks");
@@ -265,12 +327,66 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
   });
 
   it("a Settings overlay (/config) is deaf to them too", async () => {
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
+    await armTodoRow(fake, stdin, lastFrame);
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
     await eachRootGlobalIsInert(stdin, lastFrame, "Default permission mode");
+  });
+
+  // t8 review, Important 1. The standalone /add-dir overlay: `gatedRef` classified it as an "overlay" owner
+  // (ChatApp's inputOwnerRef still does), so all six root globals were inert over BOTH of its phases. The
+  // migration first pushed a scope only in the CONFIRM phase, leaving the entry phase — a half-typed path —
+  // with no context at all: a Ctrl-R or Ctrl-B there renders history search / the bg panel ABOVE the addDir arm
+  // in ChatApp's chain, which unmounts the dialog and discards what the user was typing. The scope is pushed in
+  // both phases now, and its actions are routed through one phase-branching handler, so this drives BOTH.
+  it("the /add-dir overlay is deaf to them in BOTH phases, and still types and navigates afterwards", async () => {
+    const fake = settingsRemote();
+    const target = tmpdir();                                        // a real directory outside cwd, so validation says ok
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    await armTodoRow(fake, stdin, lastFrame);
+    stdin.write("/add-dir"); await waitFor(() => frame(lastFrame).includes("/add-dir"));
+    stdin.write("\r");                                              // separate write: "text\r" in ONE chunk reads as a paste
+    await waitFor(() => frame(lastFrame).includes("Enter the path to the directory:"));
+    await eachRootGlobalIsInert(stdin, lastFrame, "Enter the path to the directory:");
+    stdin.write(target); await waitFor(() => flat(lastFrame).includes(target));    // the path still types after all that
+    stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("Yes, for this session"));
+    await eachRootGlobalIsInert(stdin, lastFrame, "Yes, for this session");
+    stdin.write("\x1b[B"); await waitFor(() => frame(lastFrame).includes("❯ Yes, and remember this directory"));
+    stdin.write("k");      await waitFor(() => frame(lastFrame).includes("❯ Yes, for this session"));   // KB14, inherited from Select
+    stdin.write("\x1b");   await waitFor(() => flat(lastFrame).includes("Did not add"));   // esc still cancels the menu
+    expect(frame(lastFrame)).toContain("›");                                               // …back to the composer
+  });
+
+  // The other half of Important 1: with the scope pushed in both phases, the dialog's own keys must still be
+  // exactly the two phases' keys — Select's `j`/`k` navigate the three-row menu, and the very same characters
+  // are LITERAL text in the path prompt (they reach the fallback through the routed handler, not the table).
+  it("the /add-dir entry phase types j/k/space as path text, while the confirm phase navigates with them", async () => {
+    const validated: string[] = [];
+    const { stdin, lastFrame } = render(
+      <AddDirDialog onValidate={async (raw) => { validated.push(raw); return { kind: "missing", abs: raw } as AddDirVerdict; }}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    await waitFor(() => frame(lastFrame).includes("Enter the path to the directory:"));
+    for (const ch of "/j k") { stdin.write(ch); await tick(); }
+    await waitFor(() => frame(lastFrame).includes("/j k"));
+    stdin.write("\r"); await waitFor(() => validated.length === 1);
+    expect(validated[0]).toBe("/j k");                              // every one of them was text, not a table action
+
+    // The confirm phase (reached here by prefill, the `/add-dir <path>` route) reads the same two keys as the list.
+    let confirmed: [string, boolean] | undefined;
+    const b = render(<AddDirDialog prefill="/tmp/x" onValidate={async () => ({ kind: "missing", abs: "" }) as AddDirVerdict}
+      onConfirm={(abs, remember) => { confirmed = [abs, remember]; }} onCancel={() => {}} />);
+    await waitFor(() => frame(b.lastFrame).includes("❯ Yes, for this session"));
+    b.stdin.write("j"); await waitFor(() => frame(b.lastFrame).includes("❯ Yes, and remember this directory"));
+    b.stdin.write("j"); await waitFor(() => frame(b.lastFrame).includes("❯ No"));
+    b.stdin.write("k"); await waitFor(() => frame(b.lastFrame).includes("❯ Yes, and remember this directory"));
+    b.stdin.write("\r"); await waitFor(() => confirmed !== undefined);
+    expect(confirmed).toEqual(["/tmp/x", true]);
   });
 
   it("the ⏪ restoring hold swallows everything for as long as the rewind runs", async () => {
@@ -286,6 +402,7 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
       <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ getSessionMessages: async () => [] as never[] }} />,
     );
     await waitFor(() => frame(lastFrame).includes("›"));
+    await armTodoRow(fake, stdin, lastFrame);
     stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
     stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("Rewind to a previous message"));
     stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("Restore conversation only"));

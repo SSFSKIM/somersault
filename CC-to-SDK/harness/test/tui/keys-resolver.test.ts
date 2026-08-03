@@ -210,6 +210,22 @@ describe("against the REAL default table", () => {
   it("the Task context contributes its own ctrl+x continuation while a turn runs", () =>
     expect(resolveKey(ctrl("b"), ["Task", "Chat", "Global"], t, pend("ctrl+x")))
       .toMatchObject({ type: "match", action: "task:background", context: "Task" }));
+  // t8 review, Minor B. `Task` is pushed for the WHOLE turn and stays live under every overlay, so the two
+  // stacks below are the real ones a user is in when a turn runs behind the bg panel or /config. Plain ctrl+b
+  // is null there; the chord alias must drop the same way or one key is unbound while its alias still fires.
+  it.each(["Select", "Settings"] as const)("%s drops ctrl+x ctrl+b during the pending walk, though Task armed it from underneath", (overlay) => {
+    const stack: KeyContextName[] = [overlay, "Task", "Global"];
+    expect(resolveKey(ctrl("x"), stack, t, []), "Task's chord head still arms — the null above does not").toMatchObject({ type: "chord-started" });
+    expect(resolveKey(ctrl("b"), stack, t, pend("ctrl+x"))).toEqual({ type: "unbound" });
+    expect(resolveKey(ctrl("b"), stack, t, []), "and the plain key is unbound too").toEqual({ type: "unbound" });
+  });
+  it("with the overlay closed the very same two keys background the turn again", () => {
+    expect(resolveKey(ctrl("x"), ["Task", "Chat", "Global"], t, [])).toMatchObject({ type: "chord-started" });
+    expect(resolveKey(ctrl("b"), ["Task", "Chat", "Global"], t, pend("ctrl+x")))
+      .toMatchObject({ type: "match", action: "task:background", context: "Task" });
+  });
+  it("the overlay's own null never arms a prefix: with no turn running, ctrl+x inside it is dead", () =>
+    expect(resolveKey(ctrl("x"), ["Select", "Global"], t, [])).toEqual({ type: "no-match" }));
   it("ctrl+r inside the history overlay is historySearch:next, and ctrl+o is dead there", () => {
     expect(resolveKey(ctrl("r"), ["HistorySearch", "Global"], t, []))
       .toMatchObject({ type: "match", action: "historySearch:next", context: "HistorySearch" });

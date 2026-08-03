@@ -77,6 +77,10 @@ export function QuestionDialog({ req, onAnswer, onDeny }: {
   React.useEffect(() => { if (!q) onDeny(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   useKeyScope("Confirmation", { active: other === null });
+  // The ref re-check closes the sub-tick where the scope flag is one render stale. Consequence worth naming: a
+  // `y` arriving in the SAME stdin chunk that just opened the Other row still MATCHES `confirm:yes` — and an
+  // action always consumes — so it is dropped rather than typed into the answer. A lost character, never a
+  // wrong decision; same class as PermissionsDialog's NO_ACTIONS sub-tick.
   const inList = (f: () => void) => { if (q && otherRef.current === null) f(); };
   useKeyActions({
     "confirm:previous": () => inList(() => setIdx((i) => Math.max(0, i - 1))),
