@@ -107,6 +107,16 @@
         }
       ],
       "minimum_matches": 0
+    },
+    "f1-tool-transcript-*/*.ansi": {
+      "patterns": [],
+      "identity_guards": [],
+      "minimum_matches": 0
+    },
+    "f1-tool-rendering-ccx/01-read-complete.ansi": {
+      "patterns": [],
+      "identity_guards": [],
+      "minimum_matches": 0
     }
   },
   "required_state_by_frame": {
@@ -175,6 +185,77 @@
           "pattern": "Use the Read tool to read src/app\\.ts, then stop without adding an assistant response\\.",
           "minimum_matches": 1
         },
+        {
+          "name": "read-progress",
+          "pattern": "Read(?:ing)? \\d+ file",
+          "minimum_matches": 1
+        },
+        {
+          "name": "gutter-path",
+          "pattern": "⎿.*src/app\\.ts",
+          "minimum_matches": 1
+        }
+      ],
+      "forbidden": [
+        {
+          "name": "logged-out-footer",
+          "pattern": "Not logged in · Run /login"
+        },
+        {
+          "name": "tool-rejected",
+          "pattern": "Tool use rejected"
+        }
+      ]
+    },
+    "f1-tool-transcript-sidecar-*/01-tool-detail.ansi": {
+      "required": [
+        {
+          "name": "read-header",
+          "pattern": "Read\\(src/app\\.ts\\)",
+          "minimum_matches": 1
+        },
+        {
+          "name": "one-gutter",
+          "pattern": "⎿",
+          "minimum_matches": 1
+        },
+        {
+          "name": "sidecar-output",
+          "pattern": "export const app = 1;",
+          "minimum_matches": 1
+        }
+      ]
+    },
+    "f1-tool-transcript-flat-*/01-tool-detail.ansi": {
+      "required": [
+        {
+          "name": "read-header",
+          "pattern": "Read\\(src/app\\.ts\\)",
+          "minimum_matches": 1
+        },
+        {
+          "name": "one-gutter",
+          "pattern": "⎿",
+          "minimum_matches": 1
+        },
+        {
+          "name": "flat-output",
+          "pattern": "\\bone\\b",
+          "minimum_matches": 1
+        }
+      ]
+    },
+    "f1-tool-transcript-*/02-tool-transcript.ansi": {
+      "required": [
+        {
+          "name": "read-summary",
+          "pattern": "Read 1 file \\(ctrl\\+o to expand\\)",
+          "minimum_matches": 1
+        }
+      ]
+    },
+    "f1-tool-rendering-ccx/01-read-complete.ansi": {
+      "required": [
         {
           "name": "read-progress",
           "pattern": "Read(?:ing)? \\d+ file",

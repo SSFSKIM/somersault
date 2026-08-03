@@ -1,3 +1,4 @@
+import fnmatch
 import importlib.util
 import json
 import os
@@ -81,7 +82,7 @@ class FrameScriptsTest(unittest.TestCase):
         version = subprocess.run([sys.executable, "--version"], text=True, capture_output=True, check=True)
         return (version.stdout or version.stderr).strip()
 
-    def run_capture(self, script: str, binary: str, out: Path, redact_masks: Path | None = None, script_parent: Path | None = None, cwd: Path | None = None, expected_version: str | None = None, env: dict[str, str] | None = None, cols: int = 100, rows: int = 40, tracked_oauth: bool = False):
+    def run_capture(self, script: str, binary: str, out: Path, redact_masks: Path | None = None, script_parent: Path | None = None, cwd: Path | None = None, expected_version: str | None = None, env: dict[str, str] | None = None, cols: int = 100, rows: int = 40, tracked_oauth: bool = False, require_state: bool = False):
         script_path = (script_parent or out.parent) / "case.keys"
         script_path.parent.mkdir(parents=True, exist_ok=True)
         script_path.write_text(textwrap.dedent(script), encoding="utf-8")
@@ -92,6 +93,8 @@ class FrameScriptsTest(unittest.TestCase):
             args += ["--expected-version", expected_version]
         if tracked_oauth:
             args += ["--tracked-oauth"]
+        if require_state:
+            args += ["--require-state"]
         return subprocess.run(args, text=True, capture_output=True, env=env)
 
     def run_diff(self, golden: Path, ours: Path, allowlist: Path | None = None, masks: Path = MASKS_PATH):
@@ -1445,6 +1448,140 @@ class FrameScriptsTest(unittest.TestCase):
         self.assertEqual(hint_failures, [])
         self.assertNotEqual(base_lines, hint_lines)
 
+    def test_f1_task7_scenarios_declare_every_exact_frame_key_they_capture(self):
+        """Every key Task 7's five captures actually write, spelled out. `frame_key()` uses the output
+        directory's BASENAME for untracked output, so a drifted directory name silently changes the key —
+        and an undeclared key validates vacuously. These assertions are what make the drift loud."""
+        script = (ROOT / "scripts" / "frames" / "f1-tool-transcript.keys").read_text(encoding="utf-8")
+        actions = [line for line in script.splitlines() if line.strip() and not line.startswith("#")]
+        frames = [line for line in actions if line.startswith("frame:")]
+        self.assertEqual(frames, ["frame:tool-detail", "frame:tool-transcript"])
+        # ctrl+o opens the detail projection (where the per-call header and the result body live after the
+        # 5c default-view fold) and closing it repaints the whole region from a state both routes share.
+        self.assertEqual([line for line in actions if line.startswith("key:")], ["key:ctrl-o", "key:ctrl-o"])
+
+        ccx_script = (ROOT / "scripts" / "frames" / "f1-upstream-read-ccx.keys").read_text(encoding="utf-8")
+        ccx_actions = [line for line in ccx_script.splitlines() if line.strip() and not line.startswith("#")]
+        self.assertEqual([line for line in ccx_actions if line.startswith("frame:")], ["frame:read-complete"])
+        # Credential-free by construction: nothing is typed, nothing is submitted, nothing is waited on.
+        self.assertEqual([line for line in ccx_actions if line.startswith(("type:", "enter", "wait-output:"))], [])
+
+        detail_keys = tuple(f"f1-tool-transcript-{shape}-{route}/01-tool-detail.ansi" for shape in ("sidecar", "flat") for route in ("live", "replay"))
+        compact_keys = tuple(f"f1-tool-transcript-{shape}-{route}/02-tool-transcript.ansi" for shape in ("sidecar", "flat") for route in ("live", "replay"))
+        ccx_key = "f1-tool-rendering-ccx/01-read-complete.ansi"
+        for key in (*detail_keys, *compact_keys, ccx_key):
+            with self.subTest(key=key):
+                self.assertTrue(capture.load_redaction_contract(str(MASKS_PATH), key).declared)
+                self.assertTrue(capture.load_required_state_contract(str(MASKS_PATH), key).declared)
+        # The ccx capture must NOT inherit the tracked golden's own contract: the two keys do not glob-match,
+        # and the golden requires a `user-prompt` selector that is real Claude Code's composer echo.
+        self.assertFalse(fnmatch.fnmatch(ccx_key, F1_KEY))
+        self.assertNotIn("user-prompt", [rule.name for rule in capture.load_required_state_contract(str(MASKS_PATH), ccx_key).required])
+
+        sidecar = capture.load_required_state_contract(str(MASKS_PATH), detail_keys[0])
+        self.assertEqual([rule.name for rule in sidecar.required], ["read-header", "one-gutter", "sidecar-output"])
+        flat = capture.load_required_state_contract(str(MASKS_PATH), detail_keys[2])
+        self.assertEqual([rule.name for rule in flat.required], ["read-header", "one-gutter", "flat-output"])
+        ccx = capture.load_required_state_contract(str(MASKS_PATH), ccx_key)
+        self.assertEqual([rule.name for rule in ccx.required], ["read-progress", "gutter-path"])
+        self.assertEqual([rule.name for rule in ccx.forbidden], ["logged-out-footer", "tool-rejected"])
+
+        # The safe expected state of each frame, and the mutations that must stay divergent.
+        detail_frame = "\x1b[0m⏺ \x1b[0;1mRead\x1b[0m(src/app.ts)\x1b[0m\n\x1b[0m  \x1b[0;2m⎿  export const app = 1;\x1b[0m\n"
+        self.assertEqual(capture.validate_required_state(detail_frame, sidecar), [])
+        for label, mutated, expected in (
+            ("changed-path", detail_frame.replace("(src/app.ts)", "(src/other.ts)"), "read-header"),
+            ("dropped-gutter", detail_frame.replace("⎿  ", ""), "one-gutter"),
+            ("changed-output", detail_frame.replace("export const app = 1;", "export const app = 2;"), "sidecar-output"),
+        ):
+            with self.subTest(case=label):
+                failures = capture.validate_required_state(mutated, sidecar)
+                self.assertEqual(len(failures), 1, failures)
+                self.assertIn(expected, failures[0])
+        compact_frame = "\x1b[0m  \x1b[0;2mRead 1 file (ctrl+o to expand)\x1b[0m\n"
+        compact = capture.load_required_state_contract(str(MASKS_PATH), compact_keys[0])
+        self.assertEqual(capture.validate_required_state(compact_frame, compact), [])
+        self.assertEqual(len(capture.validate_required_state(compact_frame.replace("1 file", "2 files"), compact)), 1)
+        ccx_frame = "\x1b[0;2m⏺\x1b[0;2m Reading \x1b[0;1;2m1\x1b[0m file…\x1b[0m\n\x1b[0;2m  ⎿  src/app.ts\x1b[0m\n"
+        self.assertEqual(capture.validate_required_state(ccx_frame, ccx), [])
+        for label, mutated, expected in (
+            ("changed-path", ccx_frame.replace("src/app.ts", "src/other.ts"), "gutter-path"),
+            ("changed-header", ccx_frame.replace("Reading ", "Frobnicating "), "read-progress"),
+            ("logged-out", ccx_frame + "Not logged in · Run /login\n", "logged-out-footer"),
+            ("rejected", ccx_frame + "Tool use rejected\n", "tool-rejected"),
+        ):
+            with self.subTest(case=label):
+                failures = capture.validate_required_state(mutated, ccx)
+                self.assertEqual(len(failures), 1, failures)
+                self.assertIn(expected, failures[0])
+        # These captures are compared against the tracked golden, so they carry the golden's comparison
+        # masks — which must still leave the path and the summary text significant.
+        scoped = diff.load_masks(str(MASKS_PATH), F1_KEY)
+        self.assertNotEqual(diff.mask_text("  ⎿  src/app.ts", scoped), diff.mask_text("  ⎿  src/other.ts", scoped))
+        self.assertNotEqual(diff.mask_text("  Read 1 file (ctrl+o to expand)", scoped), diff.mask_text("  Read 2 files (ctrl+o to expand)", scoped))
+
+    def test_require_state_checks_declared_selectors_on_untracked_output(self):
+        """Every Task 7 capture writes to untracked scratch, and capture-frames gates required state on
+        tracked output — so without --require-state each declared selector would be inert and the capture
+        would exit 0 having verified nothing. This is the failing-selector half."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            child = self.live_child_command("import sys,time; sys.stdout.write('actual screen'); sys.stdout.flush()")
+            masks = root / "masks.json"
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {"scratch/01-boot.ansi": {"patterns": [], "identity_guards": [], "minimum_matches": 0}},
+                "required_state_by_frame": synthetic_required_state(("scratch/01-boot.ansi",), "NEVER PAINTED"),
+            }), encoding="utf-8")
+            lenient = self.run_capture("frame:boot\n", child, root / "scratch", masks, script_parent=root)
+            self.assertEqual(lenient.returncode, 0, lenient.stderr)
+            strict = self.run_capture("frame:boot\n", child, root / "scratch", masks, script_parent=root, require_state=True)
+            self.assertNotEqual(strict.returncode, 0)
+            self.assertIn("state validation failed", strict.stderr)
+            self.assertIn("synthetic-logged-out", strict.stderr)
+
+    def test_require_state_preflight_rejects_an_undeclared_untracked_frame_key(self):
+        """The other half, and the one that catches a mistyped or drifted output-directory basename: an
+        undeclared key yields declared=False with an EMPTY rule list, which validates vacuously — so a
+        selector-only gate would pass a capture whose contract does not exist at all."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            child = self.live_child_command("import sys,time; sys.stdout.write('ready'); sys.stdout.flush()")
+            masks = root / "masks.json"
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {"*/01-boot.ansi": {"patterns": [], "identity_guards": [], "minimum_matches": 0}},
+                "required_state_by_frame": synthetic_required_state(("declared/01-boot.ansi",), "ready"),
+            }), encoding="utf-8")
+            self.assertFalse(capture.load_required_state_contract(str(masks), "typoed/01-boot.ansi").declared)
+            self.assertEqual(capture.validate_required_state("anything", capture.load_required_state_contract(str(masks), "typoed/01-boot.ansi")), [])
+            lenient = self.run_capture("frame:boot\n", child, root / "typoed", masks, script_parent=root)
+            self.assertEqual(lenient.returncode, 0, lenient.stderr)
+            strict = self.run_capture("frame:boot\n", child, root / "typoed", masks, script_parent=root, require_state=True)
+            self.assertNotEqual(strict.returncode, 0)
+            self.assertIn("no required state contract", strict.stderr)
+            self.assertIn("typoed/01-boot.ansi", strict.stderr)
+            declared = self.run_capture("frame:boot\n", child, root / "declared", masks, script_parent=root, require_state=True)
+            self.assertEqual(declared.returncode, 0, declared.stderr)
+
+    def test_require_state_never_extends_the_tracked_version_or_redaction_preflights(self):
+        """--require-state widens exactly three sites. The tracked-only version preflight is NOT one of
+        them: Task 7's captures pass no --expected-version, so widening it would abort every one."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            child = self.live_child_command("import sys,time; sys.stdout.write('ready'); sys.stdout.flush()")
+            masks = root / "masks.json"
+            masks.write_text(json.dumps({
+                "redactions_by_frame": {"scratch/01-boot.ansi": {"patterns": [], "identity_guards": [], "minimum_matches": 0}},
+                "required_state_by_frame": synthetic_required_state(("scratch/01-boot.ansi",), "ready"),
+            }), encoding="utf-8")
+            captured = self.run_capture("frame:boot\n", child, root / "scratch", masks, script_parent=root, require_state=True)
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            self.assertNotIn("--expected-version", captured.stderr)
+            # An undeclared REDACTION contract still only fails tracked output.
+            bare = root / "bare-masks.json"
+            bare.write_text(json.dumps({"required_state_by_frame": synthetic_required_state(("scratch2/01-boot.ansi",), "ready")}), encoding="utf-8")
+            undeclared_redaction = self.run_capture("frame:boot\n", child, root / "scratch2", bare, script_parent=root, require_state=True)
+            self.assertEqual(undeclared_redaction.returncode, 0, undeclared_redaction.stderr)
+
     def test_tracked_capture_rejects_mixed_state_atomically_before_publication(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -2571,8 +2708,15 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertIn("DIVERGENT", missing_counterpart.stdout)
             self.assertIn("not a divergent masked comparison", missing_counterpart.stdout)
 
-    def test_tracked_allowlist_template_has_no_active_entry(self):
-        self.assertEqual(diff.load_allowlist(str(ROOT / "test" / "fixtures" / "upstream-frames" / "allowlist.md")), {})
+    def test_tracked_allowlist_registers_at_most_the_one_reviewed_upstream_pair(self):
+        """A closed rule, not an emptiness assertion. Zero entries stays valid; the only key that may ever
+        appear is the real-2.1.220 Read golden, because that is the single tracked pair a ccx capture is
+        compared against. The parser and stale-fingerprint tests above still govern the exact digest and
+        inventory-ID syntax of whatever is registered here — and `frame-diff.py` fingerprints ONE SHA-256
+        over the whole masked pair, so an entry cannot distinguish chrome from an F1-owned row: an F1
+        rendering divergence must be fixed in the renderer, never registered."""
+        entries = diff.load_allowlist(str(ROOT / "test" / "fixtures" / "upstream-frames" / "allowlist.md"))
+        self.assertLessEqual(set(entries), {F1_KEY}, f"unexpected allowlist keys: {sorted(set(entries) - {F1_KEY})}")
 
     def test_diff_allowlists_only_the_exact_reviewed_masked_fingerprint(self):
         with tempfile.TemporaryDirectory() as td:
@@ -2777,7 +2921,7 @@ class FrameScriptsTest(unittest.TestCase):
         source = Path(__file__).read_text(encoding="utf-8")
         self.assertIn("LIVE_CHILD_KEEPALIVE_SECONDS = 5", source)
         self.assertIn("PARTIAL_CHILD_KEEPALIVE_SECONDS = 0.15", source)
-        self.assertEqual(len(re.findall(r"self\.live_child_command\(", source)), 44)
+        self.assertEqual(len(re.findall(r"self\.live_child_command\(", source)), 47)
         self.assertEqual(len(re.findall(r"self\.partial_child_command\(", source)), 2)
         self.assertIn("self.dead_child_command()", source)
         self.assertNotIn("self." + "child_command(", source)

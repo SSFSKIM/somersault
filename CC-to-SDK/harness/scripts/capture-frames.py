@@ -466,6 +466,14 @@ def parse_args():
     p.add_argument("--redact-masks", default=None, help="mask file required when writing under test/fixtures/upstream-frames")
     p.add_argument("--expected-version", default=None, help="exact --version output required for tracked golden captures")
     p.add_argument("--tracked-oauth", action="store_true", help="tracked capture only: preserve CLAUDE_CODE_OAUTH_TOKEN (and nothing else) so a model-driven golden can run first-party")
+    # Required state is normally a TRACKED-output gate, but Task 7's binding F1 evidence is a required-state
+    # check on a capture written to untracked scratch. Without this flag the selectors declared for those
+    # keys would load nowhere, validate nowhere, and the capture would exit 0 having verified nothing.
+    # It widens exactly three sites (contract loading, the missing-contract preflight, per-frame validation)
+    # and deliberately NOT the tracked-only redaction-declared check or the --expected-version preflight:
+    # untracked captures pass no version, so widening that one would abort every one of them. Loading still
+    # sits under --redact-masks, so both flags are required together.
+    p.add_argument("--require-state", action="store_true", help="also enforce the required-state contract on untracked output (use with --redact-masks)")
     return p.parse_args()
 
 
@@ -536,7 +544,7 @@ def main() -> int:
                 name = f"{seq:02d}-{line.partition(':')[2]}.ansi"
                 key = frame_key(args.out, name)
                 redactions[name] = load_redaction_contract(args.redact_masks, key)
-                if tracked_relative is not None:
+                if tracked_relative is not None or args.require_state:
                     required_states[name] = load_required_state_contract(args.redact_masks, key)
         except (OSError, ValueError, KeyError, re.error) as error:
             sys.stderr.write(f"capture-frames: invalid redaction masks: {error}\n")
@@ -550,9 +558,13 @@ def main() -> int:
         if version_error:
             sys.stderr.write(f"capture-frames: {version_error}\n")
             return 2
+    # Hoisted out of the tracked block on purpose: an UNDECLARED key yields declared=False with an empty
+    # rule list, which validates vacuously — so without this preflight --require-state would only ever catch
+    # a failing selector, never a missing contract, which is precisely the silent hole being closed.
+    if tracked_relative is not None or args.require_state:
         missing_state = [frame_key(args.out, name) for name, contract in required_states.items() if not contract.required]
         if missing_state:
-            sys.stderr.write(f"capture-frames: tracked golden output has no required state contract for: {', '.join(missing_state)}\n")
+            sys.stderr.write(f"capture-frames: no required state contract for: {', '.join(missing_state)}\n")
             return 2
 
     oauth_error = validate_tracked_oauth(tracked_relative is not None, args.tracked_oauth, os.environ)
@@ -742,7 +754,7 @@ def main() -> int:
                     fail(f"credential leak in tracked frame {frame_key(args.out, out_name)}")
                     break
                 state_failures = []
-                if tracked_relative is not None:
+                if tracked_relative is not None or args.require_state:
                     state_failures = validate_required_state(rendered, required_states[out_name])
                     if state_failures:
                         fail(f"state validation failed for {frame_key(args.out, out_name)}: {', '.join(state_failures)}")

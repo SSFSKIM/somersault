@@ -1,0 +1,21 @@
+# F1 Task 7's internal live-vs-replay pair. The fixture child is deterministic and credential-free (no model
+# turn, no network), so the only thing to wait for is node+tsx boot.
+#
+# ctrl+o twice BEFORE the compact frame is deliberate, not decoration. Two things ride on it:
+#   1. After the 5c default-view fold, the per-call `⏺ Read(path)` header and its result body exist ONLY in
+#      the ctrl+o detail projection — the default view is the one-line `Read 1 file (ctrl+o to expand)`
+#      summary. Without opening the pager the sidecar-vs-flat fixtures would paint the same single row and
+#      the comparison would prove nothing about a result body.
+#   2. The live route reaches the settled screen by SHRINKING (active row + hint gutter -> one settled row),
+#      and Ink repaints incrementally: its erase-line sequences inherit whatever SGR is current, so the live
+#      screen's blank padding cells keep a `dim` attribute the replay screen's do not. Measured: the two
+#      as-painted compact frames are glyph-for-glyph identical and differ only in the attributes of cells
+#      that hold no character. Opening and closing the pager repaints the whole region from a common state,
+#      which removes that inherited-terminal-state term from the comparison instead of masking it away.
+wait:3
+key:ctrl-o
+wait:1
+frame:tool-detail
+key:ctrl-o
+wait:1
+frame:tool-transcript

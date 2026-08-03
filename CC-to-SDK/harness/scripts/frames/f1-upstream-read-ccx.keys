@@ -1,0 +1,4 @@
+# Our binary's counterpart to f1-upstream-read.keys: it shares the tracked golden's frame name while the
+# deterministic fixture is already painted, so no prompt is typed and no credential is ever needed.
+wait:3
+frame:read-complete
