@@ -18,7 +18,7 @@ import { renderMessage } from "./render.js";
 import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
-import { bashArgument, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
+import { bashArgument, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
 import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldClause, type FoldGroup } from "./toolFold.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
 
@@ -203,7 +203,7 @@ export const toolItemId = (toolUseId: string, resultSequence: number | "pending"
 /** A fold group's identity is its MEMBERSHIP, with no sequence component: the member tool-use ids are already
  *  unique and stable, and a document that gains two replay dividers (which shift every later sequence) must
  *  still project the very same group id — that is what lets Static publish a settled group exactly once. */
-export const toolGroupItemId = (memberIds: readonly string[], part: "row" | "pending-row" | "pending-hint"): string => `group:${memberIds.join(",")}:${part}`;
+export const toolGroupItemId = (memberIds: readonly string[], part: "row" | "pending-row" | "pending-hint" | "unclosed-row"): string => `group:${memberIds.join(",")}:${part}`;
 
 /** PROJECTION IDENTITY ONLY — never append/dedup. Task 1's `appendSdk` deliberately refuses to hash a
  *  payload (two equal-looking calls can be genuinely distinct turns), but a retained entry with no
@@ -292,10 +292,18 @@ function groupRowLine(group: FoldGroup, active: boolean, options: ProjectionOpti
   segments.push(dimmed(" ", !active), { text: EXPAND_HINT, dim: true });
   return { text: segments.map((segment) => segment.text).join(""), segments };
 }
+/** The three lives of one group row. `published` is the immutable Static row; `active` and `unclosed` are the
+ *  DYNAMIC region's two forms of a run Static cannot have yet — active while a member is still running,
+ *  settled (geometrically identical to `published`) once they have all completed but no breaker has closed the
+ *  run. `unclosed` therefore carries its own id part: the dynamic copy and the eventual published copy are the
+ *  same text, and a shared id would collide in Static's append-once bookkeeping the moment the run closes. */
+type GroupForm = "published" | "active" | "unclosed";
+const GROUP_PART = { published: "row", active: "pending-row", unclosed: "unclosed-row" } as const;
 /** R3.1's early exit: a run whose clauses all came out empty renders NOTHING at all. */
-function groupItems(group: FoldGroup, active: boolean, options: ProjectionOptions): readonly RenderItem[] {
+function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOptions): readonly RenderItem[] {
+  const active = form === "active";
   if (foldClauses(group.counts, active).length === 0) return [];
-  const id = toolGroupItemId(group.memberIds, active ? "pending-row" : "row");
+  const id = toolGroupItemId(group.memberIds, GROUP_PART[form]);
   const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(group, active, options) }];
   // R3.7: the hint gutter is ACTIVE-ONLY — `latestDisplayHint` rides on the settled message but never renders.
   if (active && group.hint !== undefined)
@@ -343,22 +351,42 @@ function anchoredEntries(document: TranscriptDocument, options: ProjectionOption
   return anchored;
 }
 
+const bySequence = (a: Anchored, b: Anchored) => a.sequence - b.sequence || a.rank - b.rank;
+
 function projectAll(document: TranscriptDocument, options: ProjectionOptions): readonly RenderItem[] {
   const anchored = anchoredEntries(document, options);
   for (const event of document.toolEvents()) {
     if (event.route !== "top-level" || !event.result) continue;
     anchored.push({ sequence: event.result.resultSequence, rank: 1, event, items: reid(renderToolEvent(event, normalizeToolResult(event, { verbose: options.verbose }), options), event.id, event.result.resultSequence) });
   }
-  anchored.sort((a, b) => a.sequence - b.sequence || a.rank - b.rank);
+  anchored.sort(bySequence);
   return options.projection === "compact" && !options.verbose ? foldAnchored(anchored, options) : anchored.flatMap((a) => a.items);
+}
+
+/** The one atom builder both folded projections share. A tool anchor is a `tool` atom — EXCEPT for the tools
+ *  we project to nothing (`isSuppressedTool`: ToolSearch/TaskCreate/TaskUpdate), which become `neutral` and so
+ *  JOIN the run they interrupt without earning a counter, exactly like upstream's absorbed-silently branch
+ *  (contract §1.2 accumulator row 4: "no counter at all — message still joins the group").
+ *  DELIBERATE DEVIATION from default-mode upstream: that branch is `ds()`-gated (§1.1 case 4), so a
+ *  default-mode 2.1.220 falls through to case 6 and renders `⏺ ToolSearch(…)` STANDALONE, which legitimately
+ *  breaks the run. We render no row for those calls at all, so treating them as a break would split one
+ *  summary into two adjacent rows with an invisible seam between them — a bug on screen, not fidelity.
+ *  `inert` is the second reason an anchor stops being a tool: a call the compact projection has already
+ *  PUBLISHED must not re-enter the dynamic region's fold (see `projectPending`). */
+function foldAtoms(anchored: readonly Anchored[], inert?: (event: ToolEvent) => boolean): FoldAtom[] {
+  return anchored.map((a, index) =>
+    a.event !== undefined && !isSuppressedTool(a.event.name) && !(inert?.(a.event) ?? false)
+      ? { kind: "tool", event: a.event }
+      : { kind: a.atom ?? "neutral", sequence: index });
 }
 
 /** The trailing run is the one accumulator `segmentRuns` flushes at the very end, and it is still GROWABLE:
  *  the next collapsible call joins it and would change its counts, its clause text and its membership-derived
  *  id. Ink's `<Static>` is append-only, so publishing it now and re-publishing it later would leave BOTH rows
  *  on screen — it (and the neutral items it deferred, which `segmentRuns` replays straight after it) must
- *  wait for the prose or standalone tool that closes the run. While it is open the ACTIVE row carries it in
- *  the transient region instead (`projectPending`). */
+ *  wait for the prose or standalone tool that closes the run. Until then `projectPending` carries the row in
+ *  the DYNAMIC region — active while a member is still running, settled once they all are — so "withheld from
+ *  Static" never means "invisible". */
 function trailingRunCut(atoms: readonly FoldAtom[], items: readonly { kind: string }[]): number {
   let growing = false;
   for (const atom of atoms) {
@@ -374,12 +402,12 @@ function trailingRunCut(atoms: readonly FoldAtom[], items: readonly { kind: stri
  *  `passthrough` maps straight back to the entry's already-projected items — and `segmentRuns` decides which
  *  contiguous runs collapse. */
 function foldAnchored(anchored: readonly Anchored[], options: ProjectionOptions): readonly RenderItem[] {
-  const atoms: FoldAtom[] = anchored.map((a, index) => (a.event ? { kind: "tool", event: a.event } : { kind: a.atom ?? "neutral", sequence: index }));
+  const atoms = foldAtoms(anchored);
   const standalone = new Map<ToolEvent, readonly RenderItem[]>(anchored.flatMap((a) => (a.event ? [[a.event, a.items] as const] : [])));
   const folded = segmentRuns(atoms, { cwd: options.cwd, home: options.home });
   const out: RenderItem[] = [];
   for (const item of folded.slice(0, trailingRunCut(atoms, folded))) {
-    if (item.kind === "group") { out.push(...groupItems(item.group, false, options)); continue; }
+    if (item.kind === "group") { out.push(...groupItems(item.group, "published", options)); continue; }
     if (item.kind === "passthrough") { out.push(...(anchored[item.sequence]?.items ?? [])); continue; }
     out.push(...(standalone.get(item.event) ?? []));
   }
@@ -397,22 +425,46 @@ export function projectDetail(document: TranscriptDocument, options: ProjectionC
   const { projection, ...context } = options;
   return projectAll(document, { ...context, projection, verbose: projection === "detail-all" });
 }
-/** Open top-level calls only, selected by `!event.result` — NEVER by `status === "running"`, because a
- *  suppressed bookkeeping call is `suppressed` while still open and would leak into the pending region.
- *  `liveIds`, when given, keeps only the calls a live turn is actually running (useChat's rule: a
- *  disk-bootstrapped dangling call is retained history, not something that blinks). Open COLLAPSIBLE calls
- *  become one active group row per contiguous run; everything else keeps its own per-call pending row. */
+/** EVERYTHING the compact projection cannot publish yet, which is exactly two things: an open top-level call
+ *  (selected by `!event.result` — NEVER by `status === "running"`, because a suppressed bookkeeping call is
+ *  `suppressed` while still open and would leak in here), and the trailing fold run `trailingRunCut` withholds
+ *  from Static while it is still growable. `liveIds`, when given, keeps only the OPEN calls a live turn is
+ *  actually running (useChat's rule: a disk-bootstrapped dangling call is retained history, not something that
+ *  blinks) — a completed call is never filtered, since the run it belongs to is what this region draws.
+ *
+ *  The run is folded over the WHOLE anchored stream, not just the open calls, so one contiguous run is one row
+ *  through its entire life: ACTIVE (blinking glyph, participle, `…`, the `⎿` hint) while any member is still
+ *  running, then the settled row — same geometry as the published one, its own id — the moment the last member
+ *  completes, and gone the render a breaker publishes it. Closure comes ONLY from a breaker (the next user
+ *  prompt is always one); there is no timer anywhere in this path.
+ *
+ *  A group the compact projection has ALREADY published must not reappear here, so its members are made inert
+ *  (`published`) before this stream is folded: they stop being tool atoms without becoming run boundaries, and
+ *  a still-open member of that same run folds on alone — which is what keeps a live row on screen without
+ *  double-counting the members Static already shows. */
 export function projectPending(document: TranscriptDocument, options: ProjectionContext, liveIds?: ReadonlySet<string>): readonly RenderItem[] {
   const full: ProjectionOptions = { ...options, projection: "compact", verbose: false };
-  const atoms: FoldAtom[] = [];
+  const anchored = anchoredEntries(document, full);
   for (const event of document.toolEvents()) {
-    if (event.route !== "top-level" || event.result || (liveIds !== undefined && !liveIds.has(event.id))) continue;
-    atoms.push({ kind: "tool", event });
+    if (event.route !== "top-level") continue;
+    // No `items` for either kind: this region renders group rows and per-call PENDING rows, both built below.
+    if (event.result) { anchored.push({ sequence: event.result.resultSequence, rank: 1, event, items: [] }); continue; }
+    if (liveIds === undefined || liveIds.has(event.id)) anchored.push({ sequence: event.callSequence, rank: 1, event, items: [] });
   }
+  anchored.sort(bySequence);
+  const fold = { cwd: options.cwd, home: options.home };
+  // What Static already holds: the same fold the compact projection runs (open calls inert there, exactly as
+  // `projectAll` omits them), minus the trailing run it withholds.
+  const settledAtoms = foldAtoms(anchored, (event) => !event.result);
+  const settled = segmentRuns(settledAtoms, fold);
+  const published = new Set<string>();
+  for (const item of settled.slice(0, trailingRunCut(settledAtoms, settled)))
+    if (item.kind === "group") for (const id of item.group.memberIds) published.add(id);
   const items: RenderItem[] = [];
-  for (const item of segmentRuns(atoms, { cwd: options.cwd, home: options.home })) {
-    if (item.kind === "group") { items.push(...groupItems(item.group, true, full)); continue; }
-    if (item.kind === "tool") items.push(...reid(renderToolEvent(item.event, normalizeToolResult(item.event, { verbose: false }), full), item.event.id, "pending"));
+  for (const item of segmentRuns(foldAtoms(anchored, (event) => published.has(event.id)), fold)) {
+    if (item.kind === "group") { items.push(...groupItems(item.group, item.group.open ? "active" : "unclosed", full)); continue; }
+    // A COMPLETED standalone tool is already published (only groups are ever withheld); only an open one has a row here.
+    if (item.kind === "tool" && !item.event.result) items.push(...reid(renderToolEvent(item.event, normalizeToolResult(item.event, { verbose: false }), full), item.event.id, "pending"));
   }
   return items;
 }

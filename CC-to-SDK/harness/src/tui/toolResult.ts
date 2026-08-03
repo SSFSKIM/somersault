@@ -14,6 +14,9 @@ export interface NormalizedToolResult {
 
 /** Upstream's invisible bookkeeping/deferred-lookup tools: retained in full as source, projected as nothing. */
 const SUPPRESSED = new Set(["TaskCreate", "TaskUpdate", "ToolSearch"]);
+/** The one home of that list, exported so the fold's atom builder can ask the same question the normalizer
+ *  answers with `status: "suppressed"` — a call that renders no row must not be able to break a fold run. */
+export const isSuppressedTool = (name: string): boolean => SUPPRESSED.has(name);
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const lineCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;   // sidecars are unknown-typed: -1 or 1.5 must fall back, not summarize
 

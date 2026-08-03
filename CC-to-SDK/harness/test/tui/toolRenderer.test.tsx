@@ -280,3 +280,73 @@ describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
     expect(frame).toMatch(/⎿.*src\/app\.ts/);
   });
 });
+
+// ── F1 Task 5c follow-up: absorbed bookkeeping calls + the unclosed group's visibility ──────────────────
+// Two adjudicated 5c concerns. (1) A tool WE suppress (ToolSearch/TaskCreate/TaskUpdate) used to flush the
+// run, leaving two summary rows with an invisible seam between them; it must join the group silently
+// instead. (2) A run whose members have all settled but that no breaker has closed yet used to render
+// nowhere at all — the active row had left the transient region and the settled row had not published.
+describe("F1 5c fixes: silent absorption and the unclosed trailing group", () => {
+  const search = (id: string, query: string) => call(id, "ToolSearch", { query });
+  it("absorbs a suppressed bookkeeping call into the run instead of breaking it in two", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      search("ts-1", "select:Read"), result("ts-1", "{}"),
+      call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-2"), prose("done"));
+    const rows = groupRows(projectCompact(doc, context));
+    expect(lineTexts(rows)).toEqual(["  Read 2 files (ctrl+o to expand)"]);          // ONE row, no seam
+    expect(rows.map((i) => i.id)).toEqual(["group:read-1,read-2:row"]);              // and the absorbed call earns no counter
+  });
+
+  it("absorbs a suppressed call silently in the transient region too", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      search("ts-1", "select:Read"), call("read-2", "Read", { file_path: "/work/b.ts" }));
+    const rows = groupRows(projectPending(doc, context));
+    expect(lineTexts(rows)).toEqual(["⏺ Reading 2 files… (ctrl+o to expand)"]);
+  });
+
+  it("renders a settled-but-unclosed run in the DYNAMIC region, in its settled form, under a distinct id", () => {
+    const open = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"));
+    expect(groupRows(projectCompact(open, context))).toEqual([]);                    // nothing has closed the run
+    const dynamic = projectPending(open, context);
+    expect(lineTexts(dynamic)).toEqual(["  Read 1 file (ctrl+o to expand)"]);        // settled geometry: two-space leader, no `…`
+    expect(dynamic[0]!.id).toBe("group:read-1:unclosed-row");                        // distinct from the published `:row`
+    expect(dynamic.some((i) => i.kind === "gutter-block")).toBe(false);              // R3.7: the ⎿ hint stays ACTIVE-only
+  });
+
+  it("switches the dynamic row from active to settled the moment its last member completes", () => {
+    const running = built(call("read-1", "Read", { file_path: "/work/a.ts" }), call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-1"));
+    const live = projectPending(running, context);                                  // one member settled, one still running
+    expect(lineTexts(live)).toEqual(["⏺ Reading 2 files… (ctrl+o to expand)"]);     // the run counts BOTH, not just the open one
+    expect(live.filter((i) => i.kind === "gutter-block")).toHaveLength(1);          // R3.7: the ⎿ hint, active-only
+    const settled = built(call("read-1", "Read", { file_path: "/work/a.ts" }), call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-1"), result("read-2"));
+    const done = projectPending(settled, context);
+    expect(lineTexts(done)).toEqual(["  Read 2 files (ctrl+o to expand)"]);
+    expect(done.filter((i) => i.kind === "gutter-block")).toEqual([]);
+  });
+
+  it("hands the row to Static exactly once when a breaker closes the run, and drops the dynamic copy", () => {
+    const open = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"));
+    const dynamic = groupRows(projectPending(open, context))[0] as { line: RenderLine };
+    for (const breaker of [prose("done"), { type: "user", uuid: "u-next", message: { content: [{ type: "text", text: "next" }] } } as Record<string, unknown>]) {
+      const closed = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), breaker);
+      const published = groupRows(projectCompact(closed, context));
+      expect(published).toHaveLength(1);
+      expect(published[0]!.id).toBe("group:read-1:row");
+      expect((published[0] as { line: RenderLine }).line).toEqual(dynamic.line);     // same row, byte for byte — only the id differs
+      expect(projectPending(closed, context)).toEqual([]);                            // the dynamic copy is gone the same render
+    }
+  });
+
+  it("never shows a run twice: a published group is dropped from the dynamic stream even while a later call runs", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("mid"),
+      call("read-2", "Read", { file_path: "/work/b.ts" }));
+    expect(lineTexts(groupRows(projectCompact(doc, context)))).toEqual(["  Read 1 file (ctrl+o to expand)"]);
+    expect(lineTexts(groupRows(projectPending(doc, context)))).toEqual(["⏺ Reading 1 file… (ctrl+o to expand)"]);
+  });
+
+  it("keeps a standalone tool and a non-collapsible open call out of each other's way", () => {
+    const doc = built(call("bash-1", "Bash", { command: "npm test" }), result("bash-1", "ok"), prose("mid"),
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), call("bash-2", "Bash", { command: "npm run build" }));
+    expect(lineTexts(projectPending(doc, context))).toEqual(["  Read 1 file (ctrl+o to expand)", "⏺ Bash(npm run build)"]);
+  });
+});

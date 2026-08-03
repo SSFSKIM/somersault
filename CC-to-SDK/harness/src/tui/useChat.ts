@@ -211,16 +211,17 @@ export function useChat(
     }
     setPendingItems(livePending(context));
   }
-  /** The transient region: `projectPending` selects every open top-level call off the source document, and the
-   *  live-open set narrows it to the ones a live turn is actually running — so a disk-bootstrapped dangling
-   *  call, or one orphaned by a turn that ended without a result, is retained history but never a blinking row.
-   *  The set is passed INTO the projection rather than used to filter its output: since Task 5c a contiguous
-   *  run of open collapsible calls projects to ONE active group row whose id is derived from its membership,
-   *  so an id-equality filter out here could no longer recognise it. */
+  /** The transient region: `projectPending` returns everything the compact projection cannot publish yet, and
+   *  the live-open set narrows the OPEN calls to the ones a live turn is actually running — so a
+   *  disk-bootstrapped dangling call, or one orphaned by a turn that ended without a result, is retained
+   *  history but never a blinking row. The set is passed INTO the projection rather than used to filter its
+   *  output: since Task 5c a contiguous run of collapsible calls projects to ONE group row whose id is derived
+   *  from its membership, so an id-equality filter out here could no longer recognise it.
+   *  It is NOT short-circuited on an empty live set: a run whose members have all settled but which no breaker
+   *  has closed yet still owns a (settled-form) row here, and that row is all there is to see until the next
+   *  prose or prompt publishes it into Static. */
   function livePending(context: ProjectionContext = projectionContext()): readonly RenderItem[] {
-    const live = liveOpenIds.current;
-    if (live.size === 0) return [];
-    return projectPending(documentRef.current!, context, live);
+    return projectPending(documentRef.current!, context, liveOpenIds.current);
   }
   /** One live host message's effect on the live-open set: a top-level `tool_use` enters, and every id whose
    *  call has since acquired a result leaves (so a redelivered call that already settled never re-enters). */
@@ -231,12 +232,14 @@ export function useChat(
     if (live.size) for (const e of documentRef.current!.toolEvents()) if (e.result && live.has(e.id)) live.delete(e.id);
     setLiveOpen(live.size > 0);
   }
-  /** A live-open boundary: nothing is running any more. Ends the blink epoch and empties the transient region
-   *  — the document keeps whatever stayed open verbatim, no result is ever fabricated into it. */
+  /** A live-open boundary: nothing is running any more. Ends the blink epoch and RE-PROJECTS the transient
+   *  region rather than emptying it — the orphaned calls drop out with the live set, but a fold run they were
+   *  part of keeps its settled row until a breaker publishes it. The document keeps whatever stayed open
+   *  verbatim, no result is ever fabricated into it. */
   function clearLiveOpen(): void {
     if (liveOpenIds.current.size === 0) return;
     liveOpenIds.current.clear();
-    if (!disposed.current) { setLiveOpen(false); setPendingItems([]); }
+    if (!disposed.current) { setLiveOpen(false); setPendingItems(livePending()); }
   }
   /** The 600 ms pending-tool repaint: re-projects ONLY the transient region, so the blink phase
    *  (`Math.floor(now / 600) % 2`) reaches Ink without an SDK message and Static history never moves. */

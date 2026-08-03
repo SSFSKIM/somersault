@@ -1475,6 +1475,36 @@ describe("useChat: one retained document behind every surface", () => {
     return { schedule, tick: () => { ticks++; for (const cb of [...live]) cb(); }, get armed() { return live.length; }, get ticks() { return ticks; } };
   }
 
+  /** 5c follow-up: between "every member settled" and "a breaker closed the run" the row used to render
+   *  NOWHERE — the active row had left the transient region and the settled row had not published. It now
+   *  stays in the dynamic region, in its settled form, under its own id, and swaps into Static in one render. */
+  it("keeps a settled-but-unclosed fold run visible in the dynamic region until a breaker publishes it", async () => {
+    const fake = fakeRemote();
+    let snap!: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[] };
+    function H() {
+      const c = useChat(() => fake);
+      snap = { staticItems: c.state.staticItems, pendingItems: c.state.pendingItems };
+      return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: READ_CALL });
+    await waitFor(() => snap.pendingItems.some((i) => i.id === "group:read-1:pending-row"));
+    fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });                    // settles the ONLY member; nothing closes the run
+    await waitFor(() => snap.pendingItems.some((i) => i.id === "group:read-1:unclosed-row"));
+    expect(frame(lastFrame)).toContain("Read 1 file (ctrl+o to expand)");
+    expect(frame(lastFrame)).not.toContain("Reading 1 file");                       // settled form, not the active one
+    expect(snap.staticItems.filter((i) => i.id.startsWith("group:"))).toEqual([]);  // still unpublished — Static is append-only
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });                         // a turn boundary is NOT a breaker
+    await waitFor(() => frame(lastFrame).includes("Read 1 file (ctrl+o to expand)"));
+    expect(snap.pendingItems.map((i) => i.id)).toEqual(["group:read-1:unclosed-row"]);
+    fake.pushEvent({ kind: "message", data: CLOSING_PROSE });                       // the breaker publishes it
+    await waitFor(() => snap.staticItems.some((i) => i.id === "group:read-1:row"));
+    expect(snap.pendingItems).toEqual([]);                                          // and the dynamic copy is gone the same render
+    expect(frame(lastFrame).match(/Read 1 file \(ctrl\+o to expand\)/g)).toHaveLength(1);
+  });
+
   it("renders ONE row for a complete call/result pair and keeps a typed composer draft live across a duplicate follow record", async () => {
     const fake = fakeRemote();
     const api: { run?: (s: string) => void } = {};
@@ -1683,14 +1713,18 @@ describe("useChat: one retained document behind every surface", () => {
     expect(frame(lastFrame)).not.toContain("Reading 1 file");     // nor the Task 5c active group row
   });
 
-  // Round-1 review finding 2 (D): settlement is per call, not per turn.
-  it("removes ONLY the settled call from the live-open set while a second call is still running", async () => {
+  // Round-1 review finding 2 (D): settlement is per call, not per turn. Since the 5c follow-up an active
+  // group row counts EVERY member of its run, a settled one included, so the row's membership id is no longer
+  // a proxy for the live-open set — what a per-TURN settle would break is visible instead as the run flipping
+  // to its settled form (the still-running call excluded from it) and the blink epoch dying with it.
+  it("keeps a run ACTIVE and its blink epoch armed while only one of its two calls has settled", async () => {
     const scheduler = fakeScheduler();
     const fake = fakeRemote();
-    let ids: string[] = [];
+    let ids: string[] = [], rows: string[] = [];
     function H() {
       const c = useChat(() => fake, {}, { scheduleRepaint: scheduler.schedule });
       ids = [...c.state.pendingItems].map((i) => i.id);
+      rows = [...c.state.pendingItems].flatMap(itemLines);
       return <Text>{allText(c)}</Text>;
     }
     render(<H />);
@@ -1698,11 +1732,17 @@ describe("useChat: one retained document behind every surface", () => {
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     fake.pushEvent({ kind: "message", data: READ_CALL });
     fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "assistant-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/src/b.ts" } }] } } });
-    await waitFor(() => ids.some((i) => i.includes("read-1")) && ids.some((i) => i.includes("read-2")));
+    await waitFor(() => rows.some((r) => r.includes("Reading 2 files")));
     fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });          // settles read-1 only
-    await waitFor(() => !ids.some((i) => i.includes("read-1")));
-    expect(ids.every((i) => i.includes("read-2"))).toBe(true);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(ids.filter((i) => i.endsWith(":pending-row"))).toHaveLength(1);
+    expect(ids.every((i) => i.includes("read-1") && i.includes("read-2"))).toBe(true);
+    expect(rows.some((r) => r.includes("Reading 2 files"))).toBe(true);   // still the ACTIVE form
     expect(scheduler.armed).toBe(1);                                      // read-2 keeps the epoch alive
+    fake.pushEvent({ kind: "message", data: { type: "user", uuid: "user-result-b", message: { content: [{ type: "tool_result", tool_use_id: "read-2", content: "b", is_error: false }] } } });
+    await waitFor(() => rows.some((r) => r.includes("Read 2 files (ctrl+o to expand)")));
+    await waitFor(() => scheduler.armed === 0);                           // both settled → the epoch is over
+    expect(ids.every((i) => i.endsWith(":unclosed-row"))).toBe(true);     // and the run waits for a breaker, visibly
   });
 
   it("a truncated start WITH a numeric seq is a live mid-turn replay: gap record, LiveTurn, busy", async () => {
