@@ -9,12 +9,13 @@
 // `l.segments` when present and ignores `l.color`/`l.dim`/`l.bold`/`l.italic` entirely in that branch, so a
 // line-level colour on a segmented header would silently render as plain text.
 import React from "react";
-import { relative, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Box, Text } from "ink";
 import wrapAnsi from "wrap-ansi";
 import type { RenderLine, Segment } from "./render.js";
 import { renderMessage } from "./render.js";
+import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import { bashArgument, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
@@ -44,15 +45,9 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 
 /** OSC-8 with the BEL terminator (what 2.1.220 emits, and what every terminal we target accepts). */
 export const osc8FileLink = (path: string, label: string) => `\x1b]8;;${pathToFileURL(path).href}\x07${label}\x1b]8;;\x07`;
-/** cwd-first, home-second: a path inside the session cwd shows relative to it even when the project itself lives
- *  under $HOME (so `~/project/src/app.ts` reads `src/app.ts`); only an outside path falls back to `~`/absolute. */
-export function displayPath(path: string, cwd: string, home: string): string {
-  const absolute = resolve(cwd, path), fromCwd = relative(cwd, absolute);
-  if (!fromCwd || (fromCwd !== ".." && !fromCwd.startsWith(`..${sep}`))) return fromCwd || ".";
-  if (absolute === home) return "~";
-  if (absolute.startsWith(home + sep)) return `~/${relative(home, absolute)}`;
-  return absolute;
-}
+/** Re-exported, not defined here, since Task 5c: `paths.ts` owns the rule so `toolFold.ts` can reach it
+ *  without importing this module (which now imports the fold model). The public surface is unchanged. */
+export { displayPath };
 
 /** Slice to VISUAL rows first, then clip — so the overflow count is what the reader actually cannot see, not a
  *  logical-line count that undercounts a wrapped row. `revealOneExtraWithoutMarker` is upstream's four-row

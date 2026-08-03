@@ -10,7 +10,7 @@
 //      RANGES rather than markup so Task 5c owns every styling decision.
 // `ds()` is fixed false (R2.1), so the fullscreen-only clauses — shell commands, git ops, agents, edits, REPL — are
 // unreachable here and deliberately absent (R1.6, R1.7, R2.2).
-import { displayPath } from "./toolRenderer.js";
+import { displayPath } from "./paths.js";
 import type { ToolEvent } from "./transcriptModel.js";
 
 /** Upstream `jr_`/`Wr_`/`qr_`/`Vr_` verbatim (L306395). `Vr_` decides nothing: a command of only ignored words is
