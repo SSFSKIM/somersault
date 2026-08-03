@@ -21,18 +21,20 @@
 //    and `resumeOutput` test seams, none of which the provider can see.
 //  * `useKeyActions` — the six root globals plus alt+p/alt+t (KB8).
 //  * `useKeyScope("Task", {active: busy})` — makes ctrl+x ctrl+b (KB18) resolve only during a turn.
-// F2 TASK 7 — the four overlays (`?` help, the pager, history search, the rewind picker) now own their own
-// keys: Help pushes its context AND swallows, the other three push Transcript / HistorySearch /
-// MessageSelector, whose null bindings unbind the root globals declaratively. So none of them appears in
-// `gatedRef` below any more, and neither does the `?`-overlay's Escape (ShortcutsOverlay registers
-// help:dismiss itself). What `gatedRef` still covers is the surfaces that run `useInput` to this day — the
-// dialogs task 8 will take — plus the keyless “⏪ restoring…” modal. It is deliberately temporary;
-// `inputOwnerRef` is a different question (which surface is VISIBLE) and keeps its own two jobs.
+// F2 TASK 7 — the four overlays (`?` help, the pager, history search, the rewind picker) own their own keys:
+// Help pushes its context AND swallows, the other three push Transcript / HistorySearch / MessageSelector,
+// whose null bindings unbind the root globals declaratively.
+// F2 TASK 8 — so do the eleven dialogs and pickers (Select / Confirmation / Settings+Tabs), which was the
+// last thing `gatedRef`/`settledGatedRef` covered: BOTH ARE GONE. The root handlers below no longer guard
+// themselves at all, because there is nothing left for them to guard against — every surface that hides the
+// composer now states in the table which of Global's keys reach it, and the ONE surface with no keys of its
+// own (the “⏪ restoring…” hold) says so too, by swallowing (`RestoringModal`). `inputOwnerRef` stays: it is a
+// different question (which surface is VISIBLE), read only by the composer's own handler.
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import { suspendProcess } from "./suspend.js";
-import { useKeyActions, useKeyScope, useKeySuspend } from "./keys/KeymapProvider.js";
+import { useKeyActions, useKeyScope, useKeySuspend, useSwallowKeys } from "./keys/KeymapProvider.js";
 import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
@@ -55,6 +57,19 @@ import { AddDirDialog } from "./AddDirDialog.js";
 import { ThemeDialog } from "./ThemeDialog.js";
 import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
+
+/** The rewind hold — the one surface in the tree with no keys of its own. A confirmed rewind is a multi-second
+ *  file restore + engine swap, and anything that acted during it (Ctrl-R opening history search, Ctrl-O the
+ *  pager, Ctrl-C arming an exit) would reintroduce exactly the loss this modal exists to prevent. It says that
+ *  itself instead of leaving ChatApp to gate its own handlers: `useSwallowKeys` drops every key while it is
+ *  mounted — Ctrl-Z still suspends, which the provider handles above the table. It pushes NO scope, so the
+ *  swallow covers `Global` too (registry.ts: a swallower with no scope of its own swallows everything), which
+ *  is why ChatApp's `Task` scope is deactivated while `rewinding` — it would otherwise be the innermost live
+ *  scope and its ctrl+x ctrl+b chord would survive the hold. */
+function RestoringModal(): React.ReactElement {
+  useSwallowKeys(true);
+  return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
+}
 
 export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, deps, yankHintMs, escClearMs, suspend, resumeOutput }: {
   makeSession: (resume?: string) => ChatSession;
@@ -88,9 +103,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const editorStateRef = useRef<EditorState>(initialEditorState());
   const consumedPrefillTokenRef = useRef(0);
   // Input subscriptions are passive. This ref changes during render, before the visible owner swaps, so a
-  // retiring composer can reject the next key even before Ink has removed its listener. It names the VISIBLE
-  // surface, migrated ones included — a different question from `gatedRef` below, and the composer's guard is
-  // its only reader.
+  // retiring composer can reject the next key even before its own registration has been torn down — the Chat
+  // scope outlives the unmount by one passive flush, and shift+tab/escape would otherwise still reach it from
+  // under a dialog. It names the VISIBLE surface; the composer's guard is its only reader.
   const inputOwnerRef = useRef<InputOwner>("composer");
   inputOwnerRef.current = state.shortcutsOpen
     ? "shortcuts"
@@ -101,24 +116,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         : state.pending
           ? "decision"
           : "composer";
-  // TEMPORARY (task 8), and deliberately NOT the same thing as `inputOwnerRef` above. This one answers only
-  // "is a surface that still runs its own `useInput` up?", which is the sole remaining reason ChatApp's
-  // handlers below have to guard themselves at all. The four surfaces task 7 migrated are absent on purpose:
-  // Help swallows every key at the provider, and Transcript/HistorySearch/MessageSelector push scopes whose
-  // null bindings unbind the root globals declaratively — naming them here too would gate one key with two
-  // mechanisms, which is how a key goes silently dead. `state.pending` is absent for the older reason the
-  // bundle records: the root globals stay live over a VISIBLE decision dialog.
-  const gatedRef = useRef(false);
-  gatedRef.current = state.rewinding || state.bgPanelOpen || state.modelPicker.open || state.settings.open
-    || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open;
-  // …and this one is that answer as of the last FLUSHED commit. Both are needed for as long as any surface
-  // still runs `useInput`: Ink reads stdin on "readable", the keymap listens for "data", and the stream emits
-  // readable FIRST — so a key an unmigrated dialog handles by closing itself has already re-rendered the tree
-  // by the time our handlers see that same key, which would otherwise act for the surface the key just
-  // revealed (Escape denying a dialog and THEN arming rewind on the composer beneath it). Passive effects do
-  // not flush inside that window, so this ref still describes the surface the key was actually pressed on.
-  const settledGatedRef = useRef(gatedRef.current);
-  useEffect(() => { settledGatedRef.current = gatedRef.current; });
   // The keymap dispatches from a stdin listener the provider attached in a passive effect, so — exactly as
   // with the old `useInput` — a key can arrive after a newer render has already painted. Keep every
   // state/callback value these handlers consume current synchronously.
@@ -170,36 +167,28 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // from an ordinary overlay hidden behind a decision. Shift+Tab/Esc are the composer's (Chat context) — it
   // fires onCycleMode on Shift+Tab even with a `/`/`@` popup open (matches 2.1.220) and routes Esc to
   // onInterrupt only when no popup is open. Ctrl-L lives in the editor now (Task 2), not here.
-  const rootOwned = () => !gatedRef.current && !settledGatedRef.current;
-  useKeyScope("Task", { active: state.busy });                  // KB18: ctrl+x ctrl+b only while a turn runs
+  // KB18: ctrl+x ctrl+b only while a turn runs — and never through the rewind hold, whose swallow resolves
+  // against the innermost live scope and would otherwise find THIS one (see RestoringModal).
+  useKeyScope("Task", { active: state.busy && !state.rewinding });
+  // Every arm below is unguarded now (task 8): a surface that hides the composer either unbinds these keys in
+  // its own context or swallows them, so reaching this handler already means the root owns the key. The
+  // !rewinding checks the two open arms used to carry went the same way — RestoringModal eats the keystroke
+  // before dispatch, and in the three arms that can render ABOVE it (shortcuts / pager / history) ctrl+o and
+  // ctrl+r are swallowed, rebound, or null-bound in that surface's own context.
   useKeyActions({
-    // Both open arms are gated on !rewinding (F3, final review): a confirmed rewind is a multi-second
-    // engine swap held behind the “⏪ restoring…” modal so a mid-rewind prompt isn't lost — Ctrl-R/Ctrl-O
-    // opening another overlay (or, for history, Enter-executing straight into the busy host) would
-    // reintroduce exactly the loss mode that modal exists to prevent.
-    "app:toggleTranscript": () => {
-      if (!rootOwned() || rootStateRef.current.rewinding) return;
-      setTranscriptOpen(true); disarm();
-    },
-    "history:search": () => {
-      if (!rootOwned() || rootStateRef.current.rewinding) return;
-      openHistorySearchRef.current(); disarm();
-    },
-    "app:toggleTodos": () => { if (!rootOwned()) return; setTodosOpen((v) => !v); disarm(); },
+    "app:toggleTranscript": () => { setTranscriptOpen(true); disarm(); },
+    "history:search": () => { openHistorySearchRef.current(); disarm(); },
+    "app:toggleTodos": () => { setTodosOpen((v) => !v); disarm(); },
     "app:interrupt": () => {                                    // interrupt a turn, else arm/confirm exit (CC)
-      if (!rootOwned()) return;
       if (rootStateRef.current.busy) { interruptRef.current(); disarm(); return; }
       if (exitArmedRef.current) { exitRef.current(); return; }
       setExitArmed(true); if (disarmTimer.current) clearTimeout(disarmTimer.current); disarmTimer.current = setTimeout(() => setExitArmed(false), 2000);
     },
-    "task:background": () => {
-      if (!rootOwned()) return;
-      rootStateRef.current.busy ? backgroundNowRef.current() : openBgPanelRef.current(); disarm();
-    },
-    "chat:modelPicker": () => { if (rootOwned()) void openModelPickerRef.current(); },              // KB8 (alt+p)
+    "task:background": () => { rootStateRef.current.busy ? backgroundNowRef.current() : openBgPanelRef.current(); disarm(); },
+    "chat:modelPicker": () => { void openModelPickerRef.current(); },                               // KB8 (alt+p)
     // KB8 (alt+t): the Settings Thinking-mode row's flow — setThink is /think's own mechanism
     // (session.setMaxThinkingTokens) with the off/default pair the row toggles between.
-    "chat:thinkingToggle": () => { if (rootOwned()) void setThinkRef.current(rootStateRef.current.thinkLevel === "off" ? "default" : "off"); },
+    "chat:thinkingToggle": () => { void setThinkRef.current(rootStateRef.current.thinkLevel === "off" ? "default" : "off"); },
   });
   return (
     <Box flexDirection="column">
@@ -230,7 +219,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         // reachable/answerable through the overlay, and closing the overlay remounts the dialog fresh via
         // its `key={state.pending.toolUseID}` — so no answer can be lost, only its rendering briefly hidden.
         : state.rewinding
-        ? <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>
+        ? <RestoringModal />
         : state.rewindPicker.open
           ? <RewindPicker anchors={state.rewindPicker.anchors} onDryRun={rewindDryRun} onConfirm={confirmRewind} onClose={closeRewindPicker} />
           : state.bgPanelOpen

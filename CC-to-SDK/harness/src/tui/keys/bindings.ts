@@ -96,14 +96,20 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // returns before every root global, so none of Global's six reaches them. ctrl+d has no root handler at all —
     // its owner check is the composer's (ChatComposer.tsx:165), and the composer is unmounted behind an overlay.
     "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
+    "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
   }},
   { context: "Confirmation", bindings: {
     "enter": "confirm:yes", "escape": "confirm:no", "up": "confirm:previous", "down": "confirm:next",
     "y": "confirm:yes", "n": "confirm:no",          // F0 fix, re-homed
-    // owner === "decision" falls THROUGH the gate (ChatApp.tsx:145 returns only for "overlay"), so ctrl+c/o/r/t/b
-    // stay live over a visible dialog — deliberately, per the ChatApp comment — and must not be unbound here.
+    // owner === "decision" fell THROUGH the old gate (only "overlay" returned early), so ctrl+c/o/r/t/b stay
+    // live over a visible dialog — deliberately, per the ChatApp comment — and must not be unbound here.
     // Only ctrl+d is dead: the composer that owns it is unmounted while the dialog is up.
     "ctrl+d": null,
+    // alt+p/alt+t are CHAT keys, not root globals: with the composer unmounted behind any Confirmation surface
+    // the Chat scope is off the stack and they already resolve to nothing. The nulls make the passive-flush
+    // sub-tick (where the Chat scope is still registered for one flush) behave the same as the steady state
+    // instead of newly opening the model picker over a dialog — same hole as Transcript's (t7 review).
+    "alt+p": null, "alt+t": null,
   }},
   { context: "Settings", bindings: {
     "escape": "confirm:no", "up": "select:previous", "down": "select:next", "k": "select:previous",
@@ -111,6 +117,7 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "space": "select:accept", "enter": "select:accept", "/": "settings:search",
     // SettingsDialog (with PermissionsDialog/ThemeDialog/AddDirDialog) is an "overlay" owner — same suppression.
     "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
+    "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
   }},
   { context: "Tabs", bindings: {
     "tab": "tabs:next", "shift+tab": "tabs:previous", "right": "tabs:next", "left": "tabs:previous",

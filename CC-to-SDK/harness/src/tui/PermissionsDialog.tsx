@@ -6,8 +6,16 @@
 // same convention as every other dialog in this package) — this component owns only the keys, the tab/row
 // cursor, and which sub-view (if any) is showing.
 //
+// F2 Task 8: no `useInput`. Like SettingsDialog it pushes `Settings` + `Tabs` and routes every one of their
+// actions back into ONE `onKey` — the old handler body verbatim on the re-projected event — so the rule-entry
+// sub-view can keep receiving `j`, `k`, space and `/` as literal text while the contexts' null bindings keep
+// the six root globals unbound. The single exception is the embedded AddDirDialog: its entry phase needs the
+// keymap FALLBACK for the path it is typing, and an action handler always CONSUMES, so while that sub-view is
+// up this component registers NO action handlers at all (the scopes stay, and with them the nulls) and the
+// unhandled actions fall through to the child's fallback.
+//
 // Sub-views are EMBEDDED (SettingsDialog's own convention for Theme/Output-style): this component swaps its
-// OWN render to the sub-view, no nested border, and this component's top-level useInput early-returns for
+// OWN render to the sub-view, no nested border, and this component's top-level handler early-returns for
 // every `sub !== "none"` state so a keystroke never reaches two handlers at once. Workspace's
 // "Add directory…" row is the same trick: it embeds Task 3's AddDirDialog DIRECTLY (not via the top-level
 // `state.addDir` overlay slot — ChatApp's chain puts `permissions` BEFORE `addDir`, so reusing the
@@ -15,7 +23,11 @@
 // that entirely and reuses the exact same addDirValidate/confirmAddDir/cancelAddDir callbacks useChat.ts
 // already exposes for the standalone /add-dir path — including their existing transcript-notice behavior).
 import React, { useEffect, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
+import { toKeyFlags } from "./keys/editorAdapter.js";
+import { useRefState } from "./keys/refState.js";
+import type { KeyEvent, TextEvent } from "./keys/types.js";
 import { ruleRows, workspaceRows, SOURCE_LABELS, type RuleRow, type DenialEntry } from "./permissionsModel.js";
 import type { RenderLine } from "./render.js";
 import type { SettingsTarget } from "./settingsFile.js";
@@ -64,6 +76,9 @@ const DETAILS_FOOTER = "Esc to close";
 const REMOVE_DIR_FOOTER = "Enter to remove · Esc to cancel";
 
 type Sub = "none" | "addRuleText" | "addRuleDest" | "deleteConfirm" | "ruleDetails" | "addDir" | "removeDirConfirm";
+/** Registered while the embedded AddDirDialog is up (see the header): the Settings/Tabs actions must reach
+ *  NO handler here, so they fall through to that child's fallback instead of being consumed by this one. */
+const NO_ACTIONS: Record<string, (e: KeyEvent) => void> = {};
 type WorkspaceDir = { path: string; source: "cwd" | "launch" | "session" };
 
 type Item =
@@ -98,8 +113,10 @@ export function PermissionsDialog({
 }) {
   const activeTab = (TABS as readonly string[]).includes(tab) ? (tab as Tab) : "Allow";
   const [idx, setIdx] = useState(0);
-  const [sub, setSub] = useState<Sub>("none");
-  const [ruleText, setRuleText] = useState("");
+  // Ref-backed (keys/refState.ts): `sub` is what every key handler branches on and `ruleText` is what one
+  // accumulates into, and a single stdin chunk dispatches several events before any render.
+  const [sub, setSub, subRef] = useRefState<Sub>("none");
+  const [ruleText, setRuleText, ruleTextRef] = useRefState("");
   const [destIdx, setDestIdx] = useState(0);
   const [selectedRule, setSelectedRule] = useState<RuleRow | null>(null);
   const [selectedDir, setSelectedDir] = useState<string | null>(null);
@@ -128,12 +145,16 @@ export function PermissionsDialog({
   const clampedIdx = Math.min(idx, Math.max(0, items.length - 1));
   const selectedItem = items[clampedIdx];
 
-  useInput((input, key) => {
+  const onKey = (e: KeyEvent | TextEvent) => {
+    const sub = subRef.current;                      // shadows the render value ON PURPOSE: a handler must branch
+                                                     // on the LIVE sub-view, not the one this render was built from
+    if (sub === "addDir") return;                    // the embedded AddDirDialog owns every key while it's showing
+    const { input, key } = toKeyFlags(e);
     if (sub === "addRuleText") {
       if (key.escape) { setSub("none"); return; }
-      if (key.return) { if (ruleText.trim()) { setDestIdx(0); setSub("addRuleDest"); } return; }
-      if (key.backspace || key.delete) { setRuleText((t) => t.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setRuleText((t) => t + input);
+      if (key.return) { if (ruleTextRef.current.trim()) { setDestIdx(0); setSub("addRuleDest"); } return; }
+      if (key.backspace || key.delete) { setRuleText(ruleTextRef.current.slice(0, -1)); return; }
+      if (input && input >= " " && !key.ctrl && !key.meta) setRuleText(ruleTextRef.current + input);
       return;
     }
     if (sub === "addRuleDest") {
@@ -141,7 +162,7 @@ export function PermissionsDialog({
       if (key.upArrow) { setDestIdx((i) => Math.max(0, i - 1)); return; }
       if (key.downArrow) { setDestIdx((i) => Math.min(DEST_OPTIONS.length - 1, i + 1)); return; }
       if (key.return) {
-        const b = behavior!; const target = DEST_OPTIONS[destIdx].target; const rule = ruleText.trim();
+        const b = behavior!; const target = DEST_OPTIONS[destIdx].target; const rule = ruleTextRef.current.trim();
         setSub("none");
         void addRule(b, rule, target).then(refreshSettings);
       }
@@ -157,7 +178,6 @@ export function PermissionsDialog({
       return;
     }
     if (sub === "ruleDetails") { if (key.escape || key.return) setSub("none"); return; }
-    if (sub === "addDir") return;                    // the embedded AddDirDialog owns every key while it's showing
     if (sub === "removeDirConfirm") {
       if (key.escape) { setSub("none"); return; }
       if (key.return) {
@@ -186,7 +206,14 @@ export function PermissionsDialog({
       // ONLY log. Enter intentionally falls through to a no-op here (↑/↓ still moves the cursor above);
       // the footer no longer claims otherwise (RECENT_FOOTER, Finding 2 divergence note).
     }
+  };
+  useKeyScope("Settings");
+  useKeyScope("Tabs");
+  useKeyActions(sub === "addDir" ? NO_ACTIONS : {
+    "select:previous": onKey, "select:next": onKey, "select:accept": onKey,
+    "confirm:no": onKey, "settings:search": onKey, "tabs:next": onKey, "tabs:previous": onKey,
   });
+  useKeyFallback(onKey);
 
   if (sub === "addRuleText") return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>

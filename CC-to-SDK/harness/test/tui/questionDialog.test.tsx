@@ -3,7 +3,7 @@
 // `response` (probe 65E's proven channel), Esc/malformed-input deny (never a fabricated answer).
 import { describe, it, expect } from "vitest";
 import React from "react";
-import { render } from "ink-testing-library";
+import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { QuestionDialog, parseQuestions } from "../../src/tui/QuestionDialog.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";

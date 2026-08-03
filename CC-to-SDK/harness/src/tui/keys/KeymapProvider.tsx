@@ -115,28 +115,32 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   const aliveRef = useRef(true);
   useLayoutEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
 
-  // Deliberately PASSIVE, not layout: React runs passive effects child-first, so during the migration window
-  // (tasks 6–8 still have `useInput` children) our latin1 lands AFTER Ink's `handleSetRawMode` has forced
-  // utf8 for each of them. A layout effect here would run first and lose the encoding to the next child.
+  // Deliberately PASSIVE, not layout: React runs passive effects child-first, so our latin1 lands AFTER any
+  // Ink `handleSetRawMode` that forced utf8. A layout effect here would run first and lose the encoding to the
+  // next child. As of task 8 nothing under src/tui subscribes to Ink's input at all, so Ink re-sets utf8 only
+  // for the provider's OWN setRawMode below — our flip is last, and it now survives every dialog mount for the
+  // life of the process. The transitional window where a dialog could reset the encoding under us is closed.
   useEffect(() => {
     if (!isRawModeSupported) return;
     setRawMode(true);
-    // Gate the latin1 flip on a migrated consumer existing (children register during render, so by the time
-    // this parent-last passive effect runs, the registry is truthful). Before task 6 lands nothing registers,
-    // and forcing latin1 then would hand the still-live `useInput` components raw bytes — mojibake for every
-    // non-ASCII character typed into the composer at launch (t5 review, Important).
+    // Gate the latin1 flip on a registered consumer existing (children register during render, so by the time
+    // this parent-last passive effect runs, the registry is truthful). It is what kept the flip from handing
+    // raw bytes to a still-unmigrated `useInput` component — mojibake for every non-ASCII character typed at
+    // launch (t5 review, Important). The migration is finished, so in the real tree this is always true; it
+    // stays because a bare <KeymapProvider> with no consumers (a test harness, a future embed) must not touch
+    // an encoding nobody is decoding.
     const migrated = reg.scopes.size + reg.actions.size + reg.fallbacks.size > 0;
     if (migrated) stdin.setEncoding?.("latin1");
     const onData = (data: string | Buffer) => {
       if (!aliveRef.current) return;
       consumeRef.current(typeof data === "string" ? data : data.toString("latin1"));
     };
-    // Ordering note (task 6, measured): this listener can NOT be made to run before the `useInput` components
-    // that have not migrated yet. Ink reads stdin on "readable" (ink/build/components/App.js `handleReadable`)
-    // and fans out from there, and a stream emits "readable" before "data" — so for one byte, an unmigrated
-    // dialog handles the key, closes itself, and re-renders the tree before we are called. The two components
-    // this task migrated absorb that window explicitly (ChatApp's settled-owner ref, ChatComposer's `mounted`);
-    // it disappears entirely once tasks 7/8 remove the last `useInput`.
+    // Ordering note (task 6, measured; RESOLVED in task 8): Ink reads stdin on "readable"
+    // (ink/build/components/App.js `handleReadable`) and fans out from there, and a stream emits "readable"
+    // before "data" — so while any `useInput` consumer was still live, that component saw a byte, closed
+    // itself and re-rendered the tree BEFORE this listener ran. Two temporary guards absorbed the window
+    // (ChatApp's settled-gate ref, ChatComposer's `mounted`); both are deleted, because Ink now reads the
+    // stream and dispatches to zero subscribers and nothing can re-render the tree ahead of us.
     stdin.on("data", onData);
     return () => {
       stdin.removeListener("data", onData);

@@ -170,13 +170,27 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     await waitFor(() => background.mock.calls.length === 1);
   });
 
-  it("(i) neither ChatApp nor ChatComposer calls useInput any more — nor, as of task 7, the four overlays", async () => {
-    const { readFileSync } = await import("node:fs");
-    for (const file of ["../../src/tui/ChatApp.tsx", "../../src/tui/ChatComposer.tsx",
-      "../../src/tui/ShortcutsOverlay.tsx", "../../src/tui/TranscriptPager.tsx",
-      "../../src/tui/HistorySearchOverlay.tsx", "../../src/tui/RewindPicker.tsx"]) {
-      const src = readFileSync(new URL(file, import.meta.url), "utf8");
-      expect(src, `${file} still calls useInput`).not.toMatch(/useInput\(/);
+  // Task 8 turned this from a per-file list into a directory sweep: the migration is finished, so the honest
+  // gate is "NOTHING under src/tui subscribes to Ink's input any more". Prose mentioning `useInput` survives in
+  // several headers (it is the history these files explain) — the gate is on CALLS and IMPORTS, not comments.
+  it("(i) nothing under src/tui calls or imports Ink's useInput any more (tasks 6–8 complete)", async () => {
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const dir = new URL("../../src/tui/", import.meta.url);
+    const files: string[] = [];
+    const walk = (at: URL, prefix: string) => {
+      for (const e of readdirSync(at, { withFileTypes: true })) {
+        if (e.isDirectory()) { walk(new URL(`${e.name}/`, at), `${prefix}${e.name}/`); continue; }
+        if (/\.tsx?$/.test(e.name)) files.push(`${prefix}${e.name}`);
+      }
+    };
+    walk(dir, "");
+    expect(files.length).toBeGreaterThan(30);                       // the sweep really found the tree
+    for (const file of files) {
+      const src = readFileSync(new URL(file, dir), "utf8");
+      // Strip line and block comments first, so a header that TELLS the useInput story does not fail the gate.
+      const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      expect(code, `src/tui/${file} still calls useInput`).not.toMatch(/useInput\s*\(/);
+      expect(code, `src/tui/${file} still imports useInput`).not.toMatch(/\buseInput\b(?![\s]*\()/);
     }
   });
 });

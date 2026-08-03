@@ -6,8 +6,11 @@
 // entries); this one is the live per-turn engine style switch SettingsOps.setOutputStyle drives (4 entries
 // — includes "proactive", which config/outputStyle.ts has no equivalent for). Simple confirm/cancel
 // list, no live preview: unlike /theme there is nothing local to render a preview of.
+// F2 Task 8: no `useInput` — the `Select` context, exactly like its sibling pickers, so its hand-rolled j/k
+// and ctrl+n/ctrl+p become the table's and the KB15 page keys come along.
 import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useSelectKeys } from "./keys/selectKeys.js";
 import { ACCENT } from "./theme.js";
 
 export interface OutputStyleOption { id: string; label: string; description: string }
@@ -30,11 +33,9 @@ export const OUTPUT_STYLE_REDIRECT = "/output-style moved → Output style in /c
 
 export function OutputStylePicker({ current, onPick, onCancel }: { current?: string; onPick: (id: string) => void; onCancel: () => void }) {
   const [idx, setIdx] = useState(() => Math.max(0, OUTPUT_STYLES.findIndex((o) => o.id === current)));
-  useInput((input, key) => {
-    if (key.escape) { onCancel(); return; }
-    if (key.upArrow || input === "k" || (key.ctrl && input === "p")) { setIdx((i) => Math.max(0, i - 1)); return; }
-    if (key.downArrow || input === "j" || (key.ctrl && input === "n")) { setIdx((i) => Math.min(OUTPUT_STYLES.length - 1, i + 1)); return; }
-    if (key.return) onPick(OUTPUT_STYLES[idx].id);
+  useSelectKeys({
+    count: OUTPUT_STYLES.length, index: idx, onMove: setIdx, onCancel,
+    onAccept: () => onPick(OUTPUT_STYLES[idx].id),
   });
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>

@@ -3,8 +3,16 @@
 // y = accept once, n = reject (KB1); the legacy a/A/d shortcuts still work. UI hints are absent
 // headlessly, so the prompt is reconstructed from toolName + input. Shared by the chat REPL (ChatApp)
 // and the daemon console (App).
+//
+// F2 Task 8: no `useInput`. The dialog pushes the `Confirmation` context, so ↑/↓/Enter/Esc and the bare y/n
+// are the table's four actions; the numbered rows and the legacy a/A/d/D letters are bound in no context and
+// arrive on the keymap FALLBACK. `Confirmation` deliberately leaves the root globals live (a decision dialog
+// is not an overlay — Ctrl-C/O/T/R/B still work over it), which is why nothing is unbound here but ctrl+d.
 import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
+import { toKeyFlags } from "./keys/editorAdapter.js";
+import type { KeyEvent, TextEvent } from "./keys/types.js";
 import type { PermissionDecision } from "../index.js";
 import { ACCENT } from "./theme.js";
 
@@ -26,17 +34,22 @@ export function PermissionDialog({ req, onDecision }: { req: { toolName: string;
     { key: "3", label: "No, and tell Claude what to do differently (esc)", decision: { kind: "deny" } },
   ];
   const [idx, setIdx] = useState(0);
-  useInput((input, key) => {
-    if (key.escape) { onDecision({ kind: "deny" }); return; }
-    if (key.upArrow) { setIdx((i) => Math.max(0, i - 1)); return; }
-    if (key.downArrow) { setIdx((i) => Math.min(opts.length - 1, i + 1)); return; }
-    if (key.return) { onDecision(opts[idx].decision); return; }
-    const barePrintable = !key.ctrl && !key.meta && !key.shift;
-    if (barePrintable && input === "y") { onDecision({ kind: "allow_once" }); return; }   // CC confirm:yes
-    if (barePrintable && input === "n") { onDecision({ kind: "deny" }); return; }         // CC confirm:no
+  useKeyScope("Confirmation");
+  useKeyActions({
+    "confirm:previous": () => setIdx((i) => Math.max(0, i - 1)),
+    "confirm:next": () => setIdx((i) => Math.min(opts.length - 1, i + 1)),
+    // Enter and a bare `y` are ONE action in the table but two different answers here: Enter takes the
+    // HIGHLIGHTED row (↓↓⏎ must still be able to deny), while `y` is the shortcut that means yes wherever the
+    // cursor is. The handler is handed the event precisely so it can tell them apart.
+    "confirm:yes": (e) => onDecision(e.name === "enter" ? opts[idx].decision : { kind: "allow_once" }),
+    "confirm:no": () => onDecision({ kind: "deny" }),               // escape and a bare `n` both mean deny
+  });
+  useKeyFallback((e: KeyEvent | TextEvent) => {
+    const { input, key } = toKeyFlags(e);
+    if (key.ctrl || key.meta) return;                               // ctrl+y / alt+n are not decisions
     const n = opts.findIndex((o) => o.key === input);
     if (n >= 0) { onDecision(opts[n].decision); return; }
-    if (input === "a") onDecision({ kind: "allow_once" });          // legacy shortcuts
+    if (input === "a") onDecision({ kind: "allow_once" });           // legacy shortcuts
     else if (input === "A") onDecision({ kind: "allow_always" });
     else if (input === "d" || input === "D") onDecision({ kind: "deny" });
   });

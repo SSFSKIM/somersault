@@ -16,8 +16,14 @@
 // persist-and-return), this only suppresses the standalone footer's "Esc to cancel" hint, which would be
 // redundant/confusing nested inside Settings' own chrome. Nothing else about the standalone /theme path
 // changes — the prop defaults to false there.
+// F2 Task 8: the picker stopped calling `useInput` and pushes the `Select` context instead. Its hand-rolled
+// j/k and ctrl+n/ctrl+p are the table's now (same keys, one definition), and pageup/pagedown/home/end join
+// them for free. When Settings EMBEDS this component, both scopes are live and `Select` sits innermost, so
+// every navigation key resolves here — Settings' own `space` finds this component's `select:accept` and
+// therefore confirms the theme, matching the "Enter/Space to change" footer the user is looking at.
 import React, { useRef, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useSelectKeys } from "./keys/selectKeys.js";
 import { THEME_LABELS, currentTheme, resolveThemeColor, themeTokens, setTheme } from "./theme.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
 
@@ -41,15 +47,10 @@ export function ThemeDialog({ onDone, savePrefs = realSavePrefs, hideEsc = false
     setTheme(THEME_LABELS[clamped][0]);   // live preview, synchronous — see the module comment above
     setIdx(clamped);
   }
-  useInput((input, key) => {
-    if (key.escape) { setTheme(original.current); onDone("Theme picker dismissed"); return; }
-    if (key.upArrow || input === "k" || (key.ctrl && input === "p")) { moveTo(idx - 1); return; }
-    if (key.downArrow || input === "j" || (key.ctrl && input === "n")) { moveTo(idx + 1); return; }
-    if (key.return) {
-      const id = THEME_LABELS[idx][0];
-      savePrefs({ theme: id });
-      onDone(`Theme set to ${id}`);
-    }
+  useSelectKeys({
+    count: THEME_LABELS.length, index: idx, onMove: moveTo,
+    onAccept: () => { const id = THEME_LABELS[idx][0]; savePrefs({ theme: id }); onDone(`Theme set to ${id}`); },
+    onCancel: () => { setTheme(original.current); onDone("Theme picker dismissed"); },
   });
 
   const tokens = themeTokens();

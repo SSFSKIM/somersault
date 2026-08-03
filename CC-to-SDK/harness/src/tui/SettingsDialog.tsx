@@ -5,10 +5,20 @@
 // engine-touching op (applyMode/setThink/applyOutputStyle, the three tab fetchers, the Model row's picker)
 // is a callback injected by useChat.ts, same convention as AddDirDialog/ThemeDialog.
 //
+// F2 Task 8: no `useInput`. This dialog pushes TWO contexts — `Settings` (escape, the row cursor incl. j/k and
+// ctrl+p/ctrl+n, enter/space to change, `/` to search) and `Tabs` (tab/shift+tab/left/right) — and routes
+// EVERY one of their actions back into the single `onKey` below, which is the old handler body verbatim on
+// the re-projected event. ChatComposer established that shape for the same reason: the action bodies were
+// already branches of it, and one path cannot drift from itself. Search mode is why the scopes stay pushed
+// while typing rather than being gated off: `/`, `j`, `k` and space must reach the query as literal text, but
+// the six root globals must stay unbound — and the nulls live in the context, so dropping it would revive
+// them. Routing the actions through `onKey` gets both.
+//
 // Theme and Output-style rows are EMBEDDED sub-views (this component swaps its own render to the
 // sub-component, no nested border) — Esc/Enter inside them return to the Config list via `onDone`/`onPick`/
-// `onCancel`, and this component's OWN useInput is gated off (`sub !== "none"` early-return) so a keystroke
-// never reaches two handlers at once. The Model row instead reuses the EXISTING top-level `state.modelPicker`
+// `onCancel`, and this component's OWN key handling is gated off (`sub !== "none"` early-return) so a
+// keystroke never reaches two handlers at once; the sub-view's `Select` scope is innermost and answers first.
+// The Model row instead reuses the EXISTING top-level `state.modelPicker`
 // flow (`onOpenModelPicker` → useChat's `openModelPicker`) — ChatApp's overlay chain renders ModelPicker
 // ABOVE this dialog's own arm (Global Constraints line 38: "goes immediately after the modelPicker arm"),
 // so opening it UNMOUNTS this component and remounts it once the pick/cancel resolves. That's why the
@@ -20,7 +30,11 @@
 // the per-tab fetch cache/`thinkingTouched`) is ordinary component state — losing it on a Model-row detour
 // is a minor, acceptable UX cost (row cursor resets, a since-visited Status/Usage/Stats tab re-fetches).
 import React, { useEffect, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
+import { toKeyFlags } from "./keys/editorAdapter.js";
+import { useRefState } from "./keys/refState.js";
+import type { KeyEvent, TextEvent } from "./keys/types.js";
 import { buildRows, filterRows, cycleEnum, THINKING_WARNING, type SettingsRowCtx } from "./settingsRows.js";
 import type { RenderLine } from "./render.js";
 import { Line } from "./Transcript.js";
@@ -58,8 +72,10 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
 }) {
   const activeTab = (TABS as readonly string[]).includes(tab) ? (tab as Tab) : "Config";
   const [idx, setIdx] = useState(0);
-  const [search, setSearch] = useState<string | null>(null);          // null = browsing; "" = searching, empty query
-  const [sub, setSub] = useState<"none" | "theme" | "outputStyle">("none");
+  // Both are ref-backed (keys/refState.ts): the key handler BRANCHES on them and the query ACCUMULATES into
+  // them, and one stdin chunk dispatches several events with no render — a closure read would be one chunk stale.
+  const [search, setSearch, searchRef] = useRefState<string | null>(null);   // null = browsing; "" = searching, empty query
+  const [sub, setSub, subRef] = useRefState<"none" | "theme" | "outputStyle">("none");
   const [thinkingTouched, setThinkingTouched] = useState(false);      // THINKING_WARNING shows once toggled, this dialog session
   const [tabLines, setTabLines] = useState<Partial<Record<Tab, RenderLine[]>>>({});
 
@@ -83,19 +99,21 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
     onTabChange(TABS[(i + delta + TABS.length) % TABS.length]);
   }
 
-  useInput((input, key) => {
-    if (sub !== "none") return;   // the embedded Theme/OutputStyle sub-view owns every key while it's showing
-    if (search !== null) {
+  const onKey = (e: KeyEvent | TextEvent) => {
+    if (subRef.current !== "none") return;   // the embedded Theme/OutputStyle sub-view owns every key while it's showing
+    const { input, key } = toKeyFlags(e);
+    const q = searchRef.current;
+    if (q !== null) {
       if (key.escape) { setSearch(null); return; }                    // "Esc to clear" — stays on Config, just exits search
       if (key.upArrow) { setSearch(null); return; }                   // "↑ to tabs" — simplified: no header-focus mode shipped (Global Constraints line 28)
       if (key.return || key.downArrow) {
-        const picked = filtered[0];
+        const picked = filterRows(rows, q)[0];                        // re-filtered from the LIVE query, not this render's
         setSearch(null);
         if (picked) { const i = rows.findIndex((r) => r.id === picked.id); if (i >= 0) setIdx(i); }
         return;
       }
-      if (key.backspace || key.delete) { setSearch((s) => (s ?? "").slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setSearch((s) => (s ?? "") + input);
+      if (key.backspace || key.delete) { setSearch(q.slice(0, -1)); return; }
+      if (input && input >= " " && !key.ctrl && !key.meta) setSearch(q + input);
       return;
     }
     if (key.escape) { onDone(); return; }
@@ -115,7 +133,15 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
       else if (row.id === "model") onOpenModelPicker();
       else if (row.id === "outputStyle") setSub("outputStyle");
     }
+  };
+  // The scopes stay pushed in every state (their null bindings are this overlay's gate); `onKey` decides.
+  useKeyScope("Settings");
+  useKeyScope("Tabs");
+  useKeyActions({
+    "select:previous": onKey, "select:next": onKey, "select:accept": onKey,
+    "confirm:no": onKey, "settings:search": onKey, "tabs:next": onKey, "tabs:previous": onKey,
   });
+  useKeyFallback(onKey);
 
   if (sub === "theme") return <ThemeDialog hideEsc onDone={() => setSub("none")} savePrefs={savePrefs} />;
   if (sub === "outputStyle") return <OutputStylePicker current={outputStyle} onPick={(id) => { void applyOutputStyle(id); setSub("none"); }} onCancel={() => setSub("none")} />;

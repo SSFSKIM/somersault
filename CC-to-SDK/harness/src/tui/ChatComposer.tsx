@@ -95,14 +95,14 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const [yankHint, setYankHint] = useState(false);
   const yankTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { disposed.current = true; if (yankTimer.current) clearTimeout(yankTimer.current); }, []);
-  // The key that DISMISSED whatever this composer replaced is not this composer's key. Until F2 tasks 7/8
-  // migrate the dialogs, Ink dispatches that key to them first (it reads stdin on "readable"; the keymap
-  // listens for "data", emitted second), so a dialog can deny-and-unmount and remount us synchronously —
-  // and our registration, written during render, would already be live for that same byte. Ink's own
-  // `useInput` subscribed in a passive effect and so never had this problem; `mounted` reinstates exactly
-  // that one-flush window, and nothing else: from the next tick on, every key lands normally.
-  const mounted = useRef(false);
-  useEffect(() => { mounted.current = true; }, []);
+  // F2 task 8 removed the `mounted` one-flush guard that used to sit here. Its whole job was the readable-
+  // before-data window: Ink reads stdin on "readable" and the keymap listens for "data" (emitted second), so
+  // an unmigrated dialog could handle a key by unmounting itself and remounting this composer BEFORE our
+  // listener ran, and our registration — written during render — would already be live for that same byte.
+  // Nothing under src/tui subscribes to Ink's input any more, so Ink now reads the stream and dispatches to
+  // zero subscribers: no component can re-render the tree ahead of us within one chunk, and the window it
+  // guarded no longer exists. `inputOwnerRef` below is unaffected — it answers a different question (which
+  // surface is visible) and still covers the passive flush AFTER this composer unmounts.
   // busy is read through a ref in handleKey below (busyRef.current, never the closure `busy`) — same reason
   // as stateRef: the keymap dispatches from a passive-effect listener, so a closure read lags one render.
   const busyRef = useRef(busy);
@@ -183,7 +183,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // passive effect that flushes after commit, so a closure read lags one render and would submit stale text.
   // The ref updates every render.
   const handleKey = (e: KeyEvent | TextEvent) => {
-    if (!mounted.current || (inputOwnerRef && inputOwnerRef.current !== "composer")) return;
+    if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
     const { input, key } = toKeyFlags(e);
     const s = stateRef.current;
     if (!key.escape && clearArm.current) disarmClear();
@@ -247,7 +247,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // kill-to-end or the agent kill, so these handlers only fire when the chord already completed. Each still
   // ends a kill/yank run and drops an armed Esc-clear, which the swallowed ctrl+x prefix used to do.
   const interceptChord = (): EditorState | null => {
-    if (!mounted.current || (inputOwnerRef && inputOwnerRef.current !== "composer")) return null;
+    if (inputOwnerRef && inputOwnerRef.current !== "composer") return null;
     const s = stateRef.current;
     if (clearArm.current) disarmClear();
     return endInterceptedEditorAction(s);

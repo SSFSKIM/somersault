@@ -3,7 +3,7 @@
 // or "3" both open it — neither fabricates an answer), and ↑/↓ scroll for plans longer than the window.
 import { describe, it, expect } from "vitest";
 import React from "react";
-import { render } from "ink-testing-library";
+import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { PlanDialog } from "../../src/tui/PlanDialog.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
