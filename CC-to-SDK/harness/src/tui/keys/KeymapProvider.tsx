@@ -52,6 +52,27 @@ const pasteOpen = (s: string): boolean => {
  *  events are ASCII-named and unaffected. */
 const decodeText = (text: string): string => Buffer.from(text, "latin1").toString("utf8");
 
+/** How many bytes the UTF-8 sequence introduced by `b` occupies; 0 if `b` is not a lead byte. 0xC0/0xC1 and
+ *  0xF5+ never appear in valid UTF-8, so they are not leads and nothing is ever held for them. */
+const utf8Len = (b: number): number => (b >= 0xf0 && b <= 0xf4 ? 4 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xc2 && b <= 0xdf ? 2 : 0);
+/** Index at which an INCOMPLETE trailing UTF-8 sequence begins, or -1 when the chunk ends on a character
+ *  boundary. Read under latin1 each byte is its own char, and a lone high byte is `isPrintable` — so a chunk
+ *  torn mid-character used to end as a one-byte run, which the parser names a KeyEvent (`printableKey`), and
+ *  only TextEvents are re-decoded above: `é` split C3|A9 reached the editor as two mojibake keystrokes (final
+ *  review). The parser cannot see this — it is handed one chunk and one chunk is all it may reason about — so
+ *  the fix lives here, where the STREAM is. At most 3 bytes are ever behind a lead byte, which bounds the walk
+ *  and therefore the carry. */
+function incompleteTail(s: string): number {
+  for (let i = s.length - 1, back = 0; i >= 0 && back < 3; i--, back++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0x80 && c <= 0xbf) continue;                 // a continuation byte: its lead is further back
+    const need = utf8Len(c);
+    if (need === 0) return -1;                            // ASCII or garbage: whatever trails is complete as-is
+    return s.length - i < need ? i : -1;
+  }
+  return -1;
+}
+
 export function KeymapProvider({ children, deps }: { children: React.ReactNode; deps?: KeymapDeps }): React.ReactElement {
   const { stdin, setRawMode, isRawModeSupported } = useStdin();
   const regRef = useRef<Registry>(); if (!regRef.current) regRef.current = createRegistry();
@@ -65,6 +86,11 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   const pendingRef = useRef<KeySpec[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pasteRef = useRef("");
+  /** The tail bytes of a character torn across two reads (≤3, see `incompleteTail`), and the "this paste ran
+   *  past the cap, discard until its end marker" latch. Both are stream state, both are dropped at teardown
+   *  exactly like the paste buffer. */
+  const carryRef = useRef("");
+  const overflowRef = useRef(false);
 
   const clearChord = () => {
     if (timerRef.current !== null) { (depsRef.current?.clearTimeout ?? clearTimeout)(timerRef.current); timerRef.current = null; }
@@ -102,10 +128,31 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   };
 
   const consume = (chunk: string) => {
-    const data = pasteRef.current + chunk;
-    pasteRef.current = "";
-    if (data.length <= PASTE_CAP && pasteOpen(data)) { pasteRef.current = data; return; }
-    for (const ev of parseBytes(data)) dispatch(ev);
+    // Mid-overflow: every byte still belongs to a paste whose payload was already capped and emitted. DISCARD
+    // it — parsing it would hand an embedded `\r` to the keypress path and submit the composer mid-paste,
+    // which is the accident paste protection exists to prevent. Only the end marker is looked for, and only
+    // what FOLLOWS it in that chunk resumes normal parsing (final review).
+    if (overflowRef.current) {
+      const end = chunk.indexOf(PASTE_END);
+      if (end === -1) return;
+      overflowRef.current = false;
+      chunk = chunk.slice(end + PASTE_END.length);
+      if (chunk === "") return;
+    }
+    // At most ONE of these two holds anything: an open paste returns before a carry can be taken, and a carry
+    // is only ever taken from a chunk that was not held as a paste.
+    const data = pasteRef.current + carryRef.current + chunk;
+    pasteRef.current = ""; carryRef.current = "";
+    if (pasteOpen(data)) {
+      if (data.length <= PASTE_CAP) { pasteRef.current = data; return; }
+      overflowRef.current = true;   // …and fall through to emit the capped prefix, with today's truncation
+    }
+    // Hold back a torn trailing character for the next chunk — but never while overflowing, where the tail is
+    // about to be discarded anyway and prepending it to the post-marker remainder would corrupt it.
+    const cut = overflowRef.current ? -1 : incompleteTail(data);
+    if (cut === -1) { for (const ev of parseBytes(data)) dispatch(ev); return; }
+    carryRef.current = data.slice(cut);
+    for (const ev of parseBytes(data.slice(0, cut))) dispatch(ev);
   };
   // The `data` listener is attached once; everything it reaches goes through this ref so it always runs the
   // current render's closure without re-subscribing (and without ever missing a keystroke in between).
@@ -146,8 +193,9 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     return () => {
       stdin.removeListener("data", onData);
       // A paste still in flight is DROPPED: this cleanup runs while the tree is mid-teardown, so dispatching
-      // here would either reach half-unmounted components or nobody. Dropping is the honest option.
-      pasteRef.current = "";
+      // here would either reach half-unmounted components or nobody. Dropping is the honest option. The held
+      // half-character goes the same way (it was never a complete character), and so does the overflow latch.
+      pasteRef.current = ""; carryRef.current = ""; overflowRef.current = false;
       clearChord();
       setRawMode(false);
     };

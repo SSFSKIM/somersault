@@ -361,6 +361,115 @@ describe("KeymapProvider — byte-stream hygiene", () => {
   });
 });
 
+// F2 final whole-branch review, P2. stdin is a BYTE stream read under latin1 (see the provider header), so a
+// multibyte character can be torn across two reads. Each half was printable-in-latin1 and one byte long, so the
+// parser named it a KeyEvent — and the provider's utf8 re-decode only ever touched TextEvents, so the editor got
+// two mojibake keystrokes instead of one character. The parser stays pure (it sees one chunk and cannot know a
+// tail is incomplete); the provider owns the stream, so the carry lives here.
+describe("KeymapProvider — a multibyte character torn across two stdin reads", () => {
+  const textOf = (fallback: ReturnType<typeof vi.fn>) => fallback.mock.calls.map((c) => (c[0].kind === "text" ? `text:${c[0].text}` : `key:${c[0].name}`));
+
+  it("é split C3 | A9 arrives as ONE text event, not two latin1 key events", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+    await tick();
+    h.stdin.write("\xc3");                                // the lead byte alone: held, never dispatched
+    expect(fallback).not.toHaveBeenCalled();
+    h.stdin.write("\xa9");
+    expect(textOf(fallback)).toEqual(["text:é"]);
+    h.unmount();
+  });
+
+  it("a 4-byte emoji survives both split points (1+3 and 3+1)", async () => {
+    for (const [a, b] of [["\xf0", "\x9f\x98\x80"], ["\xf0\x9f\x98", "\x80"]] as const) {
+      const fallback = vi.fn();
+      const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+      await tick();
+      h.stdin.write(a);
+      expect(fallback, `held ${JSON.stringify(a)}`).not.toHaveBeenCalled();
+      h.stdin.write(b);
+      expect(textOf(fallback), `${JSON.stringify(a)} | ${JSON.stringify(b)}`).toEqual(["text:😀"]);
+      h.unmount();
+    }
+  });
+
+  it("a chunk ending in a COMPLETE multibyte character is not held back (no false positive)", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+    await tick();
+    h.stdin.write("a\xc3\xa9");                           // "aé" whole: must dispatch on this chunk, not the next
+    expect(textOf(fallback)).toEqual(["text:aé"]);
+    h.stdin.write("\xf0\x9f\x98\x80");                    // a whole 4-byte emoji, likewise
+    expect(textOf(fallback)).toEqual(["text:aé", "text:😀"]);
+    h.unmount();
+  });
+
+  it("the carry never grows past the 3 bytes a lead byte can be waiting on", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+    await tick();
+    h.stdin.write("hi\xf0");                              // ASCII flushes; only the lead byte waits
+    expect(textOf(fallback)).toEqual(["text:hi"]);
+    h.stdin.write("\x9f\x98\x80!");                       // completion + a following ASCII byte
+    expect(textOf(fallback)).toEqual(["text:hi", "text:😀!"]);
+    h.unmount();
+  });
+
+  it("a held carry is dropped at teardown, like the paste buffer — nothing is delivered late", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+    await tick();
+    h.stdin.write("\xc3");
+    h.unmount(); await tick();
+    h.stdin.write("\xa9");
+    expect(fallback).not.toHaveBeenCalled();
+  });
+});
+
+// F2 final whole-branch review, P2. A bracketed paste bigger than the cap used to stop buffering and emit its
+// prefix, with NOTHING recording that the stream was still inside the paste — so the next chunk was parsed as
+// keystrokes and an embedded \r submitted the composer mid-paste, which is the exact accident paste protection
+// exists to prevent. Overflow is an explicit state now: discard to the end marker, then resume.
+describe("KeymapProvider — a bracketed paste that overruns the 1 MiB cap", () => {
+  const CAP = 1 << 20;
+
+  it("emits the capped prefix, then DISCARDS the rest of the paste — an embedded \\r never becomes a key", async () => {
+    const seen: string[] = [];
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={(e) => { seen.push(e.kind === "text" ? `text:${e.text.length}` : `key:${e.name}`); }} />);
+    await tick();
+    h.stdin.write("\x1b[200~" + "a".repeat(CAP + 1));     // one chunk over the cap, paste still open
+    expect(seen).toEqual([`text:${CAP + 1}`]);            // the prefix is delivered, exactly as before the fix
+    seen.length = 0;
+    h.stdin.write("still\rinside\x03the\x1bpaste");       // control bytes mid-paste: every one of them discarded
+    expect(seen).toEqual([]);
+    h.unmount();
+  });
+
+  it("resumes normal key parsing at the end marker, mid-chunk", async () => {
+    const seen: string[] = [];
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={(e) => { seen.push(e.kind === "text" ? `text:${e.text}` : `key:${e.name}`); }} />);
+    await tick();
+    h.stdin.write("\x1b[200~" + "a".repeat(CAP + 1));
+    seen.length = 0;
+    h.stdin.write("tail\r\x1b[201~ok");                   // the \r is still INSIDE; "ok" follows the marker
+    expect(seen).toEqual(["text:ok"]);
+    h.stdin.write("\r");                                  // …and the very next enter is an ordinary key again
+    expect(seen).toEqual(["text:ok", "key:enter"]);
+    h.unmount();
+  });
+
+  it("teardown during the overflow drops it cleanly (no late dispatch, no crash)", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+    await tick();
+    h.stdin.write("\x1b[200~" + "a".repeat(CAP + 1));
+    fallback.mockClear();
+    h.unmount(); await tick();
+    h.stdin.write("more\x1b[201~after");
+    expect(fallback).not.toHaveBeenCalled();
+  });
+});
+
 describe("KeymapProvider — stdin ownership", () => {
   it("attaches exactly one data listener and detaches it on unmount", async () => {
     const h = renderWithKeymap(<Probe scope="Chat" />);
