@@ -52,6 +52,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 from frame_masks import (
+    MASK_TOKEN,
     RedactionContract,
     RequiredStateContract,
     canonical_path,
@@ -91,8 +92,10 @@ HEX6 = re.compile(r"^[0-9a-fA-F]{6}$")
 # exception, for a golden that can only exist if a real model turn runs: it preserves CLAUDE_CODE_OAUTH_TOKEN
 # and nothing else — every competing credential (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN), every alternate
 # provider route (ANTHROPIC_BASE_URL, CLAUDE_CODE_USE_*), every other CLAUDE*/ANTHROPIC_* value, and AI_AGENT
-# are still removed, so the capture is first-party OAuth or it does not run. That preserved literal is also
-# the one string that must never reach a published frame; see frame_contains_secret.
+# are still removed, so the capture is first-party OAuth or it does not run. Whichever credentials survive
+# into the child environment — the tracked exception above, or the OAuth token KEEP_CLAUDE_ENV forwards on
+# every untracked capture — are the literals that must never reach a published frame; see publication_secrets
+# and frame_contains_secret.
 KEEP_CLAUDE_ENV = {"CLAUDE_CODE_OAUTH_TOKEN"}
 RECOGNIZED_AUTH_ENV = {"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
 # Tracked ANSI goldens need the renderer's truecolor branch independently of the invoking terminal.
@@ -192,6 +195,18 @@ def text_contains_secret(text: str, secrets: Iterable[str]) -> bool:
 
 def frame_contains_secret(rendered: str, secrets: Iterable[str]) -> bool:
     return text_contains_secret(rendered, secrets)
+
+
+def ambient_auth_secrets() -> tuple[str, ...]:
+    """Every recognized credential this process can see, whether or not the capture forwards it."""
+    return tuple(value for name in sorted(RECOGNIZED_AUTH_ENV) if (value := os.environ.get(name)))
+
+
+def redact_child_output(text: str, secrets: Iterable[str] | None = None) -> str:
+    """Child-supplied text reaches a diagnostic only after the publication guard clears it. Detection
+    normalizes away wraps, padding, and escapes, so it cannot be inverted into a partial substitution:
+    a value carrying any reconstructable credential fragment is replaced whole."""
+    return MASK_TOKEN if text_contains_secret(text, ambient_auth_secrets() if secrets is None else secrets) else text
 
 
 def stream_contains_secret(raw: bytes, secrets: Iterable[str]) -> bool:
@@ -478,14 +493,19 @@ def validate_tracked_child_version(command: str | None, expected_version: str | 
     if not argv:
         return "tracked golden output requires a nonempty --bin command"
     try:
-        version = subprocess.run([argv[0], "--version"], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        # Probing a version needs no credential, so the preflight child gets the same scrubbed tracked
+        # environment the capture child gets, minus the --tracked-oauth exception.
+        version = subprocess.run(
+            [argv[0], "--version"], cwd=cwd, env=clean_child_env(True), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
     except OSError as error:
         return f"version check failed: {error}"
     if version.returncode:
         return f"version check failed with exit status {version.returncode}"
     actual_version = version.stdout.strip() or version.stderr.strip()
     if actual_version != expected_version:
-        return f"version mismatch: expected {expected_version!r}, got {actual_version!r}"
+        return f"version mismatch: expected {expected_version!r}, got {redact_child_output(actual_version)!r}"
     return None
 
 
@@ -539,9 +559,6 @@ def main() -> int:
     if oauth_error:
         sys.stderr.write(f"capture-frames: {oauth_error}\n")
         return 2
-    # The one credential this mode forwards is also the one literal that must never reach a published
-    # frame. Held in memory only: never logged, never serialized, never part of a diagnostic.
-    publication_secrets = (os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""),) if args.tracked_oauth else ()
 
     try:
         stage_dir = tempfile.mkdtemp(prefix=".capture-", dir=nearest_existing_canonical_ancestor(args.out))
@@ -566,6 +583,12 @@ def main() -> int:
             shutil.rmtree(config_dir, ignore_errors=True)
         shutil.rmtree(stage_dir, ignore_errors=True)
         return 2
+
+    # Whatever the built child environment actually carries is what must never reach a published frame.
+    # KEEP_CLAUDE_ENV forwards OAuth on every untracked capture too, so the guard is armed from that
+    # environment rather than from --tracked-oauth, which covers only the tracked exception. Held in
+    # memory only: never logged, never serialized, never part of a diagnostic.
+    publication_secrets = tuple(value for name in sorted(RECOGNIZED_AUTH_ENV) if (value := child_env.get(name)))
 
     try:
         pid, fd = pty.fork()
@@ -605,7 +628,8 @@ def main() -> int:
 
     def retain_raw(data: bytes) -> None:
         """Keep a bounded tail of the bytes fed to the emulator for the guard's raw-stream layer. Nothing
-        is retained when no credential is forwarded, so an ordinary capture keeps no pty bytes at all."""
+        is retained when the child environment carries no credential, so a credential-free capture — tracked
+        or scratch — keeps no pty bytes at all."""
         if not publication_secrets:
             return
         raw_tail.extend(data)

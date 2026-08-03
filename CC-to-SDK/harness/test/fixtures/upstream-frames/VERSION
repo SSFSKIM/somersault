@@ -83,14 +83,25 @@ f1-tool-rendering/01-read-complete.ansi — captured 2026-08-03 — 100x40 — T
 authenticated tracked golden: a real model turn's live Read (`⏺ Reading 1 file… (ctrl+o to expand)` with the
 transient `⎿  src/app.ts` hint gutter), captured with `--tracked-oauth` (first-party OAuth forwarded to the
 child and nothing else; the publication guard scans normalized screen text, a whitespace-stripped variant,
-and a rolling raw pty tail for any ≥16-char credential fragment and fails closed). The key script pauses
+and a rolling raw pty tail for any ≥16-char credential fragment and fails closed; that guard is armed from
+the credentials the built child environment actually carries, so an untracked scratch capture — which still
+forwards the OAuth token — is scanned on exactly the same terms). Because this frame is busy, its dashboard
+contract extends the stock footer grammar with the two segments only an in-flight footer paints, ` · esc to
+interrupt` and the right-aligned `● <effort> · /effort` column: `marker_pattern` gates both redaction and the
+fail-closed residual identity check, so a footer it cannot fullmatch would leave the frame unguarded. Its
+`by_frame` comparison masks cover what this frame actually varies between runs — the live spinner row
+(animating glyph and gradient, randomized verb, elapsed seconds, token count) and the effort word with its
+right-alignment padding — and nothing else; the `⎿  src/app.ts` gutter hint stays fully significant. The key script pauses
 `wait:0.5` between `type:` and `enter` — coalesced into one chunk, the CLI's paste detection would treat the
 trailing CR as pasted content and never submit. Recapture from `CC-to-SDK/harness/` with a workspace
 containing only `src/app.ts` (`export const app = 1;`):
 
 ```sh
 mkdir -p /tmp/frame-scratch-f1/src && printf 'export const app = 1;\n' > /tmp/frame-scratch-f1/src/app.ts
-CLAUDE_CODE_OAUTH_TOKEN=... "$VENV/bin/python3" scripts/capture-frames.py \
+# Source the credential; never put it in argv, where ps and shell history would publish it. `../.env`
+# carries CLAUDE_CODE_OAUTH_TOKEN with its ANTHROPIC_API_KEY line commented out, so OAuth is not shadowed.
+set -a; . ../.env; set +a
+"$VENV/bin/python3" scripts/capture-frames.py \
   --script scripts/frames/f1-upstream-read.keys \
   --out test/fixtures/upstream-frames/f1-tool-rendering \
   --bin "claude" --cwd "/tmp/frame-scratch-f1" --cols 100 --rows 40 \

@@ -19,9 +19,26 @@ DIFF_PATH = ROOT / "scripts" / "frame-diff.py"
 MASKS_PATH = ROOT / "scripts" / "frames" / "masks.json"
 FRAME_REQUIREMENTS_PATH = ROOT / "scripts" / "frames" / "requirements.txt"
 F1_UPSTREAM_READ_KEYS = ROOT / "scripts" / "frames" / "f1-upstream-read.keys"
+F1_KEY = "f1-tool-rendering/01-read-complete.ansi"
+F1_GOLDEN_PATH = ROOT / "test" / "fixtures" / "upstream-frames" / F1_KEY
 F0_PLAN_PATH = ROOT.parent / "docs" / "superpowers" / "plans" / "2026-07-31-tui-clone-f0.md"
 LIVE_CHILD_KEEPALIVE_SECONDS = 5
 PARTIAL_CHILD_KEEPALIVE_SECONDS = 0.15
+
+
+def visible_text(text: str) -> str:
+    return re.sub(r"\x1b\[[0-?]*[ -/]*m", "", text)
+
+
+def f1_spinner_row(glyph: str, verb: str, seconds: str, tokens: str, pad: int, glyph_color: str, verb_color: str) -> str:
+    """The live spinner row as 2.1.220 paints it. Every span varies between runs of the identical capture:
+    the glyph cycles, its gradient animates, the verb is randomized, and the counters keep counting — which
+    also moves the right padding, since the verb's width changes."""
+    return (
+        f"\x1b[0;2;38;2;{glyph_color}m{glyph}\x1b[0;2m \x1b[0;2;38;2;{verb_color}m{verb}…"
+        f"\x1b[0;2;38;2;{glyph_color}m \x1b[0;2;38;2;153;153;153m({seconds}s · ↓\x1b[0;2m "
+        f"\x1b[0;2;38;2;153;153;153m{tokens} tokens)\x1b[0;2m{' ' * pad}\x1b[0m"
+    )
 
 
 def load_module(path: Path, name: str):
@@ -1225,6 +1242,38 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertFalse(tracked.exists())
             self.assertFalse(list(root.glob(".capture-*")))
 
+    def test_untracked_capture_arms_the_publication_guard_for_its_forwarded_credential(self):
+        oauth = "oauth-fixture-secret-0123456789abcdef"
+        # KEEP_CLAUDE_ENV forwards the OAuth token to the child of EVERY untracked capture, so the guard is
+        # armed from what the built child environment actually carries, not from --tracked-oauth (which
+        # covers only the tracked exception). Arming it from the flag left every scratch capture unguarded.
+        with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": oauth}, clear=False):
+            self.assertEqual(capture.clean_child_env(False).get("CLAUDE_CODE_OAUTH_TOKEN"), oauth)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            job_dir = root / "job"; job_dir.mkdir()
+            base_env = {"PATH": os.defpath, "CLAUDE_JOB_DIR": str(job_dir), "CLAUDE_CODE_OAUTH_TOKEN": oauth}
+            scratch = root / "scratch"
+            leaked = self.run_capture(
+                "frame:leak\n",
+                self.live_child_command(f"import sys; sys.stdout.write('leak-probe {oauth}'); sys.stdout.flush()"),
+                scratch, env=base_env, cols=20, rows=6,
+            )
+            self.assertEqual(leaked.returncode, 1)
+            self.assertIn("credential leak", leaked.stderr)
+            self.assertNotIn(oauth, leaked.stdout + leaked.stderr)
+            self.assertFalse(scratch.exists())
+            self.assertFalse(list(root.glob(".capture-*")))
+
+            clean = root / "clean"
+            captured = self.run_capture(
+                "frame:boot\n",
+                self.live_child_command("import sys; sys.stdout.write('ready'); sys.stdout.flush()"),
+                clean, env=base_env,
+            )
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            self.assertIn("ready", (clean / "01-boot.ansi").read_text(encoding="utf-8"))
+
     def test_required_state_rules_require_positive_non_boolean_match_counts(self):
         with tempfile.TemporaryDirectory() as td:
             masks = Path(td) / "state-masks.json"
@@ -1245,7 +1294,7 @@ class FrameScriptsTest(unittest.TestCase):
                         capture.load_required_state_contract(str(masks), "stateful/01-frame.ansi")
 
     def test_f1_upstream_read_scenario_declares_its_key_and_binding_frame_contract(self):
-        key = "f1-tool-rendering/01-read-complete.ansi"
+        key = F1_KEY
         script = F1_UPSTREAM_READ_KEYS.read_text(encoding="utf-8")
         self.assertEqual(script, (
             "# Authenticated, version-pinned tracked capture. Bash remains available; the prompt selects Read explicitly.\n"
@@ -1300,15 +1349,90 @@ class FrameScriptsTest(unittest.TestCase):
                 failures = capture.validate_required_state(frame, contract)
                 self.assertEqual(len(failures), 1, failures)
                 self.assertIn(expected, failures[0])
-        # An SGR transition inside the gutter path must not defeat the contract, and comparison masks must still
-        # collapse the same quota/cost nondeterminism they collapse for the stock scenarios.
+        # An SGR transition inside the gutter path must not defeat the contract, and this frame's comparison
+        # masks must collapse the nondeterminism it actually paints — the live spinner row, not the stock
+        # scenarios' weekly-quota and cost/duration rows, neither of which this busy frame ever renders.
         split = accepted.replace("src/app.ts", "src/\x1b[0;1mapp\x1b[0m.ts")
         self.assertEqual(capture.validate_required_state(split, contract), [])
         scoped = diff.load_masks(str(MASKS_PATH), key)
-        quota_a = "\x1b[0m                            \x1b[0;38;2;255;193;7mYou've used 98% of your weekly limit · resets Aug 5 at 1pm (Asia/Seoul)\x1b[0m"
-        quota_b = "\x1b[0m                            \x1b[0;38;2;255;193;7mYou've used 2% of your weekly limit · resets Sep 30 at 11pm (UTC)\x1b[0m"
-        self.assertEqual(diff.mask_text(quota_a, scoped), diff.mask_text(quota_b, scoped))
+        spinner_a = f1_spinner_row("✶", "Effecting", "2", "4", 70, "215;119;87", "235;159;127")
+        spinner_b = f1_spinner_row("✳", "Pondering", "9", "117", 61, "99;99;99", "200;100;100")
+        self.assertEqual(diff.mask_text(spinner_a, scoped), diff.mask_text(spinner_b, scoped))
         self.assertNotEqual(diff.mask_text("⎿  src/app.ts", scoped), diff.mask_text("⎿  src/other.ts", scoped))
+
+    def test_f1_busy_footer_dashboard_identity_is_private_for_the_authenticated_golden(self):
+        contract = capture.load_redaction_contract(str(MASKS_PATH), F1_KEY)
+        self.assertEqual([status.name for status in contract.dashboard_statuses], ["status-user-host"])
+        status = contract.dashboard_statuses[0]
+        footers = [
+            line for line in visible_text(F1_GOLDEN_PATH.read_text(encoding="utf-8")).splitlines()
+            if line.lstrip().startswith(("⏸", "⏵⏵"))
+        ]
+        self.assertEqual(footers, [
+            "  ⏸ manual mode on · esc to interrupt · ← for agents" + " " * 30 + "● high · /effort",
+        ])
+        # The one authenticated golden is a busy in-flight frame, so its footer carries the interrupt hint and
+        # the right-aligned effort column that the logged-out stock scenarios never paint. Both gate the whole
+        # identity machinery: DashboardStatusMask keys redaction AND its fail-closed residual check on
+        # marker_pattern.fullmatch, so a grammar that cannot match this footer leaves the frame unguarded.
+        self.assertTrue(status.marker_pattern.fullmatch(footers[0]))
+        self.assertTrue(status.mode_pattern.fullmatch(footers[0]))
+
+        busy = footers[0].lstrip()
+        for effort in ("low", "medium", "high"):
+            dashboard = (
+                "\x1b[0m  alice@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+                f"\x1b[0m  \x1b[0;2m{busy.replace('● high', f'● {effort}')}\x1b[0m\n"
+            )
+            with self.subTest(effort=effort):
+                redacted, failures = capture.preprocess_frame_for_publication(dashboard, contract)
+                self.assertEqual(redacted, dashboard.replace("alice@host", "▒"))
+                self.assertEqual(failures, [])
+
+        split = (
+            "\x1b[0m  ali\x1b[31mce\x1b[0m@host\x1b[0m:\x1b[0m/repo\x1b[0m\n"
+            f"\x1b[0m  \x1b[0;2m{busy}\x1b[0m\n"
+        )
+        redacted, failures = capture.preprocess_frame_for_publication(split, contract)
+        self.assertEqual(redacted, split)
+        self.assertEqual(failures, ["unredacted identity status-user-host"])
+
+        transcript = f"const remote = 'alice@host:/repo'; // {busy} without dashboard chrome\n"
+        redacted, failures = capture.preprocess_frame_for_publication(transcript, contract)
+        self.assertEqual(redacted, transcript)
+        self.assertEqual(failures, [])
+
+    def test_f1_comparison_masks_normalize_the_live_spinner_and_effort_columns(self):
+        contract = capture.load_redaction_contract(str(MASKS_PATH), F1_KEY)
+        masks = diff.load_comparison_masks(str(MASKS_PATH), F1_KEY)
+        raw = F1_GOLDEN_PATH.read_text(encoding="utf-8")
+        spinner = next(line for line in raw.splitlines() if "tokens)" in visible_text(line))
+        footer = next(line for line in raw.splitlines() if visible_text(line).lstrip().startswith("⏸"))
+        # A rerun of the identical capture produced `Pondering… (9s · ↓ 117 tokens)` where this golden has
+        # `Effecting… (2s · ↓ 4 tokens)`; the effort word and its right-alignment padding move with it.
+        rerun_spinner = f1_spinner_row("✳", "Pondering", "9", "117", 61, "99;99;99", "200;100;100")
+        rerun_footer = footer.replace("mhigh\x1b", "mlow\x1b").replace(" " * 30, " " * 31)
+        self.assertNotEqual(spinner, rerun_spinner)
+        self.assertNotEqual(footer, rerun_footer)
+        self.assertEqual(diff.mask_text(spinner, masks), diff.mask_text(rerun_spinner, masks))
+        self.assertEqual(diff.mask_text(footer, masks), diff.mask_text(rerun_footer, masks))
+        # The rows stay present with their grammar intact; only the variable spans collapse.
+        self.assertEqual(diff.mask_text(spinner, masks), "▒ ▒… (▒s · ↓ ▒ tokens)▒")
+        self.assertIn("· /effort", visible_text(diff.mask_text(footer, masks)))
+        self.assertIn("esc to interrupt", visible_text(diff.mask_text(footer, masks)))
+
+        rerun = raw.replace(spinner, rerun_spinner).replace(footer, rerun_footer)
+        base_lines, base_failures = diff.sanitize_frame_for_comparison(raw, contract, masks)
+        rerun_lines, rerun_failures = diff.sanitize_frame_for_comparison(rerun, contract, masks)
+        self.assertEqual(base_failures, [])
+        self.assertEqual(rerun_failures, [])
+        self.assertEqual(base_lines, rerun_lines)
+        # The transient gutter hint is the element this golden exists to pin, so it stays fully significant.
+        hint_lines, hint_failures = diff.sanitize_frame_for_comparison(
+            rerun.replace("⎿  src/app.ts", "⎿  src/other.ts"), contract, masks,
+        )
+        self.assertEqual(hint_failures, [])
+        self.assertNotEqual(base_lines, hint_lines)
 
     def test_tracked_capture_rejects_mixed_state_atomically_before_publication(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1784,6 +1908,41 @@ class FrameScriptsTest(unittest.TestCase):
             self.assertIn("version mismatch", path_changed.stderr)
             self.assertFalse(path_marker.exists())
             self.assertFalse(list(root.glob(".capture-*")))
+
+    def test_version_preflight_probes_credential_free_and_redacts_child_output(self):
+        expected = "2.1.220 (Claude Code)"
+        oauth = "oauth-fixture-secret-0123456789abcdef"
+        api_key = "api-fixture-secret-0123456789abcdef"
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            reporter = root / "reporter"
+            reporter.write_text(
+                "#!/bin/sh\nprintf '%s' \"${CLAUDE_CODE_OAUTH_TOKEN:-credential-absent}${ANTHROPIC_API_KEY:-}\"\n",
+                encoding="utf-8",
+            )
+            reporter.chmod(0o755)
+            with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": oauth, "ANTHROPIC_API_KEY": api_key}, clear=False):
+                # A version probe needs no credential, so it runs under the same scrubbed tracked environment
+                # the capture child gets rather than the operator's full inherited one.
+                diagnostic = capture.validate_tracked_child_version(shlex.quote(str(reporter)), expected, str(root))
+                self.assertIn("credential-absent", diagnostic)
+                for secret in (oauth, api_key):
+                    self.assertNotIn(secret[:capture.SECRET_FRAGMENT_LENGTH], diagnostic)
+
+            forger = root / "forger"
+            forger.write_text(f"#!/bin/sh\nprintf '%s' {shlex.quote(oauth)}\n", encoding="utf-8")
+            forger.chmod(0o755)
+            with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": oauth}, clear=False):
+                # Child output is interpolated into the returned diagnostic, so it clears the publication
+                # guard first: a value carrying a reconstructable credential fragment is replaced whole.
+                diagnostic = capture.validate_tracked_child_version(shlex.quote(str(forger)), expected, str(root))
+                self.assertEqual(diagnostic, f"version mismatch: expected {expected!r}, got '▒'")
+                self.assertNotIn(oauth[:capture.SECRET_FRAGMENT_LENGTH], diagnostic)
+
+            matching = root / "matching"
+            matching.write_text(f"#!/bin/sh\nprintf '%s\\n' {shlex.quote(expected)}\n", encoding="utf-8")
+            matching.chmod(0o755)
+            self.assertIsNone(capture.validate_tracked_child_version(shlex.quote(str(matching)), expected, str(root)))
 
     def test_capture_publishes_only_validated_ansi_frames_and_preserves_failed_output(self):
         with tempfile.TemporaryDirectory() as td:
@@ -2607,7 +2766,7 @@ class FrameScriptsTest(unittest.TestCase):
         source = Path(__file__).read_text(encoding="utf-8")
         self.assertIn("LIVE_CHILD_KEEPALIVE_SECONDS = 5", source)
         self.assertIn("PARTIAL_CHILD_KEEPALIVE_SECONDS = 0.15", source)
-        self.assertEqual(len(re.findall(r"self\.live_child_command\(", source)), 42)
+        self.assertEqual(len(re.findall(r"self\.live_child_command\(", source)), 44)
         self.assertEqual(len(re.findall(r"self\.partial_child_command\(", source)), 2)
         self.assertIn("self.dead_child_command()", source)
         self.assertNotIn("self." + "child_command(", source)
