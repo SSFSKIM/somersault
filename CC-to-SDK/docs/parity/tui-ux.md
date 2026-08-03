@@ -303,9 +303,10 @@ or LOW-priority tail items, never rows tuned to hit the target number.
   `old_string`/`new_string` snippet). **P94 complete on SDK 0.3.220:** flat `tool_result.content` and the
   optional per-call `SDKUserMessage.tool_use_result` sidecar must both remain retained; recognized sidecars
   improve fidelity, while flat/input fallbacks remain mandatory for sidecar-less and forwarded calls. The
-  evidence report also records UUID/provenance ownership and the separate Write proof. A failed flat
-  `tool_result` still renders red with a `✗` prefix on its first line (`render.ts` `resultLines`, keyed on
-  `is_error`) until F1 replaces the split live/replay renderer.
+  evidence report also records UUID/provenance ownership and the separate Write proof. **Superseded by F1
+  (see the F1 section below):** the split live/replay renderer is gone, `render.ts` no longer renders any
+  tool row, and the `✗`-prefixed red failure line it used to emit is replaced by the shared renderer's
+  status colouring — upstream shows no `✓`/`✗` glyph anywhere in the transcript.
 - **Markdown tables** (`markdown.ts` `flushTableBuffer` — a buffered run of `|`-lines becomes a
   column-padded table only once a `|---|` separator confirms it, otherwise it's re-emitted as prose
   untouched) and a **zero-dependency syntax highlighter** (`tui/highlight.ts` — a manual regex lexer
@@ -393,6 +394,60 @@ own method note above points to, and are recorded here so a reader of the scorec
   DIVERGENT (expected — the boot-frame gap is real and large; the composer-editing semantics matched
   closely on manual review even though the frames diverge on layout/chrome), which is the honest
   starting baseline future waves measure against, not a defect in the instrument.
+
+---
+
+## F1 (2026-08-03) — the rendering substrate
+
+F1 replaced the split live/replay renderer with **one retained transcript document** (`tui/transcriptModel.ts`)
+that every surface projects from (`tui/toolRenderer.tsx`), so a tool row can no longer differ between what
+you saw while it ran and what you see after a `/resume`. Only the rows below changed; everything scored
+elsewhere in this file is unaffected.
+
+### Now faithful
+
+| Row | What shipped | Evidence |
+|---|---|---|
+| Unified live/replay tool renderer | `transcriptModel.ts` retains complete SDK messages verbatim (flat `tool_result` **and** the per-call `tool_use_result` sidecar); `toolRenderer.tsx` is the single projection to `RenderItem`s; live, replay, attach, resume, rewind and the Ctrl-O pager all route through it | `npx vitest run test/tui/f1-frame-parity.test.tsx` (5) + two `scripts/frame-diff.py` runs over four pyte captures of the real `ChatApp` — the sidecar and flat-only live-vs-replay pairs each report `2 clean, 0 allowlisted, 0 DIVERGENT` |
+| Default-view folding | A contiguous run of read/search/list/MCP calls collapses to one dim summary row (`  Read 1 file (ctrl+o to expand)`), and the per-call `⏺ Read(path)` form is now the ctrl+o view — which is what 2.1.220 actually does (`toolFold.ts` + `toolRenderer.tsx`) | `test/tui/toolFold.test.ts` (41), `test/tui/toolRenderer.test.tsx` (42) |
+| Active group row | While a member is running: a dim blinking `⏺` at 600 ms in the `inactive` colour, the present-participle clause, and a transient `⎿ <hint>` gutter — all from the retained source, with no timer in the projection | `test/tui/toolRenderer.test.tsx -t "blinking active group row"`, `test/tui/chat.test.tsx -t "repaints an open tool"` |
+| One `⎿` gutter | `RenderItemView` is the sole owner of the connector; it lives in a fixed five-column sibling box, so exactly one appears per result no matter how the body wraps | `test/tui/toolRenderer.test.tsx -t "sibling gutter"` |
+| Long-output detail | Compact shows three rows plus `… +N lines (ctrl+o to expand)`; ctrl+o opens the full retained source; ctrl+e collapses locally to `ctrl+e to show all` | `test/tui/transcriptPager.test.tsx` (6), `test/tui/chat.test.tsx -t "Ctrl-E"` |
+| Tool statuses, rejection, interruption | Running dim, success/error colours, no `✓`/`✗` anywhere; `⎿ Interrupted · What should Claude do instead?` and `⎿ Tool use rejected` as fixed one-row prompts | `test/tui/toolRenderer.test.tsx -t "interruption and rejection"`, `-t "resolved success and error"` |
+| Bash/Edit/Write rows (LT12) | Argument clipping, the recognized `sed -i` path resolving to `Update(<display path>)` | `test/tui/toolResult.test.ts -t "sed -i"` |
+| Generic-error normalization (LT15) | Ten physical rows plus a dim overflow marker outside the error-coloured text | `test/tui/toolRenderer.test.tsx -t "ten-row"`, `test/tui/toolResult.test.ts -t "LT15"` |
+| ST4 / TH2 / TH4 / TH7 — theme tokens | 30 tokens × 4 themes verbatim from the 2.1.220 capture, upstream's own colour grammar and is-light predicate, resolved at the moment of use so a `/theme` change recolours the next render | `test/tui/theme.test.ts` + the raw-SGR case in `test/tui/f1-frame-parity.test.tsx` (dark vs light produce identical text and different SGR from the same projected items) |
+| OSC-8 file links | `Read`/`Edit`/`Write` header paths are cwd-relative labels over a `file://` link with BEL terminators | `test/tui/toolRenderer.test.tsx -t "exact OSC-8"` + the raw-Ink case in `f1-frame-parity.test.tsx` |
+
+### Real-2.1.220 comparison (`f1-tool-rendering`)
+
+The tracked golden `test/fixtures/upstream-frames/f1-tool-rendering/01-read-complete.ansi` is a real
+`claude` 2.1.220 frame captured mid-Read. Our binary is captured against it keylessly through
+`test/fixtures/f1-tool-transcript-frame.tsx` (a deterministic replay fixture mounting the real `ChatApp`)
+and validated by a row-scoped required-state contract under `capture-frames.py --require-state`.
+
+- **Binding check passes.** The `read-progress` (`Read(?:ing)? \d+ file`) and `gutter-path`
+  (`⎿.*src/app\.ts`) selectors match and the `logged-out-footer` / `tool-rejected` selectors stay absent.
+- **The `⎿  src/app.ts` hint row is now byte-identical to the golden**, connector included — the Task 7
+  comparison found our connector rendering plain where upstream renders the whole row dim `#999999`, and
+  the renderer was fixed rather than the difference masked.
+- **The whole-frame diff stays DIVERGENT and is read as a diagnostic, not a gate.** Nothing is
+  allowlisted; `test/fixtures/upstream-frames/allowlist.md` still has zero entries. The residual
+  divergence is (a) chrome outside F1's scope — the welcome/release-notes banner box, the model line, the
+  composer echo of the user prompt, the animated spinner row and the mode/effort footer — and (b) one
+  run inside the F1 row, `" file…"`, described below.
+
+### Known divergences and deferrals
+
+| Item | State | Owner |
+|---|---|---|
+| Bold count in the folded row | **Regression against the contract, not fixable in this Ink.** R3.5 says the count stays bold inside the dim run ("Ink composes dim+bold"). Probed: Ink drops `bold` outright when `dimColor` is set on the same `<Text>` (`<Text dimColor bold>1</Text>` emits `\x1b[2m1\x1b[22m`), and embedding raw SGR is rewritten by chalk's nested-close handling. The count therefore renders dim-not-bold today | F3 — needs a raw-SGR line writer or dim hoisted onto the parent `<Text>` with a bold child (which also reproduces upstream's own `\x1b[22m` tail artifact) |
+| `" file…"` plain in the golden | Deliberately not reproduced. Everything after upstream's bold count renders bright because the count's `\x1b[22m` closer clears faint as well as bold. Emitting a broken reset to match would be fabricating a bug | recorded, no owner |
+| Settled group row colour | Open. The live-confirmation note records the settled row as grey `#949494`; the one tracked golden is an ACTIVE frame showing `#999999`. Different greys, so the settled clause run stays dim-and-uncoloured until a settled golden exists | F3 |
+| Nested (`parent_tool_use_id`) replay rows | **Deliberate, tested deferral — a shipped behaviour that is gone.** `replay.ts:42–46` used to render subagent rows indented and dimmed; F1 Task 4 drops them from the top-level projection instead of flattening them into unrelated rows | F3 (subagent grouping, parent/child progress and totals) |
+| String-content user rows render nothing | `render.ts`'s user branch only iterates array `content`, but `sessions/rows.ts` `promptText` shows persisted rows can carry a bare string — such a row projects to no line at all | F3/F4 |
+| Fullscreen-only clauses, grouped Agent batches, typed result summaries, elapsed `· Ns` | Not built. All are `ds()`-gated fullscreen-only or need parent/child state F1 does not model; a substitute would be fabrication, not fidelity | F3 |
+| Markdown/diff closure | Not built | F4 |
 
 ---
 

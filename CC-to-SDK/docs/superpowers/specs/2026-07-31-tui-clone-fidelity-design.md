@@ -912,6 +912,27 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
 - **A status hint is only honest relative to its focused owner.** Composer, autocomplete, overlay, and decision
   surfaces now have explicit ownership; the status bar hides its composer affordances under every other owner,
   and the composer derives Esc help from busy/empty/draft state. (2026-08-01)
+- **Ink cannot express bold-and-dim on one `<Text>`, so the folded row's bold count does not render bold.**
+  The render contract's R3.5 assumes "Ink composes dim+bold". Probed directly against the installed Ink:
+  `<Text dimColor bold>1</Text>` emits `\x1b[2m1\x1b[22m` with no `\x1b[1m` at all, and embedding a raw
+  `\x1b[1m…\x1b[22m` inside a dim `<Text>` is rewritten by chalk's nested-close handling into a bold run that
+  never closes. Upstream gets bold+dim only by nesting a bold child inside a dim parent — which is also why
+  its own row loses dim for everything after the count. A declared styling combination is not a reachable
+  one; this needs a raw-SGR line writer or a dim-hoisting `Line`, and is recorded as an F3 item rather than
+  papered over. (2026-08-03)
+- **The tracked 2.1.220 golden contradicts two statically-derived contract rules, and the binary wins.**
+  R4.2 says the unresolved leader glyph is "dimColor with no color"; the golden's cells are dim **and**
+  `#999999`, and so is the `(ctrl+o to expand)` hint and the whole `  ⎿  <path>` hint row, connector
+  included. R3.5's `dimColor={!isActive}` also has its polarity backwards for the active row. Both were
+  adopted from the capture and the divergence on that row fell from eleven cells to six. The one grey the
+  golden cannot settle is the SETTLED row's: the live-confirmation note records `#949494`, a different grey,
+  and no settled golden exists yet. (2026-08-03)
+- **Frame comparison is sensitive to repaint history, not just to the projection.** The live route reaches a
+  settled screen by shrinking (active row plus hint gutter into one settled row), and Ink's incremental
+  erase sequences inherit whatever SGR is current — so the live screen's blank padding cells kept a `dim`
+  attribute the replay screen's did not, while every cell holding a character was identical. The fixture's
+  key script now opens and closes the ctrl+o pager before the compact frame, repainting the region from a
+  state both routes share, which removes the inherited-terminal-state term instead of masking it. (2026-08-03)
 
 ## Outcomes & Retrospective
 
@@ -960,6 +981,48 @@ and `6c4af1b24c3f60441b7b0df2d07c7631c3ab8de5f4ea784fb50b10c94c5e9959`. The Sess
 prerequisite now distinguishes human from automatic local turns while correlating every successful completion
 by UUID. F1 is schedulable; F1–F8 remain otherwise pending.
 
+### F1 outcome — completed 2026-08-03
+
+F1 replaced the split live/replay renderer with a single canonical source. `tui/transcriptModel.ts` retains
+complete SDK messages verbatim — flat `tool_result` content and the optional per-call `tool_use_result`
+sidecar alike, associated only when the association is unambiguous — together with inherently local visual
+events, in one ordered document. `tui/toolRenderer.tsx` is the only projection from that document to
+renderable items, and live, replay, attach, resume, rewind and the Ctrl-O pager all reach a row through it.
+Ink's `<Static>` therefore holds finalized rows only; open calls and the trailing, still-growable fold run
+live in the transient region and are re-projected, never republished. Ctrl-E inside the detail view is a
+purely local verbosity flip over the same retained source rather than a second mutable history.
+
+The owner-approved 5b/5c amendment pulled the default-view collapse layer forward from F3, because the
+committed per-call `⏺ Read(path)` row turned out to be upstream's ctrl+o form, not its default one. The
+default view now folds a contiguous run of read/search/list/MCP calls into one dim summary row, with an
+active form (blinking leader, present-participle clause, transient `⎿` hint) while any member is running.
+
+Evidence is split deliberately, because a full-screen comparison against full Claude Code chrome cannot be
+a gate while overall parity sits near 63%. The binding checks are row-scoped: a required-state contract
+enforced by a new `capture-frames.py --require-state` flag, which extends contract loading, the
+missing-contract preflight and per-frame validation to untracked scratch output — without that flag the
+selectors declared for these keys loaded nowhere and every capture exited zero having verified nothing.
+Four pyte captures of the real `ChatApp`, driven through a credential-free replay fixture
+(`test/fixtures/f1-tool-transcript-frame.tsx`), prove that the sidecar-bearing and flat-only Read render
+identically through the live host-event route and the bootstrap/replay route: two `frame-diff.py` runs,
+each `2 clean, 0 allowlisted, 0 DIVERGENT`, with a sidecar-versus-flat cross-comparison confirming the
+diff is not vacuous. Paired OSC-8 evidence comes from real Ink bytes rather than a text frame: the header
+path carries the exact BEL-terminated open and close sequences, and the same projected items emit identical
+text with different SGR under the dark and light palettes.
+
+The real-upstream comparison is credential-isolated in both directions: the golden was captured from the
+installed `claude` 2.1.220 under OAuth, and our counterpart capture needs no credential at all. Read as a
+diagnostic it found one genuine F1-owned divergence — the `⎿` hint row's connector rendered plain where
+upstream renders the whole row dim `#999999` — and the renderer was fixed until that row became
+byte-identical to the golden. Nothing was allowlisted; `allowlist.md` still holds zero entries, and the
+Python contract test that used to assert emptiness is now a closed rule allowing at most the one reviewed
+upstream key. The residual whole-frame divergence is chrome F1 does not own plus one upstream escape-sequence
+artifact, both recorded in the parity scorecard rather than registered.
+
+All seven F1 acceptance contracts pass with the named evidence. Final verification covers typecheck, package
+build, 44 tracked TUI files and 817 tests, 1,245 unit tests, 17 integration tests, 7 contract tests, the
+105-test Python suite, `verify:pack`, and a clean `git diff --check`.
+
 ## Revision Notes
 
 - 2026-08-03 — **F1 amendment (owner-approved): the default-view collapse layer moved from F3 into
@@ -975,6 +1038,20 @@ by UUID. F1 is schedulable; F1–F8 remain otherwise pending.
   § 12 — mouse reporting mounts only behind `ds()`, expansion is per-item verbose keyed by tool-use
   id, there is no keyboard equivalent for a single block, and fullscreen strips the textual
   `(ctrl+o to expand)` hint in favor of hover+click), so it belongs to the fullscreen wave, not F1.
+- 2026-08-03 — **F1 closed.** Two rules in the render contract are corrected against the tracked 2.1.220
+  golden `harness/test/fixtures/upstream-frames/f1-tool-rendering/01-read-complete.ansi`, whose per-cell
+  attributes a pyte capture reconstructs exactly: R4.2's "dimColor with no color" is wrong (the active
+  leader glyph is dim **and** `#999999`, as are the expand hint and the whole `  ⎿  <path>` hint row,
+  connector included), and R3.5's `dimColor={!isActive}` has its polarity backwards for the active row.
+  Both are adopted in `tui/toolRenderer.tsx`. Not adopted: the golden's plain `" file…"`, which is
+  upstream's own `\x1b[22m` artifact — the bold count's closer clears faint as well as bold. R3.5's
+  "Ink composes dim+bold" is separately false for our renderer (probe: `<Text dimColor bold>` drops bold
+  entirely), so the folded row's count is not bold today; that is an F3 item, recorded in
+  `../../parity/tui-ux.md`. The settled row's own grey (`#949494` per the live-confirmation note, a
+  different grey from this active frame's `#999999`) stays unadopted until a settled golden exists.
+  Instrument change: `scripts/capture-frames.py --require-state` extends required-state loading, the
+  missing-contract preflight and per-frame validation to untracked output, so a row-scoped contract can
+  gate a scratch capture; tracked behaviour is unchanged with or without the flag.
 - 2026-07-31 — created from the six-report research inventory
 - 2026-07-31 — Task 6 review corrected three plan-authored values against upstream: the suspend
   implementation (Ink's ref-counted `setRawMode` and the dead repaint counter), the Ctrl-D double-press
