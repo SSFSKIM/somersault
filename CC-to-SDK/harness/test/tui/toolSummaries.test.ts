@@ -113,7 +113,10 @@ describe("F3 typed result rows — Grep and Glob", () => {
   });
   it("appends the raw matches under the typed row in the verbose projection only", () => {
     const event = grep({ mode: "content", numLines: 2, content: "a.ts:1:hit\nb.ts:9:hit" });
-    expect(texts(event, "detail-all")).toEqual(["Found 2 lines (ctrl+o to expand)", "a.ts:1:hit", "b.ts:9:hit"]);
+    // t5 review: only `$Wo`'s NON-verbose branch (L421528) appends the hint — the verbose form (L421505)
+    // has none, and our detail projections ARE that verbose form. Compact (which the fold owns for
+    // Grep/Glob, but nested condensed rows will reuse) keeps it.
+    expect(texts(event, "detail-all")).toEqual(["Found 2 lines", "a.ts:1:hit", "b.ts:9:hit"]);
     expect(texts(event, "compact")).toEqual(["Found 2 lines (ctrl+o to expand)"]);
   });
 });
@@ -140,6 +143,9 @@ describe("F3 typed result rows — Bash", () => {
     const event = bash({ ...core, stderr: "<sandbox_violations>secret</sandbox_violations>boom\nShell cwd was reset to /work" });
     expect(rows(event)).toEqual([{ text: "boom", color: errorColor() }, { text: "Shell cwd was reset to /work", dim: true }]);
     expect(texts(bash({ ...core, stdout: "out", stderr: "warn" }))).toEqual(["out", "warn"]);
+    // t5 review: upstream `w6p` returns stderr UNTOUCHED when no violations block matched — the trim rides
+    // the removal only, so interior framing (leading indent) survives a violation-free stderr.
+    expect(texts(bash({ ...core, stderr: "  indented warn" }))).toEqual(["  indented warn"]);
   });
 });
 
@@ -173,6 +179,8 @@ describe("F3 typed result rows — the remaining census tools", () => {
     expect(one(eventFor("TaskStop", { task_id: "t" }, "ok", { command: "a\nb\nc" }))).toBe("a\nb… · stopped");
     expect(one(eventFor("TaskStop", { task_id: "t" }, "ok", { command: "x".repeat(200) }))).toBe(`${"x".repeat(160)}… · stopped`);
     expect(rows(eventFor("TaskStop", { task_id: "t" }, "ok"))).toBeUndefined();
+    // t5 review: upstream `X3p` clips only when NOT verbose — the ctrl+o form carries the whole command.
+    expect(one(eventFor("TaskStop", { task_id: "t" }, "ok", { command: "a\nb\nc" }), "detail-all")).toBe("a\nb\nc · stopped");
   });
   it("renders the plan-mode pair and the two worktree rows", () => {
     const plan = rows(eventFor("EnterPlanMode", {}, "ok"))!;

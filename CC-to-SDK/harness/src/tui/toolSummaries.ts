@@ -24,7 +24,7 @@
 // are NOT part of this task's table).
 import type { RenderLine, Segment } from "./render.js";
 import type { ProjectionOptions } from "./toolRenderer.js";     // type-only: erased, so there is no import cycle
-import { foldToolOutput, withoutTrailingBlanks } from "./outputFold.js";
+import { foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { callSidecar, countTextLines, patchLineCounts, readVariant, type NormalizedToolResult } from "./toolResult.js";
 import { formatDuration, formatFileSize, plural } from "./format.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
@@ -112,21 +112,24 @@ function writeRows(event: ToolEvent, normalized: NormalizedToolResult): readonly
 /** `Found {N} {label}[ across {M} {label2}]` + the expand hint when N > 0. The pluralization is the unusual one:
  *  the label is stored PLURAL and its trailing `s` is stripped at exactly 1 (`count === 0 || count > 1`), so zero
  *  reads `Found 0 files`. Upstream bolds `{count}` TOGETHER WITH the space after it. */
-function foundRow(n: number, label: string, secondary?: { n: number; label: string }): RenderLine {
+function foundRow(n: number, label: string, projection: ResultProjection, secondary?: { n: number; label: string }): RenderLine {
   const segments: Segment[] = [plain("Found "), bold(`${n} `), plain(n === 0 || n > 1 ? label : label.slice(0, -1))];
   if (secondary !== undefined) segments.push(plain(" across "), bold(`${secondary.n} `), plain(secondary.n === 0 || secondary.n > 1 ? secondary.label : secondary.label.slice(0, -1)));
   // Upstream always emits the separating space and lets the hint be `false` at zero; a trailing space is invisible
   // and would only show up as a phantom column in width math, so the space rides with the hint here.
-  if (n > 0) segments.push(plain(` ${EXPAND_HINT}`));
+  // COMPACT-ONLY (t5 review): only `$Wo`'s non-verbose branch (L421528) appends `Bg` — the verbose form
+  // (L421505) has no hint, and `Bg` itself returns null in transcript contexts. Our detail projections ARE
+  // that verbose/transcript form, so the hint would land exactly where upstream never shows it.
+  if (n > 0 && projection === "compact") segments.push(plain(` ${EXPAND_HINT}`));
   return row(...segments);
 }
 function searchRows(event: ToolEvent, options: ProjectionOptions): readonly RenderLine[] | undefined {
   const s = callSidecar(event);
   if (s === undefined) return undefined;                                     // no honest count source ⇒ keep the raw matches
   const mode = s.mode, files = count(s.numFiles) ?? (Array.isArray(s.filenames) ? s.filenames.length : undefined);
-  const head = mode === "content" ? (count(s.numLines) === undefined ? undefined : foundRow(count(s.numLines)!, "lines"))
-    : mode === "count" ? (count(s.numMatches) === undefined || files === undefined ? undefined : foundRow(count(s.numMatches)!, "matches", { n: files, label: "files" }))
-      : files === undefined ? undefined : foundRow(files, "files");
+  const head = mode === "content" ? (count(s.numLines) === undefined ? undefined : foundRow(count(s.numLines)!, "lines", options.projection))
+    : mode === "count" ? (count(s.numMatches) === undefined || files === undefined ? undefined : foundRow(count(s.numMatches)!, "matches", options.projection, { n: files, label: "files" }))
+      : files === undefined ? undefined : foundRow(files, "files", options.projection);
   if (head === undefined) return undefined;
   // Census 01#144: the VERBOSE form keeps the same sentence and appends the raw matches indented under it. Our
   // gutter block already supplies that five-column indent, so the rows simply follow the sentence.
@@ -150,7 +153,10 @@ function bashRows(input: Record<string, unknown>, normalized: NormalizedToolResu
   // for a blank result is `(No output)`.
   const stdout = s === undefined ? normalized.flatText : typeof s.stdout === "string" ? s.stdout : "";
   const rawStderr = s !== undefined && typeof s.stderr === "string" ? s.stderr : "";
-  const withoutViolations = rawStderr.replace(SANDBOX_VIOLATIONS, "").trim();
+  // Upstream `w6p` (L423441) returns stderr UNTOUCHED when no <sandbox_violations> block matched; the trim
+  // rides the removal only (t5 review). A whitespace-only untouched stderr still paints nothing — bodyRows'
+  // trailing-blank trim owns that — so the visible difference is confined to interior framing.
+  const withoutViolations = new RegExp(SANDBOX_VIOLATIONS.source).test(rawStderr) ? rawStderr.replace(SANDBOX_VIOLATIONS, "").trim() : rawStderr;
   const reset = CWD_RESET.exec(withoutViolations)?.[1];
   const stderr = reset === undefined ? withoutViolations : withoutViolations.replace(CWD_RESET, "").trim();
   // Upstream tests `stdout === ""` because ITS stdout is the real stream; ours can be the flat result text, and
@@ -212,11 +218,12 @@ function skillRows(event: ToolEvent): readonly RenderLine[] | undefined {
 /** Upstream `pyH` (L421872): at most two physical lines, then a hard 160-character clip, then a trim — and the
  *  `…` is added by the CALLER only when that clip actually removed something. */
 const TASKSTOP_LINES = 2, TASKSTOP_WIDTH = 160;
-function taskStopRows(event: ToolEvent): readonly RenderLine[] | undefined {
+function taskStopRows(event: ToolEvent, options: ProjectionOptions): readonly RenderLine[] | undefined {
   const command = str(callSidecar(event)?.command);
   if (command === undefined) return undefined;
+  // Upstream `X3p` (L421884) clips only when NOT verbose — the ctrl+o form shows the whole command (t5 review).
   const lines = command.split("\n");
-  const clipped = (lines.length > TASKSTOP_LINES ? lines.slice(0, TASKSTOP_LINES).join("\n") : command).slice(0, TASKSTOP_WIDTH).trim();
+  const clipped = options.verbose ? command : (lines.length > TASKSTOP_LINES ? lines.slice(0, TASKSTOP_LINES).join("\n") : command).slice(0, TASKSTOP_WIDTH).trim();
   const rows = clipped.split("\n");
   return rows.map((text, i) => (i === rows.length - 1 ? row(plain(`${text}${clipped !== command ? "…" : ""} · stopped`)) : row(plain(text))));
 }
@@ -284,7 +291,7 @@ export function summaryLines(event: ToolEvent, normalized: NormalizedToolResult,
     case "WebFetch": return webFetchRows(event, options);
     case "WebSearch": return webSearchRows(event);
     case "Skill": return skillRows(event);
-    case "TaskStop": return taskStopRows(event);
+    case "TaskStop": return taskStopRows(event, options);
     case "EnterPlanMode": return planModeRows(options);
     case "EnterWorktree": case "ExitWorktree": return worktreeRows(event);
     case "TaskOutput": return taskOutputRows(event, normalized, options);
