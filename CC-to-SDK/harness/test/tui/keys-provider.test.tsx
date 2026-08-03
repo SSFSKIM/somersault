@@ -295,6 +295,26 @@ describe("KeymapProvider — chords (1 s window)", () => {
 });
 
 describe("KeymapProvider — byte-stream hygiene", () => {
+  it("the latin1 flip is gated on a migrated consumer: no registrations → setEncoding never called", async () => {
+    const h = renderWithKeymap(<Text>plain</Text>);
+    const spy = vi.fn();
+    (h.stdin as unknown as { setEncoding: typeof spy }).setEncoding = spy;   // stub lacks it; install before effects flush
+    await tick();
+    // Ink's own handleSetRawMode calls setEncoding("utf8") — seeing it here is the baseline surviving. What
+    // the gate forbids is OUR latin1 flip landing on top of it while legacy useInput components are live.
+    expect(spy).not.toHaveBeenCalledWith("latin1");
+    h.unmount();
+  });
+
+  it("…and IS applied once a consumer registers during render", async () => {
+    const h = renderWithKeymap(<Probe scope="Chat" />);
+    const spy = vi.fn();
+    (h.stdin as unknown as { setEncoding: typeof spy }).setEncoding = spy;
+    await tick();
+    expect(spy).toHaveBeenCalledWith("latin1");
+    h.unmount();
+  });
+
   it("re-decodes latin1 bytes to UTF-8 before the fallback sees them", async () => {
     const events: TextEvent[] = [];
     const h = renderWithKeymap(<Probe scope="Chat" fallback={(e) => { if (e.kind === "text") events.push(e); }} />);
@@ -354,6 +374,21 @@ describe("useBinding", () => {
     await tick();
     expect(seen[0]).toBe("shift+tab");
     expect(seen[1]).toBeNull();
+    h.unmount();
+  });
+
+  it("prefers the binding from a LIVE scope over another context's when both bind the action", async () => {
+    const seen: (string | null)[] = [];
+    function Reader() { seen.push(useBinding("go:somewhere")); return <Text>r</Text>; }
+    const h = renderWithKeymap(
+      <><Probe scope="Select" /><Reader /></>,
+      { userLayers: [
+        { context: "Chat", bindings: { "ctrl+g": "go:somewhere" } },        // Chat is NOT mounted here
+        { context: "Select", bindings: { "ctrl+l": "go:somewhere" } },      // Select IS the live scope
+      ] },
+    );
+    await tick();
+    expect(seen[seen.length - 1]).toBe("ctrl+l");       // the key that would actually fire in this tree
     h.unmount();
   });
 

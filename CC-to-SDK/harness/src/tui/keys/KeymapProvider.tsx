@@ -118,7 +118,12 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   useEffect(() => {
     if (!isRawModeSupported) return;
     setRawMode(true);
-    stdin.setEncoding?.("latin1");
+    // Gate the latin1 flip on a migrated consumer existing (children register during render, so by the time
+    // this parent-last passive effect runs, the registry is truthful). Before task 6 lands nothing registers,
+    // and forcing latin1 then would hand the still-live `useInput` components raw bytes — mojibake for every
+    // non-ASCII character typed into the composer at launch (t5 review, Important).
+    const migrated = reg.scopes.size + reg.actions.size + reg.fallbacks.size > 0;
+    if (migrated) stdin.setEncoding?.("latin1");
     const onData = (data: string | Buffer) => {
       if (!aliveRef.current) return;
       consumeRef.current(typeof data === "string" ? data : data.toString("latin1"));
@@ -126,9 +131,9 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     stdin.on("data", onData);
     return () => {
       stdin.removeListener("data", onData);
-      const held = pasteRef.current;
+      // A paste still in flight is DROPPED: this cleanup runs while the tree is mid-teardown, so dispatching
+      // here would either reach half-unmounted components or nobody. Dropping is the honest option.
       pasteRef.current = "";
-      if (held) for (const ev of parseBytes(held)) dispatch(ev);        // a paste in flight is delivered, not lost
       clearChord();
       setRawMode(false);
     };
@@ -183,5 +188,10 @@ export function useSwallowKeys(active: boolean): void {
  *  the user's keymap actually says instead of a hardcoded guess (task 10). */
 export function useBinding(action: string): string | null {
   const ctx = useContext(KeymapCtx);
-  return ctx ? bindingFor(ctx.table, action) : null;
+  if (!ctx) return null;
+  // Live scopes first (so an action bound in two contexts hints the key that would actually fire HERE), then
+  // the rest of the table so a hint rendered outside its scope (footer while a dialog is up) still resolves.
+  const live = activeContexts(ctx.reg);
+  const rest = ([...ctx.table.contexts.keys()] as KeyContextName[]).filter((c) => !live.includes(c));
+  return bindingFor(ctx.table, action, [...live, ...rest]);
 }
