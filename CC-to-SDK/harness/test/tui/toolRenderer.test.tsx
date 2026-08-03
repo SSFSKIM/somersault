@@ -27,6 +27,12 @@ const read = { id: "read-1", name: "Read", input: { file_path: "/work/src/app.ts
 const normalized = { tool: "Read", status: "success" as const, source: "fallback" as const, rawContent: "a\nb\nc\nd", flatText: "a\nb\nc\nd", summary: "Read 4 lines", output: "a\nb\nc\nd", outputLines: ["a", "b", "c", "d"] };
 
 const bodyOf = (items: readonly RenderItem[]): readonly RenderLine[] => items.flatMap((item) => (item.kind === "gutter-block" ? item.body : []));
+// F3 Task 5 (LT1): a completed `Read` now renders its TYPED row (`Read 4 lines`) as its body — upstream dumps
+// file content nowhere. The cases below that pin the GENERIC raw-output body (multi-row gutter geometry,
+// trailing-blank trimming) therefore drive an UNKNOWN tool, which is the one route that still folds raw output;
+// the Read fixture keeps pinning the header and, now, the typed row itself.
+const generic = { ...read, id: "gen-1", name: "FutureTool" };
+const genericNormalized = { ...normalized, tool: "FutureTool", summary: "FutureTool" };
 
 describe("F1 shared tool renderer", () => {
   it("uses the exact OSC-8 bytes and cwd-first/home-second path display", () => {
@@ -38,12 +44,14 @@ describe("F1 shared tool renderer", () => {
     const items = renderToolEvent(read, normalized, options); const header = items[0]!;
     expect(header).toMatchObject({ kind: "line", line: { segments: [{ text: "⏺ " }, { text: "Read", bold: true }, { text: "(" }, { text: expect.stringContaining("src/app.ts") }, { text: ")" }] } });
     expect(renderToolEvent(read, normalized, { ...options, platform: "linux" })[0]).toMatchObject({ kind: "line", line: { segments: expect.arrayContaining([expect.objectContaining({ text: "● " })]) } });
-    const block = items[1]!; expect(block).toMatchObject({ kind: "gutter-block", gutter: TOOL_RESULT_GUTTER, body: [{ text: "a" }, { text: "b" }, { text: "c" }, { text: "d" }] });
-    const view = render(<>{items.map((item) => <RenderItemView key={item.id} item={item} />)}</>);
+    expect(items[1]).toMatchObject({ kind: "gutter-block", gutter: TOOL_RESULT_GUTTER, body: [{ text: "Read 4 lines" }] });
+    const rawItems = renderToolEvent(generic, genericNormalized, options);
+    expect(rawItems[1]).toMatchObject({ kind: "gutter-block", gutter: TOOL_RESULT_GUTTER, body: [{ text: "a" }, { text: "b" }, { text: "c" }, { text: "d" }] });
+    const view = render(<>{rawItems.map((item) => <RenderItemView key={item.id} item={item} />)}</>);
     expect((view.lastFrame()!.match(/⎿/g) ?? [])).toHaveLength(1); expect(view.lastFrame()).toContain(TOOL_RESULT_GUTTER);
   });
   it("places the one gutter in a five-column sibling before its body", async () => {
-    const items = renderToolEvent(read, normalized, { ...options, columns: 100 });
+    const items = renderToolEvent(generic, genericNormalized, { ...options, columns: 100 });
     const row = plain(await rawInk(<>{items.map((item) => <RenderItemView key={item.id} item={item} />)}</>)).split("\n").find((line) => line.includes(TOOL_RESULT_GUTTER))!;
     const bodyStart = row.indexOf("a"), gutterColumn = row.slice(0, bodyStart);
     expect(gutterColumn.startsWith(TOOL_RESULT_GUTTER)).toBe(true); expect((gutterColumn.match(/⎿/g) ?? [])).toHaveLength(1);
@@ -116,9 +124,9 @@ describe("F1 shared tool renderer", () => {
     expect(body).toHaveLength(1); expect(body[0]!.text).toBe(long);
   });
   it("drops trailing blank result lines before folding and emits no block at all for an all-blank result", () => {
-    expect(bodyOf(renderToolEvent(read, { ...normalized, output: "out\n\n  ", outputLines: ["out", "", "  "] }, options)).map((line) => line.text)).toEqual(["out"]);
-    expect(bodyOf(renderToolEvent(read, { ...normalized, status: "error", output: "boom\n  ", outputLines: ["boom", "  "] }, options)).map((line) => line.text)).toEqual(["boom"]);
-    expect(renderToolEvent(read, { ...normalized, output: "\n  ", outputLines: ["", "  "] }, options).map((item) => item.kind)).toEqual(["line"]);
+    expect(bodyOf(renderToolEvent(generic, { ...genericNormalized, output: "out\n\n  ", outputLines: ["out", "", "  "] }, options)).map((line) => line.text)).toEqual(["out"]);
+    expect(bodyOf(renderToolEvent(generic, { ...genericNormalized, status: "error", output: "boom\n  ", outputLines: ["boom", "  "] }, options)).map((line) => line.text)).toEqual(["boom"]);
+    expect(renderToolEvent(generic, { ...genericNormalized, output: "\n  ", outputLines: ["", "  "] }, options).map((item) => item.kind)).toEqual(["line"]);
   });
   it("renders interruption and rejection dim rather than error-coloured, and clips a rejection to one row", () => {
     expect(bodyOf(renderToolEvent(read, { ...normalized, status: "interrupted", output: "Interrupted", outputLines: ["Interrupted"] }, options))).toEqual([{ text: "Interrupted · What should Claude do instead?", dim: true }]);
@@ -136,7 +144,7 @@ describe("F1 shared tool renderer", () => {
     expect((header as { line: { text: string } }).line.text).not.toContain("\x1b]8;;");
   });
   it("trims the padding on the last nonblank line so it cannot wrap into a phantom row", () => {
-    expect(bodyOf(renderToolEvent(read, { ...normalized, output: "abc        ", outputLines: ["abc        "] }, options)).map((line) => line.text)).toEqual(["abc"]);
+    expect(bodyOf(renderToolEvent(generic, { ...genericNormalized, output: "abc        ", outputLines: ["abc        "] }, options)).map((line) => line.text)).toEqual(["abc"]);
   });
   it("labels a proven sed -i row Update with a display path, and Edit rows Create/Update", () => {
     const sed = { id: "b1", name: "Bash", input: { command: "sed -i '' 's/a/b/' /work/src/app.ts" }, callSequence: 1, route: "top-level" as const, result: { content: "", isError: false, resultSequence: 2 } };

@@ -44,7 +44,13 @@ describe("replayDocument", () => {
     expect(rendered).toContain("added");
     const detail = JSON.stringify(projectDetail(doc, { ...projectionOptions, projection: "detail-all" }));
     expect(detail).toContain("Read(");
-    expect(detail).toContain("one");              // the result BODY, which replayLines used to discard
+    // RETENTION is the claim this test makes, and it is asserted on the DOCUMENT: the replayed tool_result body
+    // is kept whole, which is what `replayLines` used to discard. What the detail projection PAINTS for it is a
+    // separate question, and F3 Task 5 (LT1) answers it upstream's way — plan `2026-08-04-tui-clone-f3.md`
+    // § Task 5 Routing: the typed row `Read 3 lines`, never the file text. This line pinned that text before.
+    expect(String(doc.toolEvents()[0]!.result!.content)).toContain("one");
+    expect(detail).toContain("Read 3 lines");
+    expect(detail).not.toContain("two");
   });
   it("hides command stdout/caveat rows, renders command echoes as dim slash lines, and marks compact summaries", () => {
     const msgs = [

@@ -11,6 +11,9 @@
 // `ds()` is fixed false (R2.1), so the fullscreen-only clauses — shell commands, git ops, agents, edits, REPL — are
 // unreachable here and deliberately absent (R1.6, R1.7, R2.2).
 import { displayPath } from "./paths.js";
+// `ra` moved to `format.ts` in F3 Task 5 so the fold row and the typed result rows share ONE port (R4.9 still
+// calls it with no options here; only the Bash timeout suffix passes `hideTrailingZeros`).
+import { formatDuration } from "./format.js";
 import type { ToolEvent } from "./transcriptModel.js";
 
 /** Upstream `jr_`/`Wr_`/`qr_`/`Vr_` verbatim (L306395). `Vr_` decides nothing: a command of only ignored words is
@@ -169,17 +172,6 @@ const commandHint = (command: string): string => {
   const text = "$ " + command.split("\n").map((line) => line.replace(/\s+/g, " ").trim()).filter((line) => line !== "").join("\n");
   return text.length > HINT_LIMIT ? text.slice(0, HINT_LIMIT - 1) + "…" : text;
 };
-/** Upstream `ra` (L107033–107039) with no options — the only duration formatter the fold row uses (R4.9). */
-function formatDuration(ms: number): string {
-  if (ms < 60000) return ms === 0 ? "0s" : ms < 1 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 1000)}s`;
-  let days = Math.floor(ms / 86400000), hours = Math.floor((ms % 86400000) / 3600000), minutes = Math.floor((ms % 3600000) / 60000), seconds = Math.round((ms % 60000) / 1000);
-  if (seconds === 60) { seconds = 0; minutes++; }
-  if (minutes === 60) { minutes = 0; hours++; }
-  if (hours === 24) { hours = 0; days++; }
-  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
-  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
-  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-}
 
 /** A `neutral` atom carries the F3 thinking clock: `thoughtForMs` is the LOCALLY CLOCKED duration of the
  *  thinking blocks of the assistant message this atom stands for (P82 — the wire has no timestamps, and a

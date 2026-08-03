@@ -20,6 +20,8 @@ import { Line } from "./Line.js";
 import { resolveThemeColor, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
 import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type GroupCounts } from "./toolFold.js";
+import { foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
+import { summaryLines } from "./toolSummaries.js";
 import type { FoldPendingHooks } from "./foldPendingState.js";
 import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
@@ -44,8 +46,12 @@ export type RenderItem =
   // `  ⎿  src/app.ts` as ONE dim `#999999` run across connector and path alike, with no artifact in it.
   | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean } };
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
- *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). */
-export type ResultProjection = "compact" | "detail-all" | "detail-collapsed";
+ *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). F3 Task 5 moved the type and the
+ *  fold itself into `outputFold.ts` (so `toolSummaries.ts` can fold a Bash stdout body without importing this
+ *  module); both are re-exported here because this is still the surface every caller and test reaches for. */
+export type { FoldOptions } from "./outputFold.js";
+export { foldToolOutput };
+export type { ResultProjection };
 /** `thoughtMs` (F3 Task 3) is the caller's LIVE thinking clock: sdk message identity (`message:<id>`) →
  *  locally clocked thinking ms, produced by `LiveTurn` and retained by `useChat` across turn end. It is a
  *  projection input rather than document state on purpose — P82 proved the durations exist nowhere on the
@@ -57,7 +63,6 @@ export type ResultProjection = "compact" | "detail-all" | "detail-collapsed";
  *  ONLY for a group row the pending region owns: an immutable published Static row is the settled truth and
  *  must never be re-derived from live maxima. */
 export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; }
-export interface FoldOptions { projection: ResultProjection; compactRows: number; revealOneExtraWithoutMarker: boolean; }
 
 /** Upstream's exact interruption surface — the row is a prompt, not a copy of whatever partial output arrived. */
 const INTERRUPTED_TEXT = "Interrupted · What should Claude do instead?";
@@ -69,37 +74,6 @@ export const osc8FileLink = (path: string, label: string) => `\x1b]8;;${pathToFi
 /** Re-exported, not defined here, since Task 5c: `paths.ts` owns the rule so `toolFold.ts` can reach it
  *  without importing this module (which now imports the fold model). The public surface is unchanged. */
 export { displayPath };
-
-/** Slice to VISUAL rows first, then clip — so the overflow count is what the reader actually cannot see, not a
- *  logical-line count that undercounts a wrapped row. `revealOneExtraWithoutMarker` is upstream's four-row
- *  exception: showing a 4th row beats spending that row on "… +1 line". This is the ORDINARY-output fold only —
- *  errors count physical lines instead and never come through here (`errorBody`).
- *  Upstream `Omy` slices at the exact column with NO word wrapping and `trimEnd`s every emitted row (so at width 10
- *  "hello world" is "hello worl"/"d", not "hello"/"world"), and a blank input row stays a blank output row. */
-const visualRows = (line: string, width: number): string[] => wrapAnsi(line, width, { hard: true, trim: false, wordWrap: false }).split("\n").map((row) => row.trimEnd());
-/** A compact projection shows 3–10 rows, so wrapping a multi-megabyte result would stall Ink on rows nobody can see —
- *  and the 600 ms blink re-renders make it recurring. Upstream `y_s` bounds the work at `compactRows * width * 4`
- *  characters and pays for it with an ESTIMATED hidden count over the whole input, floored by the exact count the
- *  wrapped prefix already proves. `detail-all` is the one projection that must stay unbounded. */
-export function foldToolOutput(lines: readonly string[], columns: number, options: FoldOptions): readonly RenderLine[] {
-  const width = Math.max(columns - 10, 10);
-  if (options.projection === "detail-all") return lines.flatMap((line) => visualRows(line, width)).map((text) => ({ text }));
-  const bound = options.compactRows * width * 4, length = lines.reduce((sum, line) => sum + line.length, 0) + Math.max(lines.length - 1, 0);
-  const prefix: string[] = [];                                               // exactly the logical lines of `text.slice(0, bound)`
-  for (let i = 0, used = 0; i < lines.length; i++) {
-    if (i > 0 && ++used > bound) break;                                      // the separating newline itself fell outside the bound
-    const line = lines[i], room = bound - used;
-    prefix.push(line.length > room ? line.slice(0, room) : line); used += Math.min(line.length, room);
-    if (line.length > room) break;
-  }
-  const visual = prefix.flatMap((line) => visualRows(line, width));
-  // The no-marker path requires the WHOLE input inside the bound: SGR-heavy source can exceed the bound in bytes
-  // while its clipped prefix wraps to few visual rows, and returning here would silently drop the tail.
-  if (length <= bound && visual.length <= options.compactRows + (options.revealOneExtraWithoutMarker ? 1 : 0)) return visual.map((text) => ({ text }));
-  const estimated = length > bound ? Math.max(lines.length, Math.ceil(length / width)) - options.compactRows : 0;
-  const hidden = Math.max(visual.length - options.compactRows, estimated), hint = options.projection === "compact" ? "ctrl+o to expand" : "ctrl+e to show all";
-  return [...visual.slice(0, options.compactRows).map((text) => ({ text })), { text: `… +${hidden} ${hidden === 1 ? "line" : "lines"} (${hint})`, dim: true }];
-}
 
 const statusToken = (status: ToolStatus): "inactive" | "success" | "error" => (status === "running" ? "inactive" : status === "success" ? "success" : "error");
 /** The header argument, always read from the COMPLETE retained input — never from `NormalizedToolResult.summary`,
@@ -156,17 +130,6 @@ function headerLine(event: ToolEvent, status: ToolStatus, options: ProjectionOpt
   return { text: argument === undefined ? `${bullet.text}${name}` : `${bullet.text}${name}(${argument})`, segments };
 }
 
-/** Upstream `y_s` `trimEnd`s the WHOLE result before it folds anything, so trailing blank rows never buy a fold slot
- *  — and a result that is nothing but whitespace renders no body, which means no gutter block at all. Interior
- *  blanks are content and stay exactly where they are. */
-const withoutTrailingBlanks = (lines: readonly string[]): readonly string[] => {
-  let end = lines.length; while (end > 0 && lines[end - 1]!.trim() === "") end--;
-  const kept = lines.slice(0, end);
-  // Upstream trimEnd()s the WHOLE string, which also strips padding from the last nonblank line — left in place it
-  // would wrap into a phantom empty row (or a bogus marker) before the per-row trim ever saw it.
-  if (kept.length) kept[kept.length - 1] = kept[kept.length - 1]!.trimEnd();
-  return kept;
-};
 /** LT15: a generic error clips by PHYSICAL lines — upstream counts newlines and shows `split("\n").slice(0, 10)` —
  *  NOT by visual rows, and with no four-row exception. So one newline-free 500-character failure stays WHOLE (it
  *  still wraps at render; it is simply never clipped, and never counts as more than one line), while an eleven-line
@@ -182,12 +145,20 @@ function errorBody(lines: readonly string[], projection: ResultProjection, color
   return [...rows, { text: `… +${overflow} ${overflow === 1 ? "line" : "lines"} (${hint})`, dim: true }];
 }
 
-function resultBody(normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderLine[] {
+/** F3 Task 5 (LT1): the TYPED row is consulted first and is the result body in BOTH projections — a completed
+ *  Read reads `Read 340 lines`, never its file content, because upstream dumps that content nowhere (the ctrl+o
+ *  verbose branch renders the same `renderToolResultMessage` with `verbose:true`, contract R6.3). The three
+ *  surfaces above it are NOT rerouted: `interrupted`/`rejected` are what the USER did and `running` has no body
+ *  yet. `undefined` from `summaryLines` means "no typed row" — the generic fold below stays the whole story for
+ *  Bash stdout, unknown tools and every error projection. */
+function resultBody(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderLine[] {
   if (normalized.status === "running") return [];
   // Both surfaces are upstream `dimColor` prompts, not failures: they are what the USER did, so they never take the
   // error colour, and the rejection is a fixed one-row box (`height: 1`) no matter what text arrived with it.
   if (normalized.status === "interrupted") return [{ text: INTERRUPTED_TEXT, dim: true }];
   if (normalized.status === "rejected") return [{ text: REJECTED_TEXT, dim: true }];   // upstream ignores the tool's text entirely: the row is always this literal
+  const typed = summaryLines(event, normalized, options);
+  if (typed !== undefined) return typed;
   const lines = withoutTrailingBlanks(normalized.outputLines);
   if (!lines.length) return [];
   if (normalized.status === "error") return errorBody(lines, options.projection, resolveThemeColor(themeTokens().error));
@@ -199,7 +170,7 @@ function resultBody(normalized: NormalizedToolResult, options: ProjectionOptions
 export function renderToolEvent(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
   if (normalized.status === "suppressed") return [];
   const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, normalized.status, options), wrap: "truncate-end" }];
-  const body = resultBody(normalized, options);
+  const body = resultBody(event, normalized, options);
   if (body.length) items.push({ kind: "gutter-block", id: `${event.id}:result`, gutter: TOOL_RESULT_GUTTER, body });
   return items;
 }

@@ -66,7 +66,13 @@ describe("F1 frame parity", () => {
     // The default view is the folded summary the real 2.1.220 golden also paints; the per-call header is
     // the ctrl+o form. Both come off the SAME retained document through the SAME renderer.
     expect(visible(frame(compact("disk", READ_RESULT_UPSTREAM)) ?? "")).toContain("Read 1 file (ctrl+o to expand)");
-    expect(visible(frame(detail("disk", READ_RESULT_UPSTREAM)) ?? "")).toContain("Read(src/app.ts)");
+    const detailed = visible(frame(detail("disk", READ_RESULT_UPSTREAM)) ?? "");
+    expect(detailed).toContain("Read(src/app.ts)");
+    // F3 Task 5 (LT1), plan `2026-08-04-tui-clone-f3.md` § Task 5 Routing: the detail projection IS upstream's
+    // ctrl+o verbose form, and its per-call result body is the TYPED row — `Read 1 line` off the sidecar's
+    // `file.numLines`, never the file's own text. This assertion used to pin that raw text instead.
+    expect(detailed).toContain("Read 1 line");
+    expect(detailed).not.toContain("export const app = 1;");
   });
   it("retains exact OSC-8 bytes from actual projected RenderItemView output", async () => {
     expect(await rawInk(itemsView(detail("host", READ_RESULT_WITH_SIDECAR)))).toContain("\x1b]8;;file:///work/src/app.ts\x07src/app.ts\x1b]8;;\x07");

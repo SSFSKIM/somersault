@@ -29,10 +29,78 @@ export function flatText(content: unknown): string {
   return content.filter((b): b is Record<string, unknown> => isRecord(b) && b.type === "text" && typeof b.text === "string").map((b) => b.text as string).join("\n");
 }
 const toLines = (text: string): readonly string[] => (text.length === 0 ? [] : (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n"));
+/** Upstream `bbn` (L424186): newline-delimited lines of a written/returned body, minus the trailing newline's
+ *  phantom row. Exported because F3's `Wrote {N} lines` row must count EXACTLY what the normalizer counts. */
+export const countTextLines = (text: string): number => toLines(text).length;
 const countLines = (n: number): string => `${n} line${n === 1 ? "" : "s"}`;
 
 // Narrow recognizers for the exact 0.3.220 sidecar shapes; each returns the sidecar itself so it is retained whole.
-const readShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && isRecord(v.file) && lineCount(v.file.numLines) ? v : undefined);
+/** F3 Task 5 widens Read from "the text shape" to upstream `dbH`'s SIX result types (L424415–424438). Each arm
+ *  demands exactly the fields its row spells out, so a sidecar that merely CLAIMS `type:"image"` without a numeric
+ *  `originalSize` still falls back to the flat line count rather than rendering `Read image (undefined)`. The
+ *  untyped arm is last and deliberate: P94's census recorded the shape but not the discriminant's value (our own
+ *  fixture carries `type:"read"`), so a valid `file.numLines` is text-shaped whatever the tag says. */
+const byteSize = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
+const readShape = (v: unknown): Record<string, unknown> | undefined => {
+  if (!isRecord(v) || !isRecord(v.file)) return undefined;
+  const file = v.file;
+  switch (v.type) {
+    case "image": case "pdf": return byteSize(file.originalSize) ? v : undefined;
+    case "parts": return lineCount(file.count) && byteSize(file.originalSize) ? v : undefined;
+    case "notebook": return Array.isArray(file.cells) ? v : undefined;
+    case "file_unchanged": return typeof file.filePath === "string" ? v : undefined;
+    default: return lineCount(file.numLines) ? v : undefined;
+  }
+};
+/** The recognized Read row, projected off the retained sidecar — the ONE place the six-way discrimination lives, so
+ *  `toolSummaries` never re-guesses a shape the normalizer already accepted or rejected. */
+export type ReadVariant =
+  | { kind: "text"; numLines: number }
+  | { kind: "image" | "pdf"; size: number }
+  | { kind: "parts"; count: number; size: number }
+  | { kind: "notebook"; cells: number }
+  | { kind: "file_unchanged"; seeded: boolean; filePath: string };
+export function readVariant(normalized: NormalizedToolResult): ReadVariant | undefined {
+  const value = normalized.tool === "Read" ? normalized.structured : undefined;
+  if (value === undefined || !isRecord(value.file)) return undefined;
+  const file = value.file;
+  switch (value.type) {
+    case "image": case "pdf": return { kind: value.type, size: file.originalSize as number };
+    case "parts": return { kind: "parts", count: file.count as number, size: file.originalSize as number };
+    case "notebook": return { kind: "notebook", cells: (file.cells as unknown[]).length };
+    case "file_unchanged": return { kind: "file_unchanged", seeded: value.source === "seeded", filePath: file.filePath as string };
+    default: return { kind: "text", numLines: file.numLines as number };
+  }
+}
+/** The uniquely associated call sidecar, UNNARROWED. F1's `structured` is reserved for the five shapes P94
+ *  actually observed and verified (Read/Write/Edit/Bash/Agent) — `source: "structured"` means "a recognized
+ *  shape", and widening it to "an object arrived" would quietly devalue that discriminant. F3's typed rows also
+ *  cover tools P94's local-coding corpus never selected (Grep, Glob, WebFetch, WebSearch, Skill, TaskStop, the
+ *  worktree pair, TaskOutput), whose result props are read off the 2.1.220 bundle rather than off live evidence.
+ *  Those rows reach their source through here and guard it FIELD BY FIELD at the template that spells it out, so
+ *  an unverified shape can only ever cost that one row (it falls back to raw output), never mislabel a number. */
+export function callSidecar(event: ToolEvent): Record<string, unknown> | undefined {
+  const sidecar = event.result?.sidecar;
+  const value = sidecar?.scope === "call" ? sidecar.value : undefined;
+  return isRecord(value) ? value : undefined;
+}
+
+/** Upstream `NHH`/`FHH` (L423879–423884): the diff summary counts per-line `+`/`-` prefixes summed across hunks —
+ *  NOT hunk `newLines`/`oldLines`, which include the context rows. Any hunk that is not `{lines: string[]}`
+ *  rejects the WHOLE patch: half a count would read as a real number on screen. */
+export function patchLineCounts(structured: Record<string, unknown> | undefined): { added: number; removed: number } | undefined {
+  const hunks = structured?.structuredPatch;
+  if (!Array.isArray(hunks)) return undefined;
+  let added = 0, removed = 0;
+  for (const hunk of hunks) {
+    if (!isRecord(hunk) || !Array.isArray(hunk.lines)) return undefined;
+    for (const line of hunk.lines) {
+      if (typeof line !== "string") return undefined;
+      if (line.startsWith("+")) added++; else if (line.startsWith("-")) removed++;
+    }
+  }
+  return { added, removed };
+}
 const writeShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && typeof v.filePath === "string" && typeof v.content === "string" && Array.isArray(v.structuredPatch) ? v : undefined);
 const editShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && typeof v.filePath === "string" && typeof v.oldString === "string" && typeof v.newString === "string" && Array.isArray(v.structuredPatch) ? v : undefined);
 const bashShape = (v: unknown): Record<string, unknown> | undefined => (isRecord(v) && typeof v.stdout === "string" && typeof v.stderr === "string" && typeof v.interrupted === "boolean" && typeof v.noOutputExpected === "boolean" && typeof v.isImage === "boolean" && (v.returnCodeInterpretation === undefined || typeof v.returnCodeInterpretation === "string") ? v : undefined);
@@ -174,7 +242,10 @@ export function normalizeToolResult(event: ToolEvent, options?: { verbose?: bool
   let summary = tool;                                                        // generic default; unknown tools keep exactly this
   if (tool === "Read") {
     structured = readShape(value);
-    summary = `Read ${countLines(structured ? (structured.file as Record<string, unknown>).numLines as number : outputLines.length)}`;
+    // `summary` stays the TEXT row only (F1's one-line debug/label string); the five non-text variants are rows
+    // with sizes and page counts in them, and `toolSummaries.summaryLines` — not this string — is what renders them.
+    const numLines = structured !== undefined && lineCount((structured.file as Record<string, unknown>).numLines) ? (structured.file as Record<string, unknown>).numLines as number : outputLines.length;
+    summary = `Read ${countLines(numLines)}`;
   } else if (tool === "Write") {
     structured = writeShape(value);
     const written = structured ? String(structured.content) : typeof input.content === "string" ? input.content : undefined;
