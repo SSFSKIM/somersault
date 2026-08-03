@@ -25,6 +25,7 @@ import type { RenderLine } from "./render.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { LiveTurn } from "./liveTurn.js";
+import { FoldPendingState } from "./foldPendingState.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
@@ -82,7 +83,7 @@ export function useChat(
   const columnsFn = deps.columns ?? (() => process.stdout.columns ?? 80);
   const scheduleRepaint = deps.scheduleRepaint ?? ((cb: () => void, ms: number) => { const id = setInterval(cb, ms); return () => clearInterval(id); });
   const home = deps.home ?? homedir(), platform = deps.platform ?? process.platform;
-  const projectionContext = (): ProjectionContext => ({ cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current });
+  const projectionContext = (): ProjectionContext => ({ cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current! });
   // ── The ONE retained transcript document (F1 Task 4). Every visible row — live, replay, attach, resume,
   // rewind, Ctrl-O — is projected from it; `publishedIds` is what makes reconciliation append-only, so a
   // duplicate follow record, a rehydration or a redelivered bootstrap entry can never publish a row twice.
@@ -116,6 +117,14 @@ export function useChat(
   // a document swap (rewind/resume/clear) — which IS P82's replay rule: durations exist nowhere on the
   // wire or on disk, so a rebuilt transcript must show no clause rather than a fabricated one.
   const thoughtMsRef = useRef<Map<string, number>>(new Map());
+  // F3 Task 4: the pending region's time-dependent group-row state — the ratcheted counters (R3.2) and the
+  // throttled/lingering `⎿` hint (R4.7 steps 4–5). Upstream keeps both in refs INSIDE the row component,
+  // whose instance survives a growing run's re-renders; our projection is rebuilt from scratch on every
+  // 600 ms repaint, so the state has to live out here and be keyed by the run's anchor. Reads the SAME
+  // injected clock as the projection, so a frame-pinning test controls the debounce too. Lazily constructed
+  // (not `useRef(new …)`) so a re-render does not allocate a state object it immediately discards.
+  const pendingStateRef = useRef<FoldPendingState | null>(null);
+  if (pendingStateRef.current === null) pendingStateRef.current = new FoldPendingState({ now: nowFn });
   const [staticItems, setStaticItems] = useState<readonly RenderItem[]>(() => {
     const items = projectCompact(documentRef.current!, projectionContext());
     for (const item of items) publishedIds.current.add(item.id);
@@ -303,6 +312,9 @@ export function useChat(
     documentRef.current = next;
     publishedIds.current = new Set();
     thoughtMsRef.current = new Map();   // P82: a rebuilt transcript has no duration source — show none
+    // Same rule for the latched counters and the held hint (F3 Task 4): a rebuilt transcript reuses the very
+    // same tool-use ids as anchors, so a maximum latched before the swap would ride onto a run re-read from disk.
+    pendingStateRef.current!.reset();
 
     setStaticItems([]); setPendingItems([]);
     setStaticEpoch((e) => e + 1);

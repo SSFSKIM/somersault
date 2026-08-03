@@ -1835,3 +1835,86 @@ describe("useChat: the thinking clock survives the turn that measured it", () =>
     expect(frame(lastFrame)).toContain("Thought for 8s, read 1 file");
   });
 });
+
+// F3 Task 4: the pending region's time-dependent state (plan 2026-08-04-tui-clone-f3). `useChat` owns one
+// `FoldPendingState` for the whole document epoch because the projection it feeds is rebuilt from scratch
+// on every 600 ms repaint — upstream keeps the equivalent refs inside the row component, whose instance
+// survives a growing run's re-renders. Every assertion below is made after EVERY advance, not only at the
+// end: the whole point is that no intermediate frame shows the drop.
+describe("useChat: latched counters and the throttled group hint", () => {
+  const catCall = (id: string, file: string) =>
+    ({ type: "assistant", message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "Bash", input: { command: `cat ${file}` } }] } });
+  const readCall = (id: string, file: string) =>
+    ({ type: "assistant", message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "Read", input: { file_path: file } }] } });
+  const done = (id: string) => ({ type: "user", uuid: `u-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
+  const POKE = { kind: "message" as const, data: { type: "system", subtype: "noop" } };   // a frame the document retains nothing of — it exists to force one repaint
+  type Api = { run?: (s: string) => void; items?: () => readonly RenderItem[] };
+
+  function LatchHost({ fake, clock, api }: { fake: FakeRemote; clock: { now: number }; api: Api }) {
+    const c = useChat(() => fake, { cwd: "/work" }, { now: () => clock.now, home: "/home/me", platform: "darwin", columns: () => 100 });
+    api.run = c.submit; api.items = () => c.state.pendingItems;
+    return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>;
+  }
+  const hintText = (api: Api) => api.items!().flatMap((i) => (i.kind === "gutter-block" && i.id.endsWith(":pending-hint") ? i.body : [])).map((l) => l.text);
+  const hintLines = (api: Api) => api.items!().flatMap((i) => (i.kind === "gutter-block" && i.id.endsWith(":pending-hint") ? i.body : []));
+  const ids = (api: Api) => api.items!().map((i) => i.id).join(" ");
+
+  it("holds the live row at its maximum when R1.5's read recount would drop it, and resets on a document swap", async () => {
+    const fake = fakeRemote(), clock = { now: 1000 }, api: Api = {};
+    const { lastFrame } = render(<LatchHost fake={fake} clock={clock} api={api} />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: catCall("b1", "a.ts") });
+    await waitFor(() => frame(lastFrame).includes("Reading 1 file"));
+    fake.pushEvent({ kind: "message", data: done("b1") });
+    fake.pushEvent({ kind: "message", data: catCall("b2", "b.ts") });
+    await waitFor(() => frame(lastFrame).includes("Reading 2 files"));
+    fake.pushEvent({ kind: "message", data: done("b2") });
+    fake.pushEvent({ kind: "message", data: readCall("read-1", "/work/c.ts") });
+    await waitFor(() => ids(api).includes("read-1"));                 // the run grew — its anchor `b1` did not
+    // The would-be count here is 1: one distinct `file_path` beats the two bare read operations (R1.5).
+    expect(frame(lastFrame)).toContain("Reading 2 files");
+    expect(frame(lastFrame)).not.toContain("Reading 1 file");
+    // …and the hint is still the FIRST one accepted: the clock has not moved, so the 700 ms window never opened.
+    expect(hintText(api)).toEqual(["$ cat a.ts"]);
+    clock.now = 1700; fake.pushEvent(POKE);
+    await waitFor(() => hintText(api)[0] === "c.ts");                 // one window later the current candidate lands
+    expect(frame(lastFrame)).toContain("Reading 2 files");            // and the latch is unaffected by the hint's clock
+
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    api.run!("/clear");                                               // the document swap: rewind / resume / clear all land here
+    await waitFor(() => !frame(lastFrame).includes("Reading"));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
+    fake.pushEvent({ kind: "message", data: catCall("b1", "a.ts") });   // the SAME anchor id, from a rebuilt transcript
+    await waitFor(() => frame(lastFrame).includes("Reading"));
+    expect(frame(lastFrame)).toContain("Reading 1 file");
+    expect(frame(lastFrame)).not.toContain("Reading 2 files");
+  });
+
+  it("gives the hint slot to a fresh thinking summary for 3000 ms, italic, then hands it back", async () => {
+    const streamEvent = (event: unknown) => ({ kind: "message" as const, data: { type: "stream_event", event } });
+    const fake = fakeRemote(), clock = { now: 1000 }, api: Api = {};
+    const { lastFrame } = render(<LatchHost fake={fake} clock={clock} api={api} />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent(streamEvent({ type: "message_start", message: { id: "m1" } }));
+    fake.pushEvent(streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }));
+    clock.now = 4200;
+    fake.pushEvent(streamEvent({ type: "content_block_stop", index: 0 }));
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "m1", content: [
+      { type: "thinking", thinking: "Checking the\n  config   first", signature: "sig" },
+      { type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/work/a.ts" } },
+    ] } } });
+    await waitFor(() => frame(lastFrame).includes("Thinking for 3s, reading 1 file"));
+    // The summary outranks the ordinary path hint while it is fresh, whitespace-collapsed WHOLE (not its
+    // first line) and rendered italic — R4.7 step 5.
+    expect(hintLines(api)).toEqual([{ text: "Checking the config first", dim: true, color: resolveThemeColor(themeTokens().inactive), italic: true }]);
+    clock.now = 7199; fake.pushEvent(POKE);
+    await waitFor(() => ids(api).length > 0);
+    expect(hintText(api)).toEqual(["Checking the config first"]);
+    clock.now = 7200; fake.pushEvent(POKE);
+    await waitFor(() => hintText(api)[0] === "a.ts");
+    expect(hintLines(api)[0]!.italic).toBeUndefined();                // back to the ordinary dim hint
+  });
+});

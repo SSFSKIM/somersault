@@ -4,7 +4,8 @@ import { render as renderInk } from "ink";
 import { render } from "ink-testing-library";
 import wrapAnsi from "wrap-ansi";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { displayPath, foldToolOutput, GROUP_HINT_GUTTER, osc8FileLink, projectCompact, projectDetail, projectionDeps, projectPending, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { clampHintText, displayPath, foldToolOutput, GROUP_HINT_GUTTER, osc8FileLink, projectCompact, projectDetail, projectionDeps, projectPending, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { FoldPendingState } from "../../src/tui/foldPendingState.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
 import { resolveThemeColor, setTheme, THEMES, themeTokens } from "../../src/tui/theme.js";
@@ -516,5 +517,92 @@ describe("F3 thought clause on the collapsed group row", () => {
       call("read-1", "Read", { file_path: "/work/a.ts" }, "m1"), result("read-1"), prose("done"));
     const rows = groupRows(projectCompact(doc, { ...context, thoughtMs: thoughtMs({ "message:m1": 3200 }) }));
     expect((rows[0] as { line: RenderLine }).line.text).toBe("  Thought for 3s, read 1 file (ctrl+o to expand)");
+  });
+});
+
+// ── F3 Task 4: the pending region's two time-dependent behaviors ────────────────────────────────────────
+// Both live in `FoldPendingState` (its own unit tests own the state machine); these pin the SEAM — that the
+// projection consults it, only for the dynamic forms, and renders the italic variant the way R4.7 step 5
+// describes. The counters ratchet (R3.2) because our counts genuinely drop mid-run: R1.5 counts distinct
+// `file_path`s OR bare read operations and only one survives, so a `Read` landing after two `Bash("cat …")`
+// reads takes the count from 2 back to 1.
+describe("F3 latch-to-max and the throttled hint (R3.2, R4.7)", () => {
+  const cat = (id: string, file: string) => call(id, "Bash", { command: `cat ${file}` });
+  const at = (state: FoldPendingState, now = 0) => ({ ...context, pending: state, now });
+  /** The live shape again (see the Task 3 block): ONE assistant message whose first block is the thinking
+   *  that preceded the read it carries — the only route by which a group acquires `latestThinkingSummary`. */
+  const thinkingCallRead = (id: string, file: string, messageId: string, thinking: string) =>
+    ({ type: "assistant", message: { id: messageId, content: [{ type: "thinking", thinking, signature: "sig" }, { type: "tool_use", id, name: "Read", input: { file_path: file } }] } }) as Record<string, unknown>;
+
+  it("never lets the live row's read count drop when R1.5's quirk recounts the run", () => {
+    const state = new FoldPendingState({ now: () => 0 });
+    const doc = built(cat("b1", "a.ts"));
+    expect(lineTexts(projectPending(doc, at(state)))).toEqual(["⏺ Reading 1 file… (ctrl+o to expand)"]);
+    doc.appendSdk("host", result("b1")); doc.appendSdk("host", cat("b2", "b.ts"));
+    expect(lineTexts(projectPending(doc, at(state)))).toEqual(["⏺ Reading 2 files… (ctrl+o to expand)"]);
+    doc.appendSdk("host", result("b2")); doc.appendSdk("host", call("read-1", "Read", { file_path: "/work/c.ts" }));
+    // The would-be count is 1 now (one distinct file_path beats two operations) — the latch holds 2.
+    expect(lineTexts(projectPending(doc, at(state)))).toEqual(["⏺ Reading 2 files… (ctrl+o to expand)"]);
+    expect(lineTexts(projectPending(doc, context))).toEqual(["⏺ Reading 1 file… (ctrl+o to expand)"]);   // control: no state, the drop is real
+  });
+
+  it("keys the latch on the run's ANCHOR, so a second run starts from its own zero", () => {
+    const state = new FoldPendingState({ now: () => 0 });
+    const first = built(cat("b1", "a.ts"), result("b1"), cat("b2", "b.ts"), result("b2"));
+    expect(lineTexts(projectPending(first, at(state)))).toEqual(["  Read 2 files (ctrl+o to expand)"]);   // unclosed form: latched too
+    const second = built(cat("b1", "a.ts"), result("b1"), cat("b2", "b.ts"), result("b2"), prose("done"), call("read-9", "Read", { file_path: "/work/z.ts" }));
+    expect(lineTexts(projectPending(second, at(state)))).toContain("⏺ Reading 1 file… (ctrl+o to expand)");
+  });
+
+  it("leaves the PUBLISHED row alone — Static holds the settled truth, not a live maximum", () => {
+    const state = new FoldPendingState({ now: () => 0 });
+    const doc = built(cat("b1", "a.ts"), result("b1"), cat("b2", "b.ts"), result("b2"));
+    expect(lineTexts(projectPending(doc, at(state)))).toEqual(["  Read 2 files (ctrl+o to expand)"]);
+    doc.appendSdk("host", call("read-1", "Read", { file_path: "/work/c.ts" })); doc.appendSdk("host", result("read-1")); doc.appendSdk("host", prose("done"));
+    expect(lineTexts(groupRows(projectCompact(doc, at(state))))).toEqual(["  Read 1 file (ctrl+o to expand)"]);
+  });
+
+  it("holds the ⎿ hint for 700 ms after each accepted change (R4.7 step 4)", () => {
+    const clock = { now: 0 };
+    const state = new FoldPendingState({ now: () => clock.now });
+    const doc = built(cat("b1", "a.ts"));
+    const hint = () => bodyOf(projectPending(doc, at(state, clock.now))).map((l) => l.text);
+    expect(hint()).toEqual(["$ cat a.ts"]);
+    doc.appendSdk("host", result("b1")); doc.appendSdk("host", cat("b2", "b.ts"));
+    clock.now = 300; expect(hint()).toEqual(["$ cat a.ts"]);      // flapped inside the window
+    clock.now = 699; expect(hint()).toEqual(["$ cat a.ts"]);
+    clock.now = 700; expect(hint()).toEqual(["$ cat b.ts"]);
+    expect(bodyOf(projectPending(doc, context)).map((l) => l.text)).toEqual(["$ cat b.ts"]);   // control: undebounced
+  });
+
+  it("renders a fresh thinking summary italic in the hint slot, then hands the slot back (R4.7 step 5)", () => {
+    const clock = { now: 0 };
+    const state = new FoldPendingState({ now: () => clock.now });
+    const doc = built(thinkingCallRead("read-1", "/work/a.ts", "m1", "weighing\n  the   options"));
+    const ctx = () => ({ ...at(state, clock.now), thoughtMs: new Map([["message:m1", 3200]]) });
+    const grey = resolveThemeColor(themeTokens().inactive);
+    const items = projectPending(doc, ctx());
+    expect(items[1]).toEqual({
+      kind: "gutter-block", id: "group:read-1:pending-hint", gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true },
+      body: [{ text: "weighing the options", dim: true, color: grey, italic: true }],
+    });
+    clock.now = 2999;
+    expect(bodyOf(projectPending(doc, ctx())).map((l) => l.text)).toEqual(["weighing the options"]);
+    clock.now = 3000;
+    expect(bodyOf(projectPending(doc, ctx()))).toEqual([{ text: "a.ts", dim: true, color: grey }]);   // the ordinary hint, no italic
+  });
+
+  it("clamps a long summary to PAH = 10 rendered lines at `columns − 5`, with a trailing ellipsis", () => {
+    const long = Array.from({ length: 40 }, (_, i) => `sentence number ${i}`).join(" ");
+    const state = new FoldPendingState({ now: () => 0 });
+    const doc = built(thinkingCallRead("read-1", "/work/a.ts", "m1", long));
+    const body = bodyOf(projectPending(doc, { ...at(state), columns: 25, thoughtMs: new Map([["message:m1", 3200]]) }));
+    expect(body).toHaveLength(1);
+    expect(body[0]!.text.endsWith("…")).toBe(true);
+    expect(body[0]!.text.startsWith("sentence number 0 sentence number 1")).toBe(true);
+    expect(wrapAnsi(body[0]!.text, 20, { trim: false, hard: true }).split("\n")).toHaveLength(10);
+    // Short enough to fit is left exactly as it is — upstream `OAH` returns the input untouched below the clamp.
+    expect(clampHintText("short enough", 20, 10)).toBe("short enough");
+    expect(clampHintText(long, 0, 10)).toBe(long);            // a degenerate width clamps nothing (`t < 1`)
   });
 });

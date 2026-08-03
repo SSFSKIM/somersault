@@ -19,7 +19,8 @@ import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
 import { resolveThemeColor, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
-import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup } from "./toolFold.js";
+import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type GroupCounts } from "./toolFold.js";
+import type { FoldPendingHooks } from "./foldPendingState.js";
 import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
 
@@ -30,6 +31,8 @@ export const TOOL_RESULT_GUTTER = "  \u23bf \u00a0" as const;
 /** The ACTIVE group row's own hint gutter (R4.6, `X8o = 5`): 2 spaces, the connector, 2 PLAIN spaces. Upstream
  *  keeps it distinct from the tool-result gutter above (which ends in the NBSP); both are exactly five columns. */
 export const GROUP_HINT_GUTTER = "  \u23bf  " as const;
+/** Upstream `PAH` (L428157): the thinking summary's hint body is clamped to this many rendered lines. */
+const HINT_MAX_LINES = 10;
 /** `wrap` is set ONLY by the tool header (LT10: upstream's `wrap:"truncate-end"` — an MCP-length name must
  *  never wrap one header into several transcript rows). Every other line item leaves it unset and wraps
  *  normally, which is what keeps ordinary assistant text and local notices readable now that Task 4 routes
@@ -48,7 +51,12 @@ export type ResultProjection = "compact" | "detail-all" | "detail-collapsed";
  *  projection input rather than document state on purpose — P82 proved the durations exist nowhere on the
  *  wire or on disk, so a rewound/resumed/attached document must show no clause at all, which an absent
  *  map entry already achieves. */
-export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; }
+/** `pending` (F3 Task 4) is the DYNAMIC region's time-dependent state — the ratcheted counters (R3.2) and
+ *  the throttled/lingering `⎿` hint (R4.7 steps 4–5). It is stateful and clock-reading, so it lives in
+ *  `useChat` (see `foldPendingState.ts`) rather than in this otherwise-pure projection, and it is consulted
+ *  ONLY for a group row the pending region owns: an immutable published Static row is the settled truth and
+ *  must never be re-derived from live maxima. */
+export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; }
 export interface FoldOptions { projection: ResultProjection; compactRows: number; revealOneExtraWithoutMarker: boolean; }
 
 /** Upstream's exact interruption surface — the row is a prompt, not a copy of whatever partial output arrived. */
@@ -276,8 +284,12 @@ const dimmed = (text: string, color?: string): Segment => ({ text, dim: true, ..
  *  half, a bare space for the other — R4.1), then the present-participle clauses undimmed, the separate `…`,
  *  one literal space and the always-dim expand hint (R3.6). The blink is a pure phase function of
  *  `options.now`, exactly like the standalone header's, so the caller owns the clock and a test can pin any
- *  frame. No elapsed `· Ns` suffix and no 700 ms hint debounce: both are `ds()`-gated fullscreen-only (R4.10)
- *  and a substitute would be a fabrication, not fidelity.
+ *  frame. No elapsed `· Ns` suffix: its anchor `Re` is computed only `if (s && ds())` (R4.10), so a default
+ *  transcript has none, and the bash progress suffix beside it is gated the same way (R4.6) — a substitute
+ *  for either would be a fabrication, not fidelity. That gating does NOT extend to the 700 ms hint debounce,
+ *  which F1 lumped in with them here and which F3 Task 4 corrects: `de = e8p(te, MAH)` sits in the ungated
+ *  hint chain (R4.7 step 4), as does the thinking summary's `DAH` linger (step 5). Both are implemented in
+ *  `foldPendingState.ts` and reach this module through `ProjectionOptions.pending`.
  *
  *  TASK 7 CORRECTIONS. Evidence: the tracked 2.1.220 golden `f1-tool-rendering/01-read-complete.ansi`, an
  *  ACTIVE single-read frame whose per-cell attributes the pyte capture reconstructs exactly. Where the
@@ -305,12 +317,12 @@ const dimmed = (text: string, color?: string): Segment => ({ text, dim: true, ..
  *  upstream colour. So the settled clause run carries `inactive` too. The active clause run stays
  *  dim-and-uncoloured: the golden paints `" Reading "` as a bare `\x1b[0;2m` run, and only the leader glyph
  *  and the expand hint carry the colour explicitly. */
-function groupRowLine(group: FoldGroup, active: boolean, options: ProjectionOptions): RenderLine {
+function groupRowLine(counts: GroupCounts, active: boolean, options: ProjectionOptions): RenderLine {
   const grey = resolveThemeColor(themeTokens().inactive);
   const leader: Segment[] = active
     ? [{ text: Math.floor(options.now / 600) % 2 === 0 ? (options.platform === "darwin" ? "⏺" : "●") : " ", dim: true, color: grey }, { text: " ", dim: true }]
     : [{ text: "  " }];
-  const run = composeFoldRun(foldClauses(group.counts, active), active ? "active" : "settled", { ellipsis: active });
+  const run = composeFoldRun(foldClauses(counts, active), active ? "active" : "settled", { ellipsis: active });
   const segments: Segment[] = [...leader, { text: run, preStyled: true }, dimmed(" "), { text: EXPAND_HINT, dim: true, color: grey }];
   // `run` is the ONE segment whose `text` carries SGR bytes, so the line's plain text is stripped rather
   // than joined raw — width math, the pager and every text assertion must still see the bare sentence.
@@ -323,16 +335,48 @@ function groupRowLine(group: FoldGroup, active: boolean, options: ProjectionOpti
  *  same text, and a shared id would collide in Static's append-once bookkeeping the moment the run closes. */
 type GroupForm = "published" | "active" | "unclosed";
 const GROUP_PART = { published: "row", active: "pending-row", unclosed: "unclosed-row" } as const;
+/** Upstream `OAH` (L428105–428120), the thinking summary's own clamp. Below the limit it returns the text
+ *  UNTOUCHED — the `<Text>` that renders it wraps it — and only an over-long one is folded into a single
+ *  whitespace-collapsed row shrunk until `text + "…"` fits `r` wrapped lines. The shrink walks whole code
+ *  points (upstream's `codePointAt(len-2) > 65535` surrogate check, kept verbatim) so it can never split an
+ *  astral character. `t < 1` clamps nothing: a width that small has no meaningful wrap. */
+export function clampHintText(text: string, width: number, maxLines: number): string {
+  if (width < 1) return text;
+  const rows = (value: string) => wrapAnsi(value, width, { trim: false, hard: true }).split("\n").length;
+  if (rows(text) <= maxLines) return text;
+  let head = wrapAnsi(text, width, { trim: false, hard: true }).split("\n").slice(0, maxLines).join("").replace(/\s+/g, " ").trim();
+  while (head.length > 0 && rows(`${head}…`) > maxLines) {
+    const previous = head.length > 1 ? head.codePointAt(head.length - 2) : undefined;
+    head = head.slice(0, previous !== undefined && previous > 0xffff ? -2 : -1);
+  }
+  return `${head.trimEnd()}…`;
+}
 /** R3.1's early exit: a run whose clauses all came out empty renders NOTHING at all. */
 function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOptions): readonly RenderItem[] {
   const active = form === "active";
-  if (foldClauses(group.counts, active).length === 0) return [];
+  // R3.2's ratchet and R4.7's hint resolution are the DYNAMIC region's alone: a published row is rendered
+  // into append-only Static exactly once, and re-deriving it from live maxima (or from a hint whose 700 ms
+  // window happens to be open) would freeze a transient reading into history. The anchor is the run's FIRST
+  // member id — memberIds grow as the run grows, so nothing else is stable across its life.
+  const anchorId = form === "published" ? undefined : group.memberIds[0];
+  const pending = anchorId === undefined ? undefined : options.pending;
+  const counts = pending === undefined ? group.counts : pending.latch(anchorId!, group.counts);
+  if (foldClauses(counts, active).length === 0) return [];
   const id = toolGroupItemId(group.memberIds, GROUP_PART[form]);
-  const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(group, active, options) }];
+  const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(counts, active, options) }];
   // R3.7: the hint gutter is ACTIVE-ONLY — `latestDisplayHint` rides on the settled message but never renders.
-  if (active && group.hint !== undefined) {
-    const grey = resolveThemeColor(themeTokens().inactive);
-    items.push({ kind: "gutter-block", id: toolGroupItemId(group.memberIds, "pending-hint"), gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body: group.hint.split("\n").map((text) => ({ text, dim: true, color: grey })) });
+  if (active) {
+    const hint = pending === undefined
+      ? (group.hint === undefined ? undefined : { text: group.hint, italic: false })
+      : pending.hint(anchorId!, group.hint, group.latestThinkingSummary);
+    if (hint !== undefined) {
+      const grey = resolveThemeColor(themeTokens().inactive);
+      // R4.7 step 5: the summary variant is dim + ITALIC and pre-clamped by `OAH(text, columns − X8o, PAH)`;
+      // the ordinary hint (step 6) is neither clamped nor italic, just split on its own newlines.
+      const text = hint.italic ? clampHintText(hint.text, options.columns - GROUP_HINT_GUTTER.length, HINT_MAX_LINES) : hint.text;
+      const body = text.split("\n").map((line) => ({ text: line, dim: true, color: grey, ...(hint.italic ? { italic: true } : {}) }));
+      items.push({ kind: "gutter-block", id: toolGroupItemId(group.memberIds, "pending-hint"), gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body });
+    }
   }
   return items;
 }
@@ -378,14 +422,17 @@ function sdkMessageIdentity(message: Record<string, unknown>): string | undefine
   return typeof id === "string" && id.length > 0 ? `message:${id}` : undefined;
 }
 /** Upstream `Ae_` (L302003–302010): a message is thought-bearing only when its FIRST content block is a
- *  `thinking` block whose text is not blank. The summary is that text's first line, whitespace-collapsed
- *  (upstream collapses the whole text; Task 4 renders whichever it is given). */
+ *  `thinking` block whose text is not blank. The summary is that block's WHOLE text, whitespace-collapsed —
+ *  upstream `PMd` L302267 assigns exactly `u.text.trim().replace(/\s+/g, " ")`. (F3 Task 3 shipped the first
+ *  line only, a plan error corrected here in Task 4: the first line leaves upstream's 10-line `OAH` clamp
+ *  with nothing to do, and it is the clamp — not the extraction — that decides how much of a long thought
+ *  the hint slot shows.) */
 function thinkingSummaryOf(message: Record<string, unknown>): string | undefined {
   const inner = message.message, content = isRecord(inner) && Array.isArray(inner.content) ? inner.content : [];
   const first = content[0];
   if (!isRecord(first) || first.type !== "thinking" || typeof first.thinking !== "string") return undefined;
   const text = first.thinking.trim();
-  return text === "" ? undefined : text.split("\n")[0]!.trim().replace(/\s+/g, " ");
+  return text === "" ? undefined : text.replace(/\s+/g, " ");
 }
 
 function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionOptions): Anchored[] {

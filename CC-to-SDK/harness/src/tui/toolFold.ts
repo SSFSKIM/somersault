@@ -183,7 +183,8 @@ function formatDuration(ms: number): string {
 
 /** A `neutral` atom carries the F3 thinking clock: `thoughtForMs` is the LOCALLY CLOCKED duration of the
  *  thinking blocks of the assistant message this atom stands for (P82 — the wire has no timestamps, and a
- *  replayed message therefore carries none), `thinkingSummary` its first line, which rides to Task 4. */
+ *  replayed message therefore carries none), `thinkingSummary` its whole text whitespace-collapsed
+ *  (upstream `PMd` L302267), which rides to Task 4's italic hint variant and is clamped at render. */
 export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; sequence: number } | { kind: "neutral"; sequence: number; thoughtForMs?: number; thinkingSummary?: string };
 export type GroupCounts = { readCount: number; searchCount: number; listCount: number; mcpCallCount: number; mcpServerNames: readonly string[]; thoughtForMs?: number };
 export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorSequence: number; open: boolean; latestThinkingSummary?: string }
