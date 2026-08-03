@@ -499,7 +499,7 @@ and validated by a row-scoped required-state contract under `capture-frames.py -
 | Keybinding precedence model (`ST6`) | ✅ | — | **shipped 2026-08-04 (F2).** `keys/resolver.ts` + `keys/KeymapProvider.tsx`: one raw-stdin root consumer with our own keypress parser (P86 measured that Ink's `useInput` cannot express the table — it projects every key onto 14 booleans and throws `keypress.name` away), an ordered context stack each mounted surface pushes onto, first-match-wins with `null` consuming the key as explicitly unbound, plus `swallowAll` and preemptive scopes above the chain. The double-fire bug class it exists to remove is now structurally impossible rather than hand-gated |
 | User keybindings (`~/.claude/keybindings.json`) | ✅ | — | **shipped 2026-08-04 (F2, `06 K5`).** Upstream's own path and file shape, so an existing Claude Code keymap applies to `ccx` unchanged: additive merge over the defaults, later-wins within a context, `null` unbinds, live reload on save (no restart), and typed validation (`parse_error`/`invalid_context`/`invalid_action`/`duplicate`/`reserved`, plus our own binding-keeping `suspicious_key` warning) reported into the transcript. `command:<name>` bindings run a slash command, Chat-context only (`06 K6`) |
 | Generic chords, 1 s inter-key window (`KB22`) | ✅ | — | **shipped 2026-08-04 (F2, `06 K4`).** Any binding may be a space-separated sequence; the pending prefix is armed by the table rather than hardcoded, `escape` cancels, and the key that breaks a pending chord is swallowed (upstream `Q4u`). Replaces the two bespoke `useRef` timestamp chords with their 2 s window |
-| Hint strings generated from the live binding | 🟡 | — | **F2, partial and disclosed.** The composer footer ladder, the status-bar mode chip and the whole `?` shortcuts grid derive their chords from the live table, so a rebinding moves them and an unbind prints `(unbound)`. Three surfaces still print literals: the transcript-pager footer, the history-search footer (both are multi-alias ladders a generated string would render worse than the hand-written one) and `toolRenderer.ts`'s `(ctrl+o to expand)` fold marker (a pure projection module with no access to the table, pinned to the upstream golden). See §1a |
+| Hint strings generated from the live binding | 🟡 | — | **F2, partial and disclosed.** The composer footer ladder, the status-bar mode chip and the whole `?` shortcuts grid derive their chords from the live table, so a rebinding moves them and an unbind prints `(unbound)`. Three surfaces still print literals: the transcript-pager footer (a multi-alias ladder a generated string would render worse than the hand-written one), the history-search footer and `toolRenderer.ts`'s `(ctrl+o to expand)` fold marker (both excluded on cost, the fold marker additionally pinned to the upstream golden — a lookup could reach it). See §1a |
 
 
 ## 1a — Keybindings: the F2 keymap as data
@@ -519,9 +519,9 @@ silence.
 
 | Unreachable key | Why | Evidence |
 |---|---|---|
-| `super`+letter on a non-CSI-u terminal (`cmd+k`, `cmd+c`, `cmd+v`, …) | macOS terminals intercept the Command modifier and never forward it; only a terminal speaking the CSI-u protocol emits a distinguishable form (`\x1b[107;9u` for `cmd+k`), which Ink does not decode and no default terminal sends | P86 §1.7 "CSI-u chords", and the `cmd+k → chat:clearScreen` row of the "Misparsed" table: "most terminals never send cmd+k to the application at all". The reserved-key registry names the macOS `super+*` set so a user rebinding is refused with the reason rather than silently doing nothing |
+| `super`+letter on a non-CSI-u terminal (`cmd+k`, `cmd+c`, `cmd+v`, …) | macOS terminals intercept the Command modifier and never forward it; only a terminal speaking the CSI-u protocol emits a distinguishable form (`\x1b[107;9u` for `cmd+k`), which Ink does not decode and no default terminal sends | P86 §1.7 "CSI-u chords", and the `cmd+k → chat:clearScreen` row of the "Misparsed" table: "most terminals never send cmd+k to the application at all". The reserved-key registry names seven macOS `super` chords the SYSTEM eats — `super+c/v/x/q/w/tab/space` — so a rebinding of one of those is refused with the reason. It does NOT cover the rest of the family: `super+k` and every other `super`+letter is accepted silently and then never fires, because the terminal does not forward the modifier. Growing the registry to the whole family is a behaviour change, deliberately not made here |
 | `ctrl+shift+<letter>` on a non-CSI-u terminal | The byte stream is **identical** to plain `ctrl+<letter>` — the shift bit is not encoded at all outside CSI-u, so `ctrl+shift+b` and `ctrl+b` are the same key to any parser | P86 §1.7 and the `ctrl+shift+b → app:toggleBrief` row: "byte-identical to ctrl+b and **undeliverable in principle**" |
-| `shift+enter` without `/terminal-setup` or CSI-u | Plain `shift+enter` sends bare CR, byte-identical to `enter`. It becomes distinguishable only if the host terminal's own keymap is rewritten to send `ESC CR` (upstream's `/terminal-setup`, `KB21`/`06 K40`, an explicit F2 non-goal) or if the terminal speaks CSI-u (`\x1b[13;2u`) | P86 §1.6 table rows for `\x1b\r` and `\x1b[13;2u`; both are misparsed by Ink, and the plain form is not sent at all |
+| `shift+enter` without `/terminal-setup` or CSI-u | Plain `shift+enter` sends bare CR, byte-identical to `enter`. It becomes distinguishable only if the host terminal's own keymap is rewritten to send `ESC CR` (upstream's `/terminal-setup`, `KB21`/`06 K40`, an explicit F2 non-goal) or if the terminal speaks CSI-u (`\x1b[13;2u`) | P86 §1.4 "Enter forms", the `\x1b\r` and `\x1b[13;2u` rows; both are misparsed by Ink, and the plain form is not sent at all |
 | `ctrl+m` as distinct from `enter` | Impossible in any terminal: both are CR (0x0D). There is no encoding in which they differ | Upstream reserves it for the same reason (`06 §1.4`); our reserved-key registry carries it verbatim — "Cannot be rebound - identical to Enter in terminals (both send CR)" — as an **error**-severity entry, so a user binding is dropped with that message |
 | Windows / ConPTY behaviour | **Not determined**, and not determinable from this machine: `pty.fork` does not exist on Windows and ConPTY's input translation is a different code path from the POSIX pty every P86/P86b measurement used. Nothing in the table is claimed to work there | P86 §5, "Settled (was 'not determined')" — the one row that stayed open |
 
@@ -606,19 +606,28 @@ Five behaviours changed in ways a user could notice. Each is deliberate and each
 
 ### Hint derivation — generated, and the three exceptions
 
-Derived from the live table (`keys/hints.ts` + `useBindingLookup`): the composer's footer ladder and its
-`Esc` hint, the status bar's mode-chip parenthetical (shown only while the composer actually owns the
-keyboard — a hint is honest only relative to its focused owner), and every table-owned row of the `?`
-shortcuts grid. Still literal, deliberately:
+Derived from the live table (`keys/hints.ts` + `useBindingLookup`): the composer's footer ladder, its `Esc`
+hint, its two double-press arms (Esc-clear and Ctrl-D exit) and the autocomplete popup's footer; the status
+bar's mode-chip parenthetical; and every table-owned row of the `?` shortcuts grid. The mode chip carries two
+gates on top of the derivation, both upstream's own: it renders only in a **non-default mode**
+(`04-chrome.md` §1.2 rung 10, §1.3) and only while the **composer actually owns the keyboard** — a hint is
+honest only relative to its focused owner. Ownership reaches the bar as a prop derived from state during
+render, not as a read of the scope registry, which a passive-effect cleanup mutates without repainting
+anything. `test/tui/keys-acceptance.test.tsx`'s derivation guard greps all three components for the display
+literal of every hinted action, so a chord typed back in fails the build. Still literal, deliberately:
 
-- **The transcript-pager footer** and **the history-search footer** are multi-alias ladders
-  (`j/k ↑↓ line · Ctrl-U/D ½page · …`). Each action there has three or four aliases; a generated string
-  would list all of them and read worse than the hand-written one. Upstream's own hint ladder is
-  hand-written per rung for the same reason.
-- **`toolRenderer.ts`'s `(ctrl+o to expand)` fold marker** is a pure projection module with no React
-  context to read the table from, and its exact text is pinned against the tracked 2.1.220 golden
-  capture. Threading the table through every projection call site is a bigger change than the lie is
-  worth today; it is recorded here so it stays a decision rather than a gap.
+- **The transcript-pager footer** is a multi-alias ladder (`j/k ↑↓ line · Ctrl-U/D ½page · …`): most of
+  its actions carry three or four aliases, and a generated string would list all of them and read worse
+  than the hand-written one. Upstream's own hint ladder is hand-written per rung for the same reason.
+- **The history-search footer** is excluded on cost, not on alias count — the earlier wording here was
+  wrong about it. Four of its five rungs are single-binding (`execute`=enter, `next`=ctrl+r,
+  `cycleScope`=ctrl+s, `cancel`=ctrl+c) and only `accept` has a pair (escape, tab). It stays literal
+  because it is one line, served correctly by one string, and deriving it buys nothing a user would see.
+- **`toolRenderer.ts`'s `(ctrl+o to expand)` fold marker** is excluded on cost and on the text being
+  pinned to the tracked 2.1.220 golden capture — NOT, as previously written here, because the module
+  cannot reach a lookup: it is called from `useChat.ts:26`, a hook, through an existing
+  `ProjectionContext` parameter, so one could be threaded in without touching the module's purity. It is
+  recorded here so it stays a decision rather than a gap.
 
 The editor's own keys (`⏎`, `\⏎`, the readline set, `Ctrl-_`, `Ctrl-S`, the `!`/`#`/`@`/`/` prefixes)
 are literal by design: `editor.ts` is the keymap's FALLBACK and no context binds them, so there is no
@@ -656,7 +665,7 @@ live binding to derive. `test/tui/honesty.test.tsx` pins every one of them to an
 | Live token counter during turn | ✅ | — | **U10** real running output tokens from `message_delta` usage, in the spinner |
 | Elapsed timer during turn | ✅ | — | **U2** whole-turn elapsed in the spinner |
 | Context-left % + threshold warning | 🟡 | — | **U13** ctx% color-escalates green→yellow→red + "⚠ auto-compact soon" near the window. **F0 correction:** different trigger model (upstream is a queued notification, hidden entirely at `level === "ok"`), different text, different surface (transient, not a persistent status-bar segment) |
-| Permission-mode indicator (color) | 🟡 | — | `ChatStatusBar.tsx` modeColor. **F0 correction:** our colours are ours, not upstream's 6-entry table; no symbol (`⏸`/`⏵⏵`), no ` on` suffix. **F2 update (2026-08-04):** the `(shift+tab to cycle)` parenthetical now ships and is DERIVED from the live keymap — it prints whatever the user has bound `chat:cycleMode` to, and appears only while the composer owns the keyboard. Still 🟡: the symbol, the ` on` suffix and the colour table remain |
+| Permission-mode indicator (color) | 🟡 | — | `ChatStatusBar.tsx` modeColor. **F0 correction:** our colours are ours, not upstream's 6-entry table; no symbol (`⏸`/`⏵⏵`), no ` on` suffix. **F2 update (2026-08-04, corrected in the t10 fix round):** the `(shift+tab to cycle)` parenthetical now ships and is DERIVED from the live keymap — it prints whatever the user has bound `chat:cycleMode` to, and it renders only when BOTH of upstream's conditions hold: a non-default mode, and the composer actually owning the keyboard. The first shipped version printed it in every mode including `default`, where upstream prints none; that divergence was recorded as progress here and is now fixed. Still 🟡, and the list is longer than it was: the remaining gaps are the crowding rung of upstream's eleven-rung footer ladder (rung 10 fires only when the footer is not crowded — our footer architecture has no such contest, so the rung is not replicated), the symbol (`⏸`/`⏵⏵`), the ` on` suffix and the six-entry colour table |
 | Cost in status / `/cost` | ✅ | — | **U4** `/cost` via `session.usage()` |
 | `? for shortcuts` hint line | 🟡 | — | **C5** `ShortcutsOverlay.tsx`, opened by `?` — supersedes the footer-hint-only prior state (§1). **F0 correction:** we show a fixed 3-item string; upstream is an **11-rung one-winner ladder** where `? for shortcuts` appears only when everything else is empty and the mode chip is default |
 | Vim mode indicator | ❌ | LOW | tied to vim mode |
