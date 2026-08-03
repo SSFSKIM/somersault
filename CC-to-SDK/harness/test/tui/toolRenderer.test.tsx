@@ -916,6 +916,13 @@ describe("F3 Task 9 — the Bash background hint (LT20)", () => {
     expect(renderToolEvent(event, running(event), { ...options, agentMeta: meta })).toHaveLength(1);
   });
 
+  it("never hints a call that is ALREADY backgrounded — run_in_background:true short-circuits (t9 review)", () => {
+    // Upstream's `in_` returns early on run_in_background (bundle 306279–306284), so its hint loop is
+    // unreachable for an explicit background call — while task_started still fires local_bash for it.
+    const event = { ...openBash(), input: { command: "npm test", run_in_background: true } };
+    expect(renderToolEvent(event, running(event), { ...options, bashHint: hint, agentMeta: started("bash-1", "local_bash") })).toHaveLength(1);
+  });
+
   it("is a BASH surface: an Agent's task_started never grows one, and neither does a local_agent task type", () => {
     const agent = { id: "agent-1", name: "Agent", input: { description: "explore", prompt: "go" }, callSequence: 1, route: "top-level" as const };
     const agentItems = renderToolEvent(agent, normalizeToolResult(agent as never), { ...options, bashHint: hint, agentMeta: started("agent-1", "local_agent") });

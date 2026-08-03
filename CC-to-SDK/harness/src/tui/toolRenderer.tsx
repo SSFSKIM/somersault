@@ -315,6 +315,11 @@ const BACKGROUND_HINT_INDENT = "     ";
  *  like every other hint: the detail projections ARE upstream's verbose form, where `Ug`/`Bg` return null. */
 function backgroundHintItem(event: ToolEvent, options: ProjectionOptions): RenderItem | undefined {
   if (event.name !== "Bash" || event.route !== "top-level" || options.projection !== "compact" || options.verbose) return undefined;
+  // An explicitly-backgrounded call never gets the hint: upstream's `in_` returns early on
+  // `run_in_background === true` (bundle 306279–306284), so its hint loop is unreachable there — while the
+  // task_started sidechannel still fires `local_bash` for it, which is why the input check must come first
+  // (t9 review: without it the row flashes "to run in background" on a call already in the background).
+  if (isRecord(event.input) && event.input.run_in_background === true) return undefined;
   if (options.bashHint === undefined || options.agentMeta?.get(event.id)?.taskType !== "local_bash") return undefined;
   return { kind: "line", id: `${event.id}:background-hint`, line: { text: `${BACKGROUND_HINT_INDENT}${options.bashHint}`, dim: true } };
 }
