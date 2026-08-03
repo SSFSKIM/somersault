@@ -196,7 +196,7 @@ describe("F2 task 8 — Confirmation family: what the table adds, and what free 
     expect(decisions[0]).toEqual({ kind: "plan_reject", feedback: "yn" });
   });
 
-  it("AddDirDialog: the entry phase types a path containing y/n verbatim (its Confirmation scope is off there)", async () => {
+  it("AddDirDialog: the entry phase types a path containing y/n verbatim (the Select actions re-project to text there)", async () => {
     const validated: string[] = [];
     let confirmed = 0, cancelled = 0;
     const { stdin, lastFrame } = render(
