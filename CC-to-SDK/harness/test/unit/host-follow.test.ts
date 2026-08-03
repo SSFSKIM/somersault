@@ -93,6 +93,26 @@ describe("SessionHost.follow", () => {
     s.finish(); await turn; await host.stop();
   });
 
+  it("stream_event partials fan out LIVE but never enter the reconnect replay (F3 t3 review)", async () => {
+    // The interactive host now runs with includePartialMessages on, so a turn carries thousands of
+    // token-delta frames. The 500-message TurnBuffer would evict the turn's REAL frames for stale
+    // partials a late follower cannot use — a mid-turn attach would replay junk plus the truncation
+    // banner. Live fan-out keeps the partials (the foreground REPL needs them); the replay skips them.
+    const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();
+    const liveFollower: HostEvent[] = [];
+    host.follow((e) => liveFollower.push(e));
+    const turn = host.runTask("hi");
+    s.emit({ type: "stream_event", event: { type: "content_block_delta" } });
+    s.emit({ type: "assistant", n: 1 });
+    s.emit({ type: "stream_event", event: { type: "content_block_delta" } });
+    expect(liveFollower.filter((e) => e.kind === "message")).toHaveLength(3);   // live path unchanged
+    const late: HostEvent[] = [];
+    host.follow((e) => late.push(e));
+    expect(late.filter((e) => e.kind === "message").map((e: any) => e.data.type)).toEqual(["assistant"]);
+    s.finish(); await turn; await host.stop();
+  });
+
   it("unsubscribing stops delivery and does not disturb the others", async () => {
     const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
     await host.start();

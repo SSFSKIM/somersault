@@ -259,7 +259,12 @@ export class SessionHost {
     let stamped = false;
     const onMessage = (m: unknown) => {
       if (!stamped && this.session?.sessionId) { stamped = true; this.writeSessionId(); }
-      this.turnBuffer.push(m);
+      // stream_event partials fan out LIVE only. With the interactive engine now streaming partials
+      // (F3 t3), a turn carries thousands of token-delta frames; through the 500-message TurnBuffer
+      // they would evict the turn's REAL frames, so a mid-turn attach replayed stale partials plus
+      // the truncation banner. A late follower cannot use a partial anyway — its LiveTurn missed the
+      // deltas before the join, and the completed message supersedes them all.
+      if ((m as { type?: unknown } | null)?.type !== "stream_event") this.turnBuffer.push(m);
       this.emit({ kind: "message", data: m });
     };
     // A bg worker's success IS the terminal event — `done`. An interactive host stays LIVE across
