@@ -962,6 +962,16 @@ by UUID. F1 is schedulable; F1–F8 remain otherwise pending.
 
 ## Revision Notes
 
+- 2026-08-03 — **F1 amendment (owner-approved): the default-view collapse layer moved from F3 into
+  F1** as plan Tasks 5b/5c. Live pty probes against installed 2.1.220 proved the default transcript
+  folds contiguous read/search/list tool runs into one dim `Read N files (ctrl+o to expand)` summary
+  row (even a Bash `grep` folds, via a per-command classifier), that Bash/Edit/Write render standalone,
+  and that our committed per-call render is exactly upstream's ctrl+o verbose form. Without the
+  collapse layer the F1 golden could not be faithful. The full normative contract, bundle-line-tagged
+  and live-confirmed, is `../research/2026-07-31-tui-clone/08-render-contract-2.1.220.md`. Still in
+  F3: fullscreen-only (`ds()`) clauses, `grouped_tool_use` Agent batches, typed result summaries,
+  totals. A related upstream fact recorded there for later waves: errored reads are invisible on a
+  settled summary row.
 - 2026-07-31 — created from the six-report research inventory
 - 2026-07-31 — Task 6 review corrected three plan-authored values against upstream: the suspend
   implementation (Ink's ref-counted `setRawMode` and the dead repaint counter), the Ctrl-D double-press
