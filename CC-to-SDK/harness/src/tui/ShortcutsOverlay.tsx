@@ -37,8 +37,11 @@ export function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>Keyboard shortcuts  <Text dimColor>(esc closes)</Text></Text>
-      {rows.map(([k, label]) => (
-        <Box key={k} flexDirection="row">
+      {/* Keyed by POSITION, not by the rendered key column: the column is derived, so two rows can print the
+          same string — unbind `chat:cancel` and both of its rows say `(unbound)` — and duplicate React keys
+          make React drop one of them. The grid is a fixed, statically-ordered list, so the index is stable. */}
+      {rows.map(([k, label], i) => (
+        <Box key={i} flexDirection="row">
           <Box width={18}><Text color={ACCENT}>{k}</Text></Box>
           <Text dimColor>{label}</Text>
         </Box>

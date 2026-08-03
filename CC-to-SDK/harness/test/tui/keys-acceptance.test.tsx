@@ -24,12 +24,14 @@ import { UserKeymap } from "../../src/tui/keys/UserKeymap.js";
 import { useKeyActions, useKeyScope } from "../../src/tui/keys/KeymapProvider.js";
 import { loadUserBindings, userBindingsPath, type UserBindingsResult } from "../../src/tui/keys/userBindings.js";
 import { parseKeySpec } from "../../src/tui/keys/normalize.js";
+import { SHORTCUT_ROWS, defaultLookup, formatBinding } from "../../src/tui/keys/hints.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
+import { ChatStatusBar } from "../../src/tui/ChatStatusBar.js";
 import type { KeyEvent } from "../../src/tui/keys/types.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 
-const ESC = "\x1b", CTRL_B = "\x02", CTRL_G = "\x07", CTRL_K = "\x0b", CTRL_X = "\x18";
-const ALT_E = "\x1be";
+const ESC = "\x1b", CTRL_A = "\x01", CTRL_B = "\x02", CTRL_G = "\x07", CTRL_K = "\x0b", CTRL_X = "\x18";
+const ALT_E = "\x1be", ALT_M = "\x1bm", SHIFT_TAB = "\x1b[Z";
 
 const frame = (f: () => string | undefined) => f() ?? "";
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -39,6 +41,10 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 }
 const tick = (): Promise<void> => new Promise((r) => { setTimeout(r, 0); });
 const settle = () => new Promise((r) => setTimeout(r, 30));
+/** Wait for a condition but NEVER throw. Use it where the condition is itself the thing under test: the
+ *  `expect` that follows then reports the failure with the offending frame, instead of this helper reporting
+ *  an opaque "waitFor timeout" from a stack frame that names nothing about what went wrong. */
+const settleUntil = async (cond: () => boolean, timeout = 1000): Promise<void> => { await waitFor(cond, timeout).catch(() => {}); };
 
 /** A bare consumer of the table: one Chat scope plus whatever actions the case wants to observe. */
 function Probe({ actions }: { actions: Record<string, (e: KeyEvent) => void> }) {
@@ -142,7 +148,12 @@ describe("F2 acceptance 2 — an open overlay owns the keyboard", () => {
     h.unmount();
   });
 
-  it("with a picker open, j/k move its selection and the transcript never scrolls", async () => {
+  // NB on what the transcript-anchor assertions below are and are NOT: they are a CHEAP structural witness,
+  // not a scroll guard that could catch a regression on its own. `j`/`k` are bound only in the `Transcript`
+  // context, which is not on the stack while this picker is up, so "the transcript did not scroll" cannot
+  // fail here however the ownership rules break. The load-bearing half is the selection moving — that is the
+  // half that goes red if the picker stops owning the keyboard.
+  it("with a picker open, j/k move its own selection", async () => {
     const fake = fakeRemote();
     const h = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(h.lastFrame).includes("›"));
@@ -225,24 +236,41 @@ describe("F2 acceptance 3 — the ctrl+x chord machine, on the real chat surface
 });
 
 // ── Acceptance 4 ─────────────────────────────────────────────────────────────────────────────────────
+// The chip parenthetical follows upstream's own trigger rule (`04-chrome.md` §1.2 rung 10 and §1.3): it is
+// printed only for a NON-DEFAULT mode, so a fresh session's footer carries none at all. Every case below
+// therefore drives the ladder off `default` FIRST — with the very key under test, which makes the same
+// keystroke prove two things at once: the rebinding fires, and the hint it rewrote names the key that fired.
 describe("F2 acceptance 4 — rebinding an action rewrites its hints, with no code change", () => {
   const MOVE_CYCLE_MODE = [{ context: "Chat" as const, bindings: { "shift+tab": null, "alt+m": "chat:cycleMode" } }];
 
-  it("the footer mode chip and the shortcuts-overlay row both follow chat:cycleMode to alt+m", async () => {
-    const base = renderWithKeymap(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(base.lastFrame).includes("›"));
-    expect(stripAnsi(frame(base.lastFrame))).toContain("⇧Tab to cycle");       // the DEFAULT hint, derived
-    expect(stripAnsi(frame(base.lastFrame))).toContain("⇧Tab mode");
-    base.unmount();
+  it("a default-mode session prints no parenthetical; the first cycle is what brings it on", async () => {
+    const h = renderWithKeymap(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(h.lastFrame).includes("›"));
+    expect(stripAnsi(frame(h.lastFrame))).toContain("mode default");
+    expect(stripAnsi(frame(h.lastFrame))).not.toContain("to cycle");    // upstream: default mode, no rung 10
+    expect(stripAnsi(frame(h.lastFrame))).toContain("⇧Tab mode");       // the composer ladder is mode-independent
+    h.stdin.write(SHIFT_TAB);
+    await settleUntil(() => stripAnsi(frame(h.lastFrame)).includes("mode acceptEdits"));
+    expect(stripAnsi(frame(h.lastFrame))).toContain("mode acceptEdits");
+    expect(stripAnsi(frame(h.lastFrame))).toContain("⇧Tab to cycle");   // the DEFAULT hint, derived
+    h.unmount();
+  });
 
+  it("the footer mode chip and the shortcuts-overlay row both follow chat:cycleMode to alt+m", async () => {
     const h = renderWithKeymap(
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
       { userLayers: MOVE_CYCLE_MODE },
     );
     await waitFor(() => frame(h.lastFrame).includes("›"));
+    expect(stripAnsi(frame(h.lastFrame))).toContain("Alt-M mode");             // composer footer ladder
+    h.stdin.write(SHIFT_TAB);                                                  // the unbound default does nothing
+    await settle();
+    expect(stripAnsi(frame(h.lastFrame))).toContain("mode default");
+    h.stdin.write(ALT_M);                                                      // …the user's own key cycles
+    await settleUntil(() => stripAnsi(frame(h.lastFrame)).includes("mode acceptEdits"));
     const bar = stripAnsi(frame(h.lastFrame));
+    expect(bar).toContain("mode acceptEdits");                                 // the rebinding FIRES, not just prints
     expect(bar).toContain("Alt-M to cycle");                                   // status-bar mode chip
-    expect(bar).toContain("Alt-M mode");                                       // composer footer ladder
     expect(bar).not.toContain("⇧Tab");
     h.stdin.write("?");
     await waitFor(() => frame(h.lastFrame).includes("Keyboard shortcuts"));
@@ -265,6 +293,75 @@ describe("F2 acceptance 4 — rebinding an action rewrites its hints, with no co
     expect(todoRow).toContain("(unbound)");
     expect(todoRow).not.toContain("Ctrl-T");
     h.unmount();
+  });
+
+  it("two rows that unbind to the SAME key column render as two rows, with no duplicate React key", async () => {
+    // `chat:cancel` owns two grid rows (the busy interrupt and the Esc-Esc clear/rewind). Unbind it and both
+    // print `(unbound)` — identical strings. The overlay used to key its rows BY that rendered string, so the
+    // list handed React two children under one key (t10 review, Minor). Both rows still PAINT that way on a
+    // fresh mount, which is why the row count alone cannot catch it; React's own duplicate-key diagnostic is
+    // the assertion that does, and it is the thing that makes a later re-render reconcile onto the wrong row.
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => { errors.push(String(args[0])); });
+    try {
+      const h = renderWithKeymap(
+        <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
+        { userLayers: [{ context: "Chat", bindings: { escape: null } }] },
+      );
+      await waitFor(() => frame(h.lastFrame).includes("›"));
+      h.stdin.write("?");
+      await waitFor(() => frame(h.lastFrame).includes("Keyboard shortcuts"));
+      const overlay = stripAnsi(frame(h.lastFrame));
+      expect(overlay).toContain("interrupt (while running)");
+      expect(overlay).toContain("clear input · rewind when empty");
+      expect(overlay.split("\n").filter((l) => l.includes("(unbound)")).length).toBe(2);
+      expect(errors.filter((e) => e.includes("same key"))).toEqual([]);
+      h.unmount();
+    } finally { spy.mockRestore(); }
+  });
+});
+
+// ── The chip parenthetical's OTHER gate: ownership ────────────────────────────────────────────────────
+// Both cases are the task-10 reviewer's own probes, made permanent. The parenthetical is a claim about a key
+// only the COMPOSER can deliver (`chat:cycleMode` lives in the Chat context), so every frame where the
+// composer is not the visible owner must carry no such claim. The first version of this shipped reading the
+// registry during render — a `Set` a passive cleanup mutates, which repaints nothing — so the hint stayed on
+// screen under an open overlay and only ever cleared by accident, when something unrelated re-rendered.
+describe("F2 — the mode-chip parenthetical is honest about who owns the keyboard", () => {
+  it("clears while the `?` overlay and the background-tasks picker are open, and returns with the composer", async () => {
+    const fake = fakeRemote();
+    const h = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(h.lastFrame).includes("›"));
+    h.stdin.write(SHIFT_TAB);                                        // off `default` — otherwise there is no hint to hide
+    await settleUntil(() => stripAnsi(frame(h.lastFrame)).includes("⇧Tab to cycle"));
+    expect(stripAnsi(frame(h.lastFrame))).toContain("⇧Tab to cycle");
+
+    h.stdin.write("?");
+    await waitFor(() => frame(h.lastFrame).includes("Keyboard shortcuts"));
+    // Asserted while the overlay is STILL up: the status bar renders under it, and shift+tab reaches nothing
+    // from here (Help swallows), so advertising it would be the lie this gate exists to prevent.
+    expect(stripAnsi(frame(h.lastFrame))).not.toContain("to cycle");
+    expect(frame(h.lastFrame)).toContain("Keyboard shortcuts");
+    h.stdin.write(ESC);
+    await waitFor(() => stripAnsi(frame(h.lastFrame)).includes("⇧Tab to cycle"));   // the composer owns it again
+
+    fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "task-aaa", task_type: "bash", description: "alpha-task" }] });
+    await waitFor(() => frame(h.lastFrame).includes("⚙ 1 bg"));
+    h.stdin.write(CTRL_B);                                           // idle ctrl+b opens the picker over the composer
+    await waitFor(() => frame(h.lastFrame).includes("Background tasks"));
+    expect(stripAnsi(frame(h.lastFrame))).not.toContain("to cycle");
+    expect(frame(h.lastFrame)).toContain("Background tasks");
+    h.unmount();
+  });
+
+  it("a <ChatStatusBar> with no provider above it never claims a cycle key", async () => {
+    // A bare render has no input path at all — no provider, no composer, nothing that could deliver the key.
+    // The mode is deliberately NON-default here, so the mode gate cannot be what makes this pass.
+    const bare = render(<ChatStatusBar mode="acceptEdits" busy />);
+    await tick();
+    expect(stripAnsi(frame(bare.lastFrame))).toContain("mode acceptEdits");
+    expect(stripAnsi(frame(bare.lastFrame))).not.toContain("to cycle");
+    bare.unmount();
   });
 });
 
@@ -328,9 +425,16 @@ describe("F2 — `command:<name>` bindings run the slash command", () => {
     await waitFor(() => frame(h.lastFrame).includes("›"));
     h.stdin.write("keep me");
     await waitFor(() => frame(h.lastFrame).includes("keep me"));
-    h.stdin.write(CTRL_K);                                           // default ctrl+k = kill-to-end-of-line
+    // Park the cursor at the START of the line first. Default ctrl+k is `killToEnd`, so pressing it where
+    // typing left the cursor (end of line) kills NOTHING — the buffer would survive a fully broken binding
+    // and the assertion below would prove nothing at all. From column 0 the default eats the whole line.
+    h.stdin.write(CTRL_A);
+    await settle();
+    h.stdin.write(CTRL_K);
     await waitFor(() => frame(h.lastFrame).includes("Status"));
-    expect(frame(h.lastFrame)).toContain("keep me");                 // the editor never saw the key
+    // stripAnsi, because the cursor now sits ON the `k`: Ink's inverse-video escape splits the raw frame's
+    // "keep me" in two, and a raw `toContain` would report the buffer as gone when it is intact.
+    expect(stripAnsi(frame(h.lastFrame))).toContain("keep me");      // the editor never saw the key
     h.unmount();
   });
 
@@ -346,13 +450,30 @@ describe("F2 — `command:<name>` bindings run the slash command", () => {
   });
 });
 
-// A guard for the one hint surface that is NOT derived, so the exception stays deliberate rather than drifting.
+// A source-level guard against the drift this whole task exists to remove: a derived hint quietly replaced by
+// the string it happens to print today. It greps the three DERIVING surfaces for the display literal of EVERY
+// table action they hint — not just `⇧Tab`, which one hardcoded `Ctrl-T` or `Esc` would sail straight past —
+// and the ban list is itself generated from the default table, so adding a binding extends the guard for free.
 describe("F2 — hint derivation coverage", () => {
+  /** Every display string the default keymap would produce for an action one of these surfaces advertises.
+   *  Seeing one written out in the source means someone typed a key instead of asking the table for it. */
+  const BANNED = [...new Set(SHORTCUT_ROWS.filter((r) => r.action).flatMap((r) => defaultLookup(r.action!)).map(formatBinding))];
+
   it("the composer, the status bar and the overlay carry no hardcoded chord literal for a table action", () => {
+    expect(BANNED).toContain("⇧Tab");                                 // the list is really populated
+    expect(BANNED).toContain("Ctrl-T");
+    expect(BANNED).toContain("Esc");
     const src = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
     for (const file of ["../../src/tui/ChatComposer.tsx", "../../src/tui/ChatStatusBar.tsx", "../../src/tui/ShortcutsOverlay.tsx"]) {
-      const body = src(file).split("\n").filter((l) => !l.trimStart().startsWith("//")).join("\n");
-      expect(body, `${file} still prints a literal ⇧Tab`).not.toContain("⇧Tab");
+      // Comments are not rendered, so they are not lies — whole `//` / `/*` / jsdoc-`*` lines drop out, and so
+      // does the tail of a line-end `//` comment, which is what lets these files keep explaining what they
+      // derive and why. Cutting at `//` can over-strip (a `://` inside a string), which would only ever HIDE a
+      // literal from this grep, never invent one — the failure mode is a missed catch, not a false alarm.
+      // `\uXXXX` escapes are decoded first: `"⇧Tab"` renders exactly as `⇧Tab`, and a grep for the glyph
+      // would sail past the spelling that hides it.
+      const body = src(file).split("\n").filter((l) => !/^\s*(\/\/|\/\*|\*)/.test(l)).map((l) => l.replace(/\/\/.*$/, ""))
+        .join("\n").replace(/\\u([0-9a-fA-F]{4})/g, (_m, hex) => String.fromCharCode(parseInt(hex, 16)));
+      for (const literal of BANNED) expect(body, `${file} still prints a literal ${literal}`).not.toContain(literal);
     }
   });
 });

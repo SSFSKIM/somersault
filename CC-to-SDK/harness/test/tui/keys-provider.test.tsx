@@ -9,8 +9,9 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { Text } from "ink";
+import { render } from "ink-testing-library";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
-import { useKeyScope, useKeyActions, useKeyFallback, useSwallowKeys, useBinding } from "../../src/tui/keys/KeymapProvider.js";
+import { useKeyScope, useKeyActions, useKeyFallback, useSwallowKeys, useBinding, useBindingLookup } from "../../src/tui/keys/KeymapProvider.js";
 import type { KeyContextName, KeyEvent, TextEvent } from "../../src/tui/keys/types.js";
 
 // The matched ACTION is the second argument (only a `family:*` handler reads it — see the family block below).
@@ -421,6 +422,21 @@ describe("KeymapProvider — family handlers (`family:*`)", () => {
     h.stdin.write("\x11");
     expect(inner).toHaveBeenCalledTimes(1);
     expect(outer).not.toHaveBeenCalled();
+    h.unmount();
+  });
+});
+
+describe("useBindingLookup — the no-provider branch", () => {
+  it("answers from the default table, but reports NOTHING live: with no provider no key can fire", async () => {
+    const seen: string[][] = [];
+    function Reader() { const lookup = useBindingLookup(); seen.push(lookup("chat:cycleMode"), lookup("chat:cycleMode", { live: true })); return <Text>r</Text>; }
+    const h = render(<Reader />);                       // deliberately BARE — no <KeymapProvider> above it
+    await tick();
+    expect(seen[0]).toEqual(["shift+tab"]);             // "what is bound" — the defaults are the truthful answer
+    // "what would fire HERE, right now" is a different question, and the honest answer for a tree with no
+    // input path at all is "nothing". Returning the defaults again let a `{live:true}` caller print a hint for
+    // a key nobody can deliver — the branch used to take one parameter and drop `opts` on the floor.
+    expect(seen[1]).toEqual([]);
     h.unmount();
   });
 });

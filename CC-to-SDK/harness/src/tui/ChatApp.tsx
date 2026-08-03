@@ -271,7 +271,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                   : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} />}
       {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
       {escArmed ? <Box paddingX={1}><Text dimColor>Press Esc again to rewind</Text></Box> : null}
-      <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} thinkLevel={state.thinkLevel} bgCount={state.bgTasks.length} usageWarn={state.usageWarn} />
+      {/* `composerOwnsKeys` is the SAME render-time disjunction the composer's own guard reads, handed to the
+          bar as a prop: its mode-chip parenthetical advertises a Chat-context key, so it must vanish the frame
+          a dialog or overlay takes the keyboard. A prop and not a registry read, because this value is derived
+          from state during render and therefore repaints with it — see ChatStatusBar's own header. */}
+      <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} thinkLevel={state.thinkLevel} bgCount={state.bgTasks.length} usageWarn={state.usageWarn} composerOwnsKeys={inputOwnerRef.current === "composer"} />
     </Box>
   );
 }

@@ -219,14 +219,17 @@ export function useSwallowKeys(active: boolean): void {
  *  composer's mode key while a dialog owns the keyboard — F0's "a status hint is only honest relative to its
  *  focused owner").
  *
- *  With no provider above (a component rendered bare), the DEFAULT table answers. That is the truthful answer
- *  for a tree with no user layer, and a component with no provider has no input path at all, so the alternative
- *  — printing "(unbound)" for every key — would be a worse lie than the defaults. */
+ *  With no provider above (a component rendered bare), the DEFAULT table answers "what is bound" — the truthful
+ *  answer for a tree with no user layer, where printing "(unbound)" for every key would be a worse lie. But
+ *  `{ live: true }` asks a DIFFERENT question — "what would fire HERE, right now" — and a tree with no provider
+ *  has no input path at all, so the honest answer to that one is nothing. This branch used to be written as a
+ *  ONE-parameter lambda typed as the two-parameter `BindingLookup`, which silently dropped `opts` and answered
+ *  the live question with the defaults: a hint for a key nobody could deliver (t10 review, Important). */
 export type BindingLookup = (action: string, opts?: { live?: boolean }) => string[];
 
 export function useBindingLookup(): BindingLookup {
   const ctx = useContext(KeymapCtx);
-  if (!ctx) return (action) => defaultLookup(action);
+  if (!ctx) return (action, opts) => (opts?.live ? [] : defaultLookup(action));
   const live = activeContexts(ctx.reg);
   const rest = ([...ctx.table.contexts.keys()] as KeyContextName[]).filter((c) => !live.includes(c));
   return (action, opts) => bindingsFor(ctx.table, action, opts?.live ? live : [...live, ...rest]);

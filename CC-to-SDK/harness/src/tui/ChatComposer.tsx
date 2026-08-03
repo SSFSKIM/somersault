@@ -37,7 +37,10 @@ const COMMAND_ROWS = 8;                            // visible rows; the selectio
 
 export type InputOwner = "composer" | "shortcuts" | "transcript" | "overlay" | "decision";
 
-function CommandPopup({ state }: { state: EditorState }) {
+// The popup's own two keys are `Autocomplete` context bindings (`tab` → accept, `escape` → dismiss), so this
+// footer derives them like every other table-owned hint rather than restating the defaults. The strings are
+// handed down as props: this is a leaf render helper, and one lookup in the composer serves both popups.
+function CommandPopup({ state, acceptKey, dismissKey }: { state: EditorState; acceptKey: string; dismissKey: string }) {
   const c = state.command!;
   if (c.items.length === 0) return <Box paddingX={1}><Text dimColor>/{c.query} — no matches</Text></Box>;
   const start = Math.max(0, Math.min(c.index - 3, Math.max(0, c.items.length - COMMAND_ROWS)));
@@ -53,7 +56,7 @@ function CommandPopup({ state }: { state: EditorState }) {
       ))}
       {/* Without this the window is indistinguishable from a complete list — the catalog runs to ~105 entries. */}
       {c.items.length > COMMAND_ROWS
-        ? <Text dimColor>{`↑/↓ ${c.index + 1}/${c.items.length} · Tab completes · Esc closes`}</Text>
+        ? <Text dimColor>{`↑/↓ ${c.index + 1}/${c.items.length} · ${acceptKey} completes · ${dismissKey} closes`}</Text>
         : null}
     </Box>
   );
@@ -205,9 +208,14 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // '?' on a genuinely empty composer (no buffer text, no open '/' or '@' popup) opens the shortcuts
     // overlay; typed anywhere else it must fall through to applyKey and insert a literal '?'.
     if (input === "?" && !s.command && !s.mention && s.lines.length === 1 && s.lines[0] === "") { endInterceptedEditorAction(s); onHelpRef.current?.(); return; }
-    // Shift+Tab cycles the permission ladder (CC chat:cycleMode). Bare Tab belongs to the autocomplete
-    // popups alone (CC's Autocomplete context) — with no popup open it does nothing.
-    if (key.tab && key.shift) { endInterceptedEditorAction(s); onCycleModeRef.current?.(); return; }
+    // `chat:cycleMode` is NOT re-derived from the key here. It used to be (`if (key.tab && key.shift)`),
+    // which quietly made the action physical: a user who moved it to `alt+m` got a footer and a status chip
+    // that both said `Alt-M`, and a key that did nothing when pressed. It has its own registration below,
+    // which fires on whatever the table resolved. Bare Tab still belongs to the autocomplete popups alone
+    // (CC's Autocomplete context) — with no popup open it does nothing.
+    // NB the same re-derivation still governs `chat:cancel` / `chat:clearInput` / `app:exit` further down:
+    // rebinding those to a key with different flags is inert for the same reason. Recorded, not fixed here —
+    // untangling it is a change to their Esc-Esc / EOF arm semantics, not to a hint.
     // Esc is global ONLY when no autocomplete popup is open; with a popup, applyKey owns it (closes the
     // popup). This single owner prevents the ChatApp+composer double-handling. CC's Esc-Esc semantics
     // (CM15): busy Esc always interrupts (buffer untouched); idle Esc with text arms a local double-press
@@ -255,7 +263,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     return endInterceptedEditorAction(s);
   };
   useKeyActions({
-    "chat:cancel": handleKey, "chat:clearInput": handleKey, "chat:cycleMode": handleKey, "app:exit": handleKey,
+    "chat:cancel": handleKey, "chat:clearInput": handleKey, "app:exit": handleKey,
+    // Fires on the RESOLVED action, not on a re-read of the key's flags — so `alt+m` in a user's
+    // keybindings.json cycles the ladder exactly as shift+tab does, which is what makes the derived hint
+    // beside it true. `interceptChord()` is the same owner-guard + kill-run/arm cleanup `handleKey` ran.
+    "chat:cycleMode": () => { if (interceptChord()) onCycleModeRef.current?.(); },
     "autocomplete:dismiss": handleKey, "autocomplete:accept": handleKey,
     "chat:killAgents": () => { if (interceptChord()) onKillAgentsRef.current?.(); },
     // K6 (F2 task 10): `"ctrl+k": "command:clear"` in the user's keybindings.json runs `/clear` exactly as if
@@ -297,12 +309,16 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // The editor owns these affordances: derive them from this render's state so the first draft/popup
   // frame cannot inherit an out-of-date parent status-bar hint through a passive effect.
   const showFooter = mode === "normal" && !state.mention && !state.command;
-  // F2 task 10: the two chords in this ladder come from the LIVE table, not from literals typed here — rebind
-  // chat:cycleMode and the rung follows it; unbind it and the rung says `(unbound)` instead of promising a key
-  // that no longer works. The rest of the ladder is editor-owned (`⏎`, `\⏎`, the `@`/`/`/`!` prefixes, `?`),
-  // which no context binds, so those stay literal by design.
+  // F2 task 10: every chord this component prints comes from the LIVE table, not from literals typed here —
+  // rebind chat:cycleMode and the rung follows it; unbind it and the rung says `(unbound)` instead of promising
+  // a key that no longer works. That covers the footer ladder, the Esc hint, both double-press arms and the
+  // autocomplete popup's footer (t10 review, Minor: the last three were still literals, and the derivation
+  // guard in keys-acceptance.test.tsx now greps for every one of these strings). The rest of the ladder is
+  // editor-owned (`⏎`, `\⏎`, the `@`/`/`/`!` prefixes, `?`), which no context binds, so it stays literal.
   const cycleKey = formatBindings(bindings("chat:cycleMode"));
   const escKey = formatBindings(bindings("chat:cancel"));
+  const exitKey = formatBindings(bindings("app:exit"));                 // the KB3 double-press arm below
+  const acceptKey = formatBindings(bindings("autocomplete:accept")), dismissKey = formatBindings(bindings("autocomplete:dismiss"));
   const keyboardHint = busy ? `${escKey} interrupt` : isEmptyNow ? `${escKey} rewind · ? help` : `${escKey} clear`;
   const clearVisible = clearArmed && clearArm.current !== 0 && !busy;
   return (
@@ -316,12 +332,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       {mode === "bash" ? <Box paddingX={1}><Text color={role("bashBorder")} dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
       {mode === "memory" ? <Box paddingX={1}><Text color={role("remember")} dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
       {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
-      {clearVisible ? <Box paddingX={1}><Text dimColor>Esc again to clear</Text></Box> : null}
-      {dArmed && isEmptyNow ? <Box paddingX={1}><Text dimColor>Press Ctrl-D again to exit</Text></Box> : null}
+      {clearVisible ? <Box paddingX={1}><Text dimColor>{`${escKey} again to clear`}</Text></Box> : null}
+      {dArmed && isEmptyNow ? <Box paddingX={1}><Text dimColor>{`Press ${exitKey} again to exit`}</Text></Box> : null}
       {showFooter ? <Box paddingX={1}><Text dimColor>{`⏎ send · \\⏎ newline · @ files · / commands · ! bash · ${cycleKey} mode${isEmptyNow ? " · ? help" : ""}`}</Text></Box> : null}
       {showFooter ? <Box paddingX={1}><Text dimColor>{keyboardHint}</Text></Box> : null}
       {state.mention ? <MentionPopup state={state} /> : null}
-      {state.command ? <CommandPopup state={state} /> : null}
+      {state.command ? <CommandPopup state={state} acceptKey={acceptKey} dismissKey={dismissKey} /> : null}
     </Box>
   );
 }
