@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { displayPath, foldToolOutput, GROUP_HINT_GUTTER, osc8FileLink, projectCompact, projectDetail, projectionDeps, projectPending, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
-import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
+import { resolveThemeColor, setTheme, THEMES, themeTokens } from "../../src/tui/theme.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 
 async function rawInk(element: React.ReactElement, columns = 100): Promise<string> {
@@ -354,9 +354,9 @@ describe("F1 5c fixes: silent absorption and the unclosed trailing group", () =>
 // ── The blink path's memoized anchored stream ───────────────────────────────────────────────────────────
 // `useChat` re-projects the transient region every 600 ms while a tool is open, and `projectPending` folds the
 // WHOLE anchored stream — so an unmemoized build re-renders every retained message (markdown included) per
-// blink frame. The stream depends on the document ALONE, so it is cached against `TranscriptDocument.revision()`.
+// blink frame. The stream depends on the document AND the live theme, so the key is `revision()` × `themeGeneration()`.
 describe("F1 anchored-stream memoization", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { vi.restoreAllMocks(); setTheme("auto"); });
 
   it("builds the anchored stream once per revision while the blink repaints on a moving clock", () => {
     const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
@@ -397,5 +397,30 @@ describe("F1 anchored-stream memoization", () => {
     const after = lineTexts(projectCompact(doc, context));
     expect(spy).toHaveBeenCalledTimes(1);
     expect(before).not.toContain("› upgraded note"); expect(after).toContain("› upgraded note");
+  });
+
+  // The stream is NOT a pure function of the document: `renderMessage` → markdown/highlight read the LIVE
+  // global theme per call (that is what makes a /theme switch color the very next paint). A `setTheme()`
+  // touches no document, so `revision()` alone would serve the old theme's colors from cache.
+  it("rebuilds when setTheme() repaints under an untouched document", () => {
+    const doc = built(prose("use `x` now"));
+    const codeColors = () => projectCompact(doc, context).filter((i) => i.kind === "line")
+      .flatMap((i) => (i as { line: RenderLine }).line.segments ?? []).flatMap((s) => (s.color === undefined ? [] : [s.color]));
+    setTheme("dark");
+    const dark = codeColors();
+    expect(dark).toEqual([resolveThemeColor(THEMES.dark.suggestion)]);
+    const spy = vi.spyOn(projectionDeps, "buildAnchored");
+    setTheme("light");
+    expect(codeColors()).toEqual([resolveThemeColor(THEMES.light.suggestion)]);   // inline code follows the new theme
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("still cache-hits when neither the document nor the theme moved", () => {
+    setTheme("light");
+    const doc = built(prose("use `x` now"));
+    const before = lineTexts(projectCompact(doc, context));
+    const spy = vi.spyOn(projectionDeps, "buildAnchored");
+    expect(lineTexts(projectCompact(doc, context))).toEqual(before);
+    expect(spy).toHaveBeenCalledTimes(0);
   });
 });

@@ -101,8 +101,15 @@ export const isLightTheme = (id: ThemeId) => id.startsWith("light");
 
 let current: ThemeId = "auto";
 export let ACCENT = resolveThemeColor(THEMES.auto.claude); // Claude brand orange — live binding, see setTheme
+let generation = 0;
 
 export function currentTheme(): ThemeId { return current; }
+/** Monotonic counter of live-theme MUTATIONS (`setTheme` is the only one — `current`/`ACCENT` are written
+ *  nowhere else). Consumers that read the theme per call need nothing from it; it exists for the ones that
+ *  CACHE a render — toolRenderer's anchored-stream memo — which otherwise cannot see a repaint, because a
+ *  setTheme() touches no document and so bumps no `TranscriptDocument.revision()`. Bumped unconditionally,
+ *  including on a redundant re-select of the current id: an extra rebuild is cheap, a stale palette is not. */
+export function themeGeneration(): number { return generation; }
 /** The full token set for the CURRENT theme. Consumers call this per render/projection rather than caching
  *  it, so a setTheme() mid-session — including the /theme picker's own live-preview navigation — is visible
  *  on the very next paint. */
@@ -110,4 +117,4 @@ export function themeTokens(): ThemeTokens { return THEMES[current]; }
 /** Mutates ACCENT + the current theme. No persistence here — that's the caller's job: ThemeDialog calls
  *  the injected savePrefs on Enter, and boot applies a saved pref via loadPrefs() before the first render
  *  (see prefs.ts + chatMain.tsx). */
-export function setTheme(id: ThemeId): void { current = id; ACCENT = resolveThemeColor(THEMES[id].claude); }
+export function setTheme(id: ThemeId): void { current = id; ACCENT = resolveThemeColor(THEMES[id].claude); generation++; }

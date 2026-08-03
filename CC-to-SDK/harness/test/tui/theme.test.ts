@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ACCENT, ANSI_COLOR_NAMES, THEMES, THEME_LABELS, THEME_TOKEN_NAMES, currentTheme, isLightTheme, isThemeColor, resolveThemeColor, setTheme, themeTokens } from "../../src/tui/theme.js";
+import { ACCENT, ANSI_COLOR_NAMES, THEMES, THEME_LABELS, THEME_TOKEN_NAMES, currentTheme, isLightTheme, isThemeColor, resolveThemeColor, setTheme, themeGeneration, themeTokens } from "../../src/tui/theme.js";
 import { loadPrefs, savePrefs } from "../../src/tui/prefs.js";
 import { toolDiffLines } from "../../src/tui/render.js";
 
@@ -47,6 +47,16 @@ describe("theme.ts", () => {
   it("resolves the ansi256 base-16 table and grayscale ramp, not only the color cube", () => {
     expect(resolveThemeColor("ansi256(0)")).toBe("#000000"); expect(resolveThemeColor("ansi256(9)")).toBe("#ff0000");
     expect(resolveThemeColor("ansi256(15)")).toBe("#ffffff"); expect(resolveThemeColor("ansi256(232)")).toBe("#080808"); expect(resolveThemeColor("ansi256(255)")).toBe("#eeeeee");
+  });
+  // Consumers that CACHE a render read per-call theme values (toolRenderer's anchored-stream memo) need a
+  // cheap "did the theme move" signal, since a setTheme() touches no document and bumps no revision.
+  it("bumps a monotonic themeGeneration on every setTheme, including a redundant one", () => {
+    const start = themeGeneration();
+    setTheme("light"); const afterLight = themeGeneration();
+    expect(afterLight).toBeGreaterThan(start);
+    setTheme("light");                                   // redundant re-select (the /theme picker re-fires per keypress)
+    expect(themeGeneration()).toBeGreaterThan(afterLight);
+    expect(themeGeneration()).toBe(themeGeneration());   // a pure read never advances it
   });
   it("uses the TH4 light prefix predicate", () => { expect(isLightTheme("light")).toBe(true); expect(isLightTheme("light-daltonized")).toBe(true); expect(isLightTheme("dark")).toBe(false); expect(isLightTheme("auto")).toBe(false); });
   it("makes every existing palette structurally complete with TH7", () => {

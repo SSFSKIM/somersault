@@ -17,7 +17,7 @@ import type { RenderLine, Segment } from "./render.js";
 import { renderMessage } from "./render.js";
 import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
-import { resolveThemeColor, themeTokens } from "./theme.js";
+import { resolveThemeColor, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
 import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldClause, type FoldGroup } from "./toolFold.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
@@ -355,26 +355,33 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
  *  `projectPending`, which folds the WHOLE anchored stream — so without a cache every frame re-renders every
  *  retained message, markdown and all, and a long resumed/attached transcript pays that per blink.
  *
- *  The stream is cacheable because it is a pure function of the DOCUMENT ALONE — verified, not assumed:
- *  `projectLocalEvent` takes no options at all, and `projectMessageEntry` `void`s them, its one renderer
- *  (`renderMessage`) being a single-argument function of the message. Nothing here reads cwd, home, platform,
- *  columns, now, verbose or projection; those enter strictly LATER, in `renderToolEvent`, `groupItems` and
- *  `segmentRuns`, all of which stay uncached. So the document's `revision()` is the entire key.
+ *  The stream is cacheable because its inputs are the DOCUMENT plus the LIVE THEME, and nothing else —
+ *  verified, not assumed: `projectLocalEvent` takes no options at all, and `projectMessageEntry` `void`s
+ *  them, its one renderer (`renderMessage`) being a single-argument function of the message. Nothing here
+ *  reads cwd, home, platform, columns, now, verbose or projection; those enter strictly LATER, in
+ *  `renderToolEvent`, `groupItems` and `segmentRuns`, all of which stay uncached.
+ *
+ *  The theme is the second input because `renderMessage` → markdown/highlight resolve theme tokens PER CALL
+ *  (deliberately: a setTheme() must color the very next render — render.ts:47). A setTheme() touches no
+ *  document, so `revision()` alone would serve the old palette out of cache; the key is therefore
+ *  `revision()` × `themeGeneration()`, and a hit requires BOTH unchanged. (Every theme-changing UI path
+ *  today also appends a local notice, which bumps the revision — but that is an incidental coincidence, not
+ *  something the cache may lean on, so the theme dependency is named here rather than assumed away.)
  *
  *  Keyed by document in a WeakMap, so a replaced document (rewind, resume) drops its entry with itself. The
  *  cached array is copied out because callers own their list — `projectAll`/`projectPending` push tool anchors
  *  onto it and sort it in place — while the `Anchored` records inside it are never mutated and are shared. */
-const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; anchored: readonly Anchored[] }>();
+const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; theme: number; anchored: readonly Anchored[] }>();
 /** DI-by-deps test seam: the builder is reached through this record, so a test can count rebuilds without
  *  reading the cache itself. Production never reassigns it. */
 export const projectionDeps = { buildAnchored: buildAnchoredEntries };
 
 function anchoredEntries(document: TranscriptDocument, options: ProjectionOptions): Anchored[] {
-  const revision = document.revision();
+  const revision = document.revision(), theme = themeGeneration();
   const hit = anchoredCache.get(document);
-  if (hit !== undefined && hit.revision === revision) return [...hit.anchored];
+  if (hit !== undefined && hit.revision === revision && hit.theme === theme) return [...hit.anchored];
   const anchored = projectionDeps.buildAnchored(document, options);
-  anchoredCache.set(document, { revision, anchored });
+  anchoredCache.set(document, { revision, theme, anchored });
   return [...anchored];
 }
 
