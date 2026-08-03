@@ -27,30 +27,35 @@ const HINT_LIMIT = 300;
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const stringField = (input: unknown, key: string): string | undefined => { const v = isRecord(input) ? input[key] : undefined; return typeof v === "string" ? v : undefined; };
 
+/** Characters a delimiter word may stop on (upstream L141331–141332) and the two char classes its scan uses:
+ *  `iVg` (L140471) for a bare word and `_Ie` (L140459) for the tail of a `<<\EOF`. */
+const DELIMITER_END = new Set([" ", "\t", "\n", "<", ">", "|", "&", ";", "(", ")"]);
+const isDelimiterChar = (ch: string): boolean => !DELIMITER_END.has(ch) && ch !== "'" && ch !== '"' && ch !== "`" && ch !== "\\";
 /** Heredoc delimiter after a `<<`/`<<-` operator at `i`: the raw source to keep in the statement text plus the
- *  UNQUOTED terminator word, since `<<'EOF'`, `<<"EOF"` and `<<\EOF` all terminate on a bare `EOF`. Quote removal
- *  runs WHILE parsing, so an escape inside the delimiter (`<<"E\"OF"` → `E"OF`) neither truncates the word nor keeps
- *  its backslash — otherwise the terminator line never matches and the rest of the command is eaten as body.
- *  `undefined` when no word follows (a bare `<<` is then left as ordinary text). */
-function heredocDelimiter(command: string, i: number): { raw: string; delimiter: string; next: number } | undefined {
+ *  terminator word, since `<<'EOF'`, `<<"EOF"` and `<<\EOF` all terminate on a bare `EOF`. Upstream is NOT bash here
+ *  and does no quote removal: its hand-written lexer (L141306–141337, the real `SF()` parser — 2.1.220 ships no
+ *  tree-sitter) picks the scan mode from the FIRST character and takes quoted content VERBATIM, then REFUSES the
+ *  whole parse (`aborted`) rather than interpret anything harder — a double-quoted delimiter holding `` ` ``, `$`,
+ *  `\` or a newline (L141326), an astral code unit, or a word that stopped on a character it cannot end on
+ *  (`<<E"OF"`). `"abort"` reports that refusal; `undefined` means no word followed (a bare `<<` stays ordinary
+ *  text). */
+function heredocDelimiter(command: string, i: number): { raw: string; delimiter: string; next: number } | "abort" | undefined {
   let j = i, raw = "", delimiter = "";
   while (j < command.length && (command[j] === " " || command[j] === "\t")) { raw += command[j]!; j++; }
-  while (j < command.length) {
-    const ch = command[j]!;
-    if (ch === "'" || ch === '"') {
-      raw += ch; j++;
-      while (j < command.length && command[j] !== ch) {
-        // Inside `"`, `\"` and `\\` collapse to one character; single-quoted content is literal all the way through.
-        if (ch === '"' && command[j] === "\\" && (command[j + 1] === '"' || command[j + 1] === "\\")) { raw += command[j]! + command[j + 1]!; delimiter += command[j + 1]!; j += 2; continue; }
-        delimiter += command[j]!; raw += command[j]!; j++;
-      }
-      if (j < command.length) { raw += ch; j++; }
-      continue;
-    }
-    if (/[\s;&|<>()`]/.test(ch)) break;
-    if (ch === "\\" && j + 1 < command.length) { raw += ch + command[j + 1]!; delimiter += command[j + 1]!; j += 2; continue; }
-    delimiter += ch; raw += ch; j++;
-  }
+  const first = command[j];
+  if (first === "'" || first === '"') {
+    raw += first; j++;
+    while (j < command.length && command[j] !== first) { delimiter += command[j]!; raw += command[j]!; j++; }
+    if (j < command.length) { raw += first; j++; }
+    if (first === '"' && /[`$\\\n]/.test(delimiter)) return "abort";
+  } else if (first === "\\") {
+    // `<<\EOF`: the backslash quotes exactly one character, then only word characters continue the delimiter.
+    raw += first; j++;
+    if (j < command.length && command[j] !== "\n") { delimiter += command[j]!; raw += command[j]!; j++; }
+    while (j < command.length && /[A-Za-z0-9_]/.test(command[j]!)) { delimiter += command[j]!; raw += command[j]!; j++; }
+  } else while (j < command.length && isDelimiterChar(command[j]!)) { delimiter += command[j]!; raw += command[j]!; j++; }
+  if (/[\uD800-\uDFFF]/.test(delimiter)) return "abort";
+  if (j < command.length && !DELIMITER_END.has(command[j]!)) return "abort";
   return delimiter === "" ? undefined : { raw, delimiter, next: j };
 }
 /** Consume one heredoc body from `i` (a line start): every line up to and INCLUDING the terminator line, which
@@ -71,9 +76,14 @@ function skipHeredocBody(command: string, i: number, delimiter: string, stripTab
  *  other node's text whole — so a subshell, an `if`, a `for` all arrive as ONE statement whose head word is `(ls;`
  *  / `if` / `for` and therefore poisons the command. Splitting on those same operators at depth zero, with quotes,
  *  `$( )`, backticks and braces opaque, reproduces that list for every command whose classification can differ.
- *  Redirections never reach that list at all: `OE` keeps only the non-`*_redirect` children of a
+ *  A TRAILING redirection never reaches that list: `OE` keeps only the non-`*_redirect` children of a
  *  `redirected_statement` (L359737–359741), so `cat a 2>&1` is the single statement `cat a` upstream and the `&`/`|`
  *  buried in a redirect operator must be glued to the current statement rather than split on (see the branch below).
+ *  A LEADING redirection is the opposite and is deliberately kept: upstream's parser puts it INSIDE the `command`
+ *  node (`[...assignments, ...redirects, name, ...args]`, L141080), which `OE` pushes whole, so `2>/dev/null rg x`
+ *  is one statement whose head word is `2>/dev/null` and the command classifies as nothing at all.
+ *  A parse upstream refuses (see `heredocDelimiter`) returns null from `parse()`, and `OE` then yields the WHOLE
+ *  command as a single statement (L359731–359733) — so only its very first word decides the classification.
  *  Heredocs are the one place a raw depth-zero newline is NOT a separator: by that same drop (L359737–359741)
  *  the whole `heredoc_redirect` — body and terminator —
  *  never becomes a statement and `cat <<EOF … EOF` classifies as plain `cat`. We reproduce that by queueing every
@@ -99,6 +109,7 @@ function splitStatements(command: string): string[] {
     if (ch === "#" && (buf === "" || /\s$/.test(buf))) { while (i < command.length && command[i] !== "\n") i++; continue; }
     if (ch === "<" && command[i + 1] === "<" && command[i + 2] !== "<") {
       const stripTabs = command[i + 2] === "-", operator = stripTabs ? "<<-" : "<<", word = heredocDelimiter(command, i + operator.length);
+      if (word === "abort") return [command];
       if (word !== undefined) { heredocs.push({ delimiter: word.delimiter, stripTabs }); buf += operator + word.raw; i = word.next; continue; }
     }
     if (ch === "\n" || ch === ";") {

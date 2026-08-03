@@ -50,6 +50,15 @@ describe("F1 fold classifier (R1.1–R1.3)", () => {
     expect(classifyToolEvent({ name: "Bash", input: { command: "cat a >|out" } })).toEqual({ collapsible: true, kind: "read" });
     expect(classifyToolEvent({ name: "Bash", input: { command: "cat f <&3" } })).toEqual({ collapsible: true, kind: "read" });
   });
+  it("keeps a LEADING redirect in the statement, so it becomes the head word", () => {
+    // Not a bug: upstream's parser puts leading redirects inside the `command` node (2.1.220 L141080), so `OE` never
+    // drops them and the head word is the redirect itself. Confirmed by parsing each of these with the real
+    // tree-sitter-bash 0.25.1 grammar, which agrees (`command` allows `repeat(choice(variable_assignment, redirect))`
+    // before the name) — all three arrive as ONE statement and classify as nothing.
+    expect(classifyToolEvent({ name: "Bash", input: { command: "2>/dev/null rg x" } })).toEqual({ collapsible: false });
+    expect(classifyToolEvent({ name: "Bash", input: { command: ">out cat f" } })).toEqual({ collapsible: false });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "2> /dev/null cat f" } })).toEqual({ collapsible: false });
+  });
   it("still separates on a real `&&`, background `&` and `|&`", () => {
     expect(classifyToolEvent({ name: "Bash", input: { command: "grep x f 2>/dev/null && npm test" } })).toEqual({ collapsible: false });
     expect(classifyToolEvent({ name: "Bash", input: { command: "sleep 1 & cat f" } })).toEqual({ collapsible: false });
@@ -75,9 +84,22 @@ describe("F1 fold classifier (R1.1–R1.3)", () => {
     expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<EOF\nbody\nEOF\nnpm test" } })).toEqual({ collapsible: false });
     expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<EOF\nbody" } })).toEqual({ collapsible: true, kind: "read" });
   });
-  it("removes shell quoting from a heredoc delimiter so its terminator still matches", () => {
-    expect(classifyToolEvent({ name: "Bash", input: { command: 'cat <<"E\\"OF"\nbody\nE"OF\nnpm test' } })).toEqual({ collapsible: false });
+  it("takes a quoted heredoc delimiter verbatim, with no escape processing", () => {
+    // Upstream's lexer copies quoted delimiter content character for character (L141310–141314): a backslash inside
+    // `'…'` is part of the terminator word, and `<<\EOF` quotes only the character right after the backslash.
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<'E\\zOF'\nbody\nE\\zOF\nnpm test" } })).toEqual({ collapsible: false });
+    expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<\\EOF\nbody\nEOF\nnpm test" } })).toEqual({ collapsible: false });
     expect(classifyToolEvent({ name: "Bash", input: { command: "cat <<'EOF'\nlog 2>&1\nrun && npm test\nEOF" } })).toEqual({ collapsible: true, kind: "read" });
+  });
+  it("falls back to the whole command as one statement for a delimiter upstream refuses to scan", () => {
+    // A double-quoted delimiter holding ` $ \ or a newline aborts the parse (L141326), as does a word that stopped on
+    // a character it cannot end on (`E"OF"`); `parse()` then returns null and `OE` yields the WHOLE command as one
+    // statement (L359731–359733). Only its first word decides — `cat` still folds as a read, `npm` still poisons.
+    expect(classifyToolEvent({ name: "Bash", input: { command: 'cat <<"\\$EOF"\nbody\n$EOF\nnpm test' } })).toEqual({ collapsible: true, kind: "read" });
+    expect(classifyToolEvent({ name: "Bash", input: { command: 'cat <<"E\\zOF"\nbody\nE\\zOF\nnpm test' } })).toEqual({ collapsible: true, kind: "read" });
+    expect(classifyToolEvent({ name: "Bash", input: { command: 'cat <<"E\\"OF"\nbody\nE"OF\nnpm test' } })).toEqual({ collapsible: true, kind: "read" });
+    expect(classifyToolEvent({ name: "Bash", input: { command: 'cat <<E"OF"\nbody\nEOF\nnpm test' } })).toEqual({ collapsible: true, kind: "read" });
+    expect(classifyToolEvent({ name: "Bash", input: { command: 'npm run x <<"$E"\nbody\nls' } })).toEqual({ collapsible: false });
   });
   it("never mistakes a herestring for a heredoc", () => {
     expect(classifyToolEvent({ name: "Bash", input: { command: "wc -l <<<hi; npm test" } })).toEqual({ collapsible: false });
