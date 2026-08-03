@@ -28,6 +28,7 @@ import re
 import select
 import signal
 import struct
+import subprocess
 import sys
 import tempfile
 import termios
@@ -147,6 +148,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--log", default=None, help="JSONL log path (default: temp file)")
     ap.add_argument("--json", action="store_true", help="also dump machine-readable JSON")
+    ap.add_argument("--term", default="xterm-256color", help="TERM for the child (input decoding should be terminfo-independent)")
     args = ap.parse_args()
 
     if not TSX.exists():
@@ -158,7 +160,7 @@ def main() -> int:
 
     env = dict(os.environ)
     env.update({
-        "TERM": "xterm-256color",
+        "TERM": args.term,
         "COLORTERM": "truecolor",
         "P86_LOG": str(log_path),
         "NO_COLOR": "",
@@ -257,8 +259,9 @@ def main() -> int:
     print("=" * 110)
     print("P86 — Ink input capability matrix")
     print(f"  ink        : {json.loads((HARNESS / 'node_modules' / 'ink' / 'package.json').read_text())['version']}")
-    print(f"  node       : {os.popen('node -v').read().strip()}")
-    print(f"  TERM       : xterm-256color  COLORTERM=truecolor  winsize={COLS}x{ROWS}")
+    node_v = subprocess.run(["node", "-v"], capture_output=True, text=True).stdout.strip()
+    print(f"  node       : {node_v}")
+    print(f"  TERM       : {args.term}  COLORTERM=truecolor  winsize={COLS}x{ROWS}")
     print(f"  log        : {log_path}")
     print(f"  raw tap    : {'REGISTERED' if rawtap_registered else 'NOT REGISTERED'}")
     print("=" * 110)

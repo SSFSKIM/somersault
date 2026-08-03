@@ -28,7 +28,16 @@ Optional: `--log <path>` to keep the JSONL, `--json` for a machine-readable dump
 `probes/probes/86-ink-input-child.tsx` (a one-`<Text>` Ink app with a `useInput` handler **and** a
 competing `process.stdin.on("data")` raw tap, both appending to one JSONL log).
 
-**Reproducibility.** Two consecutive full runs produced **byte-identical** reports.
+**Follow-up P86b** (§6, and the source of every "settled by P86b" note below) —
+`probes/probes/86b-ink-rawstdin-matrix.py` + `86b-ink-rawstdin-child.tsx`, run the same way:
+
+```
+python3 /Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/probes/probes/86b-ink-rawstdin-matrix.py
+```
+
+**Reproducibility.** Two consecutive full runs produced **byte-identical** reports. A third run with
+`--term vt100` was also byte-identical, confirming Ink's input decoding is terminfo-independent (it is a
+hardcoded table in `parse-keypress.js`, never a terminfo lookup).
 
 **Evidence standard.** Every "useInput received" cell is the verbatim event the handler was called with.
 Anything not settled is written **not determined** — nothing here is inferred from declarations. Byte
@@ -119,9 +128,11 @@ lives only in `keypress.name`/`code`, which `useInput` discards. The modifier su
 | `\t` | `input="" flags=[tab]` | **reachable** |
 | `\x1b[Z` shift+tab | `input="" flags=[shift,tab]` | **reachable** — `pk:84` maps `[Z`→`tab`, `pk:100` forces shift |
 
-Caveat (static, not exercised): `App.handleInput` (`app:152-158`) *also* consumes `tab` / `shift+tab` for
-focus traversal, but only when `isFocusEnabled && focusables.length > 0`, and it does not suppress the
-`useInput` dispatch. Our probe app registers no focusables, so this path was not exercised — see §5.
+`App.handleInput` (`app:152-158`) *also* consumes `tab` / `shift+tab` for focus traversal when
+`isFocusEnabled && focusables.length > 0`. **Settled by P86b (config D):** with two live `useFocus`
+focusables in the tree — focus demonstrably moving, `[two:focused]` appearing in the rendered frames —
+`useInput` still received `input:"" flags=[tab]` and `input:"" flags=[shift,tab]`, byte-identical to the
+no-focusables case. Focus traversal and `useInput` dispatch both happen; neither suppresses the other.
 
 ### 1.4 Enter forms
 
@@ -223,12 +234,21 @@ SGR mouse never matches `fnKeyRe` because `<` follows the `[`. Focus events *do*
 `code:"[O"` in the raw column) but `keyName` (`pk:5-85`) has no entry for them, so `name` is `undefined`
 and `ui:68` leaves the text in place.
 
-**X10 caveat, load-bearing.** `App.handleSetRawMode` calls `stdin.setEncoding('utf8')` (`app:114`). Our X10
-probe deliberately used ASCII-safe coordinate bytes (`0x20 0x2a 0x2a`). Real X10 coordinates are
-`32 + position` and exceed 127 past column/row 95, where UTF-8 decoding will mangle them — and Ink offers
-no way to get a `Buffer`. Whether a raw `stdin.on("data")` tap can still recover those bytes after Ink has
-set utf8 encoding on the shared stream is **not determined**. SGR mouse (`?1006h`) has no such hazard — it
-is all ASCII digits — which makes SGR the only safe mouse encoding for F2.
+**X10 caveat, load-bearing — and now settled.** `App.handleSetRawMode` calls `stdin.setEncoding('utf8')`
+(`app:114`). Our X10 row above deliberately used ASCII-safe coordinate bytes (`0x20 0x2a 0x2a`); real X10
+coordinates are `32 + position` and exceed 127 past column/row 95. **P86b fed the real thing**
+(`\x1b[M\x20\xc8\xc8`) and measured three outcomes:
+
+| stream encoding | bytes the listener got | recoverable? |
+|---|---|---|
+| Ink's forced utf8 | `1b 5b 4d 20 ef bf bd` — the two `0xc8` bytes collapsed into one U+FFFD | **no**, irrecoverably lost |
+| `stdin.setEncoding("latin1")` after `setRawMode` | `1b 5b 4d 20 c8 c8` — verbatim | **yes**, losslessly |
+| never engaging Ink's `setRawMode` at all (config E) | `1b 5b 4d 20 c8 c8` as a real `Buffer` | **yes**, losslessly |
+
+Note `stdin.setEncoding(null)` does **not** work — Node's `new StringDecoder(null)` defaults to utf8, so
+the decoder stays in place. `latin1` is the fix: a 1:1 byte↔codepoint map, from which `Buffer.from(s,
+"latin1")` reconstructs the exact bytes. SGR mouse (`?1006h`) is still preferable — it is all ASCII digits
+and needs none of this — but X10 is no longer a hard blocker.
 
 ### 1.9 Bracketed paste
 
@@ -319,6 +339,10 @@ practice the leading ESC, the discarded key identity (§1.1/§1.2), and potentia
 
 Mapping each upstream binding family from `06-keys-themes.md` §1.6–§1.9 onto what Ink can actually deliver.
 
+**Read §4.1 first if you are choosing the architecture.** Everything from here to §4.1 describes what F2
+gets *if it keeps a `useInput` root* — which the P86b follow-up now argues against. It is still the
+accurate account of that option, and of why the alternative is worth its costs.
+
 **Reachable as shipped — bind directly on `key`:**
 
 | family | upstream bindings | signature |
@@ -342,9 +366,10 @@ Mapping each upstream binding family from `06-keys-themes.md` §1.6–§1.9 onto
 | alt+arrow vs cmd/super+arrow (`meta+up`/`meta+down` → `app:diffFileListUp/Down`) | both raise `key.meta` (`pk:215` masks with `10`). Harmless for this binding — upstream maps both to the same action — but F2 can never separate Option from Command on an arrow. |
 
 There is **no fix available inside `useInput`** for the home/end/insert class: the bytes differ but the
-delivered event does not. F2 must read the sequence before Ink flattens it — i.e. a raw tap (§3), with the
-suppression caveat — or accept that home, end, insert and the function keys are one undifferentiated key.
-This is the single biggest constraint the probe found.
+delivered event does not. F2 must read the sequence before Ink flattens it, or accept that home, end,
+insert and the function keys are one undifferentiated key. This is the single biggest constraint the probe
+found, and it is what makes the §4.1 verdict a verdict rather than a preference — a raw-stdin root
+dissolves this whole table, and no arrangement of `useInput` handlers can.
 
 **Misparsed — delivered, but as insertable text or with wrong attribution; F2 must special-case them:**
 
@@ -378,17 +403,137 @@ This is the single biggest constraint the probe found.
   keyed on names (`"home"`, `"ctrl+end"`) must therefore be backed either by its own parser over `input` or
   by a raw tap — the 14 booleans alone cannot express the upstream table.
 
+### 4.1 Verdict: what F2's input layer should be
+
+**A root raw-stdin consumer with no `useInput` anywhere in our tree is viable, and it is the right
+architecture for F2.** P86b proved it end to end (§6): the bytes arrive verbatim, chunking is 1:1 with
+writes, rendering is unaffected, and Ink cleans the terminal up afterwards. It dissolves every *aliased*
+row in §4 at a stroke — home, end, insert, ctrl+home, ctrl+end, shift+home, shift+end and the function keys
+are all trivially distinguishable once F2 sees the bytes — and it removes the "raw tap cannot suppress"
+problem from §3, because there is no second consumer to suppress.
+
+The recommended shape, which is exactly P86b config C (measured working, clean exit, terminal restored):
+
+```
+render(<App/>, { exitOnCtrlC: false })          // REQUIRED — see (c) in §6
+const { stdin, setRawMode } = useStdin()
+setRawMode(true)                                 // via the context, so Ink owns termios restore
+stdin.setEncoding("latin1")                      // lossless bytes; undoes Ink's forced utf8
+stdin.on("data", chunk => dispatch(Buffer.from(chunk, "latin1")))
+```
+
+Going through `useStdin().setRawMode` rather than `process.stdin.setRawMode` directly is the deliberate
+choice: it keeps Ink's termios lifecycle (`app:104-131`), which P86b config E showed is **not** applied to
+raw mode Ink did not set. The cost is that Ink's `App.handleReadable` stays attached — harmless with no
+`useInput` hooks, but it is why `exitOnCtrlC: false` is mandatory rather than optional.
+
+What F2 then owns, none of which Ink provides: its own key-name parser over the raw bytes (the whole
+upstream table becomes expressible), its own ctrl+C policy, and the terminal modes from §2 (mouse, focus,
+bracketed paste) including their restore on unmount, suspend and crash.
+
+One consequence worth stating plainly: **the entire "aliased" and "misparsed" taxonomy in §4 is a
+`useInput` artifact, not a terminal or Ink-wide limit.** It describes the cost of the architecture F2 is
+being advised to abandon. Keep §1 as the record of why.
+
 ---
 
-## 5. Not determined
+## 5. Settled (was "not determined")
 
-- Whether a raw `stdin.on("data")` tap can recover non-UTF-8 bytes (X10 mouse coordinates past column 95)
-  after Ink sets `stdin.setEncoding('utf8')` at `app:114`. Our tap received strings throughout.
-- Whether an app that registers `useFocus` focusables changes the delivered `tab` / `shift+tab` events
-  (`app:152-158` runs first but does not suppress the `useInput` dispatch). Not exercised — the probe app
-  had no focusables.
-- Behaviour on Windows/ConPTY, and under terminfo other than `xterm-256color`. Only darwin +
-  `xterm-256color` was measured.
-- Whether Ink's `useStdin().stdin` can be consumed *instead of* `useInput` (bypassing the flattening
-  entirely) without breaking Ink's own ctrl+C and focus handling. Not probed; it is the obvious alternative
-  to a side-channel raw tap and should be settled before F2 commits to an architecture.
+Every item P86 could not settle has now been settled by the P86b follow-up, except one that is
+structurally out of reach on this machine.
+
+| P86 open question | settled answer | evidence |
+|---|---|---|
+| Can a raw listener recover non-UTF-8 bytes after Ink forces utf8? | **Yes, via `setEncoding("latin1")`** (or by never engaging Ink's `setRawMode`, which leaves real `Buffer`s). `setEncoding(null)` does *not* work. | §1.8 table, P86b configs C and E |
+| Does `useFocus` change the `tab`/`shift+tab` events `useInput` receives? | **No.** With focus demonstrably moving between two focusables, the events were byte-identical to the no-focusables case. | §1.3, P86b config D |
+| Does terminfo other than `xterm-256color` change anything? | **No.** A full `--term vt100` rerun was byte-identical. Ink's decoding is a hardcoded table, never a terminfo lookup. | preamble |
+| Can `useStdin().stdin` be consumed instead of `useInput`? | **Yes** — verbatim bytes, 1:1 chunking, rendering unaffected, terminal restored. This is now F2's recommended architecture. | §4.1, §6 |
+| Windows / ConPTY behaviour | **Still not determined**, and not settleable here: it requires a Windows host. `pty.fork` does not exist on Windows and ConPTY's input translation is a different code path from the POSIX pty measured throughout. |  |
+
+---
+
+## 6. P86b — the raw-stdin consumer, measured
+
+
+Five child configurations, same pty method, same environment. Config C is the one F2 should copy.
+
+| # | configuration | outcome |
+|---|---|---|
+| A | `useStdin().setRawMode(true)` + own `data` listener, `exitOnCtrlC: true` | works; **Ink still exits on ctrl+C** |
+| B | same, `exitOnCtrlC: false` | works; survives ctrl+C |
+| C | same as B + `stdin.setEncoding("latin1")` | works; **byte-perfect including non-UTF-8**; clean exit; terminal restored |
+| D | two `useFocus` focusables + a `useInput` logger | focus moves; `useInput` events unchanged |
+| E | `process.stdin.setRawMode(true)` directly, Ink's `setRawMode` never called, `exitOnCtrlC: true` | real `Buffer`s, byte-perfect; **no ctrl+C exit**; **termios NOT restored**; **process does not exit after unmount** |
+
+### (a) Do bytes arrive verbatim?
+
+**Yes — verbatim, with nothing consumed or stripped.** All fourteen ASCII test sequences arrived on the
+`data` listener with byte-for-byte identical hex to what was written, ESC included. The single leading-ESC
+strip P86 documented is a **`useInput`-layer effect only** (`ui:73-74`); it does not exist at the stream.
+`\x1b[H` arrives as `1b 5b 48`, not as `""`. `\x1b[200~ab\x1b[201~` arrives with both markers fully intact.
+`\x1f` arrives as `1f`.
+
+The one exception is encoding, not consumption: under Ink's forced utf8 the high bytes of an X10 mouse
+report are destroyed (§1.8). `setEncoding("latin1")` (config C) or bypassing Ink's `setRawMode` (config E)
+both give byte-perfect delivery.
+
+### (b) Do chunk boundaries match writes?
+
+**Yes, exactly 1:1.** Every write produced exactly one `data` event, in every row of every configuration —
+no coalescing, no splitting. Lengths matched too, except where the utf8 decoder rewrote high bytes
+(config B's X10 row: still one event, seven bytes instead of six). This matches
+§1.10's finding from the `useInput` side and confirms the boundary is the pty read, not anything Ink does.
+
+### (c) Does Ink still exit on ctrl+C with zero `useInput` hooks?
+
+**Yes — and this is the one real trap.** Config A registered no `useInput` anywhere, and feeding `\x03`
+still terminated the app. The reason: calling the *context's* `setRawMode` is what attaches Ink's own
+`'readable'` listener (`app:117-121`), and that listener runs `App.handleInput`, whose ctrl+C branch
+(`app:143-145`) is independent of `useInput` entirely.
+
+- `exitOnCtrlC: false` **does** stop it (config B survived).
+- Config E, which never calls the context's `setRawMode`, also never exits on ctrl+C — **even with
+  `exitOnCtrlC: true`** — confirming the exit is attached to Ink's listener, not to the render option.
+
+So F2 must pass `exitOnCtrlC: false` explicitly. It is not optional, and forgetting it means ctrl+C kills
+the app instead of interrupting a turn.
+
+Method note: an early run reported a false negative here. The high-byte X10 feed had been placed *before*
+the ctrl+C feed, and the lone `0xc8` left an incomplete sequence in Node's utf8 decoder which flushed as
+U+FFFD prepended to the next chunk — so Ink saw `"�\x03"`, its `input === '\x03'` test failed, and the
+app did not exit. Reordering the two feeds produced the correct result. The ordering is now load-bearing
+and commented as such in the driver.
+
+### (d) Does rendering still work?
+
+**Yes, unaffected.** The counter incremented once per chunk and repainted every time — 16 to 18 render
+frames per run, visible in the pty output as successive `P86B READY mode=raw events=N` lines. No
+focus-manager interference: config D showed the focus manager working normally *and* `useInput` receiving
+tab/shift+tab unchanged, so the two coexist rather than competing.
+
+### (e) What happens to raw mode on unmount?
+
+Measured as `tcgetattr` on the pty master at three points — before spawn, while the app was live, and after
+the child had exited. `lflags` before and after should match if the terminal was restored.
+
+| configuration | before | while live | after exit |
+|---|---|---|---|
+| A / B / C / D (`useStdin().setRawMode`) | `ICANON\|ECHO\|ISIG\|IEXTEN` | `(none)` — raw genuinely engaged | `ICANON\|ECHO\|ISIG\|IEXTEN` — **fully restored** |
+| E (direct `process.stdin.setRawMode`) | `ICANON\|ECHO\|ISIG\|IEXTEN` | `(none)` | **`(none)` — NOT restored** |
+
+So Ink restores termios it set (`app:94-99` → `app:126-130`), and does **not** restore raw mode it did not
+set. In config E the child deliberately skipped restoring it too, which is what makes the measurement
+meaningful: `App.componentWillUnmount` calls `handleSetRawMode(false)`, but that decrements
+`rawModeEnabledCount` from 0 to −1, so the `--count === 0` guard at `app:126` is false and
+`stdin.setRawMode(false)` is never reached. A direct consumer inherits full responsibility for the
+terminal — on unmount, on SIGINT/SIGTERM, on suspend, and on an uncaught exception.
+
+Config E surfaced a second cost, unprompted: **the process did not exit after unmount.** Having called
+`stdin.resume()` and attached a `data` listener ourselves, stdin stayed referenced and kept the event loop
+alive indefinitely; the driver had to SIGKILL it. A direct consumer must `pause()`/`unref()` stdin in its
+teardown. Configs A–D all exited cleanly on their own, because Ink's `setRawMode(false)` path calls
+`stdin.unref()` (`app:129`).
+
+Together, (c) and (e) are why §4.1 recommends going *through* `useStdin().setRawMode` rather than around
+it: the context path costs one mandatory render option, and the direct path costs the entire terminal
+lifecycle.
