@@ -200,6 +200,73 @@ describe("F1 run segmentation (R1.8)", () => {
   it("returns nothing for no atoms", () => expect(segmentRuns([], OPTIONS)).toEqual([]));
 });
 
+// F3 Task 3: the pending-thought buffer. Upstream `PMd` (bundle L302266–302272) pushes the thinking
+// message itself INTO the open accumulator and adds `min(Δt, rRo)` to its `thoughtForMs`, so the thought
+// belongs to whatever run is being accumulated at that moment and dies with the next flush. Our groups
+// are tool runs (a thought-only group has no members and is never emitted), so the equivalent is a HELD
+// contribution: applied at once to a run already open, buffered for the run that starts next, and
+// dropped by the very flushes that end upstream's accumulator — a breaker AND a standalone tool.
+describe("F3 thought attachment (upstream Ae_/PMd, cap rRo = 600000)", () => {
+  const thought = (sequence: number, ms: number, summary?: string): FoldAtom =>
+    ({ kind: "neutral", sequence, thoughtForMs: ms, ...(summary === undefined ? {} : { thinkingSummary: summary }) });
+  const firstGroup = (atoms: readonly FoldAtom[]) => { const first = segmentRuns(atoms, OPTIONS).find((i) => i.kind === "group"); return first?.kind === "group" ? first.group : undefined; };
+
+  it("attaches a held thought to the run that STARTS after it, as the first clause", () => {
+    const group = firstGroup([thought(1, 3200), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2 })), atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 3 }))]);
+    expect(group?.counts).toMatchObject({ thoughtForMs: 3200, readCount: 2 });
+    expect(joined(foldClauses(group!.counts, false))).toBe("Thought for 3s, read 2 files");
+  });
+
+  it("attaches to a run that is ALREADY open", () => {
+    const group = firstGroup([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })), thought(2, 5000), atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 3 }))]);
+    expect(group?.counts).toMatchObject({ thoughtForMs: 5000, readCount: 2 });
+  });
+
+  it("keeps the thought on the run it was open for when a breaker closes that run", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })), thought(2, 4000), { kind: "breaker", sequence: 3 },
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 4 }))], OPTIONS);
+    // The neutral atom is replayed straight after the group it interrupted (upstream's deferred buffer),
+    // so the breaker's own passthrough is third and the run it opens is fourth.
+    expect(items.map((i) => i.kind)).toEqual(["group", "passthrough", "passthrough", "group"]);
+    expect(items[0]).toMatchObject({ kind: "group", group: { counts: { thoughtForMs: 4000 } } });
+    expect(items[3]).toMatchObject({ kind: "group", group: { counts: { readCount: 1 } } });
+    expect((items[3] as { group: { counts: GroupCounts } }).group.counts.thoughtForMs).toBeUndefined();
+  });
+
+  it("DISCARDS a buffered thought on a breaker", () => {
+    const group = firstGroup([thought(1, 9000), { kind: "breaker", sequence: 2 }, atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 3 }))]);
+    expect(group?.counts.thoughtForMs).toBeUndefined();
+    expect(joined(foldClauses(group!.counts, false))).toBe("Read 1 file");
+  });
+
+  it("DISCARDS a buffered thought on a standalone (non-collapsible) tool, upstream's other flush", () => {
+    const items = segmentRuns([thought(1, 9000), atom(tool("Edit", { file_path: "/repo/a.ts" }, { sequence: 2 })), atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 3 }))], OPTIONS);
+    expect(items.map((i) => i.kind)).toEqual(["passthrough", "tool", "group"]);
+    expect((items[2] as { group: { counts: GroupCounts } }).group.counts.thoughtForMs).toBeUndefined();
+  });
+
+  it("renders nothing at all for a thought with no following run", () => {
+    const items = segmentRuns([thought(1, 12000)], OPTIONS);
+    expect(items).toEqual([{ kind: "passthrough", sequence: 1 }]);
+  });
+
+  it("sums consecutive thoughts and caps EACH contribution at 600000 ms", () => {
+    const group = firstGroup([thought(1, 900000), thought(2, 1500), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 3 }))]);
+    expect(group?.counts.thoughtForMs).toBe(601500);
+  });
+
+  it("ignores a neutral atom carrying no (or a zero) duration", () => {
+    expect(firstGroup([{ kind: "neutral", sequence: 1 }, atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2 }))])?.counts.thoughtForMs).toBeUndefined();
+    expect(firstGroup([thought(1, 0), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2 }))])?.counts.thoughtForMs).toBeUndefined();
+  });
+
+  it("carries the LATEST thinking summary onto the group (Task 4 consumes it)", () => {
+    const group = firstGroup([thought(1, 1000, "checking the config"), thought(2, 1000, "now reading it"), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 3 }))]);
+    expect(group?.latestThinkingSummary).toBe("now reading it");
+    expect(firstGroup([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 }))])?.latestThinkingSummary).toBeUndefined();
+  });
+});
+
 describe("F1 fold clauses (R3.8 + §3.4)", () => {
   it("capitalizes only the first clause and keeps counts bold", () => {
     expect(foldClauses(counts({ readCount: 2 }), false)).toEqual([{ text: "Read 2 files", boldRanges: [[5, 6]] }]);

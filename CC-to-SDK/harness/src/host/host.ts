@@ -193,7 +193,7 @@ export class SessionHost {
     // it, so a fresh client's status bar never shows a placeholder (spec §mode-sync).
     this.mode = resolvedPermissionMode(this.opts.config);
     try {
-      this.session = this.deps.openSession({ ...this.opts.config, permissionBroker: this.broker() });
+      this.session = this.deps.openSession(this.engineConfig());
       this.offFrame = this.session.onFrame?.((m) => this.onSessionFrame(m));
       this.server = new HostServer({
         status: () => this.status(),
@@ -317,6 +317,23 @@ export class SessionHost {
    *  session-scoped resets with it; the swap opens at the CURRENT runtime mode (`this.mode`) — see
    *  resumeSession's doc for why launch-config would be the worse surprise. Shared by resumeSession
    *  and rewind (the conversation-restore engine swap). */
+  /** The config every engine this host opens is built from — `start()` and `swapEngine()` both, so a
+   *  /resume or a rewind can never quietly drop something the first engine had.
+   *
+   *  F3 Task 3: `includePartialMessages` is opt-in in `resolveOptions` and no interactive front door set
+   *  it, so the shipped REPL received no `stream_event` frames at all — its streaming partial region
+   *  rendered nothing and the thinking clock had no duration source whatsoever (P82: the only anchors
+   *  that exist are the LOCAL ARRIVAL of `content_block_start`/`content_block_stop`, which travel on
+   *  exactly those frames). Both interactive front doors — the in-process foreground host and the
+   *  detached `--detachable` one a `ccx attach` client drives — are `kind:"interactive"`, and nothing
+   *  headless is, so keying on the kind turns the frames on for every TUI session while leaving `--bg`
+   *  workers' (and every library caller's) wire volume untouched. An explicit config value still wins in
+   *  both directions: this is a default, not an override. */
+  private engineConfig(extra: Partial<HarnessConfig> = {}): HarnessConfig {
+    const partials = this.opts.kind === "interactive" ? { includePartialMessages: this.opts.config.includePartialMessages ?? true } : {};
+    return { ...this.opts.config, ...partials, ...extra, permissionBroker: this.broker() };
+  }
+
   private async swapEngine(extra: Partial<HarnessConfig>): Promise<void> {
     const old = this.session;
     // Open the resumed engine at the CURRENT runtime mode (`this.mode`), not the launch config's. `this.mode`
@@ -326,7 +343,7 @@ export class SessionHost {
     // (re-seeding from resolvedPermissionMode instead) would be the OTHER obvious fix, but it throws away a
     // choice the user just made with no notice — the worse surprise of the two. This keeps the host's
     // reported mode and the engine's actual mode in agreement, which is the one invariant that must hold.
-    this.session = this.deps.openSession({ ...this.opts.config, ...extra, permissionMode: this.mode as HarnessConfig["permissionMode"], permissionBroker: this.broker() });
+    this.session = this.deps.openSession(this.engineConfig({ ...extra, permissionMode: this.mode as HarnessConfig["permissionMode"] }));
     this.turnBuffer.reset(); this.settledBy.clear();
     this.parentOf.clear(); this.subagentOf.clear();   // the old session's attribution is gone with it
     // Plan-review I1: the swap replaces `this.session` with a fresh Session whose subscriber set is

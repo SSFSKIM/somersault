@@ -147,6 +147,95 @@ describe("LiveTurn", () => {
   });
 });
 
+// F3 Task 3: the thinking clock. P82 found NO time-bearing field on any stream_event (only
+// `message_start.ttft_ms`, a duration), and the on-disk transcript keeps per-message FINISH stamps
+// only — so the one honest duration source is LOCAL ARRIVAL of `content_block_start` →
+// `content_block_stop`, keyed by (message id, block index) because `event.index` restarts at 0 on
+// every API message. Thinking-ness is latched at the START frame: `content_block_stop` carries no
+// block type at all.
+describe("LiveTurn thinking clock (P82 local arrival stamps)", () => {
+  const clocked = () => {
+    let t = 0;
+    return { lt: new LiveTurn({ now: () => t }), at: (ms: number) => { t = ms; } };
+  };
+  const startThinking = (lt: LiveTurn, index: number) => lt.ingest(se({ type: "content_block_start", index, content_block: { type: "thinking", thinking: "", signature: "" } }));
+
+  it("freezes a stopped block at its arrival span, under the message's own id", () => {
+    const { lt, at } = clocked();
+    at(1000);
+    lt.ingest(se({ type: "message_start", message: { id: "m1" } }));
+    startThinking(lt, 0);
+    at(4200);
+    lt.ingest(se({ type: "content_block_stop", index: 0 }));
+    expect(lt.thinkingDurations(4200).get("m1")).toBe(3200);
+    expect(lt.thinkingDurations(999999).get("m1")).toBe(3200);      // frozen: a later `now` cannot move it
+  });
+
+  it("keys by (message id, block index), so a second message re-using index 0 keys separately", () => {
+    const { lt, at } = clocked();
+    at(1000);
+    lt.ingest(se({ type: "message_start", message: { id: "m1" } }));
+    startThinking(lt, 0);
+    at(4200); lt.ingest(se({ type: "content_block_stop", index: 0 }));
+    at(5000);
+    lt.ingest(se({ type: "message_start", message: { id: "m2" } }));
+    startThinking(lt, 0);
+    at(5500); lt.ingest(se({ type: "content_block_stop", index: 0 }));
+    const d = lt.thinkingDurations(5500);
+    expect(d.get("m1")).toBe(3200);
+    expect(d.get("m2")).toBe(500);
+  });
+
+  it("sums several thinking blocks of ONE message", () => {
+    const { lt, at } = clocked();
+    lt.ingest(se({ type: "message_start", message: { id: "m1" } }));
+    at(100); startThinking(lt, 0);
+    at(600); lt.ingest(se({ type: "content_block_stop", index: 0 }));
+    at(700); startThinking(lt, 2);
+    at(900); lt.ingest(se({ type: "content_block_stop", index: 2 }));
+    expect(lt.thinkingDurations(900).get("m1")).toBe(700);
+  });
+
+  it("ticks an UNSTOPPED block with `now`, on top of the same message's frozen blocks", () => {
+    const { lt, at } = clocked();
+    lt.ingest(se({ type: "message_start", message: { id: "m1" } }));
+    at(0); startThinking(lt, 0);
+    at(1000); lt.ingest(se({ type: "content_block_stop", index: 0 }));
+    at(2000); startThinking(lt, 1);
+    expect(lt.thinkingDurations(2000).get("m1")).toBe(1000);        // the open block has run 0 ms so far
+    expect(lt.thinkingDurations(3500).get("m1")).toBe(2500);        // 1000 frozen + 1500 ticking
+  });
+
+  it("clocks NOTHING for a non-thinking block, and nothing for a stop with no start latched", () => {
+    const { lt, at } = clocked();
+    lt.ingest(se({ type: "message_start", message: { id: "m1" } }));
+    at(0); lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
+    at(9000); lt.ingest(se({ type: "content_block_stop", index: 0 }));
+    lt.ingest(se({ type: "content_block_stop", index: 7 }));
+    expect(lt.thinkingDurations(9000).size).toBe(0);
+  });
+
+  it("attributes nothing when the message_start carried no id (nothing to key on)", () => {
+    const { lt, at } = clocked();
+    lt.ingest(se({ type: "message_start" }));
+    at(0); startThinking(lt, 0);
+    at(3000); lt.ingest(se({ type: "content_block_stop", index: 0 }));
+    expect(lt.thinkingDurations(3000).size).toBe(0);
+  });
+
+  it("hands back a SNAPSHOT: a later block cannot mutate a map the caller already holds", () => {
+    const { lt, at } = clocked();
+    lt.ingest(se({ type: "message_start", message: { id: "m1" } }));
+    at(0); startThinking(lt, 0);
+    at(1000); lt.ingest(se({ type: "content_block_stop", index: 0 }));
+    const snapshot = lt.thinkingDurations(1000);
+    at(2000); startThinking(lt, 1);
+    at(6000); lt.ingest(se({ type: "content_block_stop", index: 1 }));
+    expect(snapshot.get("m1")).toBe(1000);
+    expect(lt.thinkingDurations(6000).get("m1")).toBe(5000);
+  });
+});
+
 describe("live and replay share ONE tool grammar", () => {
   afterEach(() => setTheme("auto"));
   // The cutover's whole point: the same fixture, ingested live off the host event stream or read back off

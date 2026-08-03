@@ -43,7 +43,12 @@ export type RenderItem =
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
  *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). */
 export type ResultProjection = "compact" | "detail-all" | "detail-collapsed";
-export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; }
+/** `thoughtMs` (F3 Task 3) is the caller's LIVE thinking clock: sdk message identity (`message:<id>`) →
+ *  locally clocked thinking ms, produced by `LiveTurn` and retained by `useChat` across turn end. It is a
+ *  projection input rather than document state on purpose — P82 proved the durations exist nowhere on the
+ *  wire or on disk, so a rewound/resumed/attached document must show no clause at all, which an absent
+ *  map entry already achieves. */
+export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; }
 export interface FoldOptions { projection: ResultProjection; compactRows: number; revealOneExtraWithoutMarker: boolean; }
 
 /** Upstream's exact interruption surface — the row is a prompt, not a copy of whatever partial output arrived. */
@@ -337,7 +342,11 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
  *  own sequence immediately — so a `/help` that lands between a call and its result enters Static first and
  *  the finalized tool unit follows it. Rank breaks the one real tie: the user message carrying a
  *  `tool_result` shares its sequence with the unit that result completes. */
-type Anchored = { sequence: number; rank: number; items: readonly RenderItem[]; atom?: "breaker" | "neutral"; event?: ToolEvent };
+/** `identity`/`thinking` are the F3 thinking clock's two document-derived halves, computed once in
+ *  `buildAnchoredEntries` (both are pure functions of the retained message, so they are cache-safe — the
+ *  live DURATION is not, and enters strictly later, in `foldAtoms`). `thinking` doubles as upstream
+ *  `Ae_`'s predicate: it is set only for a message whose FIRST content block is non-blank thinking. */
+type Anchored = { sequence: number; rank: number; items: readonly RenderItem[]; atom?: "breaker" | "neutral"; event?: ToolEvent; identity?: string; thinking?: string };
 /** The sentinels upstream renders in place of a reply: they are chatter, never the "real assistant text" that
  *  ends a run (§1.3). */
 const SENTINEL_TEXT = new Set(["(no content)", "No response requested."]);
@@ -358,6 +367,27 @@ function entryAtom(entry: TranscriptEntry, items: readonly RenderItem[]): "break
   return real ? "breaker" : "neutral";
 }
 
+/** The sdk message's OWN identity, `message:<message.id>` — deliberately not `entry.identity`, which
+ *  prefers the frame `uuid` when one is present (transcriptModel's `identityOf`) and so would never match
+ *  a clock keyed by the API message id every partial frame carries. A NESTED (subagent) message is
+ *  excluded: its blocks belong to its own turn, and letting its id key a duration would attach a
+ *  subagent's thinking to the parent's run. */
+function sdkMessageIdentity(message: Record<string, unknown>): string | undefined {
+  if (message.type !== "assistant" || isNested(message)) return undefined;
+  const inner = message.message, id = isRecord(inner) ? inner.id : undefined;
+  return typeof id === "string" && id.length > 0 ? `message:${id}` : undefined;
+}
+/** Upstream `Ae_` (L302003–302010): a message is thought-bearing only when its FIRST content block is a
+ *  `thinking` block whose text is not blank. The summary is that text's first line, whitespace-collapsed
+ *  (upstream collapses the whole text; Task 4 renders whichever it is given). */
+function thinkingSummaryOf(message: Record<string, unknown>): string | undefined {
+  const inner = message.message, content = isRecord(inner) && Array.isArray(inner.content) ? inner.content : [];
+  const first = content[0];
+  if (!isRecord(first) || first.type !== "thinking" || typeof first.thinking !== "string") return undefined;
+  const text = first.thinking.trim();
+  return text === "" ? undefined : text.split("\n")[0]!.trim().replace(/\s+/g, " ");
+}
+
 function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionOptions): Anchored[] {
   const anchored: Anchored[] = [];
   const occurrences = new Map<string, number>();
@@ -367,7 +397,11 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
     const occurrence = occurrences.get(key) ?? 0;
     occurrences.set(key, occurrence + 1);
     const items = projectMessageEntry(entry, options, entry.identity ?? `${key}:${occurrence}`);
-    anchored.push({ sequence: entry.sequence, rank: 0, items, atom: entryAtom(entry, items) });
+    const identity = sdkMessageIdentity(entry.message), thinking = identity === undefined ? undefined : thinkingSummaryOf(entry.message);
+    anchored.push({
+      sequence: entry.sequence, rank: 0, items, atom: entryAtom(entry, items),
+      ...(identity === undefined || thinking === undefined ? {} : { identity, thinking }),
+    });
   }
   return anchored;
 }
@@ -428,11 +462,21 @@ function projectAll(document: TranscriptDocument, options: ProjectionOptions): r
  *  summary into two adjacent rows with an invisible seam between them — a bug on screen, not fidelity.
  *  `inert` is the second reason an anchor stops being a tool: a call the compact projection has already
  *  PUBLISHED must not re-enter the dynamic region's fold (see `projectPending`). */
-function foldAtoms(anchored: readonly Anchored[], inert?: (event: ToolEvent) => boolean): FoldAtom[] {
-  return anchored.map((a, index) =>
-    a.event !== undefined && !isSuppressedTool(a.event.name) && !(inert?.(a.event) ?? false)
-      ? { kind: "tool", event: a.event }
-      : { kind: a.atom ?? "neutral", sequence: index });
+function foldAtoms(anchored: readonly Anchored[], thoughtMs?: ReadonlyMap<string, number>, inert?: (event: ToolEvent) => boolean): FoldAtom[] {
+  // One duration per MESSAGE, spent once. The engine emits one assistant frame per content block and all
+  // of them share a single `message.id` (P82), while `LiveTurn` already sums every thinking block of that
+  // id — so a message that arrived as two thinking frames would otherwise stamp its whole total twice.
+  const spent = new Set<string>();
+  return anchored.map((a, index): FoldAtom => {
+    if (a.event !== undefined && !isSuppressedTool(a.event.name) && !(inert?.(a.event) ?? false)) return { kind: "tool", event: a.event };
+    if (a.atom === "breaker") return { kind: "breaker", sequence: index };
+    // The thinking clock's one gate: a thought-bearing message (`a.thinking`) the caller's LIVE map has a
+    // duration for. A disk-bootstrapped, replayed or attached entry is never in that map, so it earns no
+    // clause without a single replay-side branch.
+    const ms = a.identity === undefined || a.thinking === undefined || spent.has(a.identity) ? undefined : thoughtMs?.get(a.identity);
+    if (ms !== undefined) spent.add(a.identity!);
+    return { kind: "neutral", sequence: index, ...(ms === undefined ? {} : { thoughtForMs: ms, thinkingSummary: a.thinking }) };
+  });
 }
 
 /** The trailing run is the one accumulator `segmentRuns` flushes at the very end, and it is still GROWABLE:
@@ -457,7 +501,7 @@ function trailingRunCut(atoms: readonly FoldAtom[], items: readonly { kind: stri
  *  `passthrough` maps straight back to the entry's already-projected items — and `segmentRuns` decides which
  *  contiguous runs collapse. */
 function foldAnchored(anchored: readonly Anchored[], options: ProjectionOptions): readonly RenderItem[] {
-  const atoms = foldAtoms(anchored);
+  const atoms = foldAtoms(anchored, options.thoughtMs);
   const standalone = new Map<ToolEvent, readonly RenderItem[]>(anchored.flatMap((a) => (a.event ? [[a.event, a.items] as const] : [])));
   const folded = segmentRuns(atoms, { cwd: options.cwd, home: options.home });
   const out: RenderItem[] = [];
@@ -510,13 +554,13 @@ export function projectPending(document: TranscriptDocument, options: Projection
   const fold = { cwd: options.cwd, home: options.home };
   // What Static already holds: the same fold the compact projection runs (open calls inert there, exactly as
   // `projectAll` omits them), minus the trailing run it withholds.
-  const settledAtoms = foldAtoms(anchored, (event) => !event.result);
+  const settledAtoms = foldAtoms(anchored, options.thoughtMs, (event) => !event.result);
   const settled = segmentRuns(settledAtoms, fold);
   const published = new Set<string>();
   for (const item of settled.slice(0, trailingRunCut(settledAtoms, settled)))
     if (item.kind === "group") for (const id of item.group.memberIds) published.add(id);
   const items: RenderItem[] = [];
-  for (const item of segmentRuns(foldAtoms(anchored, (event) => published.has(event.id)), fold)) {
+  for (const item of segmentRuns(foldAtoms(anchored, options.thoughtMs, (event) => published.has(event.id)), fold)) {
     if (item.kind === "group") { items.push(...groupItems(item.group, item.group.open ? "active" : "unclosed", full)); continue; }
     // A COMPLETED standalone tool is already published (only groups are ever withheld); only an open one has a row here.
     if (item.kind === "tool" && !item.event.result) items.push(...reid(renderToolEvent(item.event, normalizeToolResult(item.event, { verbose: false }), full), item.event.id, "pending"));

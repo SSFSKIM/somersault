@@ -464,3 +464,57 @@ describe("F1 anchored-stream memoization", () => {
     expect(spy).toHaveBeenCalledTimes(0);
   });
 });
+
+// F3 Task 3: the thinking clock reaches the group row. The durations are LIVE-ONLY state (P82: the wire
+// carries no timestamps and the disk transcript none at all), so they travel as a projection-time map
+// keyed by the sdk message identity — deliberately OUTSIDE the anchored cache, which is keyed by document
+// revision × theme and would otherwise serve a stale clause for a whole blink epoch.
+describe("F3 thought clause on the collapsed group row", () => {
+  afterEach(() => { vi.restoreAllMocks(); setTheme("auto"); });
+  /** The ubiquitous live shape: ONE assistant message whose first block is the thinking that preceded the
+   *  call it carries (upstream `Ae_` reads exactly that first block). */
+  const thinkingCall = (id: string, input: unknown, messageId: string, thinking: string) =>
+    ({ type: "assistant", message: { id: messageId, content: [{ type: "thinking", thinking, signature: "sig" }, { type: "tool_use", id, name: "Read", input }] } }) as Record<string, unknown>;
+  const thoughtMs = (entries: Record<string, number>) => new Map(Object.entries(entries));
+
+  it("renders `Thought for Ns` FIRST on the group that follows the thinking message", () => {
+    const doc = built(thinkingCall("read-1", { file_path: "/work/a.ts" }, "m1", "Checking the config"), result("read-1"), prose("done"));
+    const rows = groupRows(projectCompact(doc, { ...context, thoughtMs: thoughtMs({ "message:m1": 3200 }) }));
+    expect((rows[0] as { line: RenderLine }).line.text).toBe("  Thought for 3s, read 1 file (ctrl+o to expand)");
+  });
+
+  it("renders NO clause for the same document with no map entry — the replay/disk-bootstrap rule, for free", () => {
+    const doc = built(thinkingCall("read-1", { file_path: "/work/a.ts" }, "m1", "Checking the config"), result("read-1"), prose("done"));
+    expect((groupRows(projectCompact(doc, context))[0] as { line: RenderLine }).line.text).toBe("  Read 1 file (ctrl+o to expand)");
+    const other = { ...context, thoughtMs: thoughtMs({ "message:someone-else": 9000 }) };
+    expect((groupRows(projectCompact(doc, other))[0] as { line: RenderLine }).line.text).toBe("  Read 1 file (ctrl+o to expand)");
+  });
+
+  it("never enters the anchored cache: the SAME document at the SAME revision follows a moving duration", () => {
+    const doc = built(thinkingCall("read-1", { file_path: "/work/a.ts" }, "m1", "Checking the config"));
+    const spy = vi.spyOn(projectionDeps, "buildAnchored");
+    const at = (ms: number) => lineTexts(projectPending(doc, { ...context, thoughtMs: thoughtMs({ "message:m1": ms }) }));
+    expect(at(3200)).toEqual(["⏺ Thinking for 3s, reading 1 file… (ctrl+o to expand)"]);
+    expect(at(9000)).toEqual(["⏺ Thinking for 9s, reading 1 file… (ctrl+o to expand)"]);
+    expect(spy).toHaveBeenCalledTimes(1);                    // the stream itself was still built once
+  });
+
+  it("requires the FIRST content block to be non-blank thinking (upstream `Ae_`)", () => {
+    const trailing = { type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/work/a.ts" } }, { type: "thinking", thinking: "after" }] } } as Record<string, unknown>;
+    const blank = thinkingCall("read-2", { file_path: "/work/b.ts" }, "m2", "   \n ");
+    const doc = built(trailing, result("read-1"), blank, result("read-2"), prose("done"));
+    const rows = groupRows(projectCompact(doc, { ...context, thoughtMs: thoughtMs({ "message:m1": 3200, "message:m2": 4000 }) }));
+    expect((rows[0] as { line: RenderLine }).line.text).toBe("  Read 2 files (ctrl+o to expand)");
+  });
+  it("spends one message's duration ONCE, however many frames that message arrived as", () => {
+    // P82: the engine emits one assistant frame per content block and they SHARE a `message.id`, while
+    // LiveTurn already sums every thinking block of that id — so two thinking frames of one message must
+    // not book the same total twice.
+    const thinkingFrame = (uuid: string, thinking: string) =>
+      ({ type: "assistant", uuid, message: { id: "m1", content: [{ type: "thinking", thinking, signature: "sig" }] } }) as Record<string, unknown>;
+    const doc = built(thinkingFrame("f1", "first"), thinkingFrame("f2", "second"),
+      call("read-1", "Read", { file_path: "/work/a.ts" }, "m1"), result("read-1"), prose("done"));
+    const rows = groupRows(projectCompact(doc, { ...context, thoughtMs: thoughtMs({ "message:m1": 3200 }) }));
+    expect((rows[0] as { line: RenderLine }).line.text).toBe("  Thought for 3s, read 1 file (ctrl+o to expand)");
+  });
+});

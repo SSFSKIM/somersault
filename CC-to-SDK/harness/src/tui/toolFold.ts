@@ -181,16 +181,26 @@ function formatDuration(ms: number): string {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
-export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; sequence: number } | { kind: "neutral"; sequence: number };
+/** A `neutral` atom carries the F3 thinking clock: `thoughtForMs` is the LOCALLY CLOCKED duration of the
+ *  thinking blocks of the assistant message this atom stands for (P82 — the wire has no timestamps, and a
+ *  replayed message therefore carries none), `thinkingSummary` its first line, which rides to Task 4. */
+export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; sequence: number } | { kind: "neutral"; sequence: number; thoughtForMs?: number; thinkingSummary?: string };
 export type GroupCounts = { readCount: number; searchCount: number; listCount: number; mcpCallCount: number; mcpServerNames: readonly string[]; thoughtForMs?: number };
-export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorSequence: number; open: boolean }
+export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorSequence: number; open: boolean; latestThinkingSummary?: string }
 export type FoldItem = { kind: "group"; group: FoldGroup } | { kind: "tool"; event: ToolEvent } | { kind: "passthrough"; sequence: number };
+
+/** Upstream `rRo` (L302645): the per-contribution ceiling on a thought. Upstream measures a message GAP,
+ *  so a conversation resumed hours later would otherwise book the whole wait as thinking; we measure one
+ *  block's own arrival span, but the clamp is kept — a turn parked on a permission decision mid-thinking
+ *  is the same failure mode. */
+const THOUGHT_CAP_MS = 600000;
 
 interface RunState {
   readFilePaths: Set<string>; readOperationCount: number; searchCount: number; listCount: number;
   mcpCallCount: number; mcpServerNames: string[]; memberIds: string[]; anchorSequence: number; open: boolean; hint?: string;
+  thoughtForMs: number; latestThinkingSummary?: string;
 }
-const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorSequence: 0, open: false });
+const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorSequence: 0, open: false, thoughtForMs: 0 });
 
 /** Upstream `PMd`'s accumulator branch chain (L302194–302256) for the reachable kinds. The `readCount` quirk lives in
  *  `emit`, not here: paths and operations are counted separately and only ONE of them survives (R1.5). */
@@ -218,9 +228,16 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
   if (path !== undefined) { run.readFilePaths.add(path); run.hint = displayPath(path, options.cwd, options.home); return; }
   run.readOperationCount++; if (command !== undefined) run.hint = commandHint(command);
 }
+/** Upstream `ke_` (L302122–302156) copies both thinking fields onto the collapsed message, and BOTH only
+ *  when they are populated (`if (e.thoughtForMs > 0)`, `if (e.latestThinkingSummary !== void 0)`) — which
+ *  is what keeps `foldClauses` from emitting a `Thought for 0s` clause on an ordinary run. */
 const emit = (run: RunState): FoldGroup => ({
-  counts: { readCount: run.readFilePaths.size > 0 ? run.readFilePaths.size : run.readOperationCount, searchCount: run.searchCount, listCount: run.listCount, mcpCallCount: run.mcpCallCount, mcpServerNames: run.mcpServerNames },
+  counts: {
+    readCount: run.readFilePaths.size > 0 ? run.readFilePaths.size : run.readOperationCount, searchCount: run.searchCount, listCount: run.listCount,
+    mcpCallCount: run.mcpCallCount, mcpServerNames: run.mcpServerNames, ...(run.thoughtForMs > 0 ? { thoughtForMs: run.thoughtForMs } : {}),
+  },
   ...(run.hint === undefined ? {} : { hint: run.hint }), memberIds: run.memberIds, anchorSequence: run.anchorSequence, open: run.open,
+  ...(run.latestThinkingSummary === undefined ? {} : { latestThinkingSummary: run.latestThinkingSummary }),
 });
 
 /** Upstream `PMd` (L302172–302284). `atoms` must already be in transcript order. A group is emitted at the position
@@ -228,17 +245,35 @@ const emit = (run: RunState): FoldGroup => ({
  *  upstream's deferred buffer `i` (L302273–302277). Errors are not a boundary and not a counter adjustment (R5.2). */
 export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; home: string }): readonly FoldItem[] {
   const out: FoldItem[] = []; let run = newRun(), deferred: FoldItem[] = [];
+  // The PENDING-THOUGHT buffer (F3 Task 3). Upstream pushes the thinking message straight into the open
+  // accumulator, so the thought belongs to the run being accumulated and is lost at its next flush. Our
+  // groups are tool runs and cannot exist without a member, so a thought that arrives with no run open is
+  // HELD for the one that starts next — and dropped by any flush before it, exactly as upstream loses it.
+  let pending: { ms: number; summary?: string } | undefined;
+  const applyThought = (ms: number, summary: string | undefined) => {
+    run.thoughtForMs += ms;
+    if (summary !== undefined) run.latestThinkingSummary = summary;
+  };
   const flush = () => {
+    pending = undefined;
     if (run.memberIds.length === 0) return;
     out.push({ kind: "group", group: emit(run) }); out.push(...deferred); deferred = []; run = newRun();
   };
   for (const atom of atoms) {
     if (atom.kind === "tool") {
       const fold = classifyToolEvent(atom.event);
-      if (fold.collapsible) { absorb(run, atom.event, fold.kind, options); continue; }
+      if (fold.collapsible) {
+        if (pending !== undefined) { applyThought(pending.ms, pending.summary); pending = undefined; }
+        absorb(run, atom.event, fold.kind, options); continue;
+      }
       flush(); out.push({ kind: "tool", event: atom.event }); continue;
     }
     if (atom.kind === "neutral") {
+      const ms = atom.thoughtForMs === undefined ? 0 : Math.min(atom.thoughtForMs, THOUGHT_CAP_MS);
+      // Already open ⇒ the thought is this run's now; nothing open ⇒ hold it, summing consecutive thoughts
+      // the way upstream's `o.thoughtForMs +=` does, with the LATEST summary winning.
+      if (ms > 0 && run.memberIds.length > 0) applyThought(ms, atom.thinkingSummary);
+      else if (ms > 0) pending = { ms: (pending?.ms ?? 0) + ms, ...((atom.thinkingSummary ?? pending?.summary) === undefined ? {} : { summary: atom.thinkingSummary ?? pending?.summary }) };
       (run.memberIds.length > 0 ? deferred : out).push({ kind: "passthrough", sequence: atom.sequence }); continue;
     }
     flush(); out.push({ kind: "passthrough", sequence: atom.sequence });

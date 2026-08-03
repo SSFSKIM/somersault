@@ -25,8 +25,39 @@ export class LiveTurn {
   model?: string;                      // captured from the first assistant frame's message.model
   private committedTokens = 0;         // summed output tokens of completed messages this turn
   private currentMsgTokens = 0;        // running output tokens of the in-flight message (message_delta usage, resets per message)
+  // ── F3 Task 3: the thinking clock ────────────────────────────────────────────────────────────────
+  // P82: NO stream_event frame carries a time-bearing field (`message_start.ttft_ms` is a duration, not
+  // a clock), and the on-disk transcript keeps per-message FINISH stamps only — so the honest duration
+  // source is LOCAL ARRIVAL, measured here, which the probe showed tracks the wire to within 1–14 ms
+  // over an 8.5 s span (the SDK spawns the CLI on this very host; it is the same clock).
+  private msgId?: string;                                 // id of the API message currently streaming (message_start)
+  private openThinking = new Map<string, number>();       // `${msgId}:${index}` → local arrival of its content_block_start
+  private thoughtMs = new Map<string, number>();          // message id → summed ms of its STOPPED thinking blocks
+  private clock: () => number;
+  /** `now` is injected for the same reason the projection's is: a test (and the frame-capture fixture)
+   *  has to pin arrival stamps that would otherwise read the host wall clock. */
+  constructor(deps: { now?: () => number } = {}) { this.clock = deps.now ?? (() => Date.now()); }
   /** Real running output-token count for the WHOLE turn (committed messages + the in-flight one). */
   get outputTokens(): number { return this.committedTokens + this.currentMsgTokens; }
+
+  /** Assistant `message.id` → total thinking ms observed on THIS turn's wire. A stopped block is frozen at
+   *  its `content_block_stop` arrival; a block still open reports elapsed-so-far against `now`, so a caller
+   *  repainting on its own clock gets a ticking value without this class owning a timer. A SNAPSHOT: the
+   *  caller (useChat's persistent map) keeps what it merged even after this turn is gone. */
+  thinkingDurations(now: number): ReadonlyMap<string, number> {
+    const out = new Map(this.thoughtMs);
+    for (const [key, startedAt] of this.openThinking) {
+      const id = key.slice(0, key.lastIndexOf(":"));
+      out.set(id, (out.get(id) ?? 0) + Math.max(0, now - startedAt));
+    }
+    return out;
+  }
+  /** `event.index` restarts at 0 on EVERY API message (P82's hard constraint — an index-only key silently
+   *  overwrites the earlier block), so the timer key is the pair. No message id ⇒ nothing to attribute the
+   *  duration to, so the block is not clocked at all. */
+  private blockKey(index: unknown): string | undefined {
+    return this.msgId !== undefined && typeof index === "number" ? `${this.msgId}:${index}` : undefined;
+  }
 
   /** Feed one frame from the host event stream. Ignores every frame that is not a partial or a completed
    *  assistant/user message. */
@@ -56,11 +87,20 @@ export class LiveTurn {
   private find(index: number): Block | undefined { return this.current.find((b) => b.index === index); }
 
   private onStreamEvent(e: any): void {
-    if (e.type === "message_start") { this.committedTokens += this.currentMsgTokens; this.currentMsgTokens = 0; this.current = []; return; }
+    if (e.type === "message_start") {
+      this.committedTokens += this.currentMsgTokens; this.currentMsgTokens = 0; this.current = [];
+      this.msgId = typeof e.message?.id === "string" && e.message.id ? e.message.id : undefined;
+      return;
+    }
     if (e.type === "content_block_start") {
       collapseThinking(this.current);                            // any new block collapses prior thinking
       const i = e.index, cb = e.content_block ?? {};
-      if (cb.type === "thinking") this.current.push({ kind: "thinking", index: i, text: "", collapsed: false });
+      // Thinking-ness is LATCHED here: `content_block_stop` carries no block type (P82), so a stop that
+      // finds no latched start is simply not a thinking block.
+      if (cb.type === "thinking") {
+        const key = this.blockKey(i); if (key !== undefined) this.openThinking.set(key, this.clock());
+        this.current.push({ kind: "thinking", index: i, text: "", collapsed: false });
+      }
       else if (cb.type === "text") this.current.push({ kind: "text", index: i, text: "" });
       // tool_use partials are NOT tracked: the open call reaches the screen through projectPending, off the
       // retained document, the moment the complete assistant message lands.
@@ -74,8 +114,17 @@ export class LiveTurn {
       // input_json_delta / signature_delta → ignored
       return;
     }
+    if (e.type === "content_block_stop") {
+      const key = this.blockKey(e.index), startedAt = key === undefined ? undefined : this.openThinking.get(key);
+      if (key !== undefined && startedAt !== undefined) {
+        this.openThinking.delete(key);
+        const id = this.msgId!;
+        this.thoughtMs.set(id, (this.thoughtMs.get(id) ?? 0) + Math.max(0, this.clock() - startedAt));
+      }
+      return;
+    }
     if (e.type === "message_delta" && e.usage && typeof e.usage.output_tokens === "number") this.currentMsgTokens = e.usage.output_tokens;
-    // content_block_stop / message_stop → no-op
+    // message_stop → no-op
   }
 
   private renderBlock(b: Block): RenderLine[] {

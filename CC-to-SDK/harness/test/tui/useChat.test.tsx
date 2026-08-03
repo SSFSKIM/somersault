@@ -1756,3 +1756,82 @@ describe("useChat: one retained document behind every surface", () => {
     await waitFor(() => frame(lastFrame).includes("IDLE"));
   });
 });
+
+// F3 Task 3: the thinking clock's LIFETIME. The durations are produced by the turn's `LiveTurn` and the
+// turn's `LiveTurn` is thrown away at `turn:end` — but the group row it belongs to outlives the turn (it
+// stays in the transient region until a breaker publishes it, and then it is an immutable Static row), so
+// useChat keeps its own map and merges into it on every repaint AND once at turn end, before the LiveTurn
+// is dropped. A document swap clears it, which IS the replay-omission rule P82 requires.
+describe("useChat: the thinking clock survives the turn that measured it", () => {
+  const streamEvent = (event: unknown) => ({ kind: "message" as const, data: { type: "stream_event", event } });
+  /** ONE assistant message carrying the thinking that preceded the call — the live shape (the engine emits
+   *  one frame per content block, but our document retains whatever the host forwards). */
+  const THINKING_READ = { type: "assistant", message: { id: "m1", content: [
+    { type: "thinking", thinking: "Checking the config first", signature: "sig" },
+    { type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/work/a.ts" } },
+  ] } };
+  const READ_DONE = { type: "user", uuid: "u-read-1", message: { content: [{ type: "tool_result", tool_use_id: "read-1", content: "ok" }] } };
+
+  function ClockHost({ fake, clock }: { fake: FakeRemote; clock: { now: number } }) {
+    const c = useChat(() => fake, { cwd: "/work" }, { now: () => clock.now, home: "/home/me", platform: "darwin", columns: () => 100 });
+    return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>;
+  }
+
+  it("keeps `Thought for Ns` on the settled group row after the turn ends", async () => {
+    const fake = fakeRemote(), clock = { now: 1000 };
+    const { lastFrame } = render(<ClockHost fake={fake} clock={clock} />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent(streamEvent({ type: "message_start", message: { id: "m1" } }));
+    fake.pushEvent(streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }));
+    clock.now = 4200;
+    fake.pushEvent(streamEvent({ type: "content_block_stop", index: 0 }));
+    fake.pushEvent({ kind: "message", data: THINKING_READ });
+    fake.pushEvent({ kind: "message", data: READ_DONE });
+    await waitFor(() => frame(lastFrame).includes("Thought for 3s, read 1 file"));   // settled: past-tense clauses
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    // The LiveTurn that measured it is gone; the row must not lose its clause.
+    expect(frame(lastFrame)).toContain("Thought for 3s, read 1 file");
+    // …and it must survive publication into Static, which only a breaker triggers.
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "m2", content: [{ type: "text", text: "all done" }] } } });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 2 });
+    await waitFor(() => frame(lastFrame).includes("all done"));
+    expect(frame(lastFrame)).toContain("Thought for 3s, read 1 file");
+  });
+
+  it("shows no clause at all when the run was never live-clocked (a replayed/attached transcript)", async () => {
+    const fake = fakeRemote(), clock = { now: 1000 };
+    const { lastFrame } = render(<ClockHost fake={fake} clock={clock} />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: THINKING_READ });          // the same messages, no stream_event frames
+    fake.pushEvent({ kind: "message", data: READ_DONE });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("Read 1 file"));
+    expect(frame(lastFrame)).not.toContain("Thought for");
+  });
+  it("freezes a block still OPEN at turn end — the last read of a clock that is about to be dropped", async () => {
+    const fake = fakeRemote(), clock = { now: 1000 };
+    const { lastFrame } = render(<ClockHost fake={fake} clock={clock} />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent(streamEvent({ type: "message_start", message: { id: "m1" } }));
+    fake.pushEvent(streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }));
+    fake.pushEvent({ kind: "message", data: THINKING_READ });      // no content_block_stop: the turn is cut short
+    fake.pushEvent({ kind: "message", data: READ_DONE });
+    await waitFor(() => frame(lastFrame).includes("read 1 file") || frame(lastFrame).includes("Read 1 file"));
+    expect(frame(lastFrame)).not.toContain("Thought for");         // 0 ms elapsed so far
+    clock.now = 9000;
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    // Only the turn-end merge can have captured this: the LiveTurn is gone by the time the next
+    // projection runs, and the block never stopped.
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "m2", content: [{ type: "text", text: "all done" }] } } });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 2 });
+    await waitFor(() => frame(lastFrame).includes("all done"));
+    expect(frame(lastFrame)).toContain("Thought for 8s, read 1 file");
+  });
+});

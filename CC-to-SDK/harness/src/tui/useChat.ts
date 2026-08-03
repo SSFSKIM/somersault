@@ -82,7 +82,7 @@ export function useChat(
   const columnsFn = deps.columns ?? (() => process.stdout.columns ?? 80);
   const scheduleRepaint = deps.scheduleRepaint ?? ((cb: () => void, ms: number) => { const id = setInterval(cb, ms); return () => clearInterval(id); });
   const home = deps.home ?? homedir(), platform = deps.platform ?? process.platform;
-  const projectionContext = (): ProjectionContext => ({ cwd, home, platform, columns: columnsFn(), now: nowFn() });
+  const projectionContext = (): ProjectionContext => ({ cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current });
   // ── The ONE retained transcript document (F1 Task 4). Every visible row — live, replay, attach, resume,
   // rewind, Ctrl-O — is projected from it; `publishedIds` is what makes reconciliation append-only, so a
   // duplicate follow record, a rehydration or a redelivered bootstrap entry can never publish a row twice.
@@ -106,6 +106,16 @@ export function useChat(
   // nothing was executing.
   const liveOpenIds = useRef<Set<string>>(new Set());
   const [liveOpen, setLiveOpen] = useState(false);   // mirror of `liveOpenIds.current.size > 0` — a ref alone can't re-run the blink effect
+  const liveTurnRef = useRef<LiveTurn | null>(null);   // the in-flight turn's renderer (event-driven). Declared HERE, above the
+  // first projection, because that projection's `mergeThoughtMs` reads it during the initial render.
+  // F3 Task 3: the thinking clock's durations, `message:<id>` → locally clocked ms. Owned HERE rather than
+  // by the LiveTurn that measures them, because the row they belong to outlives the turn: a fold group
+  // stays in the transient region until a breaker publishes it, and once published it is an immutable
+  // Static row that can never be re-rendered. `liveTurnRef` is nulled at turn end, so a duration read only
+  // from there would take the `Thought for Ns` clause off screen the moment the turn finished. Cleared on
+  // a document swap (rewind/resume/clear) — which IS P82's replay rule: durations exist nowhere on the
+  // wire or on disk, so a rebuilt transcript must show no clause rather than a fabricated one.
+  const thoughtMsRef = useRef<Map<string, number>>(new Map());
   const [staticItems, setStaticItems] = useState<readonly RenderItem[]>(() => {
     const items = projectCompact(documentRef.current!, projectionContext());
     for (const item of items) publishedIds.current.add(item.id);
@@ -122,7 +132,6 @@ export function useChat(
   const [pendingQueue, setPendingQueue] = useState<PendingDecision[]>([]);
   const pendingQueueRef = useRef<PendingDecision[]>([]); pendingQueueRef.current = pendingQueue;
   const answeredIds = useRef<Set<string>>(new Set());     // toolUseIDs THIS client answered — dropPending consults it, not the wire's `by` label
-  const liveTurnRef = useRef<LiveTurn | null>(null);       // the in-flight turn's renderer (event-driven)
   const [mode, setMode] = useState(opts.initialMode ?? "default");
   const modeRef = useRef(mode); modeRef.current = mode;    // read inside the event effect without re-subscribing on every mode change
   const [busy, setBusy] = useState(false);
@@ -210,8 +219,20 @@ export function useChat(
    *  to immutable `staticItems` in projection order, then remember those ids. Tool units, assistant text,
    *  local visual output, dividers and later non-tool items all reconcile the same way, so a duplicate
    *  follow event cannot append any of them again. An OPEN call is never inserted into Static. */
+  /** Copy whatever the in-flight turn has clocked so far into the map that outlives it. An unstopped block
+   *  reports elapsed-so-far, so repeated merges make its value grow and the LAST merge — the one at turn
+   *  end — is what it freezes at. Keyed by the sdk MESSAGE identity the projection matches on
+   *  (`transcriptModel`'s `identityOf` prefers the frame uuid, which no partial frame carries). */
+  function mergeThoughtMs(): void {
+    const live = liveTurnRef.current;
+    if (!live) return;
+    for (const [id, ms] of live.thinkingDurations(nowFn())) thoughtMsRef.current.set(`message:${id}`, ms);
+  }
   function reconcile(): void {
     if (disposed.current) return;
+    // BEFORE the projection, not after: a group row's item id is derived from its membership alone, so a
+    // run published into append-only Static with a stale (or missing) duration could never be corrected.
+    mergeThoughtMs();
     const context = projectionContext();
     const finalized = projectCompact(documentRef.current!, context);
     const unseen = finalized.filter((item) => !publishedIds.current.has(item.id));
@@ -230,8 +251,11 @@ export function useChat(
    *  It is NOT short-circuited on an empty live set: a run whose members have all settled but which no breaker
    *  has closed yet still owns a (settled-form) row here, and that row is all there is to see until the next
    *  prose or prompt publishes it into Static. */
-  function livePending(context: ProjectionContext = projectionContext()): readonly RenderItem[] {
-    return projectPending(documentRef.current!, context, liveOpenIds.current);
+  function livePending(context?: ProjectionContext): readonly RenderItem[] {
+    // The 600 ms blink is the thinking clock's tick: merging here is what makes an OPEN thinking block's
+    // `Thinking for Ns` advance without this hook owning a second timer.
+    if (context === undefined) mergeThoughtMs();
+    return projectPending(documentRef.current!, context ?? projectionContext(), liveOpenIds.current);
   }
   /** One live host message's effect on the live-open set: a top-level `tool_use` enters, and every id whose
    *  call has since acquired a result leaves (so a redelivered call that already settled never re-enters). */
@@ -278,6 +302,8 @@ export function useChat(
     clearLiveOpen();
     documentRef.current = next;
     publishedIds.current = new Set();
+    thoughtMsRef.current = new Map();   // P82: a rebuilt transcript has no duration source — show none
+
     setStaticItems([]); setPendingItems([]);
     setStaticEpoch((e) => e + 1);
     setStreaming([]);
@@ -317,7 +343,10 @@ export function useChat(
           return;
         }
         if (ev.truncated) { documentRef.current!.appendFollowGap(`follow-gap:${ev.seq}`); reconcile(); }
-        liveTurnRef.current = new LiveTurn(); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]);
+        // The SAME injected clock the projection uses: the thinking clock's arrival stamps and the `now`
+        // the fold row is rendered against must not come from two different sources (a frame-capture
+        // fixture pins one of them, and a live-reading LiveTurn would make its output unreproducible).
+        liveTurnRef.current = new LiveTurn({ now: nowFn }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]);
       }
       else if (ev.kind === "message") {
         // Harvest bg-task metadata (command/output-file) first: a reconnect-buffer replay carries no live
@@ -347,6 +376,7 @@ export function useChat(
         reconcile();
       }
       else if (ev.kind === "turn" && ev.phase === "end") {
+        mergeThoughtMs();                            // the LAST read of this turn's clock — it is dropped on the next line
         const l = liveTurnRef.current; liveTurnRef.current = null;
         if (l?.model) setModel(l.model);
         // The turn's own failure is retained history, not a transient line: the live region dies with the

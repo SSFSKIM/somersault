@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionHost } from "../../src/host/host.js";
+import { resolveOptions } from "../../src/config/resolveOptions.js";
 import { Session } from "../../src/session/session.js";
 import { AsyncQueue } from "../../src/swarm/asyncQueue.js";
 import { readRoster } from "../../src/fleet/roster.js";
@@ -199,5 +200,48 @@ describe("SessionHost", () => {
     await expect(h.start()).rejects.toThrow();
     expect(disposed).toBe(true);
     expect(readRoster("a1b2c3d4", env)!.state).toBe("error");
+  });
+});
+
+// F3 Task 3, the config seam. `includePartialMessages` is opt-in in `resolveOptions`, and the shipped REPL
+// never set it — so no `stream_event` frame ever reached the production `LiveTurn`, leaving both the
+// streaming partial region and F3's thinking clock (whose ONLY duration source is those frames, P82) dead
+// on arrival. The switch lives on the host's KIND rather than in `resolveOptions`, because that is the one
+// place both interactive front doors pass through — the in-process foreground REPL (cli/main.ts's
+// runForegroundImpl) and the detached `--detachable` host a `ccx attach` client drives — while every
+// headless caller (`-p` via createHarness, `--bg` via a kind:"bg" host, the library API) keeps its own
+// wire volume untouched.
+describe("SessionHost: partial-message frames for the interactive REPL only", () => {
+  const captured = () => { const seen: any[] = []; return { seen, deps: deps((c: any) => { seen.push(c); return instantSession(); }) }; };
+
+  it("turns includePartialMessages ON for an interactive host", async () => {
+    const { seen, deps: d } = captured();
+    await new SessionHost({ ...opts(), kind: "interactive" }, d).start();
+    expect(seen[0].includePartialMessages).toBe(true);
+  });
+
+  it("leaves a bg host's wire volume exactly as configured", async () => {
+    const { seen, deps: d } = captured();
+    await new SessionHost(opts(), d).start();
+    expect(seen[0].includePartialMessages).toBeUndefined();
+    expect(resolveOptions(seen[0]).includePartialMessages).toBeUndefined();   // and nothing reaches the SDK either
+  });
+
+  it("never overrides an explicit choice, in either direction", async () => {
+    const a = captured();
+    await new SessionHost({ ...opts(), kind: "interactive", config: { includePartialMessages: false } }, a.deps).start();
+    expect(a.seen[0].includePartialMessages).toBe(false);
+    const b = captured();
+    await new SessionHost({ ...opts(), config: { includePartialMessages: true } }, b.deps).start();
+    expect(b.seen[0].includePartialMessages).toBe(true);
+  });
+
+  it("keeps the flag across a /resume engine swap, which reopens from the same launch config", async () => {
+    const { seen, deps: d } = captured();
+    const h = new SessionHost({ ...opts(), kind: "interactive" }, d);
+    await h.start();
+    await h.resumeSession("sid-2");
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toMatchObject({ includePartialMessages: true, resume: "sid-2" });
   });
 });
