@@ -53,6 +53,119 @@ export const AGENT_PROGRESS_ROWS = 3;
 /** Upstream `KVp` (429822): the pre-first-progress-message placeholder. */
 export const AGENT_INITIALIZING = "Initializing…";
 
+// ── F3 Task 8: same-message agent batches (LT3) ─────────────────────────────────────────────────────────
+// Upstream Mechanism A: `bdf` (452545) folds ≥2 tool_use blocks that share BOTH one assistant message and
+// one tool name into a `grouped_tool_use` message, absorbing their `tool_result` frames, and `Xha` (429745)
+// renders it. Only tools declaring `renderGroupedToolUse` participate — the Agent/Task pair in 2.1.220, and
+// `isAgentTool` above is the ONLY name our wire has ever carried. Everything below is the model; the
+// RenderItems are `toolRenderer`'s, which is where the theme and the platform live.
+
+/** One same-message run of Agent dispatches. `members` keeps the source order of the assistant message. */
+export interface AgentBatch {
+  key: string; members: readonly ToolEvent[]; memberIds: readonly string[];
+  /** Every member carries a `result`. Static is append-only, so ONLY a complete batch may publish — until
+   *  then the WHOLE unit renders in the pending region and its members are inert to Static, exactly like
+   *  the still-growable trailing fold run. This is reachable rather than theoretical: P83 makes staggered
+   *  completion the normal case because a parallel member's `async_launched` sidecar IS its result. */
+  complete: boolean;
+  /** Where the unit anchors: the LAST member result to arrive once complete (so anything that landed
+   *  between the members publishes first), and the shared dispatch while it is not. */
+  anchorSequence: number;
+}
+export function agentBatches(events: readonly ToolEvent[]): readonly AgentBatch[] {
+  const byKey = new Map<string, ToolEvent[]>();
+  for (const event of events) {
+    if (event.route !== "top-level" || !isAgentTool(event.name)) continue;
+    const key = agentBatchKey(event), members = byKey.get(key);
+    if (members === undefined) byKey.set(key, [event]); else members.push(event);
+  }
+  const batches: AgentBatch[] = [];
+  for (const [key, members] of byKey) {
+    if (members.length < 2) continue;                                       // one Agent alone is Task 7's standalone unit
+    const complete = members.every((member) => member.result !== undefined);
+    const anchorSequence = complete ? Math.max(...members.map((member) => member.result!.resultSequence)) : members[0]!.callSequence;
+    batches.push({ key, members, memberIds: members.map((member) => member.id), complete, anchorSequence });
+  }
+  return batches.sort((a, b) => a.members[0]!.callSequence - b.members[0]!.callSequence);
+}
+
+/** Upstream `$Ue.agentType` (188878). `zIo` (280732) folds it — and the `worker` alias — back to the bare
+ *  `Agent` label, which is also what makes `YVp` refuse to qualify the header noun with either. */
+export const AGENT_DEFAULT_SUBAGENT = "general-purpose";
+/** The dispatch INPUT first, exactly as `Xha` reads it (`QPs().safeParse(p.input)`), then the `task_started`
+ *  frame Task 7 captured — which is the only source left for a resumed dispatch whose input we still hold
+ *  but whose type the caller learned from the sidechannel. */
+export function agentSubagentType(event: ToolEvent, meta: AgentMeta | undefined): string {
+  const raw = (isRecord(event.input) ? str(event.input.subagent_type) : undefined) ?? meta?.subagentType;
+  return raw === undefined || raw === AGENT_DEFAULT_SUBAGENT || raw === "worker" ? "Agent" : raw;
+}
+/** Upstream `N = R || (D === "async_launched" || D === "remote_launched") || H` (429751): the dispatch asked
+ *  for the background, or the launch sidecar says it went there. `teammate_spawned` rides the same branch. */
+const ASYNC_STATUSES = new Set(["async_launched", "remote_launched", "teammate_spawned"]);
+export function agentIsAsync(event: ToolEvent): boolean {
+  if (isRecord(event.input) && event.input.run_in_background === true) return true;
+  const status = callSidecar(event)?.status;
+  return typeof status === "string" && ASYNC_STATUSES.has(status);
+}
+/** The description, whitespace-collapsed and empty-as-absent — the same normalization the standalone Agent
+ *  header applies (corpus 01#507), and `Xha`'s own `?.replace(/\s+/g," ").trim() || void 0`. */
+export function agentDescription(event: ToolEvent): string | undefined {
+  const raw = isRecord(event.input) ? str(event.input.description) : undefined;
+  const text = raw?.replace(/\s+/g, " ").trim();
+  return text === undefined || text === "" ? undefined : text;
+}
+
+export interface AgentBatchMember { event: ToolEvent; agentType: string; description?: string; resolved: boolean; isError: boolean; isAsync: boolean; }
+/** `hideType` is `Xha`'s `c` — every member shares one agentType, in which case `jla` leads the row with the
+ *  DESCRIPTION instead of the type. `sharedType` is its `u`: that same shared type, but only when it is not
+ *  the bare `Agent` fallback, which is what qualifies the header noun. */
+export interface AgentBatchView { members: readonly AgentBatchMember[]; allResolved: boolean; anyError: boolean; allAsync: boolean; hideType: boolean; sharedType?: string; }
+export function agentBatchView(batch: AgentBatch, meta?: ReadonlyMap<string, AgentMeta>): AgentBatchView {
+  const members: AgentBatchMember[] = batch.members.map((event) => {
+    const description = agentDescription(event);
+    return {
+      event, agentType: agentSubagentType(event, meta?.get(event.id)), ...(description === undefined ? {} : { description }),
+      resolved: event.result !== undefined, isError: event.result?.isError === true, isAsync: agentIsAsync(event),
+    };
+  });
+  const first = members[0]!, hideType = members.every((member) => member.agentType === first.agentType);
+  const sharedType = hideType && first.agentType !== "Agent" ? first.agentType : undefined;
+  return {
+    members, allResolved: members.every((member) => member.resolved), anyError: members.some((member) => member.isError),
+    allAsync: members.every((member) => member.isAsync), hideType, ...(sharedType === undefined ? {} : { sharedType }),
+  };
+}
+
+/** Upstream `(↓ to manage)` — `<Chord chord="down" action="manage" parens>` at 429761, spelled as the literal
+ *  Task 7's `BACKGROUNDED_HINT` already spells it. */
+export const AGENT_MANAGE_HINT = "(↓ to manage)";
+/** `jla`'s settled status row (422172): the totals live on the row above, so this one is the bare word. */
+export const AGENT_BATCH_DONE = "Done";
+/** The header, split at its ONE bold run (the count). `Xha`'s three arms, verbatim:
+ *    all resolved and every member async → `{N} background agents launched` + dim `(↓ to manage)`
+ *    all resolved                        → `{N} ` + `{Type} agents`/`agents` + ` finished`
+ *    otherwise                           → `Running {N} ` + `{Type} agents`/`agents` + `…`
+ *  and `(ctrl+o to expand)` on every arm EXCEPT one where every member is async (`!d && <Bg/>`) — which is a
+ *  wider condition than the launch arm: a still-running all-background batch loses the hint too. */
+export interface AgentBatchHeader { before: string; count: string; after: string; manage: boolean; expand: boolean }
+export function agentBatchHeader(view: AgentBatchView): AgentBatchHeader {
+  const count = String(view.members.length), noun = view.sharedType === undefined ? "agents" : `${view.sharedType} agents`;
+  const expand = !view.allAsync;
+  if (view.allResolved && view.allAsync) return { before: "", count, after: " background agents launched", manage: true, expand };
+  if (view.allResolved) return { before: "", count, after: ` ${noun} finished`, manage: false, expand };
+  return { before: "Running ", count, after: ` ${noun}…`, manage: false, expand };
+}
+/** `jla`'s per-agent totals clause (422193): `" · " + N + " tool " + (N === 1 ? "use" : "uses")` plus the
+ *  token clause when there is one. The count is printed even at zero — an agent that has done nothing yet
+ *  reads `· 0 tool uses`, which is a measurement, not the fabricated `Done (0 tool uses)` Task 7 refuses.
+ *  The numbers come from Task 7's ladder, NOT from upstream's `HTH`: that reads the LAST child assistant
+ *  frame's whole `usage`, which is the re-read context P83 measured at 265–342% of the true total. */
+export function agentBatchTotalsText(totals: AgentTotals): string {
+  const parts = [`${totals.toolUses} tool use${totals.toolUses === 1 ? "" : "s"}`];
+  if (totals.tokens !== undefined) parts.push(`${formatCompactNumber(totals.tokens)} tokens`);
+  return ` · ${parts.join(" · ")}`;
+}
+
 /** The nested calls one Agent owns, in the order they were made. Task 8 reuses it for its per-agent rows. */
 export function agentChildren(events: readonly ToolEvent[], parentId: string): readonly ToolEvent[] {
   return events.filter((e) => e.route === "nested" && e.parent_tool_use_id === parentId).sort((a, b) => a.callSequence - b.callSequence);

@@ -22,7 +22,7 @@ import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedIn
 import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type GroupCounts } from "./toolFold.js";
 import { foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { summaryLines } from "./toolSummaries.js";
-import { agentChildren, agentDoneText, agentTotals, AGENT_INITIALIZING, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentMeta } from "./agentProgress.js";
+import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
 import type { FoldPendingHooks } from "./foldPendingState.js";
 import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
@@ -242,6 +242,63 @@ function agentTerminalItems(event: ToolEvent, options: ProjectionOptions): reado
   return [...items, ...nestedItems(children, options, /* linesOnly */ false)];
 }
 
+// ── F3 Task 8: the same-message agent batch (LT3) ───────────────────────────────────────────────────────
+/** `Xha`'s per-agent rows sit in a `paddingLeft: 3` column, each behind a two-column tree connector — `ZK_`
+ *  (397730) renders `├`/`└`/`│` (and the empty `space`) inside a `width: 2` DIM Box, so the glyph is dim and
+ *  the column it is padded to is not. */
+const AGENT_BATCH_PAD = "   ";
+const treeSegments = (glyph: string): Segment[] => (glyph === "" ? [{ text: `${AGENT_BATCH_PAD}  ` }] : [{ text: AGENT_BATCH_PAD }, { text: glyph, dim: true }, { text: " " }]);
+/** Upstream `ZVp` (429756) resolves a running agent's `⎿` row from the progress messages forwarded for it: a
+ *  trailing run of ≥2 read/search results collapses to a fold clause, otherwise it is the LAST tool_result's
+ *  `userFacingName` (plus its summary). Our retained document holds the child CALLS rather than a progress
+ *  stream, so the fallback branch is honoured exactly — the last nested call's display name — and the
+ *  trailing-run clause is deliberately NOT approximated from a different input. */
+function agentLastToolInfo(children: readonly ToolEvent[], options: ProjectionOptions): string | undefined {
+  const last = children.at(-1);
+  return last === undefined ? undefined : displayName(last, options);
+}
+/** One `jla` (422163) block: the agent's own row, then — unless it is a RESOLVED background dispatch, whose
+ *  totals and status upstream drops entirely (`!$yt &&` on both) — its dim `⎿` status row. `hideType` leads
+ *  with the description because every member shares one type; otherwise the type leads and the description
+ *  is parenthesized after it. The whole row is `dimColor` until the agent resolves, which costs the label its
+ *  bold exactly as it does upstream (a `<Text dimColor bold>` never emits `\x1b[1m` — F1 Task 1). */
+function agentBatchMemberItems(member: AgentBatchMember, hideType: boolean, isLast: boolean, part: (name: string) => string, options: ProjectionOptions): RenderItem[] {
+  const async = member.isAsync && member.resolved, dim = member.resolved ? {} : { dim: true as const };
+  const label = hideType ? member.description ?? member.agentType : member.agentType;
+  const row: Segment[] = [...treeSegments(isLast ? "└" : "├"), { text: label, bold: true, ...dim }];
+  if (!hideType && member.description !== undefined) row.push({ text: ` (${member.description})`, ...dim });
+  const children = agentChildren(options.toolEvents ?? [], member.event.id);
+  if (!async) row.push({ text: agentBatchTotalsText(agentTotals(member.event, options.agentMeta?.get(member.event.id), children, options.now)), ...dim });
+  const items: RenderItem[] = [{ kind: "line", id: part(`agent:${member.event.id}`), line: segmented(row) }];
+  if (async) return items;
+  const status = member.resolved ? AGENT_BATCH_DONE : agentLastToolInfo(children, options) ?? AGENT_INITIALIZING;
+  const gutter: Segment[] = [...treeSegments(isLast ? "" : "│"), { text: `⎿  ${status}`, dim: true }];
+  return [...items, { kind: "line", id: part(`agent:${member.event.id}:status`), line: segmented(gutter) }];
+}
+/** The whole unit. `form` is the append-only discipline made visible: the PENDING copy carries its own id
+ *  part so the eventual published copy — same membership, same text — cannot collide with it in Static's
+ *  append-once bookkeeping, exactly as `GROUP_PART` does for a fold run. */
+function agentBatchItems(batch: AgentBatch, form: "published" | "pending", options: ProjectionOptions): readonly RenderItem[] {
+  const view = agentBatchView(batch, options.agentMeta), header = agentBatchHeader(view);
+  const grey = resolveThemeColor(themeTokens().inactive), glyph = options.platform === "darwin" ? "⏺" : "●";
+  // `ile` (422343): steady and status-coloured once every member has resolved; while any is still open it is
+  // dim and blinks on the same 600 ms phase as every other leader — except that an ERROR pins it visible.
+  const leader: Segment[] = view.allResolved
+    ? [{ text: glyph, color: resolveThemeColor(themeTokens()[view.anyError ? "error" : "success"]) }, { text: " " }]
+    : [{ text: view.anyError || Math.floor(options.now / 600) % 2 === 0 ? glyph : " ", dim: true, color: grey }, { text: " ", dim: true }];
+  const segments: Segment[] = [...leader];
+  if (header.before !== "") segments.push({ text: header.before });
+  segments.push({ text: header.count, bold: true }, { text: header.after });
+  if (header.manage) segments.push({ text: " " }, { text: AGENT_MANAGE_HINT, dim: true });
+  // `Bg` returns null inside the transcript/verbose contexts, so the hint is compact-only — the same rule
+  // Task 7's `Done (…)` sibling hint follows, and the detail projections ARE that verbose form (R6.3).
+  if (header.expand && options.projection === "compact") segments.push({ text: " " }, { text: EXPAND_HINT, dim: true, color: grey });
+  const part = (name: string) => agentBatchItemId(batch.memberIds, form === "pending" ? `pending-${name}` : name);
+  const items: RenderItem[] = [{ kind: "line", id: part("header"), line: segmented(segments) }];
+  view.members.forEach((member, index) => items.push(...agentBatchMemberItems(member, view.hideType, index === view.members.length - 1, part, options)));
+  return items;
+}
+
 /** One retained call → its renderable items. A `suppressed` tool projects to nothing — driven by the status Task 1's
  *  normalizer assigns, never by a renderer-side name check, so the suppression list has exactly one home. */
 export function renderToolEvent(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
@@ -280,6 +337,11 @@ export const toolItemId = (toolUseId: string, resultSequence: number | "pending"
  *  unique and stable, and a document that gains two replay dividers (which shift every later sequence) must
  *  still project the very same group id — that is what lets Static publish a settled group exactly once. */
 export const toolGroupItemId = (memberIds: readonly string[], part: "row" | "pending-row" | "pending-hint" | "unclosed-row"): string => `group:${memberIds.join(",")}:${part}`;
+/** F3 Task 8, on exactly the same principle: an agent batch's identity is its MEMBERSHIP — the joined
+ *  member tool-use ids — with the sequence left out, so two replay dividers cannot re-key a settled unit.
+ *  Membership here never grows (a batch is one assistant message, complete the moment it is parsed), so the
+ *  id is stable from the first pending frame to the published one; only the `part` prefix separates them. */
+export const agentBatchItemId = (memberIds: readonly string[], part: string): string => `agents:${memberIds.join(",")}:${part}`;
 
 /** PROJECTION IDENTITY ONLY — never append/dedup. Task 1's `appendSdk` deliberately refuses to hash a
  *  payload (two equal-looking calls can be genuinely distinct turns), but a retained entry with no
@@ -555,15 +617,31 @@ function anchoredEntries(document: TranscriptDocument, options: ProjectionOption
 
 const bySequence = (a: Anchored, b: Anchored) => a.sequence - b.sequence || a.rank - b.rank;
 
+/** memberId → its batch. The batch ANCHOR event (its first member) stands in for the whole unit in the
+ *  anchored stream, so the fold sees one non-collapsible tool atom where it used to see N — which is the
+ *  same run-breaking behaviour a standalone Agent already had, and identical in both projections. */
+const batchByMember = (batches: readonly AgentBatch[]): ReadonlyMap<string, AgentBatch> =>
+  new Map(batches.flatMap((batch) => batch.memberIds.map((id) => [id, batch] as const)));
+
 function projectAll(document: TranscriptDocument, options: ProjectionOptions): readonly RenderItem[] {
   // The nested calls travel WITH the options (Task 7): an Agent's rows are derived from the document's other
   // events, and injecting them here keeps `renderToolEvent` a pure function of one call plus its context.
   const full: ProjectionOptions = { ...options, toolEvents: document.toolEvents() };
   const anchored = anchoredEntries(document, full);
+  // F3 Task 8: a batched member never publishes on its own, and an INCOMPLETE batch publishes nothing at
+  // all — every member stays inert to Static until the last result lands (`projectPending` draws it
+  // meanwhile), exactly as `trailingRunCut` withholds a still-growable fold run. VERBOSE is what the batch
+  // expands to: `bdf`'s very first statement is `if (r) return { messages: e }` (452545), so the ctrl+o
+  // verbose form is the UNGROUPED one — each member back on Task 7's standalone path with its own `Done`
+  // row. That is a narrower gate than the fold run's (`compact && !verbose`): a batch survives into the
+  // collapsed detail view, which is exactly where upstream's `bdf` still groups.
+  const batches = full.verbose ? [] : agentBatches(document.toolEvents()), batched = batchByMember(batches);
   for (const event of document.toolEvents()) {
-    if (event.route !== "top-level" || !event.result) continue;
+    if (event.route !== "top-level" || !event.result || batched.has(event.id)) continue;
     anchored.push({ sequence: event.result.resultSequence, rank: 1, event, items: reid(renderToolEvent(event, normalizeToolResult(event, { verbose: full.verbose }), full), event.id, event.result.resultSequence) });
   }
+  for (const batch of batches)
+    if (batch.complete) anchored.push({ sequence: batch.anchorSequence, rank: 1, event: batch.members[0]!, items: agentBatchItems(batch, "published", full) });
   anchored.sort(bySequence);
   return full.projection === "compact" && !full.verbose ? foldAnchored(anchored, full) : anchored.flatMap((a) => a.items);
 }
@@ -660,17 +738,31 @@ export function projectDetail(document: TranscriptDocument, options: ProjectionC
 export function projectPending(document: TranscriptDocument, options: ProjectionContext, liveIds?: ReadonlySet<string>): readonly RenderItem[] {
   const full: ProjectionOptions = { ...options, projection: "compact", verbose: false, toolEvents: document.toolEvents() };
   const anchored = anchoredEntries(document, full);
+  const batches = agentBatches(document.toolEvents()), batched = batchByMember(batches);
+  // F3 Task 8: an INCOMPLETE batch is the one unit this region owns outright — Static has none of it, so it
+  // draws here whole. Its members never anchor individually, in either projection.
+  const batchItems = new Map<ToolEvent, readonly RenderItem[]>(), withheld = new Set<ToolEvent>();
   for (const event of document.toolEvents()) {
-    if (event.route !== "top-level") continue;
+    if (event.route !== "top-level" || batched.has(event.id)) continue;
     // No `items` for either kind: this region renders group rows and per-call PENDING rows, both built below.
     if (event.result) { anchored.push({ sequence: event.result.resultSequence, rank: 1, event, items: [] }); continue; }
     if (liveIds === undefined || liveIds.has(event.id)) anchored.push({ sequence: event.callSequence, rank: 1, event, items: [] });
   }
+  for (const batch of batches) {
+    const anchor = batch.members[0]!;
+    // The same live-turn rule the per-call rows follow: a disk-bootstrapped dangling batch is retained
+    // history, not something that blinks — so it needs an OPEN member the live turn is actually running.
+    if (!batch.complete && liveIds !== undefined && !batch.members.some((member) => member.result === undefined && liveIds.has(member.id))) continue;
+    anchored.push({ sequence: batch.anchorSequence, rank: 1, event: anchor, items: [] });
+    if (batch.complete) continue;                                   // published by `projectAll`; nothing to draw here
+    withheld.add(anchor);
+    batchItems.set(anchor, agentBatchItems(batch, "pending", full));
+  }
   anchored.sort(bySequence);
   const fold = { cwd: options.cwd, home: options.home };
-  // What Static already holds: the same fold the compact projection runs (open calls inert there, exactly as
-  // `projectAll` omits them), minus the trailing run it withholds.
-  const settledAtoms = foldAtoms(anchored, options.thoughtMs, (event) => !event.result);
+  // What Static already holds: the same fold the compact projection runs (open calls and withheld batches
+  // inert there, exactly as `projectAll` omits them), minus the trailing run it withholds.
+  const settledAtoms = foldAtoms(anchored, options.thoughtMs, (event) => !event.result || withheld.has(event));
   const settled = segmentRuns(settledAtoms, fold);
   const published = new Set<string>();
   for (const item of settled.slice(0, trailingRunCut(settledAtoms, settled)))
@@ -678,8 +770,13 @@ export function projectPending(document: TranscriptDocument, options: Projection
   const items: RenderItem[] = [];
   for (const item of segmentRuns(foldAtoms(anchored, options.thoughtMs, (event) => published.has(event.id)), fold)) {
     if (item.kind === "group") { items.push(...groupItems(item.group, item.group.open ? "active" : "unclosed", full)); continue; }
+    if (item.kind !== "tool") continue;
+    // A withheld agent batch draws whole — its first member stands in for the unit, and one member having a
+    // result says nothing about whether Static may have it (only "every member resolved" does).
+    const batch = batchItems.get(item.event);
+    if (batch !== undefined) { items.push(...batch); continue; }
     // A COMPLETED standalone tool is already published (only groups are ever withheld); only an open one has a row here.
-    if (item.kind === "tool" && !item.event.result) items.push(...reid(renderToolEvent(item.event, normalizeToolResult(item.event, { verbose: false }), full), item.event.id, "pending"));
+    if (!item.event.result) items.push(...reid(renderToolEvent(item.event, normalizeToolResult(item.event, { verbose: false }), full), item.event.id, "pending"));
   }
   return items;
 }

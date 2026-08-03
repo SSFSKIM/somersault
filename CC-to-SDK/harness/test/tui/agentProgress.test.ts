@@ -3,7 +3,7 @@
 // P83's (docs/superpowers/research/2026-07-31-tui-clone/11-p83-agent-usage-identity.md): the shapes are the
 // probe's, and the ONE thing no rung may ever do is sum child `usage`.
 import { describe, it, expect } from "vitest";
-import { agentChildren, agentDoneText, agentTotals, hiddenToolUsesLine, indentRenderLine, ingestTaskFrame, isAgentTool, stampAgentCalls, type AgentMeta } from "../../src/tui/agentProgress.js";
+import { agentBatches, agentBatchHeader, agentBatchKey, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentIsAsync, agentSubagentType, agentTotals, hiddenToolUsesLine, indentRenderLine, ingestTaskFrame, isAgentTool, stampAgentCalls, type AgentMeta } from "../../src/tui/agentProgress.js";
 import type { ToolEvent } from "../../src/tui/transcriptModel.js";
 
 const nested = (id: string, seq: number, parent = "agent-1"): ToolEvent =>
@@ -150,5 +150,101 @@ describe("F3 Task 7: the arrival stamps", () => {
     stampAgentCalls(meta, dispatch, 100);
     stampAgentCalls(meta, { type: "user", parent_tool_use_id: "agent-1", message: { content: [{ type: "tool_result", tool_use_id: "agent-1", content: "r" }] } }, 4000);
     expect(meta.get("agent-1")?.resultAt).toBeUndefined();
+  });
+});
+
+// ── F3 Task 8: same-message agent batches (LT3) ─────────────────────────────────────────────────────────
+// Upstream `bdf` (452545) groups ≥2 tool_use blocks that share BOTH one assistant message and one tool
+// name; `Xha` (429745) renders the unit. The publication rule is ours and is the load-bearing one: Static
+// is append-only, so a batch may publish only once EVERY member has a result.
+describe("F3 Task 8: batch detection", () => {
+  const dispatch = (id: string, callSequence: number, input: Record<string, unknown> = {}, name = "Agent"): ToolEvent =>
+    ({ id, name, input: { description: `do ${id}`, prompt: "p", ...input }, callSequence, route: "top-level" });
+  const settle = (event: ToolEvent, resultSequence: number, isError = false, sidecar?: unknown): ToolEvent =>
+    ({ ...event, result: { content: "r", isError, resultSequence, ...(sidecar === undefined ? {} : { sidecar: { scope: "call" as const, value: sidecar } }) } });
+
+  it("keys on the assistant message AND the tool name (census 01#253–257)", () => {
+    expect(agentBatchKey(dispatch("a1", 4))).toBe("4:Agent");
+    expect(agentBatchKey(dispatch("b1", 4, {}, "Bash"))).toBe("4:Bash");
+  });
+
+  it("batches two Agents that shared one message, and NOTHING else", () => {
+    const batches = agentBatches([dispatch("a1", 4), dispatch("a2", 4)]);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]!.memberIds).toEqual(["a1", "a2"]);
+    // One Agent alone is Task 7's standalone path; an Agent + a Bash, or two Agents from different
+    // messages, are never one unit; and `Task` is not a name our wire emits at all (`isAgentTool`).
+    expect(agentBatches([dispatch("a1", 4)])).toEqual([]);
+    expect(agentBatches([dispatch("a1", 4), dispatch("b1", 4, {}, "Bash")])).toEqual([]);
+    expect(agentBatches([dispatch("a1", 4), dispatch("t1", 4, {}, "Task")])).toEqual([]);
+    // Membership is `isAgentTool`, not "≥2 of any one name": upstream only groups tools that declare
+    // `renderGroupedToolUse`, so two same-message Bash calls (or Reads, or `Task`s, which our wire never
+    // emits) stay ordinary calls rather than becoming agents.
+    expect(agentBatches([dispatch("b1", 4, {}, "Bash"), dispatch("b2", 4, {}, "Bash")])).toEqual([]);
+    expect(agentBatches([dispatch("r1", 4, {}, "Read"), dispatch("r2", 4, {}, "Read")])).toEqual([]);
+    expect(agentBatches([dispatch("t1", 4, {}, "Task"), dispatch("t2", 4, {}, "Task")])).toEqual([]);
+    expect(agentBatches([dispatch("a1", 4), dispatch("a2", 5)])).toEqual([]);
+    expect(agentBatches([{ ...dispatch("n1", 4), route: "nested", parent_tool_use_id: "a1" }, { ...dispatch("n2", 4), route: "nested", parent_tool_use_id: "a1" }])).toEqual([]);
+  });
+
+  it("is complete only when EVERY member has a result, and anchors at the last one to arrive", () => {
+    const open = agentBatches([settle(dispatch("a1", 4), 9), dispatch("a2", 4)])[0]!;
+    expect(open.complete).toBe(false);
+    expect(open.anchorSequence).toBe(4);                                   // the shared dispatch, not a member result
+    const done = agentBatches([settle(dispatch("a1", 4), 9), settle(dispatch("a2", 4), 12)])[0]!;
+    expect(done.complete).toBe(true);
+    expect(done.anchorSequence).toBe(12);
+  });
+
+  it("resolves the subagent type from the input, then the task_started map, folding the defaults to `Agent`", () => {
+    expect(agentSubagentType(dispatch("a1", 4, { subagent_type: "reviewer" }), undefined)).toBe("reviewer");
+    expect(agentSubagentType(dispatch("a1", 4), { subagentType: "reviewer" })).toBe("reviewer");
+    expect(agentSubagentType(dispatch("a1", 4, { subagent_type: "general-purpose" }), undefined)).toBe("Agent");
+    expect(agentSubagentType(dispatch("a1", 4, { subagent_type: "worker" }), undefined)).toBe("Agent");
+    expect(agentSubagentType(dispatch("a1", 4), undefined)).toBe("Agent");
+  });
+
+  it("reads asynchrony from the dispatch input OR the launch sidecar (P83: parallel members resolve async)", () => {
+    expect(agentIsAsync(dispatch("a1", 4))).toBe(false);
+    expect(agentIsAsync(dispatch("a1", 4, { run_in_background: true }))).toBe(true);
+    expect(agentIsAsync(settle(dispatch("a1", 4), 9, false, { status: "async_launched" }))).toBe(true);
+    expect(agentIsAsync(settle(dispatch("a1", 4), 9, false, { status: "remote_launched" }))).toBe(true);
+    expect(agentIsAsync(settle(dispatch("a1", 4), 9, false, { status: "completed" }))).toBe(false);
+  });
+
+  it("renders `Xha`'s three header forms, with the count as the ONE bold run", () => {
+    const view = (events: readonly ToolEvent[], meta?: Map<string, AgentMeta>) => agentBatchView(agentBatches(events)[0]!, meta);
+    const running = view([dispatch("a1", 4), dispatch("a2", 4)]);
+    expect(agentBatchHeader(running)).toEqual({ before: "Running ", count: "2", after: " agents…", manage: false, expand: true });
+    const finished = view([settle(dispatch("a1", 4), 9), settle(dispatch("a2", 4), 10)]);
+    expect(agentBatchHeader(finished)).toEqual({ before: "", count: "2", after: " agents finished", manage: false, expand: true });
+    // A shared NON-default subagent_type qualifies the noun; a mixed batch falls back to the bare one.
+    const typed = view([dispatch("a1", 4, { subagent_type: "reviewer" }), dispatch("a2", 4, { subagent_type: "reviewer" })]);
+    expect(agentBatchHeader(typed).after).toBe(" reviewer agents…");
+    const mixed = view([dispatch("a1", 4, { subagent_type: "reviewer" }), dispatch("a2", 4, { subagent_type: "writer" })]);
+    expect(agentBatchHeader(mixed).after).toBe(" agents…");
+    // All resolved AND every member async: the launch form, with `(↓ to manage)` and NO ctrl+o hint.
+    const async_ = view([settle(dispatch("a1", 4), 9, false, { status: "async_launched" }), settle(dispatch("a2", 4), 10, false, { status: "async_launched" })]);
+    expect(agentBatchHeader(async_)).toEqual({ before: "", count: "2", after: " background agents launched", manage: true, expand: false });
+    // Still running, but every member is a background dispatch: the ctrl+o hint is gone even so.
+    const asyncOpen = view([dispatch("a1", 4, { run_in_background: true }), dispatch("a2", 4, { run_in_background: true })]);
+    expect(agentBatchHeader(asyncOpen)).toEqual({ before: "Running ", count: "2", after: " agents…", manage: false, expand: false });
+  });
+
+  it("carries per-member resolution, error and description into the view", () => {
+    const batch = agentBatches([settle(dispatch("a1", 4, { description: "review\n the  diff" }), 9, true), dispatch("a2", 4)])[0]!;
+    const view = agentBatchView(batch, undefined);
+    expect(view.members.map((m) => ({ resolved: m.resolved, isError: m.isError, description: m.description }))).toEqual([
+      { resolved: true, isError: true, description: "review the diff" },
+      { resolved: false, isError: false, description: "do a2" },
+    ]);
+    expect(view).toMatchObject({ allResolved: false, anyError: true, allAsync: false, hideType: true });
+    expect(view.sharedType).toBeUndefined();                               // the bare `Agent` fallback never qualifies the noun
+  });
+
+  it("spells the per-agent totals clause with upstream's singular arm and compact tokens (`jla` 422193)", () => {
+    expect(agentBatchTotalsText({ toolUses: 3, tokens: 24100, source: "sidecar" })).toBe(" · 3 tool uses · 24.1k tokens");
+    expect(agentBatchTotalsText({ toolUses: 1, source: "derived" })).toBe(" · 1 tool use");
+    expect(agentBatchTotalsText({ toolUses: 0, source: "derived" })).toBe(" · 0 tool uses");
   });
 });

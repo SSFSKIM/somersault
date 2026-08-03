@@ -726,3 +726,149 @@ describe("F3 Task 7: Agent progress and the Done row", () => {
     expect(new Set(detail.map((i) => i.id)).size).toBe(detail.length);
   });
 });
+
+// ── F3 Task 8: same-message agent batches (LT3) ─────────────────────────────────────────────────────────
+// Upstream Mechanism A (`bdf` 452545 → `Xha` 429745): ≥2 tool_use blocks sharing ONE assistant message AND
+// one tool name collapse into a single unit — an animated header plus one condensed row per agent, with the
+// members' `tool_result` frames absorbed. The publication rule is the load-bearing half: Static is
+// append-only, so the unit publishes ONLY once every member has a result; until then the WHOLE batch lives
+// in the pending region and its members are inert to Static, exactly like the trailing fold run.
+describe("F3 Task 8: same-message agent batches", () => {
+  const agents = (specs: readonly { id: string; description?: string; input?: Record<string, unknown> }[]) =>
+    ({ type: "assistant", message: { id: `m-${specs.map((s) => s.id).join("-")}`, content: specs.map((s) => ({ type: "tool_use", id: s.id, name: "Agent", input: { description: s.description ?? `do ${s.id}`, prompt: "p", ...s.input } })) } }) as Record<string, unknown>;
+  const settle = (id: string, sidecar?: unknown, isError = false) =>
+    ({ type: "user", uuid: `ur-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content: "the report", is_error: isError }] }, ...(sidecar === undefined ? {} : { tool_use_result: sidecar }) }) as Record<string, unknown>;
+  const childOf = (parent: string, id: string, file: string) =>
+    ({ type: "assistant", parent_tool_use_id: parent, message: { id: `mc-${id}`, content: [{ type: "tool_use", id, name: "Read", input: { file_path: file } }] } }) as Record<string, unknown>;
+  const COMPLETED = { agentId: "a1", status: "completed", totalToolUseCount: 3, totalTokens: 24100, totalDurationMs: 72000 };
+  const ASYNC = { agentId: "a1", isAsync: true, status: "async_launched" };
+  const pair = () => agents([{ id: "ag-1", description: "review the diff" }, { id: "ag-2", description: "write the tests" }]);
+
+  it("collapses two running same-message Agents into ONE active unit, with no individual Agent rows", () => {
+    const items = projectPending(built(pair(), childOf("ag-1", "c-1", "/work/a.ts")), context);
+    expect(lineTexts(items)).toEqual([
+      "⏺ Running 2 agents… (ctrl+o to expand)",
+      "   ├ review the diff · 1 tool use", "   │ ⎿  Read",
+      "   └ write the tests · 0 tool uses", "     ⎿  Initializing…",
+    ]);
+    expect(lineTexts(items).some((t) => t.startsWith("⏺ Agent("))).toBe(false);   // Task 7's standalone row is gone
+    expect(items[0]!.id).toBe("agents:ag-1,ag-2:pending-header");
+    expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
+    // R4.1's blink, the `ile` model: the leader GLYPH alone blinks on the 600 ms period while unresolved.
+    expect(lineTexts(projectPending(built(pair()), { ...context, now: 600 }))[0]).toBe("  Running 2 agents… (ctrl+o to expand)");
+    expect(lineTexts(projectPending(built(pair()), { ...context, platform: "linux" }))[0]!.startsWith("● ")).toBe(true);
+  });
+
+  it("publishes NOTHING while one member is still open — no partial unit, no duplicate", () => {
+    const doc = built(pair(), settle("ag-1", COMPLETED));
+    expect(projectCompact(doc, context).filter((i) => i.id.startsWith("agents:"))).toEqual([]);
+    const pending = lineTexts(projectPending(doc, context));
+    expect(pending[0]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");            // one unit, still active
+    expect(pending.filter((t) => t.includes("Running 2 agents"))).toHaveLength(1);
+    expect(pending).toContain("   ├ review the diff · 3 tool uses · 24.1k tokens");
+    expect(pending).toContain("   │ ⎿  Done");
+    expect(pending).toContain("     ⎿  Initializing…");
+    // The absorbed member `tool_result` renders nothing of its own, in either region.
+    expect([...pending, ...lineTexts(projectCompact(doc, context))].some((t) => t.includes("the report"))).toBe(false);
+  });
+
+  it("publishes `2 agents finished` exactly once when the last member resolves, and drops the pending copy", () => {
+    const doc = built(pair(), settle("ag-1", COMPLETED), settle("ag-2", COMPLETED), prose("summary"));
+    const published = projectCompact(doc, context).filter((i) => i.id.startsWith("agents:"));
+    expect(lineTexts(published)).toEqual([
+      "⏺ 2 agents finished (ctrl+o to expand)",
+      "   ├ review the diff · 3 tool uses · 24.1k tokens", "   │ ⎿  Done",
+      "   └ write the tests · 3 tool uses · 24.1k tokens", "     ⎿  Done",
+    ]);
+    expect(published[0]!.id).toBe("agents:ag-1,ag-2:header");                     // membership-derived, no sequence
+    expect(projectPending(doc, context)).toEqual([]);
+    // The unit anchors at the LAST member result, so it publishes after anything that landed between them.
+    const interleaved = built(pair(), settle("ag-1", COMPLETED), prose("mid"), settle("ag-2", COMPLETED), prose("end"));
+    const texts = lineTexts(projectCompact(interleaved, context));
+    expect(texts.indexOf("mid")).toBeLessThan(texts.indexOf("⏺ 2 agents finished (ctrl+o to expand)"));
+  });
+
+  it("paints the header glyph in the error colour when any absorbed result is an error", () => {
+    const bad = built(pair(), settle("ag-1", COMPLETED, true), settle("ag-2", COMPLETED), prose("done"));
+    const ok = built(pair(), settle("ag-1", COMPLETED), settle("ag-2", COMPLETED), prose("done"));
+    const glyph = (doc: TranscriptDocument) => ((projectCompact(doc, context).find((i) => i.id.endsWith(":header")) as { line: RenderLine }).line.segments ?? [])[0];
+    expect(glyph(bad)).toEqual({ text: "⏺", color: resolveThemeColor(themeTokens().error) });
+    expect(glyph(ok)).toEqual({ text: "⏺", color: resolveThemeColor(themeTokens().success) });
+  });
+
+  it("qualifies the noun only when every member shares one non-default subagent_type", () => {
+    const typed = built(agents([{ id: "ag-1", input: { subagent_type: "reviewer" } }, { id: "ag-2", input: { subagent_type: "reviewer" } }]));
+    expect(lineTexts(projectPending(typed, context))[0]).toBe("⏺ Running 2 reviewer agents… (ctrl+o to expand)");
+    const mixed = built(agents([{ id: "ag-1", input: { subagent_type: "reviewer" } }, { id: "ag-2", input: { subagent_type: "writer" } }]));
+    expect(lineTexts(projectPending(mixed, context))[0]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");
+    // hideType=false: the per-agent row leads with the TYPE and parenthesizes the description (`jla` 422185).
+    expect(lineTexts(projectPending(mixed, context))[1]).toBe("   ├ reviewer (do ag-1) · 0 tool uses");
+  });
+
+  it("renders an all-async resolved batch as the background-launch form, with no ctrl+o hint", () => {
+    const doc = built(pair(), settle("ag-1", ASYNC), settle("ag-2", ASYNC), prose("done"));
+    expect(lineTexts(projectCompact(doc, context).filter((i) => i.id.startsWith("agents:")))).toEqual([
+      "⏺ 2 background agents launched (↓ to manage)",
+      "   ├ review the diff", "   └ write the tests",           // `jla`: no totals clause and no ⎿ row once async+resolved
+    ]);
+  });
+
+  it("UNGROUPS in the verbose projection — that is what the batch's ctrl+o expands to", () => {
+    // `bdf`'s very first statement is `if (r) return { messages: e }` (452545): verbose never groups. The
+    // gate is therefore `!verbose`, NOT the fold run's `compact && !verbose` — the collapsed detail view
+    // keeps the batch, and only the fully verbose one hands each member back to Task 7's standalone unit.
+    const doc = built(pair(), settle("ag-1", COMPLETED), settle("ag-2", COMPLETED), prose("summary"));
+    const all = projectDetail(doc, { ...context, projection: "detail-all" });
+    expect(all.some((i) => i.id.startsWith("agents:"))).toBe(false);
+    expect(lineTexts(all)).toContain("⏺ Agent(review the diff)");
+    expect(lineTexts(all)).toContain("⏺ Agent(write the tests)");
+    const collapsed = projectDetail(doc, { ...context, projection: "detail-collapsed" });
+    expect(lineTexts(collapsed)[0]).toBe("⏺ 2 agents finished");                  // grouped, and `Bg` is null here
+  });
+
+  it("leaves a SINGLE Agent in a message on Task 7's standalone path, untouched", () => {
+    const one = { type: "assistant", message: { id: "m-solo", content: [{ type: "tool_use", id: "solo", name: "Agent", input: { description: "review the diff", prompt: "p" } }] } } as Record<string, unknown>;
+    const doc = built(one, settle("solo", COMPLETED), prose("summary"));
+    const items = projectCompact(doc, context);
+    expect(items.some((i) => i.id.startsWith("agents:"))).toBe(false);
+    expect(lineTexts(items)).toContain("⏺ Agent(review the diff)");
+    expect(bodyOf(items).map((l) => l.text)).toEqual(["Done (3 tool uses · 24.1k tokens · 1m 12s)"]);
+  });
+
+  it("never batches an Agent with a differently-named tool that shared its assistant message", () => {
+    const mixedMessage = { type: "assistant", message: { id: "m-mixed", content: [
+      { type: "tool_use", id: "ag-1", name: "Agent", input: { description: "review the diff", prompt: "p" } },
+      { type: "tool_use", id: "bash-1", name: "Bash", input: { command: "npm test" } },
+    ] } } as Record<string, unknown>;
+    const items = projectPending(built(mixedMessage), context);
+    expect(items.some((i) => i.id.startsWith("agents:"))).toBe(false);
+    expect(lineTexts(items)).toContain("⏺ Agent(review the diff)");
+    expect(lineTexts(items)).toContain("⏺ Bash(npm test)");
+  });
+
+  it("leaves two same-message calls of any OTHER tool exactly as they were", () => {
+    // The membership test is `isAgentTool`, not "≥2 of one name" — upstream groups only tools declaring
+    // `renderGroupedToolUse`. Two same-message Reads must still reach Mechanism B's fold row, and two
+    // same-message Bash calls must still be two ordinary standalone rows.
+    const reads = { type: "assistant", message: { id: "m-reads", content: [
+      { type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/work/a.ts" } },
+      { type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/b.ts" } },
+    ] } } as Record<string, unknown>;
+    const doc = built(reads, result("read-1"), result("read-2"), prose("done"));
+    expect(doc.toolEvents().every((e) => e.callSequence === 1)).toBe(true);        // genuinely one message
+    expect(lineTexts(groupRows(projectCompact(doc, context)))).toEqual(["  Read 2 files (ctrl+o to expand)"]);
+    const bashes = { type: "assistant", message: { id: "m-bash", content: [
+      { type: "tool_use", id: "b-1", name: "Bash", input: { command: "npm test" } },
+      { type: "tool_use", id: "b-2", name: "Bash", input: { command: "npm run build" } },
+    ] } } as Record<string, unknown>;
+    const items = projectPending(built(bashes), context);
+    expect(items.some((i) => i.id.startsWith("agents:"))).toBe(false);
+    expect(lineTexts(items)).toEqual(["⏺ Bash(npm test)", "⏺ Bash(npm run build)"]);
+  });
+
+  it("keeps a live-turn filter honest: a disk-bootstrapped dangling batch does not blink", () => {
+    const doc = built(pair());
+    expect(projectPending(doc, context, new Set(["ag-1"]))).not.toEqual([]);
+    expect(projectPending(doc, context, new Set(["someone-else"]))).toEqual([]);
+  });
+});
