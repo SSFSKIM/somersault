@@ -458,6 +458,36 @@ describe("KeymapProvider — a bracketed paste that overruns the 1 MiB cap", () 
     h.unmount();
   });
 
+  // Final-fix re-review: a discarded chunk used to retain NOTHING, so an end marker split across two reads
+  // ("\x1b[2" | "01~") was invisible to indexOf and the latch never released — every later key including
+  // ctrl+c was discarded for the life of the process. The latch now carries the last marker-length-minus-one
+  // bytes of every miss (and of the chunk that ENTERED overflow, whose emitted prefix can end with the
+  // marker's front half) so a straddling marker is re-joined and found.
+  it("releases the latch when PASTE_END straddles a chunk boundary", async () => {
+    const seen: string[] = [];
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={(e) => { seen.push(e.kind === "text" ? `text:${e.text}` : `key:${e.name}`); }} />);
+    await tick();
+    h.stdin.write("\x1b[200~" + "a".repeat(CAP + 1));
+    seen.length = 0;
+    h.stdin.write("tail\x1b[2");                          // marker torn: front half ends this chunk
+    h.stdin.write("01~ok");                               // …back half opens the next
+    expect(seen).toEqual(["text:ok"]);
+    h.stdin.write("\r");
+    expect(seen).toEqual(["text:ok", "key:enter"]);
+    h.unmount();
+  });
+
+  it("releases the latch when the OVERFLOW-ENTERING chunk itself ends with the marker's front half", async () => {
+    const seen: string[] = [];
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={(e) => { seen.push(e.kind === "text" ? `text:${e.text}` : `key:${e.name}`); }} />);
+    await tick();
+    h.stdin.write("\x1b[200~" + "a".repeat(CAP + 1) + "\x1b[2");   // over the cap AND torn marker, one chunk
+    seen.length = 0;
+    h.stdin.write("01~ok");
+    expect(seen).toEqual(["text:ok"]);
+    h.unmount();
+  });
+
   it("teardown during the overflow drops it cleanly (no late dispatch, no crash)", async () => {
     const fallback = vi.fn();
     const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);

@@ -603,11 +603,14 @@ Five behaviours changed in ways a user could notice. Each is deliberate and each
 - **Hint strings can now say `(unbound)`.** Unbind an action in `keybindings.json` and the shortcuts
   grid says so instead of continuing to advertise the old chord. That is the intended outcome of
   deriving hints, not a rendering gap.
-- **`space` now takes the highlighted row in the permissions dialog's top level** (and in the
+- **The permissions dialog's top level gained the full `Settings` key families** (and the
   add-directory confirm menu embedded under it) — final-fix wave: dispatching on the semantic
-  `select:accept` action, which the `Settings` context binds to Enter AND Space, replaced a branch
-  that tested Enter alone. Consistent with `SettingsDialog`'s existing Space behavior; nothing
-  destructive is one keypress away (every delete/remove still opens its own Enter-gated prompt).
+  actions replaced branches that tested the physical defaults alone, so `space` now takes the
+  highlighted row alongside Enter (`select:accept` binds both), and `j`/`k`/`ctrl+n`/`ctrl+p`
+  now navigate alongside the arrows (`select:next`/`select:previous` bind all six) — the
+  final-fix re-review caught that the original disclosure named only Space. Consistent with
+  `SettingsDialog`'s existing behavior for every one of these keys; nothing destructive is one
+  keypress away (every delete/remove still opens its own Enter-gated prompt).
   Residual, recorded as a decision: the permissions dialog's six SUB-views deliberately stay
   physical-key — widening accept to Space there WOULD put a rule delete one stray Space away — so
   a user rebind is inert inside them (component header records the reasoning).

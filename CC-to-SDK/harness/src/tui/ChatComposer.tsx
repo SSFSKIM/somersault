@@ -289,6 +289,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // the one branch that now bypasses it.
     "app:exit": (e) => {
       if (!isEmptyBuffer(stateRef.current)) { handleKey(e); return; }
+      // Ownership FIRST (final-fix re-review): a non-owning composer must not disarm its Esc-clear or
+      // setState at all — reachable only via a user rebind of app:exit to a key no overlay context nulls.
+      if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
       if (clearArm.current) disarmClear();
       exitArm();
     },

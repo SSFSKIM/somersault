@@ -91,6 +91,11 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
    *  exactly like the paste buffer. */
   const carryRef = useRef("");
   const overflowRef = useRef(false);
+  // While the latch is set: the last PASTE_END.length-1 bytes of every discarded chunk (and of the chunk that
+  // ENTERED overflow, whose emitted prefix can end with the marker's front half). Without it, an end marker
+  // split across two reads is invisible to indexOf and the latch never releases — total keyboard death, since
+  // the latch sits above even the ctrl+z pre-table hook (final-fix re-review).
+  const overflowTailRef = useRef("");
 
   const clearChord = () => {
     if (timerRef.current !== null) { (depsRef.current?.clearTimeout ?? clearTimeout)(timerRef.current); timerRef.current = null; }
@@ -133,10 +138,14 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     // which is the accident paste protection exists to prevent. Only the end marker is looked for, and only
     // what FOLLOWS it in that chunk resumes normal parsing (final review).
     if (overflowRef.current) {
-      const end = chunk.indexOf(PASTE_END);
-      if (end === -1) return;
-      overflowRef.current = false;
-      chunk = chunk.slice(end + PASTE_END.length);
+      // Search the retained tail + this chunk so a marker split across reads is re-joined. On a miss, keep
+      // the new tail; retained bytes preceding a found marker were already emitted into the capped prefix
+      // (or discarded), so only what FOLLOWS the marker resumes parsing.
+      const scan = overflowTailRef.current + chunk;
+      const end = scan.indexOf(PASTE_END);
+      if (end === -1) { overflowTailRef.current = scan.slice(-(PASTE_END.length - 1)); return; }
+      overflowRef.current = false; overflowTailRef.current = "";
+      chunk = scan.slice(end + PASTE_END.length);
       if (chunk === "") return;
     }
     // At most ONE of these two holds anything: an open paste returns before a carry can be taken, and a carry
@@ -146,6 +155,9 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     if (pasteOpen(data)) {
       if (data.length <= PASTE_CAP) { pasteRef.current = data; return; }
       overflowRef.current = true;   // …and fall through to emit the capped prefix, with today's truncation
+      // Seed the tail from THIS data too: the prefix about to be parsed can end with the marker's front
+      // half. A full PASTE_END cannot be in this tail (pasteOpen would have been false), so no false release.
+      overflowTailRef.current = data.slice(-(PASTE_END.length - 1));
     }
     // Hold back a torn trailing character for the next chunk — but never while overflowing, where the tail is
     // about to be discarded anyway and prepending it to the post-marker remainder would corrupt it.
@@ -195,7 +207,7 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
       // A paste still in flight is DROPPED: this cleanup runs while the tree is mid-teardown, so dispatching
       // here would either reach half-unmounted components or nobody. Dropping is the honest option. The held
       // half-character goes the same way (it was never a complete character), and so does the overflow latch.
-      pasteRef.current = ""; carryRef.current = ""; overflowRef.current = false;
+      pasteRef.current = ""; carryRef.current = ""; overflowRef.current = false; overflowTailRef.current = "";
       clearChord();
       setRawMode(false);
     };
