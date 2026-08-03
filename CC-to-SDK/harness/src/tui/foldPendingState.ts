@@ -27,6 +27,12 @@ export interface HintView { text: string; italic: boolean }
  *  class (and a test can hand it a stub). */
 export interface FoldPendingHooks {
   latch(anchorId: string, counts: GroupCounts): GroupCounts;
+  /** Non-mutating read of the same maximum, for the PUBLISHED row (task-4 review): upstream's ratchet
+   *  assignment is unconditional across renders of the mounted row, so the on-screen row never downgrades
+   *  when the run settles — but sweeping a replayed transcript must not CREATE latch entries, hence a peek
+   *  rather than a latch. An anchor never latched (fresh mount/replay) reads back exactly its own counts,
+   *  which is upstream's fresh-mount recompute. */
+  peek(anchorId: string, counts: GroupCounts): GroupCounts;
   hint(anchorId: string, candidate: string | undefined, thinking: string | undefined): HintView | undefined;
 }
 
@@ -73,6 +79,13 @@ export class FoldPendingState implements FoldPendingHooks {
     if (thinking !== undefined && thinking !== state.thinking) { state.thinking = thinking; state.thinkingAt = now; }
     if (state.thinking !== undefined && now - state.thinkingAt < THINKING_LINGER_MS) return { text: state.thinking, italic: true };
     return state.shown === undefined ? undefined : { text: state.shown, italic: false };
+  }
+
+  /** The published-row read. Max against the stored latch WITHOUT writing anything back. */
+  peek(anchorId: string, counts: GroupCounts): GroupCounts {
+    const prev = this.counts.get(anchorId);
+    if (prev === undefined) return counts;
+    return { ...counts, readCount: Math.max(prev.readCount, counts.readCount), searchCount: Math.max(prev.searchCount, counts.searchCount), listCount: Math.max(prev.listCount, counts.listCount), mcpCallCount: Math.max(prev.mcpCallCount, counts.mcpCallCount) };
   }
 
   /** Every document swap (rewind, `/resume`, `/clear`): the anchors of the rebuilt transcript are the same

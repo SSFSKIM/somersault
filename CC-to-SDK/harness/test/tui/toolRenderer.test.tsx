@@ -554,12 +554,19 @@ describe("F3 latch-to-max and the throttled hint (R3.2, R4.7)", () => {
     expect(lineTexts(projectPending(second, at(state)))).toContain("⏺ Reading 1 file… (ctrl+o to expand)");
   });
 
-  it("leaves the PUBLISHED row alone — Static holds the settled truth, not a live maximum", () => {
+  it("publishes the LATCHED maximum — the on-screen row never downgrades when the run settles (t4 review)", () => {
+    // Upstream's ratchet assignment is unconditional across renders of the mounted row (`Ima` L427896),
+    // so settling keeps the max; only a fresh mount (replay) recomputes. `peek` reads the same maximum
+    // without writing, so sweeping history cannot create latch entries.
     const state = new FoldPendingState({ now: () => 0 });
     const doc = built(cat("b1", "a.ts"), result("b1"), cat("b2", "b.ts"), result("b2"));
     expect(lineTexts(projectPending(doc, at(state)))).toEqual(["  Read 2 files (ctrl+o to expand)"]);
     doc.appendSdk("host", call("read-1", "Read", { file_path: "/work/c.ts" })); doc.appendSdk("host", result("read-1")); doc.appendSdk("host", prose("done"));
-    expect(lineTexts(groupRows(projectCompact(doc, at(state))))).toEqual(["  Read 1 file (ctrl+o to expand)"]);
+    expect(lineTexts(groupRows(projectCompact(doc, at(state))))).toEqual(["  Read 2 files (ctrl+o to expand)"]);
+    // A replay with NO latch state (fresh mount) recomputes honestly — and gains no state from the sweep.
+    const fresh = new FoldPendingState({ now: () => 0 });
+    expect(lineTexts(groupRows(projectCompact(doc, at(fresh))))).toEqual(["  Read 1 file (ctrl+o to expand)"]);
+    expect(lineTexts(groupRows(projectCompact(doc, at(fresh))))).toEqual(["  Read 1 file (ctrl+o to expand)"]);
   });
 
   it("holds the ⎿ hint for 700 ms after each accepted change (R4.7 step 4)", () => {

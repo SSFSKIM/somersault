@@ -354,21 +354,24 @@ export function clampHintText(text: string, width: number, maxLines: number): st
 /** R3.1's early exit: a run whose clauses all came out empty renders NOTHING at all. */
 function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOptions): readonly RenderItem[] {
   const active = form === "active";
-  // R3.2's ratchet and R4.7's hint resolution are the DYNAMIC region's alone: a published row is rendered
-  // into append-only Static exactly once, and re-deriving it from live maxima (or from a hint whose 700 ms
-  // window happens to be open) would freeze a transient reading into history. The anchor is the run's FIRST
-  // member id — memberIds grow as the run grows, so nothing else is stable across its life.
-  const anchorId = form === "published" ? undefined : group.memberIds[0];
+  // R3.2's ratchet: the DYNAMIC forms latch (write the max), and the PUBLISHED form PEEKS the same maximum
+  // without writing — upstream's ratchet assignment is unconditional across renders of the mounted row
+  // (task-4 review, `Ima` L427896), so the on-screen row must not downgrade when the run settles; but a
+  // replay sweep must not CREATE latch entries for history, and a never-latched anchor peeks back its own
+  // counts, which is upstream's fresh-mount recompute. R4.7's hint resolution stays dynamic-only. The
+  // anchor is the run's FIRST member id — memberIds grow as the run grows, so nothing else is stable.
+  const anchorId = group.memberIds[0];
   const pending = anchorId === undefined ? undefined : options.pending;
-  const counts = pending === undefined ? group.counts : pending.latch(anchorId!, group.counts);
+  const counts = pending === undefined || anchorId === undefined ? group.counts
+    : form === "published" ? pending.peek(anchorId, group.counts) : pending.latch(anchorId, group.counts);
   if (foldClauses(counts, active).length === 0) return [];
   const id = toolGroupItemId(group.memberIds, GROUP_PART[form]);
   const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(counts, active, options) }];
   // R3.7: the hint gutter is ACTIVE-ONLY — `latestDisplayHint` rides on the settled message but never renders.
   if (active) {
-    const hint = pending === undefined
+    const hint = pending === undefined || anchorId === undefined
       ? (group.hint === undefined ? undefined : { text: group.hint, italic: false })
-      : pending.hint(anchorId!, group.hint, group.latestThinkingSummary);
+      : pending.hint(anchorId, group.hint, group.latestThinkingSummary);
     if (hint !== undefined) {
       const grey = resolveThemeColor(themeTokens().inactive);
       // R4.7 step 5: the summary variant is dim + ITALIC and pre-clamped by `OAH(text, columns − X8o, PAH)`;
