@@ -15,6 +15,9 @@
 // and registers that context's actions. Two consequences worth stating: `home`/`end` finally work (Ink's
 // `useInput` could not tell them from insert or F1–F12, P86 §1.1), and Ctrl-O closing the pager is the
 // Transcript context's `transcript:exit`, not a special case in ChatApp's owner gate any more.
+// Known window (t7 review): scope registrations unregister in a passive cleanup, so a key arriving in the
+// SAME stdin chunk as the close key still resolves to `scroll:*` on the unmounting pager and is dropped —
+// the safe direction (dropped, not misrouted), same blind spot Ink's own passive `useInput` always had.
 import React, { useRef, useState } from "react";
 import { Box, Text, useStdout } from "ink";
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";

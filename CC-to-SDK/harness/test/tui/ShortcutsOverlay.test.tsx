@@ -11,7 +11,7 @@
 // the retiring composer's fallback): registered BEFORE the overlay, it is exactly what a leak would reach.
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
-import { renderWithKeymap as render, tick as flush } from "./keysTestUtil.js";
+import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { useKeyActions, useKeyFallback } from "../../src/tui/keys/KeymapProvider.js";
 import { ShortcutsOverlay } from "../../src/tui/ShortcutsOverlay.js";
 
@@ -68,12 +68,12 @@ describe("<ShortcutsOverlay>", () => {
       return null;
     };
     const { stdin } = render(<><Underneath /><ShortcutsOverlay onClose={() => { closed++; }} /></>);
-    await flush();
+    await tick();
     stdin.write("\x0f");                                       // Ctrl-O: Global's app:toggleTranscript
     stdin.write("\x14");                                       // Ctrl-T: Global's app:toggleTodos
     stdin.write("x");                                          // a single printable key
     stdin.write("typed run");                                  // a multi-character text event
-    await flush();
+    await tick();
     expect(toggleTranscript).not.toHaveBeenCalled();
     expect(toggleTodos).not.toHaveBeenCalled();
     expect(fallback).not.toHaveBeenCalled();

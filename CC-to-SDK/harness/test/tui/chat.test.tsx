@@ -583,6 +583,30 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");
   });
 
+  it("help opened DURING a busy turn still dismisses on Escape — the swallow must resolve to Help, not the live Task scope (t7 review)", async () => {
+    let release = () => {};
+    let fake: ReturnType<typeof fakeRemote>;
+    fake = fakeRemote({
+      submit: async (_p, onMessage) => {
+        fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+        const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+        onMessage(m); fake.pushEvent({ kind: "message", data: m });
+        await new Promise<void>((res) => { release = res; });
+        fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+        return { result: "done" };
+      },
+    });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("go"); await waitFor(() => frame(lastFrame).includes("go"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("ok"));   // turn running (Task scope live)
+    stdin.write("?");
+    await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
+    stdin.write("\x1b");                                                       // Escape → help:dismiss, NOT dropped by Task
+    await waitFor(() => !frame(lastFrame).includes("Keyboard shortcuts"));
+    release();
+  });
+
   it("with the ? overlay open, ctrl+o does NOT open the pager and the overlay stays (F0 acceptance 5)", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);

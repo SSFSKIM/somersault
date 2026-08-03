@@ -64,6 +64,9 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // say so — otherwise moving the pager onto the scope stack (task 7) would NEWLY fire history-search and
     // the todo panel from inside it, through Global.
     "ctrl+r": null, "ctrl+t": null,
+    // Chat's alt+p/alt+t (model picker / thinking) could otherwise fire through a still-registered Chat scope
+    // in the passive-flush sub-tick after this overlay mounts (two keys in one chunk) — t7 review.
+    "alt+p": null, "alt+t": null,
   }},
   { context: "HistorySearch", bindings: {
     "ctrl+r": "historySearch:next", "escape": "historySearch:accept", "tab": "historySearch:accept",
@@ -71,6 +74,7 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // owner === "overlay" (state.historyOpen, ChatApp.tsx:80): the root globals never reach the visible overlay.
     // ctrl+r/ctrl+c above are rebindings, not survivals; the remaining four are dead today and stay dead.
     "ctrl+o": null, "ctrl+t": null, "ctrl+b": null, "ctrl+d": null,
+    "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
   }},
   { context: "MessageSelector", bindings: {
     "up": "messageSelector:up", "down": "messageSelector:down", "enter": "messageSelector:select",
@@ -81,6 +85,7 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "ctrl+down": "messageSelector:bottom", "shift+down": "messageSelector:bottom", "alt+down": "messageSelector:bottom", "shift+j": "messageSelector:bottom", // NEW (KB14)
     // RewindPicker is an "overlay" owner (state.rewindPicker.open) — same total suppression as Select/Settings.
     "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
+    "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
   }},
   { context: "Select", bindings: {
     "up": "select:previous", "down": "select:next", "j": "select:next", "k": "select:previous",
