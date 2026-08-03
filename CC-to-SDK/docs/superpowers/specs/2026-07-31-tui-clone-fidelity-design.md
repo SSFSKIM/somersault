@@ -289,25 +289,31 @@ left dead** — that is the whole point of running the probe first.
 
 **Delivers.** `LT1` (per-tool typed result rows on F1's derivation layer — `Read 340 lines`,
 `Found 3 files`, `Added 2 lines, removed 3 lines`, `Wrote 42 lines`, `Received 42.1 kB (200 OK)`),
-`LT2` (collapsed read/search/list groups with a clause grammar built from **our** census — first clause
-capitalised, `", "` joins, bold counts, latch-to-max, finished group entirely dim), `LT5` (the group's
-single elapsed suffix after two seconds; never a per-row duration), `LT3` (≥2 same-name
-tool_use blocks collapse to `Running 3 agents…` / `3 agents finished`), `LT4` (the throttled live hint
-line), `LT16` and `LT17` (agent progress: last three inner rows plus `… +N tool uses (ctrl+o to expand)`,
-then `Done (7 tool uses · 24.1k tokens · 1m 12s)`), `LT18` (Write preview = first 10 highlighted lines),
-`LT20` (the `(ctrl+b to run in background)` row hint), `CH23` (the 77-entry irregular-past conjugation
-table that drives the **grouped activity line**, not the spinner).
+`LT2`'s remaining half (F1 shipped the collapse; F3 ships the **real bold count inside the dim row**
+via the raw-SGR fold-row writer — see Decision Log 2026-08-04 — the thought clause's `thoughtForMs`
+population from locally clocked thinking blocks per P82, and the latch-to-max counters), `LT3` (≥2
+same-name tool_use blocks in one assistant message collapse to `Running 3 agents…` / `3 agents
+finished`), `LT4`'s default-reachable pieces (the 700 ms hint debounce and the italic thinking-summary
+hint with its 3 s linger — the bash progress suffix is `ds()`-gated and stays out), `LT16` and `LT17`
+(agent progress: last three inner rows plus `… +N tool uses (ctrl+o to expand)`, then
+`Done (7 tool uses · 24.1k tokens · 1m 12s)` with the P83 totals ladder — sidecar, then
+`task_notification.usage`, then client-derived count/duration), `LT18` (Write preview = first 10
+highlighted lines), `LT20` (the `(ctrl+b to run in background)` row hint — client-side schema
+knowledge, gated on the call's `task_started` arrival per P84).
 
-**Depends on.** F1 (hard: ST1 + ST2 + ST3 + ST9). P82 gates `LT2`/`LT5`'s duration source. P94's
-Agent sidecar supplies exact top-level tool/token/duration totals; P83 still gates nested or flat-only
-Agent fallback and teammate identity semantics.
+**Depends on.** F1 (hard: ST1 + ST2 + ST3 + ST9). P82 ✅ (duration source = local arrival clock,
+keyed by message id + block index; replay omits durations). P94's Agent sidecar supplies exact
+top-level totals when present; P83 ✅ settles the fallback ladder and identity fields.
 
-**Non-goals.** `LT19` (Bash incremental stdout), `LT21` (hook-timing rows), `LT22` (auto-mode classifier
-annotations) — all gated on P84/P85 and all low value if those come back negative.
+**Non-goals.** `LT19`, `LT21`, `LT22` — P84/P85 came back negative 2026-08-04; all three are recorded
+in § Cannot build. `LT5`'s elapsed suffix and `CH23`'s conjugation table — bundle-verified
+`ds()`/brief-mode-gated, dead in the tracked default; recorded in § Cannot build, not built (revision
+note 2026-08-04; supersedes their listing as deliverables here).
 
 **Acceptance.**
-1. Three consecutive reads collapse into one row reading `Read 3 files`, gaining ` · 12s` once the oldest
-   unresolved tool passes two seconds. **No per-row elapsed appears anywhere.**
+1. Three consecutive reads collapse into one row reading `Read 3 files`, its count genuinely bold
+   inside the dim run (byte-shape matching upstream's golden, post-count dim loss included). **No
+   per-row elapsed appears anywhere, and no group elapsed suffix in default mode** (R4.10).
 2. A Read shows `⎿ Read 340 lines`; a Bash used as a search shows `Found 3 files`; a Write shows
    `Wrote 42 lines`; an Edit shows `Added 2 lines, removed 3 lines`.
 3. A `TaskCreate` renders nothing at all, and a `ToolSearch` contributes no visible row and no clause.
@@ -587,7 +593,9 @@ necessary by disagreeing with each other about our own behaviour).
 
 ## Probes
 
-Three are done. Fourteen remain, of which one is still new here. A probe is not optional documentation: an
+Ten are done (probes 77/78/P94/P86 through the F0–F2 waves; batch B — P80/P81/P82/P83 — plus P84/P85
+landed 2026-08-04, before F3, exactly as scheduled). Eight remain, of which one is still new here. A
+probe is not optional documentation: an
 item whose probe has not returned is **unschedulable**, and an item whose probe returns negative is
 **recorded as unreachable, not built and left dead**.
 
@@ -596,15 +604,15 @@ item whose probe has not returned is **unschedulable**, and an item whose probe 
 | **77 ✅** | What is in a `tool_result`? Anything structured? | `ST3`, `LT1`, `TR23`, `TR25` — and the whole derivation premise | done |
 | **78 ✅** | Which `canUseTool` fields arrive populated? Does `updatedPermissions` round-trip? | **the entire F6 permission cluster**; also settles the inventory's P79 for the `session` destination | done |
 | **P94 ✅** | **Tool census.** Completed on the harness's SDK 0.3.220 with Fable 5 and first-party OAuth-only authentication. The natural corpus and separate Write-only case passed, every call/result paired, and every canonical result matched its submitted UUID. Read/Edit/Write/Bash/Agent/TaskOutput shapes, optional Bash `returnCodeInterpretation`, ordinary redirect classification, and the flat fallback are recorded in `../research/2026-07-31-tui-clone/07-p94-tool-census.md`. Final probe hashes are `ef882c088ae10ac0bbe996d3cd2c44d8a9aa8504a3cb6886c903e89e4cd1a7dc` and `6c4af1b24c3f60441b7b0df2d07c7631c3ab8de5f4ea784fb50b10c94c5e9959`; both fail closed on competing credentials and alternate provider routes and require the resolved SDK provider to be `firstParty`; P94 additionally uses a minimal child environment plus a credential/network/write-denying sandbox (read containment is explicitly not claimed), while 94b exposes no tools. Frequencies stay in the evidence report and are never dispatch constants. | `ST3`'s structured-first/fallback vocabulary, `LT1`'s per-tool rows, `LT2`'s clause grammar | done |
-| **P86** | Ink input capability matrix in our terminals: `home`/`end`/`pageup`/`pagedown`, `shift+return`, `super`/`meta` chords, mouse click and wheel, terminal focus events, bracketed-paste boundaries | **scopes F2 and F5** — separates unreachable from unbuilt | before F2; needs a pty, not the SDK, so it can run from day one |
-| **P80** | Does `[Request interrupted by user]` reach a client as a user message? Do context-limit, credit-balance and abort conditions arrive as assistant text with upstream's sentinel strings, or as SDK errors? | `LT14`, `TR38` | batch B, before F3 |
-| **P81** | Does the `compact_boundary` frame carry a summarised-message count and direction? | `TR36` | batch B |
-| **P82** | Are there per-block timestamps on the thinking stream, enough to compute `Thought for 12s`? | `TR33`, `LT2`'s first clause | batch B |
-| **P83** | For nested/flat-only Agent calls, are assistant `usage` blocks summable and is there identity beyond `parent_tool_use_id`? P94 confirmed on 0.3.220 that recognized top-level Agent sidecars can carry exact `totalToolUseCount`, `totalTokens`, `totalDurationMs`, `toolStats`, model, status, and async/completed variants, but some Agent calls remain flat-only. | `LT17` fallback, `TR39`, `DG21` | batch B |
+| **P86 ✅** | Done 2026-08-03 (probes 86/86b, report `../research/2026-07-31-tui-clone/09-p86-ink-input-matrix.md`). `useInput` destroys key identity (`home ≡ end ≡ insert ≡ F1–F12`); F2 replaced it with a root raw-stdin parser. Unreachable key classes recorded in `tui-ux.md` §1a. | **scopes F2 and F5** — separates unreachable from unbuilt | done |
+| **P80 ✅** | Done 2026-08-04 (`probes/80b-interrupt-error-sentinels.ts`, report `../research/2026-07-31-tui-clone/13-p80-p81-sentinels-compact.md`). `query.interrupt()` puts the literal sentinel on the wire: a real `type:"user"` frame whose sole text block is `[Request interrupted by user for tool use]`, after the rejected `tool_result` frame, before `result{terminal_reason:"aborted_tools"}`. AbortController is NOT interchangeable: the iterator throws, no frames follow, the sentinel lands only in the session file. API errors arrive as assistant text — `error:"invalid_request"` + `is_api_error_message:true` with upstream's `Prompt is too long · …` wording — with the trap that the turn's `result` frame still reports `subtype:"success"` while `is_error` is true. Credit-balance covered by labelled static grep only (`billing_error` tag exists in the binary). | `LT14`, `TR38` | done |
+| **P81 ✅** | Done 2026-08-04 (`probes/81-compact-boundary.ts`, same report). `compact_boundary` carries a trigger tag (`manual`), `pre_tokens`/`post_tokens` (+ undeclared `cumulative_dropped_tokens`), a duration and relink anchors — but NO summarised-message count and NO direction field; a count must be derived locally. Critical: `getSessionMessages` strips `subtype`/`compactMetadata`/`isCompactSummary`, so the boundary must be captured while it streams — it is unrecoverable from the persisted-message API. | `TR36` | done |
+| **P82 ✅** | Done 2026-08-04 (`probes/82-thinking-timestamps.ts`, report `../research/2026-07-31-tui-clone/10-p82-thinking-timestamps.md`). No time-bearing field on any `stream_event` frame; completed-message ISO timestamps are block-FINISH stamps with no start counterpart. Local arrival clocking is the duration source (proven within 1–14 ms of the wire span over an 8.5 s block); the timer key must be (message id, block index) because `event.index` restarts per API message. Replay/resume cannot recover durations — omit, never infer from finish-to-finish deltas. | `TR33`, `LT2`'s first clause | done |
+| **P83 ✅** | Done 2026-08-04 (`probes/83-agent-usage-identity.ts`, report `../research/2026-07-31-tui-clone/11-p83-agent-usage-identity.md`). Child `usage` blocks are NOT summable (265–342% overshoot — per-turn context re-count); the sidecar's `totalTokens` is itself the final child message's four usage fields summed. Faithful fallback totals: `system/task_notification.usage` `{total_tokens, tool_uses, duration_ms}` keyed by Agent tool_use_id (arrives just before the `tool_result`; the ONLY totals source for parallel dispatches, whose sidecars come back `async_launched` with no totals); tool-use count by counting child `tool_use` blocks per `parent_tool_use_id` (exact ×5); duration by first-child-frame→result arrival (±1–7 ms). Identity is rich: child frames carry `subagent_type`/`task_description`/child `message.model`; `system/task_started` binds tool_use_id↔task_id↔type↔description first. Child frames carry the PARENT's session_id; `stream_event` partials have null `parent_tool_use_id` (no token-level streaming inside a subagent). | `LT17` fallback, `TR39`, `DG21` | done |
 | **P89** | Does `getContextUsage` expose window size, reserved output and the auto-compact point — enough for upstream's token-absolute `warn`/`compact`/`blocked` levels rather than a naive percentage? | `CH4`, and statusLine's `context_window` block | before F7 |
 | **P95** *(new)* | **statusLine payload sourcing.** Which of the 20 documented plus five undocumented fields can we actually populate — `transcript_path`, `prompt_id`, `context_window.*`, `rate_limits` (probe 55 says null under OAuth), `cost`, `output_style`, `agent`, `worktree`? | `CH11`'s fidelity claim and the degradation contract | before F7 |
-| **P84** | Does a client see incremental stdout for a running Bash? Any wire counterpart to the background affordance? | `LT19`, `LT20` | before F3 (cheap; share a session) |
-| **P85** | Do PreToolUse hook summaries with timing reach a client? Does the auto-mode classifier's verdict? | `LT21`, `LT22` | with P84 |
+| **P84 ✅** | Done 2026-08-04 (`probes/84-bash-stdout-background.ts`, report `../research/2026-07-31-tui-clone/12-p84-p85-bash-hooks-wire.md`). A foreground Bash is wire-silent for its whole runtime (only `system/task_started` ~5 s late and `task_notification` at completion; zero stdout, no `tool_progress`) — `LT19` is unreachable. Nothing announces the background affordance (`run_in_background` absent from the init frame): `LT20`'s hint is client-side schema knowledge, gated on the call's `task_started` arrival. The ACTION is real: `backgroundTasks(toolUseId)` after `task_started` backgrounds the command and the `tool_result` short-circuits within ~1 s with the output-file path (corrects probe 67: called early, targeted form returns false and the no-arg form returns true while backgrounding nothing). | `LT19`, `LT20` | done |
+| **P85 ✅** | Done 2026-08-04 (`probes/85-hook-timing-classifier.ts`, same report). Both hook species execute invisibly — no `hook_started`/`hook_progress`/`hook_response`/`tool_use_summary` frames — so `LT21` is unreachable. No classifier verdict is annotated anywhere (no `system/permission_denied` across five permission paths; a genuine denial's only traces are prose in the model-facing tool_result and a reason-less `result.permission_denials` entry), so `LT22` is unreachable. | `LT21`, `LT22` | done |
 | **P90** | Do the SDK's task items carry `activeForm`, owner, blocker, activity? | `DG58`, `CH15` | before F8 |
 | **P93** | Can we send OSC 11 / OSC 0 / OSC 21337 from inside a live Ink render without corrupting the frame, and does the OSC 11 reply parse? *(Terminal question, not SDK.)* | `TH3`, `CH28`, `CH30`, `CH34` | before F8 |
 | **P87** | Does the SDK accept image content blocks on a user turn? Can a pasted screenshot round-trip? | `CM42`–`CM45`, `TR34` — a whole sub-domain, and a scorecard reclassification | tail decision |
@@ -641,15 +649,19 @@ becomes permanently unbuilt.
 | `cmd+*` chords | macOS system keys never reach a terminal app | `KB9` (`cmd+k` clear screen), already a recorded divergence |
 | Voice push-to-talk | No audio surface | `CM`/`KB` push-to-talk rows |
 | `rate_limits` under OAuth | Probe 55: populated only under the interactive credential | statusLine's `rate_limits` block is null for subscription-authenticated users. Emitted as null, never faked |
+| Incremental stdout for a running Bash | P84 on 0.3.220: the wire is silent between `tool_use` and `tool_result` (only `task_started` ~5 s late and `task_notification` at completion) | `LT19`'s last-5-lines live box and the `(elapsed · timeout)` progress indicator. The background *action* remains reachable via `backgroundTasks(toolUseId)` after `task_started` |
+| Hook execution visibility on the client stream | P85 on 0.3.220: in-process and settings-layer hooks both run invisibly — no `hook_started`/`hook_progress`/`hook_response`/`tool_use_summary` frames | `LT21`'s `Ran N PreToolUse hooks (Xms)` rows |
+| The auto-mode classifier's verdict | P85 on 0.3.220: no `system/permission_denied` across five paths; a denial leaves only tool_result prose and a reason-less `result.permission_denials` | `LT22`'s `Allowed/Denied by auto mode classifier` annotations |
+| Token-level streaming inside a subagent | P83 on 0.3.220: every `stream_event` partial carries a null `parent_tool_use_id` | `LT16`'s inner rows update per complete child message, never per token |
+| The default-mode elapsed suffix and conjugated agent clause | Bundle-verified 2026-08-04: `V8p`'s anchor is computed only under `if (s && ds())` (L427963–427974), and the default finalizer `ke_` (L302123) never sets `agentCount`/`agentDescriptions`, so `s8p`'s single call site (L428041) is dead when `ds()` is false | `LT5`'s ` · 12s` group suffix and `CH23`'s 77-entry conjugation table are fullscreen/brief-mode-only upstream; the tracked default (`ds() === false`, R2.1) shows neither. Recorded, not built |
 
 ### Merely unverified — a probe decides
 
-Bash incremental stdout (P84) · hook timing and the auto-mode verdict (P85) · image content blocks
-(P87) · reasoning effort and pricing metadata (P88) · token-absolute context thresholds (P89) · task
-item fields (P90) · anchored summarize and seeded fresh turns (P91) · auth and refusal events (P92) ·
-Chrome/browser tool presence in `canUseTool` (unanswered by probe 78, which covered Read/Write/Edit) ·
-Ink's key and mouse capability set (P86) · OSC round-tripping from inside an Ink render (P93) ·
-statusLine payload sourcing (P95).
+Image content blocks (P87) · reasoning effort and pricing metadata (P88) · token-absolute context
+thresholds (P89) · task item fields (P90) · anchored summarize and seeded fresh turns (P91) · auth and
+refusal events (P92) · Chrome/browser tool presence in `canUseTool` (unanswered by probe 78, which
+covered Read/Write/Edit) · OSC round-tripping from inside an Ink render (P93) · statusLine payload
+sourcing (P95). *(P84, P85 and P86 moved to the settled table above on their 2026-08-03/04 returns.)*
 
 **None of these may be recorded as unreachable until its probe returns.** And one is unverified in the
 *other* direction: report 02 searched six ways for an upstream session-resume divider and found no
@@ -835,9 +847,42 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
   to F3 design — candidates are a raw-SGR line writer for fold rows, or upstream's own shape (bold child
   nested inside a dim parent, accepting upstream's post-count dim loss, which the golden shows is what
   2.1.220 actually emits). Rejected: shipping the count unbolded.
+- **Bold-count mechanism chosen: a raw-SGR fold-row writer emitting upstream's exact byte shape —
+  bold count nested in the dim run, post-count dim loss included** (F3 design, 2026-08-04). Direct
+  bundle read (L428046) confirms upstream renders the whole clause run as ONE `<Text dimColor={!s}>`
+  with nested `<Text bold>` children, whose `\x1b[22m` closer clears faint — the golden's plain
+  `" file…"` tail IS upstream's emission, so matching it byte-for-byte drives that row's remaining six
+  divergent cells to zero. Our Ink cannot compose bold+dim via props (Surprises, 2026-08-03) and chalk
+  rewrites raw SGR inside a styled `<Text>`, so the fold row is emitted as one pre-styled string
+  through an unstyled `<Text>`; a TDD passthrough test must pin that an unstyled Text preserves raw
+  SGR before anything builds on it. Rejected: a "corrected" writer that keeps dim after the count
+  (diverges from the golden forever — better-than-upstream is still divergence under this brief).
 
 ## Surprises & Discoveries
 
+- **The Agent sidecar's `totalTokens` is not an aggregate, and summing child usage fabricates one.**
+  P83: per-message child `usage` blocks re-count the child's context every turn (cache reads climb
+  monotonically), overshooting the sidecar by 265–342%; the sidecar's own `totalTokens` is exactly the
+  final child message's four usage fields summed. The honest fallback was hiding in plain sight:
+  `system/task_notification.usage` carries `{total_tokens, tool_uses, duration_ms}` keyed by the Agent
+  tool_use_id, arrives just before the `tool_result`, and is the ONLY totals source for parallel
+  dispatches (their sidecars return `async_launched` with no totals — parallelism, not agent type,
+  triggers that). (2026-08-04)
+- **Two stop paths, two different wires.** `query.interrupt()` yields a real user frame carrying the
+  literal `[Request interrupted by user for tool use]` sentinel plus a `result{terminal_reason:
+  "aborted_tools"}`; an AbortController abort throws out of the iterator with NO further frames — the
+  sentinel lands only in the session file. A client that treats them as one path renders the wrong
+  thing on one of them. Also: API errors arrive as assistant text (`is_api_error_message:true`) while
+  the turn's `result` frame still says `subtype:"success"` — is_error is the trustworthy bit. (2026-08-04)
+- **`compact_boundary` must be captured in flight.** The streamed frame carries trigger, token deltas
+  and anchors (no summarised count, no direction — derive locally), but `getSessionMessages` strips
+  `subtype`/`compactMetadata`/`isCompactSummary`, so the boundary is unrecoverable from the
+  persisted-message API afterwards. (2026-08-04)
+- **The auto-mode classifier's permissiveness is model-dependent, and sharply so.** P85's incidental:
+  on `claude-sonnet-5` it allowed every operation the probe could safely construct — deleting a
+  pre-existing file, writing into `$HOME`, invoking sudo, writing `.claude/settings.json` — the last
+  of which probe 18e saw BLOCKED on sonnet-4-6. Relevant to the harness's autonomy posture beyond F3;
+  the `sdk-permissionmode-canusetool-matrix` memory should carry it. (2026-08-04)
 - **Probe 77 was right about the block and wrong about the message.** Final SDK 0.3.220 P94 evidence confirms
   `SDKUserMessage.tool_use_result` alongside flat `tool_result.content`, but sidecar presence varies per call:
   even Agent and the high-volume Read/Bash tools had flat-only calls. The enduring contract is structured-first
@@ -1138,6 +1183,18 @@ behind those rows — all forty `K1`–`K40` research rows, re-scored — sits a
 
 ## Revision Notes
 
+- 2026-08-04 — **F3 probe round complete (P80–P85) and four F3 amendments recorded.** (1) Acceptance
+  #1's ` · 12s` group elapsed suffix removed: R4.10 is bundle-verified (`V8p`'s anchor computed only
+  under `if (s && ds())`, L427963–427974) — the suffix is fullscreen-only and the tracked default is
+  `ds() === false` (R2.1). (2) `CH23` removed from Delivers: `s8p` has one call site (L428041) inside
+  the agent clause, and the default finalizer `ke_` never sets `agentCount`/`agentDescriptions`, so
+  the conjugation table is dead outside brief mode — recorded in § Cannot build with `LT5`.
+  (3) `LT19`/`LT21`/`LT22` moved from probe-gated non-goals to settled unreachable (P84/P85 negative).
+  (4) `LT4` split by reachability: 700 ms debounce and the thinking-summary hint are default-reachable
+  and ship; the bash progress suffix is `ds()`-gated and does not. Also corrected: F1's
+  `toolRenderer.tsx` comment claiming the 700 ms debounce is `ds()`-gated — the contract's R4.7 shows
+  the debounce unconditional; only the elapsed anchor and bash suffix are gated. `LT20` reworded: the
+  hint is client-side schema knowledge gated on `task_started` (P84); the wire announces nothing.
 - 2026-08-03 — **F2 architecture revision (probe-driven): ST6's "one `useInput` subscriber at the
   root" is superseded by a root raw-stdin consumer with our own keypress parser.** P86
   (`../research/2026-07-31-tui-clone/09-p86-ink-input-matrix.md`, probes 86/86b) proved `useInput`'s

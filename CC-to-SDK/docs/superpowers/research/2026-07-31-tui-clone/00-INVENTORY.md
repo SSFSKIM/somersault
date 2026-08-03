@@ -159,7 +159,7 @@ files. This *is* the evidence for ST1.
 | LT2 | Collapsed read/search/list groups with the 20-clause grammar, first clause capitalised, `", "` joins, bold counts, latch-to-max, finished group entirely dim | One line per tool, forever | missing | L | 3 | 01#2/#20 |
 | LT3 | ≥2 same-name tool_use blocks in one API message collapse (`Running 3 agents…` / `3 agents finished`) | none | missing | M | 3 | 01#17 |
 | LT4 | Live hint line `⎿ {path \| "pattern" \| $ cmd}`, 700 ms throttle, thinking summary wins for 3 s | none | missing | M | 3 | 01#21 |
-| LT5 | Group elapsed ` · 12s` once the oldest unresolved tool passes 2000 ms; **no per-row elapsed** | Per-row elapsed from 1 s | divergent | S | 2 | 01#19 |
+| LT5 | Group elapsed ` · 12s` once the oldest unresolved tool passes 2000 ms; **no per-row elapsed** | Per-row elapsed removed in F1; suffix **unreachable in default mode** — R4.10 bundle-verified 2026-08-04: anchor computed only under `ds()` | unreachable (default) | — | 2 | 01#19 |
 | LT6 | First 3 wrapped lines at width `cols−10`, then `… +N lines (ctrl+o to expand)`; one-hidden-line special case; no truncation in the text path | 12 lines × 100 chars, no more-marker; live shows one line | divergent | S | 2 | 01#4, 02#48 |
 | LT7 | `⏺` (U+23FA) on macOS, `●` (U+25CF) elsewhere | `●` hardcoded | divergent | S | 2 | 01#9, 02#1 |
 | LT8 | Running = the same bullet, dim, blinking at 600 ms; done = bullet in `success`; error = bullet in `error`; no `✗` anywhere | `⟳` static + elapsed; `✓`/`✗ …red` | divergent | S | 2 | 01#6/#7 |
@@ -173,10 +173,10 @@ files. This *is* the evidence for ST1.
 | LT16 | Agent progress: last 3 inner rows + `… +N tool uses (ctrl+o to expand)`; short-terminal fallback `In progress… · N tool uses`; `Initializing…` first | All nested rows, unbounded | partial | M | 3 | 01#15, 05 N5 |
 | LT17 | `Done (7 tool uses · 24.1k tokens · 1m 12s)` as a bulleted assistant line | `● Agent <target> ✓ (N tools · Ss)` — no token count | partial | S | 3 | 01#16, 05 N5 |
 | LT18 | Write preview = first 10 syntax-highlighted lines + `… +N lines` | Every line as `+ line`, cap 24, `… N more lines` | partial | S | 2 | 01#24 |
-| LT19 | Bash live progress: last 5 lines in a `height:5` clipped box, `+N lines`, `({elapsed} · timeout t)` | Only `⟳ Bash <cmd> 3s` | missing | M | 4 | 01#14 |
+| LT19 | Bash live progress: last 5 lines in a `height:5` clipped box, `+N lines`, `({elapsed} · timeout t)` | none | **unreachable on 0.3.220** — P84 2026-08-04: wire silent between tool_use and tool_result | — | 4 | 01#14 |
 | LT20 | Dim `(ctrl+b to run in background)` at `paddingLeft:5` under a running foreground Bash; tmux variant `ctrl+b ctrl+b (twice)` | `/bg` + Ctrl-B exist, no inline row hint | partial | S | 2 | 01#29, 05 N6 |
-| LT21 | `⎿ Ran N PreToolUse hooks (120ms)` + per-command rows in verbose | none | missing | S | 4 | 01#26 |
-| LT22 | `⎿ Allowed by auto mode classifier` / `Denied by auto mode classifier … see <link>` | none | missing | S | 4 | 01#28 |
+| LT21 | `⎿ Ran N PreToolUse hooks (120ms)` + per-command rows in verbose | none | **unreachable on 0.3.220** — P85 2026-08-04: hooks execute invisibly, no hook frames | — | 4 | 01#26 |
+| LT22 | `⎿ Allowed by auto mode classifier` / `Denied by auto mode classifier … see <link>` | none | **unreachable on 0.3.220** — P85 2026-08-04: no verdict annotation on any client frame | — | 4 | 01#28 |
 
 **Probe-77 reshaping, applies across §B.** Upstream's per-tool clause table is keyed on
 `Read`/`Grep`/`Glob`/`LS`/`TodoWrite`. In *this* SDK the model reaches for **Bash to grep and glob**,
@@ -428,7 +428,7 @@ the surprising `Esc` = accept.
 | CH20 | Token count is `responseLength/4`, animated toward truth at 50 ms steps | Real `message_delta` output tokens, un-animated | divergent (**ours is better**) | — | 5 | 04 C17 |
 | CH21 | Below the spinner: compaction progress bar + `%`, `Next: <subject>`, `Tip: <text>` with two hard-coded overrides (30 min → `/clear`; 30 s + never-used-`/btw` → `/btw`), retry banner replacing the row, brief/remote dots variant | none | missing | L | 3 | 04 C18 |
 | CH22 | Tip catalog ~40 entries with `cooldownSessions` / `priority` / `maxLifetimeShows` / `isRelevant()` / `providerAgnostic`, selected most-stale-first | none | missing | L | 5 | 04 C19 |
-| CH23 | Single-subagent description conjugation on the group summary row: 77-entry irregular past table, 26 irregular gerunds, prefix handling (`re-`/`un-`/`over-`), connective handling after `and `/`then `, a ~200-verb allow-list, and refusal rules | none | missing | M | 3 | 04 C20 |
+| CH23 | Single-subagent description conjugation on the group summary row: 77-entry irregular past table, 26 irregular gerunds, prefix handling (`re-`/`un-`/`over-`), connective handling after `and `/`then `, a ~200-verb allow-list, and refusal rules | none | **unreachable in default mode** — bundle-verified 2026-08-04: `s8p`'s sole call site is the agent clause, whose `agentCount` only brief-mode `kMd` populates | — | 3 | 04 C20 |
 
 **Correction carried from 04 to an earlier research pass:** the irregular table has **77** entries,
 not 71, and the conjugator drives the **grouped tool-use activity line**, not the spinner.
