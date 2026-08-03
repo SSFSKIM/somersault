@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import React from "react";
-import { render } from "ink-testing-library";
+// F2 task 6: ChatApp/ChatComposer read stdin through <KeymapProvider> now, not `useInput` — rendered bare
+// they have no input path at all, so every render here goes through the provider wrapper.
+import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { Box, Text } from "ink";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
 import { applyKey, initialEditorState, type EditorState } from "../../src/tui/editor.js";
@@ -393,7 +395,20 @@ describe("ChatComposer", () => {
     let modeCycles = 0;
     await exercise((stdin) => stdin.write("\x1b[Z"), { onCycleMode: () => modeCycles++ }, () => expect(modeCycles).toBe(1));
 
-    await exercise((stdin) => stdin.write("\x18"));
+    // F2 task 6: a BARE Ctrl-X is no longer a composer-owned intercept. The resolver's chord machine
+    // consumes it as a pending prefix (the bespoke 2 s timestamp ref it used to set is deleted), so it
+    // reaches neither the editor nor the kill/yank bookkeeping — the run now ends when the chord COMPLETES,
+    // which is what the two chord cases below assert. What must still hold of the prefix alone: it inserts
+    // nothing and changes no buffer.
+    {
+      const editorStateRef = { current: makeYankedState() } as React.MutableRefObject<EditorState>;
+      const view = render(<ChatComposer editorStateRef={editorStateRef} onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
+      await new Promise((r) => setTimeout(r, 20));
+      view.stdin.write("\x18");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(editorStateRef.current.lines).toEqual(makeYankedState().lines);
+      view.unmount();
+    }
 
     let externalEdits = 0;
     await exercise((stdin) => stdin.write("\x07"), { editExternal: () => { externalEdits++; return null; } }, () => expect(externalEdits).toBe(1));

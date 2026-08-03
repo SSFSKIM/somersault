@@ -6,7 +6,9 @@
 // (Task 1's precedent), not a literal `tick()`.
 import { describe, it, expect } from "vitest";
 import React from "react";
-import { render } from "ink-testing-library";
+// F2 task 6: ChatApp/ChatComposer read stdin through <KeymapProvider> now, not `useInput` — rendered bare
+// they have no input path at all, so every render here goes through the provider wrapper.
+import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";

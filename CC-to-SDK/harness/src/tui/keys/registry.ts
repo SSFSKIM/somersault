@@ -12,13 +12,15 @@ export interface ScopeEntry { seq: number; name: KeyContextName; active: boolean
 export interface ActionEntry { seq: number; handlers: Record<string, (e: KeyEvent) => void> }
 export interface FallbackEntry { seq: number; handler: (e: KeyEvent | TextEvent) => void }
 export interface SwallowEntry { seq: number; active: boolean }
+export interface SuspendEntry { seq: number; handler: () => void }
 
 export interface Registry {
   scopes: Set<ScopeEntry>; actions: Set<ActionEntry>; fallbacks: Set<FallbackEntry>; swallows: Set<SwallowEntry>;
+  suspends: Set<SuspendEntry>;
 }
 
 export const createRegistry = (): Registry =>
-  ({ scopes: new Set(), actions: new Set(), fallbacks: new Set(), swallows: new Set() });
+  ({ scopes: new Set(), actions: new Set(), fallbacks: new Set(), swallows: new Set(), suspends: new Set() });
 
 let seqCounter = 0;
 /** Stamped once per hook instance (in a ref initializer), never re-stamped on re-render. */
@@ -62,4 +64,11 @@ export function handlerFor(reg: Registry, action: string): ((e: KeyEvent) => voi
 /** The innermost fallback — the composer's editor in the real tree, "component code below the table" upstream. */
 export function fallbackHandler(reg: Registry): ((e: KeyEvent | TextEvent) => void) | undefined {
   return newestFirst(reg.fallbacks)[0]?.handler;
+}
+
+/** The innermost registered ctrl+z handler (task 6: ChatApp, which is where Ink's `useStdin`/`useStdout` and
+ *  the `suspend`/`resumeOutput` seams live — suspendProcess needs the REAL tty object, not a value the
+ *  provider could construct). Undefined falls back to `KeymapDeps.suspend`. */
+export function suspendHandler(reg: Registry): (() => void) | undefined {
+  return newestFirst(reg.suspends)[0]?.handler;
 }

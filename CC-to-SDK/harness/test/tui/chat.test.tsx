@@ -4,7 +4,9 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { tmpdir } from "node:os";
-import { render } from "ink-testing-library";
+// F2 task 6: ChatApp/ChatComposer read stdin through <KeymapProvider> now, not `useInput` — rendered bare
+// they have no input path at all, so every render here goes through the provider wrapper.
+import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { READ_CALL, READ_RESULT_FLAT, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
 import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";

@@ -9,12 +9,14 @@
 // `while (rawModeEnabledCount > 0) handleSetRawMode(false)`. We are outside Ink and can't see that count.
 // `useStdin().setRawMode` (node_modules/ink/build/components/App.js:104-131, `handleSetRawMode`) is a
 // REFERENCE COUNT, not a switch: disabling only calls the real `stdin.setRawMode(false)` once the count
-// reaches 0 (line 126: `if (--this.rawModeEnabledCount === 0)`). ChatApp's own `useInput` AND whatever
-// occupies the composer slot (ChatComposer/PermissionDialog/…) each hold a count, so it is always >=2 while
-// interactive — calling the CONTEXT `setRawMode` here would be a silent no-op: the real tty never leaves
-// raw mode and the shell's own job control stays disabled underneath us. So this module bypasses Ink's
-// count entirely and toggles the real tty object directly (the `stdin` field `useStdin()` also exposes,
-// separate from its `setRawMode` function) — Ink's internal bookkeeping is left untouched and
+// reaches 0 (line 126: `if (--this.rawModeEnabledCount === 0)`). Whoever holds a count would therefore have
+// to be drained to zero, and no caller can know how many that is: before F2 task 6 it was ChatApp's own
+// `useInput` PLUS whatever occupied the composer slot (>=2, so one decrement was a silent no-op); since
+// task 6 the root of the count is KeymapProvider's single subscription, but every dialog still running its
+// own `useInput` (and, after tasks 7/8, whatever raw-mode holder replaces them) adds one more the moment it
+// mounts. A ctrl+z arriving with a dialog up would hit exactly the old >=2 case again. So this module keeps
+// bypassing Ink's count entirely and toggles the real tty object directly (the `stdin` field `useStdin()`
+// also exposes, separate from its `setRawMode` function) — Ink's internal bookkeeping is left untouched and
 // self-consistent: it still believes raw mode is on the whole time, and it genuinely is on again before Ink
 // ever reads more input.
 //

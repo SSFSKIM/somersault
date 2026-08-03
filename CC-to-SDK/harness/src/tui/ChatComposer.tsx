@@ -1,13 +1,16 @@
 // tui/src/ChatComposer.tsx — the chat REPL's multiline input: a thin Ink view over the pure editor reducer.
 // Owns the one side effect (the @-mention filesystem walk). The shared console <Composer> is left untouched.
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { readdirSync } from "node:fs";
 import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, type EditorState } from "./editor.js";
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
 import { editExternal as realEditExternal } from "./externalEditor.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
+import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
+import { toKeyFlags } from "./keys/editorAdapter.js";
+import type { KeyEvent, TextEvent } from "./keys/types.js";
 
 // F1 Task 2 role map: the bash-mode composer takes `bashBorder`, the memory-mode composer `remember`.
 // Read per render so a mid-session /theme change repaints the border and its hint on the next frame.
@@ -92,9 +95,16 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const [yankHint, setYankHint] = useState(false);
   const yankTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { disposed.current = true; if (yankTimer.current) clearTimeout(yankTimer.current); }, []);
-  const ctrlX = useRef(0);
-  // busy is read through a ref in useInput below (busyRef.current, never the closure `busy`) — same reason
-  // as stateRef: useInput re-registers in a passive effect, so a closure read lags one render.
+  // The key that DISMISSED whatever this composer replaced is not this composer's key. Until F2 tasks 7/8
+  // migrate the dialogs, Ink dispatches that key to them first (it reads stdin on "readable"; the keymap
+  // listens for "data", emitted second), so a dialog can deny-and-unmount and remount us synchronously —
+  // and our registration, written during render, would already be live for that same byte. Ink's own
+  // `useInput` subscribed in a passive effect and so never had this problem; `mounted` reinstates exactly
+  // that one-flush window, and nothing else: from the next tick on, every key lands normally.
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; }, []);
+  // busy is read through a ref in handleKey below (busyRef.current, never the closure `busy`) — same reason
+  // as stateRef: the keymap dispatches from a passive-effect listener, so a closure read lags one render.
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const onSubmitRef = useRef(onSubmit); onSubmitRef.current = onSubmit;
@@ -156,13 +166,25 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     onPrefillAppliedRef.current?.();
   }, [prefill]);
 
-  // Read stateRef.current (NOT the closure `state`): Ink re-registers this handler in a passive effect that
-  // flushes after commit, so a closure read lags one render and would submit stale text. The ref updates every render.
-  useInput((input, key) => {
-    // Ctrl-Z is reserved for ChatApp's process-level suspend handler. Ink broadcasts input to every
-    // subscriber, so returning here must precede arm cleanup and applyKey or a suspend corrupts editor state.
-    if (key.ctrl && input === "z") return;
-    if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
+  // F2 task 6: the composer is the Chat context's owner and the keymap's FALLBACK — everything the table
+  // did not bind lands in `handleKey` below, which is the old `useInput` body verbatim minus the two
+  // bespoke chords (the resolver's chord machine owns ctrl+x … now) and minus the ctrl+z guard (the
+  // provider consumes ctrl+z pre-table, so it can no longer reach the editor at all). The Chat-context
+  // actions route to the SAME function: their bodies were already branches of it, and re-entering through
+  // it keeps every arm-cleanup and popup check on one path instead of two that can drift.
+  //
+  // Autocomplete is pushed AFTER Chat so it outranks it (mount order = registration order) — without it,
+  // Chat's `escape → chat:cancel` would steal the popup's own dismissal. It is belt-and-braces rather than
+  // load-bearing: `handleKey` re-checks the live popup state from the ref, which is what keeps two keys
+  // arriving in ONE chunk (no render in between, so the scope flag is one render stale) correct.
+  useKeyScope("Chat");
+  useKeyScope("Autocomplete", { active: !!(state.command || state.mention) });
+  // Read stateRef.current (NOT the closure `state`): the provider dispatches from a listener attached in a
+  // passive effect that flushes after commit, so a closure read lags one render and would submit stale text.
+  // The ref updates every render.
+  const handleKey = (e: KeyEvent | TextEvent) => {
+    if (!mounted.current || (inputOwnerRef && inputOwnerRef.current !== "composer")) return;
+    const { input, key } = toKeyFlags(e);
     const s = stateRef.current;
     if (!key.escape && clearArm.current) disarmClear();
     // KB3: EOF needs two presses. Unlike the Esc-Esc clearArm below, NO other keystroke disarms this one —
@@ -184,24 +206,6 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // Shift+Tab cycles the permission ladder (CC chat:cycleMode). Bare Tab belongs to the autocomplete
     // popups alone (CC's Autocomplete context) — with no popup open it does nothing.
     if (key.tab && key.shift) { endInterceptedEditorAction(s); onCycleModeRef.current?.(); return; }
-    // Ctrl-X Ctrl-E chord (2s window) or Ctrl-G: round-trip the buffer through $EDITOR. Ctrl-E alone
-    // must stay line-end, so the chord prefix gates it.
-    if (key.ctrl && input === "x") { endInterceptedEditorAction(s); ctrlX.current = Date.now(); return; }
-    // Ctrl-X Ctrl-K (CC chat:killAgents) — only when chorded; a bare Ctrl-K stays the editor's kill-to-end.
-    if (key.ctrl && input === "k" && Date.now() - ctrlX.current < 2000) { endInterceptedEditorAction(s); ctrlX.current = 0; onKillAgentsRef.current?.(); return; }
-    if (key.ctrl && (input === "g" || (input === "e" && Date.now() - ctrlX.current < 2000))) {
-      const ended = endInterceptedEditorAction(s);
-      ctrlX.current = 0;
-      const edited = (editExternalRef.current ?? realEditExternal)(s.lines.join("\n"));
-      // Clear any open mention/command popup too — it was filtered against the pre-edit buffer and would
-      // otherwise show stale items against the freshly-applied text.
-      if (edited !== null && !disposed.current) {
-        if (s.lines.length === 1 && s.lines[0] === "" && edited.length > 0) onDraftStartRef.current?.();
-        commitState(replaceBufferFromOutside(ended, edited));
-      }
-      return;
-    }
-    ctrlX.current = 0;                                       // any other key breaks the chord
     // Esc is global ONLY when no autocomplete popup is open; with a popup, applyKey owns it (closes the
     // popup). This single owner prevents the ChatApp+composer double-handling. CC's Esc-Esc semantics
     // (CM15): busy Esc always interrupts (buffer untouched); idle Esc with text arms a local double-press
@@ -236,6 +240,33 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     }
     if (s.lines.length === 1 && s.lines[0] === "" && !(r.state.lines.length === 1 && r.state.lines[0] === "")) onDraftStartRef.current?.();
     if (r.submit != null) onSubmitRef.current(r.submit); commitState(r.state);
+  };
+  useKeyFallback(handleKey);
+  // Ctrl-X Ctrl-K (CC chat:killAgents) and Ctrl-G / Ctrl-X Ctrl-E (chat:externalEditor) are the two keys
+  // whose GATE moved into the resolver: the chord machine decides whether ctrl+k is the editor's
+  // kill-to-end or the agent kill, so these handlers only fire when the chord already completed. Each still
+  // ends a kill/yank run and drops an armed Esc-clear, which the swallowed ctrl+x prefix used to do.
+  const interceptChord = (): EditorState | null => {
+    if (!mounted.current || (inputOwnerRef && inputOwnerRef.current !== "composer")) return null;
+    const s = stateRef.current;
+    if (clearArm.current) disarmClear();
+    return endInterceptedEditorAction(s);
+  };
+  useKeyActions({
+    "chat:cancel": handleKey, "chat:clearInput": handleKey, "chat:cycleMode": handleKey, "app:exit": handleKey,
+    "autocomplete:dismiss": handleKey, "autocomplete:accept": handleKey,
+    "chat:killAgents": () => { if (interceptChord()) onKillAgentsRef.current?.(); },
+    "chat:externalEditor": () => {
+      const ended = interceptChord();
+      if (!ended) return;
+      const edited = (editExternalRef.current ?? realEditExternal)(ended.lines.join("\n"));
+      // Clear any open mention/command popup too — it was filtered against the pre-edit buffer and would
+      // otherwise show stale items against the freshly-applied text.
+      if (edited !== null && !disposed.current) {
+        if (ended.lines.length === 1 && ended.lines[0] === "" && edited.length > 0) onDraftStartRef.current?.();
+        commitState(replaceBufferFromOutside(ended, edited));
+      }
+    },
   });
 
   // A just-opened mention has empty files → walk cwd once and feed the results in.

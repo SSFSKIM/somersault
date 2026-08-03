@@ -22,13 +22,13 @@ import type { InputEvent, KeyContextName, KeyEvent, TextEvent } from "./types.js
 import { DEFAULT_BINDINGS, type ContextBindings } from "./bindings.js";
 import { bindingFor, compileBindings, resolveKey, type CompiledTable } from "./resolver.js";
 import type { KeySpec } from "./normalize.js";
-import { activeContexts, createRegistry, fallbackHandler, handlerFor, nextSeq, swallowContexts,
-  type ActionEntry, type FallbackEntry, type Registry, type ScopeEntry, type SwallowEntry } from "./registry.js";
+import { activeContexts, createRegistry, fallbackHandler, handlerFor, nextSeq, suspendHandler, swallowContexts,
+  type ActionEntry, type FallbackEntry, type Registry, type ScopeEntry, type SuspendEntry, type SwallowEntry } from "./registry.js";
 
 export interface KeymapDeps {
   now?: () => number; setTimeout?: typeof setTimeout; clearTimeout?: typeof clearTimeout;
   userLayers?: readonly ContextBindings[];            // task 9 feeds live ~/.claude/keybindings.json here
-  suspend?: () => void;                               // ctrl+z pre-table hook (chatMain wires suspend.ts)
+  suspend?: () => void;                               // ctrl+z pre-table hook; `useKeySuspend` outranks it
 }
 
 /** Chord inter-key timeout (spec KB22). */
@@ -79,7 +79,7 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     if (ev.kind === "ignored") return;                                  // mouse/focus/garbage: consumed, never inserted
     // ctrl+z is handled ABOVE the table, like upstream's raw input loop: it must suspend even while Help
     // swallows everything and even mid-chord (F0 contract).
-    if (ev.kind === "key" && ev.ctrl && ev.name === "z") { depsRef.current?.suspend?.(); return; }
+    if (ev.kind === "key" && ev.ctrl && ev.name === "z") { (suspendHandler(reg) ?? depsRef.current?.suspend)?.(); return; }
     const swallowed = swallowContexts(reg);
     if (ev.kind === "text") {
       if (swallowed) return;
@@ -128,6 +128,12 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
       if (!aliveRef.current) return;
       consumeRef.current(typeof data === "string" ? data : data.toString("latin1"));
     };
+    // Ordering note (task 6, measured): this listener can NOT be made to run before the `useInput` components
+    // that have not migrated yet. Ink reads stdin on "readable" (ink/build/components/App.js `handleReadable`)
+    // and fans out from there, and a stream emits "readable" before "data" — so for one byte, an unmigrated
+    // dialog handles the key, closes itself, and re-renders the tree before we are called. The two components
+    // this task migrated absorb that window explicitly (ChatApp's settled-owner ref, ChatComposer's `mounted`);
+    // it disappears entirely once tasks 7/8 remove the last `useInput`.
     stdin.on("data", onData);
     return () => {
       stdin.removeListener("data", onData);
@@ -175,6 +181,14 @@ export function useKeyActions(handlers: Record<string, (e: KeyEvent) => void>): 
 export function useKeyFallback(handler: (e: KeyEvent | TextEvent) => void): void {
   const ctx = useContext(KeymapCtx);
   useRegistration<FallbackEntry>(ctx?.reg.fallbacks, () => ({ seq: nextSeq(), handler }), (e) => { e.handler = handler; });
+}
+
+/** The ctrl+z (SIGTSTP) handler, registered where Ink's `useStdin`/`useStdout` and the app's own suspend
+ *  seams are reachable — ChatApp. Pre-table like the raw loop upstream: it fires under Help's swallow and
+ *  mid-chord alike. Innermost registration wins; with none, `KeymapDeps.suspend` still applies. */
+export function useKeySuspend(handler: () => void): void {
+  const ctx = useContext(KeymapCtx);
+  useRegistration<SuspendEntry>(ctx?.reg.suspends, () => ({ seq: nextSeq(), handler }), (e) => { e.handler = handler; });
 }
 
 /** Help semantics: while active, only this component's own context resolves — every other scope, `Global`

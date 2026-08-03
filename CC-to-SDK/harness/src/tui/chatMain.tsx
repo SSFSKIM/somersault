@@ -89,7 +89,10 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // F2 task 5: the keymap owns raw stdin for the whole tree (its own parser + binding table + chord machine),
   // which is only safe because this render already passes `exitOnCtrlC: false` — Ink must not exit underneath
   // the table's own ctrl+c semantics. Components below register scopes/actions/fallbacks; ctrl+z stays
-  // pre-table and routes to the same suspendProcess path ChatApp uses (deps.suspend is the seam).
+  // pre-table and routes to the same suspendProcess path ChatApp uses — ChatApp registers it itself
+  // (`useKeySuspend`, task 6), since building the SuspendDeps needs the real tty from `useStdin`/`useStdout`
+  // plus the resumeOutput repaint owner, none of which exist up here. `KeymapDeps.suspend` stays the
+  // provider-level fallback for trees that render no ChatApp.
   const app = render(
     <KeymapProvider>
       <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}

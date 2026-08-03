@@ -1,0 +1,40 @@
+// tui/keys/editorAdapter.ts — the one place a canonical `KeyEvent`/`TextEvent` (keys/types.ts) is projected
+// back onto the legacy `(input, KeyFlags)` pair `editor.applyKey` reads. F2 task 6: the composer stopped
+// calling `useInput`, so the reducer no longer receives Ink's shape from Ink — it receives OUR shape,
+// re-projected here. The reducer itself is untouched (it is pure, snapshot-tested, and shared).
+//
+// Two mappings are load-bearing and would silently kill a live editor key if "simplified":
+//  * `ctrl+_` → `input: "\x1f"` with NO flags. The undo branch (editor.ts:278) matches the bare C0 byte,
+//    because that is exactly what a terminal sends and what Ink handed over. `{input:"_",key:{ctrl:true}}`
+//    would fall into the ctrl switch's default and undo would quietly stop working.
+//  * `ctrl+j` → `input: "\n"` with NO flags: the reducer inserts it (newline), and the ctrl switch has no
+//    "j" case, so carrying the ctrl flag would eat the keystroke instead.
+// `alt` becomes `meta`: the reducer's word-movement/yank-pop branch is written in Ink's vocabulary, which
+// fuses the two (keys/types.ts says the same about the event side).
+import type { KeyFlags } from "../editor.js";
+import type { KeyEvent, TextEvent } from "./types.js";
+
+/** Named keys → the reducer's boolean. Names with no editor meaning (home/end/f1…) are absent on purpose:
+ *  they arrive as an empty `input` with no flag set, which `applyKeyInner` returns unchanged. */
+const NAMED: Record<string, keyof KeyFlags> = {
+  enter: "return", escape: "escape", tab: "tab", backspace: "backspace", delete: "delete",
+  up: "upArrow", down: "downArrow", left: "leftArrow", right: "rightArrow",
+};
+/** Raw C0 bytes the reducer matches on directly, flags and all stripped (see the header). */
+const RAW: Record<string, string> = { "_": "\x1f", j: "\n" };
+
+export function toKeyFlags(e: KeyEvent | TextEvent): { input: string; key: KeyFlags } {
+  if (e.kind === "text") return { input: e.text, key: {} };
+  if (e.ctrl && !e.alt && !e.super && e.name in RAW) return { input: RAW[e.name], key: {} };
+  const key: KeyFlags = {};
+  if (e.ctrl) key.ctrl = true;
+  if (e.alt) key.meta = true;
+  if (e.shift) key.shift = true;
+  const named = NAMED[e.name];
+  if (named) { key[named] = true; return { input: "", key }; }
+  if (e.name === "space") return { input: " ", key };
+  // A literal character: the parser lowercased it and recorded the shift, so re-case it here — the reducer
+  // inserts `input` verbatim.
+  if (e.name.length === 1) return { input: e.shift ? e.name.toUpperCase() : e.name, key };
+  return { input: "", key };                                  // home/end/pageup/insert/f1–f12: a no-op edit
+}

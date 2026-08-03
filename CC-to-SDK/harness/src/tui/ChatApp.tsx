@@ -12,10 +12,24 @@
 // shortcuts overlay (F0 KB6) owns every key except Escape, including during the passive-effect unmount
 // window of the composer; the overlay is presentational in this tree.
 // Renders increment 8's multiline <ChatComposer>.
+//
+// F2 TASK 6 — this file no longer calls `useInput` at all. Every key above arrives through
+// <KeymapProvider> (chatMain wraps the tree): the binding table names an ACTION, the provider finds the
+// innermost handler, and the registrations below are ChatApp's. What was one `useInput` body is now:
+//  * `useKeySuspend` — ctrl+z, still PRE-table (it must fire under Help's swallow and mid-chord), still
+//    built here because suspendProcess needs the real tty from `useStdin`/`useStdout` plus the `suspend`
+//    and `resumeOutput` test seams, none of which the provider can see.
+//  * `useKeyActions` — the six root globals plus alt+p/alt+t (KB8) and the `?`-overlay's Escape.
+//  * `useKeyScope("Task", {active: busy})` — makes ctrl+x ctrl+b (KB18) resolve only during a turn.
+// The one thing the table cannot express YET is the owner gate: overlays still run their own `useInput`
+// until tasks 7/8 push their scopes (whose null bindings then unbind these globals declaratively), so
+// `rootOwned()` below keeps the old early-returns alive as a guard on the handlers themselves. It is
+// deliberately temporary; the `inputOwnerRef` ternary keeps its RENDERING job either way.
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
+import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import { suspendProcess } from "./suspend.js";
+import { useKeyActions, useKeyScope, useKeySuspend } from "./keys/KeymapProvider.js";
 import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
@@ -82,8 +96,19 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         : state.pending
           ? "decision"
           : "composer";
-  // Ink's useInput subscription is passive, so a root handler can receive a key after a newer render has
-  // already painted. Keep every state/callback value consumed by this handler current synchronously.
+  // …and this one is the owner as of the last FLUSHED commit. Both are needed for as long as any surface
+  // still runs `useInput` (tasks 7/8): Ink reads stdin on "readable", the keymap listens for "data", and the
+  // stream emits readable FIRST — so a key that an unmigrated overlay/dialog handles by closing itself has
+  // already re-rendered the tree (swapping the visible owner) by the time our handlers see that same key,
+  // which would otherwise act for the surface the key just revealed (Escape denying a dialog and THEN arming
+  // rewind on the composer beneath it). Passive effects do not flush inside that window, so `settledOwner`
+  // still names the surface the key was actually pressed on. `inputOwnerRef` keeps its own opposite job:
+  // updated during render, it lets a RETIRING owner reject a key before its listener is gone.
+  const settledOwnerRef = useRef<InputOwner>(inputOwnerRef.current);
+  useEffect(() => { settledOwnerRef.current = inputOwnerRef.current; });
+  // The keymap dispatches from a stdin listener the provider attached in a passive effect, so — exactly as
+  // with the old `useInput` — a key can arrive after a newer render has already painted. Keep every
+  // state/callback value these handlers consume current synchronously.
   const rootStateRef = useRef(state); rootStateRef.current = state;
   const exitArmedRef = useRef(exitArmed); exitArmedRef.current = exitArmed;
   const suspendRef = useRef(suspend); suspendRef.current = suspend;
@@ -94,6 +119,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const backgroundNowRef = useRef(backgroundNow); backgroundNowRef.current = backgroundNow;
   const openBgPanelRef = useRef(openBgPanel); openBgPanelRef.current = openBgPanel;
   const exitRef = useRef(exit); exitRef.current = exit;
+  const openModelPickerRef = useRef(openModelPicker); openModelPickerRef.current = openModelPicker;
+  const setThinkRef = useRef(setThink); setThinkRef.current = setThink;
   const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disarm = () => { setExitArmed(false); if (disarmTimer.current) { clearTimeout(disarmTimer.current); disarmTimer.current = null; } };
   useEffect(() => () => { if (disarmTimer.current) clearTimeout(disarmTimer.current); }, []);
@@ -116,46 +143,58 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     escTimer.current = setTimeout(() => setEscArmed(false), 1500);
   };
   const onCycleMode = () => { cycleMode(); disarm(); };   // Shift+Tab cycles the permission ladder (default → acceptEdits → plan → auto)
-  // Ctrl-Z is process-level for EVERY visible owner: upstream's raw input loop handles it before context
-  // dispatch, including Help and modal swallowers; suspendProcess is already a Windows-safe no-op. Ctrl-O
-  // closes only Transcript or opens it only from Composer; Ctrl-R/T/B are Composer-only. Ctrl-C is allowed
-  // from Composer and a visible decision dialog, but never from an ordinary overlay hidden behind a decision.
-  // Shift+Tab/Esc are owned by the visible component: the composer fires onCycleMode on Shift+Tab even with
-  // a `/`/`@` popup open (matches 2.1.220), and routes Esc to onInterrupt only when no popup is open.
+  // Ctrl-Z is process-level for EVERY visible owner: the provider intercepts it before context dispatch,
+  // like upstream's raw input loop, so this handler runs under Help and modal swallowers too;
+  // suspendProcess is already a Windows-safe no-op.
+  useKeySuspend(() => {
+    const repaint = () => write("");
+    (suspendRef.current ?? suspendProcess)({ stdin, stdout, repaint: () => {
+      const output = resumeOutputRef.current;
+      if (output) output.repaint(repaint); else repaint();
+    } });
+  });
+  // Ctrl-O closes only Transcript or opens it only from Composer; Ctrl-R/T/B are Composer-only. Ctrl-C is
+  // allowed from Composer and a visible decision dialog, but never from an ordinary overlay hidden behind a
+  // decision. Shift+Tab/Esc are the composer's (Chat context) — it fires onCycleMode on Shift+Tab even with
+  // a `/`/`@` popup open (matches 2.1.220) and routes Esc to onInterrupt only when no popup is open.
   // Ctrl-L lives in the editor now (Task 2), not here.
-  useInput((input, key) => {
-    const current = rootStateRef.current;
-    const owner = inputOwnerRef.current;
-    if (key.ctrl && input === "z") {                            // upstream intercepts this before Help/modal context dispatch
-      const repaint = () => write("");
-      (suspendRef.current ?? suspendProcess)({ stdin, stdout, repaint: () => {
-        const output = resumeOutputRef.current;
-        if (output) output.repaint(repaint); else repaint();
-      } });
-      return;
-    }
-    if (owner === "shortcuts") {                                // Help owns every non-process key during its visible/race window
-      if (key.escape) closeShortcutsRef.current();
-      return;
-    }
-    if (owner === "transcript") {                               // pager owns its keys except its established Ctrl-O close arm
-      if (key.ctrl && input === "o") { setTranscriptOpen(false); disarm(); }
-      return;
-    }
-    if (owner === "overlay") return;                            // root globals never bypass the actually visible ordinary overlay
+  const rootLive = (owner: InputOwner) => owner === "composer" || owner === "decision";
+  const rootOwned = () => rootLive(inputOwnerRef.current) && rootLive(settledOwnerRef.current);
+  // Escape reaches help:dismiss through a PREEMPTIVE scope: the retiring composer's own Chat scope is
+  // removed in a passive effect, so for one sub-tick it would otherwise still outrank Help by mount order
+  // and swallow the Escape that closes the overlay. Preemptive is mount-order-independent by definition.
+  useKeyScope("Help", { active: state.shortcutsOpen, preemptive: true });
+  useKeyScope("Task", { active: state.busy });                  // KB18: ctrl+x ctrl+b only while a turn runs
+  useKeyActions({
+    "help:dismiss": () => closeShortcutsRef.current(),
     // Both open arms are gated on !rewinding (F3, final review): a confirmed rewind is a multi-second
     // engine swap held behind the “⏪ restoring…” modal so a mid-rewind prompt isn't lost — Ctrl-R/Ctrl-O
     // opening another overlay (or, for history, Enter-executing straight into the busy host) would
     // reintroduce exactly the loss mode that modal exists to prevent.
-    if (key.ctrl && input === "o" && !current.rewinding) { setTranscriptOpen(true); disarm(); return; }   // CC app:toggleTranscript
-    if (key.ctrl && input === "r" && !current.rewinding) { openHistorySearchRef.current(); disarm(); return; }   // CC history:search (Global)
-    if (key.ctrl && input === "t") { setTodosOpen((v) => !v); disarm(); return; }   // CC app:toggleTodos
-    if (key.ctrl && input === "c") {                                // interrupt a turn, else arm/confirm exit (CC)
-      if (current.busy) { interruptRef.current(); disarm(); return; }
+    "app:toggleTranscript": () => {
+      if (inputOwnerRef.current === "transcript" && settledOwnerRef.current === "transcript") { setTranscriptOpen(false); disarm(); return; }   // the pager's Ctrl-O close arm
+      if (!rootOwned() || rootStateRef.current.rewinding) return;
+      setTranscriptOpen(true); disarm();
+    },
+    "history:search": () => {
+      if (!rootOwned() || rootStateRef.current.rewinding) return;
+      openHistorySearchRef.current(); disarm();
+    },
+    "app:toggleTodos": () => { if (!rootOwned()) return; setTodosOpen((v) => !v); disarm(); },
+    "app:interrupt": () => {                                    // interrupt a turn, else arm/confirm exit (CC)
+      if (!rootOwned()) return;
+      if (rootStateRef.current.busy) { interruptRef.current(); disarm(); return; }
       if (exitArmedRef.current) { exitRef.current(); return; }
       setExitArmed(true); if (disarmTimer.current) clearTimeout(disarmTimer.current); disarmTimer.current = setTimeout(() => setExitArmed(false), 2000);
-    }
-    if (key.ctrl && input === "b") { current.busy ? backgroundNowRef.current() : openBgPanelRef.current(); disarm(); return; }
+    },
+    "task:background": () => {
+      if (!rootOwned()) return;
+      rootStateRef.current.busy ? backgroundNowRef.current() : openBgPanelRef.current(); disarm();
+    },
+    "chat:modelPicker": () => { if (rootOwned()) void openModelPickerRef.current(); },              // KB8 (alt+p)
+    // KB8 (alt+t): the Settings Thinking-mode row's flow — setThink is /think's own mechanism
+    // (session.setMaxThinkingTokens) with the off/default pair the row toggles between.
+    "chat:thinkingToggle": () => { if (rootOwned()) void setThinkRef.current(rootStateRef.current.thinkLevel === "off" ? "default" : "off"); },
   });
   return (
     <Box flexDirection="column">
