@@ -9,8 +9,12 @@ kept verbatim so the evidence can be re-checked; a glossary is at the end.
 Two interactive probe sessions (100×40/44 pty, OAuth first-party, isolated `CLAUDE_CONFIG_DIR`)
 confirmed the default-mode contract end to end before it was adopted as normative:
 
-- Two `Read` calls in one turn settle to one row `  Read 2 files (ctrl+o to expand)` — grey
-  `#949494`, count bold, two-space leader, no `⏺`, no `⎿` line. Matches R1.1/R3.4–R3.8.
+- Two `Read` calls in one turn settle to one row `  Read 2 files (ctrl+o to expand)` — grey,
+  count bold, two-space leader, no `⏺`, no `⎿` line. Matches R1.1/R3.4–R3.8. **Grey pinned
+  2026-08-03 (Task 7 closeout):** under the tracked capture environment (pinned
+  `TERM=xterm-256color`/`COLORTERM=truecolor`, wrapper/palette vars removed) BOTH the active and
+  the settled row render `#999999` — verified by a dedicated settled-state probe; the `#949494`
+  first recorded here was the ambient-palette variant (`COLORFGBG` present in that probe env).
 - ctrl+o replaces that row with `⏺ Read(src/app.ts)` + `⎿  Read 2 lines` per call and the footer
   `Showing detailed transcript · ctrl+o to toggle · ctrl+e to show all`. Matches R6.1–R6.3.
 - `Bash(echo one)` / `Bash(echo two)` render standalone (`echo` is on the ignored list `Vr_`);
