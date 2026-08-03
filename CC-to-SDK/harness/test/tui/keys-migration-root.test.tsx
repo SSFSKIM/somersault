@@ -202,6 +202,68 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     expect(frame(lastFrame), "the key opened the overlay instead of inserting").not.toContain("draft/");
   });
 
+  // F2 final review, the stretch item (disclosed debt from t10). `chat:cycleMode` stopped being re-derived from
+  // `key.tab && key.shift` in t10; its three neighbours — chat:cancel, chat:clearInput, app:exit — did not, so a
+  // full rebind printed a correct derived hint beside a dead key. The three arms below drive the REBOUND key
+  // through each state machine end to end; the default-key halves are pinned unchanged by escape.test.tsx and
+  // components.test.tsx.
+  it("(k) a rebound chat:cancel runs the Esc-Esc clear arm, not just the escape flag", async () => {
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
+      { userLayers: [{ context: "Chat", bindings: { escape: null, "alt+c": "chat:cancel" } }] },
+    );
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("draft"); await waitFor(() => frame(lastFrame).includes("draft"));
+    stdin.write("\x1bc"); await waitFor(() => frame(lastFrame).includes("again to clear"));
+    expect(frame(lastFrame)).toContain("draft");                     // armed, buffer intact
+    stdin.write("\x1bc"); await waitFor(() => !frame(lastFrame).includes("draft"));
+  });
+
+  it("(k2) a rebound chat:cancel interrupts a running turn, exactly as Escape does", async () => {
+    let interrupted = 0;
+    let fake: ReturnType<typeof fakeRemote>;
+    fake = fakeRemote({
+      submit: async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); return new Promise(() => {}); },
+      interrupt: async () => { interrupted++; fake.pushEvent({ kind: "turn", phase: "end", seq: 1 }); },
+    });
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />,
+      { userLayers: [{ context: "Chat", bindings: { escape: null, "alt+c": "chat:cancel" } }] },
+    );
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("go"); await waitFor(() => frame(lastFrame).includes("go"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
+    stdin.write("\x1bc"); await waitFor(() => interrupted === 1);
+  });
+
+  it("(k3) a rebound chat:clearInput clears the buffer", async () => {
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
+      { userLayers: [{ context: "Chat", bindings: { "ctrl+l": null, "alt+k": "chat:clearInput" } }] },
+    );
+    await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("draft"); await waitFor(() => frame(lastFrame).includes("draft"));
+    stdin.write("\x1bk"); await waitFor(() => !frame(lastFrame).includes("draft"));
+    expect(frame(lastFrame)).toContain("Ask Claude anything…");
+  });
+
+  it("(k4) a rebound app:exit runs the KB3 double-press arm on an empty composer, and nothing with text", async () => {
+    let exits = 0;
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatComposer onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} onExit={() => { exits++; }} />,
+      { userLayers: [{ context: "Chat", bindings: { "ctrl+d": null, "alt+q": "app:exit" } }] },
+    );
+    await tick();
+    stdin.write("x"); await waitFor(() => frame(lastFrame).includes("x"));
+    stdin.write("\x1bq"); await tick();                              // with text: no arm, no exit
+    expect(exits).toBe(0);
+    expect(frame(lastFrame)).not.toContain("again to exit");
+    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("Ask Claude anything…"));
+    stdin.write("\x1bq"); await waitFor(() => frame(lastFrame).includes("again to exit"));
+    expect(exits).toBe(0);
+    stdin.write("\x1bq"); await waitFor(() => exits === 1);
+  });
+
   // Task 8 turned this from a per-file list into a directory sweep: the migration is finished, so the honest
   // gate is "NOTHING under src/tui subscribes to Ink's input any more". Prose mentioning `useInput` survives in
   // several headers (it is the history these files explain) — the gate is on CALLS and IMPORTS, not comments.
