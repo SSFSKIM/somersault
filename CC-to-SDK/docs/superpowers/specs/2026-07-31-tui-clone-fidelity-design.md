@@ -243,7 +243,10 @@ root cause: we have no precedence model.
   source of truth; `car()`-style normalisation with `alt ≡ meta`; a reserved-key registry.
 - `ST6` — the ordered-context resolver. Upstream builds its context array by walking the focused node's
   parent chain and appending `Global` last; **Ink has no focus tree and no propagation stopping**, so we
-  substitute deliberately: one `useInput` subscriber at the root, an explicit React context stack that
+  substitute deliberately: one root **raw-stdin consumer with our own keypress parser** (P86/P86b:
+  `useInput` cannot express the table — see Revision Notes 2026-08-03; the recipe is
+  `exitOnCtrlC: false` + `useStdin().setRawMode(true)` + `setEncoding("latin1")` + our `data`
+  listener), an explicit React context stack that
   each mounted surface pushes its context name onto, first match wins, a binding to `null` consumes the
   key as explicitly unbound. `swallowAll` and preemptive scopes layer above the chain, as upstream's do.
   This replaces 17 ad-hoc `useInput` callbacks and the nested-ternary-plus-six-flags arrangement in
@@ -1048,6 +1051,20 @@ the 9 credential-gated `test/tui/live/*.e2e.test.ts`; the "44" recorded here at 
 
 ## Revision Notes
 
+- 2026-08-03 — **F2 architecture revision (probe-driven): ST6's "one `useInput` subscriber at the
+  root" is superseded by a root raw-stdin consumer with our own keypress parser.** P86
+  (`../research/2026-07-31-tui-clone/09-p86-ink-input-matrix.md`, probes 86/86b) proved `useInput`'s
+  fixed 14-boolean record cannot carry the upstream binding table: `home ≡ end ≡ insert ≡ F1–F12`
+  (byte-identical events), `ctrl+home ≡ ctrl+end`, `shift+home ≡ shift+end`, Backspace ≡ Delete, and
+  the `\x1f` control class lands in text-insert paths — the parser knows the key, the hook discards
+  it. The follow-up (86b) measured the substitute working end to end: render with
+  `exitOnCtrlC: false` (mandatory — Ink's ctrl+C exit rides its stdin listener, not `useInput`),
+  take raw mode through `useStdin().setRawMode(true)` so Ink keeps owning termios restore and stdin
+  unref, `stdin.setEncoding("latin1")` (utf8 mangles high bytes irrecoverably; `setEncoding(null)`
+  silently falls back to utf8), then attach our own `data` listener and parse bytes ourselves —
+  which dissolves every collision and needs no consumed-filter because no `useInput` remains
+  anywhere. The rest of ST6 (explicit React context stack, first match wins, `null` consumes as
+  explicitly unbound, `swallowAll`/preemptive layers) is unchanged.
 - 2026-08-03 — **F1 amendment (owner-approved): the default-view collapse layer moved from F3 into
   F1** as plan Tasks 5b/5c. Live pty probes against installed 2.1.220 proved the default transcript
   folds contiguous read/search/list tool runs into one dim `Read N files (ctrl+o to expand)` summary
