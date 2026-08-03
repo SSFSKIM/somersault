@@ -47,16 +47,16 @@ polish* that makes CC instantly recognizable: **no welcome banner, a non-CC spin
 glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input modes, no queued input, no
 `/cost`, and thin terminal-native editor ergonomics** (Ctrl-A/E/K/U/W, Ctrl-L, Ctrl-C-twice).
 
-| Category | Parity (start) | Parity (pre-C5) | Parity (pre-F0, post–sprint-W3) | Parity (now, post-F0 correction) |
+| Category | Parity (start) | Parity (pre-C5) | Parity (pre-F0, post–sprint-W3) | Parity (now, post-F2) |
 |---|---|---|---|---|
-| 1. Input / composer ergonomics | ~45% | ~88% | ~95% | **~78%** |
+| 1. Input / composer ergonomics | ~45% | ~88% | ~95% | **~86%** (was ~78% post-F0; F2 landed the keymap — see §1a) |
 | 2. Transcript / message rendering | ~50% | ~74% | ~83% | **~57%** |
 | 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% | **~36%** |
 | 4. Modals / overlays | ~60% | ~88% | ~88% (4 new W3 rows — see W3 recount note) | **~50%** |
-| 5. Slash commands | ~55% | ~70% | ~86% (6 new W3 rows — see W3 recount note) | **~86%** (unchanged — no §5 row was named in the corrections) |
+| 5. Slash commands | ~55% | ~70% | ~86% (6 new W3 rows — see W3 recount note) | **~88%** (F2: `/keybindings` 🟡→✅ — it opens the real file now) |
 | 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% | **~61%** |
 | 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~80% (untouched in W3) | **~75%** |
-| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* | **~63%**<br>*(plain row count)* |
+| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* | **~65%**<br>*(plain row count)* |
 
 **F0 correction note (2026-07-31) — the headline fell from ~88% to ~63%, and this is the point of the
 exercise, not a regression to explain away.** Nothing that worked on 2026-07-30 stopped working; the
@@ -105,6 +105,20 @@ category percentages, per the C5 recompute method below):
 | 6. Polish | 3 | 5 | 1 | 9 | 5.5/9 = 61.1% |
 | 7. Control plane (§8) | 5 | 5 | 0 | 10 | 7.5/10 = 75.0% |
 | **Overall (unweighted avg of the 7 rows above)** | | | | | **≈ 63.2% → ~63%** |
+
+**F2 recount (2026-08-04, the keymap wave).** Two categories move, and only because rows actually
+changed state — no re-scoring of anything already counted:
+
+| Category | ✅ | 🟡 | ❌ | non-🚫 rows | Score | what moved |
+|---|---|---|---|---|---|---|
+| 1. Input / composer | 22 | 4 | 2 | 28 | 24/28 = 85.7% | `ST5` (the table) and `ST6` (the resolver) ❌→✅; three new rows enter at ✅/✅/🟡 — the user keybindings file, generic chords, and hints generated from the live binding |
+| 5. Slash commands | 17 | 3 | 1 | 21 | 18.5/21 = 88.1% | `/keybindings` 🟡→✅ — it opens the real `~/.claude/keybindings.json` in `$EDITOR`, which is exactly what upstream's command does |
+| **Overall (unweighted avg of the 7 categories)** | | | | | **≈ 64.7% → ~65%** | §2/§3/§4/§6/§7 unchanged |
+
+The three new §1 rows are upstream features we previously had no row for (`06 K4`, `06 K5`, and
+upstream's own "every hint string generated from the live binding"), not credit for inventions of ours.
+The hint row is honestly 🟡, not ✅: three surfaces derive, two footers and one fold marker do not — §1a
+names them.
 
 The spec that ordered this correction estimated the fall would land "into the low 70s"; the computed
 number lands lower, at ~63%. That is not a contradiction to paper over: the spec's figure was a
@@ -166,7 +180,9 @@ percentage down by construction (✅=1.0, 🟡=0.5). §5 drops its one placehold
 (`/add-dir`, `/permissions`, `/output-style` — the last matches upstream's **own** redirect-into-`/config`
 behavior exactly, a Wave-3 bundle-extraction surprise, not a corner we cut) and 3🟡 (`/config`, `/theme`,
 `/keybindings` — the same disclosed scope cuts as §4, plus `/keybindings` viewing rather than editing) —
-landing §5 at **16✅+4🟡 of 21 rows (~86%)**, up from ~84%. **Overall ~89% → ~88%** is a real, small,
+landing §5 at **16✅+4🟡 of 21 rows (~86%)**, up from ~84%. **F2 update (2026-08-04):** `/keybindings`
+moved 🟡→✅ when the user layer shipped, so §5 now reads **17✅+3🟡 of 21 (~88%)**; the W3 arithmetic above
+is left as written because it records what W3 measured, not what is true today. **Overall ~89% → ~88%** is a real, small,
 plainly-computed movement: §5's rise (+2 in the unweighted 7-category average) is outweighed by §4's fall
 (-6) in that same average — one point net, from adding ten honestly-scored rows to a wave that shipped
 seven working features. Not a regression in anything previously counted; a truer denominator.
@@ -188,9 +204,10 @@ noted otherwise, each with its reason):**
   unused, and only our **5 functional Config rows** ship (Theme/Model/Output style/Default permission
   mode/Thinking mode) against upstream's ~54, most of which have no ccx equivalent (no real Claude Code
   client to configure).
-- **`/keybindings` views the keymap rather than opening it for editing** — upstream opens
-  `~/.claude/keybindings.json` in `$EDITOR`; we have no rebinding mechanism to open a file for, so the
-  command opens the existing read-only `?` keymap viewer instead and says so up front.
+- ~~**`/keybindings` views the keymap rather than opening it for editing**~~ — **RETIRED by F2
+  (2026-08-04).** The premise ("we have no rebinding mechanism to open a file for") stopped holding when
+  the user layer shipped: `/keybindings` opens the real `~/.claude/keybindings.json` in `$EDITOR`, seeds a
+  starter template if the file does not exist, and every save applies to the running REPL. See §1a.
 - **`/permissions` rule mutations live in the flag layer (session) plus the chosen settings file** (for
   the next launch) — upstream's own in-session rule engine is CLI-internal and unreachable from the SDK,
   so this harness owns both halves itself (`applyFlagSettings` for the live effect, `mergeSettingsFile`
@@ -478,8 +495,134 @@ and validated by a row-scoped required-state contract under `capture-frames.py -
 | External editor (Ctrl-X Ctrl-E / Ctrl-G → `$EDITOR`) | ✅ | — | **W1** `externalEditor.ts` — spawnSync terminal handoff (raw mode released/restored), null-safe (editor failure keeps the buffer), popups cleared on applied edit |
 | Ctrl-Z (suspend to shell) | ✅ | — | **fixed 2026-07-31 (F0, t6, KB3/KB5):** new row — previously `Ctrl-Z` detached this client (a divergence with no upstream equivalent, undocumented as a row). It now suspends the whole process group to the shell on `SIGTSTP` and resumes on `SIGCONT`/`fg`, matching upstream's own reserved `Ctrl-Z` exactly, including targeting the process group (not just our own pid) and restoring raw mode past Ink's ref-counted `setRawMode` (`suspend.ts`, read from upstream's own `handleSuspend` at `cli.pretty.js:177985`). Detach moved to `/detach` — see Recorded additions |
 | Image paste (Ctrl-V) | ❌ | pending P87 | **F0 correction:** was scored `🚫` "non-terminal / out of scope" — **the rationale was wrong**. Upstream's `ctrl+v` reads the system clipboard, which is terminal-native; whether the SDK surface lets us reach it is an open probe (P87: image content blocks), not an out-of-scope call. Reclassified `🚫` → `❌`-pending-P87, which brings it into the denominator |
-| Keybinding table (`ST5`) | ❌ | — | **F0 — new row, no prior row existed.** Upstream resolves ~180 bindings across 19 declarative context blocks (one table, `jar`) with every hint string generated from the live binding. We have 17 ad-hoc `useInput` callbacks with hardcoded chord strings scattered per component — no single source of truth. Root cause of the help-overlay double-fire and `Ctrl-_` bugs F0 just fixed above. Owner decision: port the architecture (declarative table + resolver), not just the individual keys — its own future wave, sequenced after the harm list (spec Decision Log) |
-| Keybinding precedence model (`ST6`) | ❌ | — | **F0 — new row, no prior row existed.** Upstream resolves key events through an ordered-context resolver over a focus scope chain (first match wins, `Global` last, with `swallowAll`/`preemptiveScopes` above it). We have a nested-ternary render tree plus 6 hand-checked flags, and 7 surfaces were found ungated (real double-fire bugs — the help-overlay one was one of them, fixed this wave by hand; the generator of that bug class is still unbuilt) |
+| Keybinding table (`ST5`) | ✅ | — | **shipped 2026-08-04 (F2).** `src/tui/keys/bindings.ts` is the single declarative source of truth: upstream's 20 context names, a closed 55-action vocabulary, 136 default entries across the 12 contexts that carry any (97 bindings + 39 explicit unbinds), and a reserved-key registry — with `null` entries stating declaratively which globals a surface kills, which is what the old imperative owner gate did by hand. Every `useInput` callback in `src/tui/` is gone (the F0 row's "17 ad-hoc callbacks" count is now zero) |
+| Keybinding precedence model (`ST6`) | ✅ | — | **shipped 2026-08-04 (F2).** `keys/resolver.ts` + `keys/KeymapProvider.tsx`: one raw-stdin root consumer with our own keypress parser (P86 measured that Ink's `useInput` cannot express the table — it projects every key onto 14 booleans and throws `keypress.name` away), an ordered context stack each mounted surface pushes onto, first-match-wins with `null` consuming the key as explicitly unbound, plus `swallowAll` and preemptive scopes above the chain. The double-fire bug class it exists to remove is now structurally impossible rather than hand-gated |
+| User keybindings (`~/.claude/keybindings.json`) | ✅ | — | **shipped 2026-08-04 (F2, `06 K5`).** Upstream's own path and file shape, so an existing Claude Code keymap applies to `ccx` unchanged: additive merge over the defaults, later-wins within a context, `null` unbinds, live reload on save (no restart), and typed validation (`parse_error`/`invalid_context`/`invalid_action`/`duplicate`/`reserved`, plus our own binding-keeping `suspicious_key` warning) reported into the transcript. `command:<name>` bindings run a slash command, Chat-context only (`06 K6`) |
+| Generic chords, 1 s inter-key window (`KB22`) | ✅ | — | **shipped 2026-08-04 (F2, `06 K4`).** Any binding may be a space-separated sequence; the pending prefix is armed by the table rather than hardcoded, `escape` cancels, and the key that breaks a pending chord is swallowed (upstream `Q4u`). Replaces the two bespoke `useRef` timestamp chords with their 2 s window |
+| Hint strings generated from the live binding | 🟡 | — | **F2, partial and disclosed.** The composer footer ladder, the status-bar mode chip and the whole `?` shortcuts grid derive their chords from the live table, so a rebinding moves them and an unbind prints `(unbound)`. Three surfaces still print literals: the transcript-pager footer, the history-search footer (both are multi-alias ladders a generated string would render worse than the hand-written one) and `toolRenderer.ts`'s `(ctrl+o to expand)` fold marker (a pure projection module with no access to the table, pinned to the upstream golden). See §1a |
+
+
+## 1a — Keybindings: the F2 keymap as data
+
+The keymap is one declarative table (`harness/src/tui/keys/bindings.ts`), one resolver
+(`keys/resolver.ts`), one raw-stdin root consumer (`keys/KeymapProvider.tsx`), and one user layer
+(`~/.claude/keybindings.json`, `keys/userBindings.ts`). Nothing under `src/tui/` calls Ink's `useInput`
+any more. This section is the honest ledger of that wave: what a terminal cannot deliver, what each of
+the research inventory's 40 keybinding rows looks like now, and which behaviours changed on purpose.
+
+### Unreachable keys — recorded, not written and left dead
+
+P86 (`docs/superpowers/research/2026-07-31-tui-clone/09-p86-ink-input-matrix.md`) measured what actually
+arrives at a terminal application. These families are in **no table and no hint string**, because binding
+them would be advertising a key that cannot fire. This is the F2 non-goal stated as a list rather than as
+silence.
+
+| Unreachable key | Why | Evidence |
+|---|---|---|
+| `super`+letter on a non-CSI-u terminal (`cmd+k`, `cmd+c`, `cmd+v`, …) | macOS terminals intercept the Command modifier and never forward it; only a terminal speaking the CSI-u protocol emits a distinguishable form (`\x1b[107;9u` for `cmd+k`), which Ink does not decode and no default terminal sends | P86 §1.7 "CSI-u chords", and the `cmd+k → chat:clearScreen` row of the "Misparsed" table: "most terminals never send cmd+k to the application at all". The reserved-key registry names the macOS `super+*` set so a user rebinding is refused with the reason rather than silently doing nothing |
+| `ctrl+shift+<letter>` on a non-CSI-u terminal | The byte stream is **identical** to plain `ctrl+<letter>` — the shift bit is not encoded at all outside CSI-u, so `ctrl+shift+b` and `ctrl+b` are the same key to any parser | P86 §1.7 and the `ctrl+shift+b → app:toggleBrief` row: "byte-identical to ctrl+b and **undeliverable in principle**" |
+| `shift+enter` without `/terminal-setup` or CSI-u | Plain `shift+enter` sends bare CR, byte-identical to `enter`. It becomes distinguishable only if the host terminal's own keymap is rewritten to send `ESC CR` (upstream's `/terminal-setup`, `KB21`/`06 K40`, an explicit F2 non-goal) or if the terminal speaks CSI-u (`\x1b[13;2u`) | P86 §1.6 table rows for `\x1b\r` and `\x1b[13;2u`; both are misparsed by Ink, and the plain form is not sent at all |
+| `ctrl+m` as distinct from `enter` | Impossible in any terminal: both are CR (0x0D). There is no encoding in which they differ | Upstream reserves it for the same reason (`06 §1.4`); our reserved-key registry carries it verbatim — "Cannot be rebound - identical to Enter in terminals (both send CR)" — as an **error**-severity entry, so a user binding is dropped with that message |
+| Windows / ConPTY behaviour | **Not determined**, and not determinable from this machine: `pty.fork` does not exist on Windows and ConPTY's input translation is a different code path from the POSIX pty every P86/P86b measurement used. Nothing in the table is claimed to work there | P86 §5, "Settled (was 'not determined')" — the one row that stayed open |
+
+**Dropped with a rationale (from `KB8`/`06 K17`).** Upstream's four `meta+*` chat keys are `meta+p`
+(model picker), `meta+t` (thinking), `meta+o` (fast mode) and `meta+w` (workflow keywords). F2 shipped
+the first two as `alt+p` / `alt+t`. **`meta+o` and `meta+w` are deliberately not bound**: `ccx` has no
+"fast mode" and no workflow-keyword surface for them to open, so binding them would either do nothing or
+invent a feature to justify a key. They are recorded here rather than left as a silent omission.
+
+### K1–K40 — the keybinding ledger, post-F2
+
+The 40 rows of the research gap table (`06-keys-themes.md` §1.9), re-scored after F2. ✅ have ·
+🟡 partial · ❌ missing · 🚫 out of scope (the surface does not exist in `ccx`, or upstream's own binding
+is vestigial). This ledger is **not** part of the §1 percentage — §1 carries the five rolled-up rows;
+these are the auditable detail behind them.
+
+| ID | Upstream | Ours, post-F2 | Status |
+|---|---|---|---|
+| K1 | Declarative table, 19 contexts × ~180 bindings | `keys/bindings.ts`: 20 contexts, 136 default entries, one source of truth | ✅ |
+| K2 | Ordered-context first-match-wins resolver, `Global` last | `keys/resolver.ts` + the provider's scope stack; `null` consumes as explicitly unbound | ✅ |
+| K3 | `swallowAll` + `preemptiveScopes` above the chain | `useSwallowKeys` / `useKeyScope({preemptive})`; the swallower resolves to its own innermost scope | ✅ |
+| K4 | Generic chords, 1 s window | Any binding may be space-separated; `escape` cancels; the breaking key is swallowed | ✅ |
+| K5 | `~/.claude/keybindings.json`, additive, `null` unbinds, hot reload, typed validation, reserved registry | All of it, on upstream's own path and file shape; issues land in the transcript, never in a crash | ✅ |
+| K6 | `command:<name>` bindings (Chat-only) | Validated at load and dispatched through the composer's own submit seam — the same path a typed `/name` takes, unknown names included | ✅ |
+| K7 | Key normalisation + alias table, `alt ≡ meta` | `keys/normalize.ts`: one canonical spec string; `meta`/`opt`/`option` fold into `alt`, `cmd`/`win` into `super`, `ctrl+-` ≡ `ctrl+_` | ✅ |
+| K8 | Platform branching (`alt+v` vs `ctrl+v` paste, `shift+tab` vs `meta+m`, iTerm2 coercion, tmux hint) | None — `shift+tab` is the default for `chat:cycleMode` (rebindable), and there is no paste key at all (see K35) | ❌ |
+| K9 | Kill ring with `ctrl+y` / `alt+y` | `editor.ts` kill ring (cap 10, coalescing runs) + the yank hint | ✅ (F0) |
+| K10 | `ctrl+b`/`ctrl+f`/`ctrl+h` in the composer | Not bound in the composer: `ctrl+b` is ours for background (a recorded standing divergence), `ctrl+f`/`ctrl+h` are unbound | ❌ |
+| K11 | `ctrl+n`/`ctrl+p` as composer history | Not bound in Chat (they are list-nav keys in `Select`/`MessageSelector`/`Transcript`) | ❌ |
+| K12 | `alt+d` delete-word-after | Not bound | ❌ |
+| K13 | `escape escape`: text ⇒ clear, empty ⇒ rewind | Exactly that (F0 CM15); the arms live in the composer and `ChatApp`, the key in the table | ✅ |
+| K14 | `←←` on an empty composer ⇒ agents view | No agents view exists in `ccx` | 🚫 |
+| K15 | Confirmation `y` / `n` | Bound, alongside the digits and the legacy `a`/`A`/`d` aliases | ✅ (F0) |
+| K16 | Confirmation `tab` next field · `shift+tab` cycle mode · `ctrl+e` explanation | Not built — an explicit F2 non-goal | ❌ |
+| K17 | `meta+p` · `meta+t` · `meta+o` · `meta+w` | `alt+p` (model picker) and `alt+t` (thinking) ship; `meta+o`/`meta+w` dropped with the rationale above | 🟡 |
+| K18 | `cmd+k` clear screen | Unreachable (see the table above); screen clear stays `/clear` | 🚫 |
+| K19 | `ctrl+shift+b` brief · `ctrl+]` artifact | No such surfaces, and `ctrl+shift+<letter>` is unreachable anyway | 🚫 |
+| K20 | `ctrl+up`/`down`, `meta+up`/`down` diff file list | Vestigial upstream (no handler registered anywhere in their bundle) and no diff file list here | 🚫 |
+| K21 | The whole `DiffDialog` / `DiffPanel` contexts | No such surface; `DiffDialog`/`DiffPanel` validate as context names and carry no bindings, exactly as upstream ships `DiffPanel` | 🚫 |
+| K22 | The `Scroll` context (wheel, `ctrl+home`/`end`, shift-arrow selection, copy) | Not built — an explicit F2 non-goal (`KB12`); needs terminal mouse-mode ownership | ❌ |
+| K23 | The `Footer` context (focusable footer indicators) | No focusable footer | 🚫 |
+| K24 | The `Attachments` context (image attachment navigation) | No image attachments (see K35) | 🚫 |
+| K25 | The `Plugin` context | No plugin surface in the REPL | 🚫 |
+| K26 | `ModelPicker`: `←`/`→` effort, `s` session-only | Not bound; our picker is arrows + enter through the `Select` context | ❌ |
+| K27 | `MessageSelector`: `j`/`k`, `ctrl+n`/`ctrl+p`, eight top/bottom jump aliases | All of them (`KB14`, F2) | ✅ |
+| K28 | `Select`: `j`/`k`, `ctrl+n`/`ctrl+p`, `pageup`/`pagedown`, `home`/`end` | All of them, once, for every list overlay — they share the context (`KB15`, F2) | ✅ |
+| K29 | `Settings`: `r` retry, `d`/`w` period, `t` sort, `ctrl+u`/`ctrl+d` half-page | Not built — an explicit F2 non-goal (`KB16`); our Usage/Stats tabs are static | ❌ |
+| K30 | `Transcript`: `ctrl+e` toggle-show-all, `home`/`end` | Both bound, plus the pager's own scroll set, and the two root globals that were dead inside it are `null` in the table rather than silently live | ✅ |
+| K31 | `Task`: `ctrl+x ctrl+b` as an alias for `ctrl+b` | Bound, and scoped to a running turn (`KB18`, F2) | ✅ |
+| K32 | `ThemePicker`: `ctrl+t` highlight toggle, `ctrl+e` edit custom theme | Not built — an explicit F2 non-goal (`KB19`) | ❌ |
+| K33 | Pager extras `{` `}` `/` `n` `N` `[` `v` | Not built (`KB20`) | ❌ |
+| K34 | `space` ⇒ `voice:pushToTalk` in Chat | No voice mode; `space` types a space | 🚫 |
+| K35 | `ctrl+v` / `alt+v` ⇒ `chat:imagePaste` | Not built; the open question is the SDK image-block surface (P87), not the key | ❌ |
+| K36 | `Help` binds only `escape` | Structural now: the overlay pushes `Help` and swallows, so the provider drops everything else — including `Global`'s own keys | ✅ (F0 + F2) |
+| K37 | `ctrl+z` is a reserved-key **warning**, not a binding | Same: the registry warns, and `ctrl+z` is handled pre-table (SIGTSTP), above context dispatch, so it fires under a swallow and mid-chord | ✅ |
+| K38 | `ctrl+d` on an empty composer needs two presses | Two presses, upstream's own 800 ms window | ✅ (F0) |
+| K39 | Four working `chat:undo` aliases | `ctrl+_`/`ctrl+-` reachable (matched as the raw `0x1f` byte, and canonicalised to one spec) | ✅ (F0) |
+| K40 | `shift+enter` newline via `/terminal-setup` | Not built; the key itself is unreachable without it (see the table above) | ❌ |
+
+**Ledger score: 18✅ + 1🟡 of 31 non-🚫 rows ≈ 60%.** The nine 🚫 rows are surfaces `ccx` does not have
+or bindings upstream itself never wired.
+
+### Accepted behaviour deltas from F2
+
+Five behaviours changed in ways a user could notice. Each is deliberate and each has a reason:
+
+- **The key that breaks a pending chord is swallowed.** Type `ctrl+x` and then `h`, and the `h` is
+  dropped rather than inserted. This is upstream's own chord machine (`Q4u`) and the price of generic
+  chords: while a prefix pends, only extensions and `escape` are considered. Pre-F2 our two bespoke
+  chords let the stray key through into the editor.
+- **`space` now confirms the highlighted row inside `/config`'s embedded theme picker.** The `Settings`
+  context binds `space` → `select:accept` (upstream's own binding), and the theme rows live under it —
+  consistent with the row's own "Enter/Space to change" footer, which previously only half worked.
+- **Embedded "Add directory…" prompts under the permissions dialog no longer move the parent row
+  cursor while a path is typed.** The embedded prompt owns its own context, so `j`/`k` inside a path go
+  into the path. Before, they were also list navigation in the dialog behind it.
+- **`meta+o` and `meta+w` are not bound** (rationale above): no fast mode and no workflow-keyword
+  surface exists for them to reach.
+- **Hint strings can now say `(unbound)`.** Unbind an action in `keybindings.json` and the shortcuts
+  grid says so instead of continuing to advertise the old chord. That is the intended outcome of
+  deriving hints, not a rendering gap.
+
+### Hint derivation — generated, and the three exceptions
+
+Derived from the live table (`keys/hints.ts` + `useBindingLookup`): the composer's footer ladder and its
+`Esc` hint, the status bar's mode-chip parenthetical (shown only while the composer actually owns the
+keyboard — a hint is honest only relative to its focused owner), and every table-owned row of the `?`
+shortcuts grid. Still literal, deliberately:
+
+- **The transcript-pager footer** and **the history-search footer** are multi-alias ladders
+  (`j/k ↑↓ line · Ctrl-U/D ½page · …`). Each action there has three or four aliases; a generated string
+  would list all of them and read worse than the hand-written one. Upstream's own hint ladder is
+  hand-written per rung for the same reason.
+- **`toolRenderer.ts`'s `(ctrl+o to expand)` fold marker** is a pure projection module with no React
+  context to read the table from, and its exact text is pinned against the tracked 2.1.220 golden
+  capture. Threading the table through every projection call site is a bigger change than the lie is
+  worth today; it is recorded here so it stays a decision rather than a gap.
+
+The editor's own keys (`⏎`, `\⏎`, the readline set, `Ctrl-_`, `Ctrl-S`, the `!`/`#`/`@`/`/` prefixes)
+are literal by design: `editor.ts` is the keymap's FALLBACK and no context binds them, so there is no
+live binding to derive. `test/tui/honesty.test.tsx` pins every one of them to an executable proof.
 
 ## 2 — Transcript / message rendering
 
@@ -513,7 +656,7 @@ and validated by a row-scoped required-state contract under `capture-frames.py -
 | Live token counter during turn | ✅ | — | **U10** real running output tokens from `message_delta` usage, in the spinner |
 | Elapsed timer during turn | ✅ | — | **U2** whole-turn elapsed in the spinner |
 | Context-left % + threshold warning | 🟡 | — | **U13** ctx% color-escalates green→yellow→red + "⚠ auto-compact soon" near the window. **F0 correction:** different trigger model (upstream is a queued notification, hidden entirely at `level === "ok"`), different text, different surface (transient, not a persistent status-bar segment) |
-| Permission-mode indicator (color) | 🟡 | — | `ChatStatusBar.tsx` modeColor. **F0 correction:** our colours are ours, not upstream's 6-entry table; no symbol (`⏸`/`⏵⏵`), no ` on` suffix, no `(shift+tab to cycle)` hint |
+| Permission-mode indicator (color) | 🟡 | — | `ChatStatusBar.tsx` modeColor. **F0 correction:** our colours are ours, not upstream's 6-entry table; no symbol (`⏸`/`⏵⏵`), no ` on` suffix. **F2 update (2026-08-04):** the `(shift+tab to cycle)` parenthetical now ships and is DERIVED from the live keymap — it prints whatever the user has bound `chat:cycleMode` to, and appears only while the composer owns the keyboard. Still 🟡: the symbol, the ` on` suffix and the colour table remain |
 | Cost in status / `/cost` | ✅ | — | **U4** `/cost` via `session.usage()` |
 | `? for shortcuts` hint line | 🟡 | — | **C5** `ShortcutsOverlay.tsx`, opened by `?` — supersedes the footer-hint-only prior state (§1). **F0 correction:** we show a fixed 3-item string; upstream is an **11-rung one-winner ladder** where `? for shortcuts` appears only when everything else is empty and the mode chip is default |
 | Vim mode indicator | ❌ | LOW | tied to vim mode |
@@ -564,7 +707,7 @@ and validated by a row-scoped required-state contract under `capture-frames.py -
 | `/permissions` (alias `/allowed-tools`) | ✅ | **W3** — opens `PermissionsDialog`; five tabs, add/delete rules, workspace directory management — see §4's PermissionsDialog row |
 | `/theme` | 🟡 | **W3** — opens `ThemeDialog`; 5 of exactly 7 built-in upstream themes shipped (not "7+" — F0 correction), `auto` currently ≡ `dark` for a reason smaller than previously stated — see §4's ThemeDialog row (F0-corrected) |
 | `/output-style` | ✅ | **W3** — prints the exact redirect line then opens `/config`'s Output-style row. This matches upstream's **own** 2.1.220 behavior — its standalone picker is itself a hidden redirect into `/config` (bundle-extraction surprise, see the spec) |
-| `/keybindings` | 🟡 | **W3** — upstream opens `~/.claude/keybindings.json` in `$EDITOR` for in-place rebinding; we have no rebinding mechanism, so this opens the existing read-only `?` keymap viewer instead and says so up front (recorded divergence — viewing, not editing) |
+| `/keybindings` | ✅ | **W3 → F2 (2026-08-04).** Upstream opens `~/.claude/keybindings.json` in `$EDITOR`, and so do we — seeding a documented starter file when none exists, and applying every save live (no restart). The W3 divergence ("viewing, not editing") is retired: the user layer it needed now exists. The read-only `?` keymap remains only as the fallback for a shell with neither `$VISUAL` nor `$EDITOR`, which says so in the notice |
 | `/export` (file or clipboard) | ✅ | **W1** `sessionTools.ts` `exportMarkdown` — prompts as `## ›` headings, tools as one-line markers |
 | `/files` (files touched in conversation) | ✅ | **W1** `filesInContext` — tool-input paths, deduped, last-touch order |
 | `/diff` | 🟡 | **W1** terminal stand-in (`git status --short; git diff --stat` via the `!`-runner) — real CC has a full DiffDialog with per-turn sources (Wave-2+ candidate) |

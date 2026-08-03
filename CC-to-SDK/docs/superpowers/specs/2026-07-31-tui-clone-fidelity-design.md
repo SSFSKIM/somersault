@@ -956,6 +956,51 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
   attribute the replay screen's did not, while every cell holding a character was identical. The fixture's
   key script now opens and closes the ctrl+o pager before the compact frame, repainting the region from a
   state both routes share, which removes the inherited-terminal-state term instead of masking it. (2026-08-03)
+- **`useInput` does not merely inconvenience the binding table — it destroys key identity, and only a
+  measurement showed it.** P86 put every key through Ink's fixed 14-boolean record and found `home ≡ end ≡
+  insert ≡ F1–F12`, `ctrl+home ≡ ctrl+end`, Backspace ≡ Delete, and the whole `\x1f` control class landing in
+  text-insert paths: the parser underneath knows which key it was and the hook throws the name away. So the
+  raw-stdin root consumer is not an architectural preference we could have argued our way to — the design was
+  **forced by a probe**, and the plan that predated it ("one `useInput` subscriber at the root") would have
+  shipped a table that could not express half its own rows. The full byte tables and the working substitute
+  recipe are in the 2026-08-03 Revision Note; the lesson to carry is that a dependency's declared surface
+  ("`useInput` gives you the key") and its reachable one are different questions, and only one of them is
+  answerable by reading. (2026-08-04)
+- **A swallow resolves against the innermost LIVE scope and ignores `preemptive`, so the swallow and the scope
+  have to live in the same component.** `swallowContexts` identifies the swallower as the newest active scope,
+  which is true by construction for a modal (it mounts last and nothing mounts inside it) — but it means a
+  component that swallows while a DIFFERENT component owns the innermost scope swallows on that other
+  component's behalf, and that a preemptive scope elsewhere does not rescue it. Splitting the two across
+  components produced exactly the surprising case: the rewind hold swallows with no scope of its own, which
+  correctly eats `Global` too, and that is only correct because ChatApp deactivates its own `Task` scope during
+  the hold — otherwise `Task` would have been "the swallower" and its `ctrl+x ctrl+b` chord would have survived
+  a modal whose entire purpose is to survive nothing. (2026-08-04)
+- **The migration audit was per-CONTEXT and the thing it was auditing was per-SURFACE, and one overlay fell
+  through the gap.** Task 8's sweep enumerated the twenty context names and checked each had an owner; the old
+  imperative gate it was replacing was written per visible surface. A surface whose context was already
+  "covered" by another component was therefore invisible to the audit — the embedded add-directory prompt
+  under the permissions dialog, assigned a park-dialog context that something else already owned. **A fidelity
+  audit must enumerate the surfaces a user can see, not the abstractions the new design happens to group them
+  into**; the grouping is precisely what hides the omission. (2026-08-04)
+- **A `null`-unbound chord must not arm its own prefix, or a user's unbind can make the plain key permanently
+  unreachable.** Merge is additive — a later layer can change an action or add a key, never delete an entry —
+  so if a null-bound `"ctrl+x ctrl+k"` still contributed `ctrl+x` to the prefix set, a user who unbound the
+  chord would find `ctrl+x` eating the next keystroke forever, with nothing left to complete it. Cross-context
+  shadowing does not need the null to arm either: the pending walk still checks exact completions per context,
+  so a chord unbound above a live lower one resolves as `unbound` on its own. (2026-08-04)
+- **An uppercase single letter in a binding spec means shift, which is why the caps warning exists.** `"CTRL+G"`
+  does not bind ctrl+g — it binds ctrl+**shift**+g, because a lone capital letter is the documented shorthand
+  for `shift+<letter>` and it applies to the key name whether or not the writer meant it to. Someone who
+  shouted the modifier usually shouted the key too, so the two failures arrive together and the binding lands
+  on a key they will never press. Hence `suspicious_key`: a warning that KEEPS the binding (it is legal) but
+  says what was actually installed. (2026-08-04)
+- **The `latin1` encoding flip had to be gated on a migrated consumer existing, and the ungated version was a
+  live mojibake regression.** Setting `stdin.setEncoding("latin1")` is what makes non-ASCII input recoverable
+  — but while any un-migrated `useInput` component was still mounted, that component received raw bytes it
+  decoded as characters, so every accented character typed at launch rendered as mojibake in the real REPL
+  while every test stayed green. The flip is therefore conditional on the registry being non-empty, which is
+  both the transitional fix and the permanent right answer: a bare provider with no consumers must not touch
+  an encoding nobody is decoding. (2026-08-04)
 
 ## Outcomes & Retrospective
 
@@ -1048,6 +1093,48 @@ tests, the Python suite, `verify:pack`, and a clean `git diff --check`. The trac
 **54 files** — `git ls-files 'test/tui/*.test.*'`, whose `*` crosses `/`, so that is 45 keyless files plus
 the 9 credential-gated `test/tui/live/*.e2e.test.ts`; the "44" recorded here at closeout was neither.
 (The Python suite stands at 108 tests / 144 subtests after the closeout review fixes.)
+
+### F2 outcome — completed 2026-08-04
+
+F2 replaced seventeen ad-hoc `useInput` callbacks and a nested-ternary-plus-six-flags ownership scheme with a
+keymap that is data. `keys/bindings.ts` is the single table — upstream's 20 context names, a closed 55-action
+vocabulary, 136 default entries across the 12 contexts that carry any, and a reserved-key registry;
+`keys/resolver.ts` walks an ordered context array with first-match-wins, where a `null` binding consumes the
+key as explicitly unbound and stops the search, which is how a surface now states declaratively which of the
+root globals reach it. `keys/KeymapProvider.tsx` is the one component that reads stdin bytes, parses them with
+our own keypress parser (P86: Ink's hook cannot express the table), and dispatches through a registry ordered
+by mount, with `swallowAll` and preemptive scopes above the chain. Chords are generic and space-separated with
+a 1 s window; `~/.claude/keybindings.json` merges additively over the defaults on upstream's own path and file
+shape, hot-reloads on save, validates into typed issues that land in the transcript rather than in a crash,
+and supports the `command:<name>` form, which dispatches through the same submit seam a typed `/name` takes.
+Zero `useInput` calls remain anywhere under `src/tui/`.
+
+The wave's last task closed the loop the table exists for: **hints are derived, not typed**. The composer's
+footer ladder, the status bar's mode chip and every table-owned row of the `?` shortcuts grid read the live
+binding, so a rebinding moves them and an unbind prints `(unbound)` instead of continuing to advertise a dead
+chord. Under the default keymap the derived grid reproduces the previously hand-written strings byte for byte,
+which is what lets F0's honesty audit — a corpus of executable proofs keyed by those strings — keep auditing
+the grid unchanged. Three hint surfaces stay literal on purpose and are recorded rather than quietly excepted:
+the transcript-pager and history-search footers (multi-alias ladders a generated string would render worse
+than the hand-written one) and `toolRenderer.ts`'s `(ctrl+o to expand)` fold marker (a pure projection module
+with no context to read the table from, pinned to the tracked 2.1.220 golden).
+
+All six acceptance items are executed as tests in `test/tui/keys-acceptance.test.tsx` rather than asserted
+about, each shown to bite under a deliberate sabotage. Two of the spec's own wordings were corrected in the
+process: acceptance 1's `ctrl+g` example is already a default and would have passed with the whole user layer
+deleted (the test adds `alt+e` and keeps `ctrl+g` as the survives-the-merge check), and acceptance 6 is
+asserted per unreachable class rather than per section heading. The unreachable families P86 settled —
+`super`+letter and `ctrl+shift+<letter>` off CSI-u, `shift+enter` without `/terminal-setup`, `ctrl+m` as
+anything other than Enter, and Windows/ConPTY as undetermined — are recorded in the parity scorecard's new
+§1a with their evidence, alongside `meta+o`/`meta+w`, which are dropped because the surfaces they would open
+do not exist here.
+
+Verification: `npm run typecheck` and `npm run build` clean; the eleven `keys-*` suites (418 tests) plus the
+full tracked keyless TUI inventory (56 files, 1,247 tests) green; `npm run test:unit` green (135 files, 1,245
+tests). The scorecard moves §1 from
+~78% to ~86% (`ST5`/`ST6` ❌→✅, three new rows for the user file, generic chords and derived hints) and §5
+from ~86% to ~88% (`/keybindings` opens the real file now), for an overall ~63% → ~65%. The keybinding ledger
+behind those rows — all forty `K1`–`K40` research rows, re-scored — sits at 18✅ + 1🟡 of 31 non-🚫 rows.
 
 ## Revision Notes
 
