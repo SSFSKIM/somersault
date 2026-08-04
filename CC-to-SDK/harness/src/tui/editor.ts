@@ -4,7 +4,7 @@
 // continuation. rankCandidates (pure) is added in the mention pass.
 import { rankCandidates } from "./fileComplete.js";
 import { rankCommands, type CommandEntry } from "./commandComplete.js";
-import { CHIP_CHARS, chipContaining, chipEndingAt, chipStartingAt, deleteTokenBefore, gcPastedContents, ingestPaste, snapOut, substituteChips } from "./pasteChips.js";
+import { CHIP_CHARS, chipContaining, chipEndingAt, chipStartingAt, deleteTokenBefore, ingestPaste, snapOut, substituteChips } from "./pasteChips.js";
 export interface Cursor { row: number; col: number }
 export interface Candidate { path: string; score: number }
 export interface MentionState { anchor: Cursor; query: string; files: string[]; items: Candidate[]; index: number }
@@ -16,10 +16,11 @@ export interface CommandState { query: string; items: CommandEntry[]; catalog: C
 export interface PastedEntry { id: number; type: "text"; content: string; lineCount: number }
 export type PastedMap = Record<number, PastedEntry>;
 /** The draft parked by the FIRST history Up, restored by the Down that walks off the end of the list. It carries
- *  the paste map as well as the text: the buffer swap into a history entry is a text change, so applyKey's GC
- *  empties the live map on the way in, and a draft that came back as label-without-entry would submit the literal
- *  `[Pasted text #1 …]` (t4 review, Critical). Upstream parks the same pair (`{ display, pastedContents }`,
- *  bundle L489580/L489583); the `mode` T7 adds there is the third field of that same record. */
+ *  the paste map as well as the text, exactly as upstream's own park record does (`{ display, pastedContents }`,
+ *  bundle L489580/L489583; the `mode` T7 adds is the third field of that same record). Since t4-fix2 dropped the
+ *  live GC the live map would survive the round trip anyway — this is now belt and braces, and it is upstream's
+ *  belt, so it stays: it is the only thing that keeps the draft's map correct if history browsing ever starts
+ *  replacing the map (T6/T7's persistence work) rather than merely the text. */
 export interface DraftStash { display: string; pastedContents: PastedMap }
 export interface EditorState {
   lines: string[]; cursor: Cursor; history: string[]; histIndex: number | null; stash: DraftStash | null;
@@ -122,8 +123,10 @@ function killToStart(s: EditorState): { state: EditorState; text: string } {   /
 // F5 t4-fix: upstream's `deleteWordBefore` (bundle L395146) opens with
 // `snapOutOfPlaceholder(this.prevWord().offset, "start")` — the boundary is snapped BEFORE the range is cut, so a
 // Ctrl-W right after a chip kills the WHOLE label into the ring instead of the `lines]` tail (a label is full of
-// spaces). Killing the whole thing is also what makes the ring round-trip: Ctrl-Y reinserts a label the
-// recognizer still knows, where a fragment would paste back as dead text.
+// spaces). Killing the whole thing is what makes the ring ROUND-TRIP, and since t4-fix2 that is literally true
+// rather than half true: the ring parks label text only, but the map now lives until submit, so Ctrl-Y puts back
+// a label whose entry is still there and the submit sends the payload. A killed FRAGMENT would come back as text
+// no recognizer matches, and the payload would be unreachable even though its entry survived.
 function killWordBack(s: EditorState): { state: EditorState; text: string } {  // Ctrl-W → ring, prepend
   const { row, col } = s.cursor;
   if (col === 0) {
@@ -237,8 +240,7 @@ export function replaceBufferFromOutside(s: EditorState, t: string): EditorState
 export function withBufferText(s: EditorState, t: string): EditorState { return replaceBufferFromOutside(s, t); }
 function historyPrev(s: EditorState): EditorState {
   if (s.history.length === 0) return s;
-  // Park the draft — text AND paste map — on the way in; the GC in applyKey will empty the live map against the
-  // history text a line later, and only this copy can give the payload back (see DraftStash).
+  // Park the draft — text AND paste map — on the way in, the pair upstream parks (see DraftStash).
   if (s.histIndex === null) { const idx = s.history.length - 1; return setBuffer({ ...s, stash: { display: bufferText(s), pastedContents: s.pastedContents }, histIndex: idx }, s.history[idx]); }
   const idx = Math.max(0, s.histIndex - 1); return setBuffer({ ...s, histIndex: idx }, s.history[idx]);
 }
@@ -472,16 +474,20 @@ export function applyKey(s: EditorState, input: string, key: KeyFlags, now: numb
   } else if (state.yankSite === s.yankSite) {
     state = endKillAndYank(state);                            // any non-kill keystroke ends the run; any non-yank-pop fixes the yank
   }
-  // F5 t4, the two chip mechanics that belong to NO single key, so every arm above stays chip-blind:
-  //  · text changed → GC the paste map (a label that left the buffer takes its entry with it). Runs BEFORE the
-  //    undo push below, which snapshots `s.pastedContents` — the PRIOR map — so undo still resurrects both.
-  //    EXCEPT when the op managed the undo stack itself (`state.undo !== s.undo` — undoEdit's pop, or a submit's
-  //    fresh state): a pop restores a snapshot that was already GC'd when it was taken, so re-deriving the map
-  //    from it would only second-guess it, and the t1 contract is that a pop restores the map with the text.
-  //  · text unchanged but the cursor MOVED → snap out of any chip it landed inside. Only then: a key that
-  //    changed the text has already placed its own cursor deliberately (an insert mid-label must stay put).
-  if (!sameText(state.lines, s.lines)) { if (state.undo === s.undo) state = gcPastedContents(state); }
-  else if (state.cursor.row !== s.cursor.row || state.cursor.col !== s.cursor.col) state = snapOut(state);
+  // F5 t4: snap out of a chip the cursor landed INSIDE — the one chip mechanic that belongs to no single key,
+  // so every arm above stays chip-blind. Only when the text did NOT change: a key that changed the text has
+  // already placed its own cursor deliberately (an insert mid-label must stay put).
+  //
+  // There is deliberately NO live GC of `pastedContents` here (t4-fix2, reverting the brief's rule). Upstream
+  // never prunes TEXT entries against the live buffer: its GC effect is gated on the map holding an image or
+  // audio entry and filters to those two species (bundle L495715–L495728), and text entries are pruned only
+  // implicitly at submit, where the OUTGOING map is rebuilt from the ids actually present in the text
+  // (L536788–L536792). That is not an oversight — it is what makes every "park the text somewhere and put it
+  // back" site work with no special handling: the kill ring, history, the Ctrl-S stash and undo all move label
+  // TEXT around, and a map pruned the instant a label left the buffer would strand the payload on the way back
+  // (measured: Ctrl-W → Ctrl-Y → submit sent the literal `[Pasted text #1 …]`). A stale entry is inert —
+  // `substituteChips` expands only ids whose label is present — and dies with the buffer at submit.
+  if (sameText(state.lines, s.lines) && (state.cursor.row !== s.cursor.row || state.cursor.col !== s.cursor.col)) state = snapOut(state);
   if (r.submit !== undefined) return { ...r, state, killed };
   if (state === s) return { ...r, killed };
   if (sameText(state.lines, s.lines) || state.undo !== s.undo) return { ...r, state, killed };

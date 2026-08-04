@@ -130,29 +130,18 @@ export function snapOut(s: EditorState): EditorState {
   return { ...s, cursor: { row, col: col < (chip.start + chip.end) / 2 ? chip.start : chip.end } };
 }
 
-/** GC (bundle L495717-L495728): the map is keyed by ids the BUFFER carries. Once an edit removes (or mangles) a label,
- *  its entry can never be expanded again, so it dies with it — otherwise a submit could resurrect a paste whose
- *  placeholder the user deleted, and the counter's ids would leak forever. Undo brings both back together
- *  (the undo entry carries `pastedContents`; see applyKey).
+/** Why there is NO garbage collector here (t4-fix2). The map is keyed by ids the buffer carries, so an entry
+ *  whose label the user deleted looks like garbage — but pruning it live is wrong, and upstream does not.
+ *  Upstream's live-buffer effect is gated on the map holding an image or audio entry (`iD`, L495715) and
+ *  filters to exactly those two species (L495721); TEXT entries are pruned only implicitly at submit, where
+ *  the outgoing map is rebuilt from the ids present in the submitted text (L536788-L536792).
  *
- *  Every line is rescanned on every text-changing keystroke. That is a full buffer walk per keypress, which is
- *  fine at composer scale (a few short lines) and is the only version that cannot go stale — the alternative,
- *  tracking which ids an edit touched, has to be right in every reducer arm forever.
- *
- *  SAME DIVERGENCE as snapOut, same reason: upstream's live-buffer effect prunes only `type === "image" || "audio"`
- *  entries (L495721) and is gated off entirely when the map holds none (`iD`, L495715) — a stale TEXT entry
- *  survives in upstream's map until the submit path rebuilds it from the ids actually present (L536788). We have
- *  no image/audio, so text is the species that gets the treatment. */
-export function gcPastedContents(s: EditorState): EditorState {
-  const ids = Object.keys(s.pastedContents);
-  if (ids.length === 0) return s;
-  const live = new Set<number>();
-  for (const line of s.lines) for (const span of chipSpans(line)) live.add(span.id);
-  if (ids.every((k) => live.has(Number(k)))) return s;
-  const kept: PastedMap = {};
-  for (const k of ids) { const id = Number(k); if (live.has(id)) kept[id] = s.pastedContents[id]; }
-  return { ...s, pastedContents: kept };
-}
+ *  That asymmetry is load-bearing. An image chip cannot be reconstructed from its label, but a text chip's
+ *  label is ordinary characters that the composer parks and replays all the time: the kill ring, history
+ *  navigation, the Ctrl-S stash, undo. Prune on the way out and every one of those round trips strands the
+ *  payload — measured, before this was reverted: Ctrl-W, Ctrl-Y, submit sent the literal `[Pasted text #1 …]`.
+ *  A stale entry costs one map slot and is inert: `substituteChips` expands only ids whose label is actually
+ *  present, and the whole map dies with the buffer at submit. */
 
 /** `fSe`: expand every recognized chip whose id names a text entry. RIGHT TO LEFT, because each replacement
  *  changes the length of everything after it. A chip with no entry (a stale id, an `[Image #N]`) stays literal —

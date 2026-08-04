@@ -4,7 +4,7 @@
 // recognizer and `fSe` (L317403) for the submit-time expansion.
 import { describe, it, expect } from "vitest";
 import { applyKey, clearToHistory, initialEditorState, type EditorState } from "../../src/tui/editor.js";
-import { CHIP_CHARS, CHIP_RE, chipLabel, chipSpans, deleteTokenBefore, gcPastedContents, ingestPaste, newlineCount, newlineThreshold, normalizePaste, snapOut, stripANSI, substituteChips } from "../../src/tui/pasteChips.js";
+import { CHIP_CHARS, CHIP_RE, chipLabel, chipSpans, deleteTokenBefore, ingestPaste, newlineCount, newlineThreshold, normalizePaste, snapOut, stripANSI, substituteChips } from "../../src/tui/pasteChips.js";
 
 const text = (s: EditorState) => s.lines.join("\n");
 const paste = (s: EditorState, raw: string, rows?: number) => applyKey(s, raw, { paste: true }, Date.now(), rows);
@@ -216,19 +216,19 @@ const chipped = () => paste(initialEditorState(), "a\nb\nc\nd", 24).state;
 const bksp = (s: EditorState, now?: number) => applyKey(s, "", { backspace: true }, now);
 
 describe("deleteTokenBefore — the atomic one-keystroke chip delete", () => {
-  it("backspace right after a chip empties the buffer and GCs the entry", () => {
+  it("backspace right after a chip empties the buffer; the entry stays until submit", () => {
     const s = chipped();
     expect(text(s)).toBe(LABEL3);
     const r = bksp(s);
     expect(text(r.state)).toBe("");
     expect(r.state.cursor).toEqual({ row: 0, col: 0 });
-    expect(r.state.pastedContents).toEqual({});
+    expect(r.state.pastedContents[1].content).toBe("a\nb\nc\nd");   // inert, not collected (t4-fix2)
     expect(r.state.pasteCounter).toBe(1);                   // ids stay monotonic — the counter is not a live count
   });
   it("ctrl+h takes the same path (bundle L395676: `h` → `deleteTokenBefore() ?? backspace()`)", () => {
     const r = applyKey(chipped(), "h", { ctrl: true });
     expect(text(r.state)).toBe("");
-    expect(r.state.pastedContents).toEqual({});
+    expect(applyKey(r.state, "x", {}).state.pastedContents[1]).toBeDefined();   // survives the edits after it too
   });
   it("eats only the placeholder, keeping the whitespace that precedes it (`o = n.index + n[1].length`)", () => {
     let s = applyKey(initialEditorState(), "see ", {}).state;
@@ -243,7 +243,8 @@ describe("deleteTokenBefore — the atomic one-keystroke chip delete", () => {
     expect(s.cursor.col).toBe(LABEL3.length);
     const r = bksp(s);
     expect(text(r.state)).toBe("[Pasted text #1 +3 linesx"); // a plain backspace ate the "]" …
-    expect(r.state.pastedContents).toEqual({});              // … and the mangled label GC'd the entry
+    expect(r.state.pastedContents[1]).toBeDefined();         // … the entry survives, but nothing can reach it:
+    expect(applyKey(r.state, "", { return: true }).submit).toBe("[Pasted text #1 +3 linesx");
   });
   it("whitespace at the cursor passes the guard (a chip mid-line still dies whole)", () => {
     let s = chipped();
@@ -257,7 +258,7 @@ describe("deleteTokenBefore — the atomic one-keystroke chip delete", () => {
     const r = bksp({ ...s, cursor: { row: 0, col: 0 } });
     expect(text(r.state)).toBe("tail");
     expect(r.state.cursor).toEqual({ row: 0, col: 0 });
-    expect(r.state.pastedContents).toEqual({});
+    expect(applyKey(r.state, "", { return: true }).submit).toBe("tail");   // the orphaned entry never resurfaces
   });
   it("returns null (→ plain backspace) when no placeholder ends at the cursor", () => {
     const s = applyKey(initialEditorState(), "ab", {}).state;
@@ -331,60 +332,83 @@ describe("snapOut — a cursor strictly inside a chip lands on an edge", () => {
   });
 });
 
-describe("map GC — an edit that removes a label removes its entry", () => {
-  it("ctrl+k through half a chip leaves a literal remainder and GCs the entry", () => {
+describe("the map lives until submit — a deleted label's entry is inert, never collected", () => {
+  it("ctrl+k through half a chip leaves a literal remainder that no longer expands", () => {
     const s = chipped();
     const cut = applyKey({ ...s, cursor: { row: 0, col: 10 } }, "k", { ctrl: true });
     expect(text(cut.state)).toBe("[Pasted te");
-    expect(cut.state.pastedContents).toEqual({});
-    expect(applyKey(cut.state, "", { return: true }).submit).toBe("[Pasted te");
+    expect(cut.state.pastedContents[1]).toBeDefined();                            // still in the map …
+    expect(applyKey(cut.state, "", { return: true }).submit).toBe("[Pasted te");  // … and still unreachable
   });
-  it("drops only the entry whose label left the buffer", () => {
+  it("deleting one chip of two leaves the other expandable and the dead one inert", () => {
     let s = chipped();
     s = applyKey(s, " ", {}).state;
     s = paste(s, "e\nf\ng\nh", 24).state;
     const r = bksp(s);
     expect(text(r.state)).toBe(LABEL3 + " ");
-    expect(Object.keys(r.state.pastedContents)).toEqual(["1"]);
+    expect(Object.keys(r.state.pastedContents)).toEqual(["1", "2"]);              // #2's entry outlives its label
+    expect(applyKey(r.state, "", { return: true }).submit).toBe("a\nb\nc\nd ");   // fSe expands only what is there
   });
-  it("scans EVERY line, so an edit on one line cannot GC a chip living on another", () => {
+  it("an edit on one line leaves a chip living on another expandable", () => {
     let s = chipped();
     s = applyKey(s, "", { return: true, shift: true }).state;
     s = applyKey(s, "hello", {}).state;
     const r = bksp(s);
     expect(r.state.lines).toEqual([LABEL3, "hell"]);
-    expect(r.state.pastedContents[1]).toBeDefined();
-  });
-  it("gcPastedContents is identity when nothing died (and on an empty map)", () => {
-    const s = chipped();
-    expect(gcPastedContents(s)).toBe(s);
-    const empty = initialEditorState();
-    expect(gcPastedContents(empty)).toBe(empty);
+    expect(applyKey(r.state, "", { return: true }).submit).toBe("a\nb\nc\nd\nhell");
   });
   it("a history Up/Down round trip keeps the DRAFT's payload (the map parks with the draft text)", () => {
-    // The buffer swap is a text change, so the GC empties the live map on the way into history. `stash` therefore
-    // has to park the map alongside the draft text, or Down restores a label with nothing behind it and the
-    // submit sends `[Pasted text #1 +3 lines]` literally (t4 review, Critical).
+    // Two independent guarantees now: the live map survives the swap (no GC since t4-fix2) AND `stash` parks a
+    // copy with the draft, as upstream's own park record does. Either alone makes the submit send the payload;
+    // the pin is on the submitted text, which is what the review measured.
     let s = initialEditorState(["an older turn"]);
     s = paste(s, "a\nb\nc\nd", 24).state;
     expect(text(s)).toBe(LABEL3);
     const up = applyKey(s, "", { upArrow: true }).state;
     expect(text(up)).toBe("an older turn");
-    expect(up.pastedContents).toEqual({});                      // GC'd — the label is not in the history text
+    expect(up.stash).toEqual({ display: LABEL3, pastedContents: up.pastedContents });   // parked with the draft
     const down = applyKey(up, "", { downArrow: true }).state;
     expect(text(down)).toBe(LABEL3);
     expect(down.pastedContents[1].content).toBe("a\nb\nc\nd");
     expect(applyKey(down, "", { return: true }).submit).toBe("a\nb\nc\nd");
   });
-  it("ctrl+w right after a chip kills the WHOLE label into the ring and GCs the entry", () => {
+  it("ctrl+w right after a chip kills the WHOLE label into the ring", () => {
     let s = applyKey(initialEditorState(), "keep ", {}).state;
     s = paste(s, "a\nb\nc\nd", 24).state;
     const r = applyKey(s, "w", { ctrl: true });
     expect(text(r.state)).toBe("keep ");
     expect(r.killed?.text).toBe(LABEL3);
     expect(r.state.killRing[r.state.killRing.length - 1]).toBe(LABEL3);   // …so Ctrl-Y reinserts a live label
-    expect(r.state.pastedContents).toEqual({});
     expect(text(applyKey(r.state, "y", { ctrl: true }).state)).toBe("keep " + LABEL3);
+  });
+  // The kill ring parks LABEL TEXT and nothing else, so the payload can only survive a kill→yank round trip if
+  // the map outlives the edit. These three assert the SUBMITTED text, which is the only thing the model sees.
+  it("ctrl+w then ctrl+y round-trips the payload, not the label", () => {
+    let s = chipped();
+    s = applyKey(s, "w", { ctrl: true }).state;
+    s = applyKey(s, "y", { ctrl: true }).state;
+    expect(text(s)).toBe(LABEL3);
+    expect(applyKey(s, "", { return: true }).submit).toBe("a\nb\nc\nd");
+  });
+  it("ctrl+a ctrl+k then ctrl+y round-trips the payload, not the label", () => {
+    let s = chipped();
+    s = applyKey(s, "a", { ctrl: true }).state;
+    s = applyKey(s, "k", { ctrl: true }).state;
+    expect(text(s)).toBe("");
+    s = applyKey(s, "y", { ctrl: true }).state;
+    expect(text(s)).toBe(LABEL3);
+    expect(applyKey(s, "", { return: true }).submit).toBe("a\nb\nc\nd");
+  });
+  it("ctrl+w from column 0 joins back over the chip on the previous line, newline and all", () => {
+    let s = chipped();
+    s = applyKey(s, "", { return: true, shift: true }).state;
+    expect(s.cursor).toEqual({ row: 1, col: 0 });
+    const r = applyKey(s, "w", { ctrl: true });
+    expect(r.killed?.text).toBe(LABEL3 + "\n");                 // the whole label, plus the join it undid
+    expect(r.state.lines).toEqual([""]);
+    const back = applyKey(r.state, "y", { ctrl: true }).state;
+    expect(back.lines).toEqual([LABEL3, ""]);
+    expect(applyKey(back, "", { return: true }).submit).toBe("a\nb\nc\nd\n");
   });
   it("clearToHistory resets the map with the buffer, keeping the label in history", () => {
     const c = clearToHistory(chipped());
