@@ -88,13 +88,21 @@ export function userEchoLines(text: string, opts: { width?: number } = {}): Rend
   const blank = " ".repeat(USER_GUTTER.length);
   const bodyRows = (t: string): string[] => t.split("\n").flatMap((line) => wrapRows(line, content));
   // `dEn` (L426084): `(N line[s] hidden)` in `subtle`, `titleAlign: "start"` → up to FOUR leading dashes
-  // (`Math.min(4, gap)`), the rest trailing, the whole rule `dys = width - padding` columns wide. Not dim:
-  // `Sg`'s `dimColor` is `!color` (L183981) and `dEn` passes one.
+  // (`Math.min(4, gap)`), the rest trailing, the whole rule `dys = width - padding` columns wide. The DASHES
+  // are not dim — `Sg`'s `dimColor` is `!color` (L183981) and `dEn` passes one — but the TITLE span is:
+  // L183972 nests it in its own `<Text dimColor={true}>` inside the subtle rule (t8 review Minor 1).
   const ruleRow = (hidden: number): RenderLine => {
     const title = `(${hidden} ${hidden === 1 ? "line" : "lines"} hidden)`;
     const span = Math.max(0, width - RULE_INSET), gap = Math.max(0, span - (stringWidth(title) + 2));
     const lead = Math.min(4, gap);
-    return row(blank, fg, RULE_CHAR.repeat(lead) + " " + title + " " + RULE_CHAR.repeat(gap - lead), subtle);
+    const head = RULE_CHAR.repeat(lead) + " ", trail = " " + RULE_CHAR.repeat(gap - lead);
+    const pad = " ".repeat(Math.max(0, inner - USER_GUTTER.length - stringWidth(head + title + trail)));
+    return { text: blank + head + title + trail + pad, bg: band, segments: [
+      { text: blank, color: fg, bg: band },
+      { text: head, color: subtle, bg: band },
+      { text: title, color: subtle, dim: true, bg: band },
+      { text: trail + pad, color: subtle, bg: band },
+    ] };
   };
   // The fold (L426143–426167): head = first 2 500 chars, tail = LAST 2 500 chars, and `hiddenLines` is the
   // newline count from char 2 500 onward MINUS the tail's own — i.e. the lines that fall in the dropped

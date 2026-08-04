@@ -113,6 +113,13 @@ describe("userEchoLines — the 10 000-char fold", () => {
     expect(rule.text.endsWith("─")).toBe(true);
     expect(rule.segments![1]!.color).toBe(tok("subtle"));
     expect(rule.segments![1]!.bg).toBe(tok("userMessageBackground"));
+    // The DASH spans are undimmed subtle, but the TITLE span rides its own nested `<Text dimColor={true}>`
+    // (L183972) — dim title inside a plain-subtle rule (t8 review Minor 1).
+    const title = rule.segments!.find((s) => s.text.includes("hidden)"))!;
+    expect(title.dim).toBe(true);
+    expect(title.color).toBe(tok("subtle"));
+    expect(rule.segments![1]!.dim).toBeUndefined();
+    expect(rule.segments![3]!.dim).toBeUndefined();
   });
   it("pluralizes the title off `hiddenLines === 1`", () => {
     const one = "a".repeat(5000) + "\n" + "b".repeat(5001);               // 10 002 chars, exactly one hidden newline
