@@ -128,10 +128,10 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     const fake = { ...fakeRemote(), rewindAnchors: async () => { anchors++; return []; }, rewindDryRun: async () => ({ canRewind: true }), rewind: async () => {} };
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake as never} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
-    stdin.write("/");
-    await waitFor(() => frame(lastFrame).includes("no matches"));
+    stdin.write("/zz");                                       // F5 t9: CM38 needs a partial NAME to say anything
+    await waitFor(() => frame(lastFrame).includes('No commands match "/zz"'));
     stdin.write("\x1b");                                      // Autocomplete owns Escape here
-    await waitFor(() => !frame(lastFrame).includes("no matches"));
+    await waitFor(() => !frame(lastFrame).includes('No commands match "/zz"'));
     expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");   // chat:cancel never fired
     expect(anchors).toBe(0);
     stdin.write("\x1b");                                      // now that the popup is gone, Esc IS chat:cancel

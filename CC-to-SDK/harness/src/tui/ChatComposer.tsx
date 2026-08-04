@@ -12,6 +12,7 @@ import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
 import { composerMode } from "./promptMode.js";
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
+import { isCommandToken } from "./completionTriggers.js";
 import { editExternalAsync as realEditExternal } from "./externalEditor.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, newlineHint } from "./composerFrame.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
@@ -100,7 +101,13 @@ export interface PlaceholderMemo { files?: string[]; draws: number[] }
 // handed down as props: this is a leaf render helper, and one lookup in the composer serves both popups.
 function CommandPopup({ state, acceptKey, dismissKey }: { state: EditorState; acceptKey: string; dismissKey: string }) {
   const c = state.command!;
-  if (c.items.length === 0) return <Box paddingX={1}><Text dimColor>/{c.query} — no matches</Text></Box>;
+  // CM38 (bundle L490779): `suggestionsEmptyMessage` is `No commands match "${mt}"` where `mt` is the whole
+  // slash input — verbatim, quotes included. Upstream sets it only when there IS a partial name
+  // (`mt.length > 1`) and that name is a plain command token (`KJa`), so a bare `/` against an empty list
+  // renders nothing rather than an empty-quoted complaint.
+  if (c.items.length === 0) return c.query && isCommandToken(c.query)
+    ? <Box paddingX={1}><Text dimColor>{`No commands match "/${c.query}"`}</Text></Box>
+    : null;
   const start = Math.max(0, Math.min(c.index - 3, Math.max(0, c.items.length - COMMAND_ROWS)));
   const visible = c.items.slice(start, start + COMMAND_ROWS);
   return (
@@ -122,7 +129,9 @@ function CommandPopup({ state, acceptKey, dismissKey }: { state: EditorState; ac
 
 function MentionPopup({ state }: { state: EditorState }) {
   const m = state.mention!;
-  if (m.items.length === 0) return <Box paddingX={1}><Text dimColor>@{m.query} — no matches</Text></Box>;
+  // No mention counterpart to CM38: `suggestionsEmptyMessage` is written at exactly one site (L490779, the
+  // command branch) and read at one (L491083), so the file popup with nothing to show simply is not drawn.
+  if (m.items.length === 0) return null;
   const start = Math.max(0, Math.min(m.index - 3, Math.max(0, m.items.length - 8)));
   const visible = m.items.slice(start, start + 8);
   return (

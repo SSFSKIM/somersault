@@ -147,18 +147,24 @@ describe("<ChatApp>", () => {
     stdin.write("\x15");
     await waitFor(() => !frame(lastFrame).includes("sentinel-draft"));
 
+    // F5 t9 migrated these two legs onto the upstream trigger/empty-state contract. The command popup's empty
+    // message is CM38's `No commands match "…"` and upstream only writes it once a partial NAME exists
+    // (`mt.length > 1`, bundle L490779), so the marker is `/zz` rather than the bare `/` this used to type.
     start = stdout.frames.length;
-    stdin.write("/");
-    await waitFor(() => frame(lastFrame).includes("/ — no matches"));
-    expectOwnerFramesHonest(stdout.frames.slice(start), "/ — no matches");
+    stdin.write("/zz");
+    await waitFor(() => frame(lastFrame).includes('No commands match "/zz"'));
+    expectOwnerFramesHonest(stdout.frames.slice(start), 'No commands match "/zz"');
     stdin.write("\x1b");
-    await waitFor(() => !frame(lastFrame).includes("/ — no matches"));
+    await waitFor(() => !frame(lastFrame).includes('No commands match "/zz"'));
     stdin.write("\x15");
 
+    // The file popup has NO empty message upstream (`suggestionsEmptyMessage` is written at the command site
+    // only), so an `@` against this empty cwd draws no popup at all — the ownership the honesty check is
+    // after is still real (the footer hint is gone while the mention is open), so the marker is the draft.
     start = stdout.frames.length;
-    stdin.write("@");
-    await waitFor(() => frame(lastFrame).includes("@ — no matches"));
-    expectOwnerFramesHonest(stdout.frames.slice(start), "@ — no matches");
+    stdin.write("@zz");
+    await waitFor(() => frame(lastFrame).includes("@zz"));
+    expectOwnerFramesHonest(stdout.frames.slice(start), "@zz");
   });
 
   it("surfaces a parked question as a QuestionDialog (kind dispatcher) and answers it", async () => {

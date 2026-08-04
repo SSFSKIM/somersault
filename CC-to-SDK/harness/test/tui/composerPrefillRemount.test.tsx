@@ -133,7 +133,7 @@ describe("app-scoped durable editor state across overlay remounts", () => {
 
     editorStateRef.current = {
       ...initialEditorState(), lines: ["/review"], cursor: { row: 0, col: 7 },
-      command: { query: "review", items: [{ name: "review", description: "stale popup", source: "catalog" }], catalog: [], index: 0 },
+      command: { span: { row: 0, start: 0, end: 7 }, query: "review", head: true, items: [{ name: "review", description: "stale popup", source: "catalog" }], catalog: [], index: 0 },
     };
     api.open!(); await waitFor(() => frame(lastFrame).includes("Settings overlay"));
     api.close!(); await waitFor(() => frame(lastFrame).includes("/review"));
