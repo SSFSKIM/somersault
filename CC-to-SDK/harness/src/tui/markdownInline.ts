@@ -107,13 +107,15 @@ export function inlineSegments(tokens: Token[], style: InlineStyle): Segment[] {
       case "strong": out.push(...inlineSegments(t.tokens ?? [], { ...style, bold: true })); break;
       case "em": out.push(...inlineSegments(t.tokens ?? [], { ...style, italic: true })); break;
       case "link": {
-        // `case "link"` (bundle L420625–420640). Two upstream branches are UNREACHABLE for us and are
-        // deliberately not ported: the `Oro(href)` arm (L420631–420639) and every `⧉` (`Ib`) mechanic that
-        // hangs off it. `Oro` is `AIg.test(href)` (L100700) = `^https://(claude\.ai|claude-ai\.staging\.ant\.dev)
-        // /code/(artifact|frame)/<id>/?$` — a Claude ARTIFACT/frame url; `oPi` (L41476) is what prepends `⧉ `.
-        // The only other ⧉ path is `if (!m && c && g && E)`, whose `E` requires a ⧉ ALREADY inside the link
-        // text. So on our hrefs no reachable path emits ⧉, and `yAr`'s post-pass (L420511) is likewise a ⧉
-        // de-duplicator that `continue`s out when no ⧉ is present — nothing for us to port.
+        // `case "link"` (bundle L420625–420645). Two upstream branches are NOT PORTED: the `Oro(href)` arm
+        // (L420631–420639, plus the `oPi` return at L420644) and every `⧉` (`Ib`) mechanic that hangs off it.
+        // They trigger only on a CANONICAL claude.ai artifact href — `Oro` is `AIg.test(href)` (L100700) =
+        // `^https://(claude\.ai|claude-ai\.staging\.ant\.dev)/code/(artifact|frame)/<uuid>/?$`, where <uuid>
+        // is `x8r` (L100691), a real 8-4-4-4-12 UUID — which THIS HARNESS NEVER MINTS. `oPi` (L41476) is what
+        // prepends `⧉ `. The only other ⧉ path is `if (!m && c && g && E)` (L420642), whose `E` requires a ⧉
+        // ALREADY inside the author's link text. So nothing we render reaches ⧉ today, and `yAr`'s post-pass
+        // (L420511) is likewise a ⧉ de-duplicator that `continue`s out when no ⧉ is present. If this harness
+        // ever starts emitting artifact links, this is the arm to build.
         const lk = t as Tokens.Link;
         const suffix = lk.title ? ` ("${lk.title}")` : "";                     // L420626
         if (lk.href.startsWith("mailto:")) {                                   // L420627–420630

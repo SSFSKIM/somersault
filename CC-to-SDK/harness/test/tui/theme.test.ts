@@ -69,7 +69,7 @@ describe("theme.ts", () => {
     expect(THEMES["light-daltonized"]).toMatchObject({ claude: "rgb(255,153,51)", text: "rgb(0,0,0)", success: "rgb(0,102,153)", error: "rgb(204,0,0)", background: "rgb(0,153,153)", diffAdded: "rgb(153,204,255)", diffRemoved: "rgb(255,204,204)" });
     expect(THEMES.auto).toEqual(THEMES.dark);
   });
-  it("removes bare color words from F1's five named consumers", async () => {
+  it("removes bare color words from F1's four named consumers", async () => {
     // Match ANY bare-ANSI string literal, not just one assigned to a `color`-named property. Three of
     // the sixteen bare-colour sites in these files are indirected and would escape an attribute-anchored
     // pattern: ChatStatusBar's `modeColor()` and `ctxColor()` RETURN "red"|"cyan"|"yellow"|"green", and
@@ -81,7 +81,7 @@ describe("theme.ts", () => {
       expect(source, file).not.toMatch(/["'](?:red|green|yellow|blue|magenta|cyan|white|black|gray|grey)(?:Bright)?["']/);
     }
   });
-  it("highlight.ts names EXACTLY the four DhH scope colors, and no other bare color", () => {
+  it("highlight.ts names EXACTLY the three DhH scope colors, and no other bare color", () => {
     // F4 Task 3 made highlight.ts a deliberate, single exception to the rule above: upstream's hljs scope
     // map `DhH` (constants pack §1.10, bundle L420495) is built from CHALK CONSTANTS — `keyword: vt.blue`,
     // `string: vt.red`, `number: vt.green`, `comment: vt.green` — so fenced-code colours are theme-

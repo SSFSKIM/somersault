@@ -128,7 +128,7 @@ describe("F3 typed result rows — the Write create preview", () => {
     expect(highlighted.dim).toBeUndefined();
     const python = rows(eventFor("Write", { file_path: "/work/s.py", content: "def go():" }, "Created"))![0]!;
     expect(python.segments?.find((s) => s.text === "def")?.color).toBe("blue");
-    const unknown = rows(write("const x = 42;", "/work/notes.md"))![0]!;       // `highlightCode` would dim this; the preview must not
+    const unknown = rows(write("const x = 42;", "/work/notes.md"))![0]!;       // an extension we cannot colour stays plain
     expect(unknown).toEqual({ text: "const x = 42;", segments: [{ text: "const x = 42;" }] });
   });
   it("previews the sidecar content ahead of the input content, keyed on the sidecar's own path", () => {

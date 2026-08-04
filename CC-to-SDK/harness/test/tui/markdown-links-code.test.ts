@@ -2,7 +2,7 @@
 // terminal gate and the upstream (DhH) highlight colors. Every pin cites the constants pack
 // `docs/superpowers/research/2026-07-31-tui-clone/14-f4-constants-pack.md` (§1.7 dHn, §1.9 image,
 // §1.10 DhH L420495, §5 code) or the bundle lines the pack points at (`ZF` L393098, `case "link"`
-// L420625–420640, `jhH` L420707, `mI` L181827).
+// L420625–420645, `jhH` L420707, `mI` L181827).
 //
 // The gates read `process.env` by default (the house DI shape is an optional `env` argument), so the
 // renderMarkdown-level cases drive them by mutating the process env around each test; the gate
@@ -33,7 +33,7 @@ const ITERM = { TERM_PROGRAM: "iTerm.app" };
 const OSC = (href: string, text: string) => `\x1b]8;;${href}\x07${text}\x1b]8;;\x07`;
 const plain = (s: string) => s.replace(/\x1b\]8;;[^\x07]*\x07/g, "").replace(/\x1b\[[0-9;]*m/g, "");
 
-describe("F4 Task 3 — links (bundle `case \"link\"` L420625–420640 → `ZF` L393098)", () => {
+describe("F4 Task 3 — links (bundle `case \"link\"` L420625–420645 → `ZF` L393098)", () => {
   it("link emits OSC-8 wrapping when supported, text (url) when not", () => {
     setEnv(ITERM);
     const on = lines("[docs](https://example.com)")[0];
@@ -73,9 +73,14 @@ describe("F4 Task 3 — links (bundle `case \"link\"` L420625–420640 → `ZF` 
     expect(texts("[h](file://localhost/tmp/a.txt)")[0]).toBe(OSC("file:///tmp/a.txt", "h"));
   });
 
-  it("no `⧉` ever reaches our OSC-8 runs (bundle `Oro`/`AIg` L100700 — claude.ai artifact hrefs only)", () => {
+  it("no `⧉` ever reaches our OSC-8 runs — including on a REAL artifact href that `AIg` matches", () => {
     setEnv(ITERM);
-    for (const md of ["[docs](https://example.com)", "[art](https://claude.ai/code/artifact/abc123)", "![a](https://x.dev/i.png)"])
+    // `AIg` (L100700) is `^https://(claude\.ai|claude-ai\.staging\.ant\.dev)/code/(artifact|frame)/<uuid>/?$`,
+    // where `<uuid>` is the `x8r` UUID pattern — so the fixture carries a real UUID slug rather than a slug
+    // like `abc123` that would fail the regex and pin nothing. The absence here is therefore HONEST: it pins
+    // our deliberate non-port of the `Oro` arm, not an input that could never have reached it anyway. A
+    // harness that ever starts minting canonical claude.ai artifact links must revisit divergence 6.
+    for (const md of ["[docs](https://example.com)", "[art](https://claude.ai/code/artifact/12345678-1234-1234-1234-123456789abc)", "![a](https://x.dev/i.png)"])
       expect(lines(md)[0].text).not.toContain("⧉");
   });
 
@@ -126,6 +131,36 @@ describe("F4 Task 3 — fenced code (constants pack §5, L420597–420602)", () 
 
   it("multi-line bodies keep every line flush-left", () => {
     expect(renderMarkdown("```\na\nb\n```").map((l) => l.text)).toEqual(["a", "b"]);
+  });
+
+  // The fix round separated the two questions the label conflated. Upstream's `supportsLanguage` (`NhH`
+  // L420486 → `sre` L419379) answers off hljs's WHOLE registry — the loader map at bundle L418473 (192
+  // language names) plus the alias map `lur` at L222493 (191 aliases) — while our KNOWN_LANGS (10 aliases)
+  // only says what this harness can actually colour. Binding the label to KNOWN_LANGS therefore labelled
+  // ~180 languages upstream leaves bare. `UPSTREAM_LANGS` now answers the label; KNOWN_LANGS still answers
+  // the highlighting.
+  it("an hljs language we cannot highlight (rust) gets NO label and a plain body", () => {
+    // DIVERGENCE CLOSED: before the fix this rendered a dim `rust` label above the block. Upstream draws
+    // none — `rust` is a registry name at L418473, so `supportsLanguage("rust")` is true.
+    expect(renderMarkdown("```rust\nfn main() {}\n```")).toEqual([{ text: "fn main() {}" }]);
+    for (const lang of ["go", "java", "c", "cpp", "css", "sql", "yaml", "swift", "kotlin"])
+      expect(renderMarkdown(`\`\`\`${lang}\nx\n\`\`\``), lang).toEqual([{ text: "x" }]);
+  });
+
+  it("the language is lowercased before BOTH lookups (`sre` L419379 does `e.toLowerCase()`)", () => {
+    // ```Python highlights as python AND draws no label; ```TS likewise. Before the fix both were
+    // case-sensitive misses: a dim `Python` label over an unhighlighted body.
+    const py = renderMarkdown("```Python\ndef go():\n```");
+    expect(py).toEqual([{ text: "def go():", segments: [{ text: "def", color: "blue" }, { text: " go():" }] }]);
+    const ts = renderMarkdown("```TS\nconst x = 1;\n```");
+    expect(ts[0].segments![0]).toEqual({ text: "const", color: "blue" });
+    expect(ts.length).toBe(1);                            // no label row
+    expect(renderMarkdown("```RUST\nfn main() {}\n```")).toEqual([{ text: "fn main() {}" }]);
+  });
+
+  it("a genuinely unknown language still gets the dim label", () => {
+    expect(renderMarkdown("```weirdlang\nfoo\n```")).toEqual([{ text: "weirdlang", dim: true }, { text: "foo" }]);
+    expect(renderMarkdown("```notalanguage\nfoo\n```")).toEqual([{ text: "notalanguage", dim: true }, { text: "foo" }]);
   });
 });
 

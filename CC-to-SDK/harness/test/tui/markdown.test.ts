@@ -7,6 +7,9 @@ import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 const lines = (s: string, o?: MarkdownOptions) => renderMarkdown(s, o);
 const texts = (s: string, o?: MarkdownOptions) => lines(s, o).map((l) => l.text);
 const tok = (name: "permission" | "suggestion" | "warning" | "inactive") => resolveThemeColor(themeTokens()[name]);
+// Every env var `dHn`/`mI` read — the same list markdown-links-code.test.ts clears, kept in sync by hand.
+const GATE_KEYS = ["TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM", "TERMINAL_EMULATOR", "LC_TERMINAL", "FORCE_HYPERLINK",
+  "WT_SESSION", "TMUX", "CLAUDE_CODE_FORCE_STRIKETHROUGH", "KITTY_WINDOW_ID", "ALACRITTY_LOG", "KONSOLE_VERSION", "ZED_TERM", "VTE_VERSION", "MSYSTEM"];
 
 describe("F4 markdown — block grammar (census §2.1, bundle f2 L420590–420711)", () => {
   it("h1 is bold+italic+underline; h2+ bold only; blank line follows a heading", () => {
@@ -106,12 +109,16 @@ describe("F4 markdown — block grammar (census §2.1, bundle f2 L420590–42071
   // Task 3 moved fenced code to upstream's own form: FLUSH-LEFT, the label-polarity rule, a plain
   // (not dim) body for an unresolved language, and the theme-independent DhH scope colours. The full
   // matrix lives in `markdown-links-code.test.ts`; these three keep the block-grammar file honest.
-  it("fenced code is flush-left: recognized → highlighted+unlabelled, unknown → dim label + plain body", () => {
+  it("fenced code is flush-left: recognized → highlighted+unlabelled, hljs-known-but-unhighlighted → plain+unlabelled, unknown → dim label + plain body", () => {
     expect(lines("```ts\nconst x = 1;\n```")).toEqual([
       { text: "const x = 1;", segments: [{ text: "const", color: "blue" }, { text: " x = " }, { text: "1", color: "green" }, { text: ";" }] },
     ]);
     expect(lines("```\nplain text\n```")).toEqual([{ text: "plain text" }]);
-    expect(lines("```rust\nfn main() {}\n```")).toEqual([{ text: "rust", dim: true }, { text: "fn main() {}" }]);
+    // The fix round split the two questions apart: `rust` IS in hljs's registry (bundle L418473), so
+    // upstream's `supportsLanguage` says yes and NO label is drawn — our own KNOWN_LANGS still can't
+    // highlight it, so the body is plain. See markdown-links-code.test.ts for the whole matrix.
+    expect(lines("```rust\nfn main() {}\n```")).toEqual([{ text: "fn main() {}" }]);
+    expect(lines("```weirdlang\nfn main() {}\n```")).toEqual([{ text: "weirdlang", dim: true }, { text: "fn main() {}" }]);
   });
   it("a table falls through to raw pipe lines until Task 4's renderTable", () => {
     expect(texts("| a | b |\n|---|---|\n| 1 | 2 |")).toEqual(["| a | b |", "|---|---|", "| 1 | 2 |"]);
@@ -126,12 +133,16 @@ describe("F4 markdown — inline walker", () => {
     expect(typeof strikethroughSupported()).toBe("boolean");
   });
   it("del applies strikethrough to its children", () => {
-    // Task 3 gated `del` on the real `dHn` allowlist, which reads `process.env` — so this case has to
-    // name a supported terminal now (the gate matrix itself is pinned in markdown-links-code.test.ts).
-    const before = process.env.TERM_PROGRAM;
+    // Task 3 gated `del` on the real `dHn` allowlist, which reads `process.env` — so this case has to name
+    // a supported terminal now (the gate matrix itself is pinned in markdown-links-code.test.ts). Setting
+    // TERM_PROGRAM ALONE is not enough: `dHn`'s exclusions run first, so an ambient `TERM=linux` (or an
+    // ambient Apple_Terminal left behind) would flip this green test red on someone else's machine. Clear
+    // the same full gate-key set the links-code file clears, then set the one var under test.
+    const saved = Object.fromEntries(GATE_KEYS.map((k) => [k, process.env[k]]));
+    for (const k of GATE_KEYS) delete process.env[k];
     process.env.TERM_PROGRAM = "iTerm.app";
     try { expect(lines("~~gone~~")[0]).toMatchObject({ text: "gone", strikethrough: true }); }
-    finally { if (before === undefined) delete process.env.TERM_PROGRAM; else process.env.TERM_PROGRAM = before; }
+    finally { for (const k of GATE_KEYS) { const v = saved[k]; if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
   });
   it("inlineSegments accumulates the incoming style down the tree", () => {
     const segs = inlineSegments([{ type: "strong", raw: "**a**", text: "a", tokens: [{ type: "text", raw: "a", text: "a" }] } as never], { dim: true });

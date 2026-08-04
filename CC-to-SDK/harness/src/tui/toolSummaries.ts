@@ -107,10 +107,10 @@ const editRows = (normalized: NormalizedToolResult): readonly RenderLine[] | und
  *  the census that is the BARE `… +{N} lines`, with no `(ctrl+o to expand)` suffix. The census records no verbose
  *  variant of `jme` either (the three branches above it are the only `verbose` tests), so the cap holds in the
  *  detail projections too; that is the census's silence, not a verified expansion.
- *  Highlighting is keyed off the file extension. An extension `highlight.ts` does not know renders PLAIN, not
- *  dim: `highlightCode`'s own unknown-language fallback is a dim `inactive` line, which is markdown's
- *  fenced-code polarity (an unrecognised fence reads as inert) — here the rows ARE the result body, and dimming
- *  a whole file because it is `.md` would say "less important" about the only content on screen. */
+ *  Highlighting is keyed off the file extension. An extension `highlight.ts` does not know renders PLAIN — the
+ *  `known` gate below is what keeps it plain rather than dim, and the F4 fix round made plain the fallback
+ *  inside `highlightCode` too (its old dim `inactive` arm was dead once both callers gated on KNOWN_LANGS).
+ *  Dimming a whole file because it is `.md` would say "less important" about the only content on screen. */
 const WRITE_PREVIEW_LINES = 10;
 const extensionOf = (path: string | undefined): string => {
   const name = path === undefined ? "" : basename(path), dot = name.lastIndexOf(".");

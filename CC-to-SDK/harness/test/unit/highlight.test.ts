@@ -3,15 +3,14 @@
 // overlapping construct (keyword inside a string, // inside a string).
 import { describe, it, expect } from "vitest";
 import { highlightCode } from "../../src/tui/highlight.js";
-import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 
 // F4 Task 3 re-pinned the scope colours to upstream's hljs map `DhH` (constants pack §1.10, bundle
 // L420495): keyword `vt.blue`, string `vt.red`, number `vt.green`, comment `vt.green`. That map is built
 // from CHALK CONSTANTS, so it is theme-INDEPENDENT — these are bare ANSI names, not theme tokens, and they
-// do not move when /theme does (a recorded divergence, see the parity doc). `inactive` remains a theme
-// token for the one role with no upstream counterpart: the unknown-language fallback.
+// do not move when /theme does (a recorded divergence, see the parity doc). The fix round finished the job:
+// `comment` is FLAT green (no `dim`, which `DhH` never had), and the last theme-token role — the dim
+// `inactive` unknown-language fallback — is gone, so this module imports no theme at all.
 const KEYWORD = "blue", STRING = "red", NUMBER = "green", COMMENT = "green";
-const tok = (name: "inactive") => resolveThemeColor(themeTokens()[name]);
 
 describe("highlightCode", () => {
   it("colors a keyword `blue` (DhH `keyword: vt.blue`)", () => {
@@ -30,14 +29,17 @@ describe("highlightCode", () => {
   it("string literals are `red` (DhH `string: vt.red`), whole literal in one segment", () => {
     expect(highlightCode('"hi"', "ts")).toEqual([{ text: '"hi"', color: STRING }]);
   });
-  it("a line comment is `green` (DhH `comment: vt.green`) for its whole rest", () => {
-    expect(highlightCode("// note", "ts")).toEqual([{ text: "// note", color: COMMENT, dim: true }]);
+  it("a line comment is FLAT `green` (DhH `comment: vt.green` carries no dim) for its whole rest", () => {
+    expect(highlightCode("// note", "ts")).toEqual([{ text: "// note", color: COMMENT }]);
   });
-  it("a python comment (# marker) takes the same `green` for its whole rest", () => {
-    expect(highlightCode("# note", "py")).toEqual([{ text: "# note", color: COMMENT, dim: true }]);
+  it("a python comment (# marker) takes the same flat `green` for its whole rest", () => {
+    expect(highlightCode("# note", "py")).toEqual([{ text: "# note", color: COMMENT }]);
   });
-  it("unknown lang → a single dim `inactive` segment carrying the whole line", () => {
-    expect(highlightCode("fn main() {}", "rust")).toEqual([{ text: "fn main() {}", color: tok("inactive"), dim: true }]);
+  it("unknown lang → one PLAIN segment (hljs's unscoped `plaintext`), no theme token anywhere", () => {
+    // The old dim `inactive` fallback was dead code: both call sites (markdown's `codeRuns`, toolSummaries'
+    // `previewRows`) gate on KNOWN_LANGS before calling. Dropping it sheds the `theme.js` import, so this
+    // module is now literally theme-independent, not merely theme-independent in its four scope colours.
+    expect(highlightCode("fn main() {}", "rust")).toEqual([{ text: "fn main() {}" }]);
   });
   it("leading indentation survives intact in the first segment", () => {
     const out = highlightCode("  const x = 1;", "ts");
@@ -58,7 +60,9 @@ describe("highlightCode", () => {
     const str = out.find((s) => s.text === '"http://example.com"');
     expect(str).toBeDefined();
     expect(str!.color).toBe(STRING);
-    expect(out.some((s) => s.dim)).toBe(false);   // no comment segment anywhere
+    // No comment segment anywhere. `dim` no longer marks one (the fix round dropped it), so the pin is on
+    // the comment COLOUR — safe here because the line holds no number, `green`'s only other source.
+    expect(out.some((s) => s.color === COMMENT)).toBe(false);
   });
   it("segments always reconstruct the original line exactly (no dropped/duplicated characters)", () => {
     const cases: [string, string][] = [
