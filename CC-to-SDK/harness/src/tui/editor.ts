@@ -8,10 +8,17 @@ export interface Cursor { row: number; col: number }
 export interface Candidate { path: string; score: number }
 export interface MentionState { anchor: Cursor; query: string; files: string[]; items: Candidate[]; index: number }
 export interface CommandState { query: string; items: CommandEntry[]; catalog: CommandEntry[]; index: number }
+/** One collapsed paste, rendered in the buffer as a `[Pasted text #id +N lines]` placeholder (F5 task 3 fills
+ *  the map). Declared HERE, with the undo entry that carries it, so the undo shape never has to reopen. */
+export interface PastedEntry { id: number; type: "text"; content: string; lineCount: number }
+export type PastedMap = Record<number, PastedEntry>;
 export interface EditorState {
   lines: string[]; cursor: Cursor; history: string[]; histIndex: number | null; stash: string | null;
   stashed: string | null;                                    // Ctrl-S input stash (distinct from history-nav `stash`)
-  undo: { lines: string[]; cursor: Cursor }[];               // snapshot-on-change, capped at 100 (Ctrl-_ pops)
+  undo: { lines: string[]; cursor: Cursor; pastedContents: PastedMap; at: number }[];   // see UNDO_CAP / applyKey
+  pastedContents: PastedMap;                                 // collapsed pastes keyed by id; dies with the buffer
+  pasteCounter: number;                                      // monotonic id source for the next chip
+  hasUsedBackslashReturn: boolean;                           // CM18: upstream's persisted `markBackslashReturnUsed`
   mention: MentionState | null; command: CommandState | null;
   killRing: string[];                                        // newest LAST, cap 10; entries may include killed line breaks
   killRun: boolean;                                          // an unbroken run of kill keystrokes coalesces into the newest entry
@@ -25,8 +32,12 @@ export interface KeyFlags {
 }
 
 export function initialEditorState(history: string[] = []): EditorState {
-  return { lines: [""], cursor: { row: 0, col: 0 }, history: [...history], histIndex: null, stash: null, stashed: null, undo: [], mention: null, command: null, killRing: [], killRun: false, yankSite: null };
+  return { lines: [""], cursor: { row: 0, col: 0 }, history: [...history], histIndex: null, stash: null, stashed: null, undo: [], pastedContents: {}, pasteCounter: 0, hasUsedBackslashReturn: false, mention: null, command: null, killRing: [], killRun: false, yankSite: null };
 }
+/** CM17, upstream `o9f({ maxBufferSize: 50, debounceMs: 1000 })` (bundle L495478). Upstream debounces pushes on
+ *  a real timer; a pure reducer has none, so `applyKey` coalesces on the elapsed `now` instead (see there). */
+export const UNDO_CAP = 50;
+export const UNDO_COALESCE_MS = 1000;
 
 export type InputMode = "bash" | "memory" | "normal";
 /** The composer's current input mode, derived purely from the buffer: a leading `!` = bash, `#` = memory
@@ -134,25 +145,37 @@ function wordRight(s: EditorState): EditorState {        // Alt/Option-Right (an
   let i = col; while (i < line.length && /\s/.test(line[i])) i++; while (i < line.length && !/\s/.test(line[i])) i++;
   return { ...s, cursor: { row, col: i } };
 }
+/** Alt-d (CM12, bundle meta map `["d", () => W.deleteWordAfter()]`): delete forward to the next word boundary.
+ *  Upstream's `deleteWordAfter` is a plain text modify — it never dispatches a kill — so this is deliberately
+ *  NOT a kill op: it reports no `killed`, so it feeds no ring and (like any other edit) ends a kill run. */
+function deleteWordAfter(s: EditorState): EditorState {
+  const to = wordRight(s).cursor;
+  if (to.row === s.cursor.row && to.col === s.cursor.col) return s;      // at the end of the buffer
+  return removeRange(s, s.cursor, to);
+}
 function moveCursorVert(s: EditorState, delta: number): EditorState {
   const row = s.cursor.row + delta;
   if (row < 0 || row >= s.lines.length) return s;
   return { ...s, cursor: { row, col: Math.min(s.cursor.col, s.lines[row].length) } };
 }
+/** CM18, bundle L395679: `if (d && W.offset > 0 && W.text[W.offset-1] === "\\") return CXs(), W.backspace().insert("\n")`.
+ *  The trigger is the character BEFORE THE CURSOR (see `continuesLine` below), and the action is literally a
+ *  backspace over that backslash followed by a newline AT THE CURSOR — so a mid-line `\` splits mid-line.
+ *  `CXs` is `markBackslashReturnUsed`, a one-way flag the composer's newline hint reads (F5 task 2). */
 function continueLine(s: EditorState): EditorState {
-  const lines = [...s.lines]; const row = s.cursor.row;
-  lines[row] = lines[row].replace(/\\$/, "");              // drop the trailing backslash
-  lines.splice(row + 1, 0, "");                            // insert a new empty line after it
-  return { ...s, lines, cursor: { row: row + 1, col: 0 } };
+  return { ...insertText(deleteLeft(s), "\n"), hasUsedBackslashReturn: true };
 }
+const continuesLine = (s: EditorState): boolean => s.cursor.col > 0 && s.lines[s.cursor.row][s.cursor.col - 1] === "\\";
 function submitTurn(s: EditorState): EditorResult {
   if (isBlank(s)) return { state: s };
   const t = bufferText(s);
   const history = s.history.length && s.history[s.history.length - 1] === t ? s.history : [...s.history, t];   // dedup consecutive
   // The stash SURVIVES a send (2.1.220 chat:stash keeps it in state separate from the buffer) — park a
   // draft, fire a quick question, Ctrl-S restores the draft. The undo stack does reset with the buffer.
-  // The kill ring survives too (like the stash) — a submit is not a keystroke that should clear it.
-  return { state: { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing }, submit: t };
+  // The kill ring survives too (like the stash) — a submit is not a keystroke that should clear it. So does
+  // `hasUsedBackslashReturn`: upstream keeps it in PERSISTED config (`markBackslashReturnUsed`), so nothing
+  // inside a session can unlearn it. The paste chips do NOT — they are placeholders in the buffer that just left.
+  return { state: { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing, hasUsedBackslashReturn: s.hasUsedBackslashReturn }, submit: t };
 }
 
 /** Esc-Esc's second press (CC `cgr`): push nonblank text to history, then clear. Blank buffer = clear-only. */
@@ -162,7 +185,7 @@ export function clearToHistory(s: EditorState): EditorState {
   const history = t.trim().length === 0 || (s.history.length && s.history[s.history.length - 1] === t)
     ? s.history
     : [...s.history, t];
-  return { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing };
+  return { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing, hasUsedBackslashReturn: s.hasUsedBackslashReturn };
 }
 
 function setBuffer(s: EditorState, t: string): EditorState {
@@ -173,7 +196,7 @@ function setBuffer(s: EditorState, t: string): EditorState {
 /** Replace text supplied by a non-editor source; old-buffer navigation, popup, kill, and undo state cannot survive it. */
 export function replaceBufferFromOutside(s: EditorState, t: string): EditorState {
   const lines = splitLines(t); const r = lines.length - 1;
-  return { ...s, lines, cursor: { row: r, col: lines[r].length }, histIndex: null, stash: null, undo: [], mention: null, command: null, killRun: false, yankSite: null };
+  return { ...s, lines, cursor: { row: r, col: lines[r].length }, histIndex: null, stash: null, undo: [], pastedContents: {}, mention: null, command: null, killRun: false, yankSite: null };
 }
 /** Replace the buffer's text wholesale, cursor at the end — the composer's rewind prefill (edit-and-resend). */
 export function withBufferText(s: EditorState, t: string): EditorState { return replaceBufferFromOutside(s, t); }
@@ -248,7 +271,7 @@ function submitCommand(s: EditorState): EditorResult {
   const name = c.items.length ? c.items[Math.min(c.index, c.items.length - 1)].name : s.lines[0].slice(1);
   const t = "/" + name;
   const history = s.history.length && s.history[s.history.length - 1] === t ? s.history : [...s.history, t];
-  return { state: { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing }, submit: t };
+  return { state: { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing, hasUsedBackslashReturn: s.hasUsedBackslashReturn }, submit: t };
 }
 const syncCompletions = (s: EditorState): EditorState => (s.command ? refreshCommand(s) : (s.mention ? refreshMention(s) : s));
 function afterInsert(next: EditorState, prev: EditorState, t: string): EditorState {
@@ -261,7 +284,7 @@ function onUp(s: EditorState): EditorState { if (s.command) return moveCommand(s
 function onDown(s: EditorState): EditorState { if (s.command) return moveCommand(s, 1); if (s.mention) return moveMention(s, 1); if (s.cursor.row === s.lines.length - 1) return historyNext(s); return moveCursorVert(s, 1); }
 
 function clearInput(s: EditorState): EditorState {           // Ctrl-L = CC chat:clearInput (screen clear stays /clear)
-  return { ...s, lines: [""], cursor: { row: 0, col: 0 }, mention: null, command: null };
+  return { ...s, lines: [""], cursor: { row: 0, col: 0 }, pastedContents: {}, mention: null, command: null };
 }
 function stashToggle(s: EditorState): EditorState {          // Ctrl-S = CC chat:stash: park non-empty input, restore when empty
   if (!isBlank(s)) return { ...clearInput(s), stashed: bufferText(s) };
@@ -271,7 +294,9 @@ function stashToggle(s: EditorState): EditorState {          // Ctrl-S = CC chat
 function undoEdit(s: EditorState): EditorState {             // Ctrl-_ / Ctrl-- = CC chat:undo (terminals send 0x1F for both)
   const last = s.undo[s.undo.length - 1];
   if (!last) return s;
-  return { ...s, lines: last.lines, cursor: last.cursor, undo: s.undo.slice(0, -1), mention: null, command: null };
+  // The chips ride along with the text they belong to (upstream's entries carry `pastedContents` too): undoing
+  // past a paste whose placeholder is gone must bring its content back, or the chip renders as a dead label.
+  return { ...s, lines: last.lines, cursor: last.cursor, pastedContents: last.pastedContents, undo: s.undo.slice(0, -1), mention: null, command: null };
 }
 
 function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResult {
@@ -284,12 +309,21 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResu
     if (key.leftArrow || input === "b") return { state: syncCompletions(wordLeft(s)) };
     if (key.rightArrow || input === "f") return { state: syncCompletions(wordRight(s)) };
     if (input === "y") return { state: syncCompletions(yankPop(s)) };
+    if (input === "d") return { state: syncCompletions(deleteWordAfter(s)) };   // CM12; NOT a kill (see deleteWordAfter)
     return { state: s };                                 // an unrecognized meta combo never inserts text
   }
   if (key.ctrl) {                                        // readline keys; other ctrl combos (l/c/d) act at app level → ignore here (never insert)
     switch (input) {
+      // CM12, bundle L395676 — the ctrl map verbatim: a=startOfLogicalLine, b=left, e=endOfLogicalLine, f=right,
+      // h=deleteTokenBefore()??backspace(), n=the down body, p=the up body. CM14: a/e are LOGICAL-line ends, and
+      // our buffer is already unwrapped logical lines, so lineStart/lineEnd ARE upstream's two ops.
       case "a": return { state: syncCompletions(lineStart(s)) };
       case "e": return { state: syncCompletions(lineEnd(s)) };
+      case "b": return { state: syncCompletions(moveLeft(s)) };
+      case "f": return { state: syncCompletions(moveRight(s)) };
+      case "h": return { state: syncCompletions(deleteLeft(s)) };   // Task 4 upgrades: deleteTokenBefore() ?? backspace()
+      case "n": return { state: onDown(s) };                        // history at the bottom edge, popup nav while open
+      case "p": return { state: onUp(s) };
       // A kill keystroke ALWAYS reports `killed` (even with empty text) so applyKey's wrapper can tell "a
       // kill that killed nothing" apart from "not a kill at all" — the former must never break the run.
       case "k": { const r = killToEnd(s); return { state: syncCompletions(r.state), killed: { text: r.text, dir: "append" as const } }; }
@@ -302,7 +336,7 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResu
     }
   }
   if (key.return) {
-    if (s.lines[s.cursor.row].endsWith("\\")) return { state: continueLine(s) };
+    if (continuesLine(s)) return { state: continueLine(s) };
     if (s.command) return submitCommand(s);
     if (s.mention) return { state: acceptMention(s) };
     return submitTurn(s);
@@ -330,11 +364,19 @@ export function endKillAndYank(s: EditorState): EditorState {
   return s.killRun || s.yankSite ? { ...s, killRun: false, yankSite: null } : s;
 }
 
-/** Snapshot-on-change undo: any key that changed the buffer pushes the PRIOR buffer (cap 100). An op
+/** Snapshot-on-change undo: any key that changed the buffer pushes the PRIOR buffer (cap UNDO_CAP = 50). An op
  *  that managed the stack itself (undoEdit pops it) is recognized by its own `undo` identity change;
  *  a submit returns a fresh initialEditorState, so its stack is already empty. Also folds a kill into
- *  the ring (coalescing an unbroken run) and tracks when that run / a yank-pop site ends. */
-export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorResult {
+ *  the ring (coalescing an unbroken run) and tracks when that run / a yank-pop site ends.
+ *
+ *  CM17 coalescing, and the one deliberate divergence in this file. Upstream (`o9f`, bundle L489735-L489748)
+ *  DEBOUNCES on a real timer: a change less than `debounceMs` (1000) after the last push is rescheduled and
+ *  lands later, so a rapid typing run eventually leaves ONE entry. A pure reducer has no timer and no way to
+ *  land a deferred push, so we drop the change instead of deferring it: a change inside the window pushes
+ *  nothing, which reaches the same observable end state (undo reverts the whole run) by a simpler route. The
+ *  visible difference is a pause with no further keystroke — upstream's rescheduled push lands, ours never
+ *  does, so the run stays folded into the next entry. `now` is injectable so the window is testable. */
+export function applyKey(s: EditorState, input: string, key: KeyFlags, now: number = Date.now()): EditorResult {
   const r = applyKeyInner(s, input, key);
   let state = r.state;
   // A kill keystroke that killed nothing (Ctrl-K at end of line, Ctrl-U at col 0, Ctrl-W at col 0) must
@@ -358,5 +400,8 @@ export function applyKey(s: EditorState, input: string, key: KeyFlags): EditorRe
   if (r.submit !== undefined) return { ...r, state, killed };
   if (state === s) return { ...r, killed };
   if (sameText(state.lines, s.lines) || state.undo !== s.undo) return { ...r, state, killed };
-  return { ...r, state: { ...state, undo: [...s.undo.slice(-99), { lines: s.lines, cursor: s.cursor }] }, killed };
+  const head = s.undo[s.undo.length - 1];
+  if (head && now - head.at < UNDO_COALESCE_MS) return { ...r, state, killed };            // inside the window: fold in
+  const entry = { lines: s.lines, cursor: s.cursor, pastedContents: s.pastedContents, at: now };
+  return { ...r, state: { ...state, undo: [...s.undo.slice(-(UNDO_CAP - 1)), entry] }, killed };
 }

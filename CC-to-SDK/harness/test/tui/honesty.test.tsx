@@ -18,7 +18,7 @@ import { ChatApp } from "../../src/tui/ChatApp.js";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
 import { ChatStatusBar } from "../../src/tui/ChatStatusBar.js";
 import { ROWS } from "../../src/tui/ShortcutsOverlay.js";
-import { applyKey, initialEditorState, inputMode, type EditorState } from "../../src/tui/editor.js";
+import { applyKey, initialEditorState, inputMode, UNDO_COALESCE_MS, type EditorState } from "../../src/tui/editor.js";
 import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
 
@@ -31,9 +31,12 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 const settle = () => new Promise((r) => setTimeout(r, 30));   // chat.test.tsx's bare-setTimeout settle idiom
 
 /** Fold applyKey over each character of `text` from a base state (default: fresh) — the same reduction
- *  editor.test.ts's own file-local `type` helper performs, just named per this task brief's `typed(text)`. */
+ *  editor.test.ts's own file-local `type` helper performs, just named per this task brief's `typed(text)`.
+ *  Each keystroke is handed a `now` a full coalesce window apart (F5 task 1 / CM17), so every character is
+ *  its own undo entry — these proofs are about a key being LIVE, not about typing speed. */
+let honestyClock = 0;
 function typed(text: string, base: EditorState = initialEditorState()): EditorState {
-  return [...text].reduce((s, ch) => applyKey(s, ch, {}).state, base);
+  return [...text].reduce((s, ch) => applyKey(s, ch, {}, honestyClock += UNDO_COALESCE_MS + 1).state, base);
 }
 
 // A fakeRemote() extended onto the RewindOps surface, copied from chat.test.tsx's own file-local

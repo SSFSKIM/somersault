@@ -13,6 +13,7 @@ import { ChatApp } from "../../src/tui/ChatApp.js";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
+import { UNDO_COALESCE_MS } from "../../src/tui/editor.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
 /** The status bar colors the think level, so "think default" is not contiguous in a raw frame. */
@@ -112,6 +113,9 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("›"));
     stdin.write("hello world"); await waitFor(() => frame(lastFrame).includes("hello world"));
+    // F5 task 1 (CM17): undo pushes coalesce inside a 1000 ms window, so the kill has to land OUTSIDE it to
+    // be its own entry — otherwise it folds into the paste's and undo (correctly) empties the buffer instead.
+    await new Promise((r) => setTimeout(r, UNDO_COALESCE_MS + 50));
     stdin.write("\x17");                                      // ctrl+w kills the last word
     await waitFor(() => !frame(lastFrame).includes("world"));
     stdin.write("\x1f");                                      // ctrl+_ = undo

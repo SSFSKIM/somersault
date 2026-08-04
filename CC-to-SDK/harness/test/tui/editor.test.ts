@@ -1,7 +1,7 @@
 // tui/test/editor.test.ts — pure editor-reducer units. Probe 17d7116: a paste arrives as one `input` with
 // embedded \n; submit = a lone key.return; `\`+Enter = continuation.
 import { describe, it, expect } from "vitest";
-import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, inputMode, withBufferText, clearToHistory, type EditorState, type KeyFlags } from "../../src/tui/editor.js";
+import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, inputMode, withBufferText, clearToHistory, UNDO_CAP, UNDO_COALESCE_MS, type EditorState, type KeyFlags } from "../../src/tui/editor.js";
 import type { CommandEntry } from "../../src/tui/commandComplete.js";
 
 const type = (s: EditorState, text: string): EditorState => applyKey(s, text, {}).state;
@@ -73,7 +73,7 @@ describe("editor composer prefill", () => {
   });
   it("external replacement clears stale buffer-derived state but preserves durable history, stash, and kill ring", () => {
     let s = initialEditorState(["old"]);
-    s = { ...s, lines: ["draft"], cursor: { row: 0, col: 5 }, histIndex: 0, stash: "draft", stashed: "parked", undo: [{ lines: ["before"], cursor: { row: 0, col: 6 } }], mention: { anchor: { row: 0, col: 0 }, query: "d", files: ["draft.ts"], items: [], index: 0 }, command: { query: "mod", items: [], catalog: [], index: 0 }, killRing: ["keep"], killRun: true, yankSite: { start: { row: 0, col: 0 }, end: { row: 0, col: 4 }, index: 0 } };
+    s = { ...s, lines: ["draft"], cursor: { row: 0, col: 5 }, histIndex: 0, stash: "draft", stashed: "parked", undo: [{ lines: ["before"], cursor: { row: 0, col: 6 }, pastedContents: {}, at: 1 }], mention: { anchor: { row: 0, col: 0 }, query: "d", files: ["draft.ts"], items: [], index: 0 }, command: { query: "mod", items: [], catalog: [], index: 0 }, killRing: ["keep"], killRun: true, yankSite: { start: { row: 0, col: 0 }, end: { row: 0, col: 4 }, index: 0 } };
     const replaced = withBufferText(s, "queued\n/mod");
     expect(replaced.lines).toEqual(["queued", "/mod"]);
     expect(replaced.cursor).toEqual({ row: 1, col: 4 });
@@ -368,19 +368,23 @@ describe("meta co-occurring with escape/backspace (Ink's real key shape)", () =>
 
 describe("Wave-1 keymap: clear input, newline, undo, stash", () => {
   // Shadows the file's single-shot `type` (one applyKey call for the whole string): undo is snapshot-per-key,
-  // so stepping back "one keystroke at a time" requires one applyKey call per character.
-  const type = (s: EditorState, text: string) => [...text].reduce((st, ch) => applyKey(st, ch, {}).state, s);
+  // so stepping back "one keystroke at a time" requires one applyKey call per character — AND, since F5 task 1
+  // (CM17), each of those calls needs a `now` a full coalesce window past the last, or the run folds into one
+  // entry. `clock` is that injected time; the folded-run case is pinned in editor-readline.test.ts.
+  let clock = 0;
+  const tick = () => (clock += UNDO_COALESCE_MS + 1);
+  const type = (s: EditorState, text: string) => [...text].reduce((st, ch) => applyKey(st, ch, {}, tick()).state, s);
 
   it("Ctrl-L clears the buffer (input, not screen) and Ctrl-_ (bare 0x1f) restores it", () => {
     let s = type(initialEditorState(), "hello world");
-    s = applyKey(s, "l", { ctrl: true }).state;
+    s = applyKey(s, "l", { ctrl: true }, tick()).state;
     expect(s.lines).toEqual([""]);
     s = applyKey(s, "\x1f", {}).state;                          // terminals send the bare C0 byte, no ctrl flag
     expect(s.lines).toEqual(["hello world"]);
     expect(s.cursor).toEqual({ row: 0, col: 11 });
   });
 
-  it("undo (bare 0x1f) steps back one keystroke at a time", () => {
+  it("undo (bare 0x1f) steps back one keystroke at a time (keystrokes a coalesce window apart)", () => {
     let s = type(initialEditorState(), "abc");
     s = applyKey(s, "\x1f", {}).state;
     expect(s.lines).toEqual(["ab"]);
@@ -398,10 +402,10 @@ describe("Wave-1 keymap: clear input, newline, undo, stash", () => {
     expect(s.stashed).toBeNull();
   });
 
-  it("undo snapshots cap at 100", () => {
+  it("undo snapshots cap at 50 (CM17: upstream's `maxBufferSize`, was our 100)", () => {
     let s = initialEditorState();
-    for (let i = 0; i < 120; i++) s = applyKey(s, "x", {}).state;
-    expect(s.undo.length).toBe(100);
+    for (let i = 0; i < 120; i++) s = applyKey(s, "x", {}, tick()).state;
+    expect(s.undo.length).toBe(UNDO_CAP);
   });
 
   it("submit resets the undo stack but the STASH SURVIVES the send (2.1.220 chat:stash — park a draft, fire a question, restore)", () => {
@@ -448,8 +452,8 @@ describe("undo snapshots track CONTENT, not array identity", () => {
     expect(applyKey(initialEditorState(), "l", { ctrl: true }).state.undo.length).toBe(0);
   });
   it("still snapshots when the keypress genuinely changes the text", () => {
-    const s = type(initialEditorState(), "hello");
-    const killed = applyKey(applyKey(s, "a", { ctrl: true }).state, "k", { ctrl: true }).state;
+    const s = type(initialEditorState(), "hello");                          // one applyKey call → one entry
+    const killed = applyKey(applyKey(s, "a", { ctrl: true }).state, "k", { ctrl: true }, Date.now() + UNDO_COALESCE_MS).state;
     expect(killed.lines).toEqual([""]);
     expect(killed.undo.length).toBe(s.undo.length + 1);   // a real edit is still undoable
   });
@@ -544,7 +548,7 @@ describe("kill ring (CM10/CM11)", () => {
 describe("ctrl+_ undo reachability (KB4/KB23, F0 acceptance 4)", () => {
   it("the raw 0x1f byte undoes the last edit and NEVER lands in the buffer", () => {
     let s = initialEditorState();
-    s = applyKey(s, "a", {}).state; s = applyKey(s, "b", {}).state;
+    s = applyKey(s, "a", {}, 0).state; s = applyKey(s, "b", {}, UNDO_COALESCE_MS).state;   // two entries, not coalesced
     const undone = applyKey(s, "\x1f", {}).state;             // terminals send bare 0x1f for Ctrl+_ AND Ctrl+-
     expect(undone.lines).toEqual(["a"]);
     expect(applyKey(initialEditorState(), "\x1f", {}).state.lines).toEqual([""]);   // empty stack: no-op, no insertion
