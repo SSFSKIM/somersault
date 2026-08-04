@@ -4,8 +4,9 @@
 > north star) to the *look-and-feel* level of the original Claude Code TUI. This scorecard is the
 > **source of truth for visual/interaction parity** — distinct from `coverage.md` (which scores SDK
 > *capability* realization). Tracked feature-by-feature against the real Claude Code bundle at
-> **`~/claude-code-bundle/2.1.220/`** (`cli.pretty.js` plus its `MAP.md`). Scores below are dated
-> **2026-07-31**.
+> **`~/claude-code-bundle/2.1.220/`** (`cli.pretty.js` plus its `MAP.md`). The current headline is dated
+> **2026-08-04 (post-F4)**; each recount block below carries its own date, and older ones are left as
+> written rather than back-edited.
 >
 > **This file is a coarse summary, not the primary record.** The detailed per-feature ledger is the
 > research inventory's **271 IDs**, at `docs/superpowers/research/2026-07-31-tui-clone/00-INVENTORY.md`.
@@ -47,16 +48,16 @@ polish* that makes CC instantly recognizable: **no welcome banner, a non-CC spin
 glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input modes, no queued input, no
 `/cost`, and thin terminal-native editor ergonomics** (Ctrl-A/E/K/U/W, Ctrl-L, Ctrl-C-twice).
 
-| Category | Parity (start) | Parity (pre-C5) | Parity (pre-F0, post–sprint-W3) | Parity (post-F2) | Parity (now, post-F3) |
-|---|---|---|---|---|---|
-| 1. Input / composer ergonomics | ~45% | ~88% | ~95% | ~86% (was ~78% post-F0; F2 landed the keymap — see §1a) | **~86%** (untouched by F3) |
-| 2. Transcript / message rendering | ~50% | ~74% | ~83% | ~57% | **~63%** (F1 substrate rows scored at last, +5 new F3 rows — see the F3 recount) |
-| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% | ~36% | **~36%** (untouched by F3) |
-| 4. Modals / overlays | ~60% | ~88% | ~88% (4 new W3 rows — see W3 recount note) | ~50% | **~50%** (untouched by F3) |
-| 5. Slash commands | ~55% | ~70% | ~86% (6 new W3 rows — see W3 recount note) | ~88% (F2: `/keybindings` 🟡→✅ — it opens the real file now) | **~88%** (untouched by F3) |
-| 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% | ~61% | **~61%** (untouched by F3) |
-| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~80% (untouched in W3) | ~75% | **~72%** (F3 deleted an over-shipped row — see §8) |
-| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* | ~65%<br>*(plain row count)* | **~65%**<br>*(plain row count)* |
+| Category | Parity (start) | Parity (pre-C5) | Parity (pre-F0, post–sprint-W3) | Parity (post-F2) | Parity (post-F3) | Parity (now, post-F4) |
+|---|---|---|---|---|---|---|
+| 1. Input / composer ergonomics | ~45% | ~88% | ~95% | ~86% (was ~78% post-F0; F2 landed the keymap — see §1a) | ~86% | **~86%** (untouched by F4) |
+| 2. Transcript / message rendering | ~50% | ~74% | ~83% | ~57% | ~63% (F1 substrate rows scored at last, +5 new F3 rows) | **~70%** (F4's static transcript: 8 rows rise, 1 falls, 7 new rows — see the F4 recount) |
+| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% | ~36% | ~36% | **~36%** (untouched by F4) |
+| 4. Modals / overlays | ~60% | ~88% | ~88% (4 new W3 rows — see W3 recount note) | ~50% | ~50% | **~50%** (untouched by F4) |
+| 5. Slash commands | ~55% | ~70% | ~86% (6 new W3 rows — see W3 recount note) | ~88% (F2: `/keybindings` 🟡→✅ — it opens the real file now) | ~88% | **~88%** (untouched by F4) |
+| 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% | ~61% | ~61% | **~61%** (untouched by F4) |
+| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~80% (untouched in W3) | ~75% | ~72% (F3 deleted an over-shipped row) | **~72%** (untouched by F4) |
+| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* | ~65%<br>*(plain row count)* | ~65%<br>*(plain row count)* | **~66%**<br>*(plain row count)* |
 
 **F0 correction note (2026-07-31) — the headline fell from ~88% to ~63%, and this is the point of the
 exercise, not a regression to explain away.** Nothing that worked on 2026-07-30 stopped working; the
@@ -117,7 +118,7 @@ changed state — no re-scoring of anything already counted:
 
 The three new §1 rows are upstream features we previously had no row for (`06 K4`, `06 K5`, and
 upstream's own "every hint string generated from the live binding"), not credit for inventions of ours.
-The hint row is honestly 🟡, not ✅: three surfaces derive, two footers and one fold marker do not — §1a
+The hint row is honestly 🟡, not ✅: three surfaces derive, two footers and one fold marker did not — §1a
 names them.
 
 **F3 recount (2026-08-04, the live-turn wave).** Two categories move. §2's movement is deliberately split
@@ -149,6 +150,50 @@ and §7 gives back 2.8 points for a row we deleted on purpose. The wave's real o
 turn now has rows at all — twelve upstream behaviours went from invisible to either built, deliberately
 diverged, or **provably unreachable** (six of those, excluded from the denominator with probe or bundle
 citations, in the F3 section below).
+
+**F4 recount (2026-08-04, the static transcript wave).** One category moves. F4 is the first wave whose
+work lands almost entirely inside a single section, so the split below is per-row rather than per-step.
+
+*The scoring rule this recount applies, stated once so it is auditable.* **✅** = every upstream behaviour
+the row names is built and pinned, and any remaining difference is a **recorded deliberate delta** — a
+choice, listed in the F4 divergence table below. **🟡** = something upstream does is genuinely not built.
+A row is not promoted for effort, and a recorded delta does not by itself demote one; that is the same rule
+§1a's "Accepted behaviour deltas" and §5's `/session` row already ran under, written down here because F4
+applies it seven times in one pass — every ✅ in the row table below is a row whose whole named gap list is
+closed.
+
+| Category | ✅ | 🟡 | ❌ | non-🚫 rows | Score |
+|---|---|---|---|---|---|
+| 2. Transcript | 13 | 12 | 2 | 27 | 19/27 = 70.4% |
+| **Overall (unweighted avg of the 7 categories)** | | | | | **≈ 66.2% → ~66%** — (85.7 + 70.4 + 36.1 + 50.0 + 88.1 + 61.1 + 72.2) ÷ 7 |
+
+Row by row, so the +7.9 points in §2 are checkable rather than asserted:
+
+| Row | Was | Now | Why |
+|---|---|---|---|
+| User prompt echo | 🟡 | ✅ | The F0 correction named `❯ ` (U+276F) in `subtle` on a `userMessageBackground` band; all three shipped, plus the 10 000-char fold |
+| Assistant message identity | 🟡 | ✅ | Both named divergences closed: the bullet is per-platform `⏺`/`●`, in the plain `text` token, not an accent |
+| Thinking blocks | 🟡 | ✅ | The two glyph divergences the F3 note left standing are closed — content hidden by default, `∴` gutter in detail, `✻` placeholder |
+| Markdown: block grammar | 🟡 | ✅ | Every one of the eight gaps the F0 correction listed is built and pinned |
+| Markdown: tables | 🟡 | ✅ | Box grid, per-column alignment, three-way fitting, a rule between every data-row pair, the 200-row cap and the vertical fallback — the whole F0 list |
+| Edit/Write diff (header, bands, word diff, wrap) | 🟡 | ✅ | All five named gaps closed, and the 24-row cap upstream does not have is gone |
+| Compact boundary marker | 🟡 | ✅ | The bulleted `Compact summary` with its expand affordance replaced our invented rule |
+| Markdown: code-block syntax highlight | ✅ | 🟡 | **A downgrade, and the honest kind.** The old ✅ predates anyone counting: we highlight 10 languages, upstream ~383. See the divergence table |
+| Diff line numbering ladder | — | ✅ | New row: sidecar-absolute → disk-anchored absolute → visibly approximate |
+| Markdown: links, images, strikethrough + terminal gates | — | 🟡 | New row: OSC-8, the three image forms and the `dHn` gate ship; the link title suffix is coloured where upstream's is not |
+| Syntax-highlighted diff bodies | — | ❌ | New row: upstream colours the code inside a diff band before falling back to the plain renderer; we render plain |
+| User-frame sentinel router (`ERe`) | — | 🟡 | New row: 12 of 15 exits plus the fallthrough, three recorded unreachable — but one shipped route is unverified |
+| Error sentinels (`VAr`) | — | 🟡 | New row: 11 cases + 2 default predicates, byte-verified; one runtime-proven, nine static-only, one wrap-over-clip deviation |
+| System notices (`dVo`) | — | 🟡 | New row: the generic exit and its suppression rules ship; nine subtypes are unreachable and the route is unobserved live |
+| Teammate attribution | — | 🟡 | New row: the nested detail branch and the collapsed `› N messages from @name` ship; the colour assignment is ours, not upstream's |
+
+**Read this headline the way the last two were written: +1.1 points is the honest number for a wave that
+closed the whole static transcript.** §2 rises 7.9 points on seven promoted rows, and seven new rows —
+five of them 🟡 or ❌ — grow the denominator from 20 to 27 at the same time. One previously-✅ row is marked
+down on a gap nobody had measured. Averaged across seven categories, six of which F4 never touched, that
+lands at ~66%. The wave's real output is not the headline: it is that the markdown engine, the diff ladder,
+the identity glyphs, thinking and the sentinel router all have rows with evidence pointers behind them for
+the first time, and that the residual gaps are named and sized rather than invisible.
 
 The spec that ordered this correction estimated the fall would land "into the low 70s"; the computed
 number lands lower, at ~63%. That is not a contradiction to paper over: the spec's figure was a
@@ -492,9 +537,9 @@ and validated by a row-scoped required-state contract under `capture-frames.py -
 | `" file…"` plain in the golden | **REVERSED by F3 (Task 2), deliberately.** F1 read this as a bug it would be dishonest to copy; F3's Decision Log settled the opposite way — it is upstream's *emitted artifact*, produced by the same one-`<Text dimColor>`-with-a-nested-`<Text bold>` markup the count needs, and reproducing the markup faithfully reproduces the tail for free. The writer never re-opens dim after a count, so the tail (ellipsis included, since it rides the run) is plain, exactly as the golden's cells are | closed |
 | Settled group row colour | **Resolved 2026-08-03.** A dedicated settled-state probe against installed 2.1.220, run under the tracked capture environment (pinned `TERM=xterm-256color`/`COLORTERM=truecolor`, wrapper and palette vars removed), paints the settled row `#999999` — the same grey as the active row. The `#949494` first recorded in the live-confirmation note was that earlier probe environment's ambient-palette variant (`COLORFGBG` present), not a second upstream colour. The settled clause run now carries the `inactive` token; see the render contract § 0 pin | closed |
 | Nested (`parent_tool_use_id`) replay rows | **CLOSED by F3 (Task 7).** They come back as the Agent unit's own nested rows — last three plus a hidden-count marker in compact, the full list under ctrl+o — attributed to their parent rather than flattened into unrelated rows (§2 row `LT16`/`LT17`) | closed |
-| String-content user rows render nothing | `render.ts`'s user branch only iterates array `content`, but `sessions/rows.ts` `promptText` shows persisted rows can carry a bare string — such a row projects to no line at all | F4 (untouched by F3) |
+| String-content user rows render nothing | **CLOSED by F4 (Task 10a).** String-form `message.content` is normalized in both `renderMessage` and `projectMessageEntry` (upstream `cke` L373253). The scope was measured rather than guessed: 5.8% of user rows across a 60-file sample, and 77 replayed disk prompts in that sample previously rendered nothing and now show | closed |
 | Fullscreen-only clauses, grouped Agent batches, typed result summaries, elapsed `· Ns` | **Split by F3.** Grouped Agent batches (`LT3`) and typed result summaries (`LT1`) are **built** — both are new §2 rows. The `ds()`-gated fullscreen-only clauses and the elapsed `· Ns` suffix are **unreachable**, not deferred: see the F3 "Unreachable" table below | partly closed, partly 🚫 |
-| Markdown/diff closure | Not built | F4 |
+| Markdown/diff closure | **CLOSED by F4.** The markdown engine is a `marked` token walker transcribing `f2`; the diff is the `diffSource` → `diffRender` ladder. See the F4 section below | closed |
 
 ---
 
@@ -582,6 +627,100 @@ choice is auditable rather than invisible; each is one line of the 🟡 on its �
 
 ---
 
+## F4 (2026-08-04) — the static transcript
+
+F1 built the substrate, F2 the keymap, F3 what the transcript says while a turn runs. **F4 is what the
+transcript says once the turn is over** — the part a reader spends most of their time looking at. Eleven
+tasks replaced the line-oriented markdown renderer with a `marked` token walker transcribing the bundle's
+own node switch, built box tables, ported links/images/strikethrough and their terminal-capability gates,
+rebuilt the Edit/Write diff as a source ladder plus a banded renderer, corrected the assistant and prompt
+identity glyphs, hid thinking by default and gave it upstream's `∴` detail form, and — the largest single
+piece of previously-invisible behaviour — built the **user-frame sentinel router**, the switch that decides
+whether a `user` frame on the wire is a prompt at all.
+
+Two disciplines shaped the wave and both earned their keep. **The bundle outranks the constants pack, which
+outranks the census**, and that order was exercised four times: `JhH`'s marker depth is the child's depth
+(the census and the plan pin were both one level off), nested table rows keep their closing pipe, tables are
+exempt from ambient dim, and eight subagent colour tokens live in six theme blocks rather than the four the
+pack captured. Each correction was written back into the pack with a dated self-correction block rather than
+silently absorbed. **And a shipped route is not a proven one**: the MCP resource/polling exit is built to a
+verbatim bundle form and has never been observed, so it is recorded below and excluded from the score.
+
+### Now faithful
+
+| Row | What shipped | Evidence |
+|---|---|---|
+| Markdown block grammar | A `marked` token walker over `f2`'s node switch (L420590–420711) with `Oaa`'s three-way chunking, a real LRU(500) lexer cache and upstream's byte-identical fast-path regex. Nested lists, `start`-honouring ordered lists with `JhH` depth numbering, literal task-list boxes, the dim `▎ ` quote rail, `hr`, depth-varying headings, and blank-line structure that falls out of the walk | `test/tui/markdown.test.ts`, `test/tui/markdown-integration.test.tsx` |
+| Links, images, strikethrough | OSC-8 hyperlinks behind the `mI`/`hgs` env gate with the `text (url)` fallback, `mailto:`/`file://`/label-equals-url collapses, the three image forms, and `dHn`'s strikethrough allowlist verbatim — force-override ahead of the exclusions, the ordering trap included | `test/tui/markdown-links-code.test.ts` |
+| Box tables | `IBp` (L420907) transcribed: grid, force-centred header, three-way fitting, a rule between every data-row pair, the 200-row cap, and `kaa`'s vertical fallback on both triggers. Widths measured with `string-width`, which *is* `Ut` (`ambiguousIsNarrow` by default since v5) | `test/tui/mdTable.test.ts`, `test/tui/f4-acceptance.test.tsx` § #2 |
+| The diff source ladder | Recognized sidecar (absolute, disk never read) → local diff anchored on a unique disk match (absolute) → visibly approximate. Memoized on the retained call input with sidecar-identity revalidation, so an in-place sidecar upgrade is not frozen out by the memo | `test/tui/diffSource.test.ts` |
+| The diff renderer | `fbn`'s header, `H2p`'s full-width bands and number gutter, `chH`'s remove-run rewind, `shH`'s run pairing and `lhH`'s word diff with the `0.4` bail. No cap of any kind | `test/tui/diffRender.test.ts`, `test/tui/f4-acceptance.test.tsx` § #3 |
+| Prompt + assistant identity | One `userEchoLines` for all four echo surfaces — `❯ ` on a full-width band, the 10 000-char fold with its titled rule — and the per-platform `⏺`/`●` bullet in the plain `text` token | `test/tui/identity.test.tsx`, `test/tui/f4-acceptance.test.tsx` § #1, § #5 |
+| Thinking | Hidden by default (`Gha`'s guard), `∴` dim+italic gutter with a dim markdown body in detail, `✻ Thinking…` placeholder including for `redacted_thinking` | `test/tui/thinking.test.tsx`, `test/tui/f4-acceptance.test.tsx` § #4 |
+| The sentinel router | `ERe`'s 12 reachable exits plus the fallthrough, tag constants verbatim, regexes shared with `sessions/rows.ts`, and string-form `content` normalized on both paths | `test/tui/species.test.ts`, `test/tui/species-system.test.ts` |
+| Error sentinels, system notices, compact boundary | `VAr`'s eleven cases + two default predicates + truncation; the generic notice exit with its wrap and suppression rules; the bulleted `Compact summary` | `test/tui/species-system.test.ts` |
+| Teammate attribution | Nested detail branch, per-agent colour, `› N messages from @name` at detail-collapsed, lifecycle rows for named subagents | `test/tui/teammate.test.tsx` |
+| Expand-hint honesty | Nine sites that typed `(ctrl+o to expand)` as a literal now read the **live** keymap table, `keybindings.json` overrides included, with the hint in the projection cache key; an unbound `app:toggleTranscript` produces no clause at all | `test/tui/toolRenderer.test.tsx`, `test/tui/keys-hints.test.ts` |
+| Acceptance composites | The wave's five spec criteria as executable pins, each mutation-proven | `test/tui/f4-acceptance.test.tsx` (13) |
+
+### Unreachable — recorded, not built
+
+🚫, excluded from the denominator, on the same rule as §1a's unreachable keys and the F3 table above.
+
+| Upstream behaviour | Why it is unreachable | Evidence |
+|---|---|---|
+| `ERe` exit 2 — `planContent` | Not a text sentinel at all: a PROP on the UI-layer message object (`DAe.planContent` L429357) the CLI sets when a queued prompt carries a plan-file reference. SDK messages have no such field; a text-only router cannot reach it by construction | bundle L426428 → `p4t` L425978 |
+| `ERe` exit 3 — the agent-teams teammate transcript | Double-gated: `mc()` (L224777) needs BOTH the `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` env var AND the `tengu_amber_flint` statsig gate, and `kvr` needs a `<teammate-message …>` tag only the CLI's teammate transport writes. Our teammates ride their own bus | bundle L426436 → `cqo` L425393 |
+| `ERe` exit 4 — `<channel source="` / cross-session inbox | The same feature's channel transport. Nothing on our wire writes the tag; the SDK has no channel transport at all | bundle L426444 → `HWp` L426253 |
+| Four `errorSentinelLines` arms — the usage-limit nudge, the login box, the entitlement clause, the resolved model name | Each needs CLI-internal state (`Dcs`/`l8o`, `case lir`/`<aca/>`, `J2e("warning")`, `nm(wT())`) that no SDK frame carries | bundle read 2026-08-04 |
+| Nine `dVo` system-notice branches | Their subtypes are absent from `sdk.d.ts`'s system union, and the structured frames fall out of the generic exit by construction | `sdk.d.ts` + bundle read |
+| `XWo` shape A (`summarizeMetadata`) and the transcript-mode compact-summary body | P81 read the live `compact_boundary` frame key by key; neither field is on it | probe 81 |
+
+### Deliberate divergences from upstream
+
+Every place F4 knows what 2.1.220 does and shipped something else, with the reason. Each is one line of the
+🟡 on its §2 row, or — where the row is ✅ — the recorded delta that kept it ✅ under the rule stated in the
+F4 recount.
+
+| Divergence | Upstream | Ours, and why |
+|---|---|---|
+| The `~` approximate line-number marker | No approximate mode exists — every diff upstream paints came off a file it had just read | When the source ladder cannot prove where a snippet sits, the gutter is prefixed `~`. There is no glyph to copy, and painting bare 1-based numbers would read exactly like absolute ones — the confidently-wrong failure the ladder exists to prevent. **Being visibly approximate beats being confidently wrong** |
+| Wrap over clip on error sentinels | `height: 1` **clips** five `VAr` arms in every view | We wrap. At 80 columns only the credit-balance arm actually diverges — and there upstream's clip deletes its own billing URL, so copying it would hide the one piece of information the message exists to deliver |
+| The `✻ Thinking…` collapsed placeholder | Shows nothing in that position | Kept as a recorded invention. Upstream's live region has no thinking-text accumulator at all (deltas feed a token counter, L374721–374730), so there is nothing to port; the placeholder is a better stand-in than F1's `✦ Thinking`, and it reuses upstream's own `e8o` component rather than inventing a shape |
+| Live echoes and notice rows bake at ingest | Re-flows on resize | A local entry's lines are minted at the width of the moment and projected verbatim, so an already-echoed prompt (and an already-rendered system notice) keeps its original band across a terminal resize. Retained SDK frames are unaffected — they re-project. Fixing it needs render *recipes* in `TranscriptDocument`, a substrate change, not a renderer change |
+| `hr` closes its line | Emits `---` with NO trailing newline, gluing the next block onto the same physical line (`---below`) | We close the line. A deliberate non-reproduction of an upstream artifact |
+| Deep-nest first-item indent | A ragged first-item indent at deep nesting levels | Smoothed uniform. The same call as the `hr` line — an artifact we chose not to copy |
+| Fenced-code highlighting coverage | hljs's whole registry — ~383 language names and aliases | **~373 of them render PLAIN here.** `KNOWN_LANGS` is 10 (ts/js/py/sh/json and friends); the label-polarity rule is faithful, so ` ```rust ` correctly draws no label, but nothing colours its body. **The largest remaining fenced-code gap**, and the one most likely to be visible to a reader |
+| Syntax-highlighted diff bodies | `lre` → `R2p` colours the code inside a band before falling back to `H2p` | We render diff bodies plain — bounded by the same 10-language highlighter |
+| `syntaxHighlightingDisabled` label mode | With highlighting globally off, EVERY tagged fence draws its label (`s?.supportsLanguage` short-circuits to undefined) | Unbuilt: we ship no such setting, so the mode is unreachable here rather than missing |
+| The `⧉` artifact glyph | Appended to canonical `claude.ai/code/(artifact\|frame)/<uuid>` links | Not ported. Bundle-verified (`AIg` L100700 / `x8r`): the arm fires only on hrefs this harness never mints. A fixture carrying a real UUID slug pins the absence honestly. **A harness that ever starts minting those links must revisit this** |
+| The `Found N files` expand hint on the compact path | `$Wo`'s non-verbose branch appends `Bg` (L421528) | **Shipped and unreachable.** One bounded bundle check settled it this wave: `PMd`'s flush (`a()`, L302172–302178) pushes a `collapsed_read_search` whenever the accumulator holds any message — **no minimum-size gate, no error escape** (`erroredToolUseIds` only filters memory ops, L302144), and `VFt` makes Grep/Glob unconditionally collapsible. A `collapsed_read_search` renders only through `Ima` (L429332). So a Grep's own `Found N files` row cannot appear in the default view, and the hint riding it cannot either — while the verbose branch that *does* show the row has no hint. Our form is faithful; it is **not counted as observed parity** |
+| Prose coalescing | `Jbn` walks a prose-only list, so adjacent assistant prose merges reliably | Our "adjacent" test breaks on subagent tool traffic, which makes the coalescer **near-inert on real transcripts**. A design question for the next wave, recorded rather than papered over |
+| Batch-member lifecycle rows | — | A member of an Agent batch gets no lifecycle row at detail-collapsed, non-verbose |
+| Teammate colour assignment | The colour rides the teammate message via the agent definition or a user override, defaulting to cyan | Ours is assigned by dispatch order and re-derived deterministically per call. Chosen over a hash (which collides 1-in-8 on parallel pairs). Consequences recorded: the attach path's fallback may disagree, and a rewind shifts later agents' indices |
+| Named-subagent gate on lifecycle rows | Renders `general-purpose` in default cyan | Ours are gated on NAMED subagents — a reachability choice of ours, not a port |
+| `PlanDialog` width | Reads the terminal | Fixed at 80 columns. Untouched by F4's width plumbing; recorded so the next dialog wave owns it |
+| Link title suffix | Uncoloured | Ours is coloured |
+| `dHn`'s second term | `dHn() && vt.level > 0` — chalk's colour level | Only `dHn` is ported. Colour level does not exist at our style-as-data layer; Ink decides colour at paint time |
+
+### Open evidence gaps (honest closure candidates, not claims)
+
+- **The MCP resource/polling route is implemented but UNVERIFIED.** All five `<mcp-resource-update>` /
+  `<mcp-polling-update>` tag sites in 2.1.220 are readers (L426198–426202, L426420, L426513); the artifact
+  contains no writer, so the injection is produced outside this bundle. The form is pinned verbatim by the
+  constants pack, but nothing has ever been observed. A live MCP-subscription probe would settle it. Until
+  then it does not count toward parity.
+- **The system-notice route has not been observed live** — a keyed run provoking an informational frame
+  would convert a bundle read into evidence.
+- **Nine of the eleven error-sentinel arms are static-only.** Only `Prompt is too long` is runtime-proven
+  (P80); the rest rest on the same-channel producer chain (`hey()` → `_u()`), which is a sound reading, not
+  a measurement.
+- **Interrupted / rejected teammate lifecycle arms are reasoned, not observed.** A live probe would settle
+  them the way P80 settled the interrupt sentinel.
+- **`toolRenderer.tsx` is 799 lines** and the `agentUnit.tsx` extraction seam noted in F3 is still owed.
+
+---
+
 ## 1 — Input / composer ergonomics
 
 | Feature | Status | Priority | Notes / CC reference |
@@ -613,7 +752,7 @@ choice is auditable rather than invisible; each is one line of the 🟡 on its �
 | Keybinding precedence model (`ST6`) | ✅ | — | **shipped 2026-08-04 (F2).** `keys/resolver.ts` + `keys/KeymapProvider.tsx`: one raw-stdin root consumer with our own keypress parser (P86 measured that Ink's `useInput` cannot express the table — it projects every key onto 14 booleans and throws `keypress.name` away), an ordered context stack each mounted surface pushes onto, first-match-wins with `null` consuming the key as explicitly unbound, plus `swallowAll` and preemptive scopes above the chain. The double-fire bug class it exists to remove is now structurally impossible rather than hand-gated |
 | User keybindings (`~/.claude/keybindings.json`) | ✅ | — | **shipped 2026-08-04 (F2, `06 K5`).** Upstream's own path and file shape, so an existing Claude Code keymap applies to `ccx` unchanged: additive merge over the defaults, later-wins within a context, `null` unbinds, live reload on save (no restart), and typed validation (`parse_error`/`invalid_context`/`invalid_action`/`duplicate`/`reserved`, plus our own binding-keeping `suspicious_key` warning) reported into the transcript. `command:<name>` bindings run a slash command, Chat-context only (`06 K6`) |
 | Generic chords, 1 s inter-key window (`KB22`) | ✅ | — | **shipped 2026-08-04 (F2, `06 K4`).** Any binding may be a space-separated sequence; the pending prefix is armed by the table rather than hardcoded, `escape` cancels, and the key that breaks a pending chord is swallowed (upstream `Q4u`). Replaces the two bespoke `useRef` timestamp chords with their 2 s window |
-| Hint strings generated from the live binding | 🟡 | — | **F2, partial and disclosed.** The composer footer ladder, the status-bar mode chip and the whole `?` shortcuts grid derive their chords from the live table, so a rebinding moves them and an unbind prints `(unbound)`. Three surfaces still print literals: the transcript-pager footer (a multi-alias ladder a generated string would render worse than the hand-written one), the history-search footer and `toolRenderer.ts`'s `(ctrl+o to expand)` fold marker (both excluded on cost, the fold marker additionally pinned to the upstream golden — a lookup could reach it). See §1a |
+| Hint strings generated from the live binding | 🟡 | — | **F2, partial and disclosed.** The composer footer ladder, the status-bar mode chip and the whole `?` shortcuts grid derive their chords from the live table, so a rebinding moves them and an unbind prints `(unbound)`. **F4 (t10b) update:** the `(ctrl+o to expand)` fold marker is no longer a literal — nine transcript sites now read the live lookup through `ProjectionContext`, so a rebind moves every fold marker, group row and search sentence, and an unbound `app:toggleTranscript` removes the clause entirely. **Two** surfaces still print literals: the transcript-pager footer (a multi-alias ladder a generated string would render worse than the hand-written one) and the history-search footer (excluded on cost). ChatApp's two double-press notices are literal too and are outside the derivation guard's grep set. Still 🟡 for those. See §1a |
 
 
 ## 1a — Keybindings: the F2 keymap as data
@@ -729,7 +868,7 @@ Five behaviours changed in ways a user could notice. Each is deliberate and each
   physical-key — widening accept to Space there WOULD put a rule delete one stray Space away — so
   a user rebind is inert inside them (component header records the reasoning).
 
-### Hint derivation — generated, and the three exceptions
+### Hint derivation — generated, and the remaining exceptions (three at F2, two after F4)
 
 Derived from the live table (`keys/hints.ts` + `useBindingLookup`): the composer's footer ladder, its `Esc`
 hint, its two double-press arms (Esc-clear and Ctrl-D exit) and the autocomplete popup's footer; the status
@@ -748,11 +887,14 @@ literal of every hinted action, so a chord typed back in fails the build. Still 
   wrong about it. Four of its five rungs are single-binding (`execute`=enter, `next`=ctrl+r,
   `cycleScope`=ctrl+s, `cancel`=ctrl+c) and only `accept` has a pair (escape, tab). It stays literal
   because it is one line, served correctly by one string, and deriving it buys nothing a user would see.
-- **`toolRenderer.ts`'s `(ctrl+o to expand)` fold marker** is excluded on cost and on the text being
-  pinned to the tracked 2.1.220 golden capture — NOT, as previously written here, because the module
-  cannot reach a lookup: it is called from `useChat.ts:26`, a hook, through an existing
-  `ProjectionContext` parameter, so one could be threaded in without touching the module's purity. It is
-  recorded here so it stays a decision rather than a gap.
+- ~~**`toolRenderer.ts`'s `(ctrl+o to expand)` fold marker**~~ — **RETIRED by F4 (Task 10b).** The
+  exception's own text predicted the fix: the hint is now threaded through `ProjectionContext` from
+  `useChat`, which reads the LIVE lookup (user `keybindings.json` layers included) and puts the resolved
+  string in the projection cache key. **Nine** sites that typed the literal — fold markers, group rows, the
+  search sentence, the compact-summary hint, the long-output marker among them — now name whatever
+  `app:toggleTranscript` is actually bound to, and an unbound action produces no clause at all rather than
+  advertising a dead key. `EXPAND_HINT_FALLBACK` is the one surviving literal, used only when no provider
+  is mounted. So of the exceptions listed here, **two remain** (the two footers), not three.
 - **ChatApp's two double-press notices** (`Press Ctrl-C again to exit`, `Press Esc again to rewind`)
   are still literal too, and ChatApp is not in the derivation guard's grep set — recorded here (t10
   re-review) so the exception is a decision, not an unnoticed gap.
@@ -778,24 +920,31 @@ live binding to derive. `test/tui/honesty.test.tsx` pins every one of them to an
 
 | Feature | Status | Priority | Notes / CC reference |
 |---|---|---|---|
-| User prompt echo | 🟡 | LOW | we show `› text` dim (intentional clean variant). **F0 correction:** the note was wrong, not just the score — upstream does not use plain `>`, it uses **`❯ ` (U+276F)** in the `subtle` colour on a `userMessageBackground` band |
-| Assistant message identity (`●` bullet, accent) | 🟡 | — | **U3** accent `●` gutter + aligned continuation (live + replay). **F0 correction:** two divergences under one ✅ — upstream's bullet is **`⏺`** on macOS (not `●`), and its colour is the plain `text` token, **not an accent** |
-| Thinking blocks (stream + collapse) | 🟡 | — | `liveTurn.ts` `✦ Thinking`; CC `✻`/token count. **F0 correction:** upstream shows a **duration**, not a token count; the streaming glyph is `✻` but the content gutter is `∴`; and the content is **hidden by default**. **F3 update (Tasks 3–4):** the duration half is now real and honest — thinking time is measured from local `content_block_start`/`stop` arrival stamps (thinking-ness latched at start, since `content_block_stop` carries no block type — P82), survives past the `LiveTurn` that produced it in a `useChat`-owned map, and surfaces as the fold run's `Thought for Ns` clause. Content stays hidden by default. Still 🟡: the two **glyph** divergences (`✻` streaming, `∴` content gutter) are untouched |
+| User prompt echo | ✅ | — | **F4 (t8) — the F0 correction is CLOSED and retired.** `render.ts` `userEchoLines` is THE single prompt renderer: the `❯ ` pointer (`Ge.pointer` U+276F, L104968) in `subtle` on a full-width `userMessageBackground` band (`Mqo` L426143 wrapping `xqo` L426067), every later row indented two columns under it, and the 10 000-char fold (`tWp`/`Rqo`/`rWp` L426183) with its `(N lines hidden)` rule — subtle dashes, dim title (`Sg` L183972/L183981). The live echo, the replayed one, the slash-command echo and the queued list all route through it, so the three surfaces that used to hand-roll `› ` cannot drift. The `⋯ queued:` invention is dead. Recorded delta: a live echo bakes at the width of the moment and does not re-flow on resize (divergence table). Evidence `test/tui/render.test.ts`, `test/tui/f4-acceptance.test.tsx` § acceptance #5 (the fold driven through `useChat.submit`) |
+| Assistant message identity (`⏺`/`●` bullet) | ✅ | — | **F4 (t8) — the F0 correction is CLOSED and retired.** Both divergences it named are fixed: the glyph is per-platform (`Za = Pt() === "macos" ? "⏺" : "●"`, L41484 — the darwin build constant-folds to `⏺`, so the port is the switch, not the artifact) and it rides the plain `text` token, not an accent (`VAr` L422851). `platform` reaches the renderer through `renderMessage`'s options and is part of the projection cache key, so one document projected on two platforms cannot serve one answer. Evidence `test/tui/identity.test.tsx`, `test/tui/f4-acceptance.test.tsx` § acceptance #1 |
+| Thinking blocks | ✅ | — | **F4 (t9) — the F0 correction is CLOSED and retired.** Thinking is **invisible by default**: `Gha`'s guard (L429455) returns null unless transcript-mode or verbose, so F1's always-visible dim lines are gone. The detail form is `zAr` (L422947–422969) — a `minWidth: 2` gutter carrying a dim+italic `∴` (`q3r` U+2234) beside a `<Markdown dimColor>` body, one gutter per block. The streaming placeholder is the other glyph, `✻ Thinking…` (`e8o` L422457, U+273B + U+2026), and a `redacted_thinking` block renders it too (L429450). F3's `Thought for Ns` clause on the fold run is untouched. Recorded delta: we keep the `✻` placeholder where the collapsed live region shows it, and upstream shows nothing there (divergence table). Evidence `test/tui/thinking.test.tsx`, `test/tui/f4-acceptance.test.tsx` § acceptance #4 |
 | Tool-use rows | ✅ | — | **C5** `render.ts` `toolUseLines`, then **F1** `toolRenderer.tsx`. **F0 correction (`ST1`) now CLOSED by F1, scored here for the first time:** the live/replay split that made this 🟡 is gone — one retained transcript document and one projection serve live, replay, attach, resume, rewind and the ctrl+o pager, so both paths render the identical bolded `⏺ Read(src/app.ts)` form with parens and an OSC-8 target. Evidence `test/tui/f1-frame-parity.test.tsx` + `test/tui/toolRenderer.test.tsx -t "bold name-only segments"` (which also pins the single sibling gutter). *This movement is F1's credit, not F3's — see the split arithmetic under the F3 recount* |
 | Tool result tree glyph (`⎿`) | ✅ | — | **U3**, corrected by **F1**. **F0 correction now CLOSED by F1, scored here for the first time:** `RenderItemView` is the sole owner of the connector and emits it exactly **once** per result in a fixed five-column sibling box, with the body in the sibling flex column — never prefixed per line. Evidence `test/tui/toolRenderer.test.tsx -t "one sibling gutter"` / `-t "places the one gutter in a five-column sibling"`. *F1's credit, not F3's* |
-| Markdown: headers/lists/quote/fenced | 🟡 | — | `markdown.ts` (lightweight). **F0 correction:** no links, no images, no strikethrough, no `hr`, no task lists, no nested lists, no depth-varying heading style, no block separation — not a ✅ |
-| Markdown: inline mixed bold/italic spans | ✅ | — | **U11** per-span `segments` (bold/italic/code) rendered within a line |
-| Markdown: tables | 🟡 | — | **C5** `markdown.ts` `flushTableBuffer` — a buffered run of `\|`-lines becomes a column-padded table only once a `\|---\|` separator confirms it; otherwise re-emitted as prose untouched. **F0 correction:** upstream draws a box table with per-column alignment, three-way width fitting, a rule between every pair of data rows, a 200-row cap, and a vertical record fallback — ours has none of that |
-| Markdown: code-block syntax highlight | ✅ | — | **C5** `highlight.ts` — a zero-dependency regex lexer (keywords/strings/comments/numbers for ts/js/py/sh/json). **Not a full grammar** — a hand-rolled single-pass lexer, a recognizable-90% approximation (spec Decision Log against a ~1MB dependency), unknown langs fall back to dim |
-| Edit/Write diff | 🟡 | — | **C5** `render.ts` `toolDiffLines` — a real hunk body: up to 3 dim numbered context lines each side of the change, numbered `-`/`+` rows for the changed lines. The shipped implementation remains **hunk-relative**. **P94 correction, confirmed on 0.3.220:** recognized Edit sidecars expose absolute `structuredPatch[].oldStart/newStart`; the separate Write case exposes content/file metadata. Flat-only and forwarded calls still require input fallback. **F0 correction:** no add/remove counts header, **foreground colour instead of background bands**, no word diff, no wrapping, and a 24-line cap upstream does not have |
-| Bash output rendering | 🟡 | MED | **C5**: only error framing landed — a failed `tool_result` (`is_error`) renders red with a `✗` prefix on its first line (`render.ts` `resultLines`). **P94 correction, confirmed on 0.3.220:** some Bash calls carry structured stdout/stderr/interrupted/noOutputExpected/isImage and optional `returnCodeInterpretation`, while most remain flat-only. No numeric exit code appeared, so `$`/exit-code framing remains unreachable and the row stays 🟡 |
+| Markdown: block grammar (headings, lists, task lists, blockquote, `hr`, spacing) | ✅ | — | **F4 (t2) — the F0 correction is CLOSED and retired.** The line-oriented regex renderer is gone; `markdown.ts` is a `marked` TOKEN WALKER transcribing the bundle's `f2` node switch (L420590–420711) and `Oaa`'s three-way chunking (L421134–421157). Every one of the eight gaps the F0 note listed now ships: nested lists at `"  ".repeat(depth)`, ordered lists honouring `start` with `JhH`'s depth numbering (arabic → letters → roman → arabic, at the CHILD's depth — the wave's first bundle-beats-plan correction, L420647→420650→420665), literal `[x] `/`[ ] ` task boxes, the dim `▎ ` blockquote rail with italic content, the `---` rule, depth-varying heading style (h1 bold+italic+underline), and block separation that falls out of the walk (`gap: 1` at chunk boundaries only, `space` tokens inside). Two recorded deltas, both non-reproduction of an upstream *artifact*: the `hr` closes its line where the bundle glues the next block onto it, and a deep-nest ragged first-item indent is smoothed (divergence table). Evidence `test/tui/markdown.test.ts` (24), `test/tui/f4-acceptance.test.tsx` § acceptance #1 |
+| Markdown: inline mixed bold/italic spans | ✅ | — | **U11**, rebuilt by **F4 (t2/t3)**: `markdownInline.ts` is a recursive walker over `marked`'s inline tokens where style flows down by spreading, so `**bold *both***` yields ONE segment carrying bold AND italic — a nesting the old regex renderer could not express at all. A codespan takes the `permission` theme token (`TR15`; `permission` and `suggestion` are byte-identical in all four shipped themes, so the change is satisfied-by-value and no test can observe it — plan-review finding 12) |
+| Markdown: links, images, strikethrough + terminal-capability gates | 🟡 | — | **F4 (t3) — new row, no prior row existed.** Links render as real OSC-8 hyperlinks (`ZF` L393098) when the terminal supports them and as `text (url)` when it does not, with the `mailto:` collapse, the `file://` normalisation (`jhH` L420707) and the url-equals-label collapse. Images take all three upstream forms (`alt (href)`, bare href, title-carrying — pack §1.9 L420619–420624). `del` marks its children through the `dHn` allowlist (L420498–420509) ported verbatim, force-override ahead of the Apple_Terminal / `TERM=linux` exclusions included. 🟡 for two named items: the link **title suffix is coloured** where upstream's is not, and upstream's render condition is `dHn() && vt.level > 0` — the second term is chalk's colour level, which does not exist at our style-as-data layer, so only `dHn` is ported. The `⧉` artifact arm is **not ported and unreachable** (divergence table). Evidence `test/tui/markdown-links-code.test.ts` |
+| Markdown: tables | ✅ | — | **F4 (t4) — the F0 correction is CLOSED and retired.** `mdTable.ts` is a transcription of `IBp` (L420907): a box-drawing grid, per-column alignment with a force-CENTRED header (`bWo` L420839, biasing left), three-way width fitting (natural → slack-over-deficits → hard scale), a `middle` rule between **every** pair of data rows, the 200-row cap with its `toLocaleString`'d overflow note (`AWo` L420897), and `kaa`'s vertical record fallback on both triggers. Three bundle corrections landed with it, all confirmed: borders are NOT dim, tables are deliberately EXEMPT from ambient markdown dim (`Oaa` hands `dimColor` to prose and blockquote but not to `TWo`), and a nested row KEEPS its closing pipe. Width is measured in display columns via `string-width` — `Ut` = `Bun.stringWidth(s, {ambiguousIsNarrow:true})` exactly, so CJK measures 2. Evidence `test/tui/mdTable.test.ts`, `test/tui/f4-acceptance.test.tsx` § acceptance #2 |
+| Markdown: code-block syntax highlight | 🟡 | — | **DOWNGRADED by F4 (t3), and the downgrade is the point.** The C5 ✅ was scored before anyone counted what upstream highlights. F4 fixed the *form*: fenced code is flush-left with no border, no line numbers and no cap (`f2`'s `code` case, L420597–420602); the label-polarity rule ships verbatim (a dim raw-lang line appears exactly when the FULL lang string is outside hljs's registry, so ` ```rust ` draws no label); `UPSTREAM_LANGS` is the real 383-name registry ∪ alias set lifted from L418473/L222493; and the colours are upstream's own flat `DhH` scopes rather than our theme's. What did **not** change: `KNOWN_LANGS` is 10 languages, so **~373 languages upstream colours render PLAIN here** — the largest remaining fenced-code gap, sized in the divergence table. `syntaxHighlightingDisabled` is unbuilt (same table) |
+| Edit/Write diff — header, bands, word diff, wrapping | ✅ | — | **F4 (t7) — the F0 correction is CLOSED and retired.** All five gaps it named are closed. The header is `fbn` (L423885–423902): `Added 3 lines, removed 1 line`, clauses joined by the literal `", "`, counts bolded as their own spans, `> 1` pluralization, and POSITIONAL capitalization of `removed` (L423894). The body is `H2p` (L419987–420003): a full-width **background band** per row (not a foreground colour), a right-aligned number cell then one space then the marker, Ink `wrap` at `width - gutter - 3`, and the forced `text` foreground on every span. Word diff is `lhH` (L419944) with `shH`'s k-th-to-k-th run pairing (L419906) and the `ohH = 0.4` bail; it wraps one column wider than the plain path, as upstream's own arithmetic does. `chH`'s remove-run rewind puts a paired remove/add block on the same numbers. **The 24-row cap is gone** — upstream caps nothing. Evidence `test/tui/diffRender.test.ts`, `test/tui/f4-acceptance.test.tsx` § acceptance #3 |
+| Diff line numbering — the source ladder | ✅ | — | **F4 (t6) — new row, no prior row existed.** The number over a diff row is only as good as its source, so `diffSource.ts` is an explicit three-rung ladder: (1) a shape-recognized `tool_use_result.structuredPatch` is taken verbatim and the disk is **never** read — a re-read would observe state newer than the completed edit it is numbering (pinned with a throwing reader); (2) a flat-only Edit is diffed locally with `structuredPatch` at 3 lines of context and anchored against disk **only** when the pre-edit snippet still sits there exactly once; (3) anything else is not diffable. Positions are all-or-nothing per patch. When rung 2 cannot prove an anchor the patch says so, and the renderer prefixes the gutter with `~` — a recorded invention, since upstream has no approximate mode to copy (divergence table). New capability over F3: a flat-only Edit now renders a header and a body where it used to emit no row at all. Evidence `test/tui/diffSource.test.ts`, `test/tui/f4-acceptance.test.tsx` § acceptance #3 (both rungs, matching and mismatching disk) |
+| Syntax-highlighted diff bodies (`lre` → `R2p`) | ❌ | — | **F4 (t7) — new row, no prior row existed.** Upstream runs a diff body's code through the highlighter before falling back to the plain band renderer (`H2p`); the constants pack omitted that branch and the gap surfaced only in Task 7's review. We render diff bodies plain. Adjacent to the fenced-code gap above and bounded by the same 10-language highlighter |
+| Bash output rendering | 🟡 | MED | **C5**: error framing (`render.ts` `resultLines`). **P94 correction, confirmed on 0.3.220:** some Bash calls carry structured stdout/stderr/interrupted/noOutputExpected/isImage and optional `returnCodeInterpretation`, while most remain flat-only. No numeric exit code appeared, so `$`/exit-code framing remains unreachable and the row stays 🟡. **F4 (t10b) update:** a `<bash-stdout>` species now folds through the shared `foldToolOutput` 3-row + expand-hint form (`p2`/`y_s`) — the fold is real upstream for bash output *only* — and a `<local-command-stdout>` renders as **markdown** (`km` L421121), not as plain lines |
 | Typed result summary rows (`LT1`) | 🟡 | — | **F3 — new row, no prior row existed.** Upstream never dumps a tool's raw output into the default transcript: every recognized tool gets a one-line typed summary in the `⎿` gutter (`Read 340 lines`, `Found 3 files`, `Added 2 lines, removed 3 lines`, `Wrote 42 lines`, …). `toolSummaries.ts` ships **19 templates**, sidecar-first with an honest input/flat fallback, routed identically in both projections (`toolSummaries.test.ts`, `toolRenderer.test.tsx`). Named remaining gaps keep it 🟡: Write's `condensed`/scratchpad/plan variants and Edit's `previewHint`/`collapsed` forms are **not built** (they need state we do not model), `TaskStop`'s 160-char clip counts code units where upstream counts display width, `Bash`'s timeout is sourced from the call input rather than upstream's progress message, and **8 tools' sidecar shapes were bundle-read, not live-observed** (they fail closed to the fallback; an honest closure would be a probe that selects them) |
 | Write create preview (`LT18`) | ✅ | — | **F3 — new row, no prior row existed.** A `Write` that creates a file previews its **first 10 lines**, syntax-highlighted, followed by a bare `… +N lines` marker with no expand affordance — and the preview renders **alone**, with no count header above it (upstream `jme` L423783, `C8o = 10`; census 01#58–62). `Wrote N lines` survives only as the fallback when no content is available anywhere. An unknown extension renders **plain**, not dim — the rows *are* the content. Evidence `test/tui/toolSummaries.test.ts` § "the Write create preview" |
 | Subagent (Agent) unit — progress rows + `Done (…)` (`LT16`/`LT17`) | 🟡 | — | **F3 — new row; supersedes F1's recorded deferral of nested `parent_tool_use_id` rows.** A running `Agent` shows dim `Initializing…`, then its **last three** inner tool rows plus a dim `… +N tool uses (ctrl+o to expand)` marker (upstream `zVp = 3`); ctrl+o expands to the full nested list. Completion is a `⎿` **gutter** row with the bullet suppressed (bundle `Vha` 429640 — census 01#153 was wrong and was corrected in this wave) carrying `Done (7 tool uses · 24.1k tokens · 1m 12s)` from a three-rung honesty ladder: sidecar → `task_notification` → derived-from-children. Evidence `test/tui/agentProgress.test.ts`, `toolRenderer.test.tsx` § "F3 Task 7". 🟡 for five named divergences listed in the F3 divergence table below (derived totals omit the token clause rather than fabricate one; Backgrounded→Done upgrade; detail ordering; running-branch transcript-mode row set; no short-terminal `In-progress` fallback) |
 | Grouped Agent batches (`LT3`) | 🟡 | — | **F3 — new row, no prior row existed.** Same-name `Agent` calls dispatched in **one API message** render as one unit — `Running 3 agents…` / `3 agents finished` — keyed on the API `message.id` (the engine emits one wire frame per content block, so a `callSequence` key would never have fired; the split-frame case is live-proven, `apiMessageIds=msg_011CdggL8MApN9DTU7LQgH1n`, `callSequences=2,4`). Publishes only when every member has a result; verbose never groups. Evidence `toolRenderer.test.tsx` § "F3 Task 8" + `test/live/f3-live-turn.e2e.test.ts`. 🟡: upstream's `hideType` suppression when a member's name is a teammate name is not modelled |
 | Bash background hint (`LT20`) | 🟡 | — | **F3 — new row, no prior row existed.** A running foreground `Bash` grows a dim `(ctrl+b to run in background)` line at a five-column indent, gated on that call's own `task_started` frame (upstream registers the task and starts the hint timer in the same statement), never on `run_in_background: true`, with the chord derived from the **live** keymap (tmux doubling only when the resolved chord is still `ctrl+b`; unbound → no hint). Evidence `toolRenderer.test.tsx` § "F3 Task 9", `test/tui/keys-hints.test.ts`. 🟡: upstream renders the same hint under a running **synchronous Agent** too (bundle 281153); ours is Bash-only |
 | Long-output truncation + expand | 🟡 | **MED (structural)** | we cap; no interactive expand. **F0 correction:** the LOW priority was wrong — `(ctrl+o to expand)` is one mechanism that also drives collapsed groups, verbose diffs and expanded thinking; this is `ST2`, a structural gap, not a tail item |
-| Compact boundary marker | 🟡 | — | **C5** `useChat.ts` — a `system`/`compact_boundary` frame renders a `─── context compacted ───` divider notice. **F0 correction:** upstream renders a bulleted `Compact summary` with a message count and an expand affordance, not a rule |
+| Compact boundary marker | ✅ | — | **F4 (t10b) — the F0 correction is CLOSED and retired.** Our invented `─── context compacted ───` rule is replaced by upstream's form: a bulleted `⏺` row carrying a bold `Compact summary` plus the dim expand hint, suppressed in the detail projection exactly as upstream suppresses it. The message count the F0 note also asked for is **unreachable** — P81 read the live `compact_boundary` frame key by key and neither `summarizeMetadata` nor the transcript-mode summary body is on it (unreachable table below), so the row is scored on what the wire can actually support |
+| User-frame sentinel router (`ERe`'s 15 exits) | 🟡 | — | **F4 (t10a) — new row, no prior row existed.** A `user` frame on our wire is very often not a prompt: it is a slash-command echo, local-command stdout, an interrupt sentinel, a background-task notification or an MCP resource push wearing a user frame. `species.ts` is upstream's one decision point (`ERe` L426424–426532) ported: 12 of its 15 exits plus the fallthrough, with the tag constants verbatim from L17765 and `sessions/rows.ts` importing its regexes back rather than keeping a second copy. Both the live path and the disk replay route through it, so a sentinel can no longer be band-wrapped as a prompt the human never typed. It also closed F1's recorded deferral: a **string-form** `message.content` (5.8% of user rows across a 60-file sample; 77 replayed disk prompts) used to render NOTHING and now shows. 🟡 for two reasons, both honest: three exits are **recorded unreachable** (table below), and the `<mcp-resource-update>`/`<mcp-polling-update>` route is **implemented but UNVERIFIED** — all five tag sites in 2.1.220 are readers and the artifact contains no writer, so its form is bundle-pinned and has never been observed. It is not counted as observed parity |
+| Error sentinels (`VAr`) | 🟡 | — | **F4 (t10b) — new row, no prior row existed.** The eleven `VAr` cases plus two default predicates and the 1000-char truncation, literals byte-verified against L157931, with `is_api_error_message` as the trust bit. 🟡 because only default-predicate 1 (`Prompt is too long`) is runtime-proven (P80); the other nine are static reads of the same-channel producer chain, and one deliberate deviation ships: upstream's `height: 1` **clips** five arms in every view, and we **wrap** — at 80 columns only the credit-balance arm diverges, where upstream's clip deletes its own billing URL (divergence table) |
+| System notices (`dVo`) | 🟡 | — | **F4 (t10b) — new row, no prior row existed.** The generic `⏺` fallback wrapping at `width - 10`, `api_error → null`, blanket suppression of `info`, and an empty-content frame rendering an empty bulleted row. 🟡 because nine `dVo` branches have subtypes that are **absent from `sdk.d.ts`'s system union** and the structured frames fall out of the generic exit by construction (unreachable table), and because the route itself has not been observed live — a keyed run provoking an informational frame would close that |
+| Teammate attribution | 🟡 | — | **F4 (t10c) — new row, no prior row existed.** A teammate message gets a nested detail branch: `@name❯` in a per-agent colour at `paddingLeft: 2`, collapsing to `› N messages from @name` at pager detail-collapsed (singular `Message` pinned, L425483) and expanding at detail-all; the compact projection deliberately stays empty, since F3's agent-progress rows are the compact surface. The eight `*_FOR_SUBAGENTS_ONLY` colour tokens were re-derived from the bundle's six theme blocks (L156475) after the constants pack proved wrong about them, and all 32 values are byte-verified. 🟡 for three named items: the **colour assignment is our invention** (upstream carries the colour on the message via the agent definition, defaulting to cyan — we assign by dispatch order), the lifecycle rows are gated on NAMED subagents (our reachability choice, not a port), and a batch member gets no lifecycle row at detail-collapsed (divergence table) |
 | Welcome banner / splash | ✅ | — | **U1** `banner.ts` — accent `✻ Welcome` box + cwd/model/mode + tips |
 | Tip of the day | ❌ | LOW | `tipScheduler.ts` |
 | Message timestamps | 🚫 | — | off by default in CC |
