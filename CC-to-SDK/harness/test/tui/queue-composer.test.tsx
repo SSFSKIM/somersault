@@ -1,19 +1,19 @@
 // test/tui/queue-composer.test.tsx — F5 task 8: the type-ahead queue's record shape (CM51) and CM48's
 // Up/ctrl+p drain back into the composer. Pins transcribed from the 2.1.220 bundle:
-//  · L148879  `P5`  — the editable predicate (`!SKg.has(mode) && !isMeta && cee(origin)`; `SKg` at L149146)
+//  · L148879  `P5`  — the editable predicate (`!SKg.has(mode) && !isMeta && cee(origin)`; `SKg` at L149153)
 //  · L149093  `V`   — `popAllEditable`: `[...queued, draft].filter(Boolean).join("\n")`, QUEUED FIRST,
 //                     cursor at `queued.join("\n").length + 1 + draftOffset`, non-editable entries survive
 //  · L495509  `Uge` — the Up guard: bail on a popup with >1 items, bail with the caret past the first
 //                     newline, otherwise DRAIN when anything is editable and only then walk history
 //  · L495786  `GU`  — the composer-side apply
-//  · L495114  the queued-up hint literal, and L495120's `LNb = 3` session cap
+//  · L495115  the queued-up hint literal (L495114 is the gate above it), and L495120's `LNb = 3` cap
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderWithKeymap } from "./keysTestUtil.js";
-import { ChatComposer } from "../../src/tui/ChatComposer.js";
+import { ChatComposer, type PlaceholderMemo } from "../../src/tui/ChatComposer.js";
 import { applyQueueDrain, isEditableQueueEntry, joinQueuedForComposer, type QueueEntry } from "../../src/tui/queue.js";
 import { initialEditorState, setBuffer, type EditorState, type PastedMap } from "../../src/tui/editor.js";
 import { chipLabel } from "../../src/tui/pasteChips.js";
@@ -261,6 +261,25 @@ describe("<ChatComposer> — the placeholder ladder (NVf, L495107)", () => {
     const { lastFrame } = mount({ queueHasEditable: true, hasMessages: true });
     await settle();
     expect(strip(frame(lastFrame))).not.toContain(QUEUED_UP_HINT);
+  });
+
+  it("keeps the SAME sentence across composer remounts — upstream's `Vr` memoizes once per PROCESS", async () => {
+    // The composer unmounts behind the `?` overlay (and every dialog), so a per-mount freeze re-rolled the
+    // suggestion the moment you pressed Escape out of help. ChatApp owns the memo for exactly that reason.
+    const memo: { current: PlaceholderMemo } = { current: { draws: [] } };
+    const first = mount({ placeholderMemoRef: memo });
+    await settle();
+    const sentence = strip(frame(first.lastFrame)).match(/ry "[^"]+"/)![0];
+    first.unmount();
+    for (let i = 0; i < 4; i++) {
+      const again = mount({ placeholderMemoRef: memo });
+      await settle();
+      expect(strip(frame(again.lastFrame))).toContain(sentence);
+      again.unmount();
+    }
+    // …and WITHOUT the shared ref each mount is free to re-roll, which is the bug this guards against: the
+    // draws record is the only thing carrying the freeze across the remount.
+    expect(memo.current.draws.length).toBeGreaterThan(0);
   });
 
   it("counts ONE session across composer remounts when ChatApp owns the guard ref", async () => {

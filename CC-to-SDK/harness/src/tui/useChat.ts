@@ -1136,7 +1136,16 @@ export function useChat(
   function drainNext() {
     const q = queueRef.current;
     if (disposed.current || q.length === 0) return;
-    const next = q[0].value; setQueue(q.slice(1));
+    // The REF is written beside the state, this file's standing discipline — and it matters more since F5
+    // task 8. `queueRef.current` is otherwise only refreshed during render, so between this call and the
+    // next commit the ref would still hold the entry this drain has already claimed; an Up landing in that
+    // window would let `popQueueToComposer` hand the SAME prompt back to the composer while the scheduled
+    // `dispatch` was still going to send it — edited and submitted at once. Written, not left to React:
+    // under ink-testing-library the commit happens to flush synchronously inside the event emit, so the
+    // window is not observable from a test (a discriminating regression test was attempted three ways and
+    // each passed with the write reverted — see the task-8 report's follow-up pass). Depending on that
+    // flush timing for a correctness invariant is exactly what this file's ref discipline exists to avoid.
+    const next = q[0].value, rest = q.slice(1); queueRef.current = rest; setQueue(rest);
     const gen = drainGen.current;
     setTimeout(() => { if (disposed.current || drainGen.current !== gen) return; if (!dispatch(next)) drainNext(); }, 0);
   }

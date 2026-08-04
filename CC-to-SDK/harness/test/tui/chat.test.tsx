@@ -664,10 +664,14 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
     expect(frame(lastFrame)).not.toContain("Transcript");
 
-    stdin.write("x");
-    await waitFor(() => frame(lastFrame).includes("x"));
+    // NOT "x": F5 task 8 made the empty composer show a random `Try "…"` suggestion, and two of the eight
+    // templates ("fix lint errors", "fix typecheck errors") contain an `x` — so a `not-in-frame` check on a
+    // single `x` failed roughly a quarter of the time once the kill emptied the buffer. Any token asserted
+    // ABSENT from a frame that may be showing the placeholder has to be one the pool cannot produce.
+    stdin.write("zzq");
+    await waitFor(() => frame(lastFrame).includes("zzq"));
     stdin.write("\x15");
-    await waitFor(() => !frame(lastFrame).includes("x"));
+    await waitFor(() => !frame(lastFrame).includes("zzq"));
     stdin.write("\x1b[Z");
     await waitFor(() => modes.length === 1);
     expect(modes).toEqual(["acceptEdits"]);

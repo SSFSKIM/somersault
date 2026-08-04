@@ -90,6 +90,11 @@ const CTRL_L: KeyEvent = { kind: "key", name: "l", ctrl: true, alt: false, shift
 
 export type InputOwner = "composer" | "shortcuts" | "transcript" | "overlay" | "decision";
 
+/** What `Vr` memoizes for `MVf` (bundle L495093), as a record ChatApp can own: the example-file list the
+ *  `Try "…"` pool is built from, resolved once, and the random draws that index into it, frozen at first
+ *  use. Both have to outlive a composer remount or the suggestion re-rolls behind every dialog. */
+export interface PlaceholderMemo { files?: string[]; draws: number[] }
+
 // The popup's own two keys are `Autocomplete` context bindings (`tab` → accept, `escape` → dismiss), so this
 // footer derives them like every other table-owned hint rather than restating the defaults. The strings are
 // handed down as props: this is a leaf render helper, and one lookup in the composer serves both popups.
@@ -131,7 +136,7 @@ function MentionPopup({ state }: { state: EditorState }) {
  *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
 export type ComposerEditExternal = (text: string) => string | null | Promise<string | null>;
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>;
   /** CM56's once-only guard, owned by ChatApp so it outlives this component's remounts (see below). */
   searchHintFiredRef?: React.MutableRefObject<boolean>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
   /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
@@ -174,7 +179,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   queueHasEditable?: boolean; submitCount?: number; hasMessages?: boolean; suggestionEnabled?: boolean;
   /** The queued-up hint's once-per-SESSION guard, owned by ChatApp so it outlives this component's remounts
    *  — exactly like `searchHintFiredRef` above, and for exactly the same reason. */
-  queueHintCountedRef?: React.MutableRefObject<boolean> }) {
+  queueHintCountedRef?: React.MutableRefObject<boolean>;
+  /** The `Try "…"` suggestion's frozen inputs, app-scoped for the same lifetime reason: upstream's `Vr`
+   *  memoizes the pick once per PROCESS, so it must survive this component's remounts. */
+  placeholderMemoRef?: React.MutableRefObject<PlaceholderMemo> }) {
   const historyProject = project ?? cwd;
   const historyEnvRef = useRef(historyEnv ?? process.env); historyEnvRef.current = historyEnv ?? process.env;
   const historyProjectRef = useRef(historyProject); historyProjectRef.current = historyProject;
@@ -573,19 +581,27 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     if (!disposed.current) commitState((s) => setCommandCatalog(s, commandCatalog));
   }, [needCatalog, commandCatalog]);
 
-  // ── CM47/CM3, the placeholder (F5 task 8). Upstream memoizes the `Try "…"` draw once per PROCESS (`Vr`,
-  // L495095) and re-evaluates the LADDER on every render (`NVf`'s useMemo, L495109). Both halves are kept:
-  // `draws` freezes the random sequence at first use so the sentence never changes under the user, while
-  // the ladder itself is computed below on each render so a prompt queued mid-session promotes rule 3.
-  const draws = useRef<number[]>([]);
+  // ── CM47/CM3, the placeholder (F5 task 8). Upstream memoizes the `Try "…"` draw once per PROCESS (`Vr` is
+  // lodash `memoize`, L495093) and re-evaluates the LADDER on every render (`NVf`'s useMemo, L495109). Both
+  // halves are kept: the random draws are frozen so the sentence never changes under the user, while the
+  // ladder itself is computed below on each render so a prompt queued mid-session promotes rule 3.
+  //
+  // The frozen pick lives in an APP-SCOPED ref — the third thing in this component to need that lifetime,
+  // after CM56's `searchHintFiredRef` and task 8's own `queueHintCountedRef`, and for the identical reason:
+  // this composer is unmounted and remounted behind every dialog, so a component-local freeze thaws on the
+  // way back. Concretely, opening `?` help and pressing Escape re-rolled the suggestion — a per-MOUNT pick
+  // where upstream's is per-PROCESS. The local fallback keeps a bare test render self-contained.
+  // BOTH inputs to the draw are memoized there, not just the random numbers: the pool an index lands in is
+  // built from the example-file CACHE, and the harvest can write that cache mid-session, so freezing only
+  // the numbers would still let a remount put the same index into a different pool. `files` is resolved once
+  // into the same record. Together they are what `Vr` memoizes upstream — `MVf`'s whole body, its
+  // `Cd().exampleFiles` read included. (The composer only READS that cache; filling it, `DVf` L495100, is a
+  // once-per-process side effect that shells out to git and lives in `chatMain.tsx` — see divergence 4.)
+  const localMemoRef = useRef<PlaceholderMemo>({ draws: [] });
+  const memo = placeholderMemoRef ?? localMemoRef;
+  if (memo.current.files === undefined) memo.current.files = cachedExampleFiles(historyEnvRef.current);
   const drawIndex = useRef(0); drawIndex.current = 0;
-  const stableRand = () => { const i = drawIndex.current++; if (draws.current[i] === undefined) draws.current[i] = Math.random(); return draws.current[i]; };
-  // The CACHE, read once at mount (upstream's `Cd().exampleFiles`): a first run in a repo shows `<filepath>`
-  // and the harvest below fills the cache for the next launch — divergence 4 in placeholder.ts.
-  // The composer only READS the cache. Filling it (`DVf`, L495100) is a once-per-process side effect that
-  // shells out to git, so it lives at the process entry point (`chatMain.tsx`) rather than in a component
-  // that is unmounted and remounted behind every dialog.
-  const [exampleNames] = useState(() => cachedExampleFiles(historyEnvRef.current));
+  const stableRand = () => { const d = memo.current.draws, i = drawIndex.current++; if (d[i] === undefined) d[i] = Math.random(); return d[i]; };
   // Read ONCE at mount, not per render: upstream's `Ct()` is a cached in-memory config and ours is a file, so
   // consulting it inside the ladder meant a disk read on every keystroke. The value only has to be right for
   // the session anyway — the increment below is what the NEXT session reads.
@@ -593,7 +609,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const placeholder = pickPlaceholder({
     inputEmpty: isEmptyNow, queueHasEditable: !!queueHasEditable, upHintSessions,
     submitCount, hasMessages, suggestionEnabled,
-    pool: examplePool(exampleNames, stableRand), rand: stableRand,
+    pool: examplePool(memo.current.files ?? [], stableRand), rand: stableRand,
   });
   // Divergence 2 (placeholder.ts): upstream never writes `queuedCommandUpHintCount`, so its own `< 3` gate
   // can never close. Ours counts a SESSION that showed the hint, once, which is the reading that makes `LNb`

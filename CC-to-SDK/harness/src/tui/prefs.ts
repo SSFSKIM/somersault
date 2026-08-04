@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { fleetRoot } from "../fleet/paths.js";
 import { THEMES, type ThemeId } from "./theme.js";
 
-/** `queuedUpHintSessions` is upstream's `queuedCommandUpHintCount` (bundle L377294/L495114) — how many
+/** `queuedUpHintSessions` is upstream's `queuedCommandUpHintCount` (bundle L377294 default, L495114 gate, L495115 literal) — how many
  *  sessions have already shown `Press up to edit queued messages`; the hint stops at `QUEUED_UP_HINT_LIMIT`.
  *  `exampleFiles` is the git-log harvest `placeholder.ts` draws the `Try "…"` filename from, cached with the
  *  stamp that decides its weekly expiry (upstream keeps the two as `exampleFiles` + `exampleFilesGeneratedAt`;

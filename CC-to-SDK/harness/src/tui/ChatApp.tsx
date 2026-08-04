@@ -40,7 +40,7 @@ import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
 import { Line } from "./Line.js";
 import { userEchoLines } from "./render.js";
-import { ChatComposer, type InputOwner } from "./ChatComposer.js";
+import { ChatComposer, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
 import { initialEditorState, type EditorState } from "./editor.js";
 import { isEditableQueueEntry } from "./queue.js";
 import { PermissionDialog } from "./PermissionDialog.js";
@@ -127,6 +127,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // F5 task 8: the queued-up hint's session counter is bumped ONCE per app, for the same lifetime reason —
   // the composer below is replaced by every dialog, and a counter it owned itself would count each remount.
   const queueHintCountedRef = useRef(false);
+  // …and the `Try "…"` suggestion's frozen inputs, for the third instance of that same lifetime rule:
+  // upstream memoizes the pick once per PROCESS (`Vr`), so a composer remount must not re-roll the sentence.
+  const placeholderMemoRef = useRef<PlaceholderMemo>({ draws: [] });
   // Input subscriptions are passive. This ref changes during render, before the visible owner swaps, so a
   // retiring composer can reject the next key even before its own registration has been torn down — the Chat
   // scope outlives the unmount by one passive flush, and shift+tab/escape would otherwise still reach it from
@@ -309,7 +312,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       : <PermissionDialog key={state.pending.toolUseID} req={state.pending} onDecision={(d) => resolveDecision(d)} />
                   : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} searchHintFiredRef={searchHintFiredRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} sessionId={state.sessionId} project={cwd}
                       queuePop={popQueueToComposer} queueHasEditable={state.queue.some(isEditableQueueEntry)}
-                      submitCount={state.submitCount} hasMessages={state.hasMessages} queueHintCountedRef={queueHintCountedRef} />}
+                      submitCount={state.submitCount} hasMessages={state.hasMessages} queueHintCountedRef={queueHintCountedRef} placeholderMemoRef={placeholderMemoRef} />}
       {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
       {escArmed ? <Box paddingX={1}><Text dimColor>Press Esc again to rewind</Text></Box> : null}
       {/* `composerOwnsKeys` is the SAME render-time disjunction the composer's own guard reads, handed to the

@@ -4,8 +4,8 @@
 //
 // Transcribed from 2.1.220:
 //  · `NVf`  (L495107)   the precedence ladder — see `pickPlaceholder`.
-//  · `MVf`  (L495095)   the eight templates and the `Try "…"` wrapper, memoized once per process by `Vr`.
-//  · `wNb`  (L495082)   the denylist, transcribed VERBATIM below.
+//  · `MVf`  (L495093)   the eight templates and the `Try "…"` wrapper, memoized once per process by `Vr`.
+//  · `wNb`  (L495092)   the denylist, transcribed VERBATIM below.
 //  · `CNb`  (L495033)   `!wNb.some(t => t.test(e))` — the denylist test.
 //  · `INb`  (L495036)   the ramp-and-cap selector: dedup by basename, at most `i` per directory for i=1…5,
 //                       and ALL OR NOTHING (`return r.length >= t ? r : []`).
@@ -31,10 +31,15 @@
 //     REPL is viewing a spawned teammate's thread, a surface this port does not have. Carried as a comment
 //     in the ladder so the numbering matches upstream's.
 //
-//  4. THE HARVEST IS SYNCHRONOUS. `xNb` is async and `DVf` fires it without awaiting, so upstream's FIRST
-//     session in a repo always renders `<filepath>` and the real names appear from the next launch on. Our
-//     `run` is sync; `ChatComposer` preserves the same observable behaviour by picking its placeholder from
-//     the CACHE at mount and refreshing the cache off the paint path (see there).
+//  4. THE HARVEST IS SYNCHRONOUS, AND THAT BLOCKS. `xNb` is async and `DVf` fires it without awaiting, so
+//     upstream's FIRST session in a repo always renders `<filepath>` and the real names appear from the
+//     next launch on. Our `run` is sync, so whatever thread calls it stops for the duration of a `git log
+//     -n 1000` — in a large repo that is real time, and on a wedged git it would be unbounded. Three things
+//     keep it off the user's path: the call site is `chatMain.tsx`'s process entry, not a component (the
+//     composer only READS the cache, so a remount never re-shells); it runs inside a `setTimeout(0)` so the
+//     first paint is already out; and `execSync` carries `HARVEST_TIMEOUT_MS` below, whose expiry throws
+//     and lands in the same empty-harvest arm as "not a git repo". The observable behaviour still matches
+//     upstream: the first session in a repo shows `<filepath>`.
 import { execSync } from "node:child_process";
 import { loadPrefs, savePrefs } from "./prefs.js";
 
@@ -42,7 +47,7 @@ import { loadPrefs, savePrefs } from "./prefs.js";
 export const EXAMPLE_REFRESH_MS = 604800000;
 /** `LNb` (L495120). */
 export const QUEUED_UP_HINT_LIMIT = 3;
-/** L495114, byte-exact. */
+/** L495115, byte-exact (the `return`; L495114 is the gate that reaches it). */
 export const QUEUED_UP_HINT = "Press up to edit queued messages";
 /** The `${t}` fallback when no example file is known (L495096). */
 export const EXAMPLE_FILE_FALLBACK = "<filepath>";
@@ -51,7 +56,7 @@ export const HARVEST_COMMAND = "git log -n 1000 --pretty=format: --name-only --d
 /** `INb(o, 5)` (L495077). */
 const EXAMPLE_CAP = 5;
 
-/** `wNb` (bundle L495082), transcribed verbatim and in order. */
+/** `wNb` (bundle L495092), transcribed verbatim and in order. */
 const DENYLIST: RegExp[] = [
   /(?:^|\/)(?:package-lock\.json|yarn\.lock|bun\.lock|bun\.lockb|pnpm-lock\.yaml|Pipfile\.lock|poetry\.lock|Cargo\.lock|Gemfile\.lock|go\.sum|composer\.lock|uv\.lock)$/,
   /\.generated\./,
@@ -88,10 +93,15 @@ export function pickExampleFiles(paths: readonly string[], cap: number = EXAMPLE
   return out.length >= cap ? out : [];
 }
 
+/** `xNb`'s wall-clock budget, ours: upstream spawns asynchronously and can afford to wait, our `run` is
+ *  synchronous and blocks whoever calls it. 2 s is far above a warm `git log -n 1000` and far below the
+ *  point where a wedged git (a stale index lock, a network-backed filesystem) would be felt. */
+const HARVEST_TIMEOUT_MS = 2000;
+
 /** The default `run`: the harvest command in `cwd`, stderr discarded, every failure (not a repo, no git,
- *  a timeout) surfacing as an empty harvest rather than a crashed composer. */
+ *  the timeout above) surfacing as a throw that `exampleFiles` turns into an empty harvest. */
 const execRun = (cwd: string) => (cmd: string): string =>
-  execSync(cmd, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 32 * 1024 * 1024 });
+  execSync(cmd, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 32 * 1024 * 1024, timeout: HARVEST_TIMEOUT_MS });
 
 /** `xNb` (L495054) minus divergence 1: count every modified path in the last 1000 commits, order by count
  *  descending, hand the ordering to `INb`. Windows is excluded upstream (`Z.platform === "win32"`) and here. */

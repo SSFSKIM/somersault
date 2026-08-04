@@ -1,10 +1,10 @@
 // test/unit/placeholder.test.ts — F5 task 8: the composer's placeholder generator. Pins transcribed from
 // the 2.1.220 bundle:
 //  · L495107  `NVf` — the precedence ladder, over SIX inputs
-//  · L495095  `MVf` — the eight templates and the `Try "…"` wrapper
-//  · L495114  `Press up to edit queued messages`, byte-exact
+//  · L495093  `MVf` — the eight templates and the `Try "…"` wrapper
+//  · L495115  `Press up to edit queued messages`, byte-exact (L495114 is the gate above it)
 //  · L495120  `LNb = 3` — how many sessions the queued hint may appear in
-//  · L495082  `wNb` — the harvest denylist
+//  · L495092  `wNb` — the harvest denylist
 //  · L495036  `INb` — the ramp-and-cap selector (dedup by basename, all-or-nothing at 5)
 //  · L495054  `xNb` — `git log -n 1000 --pretty=format: --name-only --diff-filter=M`, counted and ordered
 //  · L495081  `kNb = 604800000` — the weekly cache expiry
@@ -18,7 +18,7 @@ import {
 } from "../../src/tui/placeholder.js";
 import { loadPrefs, savePrefs } from "../../src/tui/prefs.js";
 
-// ————————————————————————— CM3: the template pool (MVf, L495095) —————————————————————————
+// ————————————————————————— CM3: the template pool (MVf, L495093) —————————————————————————
 
 describe("examplePool — MVf's eight templates, verbatim", () => {
   it("substitutes ONE drawn file into the four slots that take one", () => {
@@ -108,7 +108,7 @@ describe("pickPlaceholder — the precedence ladder, exhaustive over all six inp
 
 // ————————————————————————— CM3: the harvest (xNb / INb / wNb) —————————————————————————
 
-describe("the denylist (wNb, L495082)", () => {
+describe("the denylist (wNb, L495092)", () => {
   it("rejects lockfiles, build dirs, config and every data/doc extension", () => {
     for (const path of [
       "package-lock.json", "src/yarn.lock", "Cargo.lock", "go.sum",

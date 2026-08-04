@@ -4,7 +4,7 @@
 //
 // Transcribed from 2.1.220:
 //  · `P5`   (L148879)   the EDITABLE predicate: `AKg(e.mode) && !e.isMeta && cee(e.origin)`, where
-//                       `AKg(m) = !SKg.has(m)` and `SKg = new Set(["task-notification"])` (L149146).
+//                       `AKg(m) = !SKg.has(m)` and `SKg = new Set(["task-notification"])` (L149153).
 //  · `V`    (L149093)   `popAllEditable(currentDraft, cursorOffset)` — the drain itself:
 //                         let { editable: ce, nonEditable: se } = partition(queue, P5)
 //                         if (ce.length === 0) return
@@ -24,9 +24,28 @@
 //     so the drained buffer re-enters bash mode by itself. Same rule, same reason, as editorHistory.ts's
 //     divergence 1 for a bash RECALL: the text is what the user typed, and the mode follows the text.
 //
-//  2. NO IMAGE PAYLOADS. `L0u` (L148911) lifts image/audio blocks out of a structured (non-string) queued
-//     value. Every value this port enqueues is a plain string (`useChat.submit`), so `L0u` returns `[]` for
-//     all of them and only the TEXT paste map has anything to merge. Recorded, not built.
+//  2. OUR PASTE MERGE FILTERS THE OPPOSITE WAY FROM UPSTREAM'S — on a shape NEITHER side produces today.
+//     Both halves of that sentence are load-bearing, so both are spelled out:
+//
+//     · UPSTREAM CARRIES IMAGE/AUDIO AND DROPS TEXT. `V`'s merge loop (L149100–L149105) walks a queued
+//       entry's `pastedContents` and pushes an entry into the drained batch only `if (he.type === "image"
+//       || he.type === "audio")`; a TEXT entry in that map is dropped on the way back to the composer.
+//       (`L0u`, L148911, then adds image blocks lifted out of a STRUCTURED value — always `[]` for the
+//       plain strings this port enqueues.) `GU` merges exactly that image/audio batch into the composer's
+//       map (L495790–L495795).
+//     · UPSTREAM ONLY ATTACHES A MAP WHEN AN IMAGE/AUDIO SURVIVES. The enqueue site filters the composer's
+//       map to "not image/audio, or still referenced in the text" (`N`, L501803) and then attaches it as
+//       `pastedContents: M ? N : void 0` (L501842) where `M = Object.values(N).some(G => $_r(G) || G.type
+//       === "audio")`. So a text-only map is never attached to a queued entry at all — text entries ride
+//       along only in the company of an image or audio one, and are then dropped by `V` anyway.
+//     · OURS CARRIES TEXT AND DROPS IMAGE/AUDIO, because the re-minter it goes through is `rebuildChips`,
+//       whose whole job is chips and whose filter is `src[id]?.type === "text"`. It is the exact inverse
+//       of upstream's, and this port has no image/audio `PastedEntry` type to carry in the first place.
+//     · AND IT RUNS ON DATA THAT DOES NOT EXIST. `ChatComposer`'s submit hands `useChat` the EXPANDED text
+//       (`r.submit` carries payloads, not labels — see editorHistory.ts), so every `QueueEntry` this port
+//       mints has `pastedContents: undefined`. The re-mint machinery below is therefore FORWARD-INSURANCE
+//       for a shape that exists on neither side today: correct and tested, but not reachable from the
+//       running product until some later task enqueues label-form text together with its map.
 //
 //  3. THE EMPTY-DRAFT CURSOR IS CLAMPED. Upstream's `te` adds `+ 1` for the joining newline unconditionally,
 //     so draining onto an EMPTY draft (which `filter(Boolean)` then drops from the join) returns an offset
@@ -39,7 +58,7 @@ import { bufferText, rebuildChips, type EditorState, type PastedMap } from "./ed
  *  `value` is the RAW submitted text, prefix and all — a queued `!git status` stores the `!` (divergence 1).
  *  `mode` is upstream's own record field and is what `isEditableQueueEntry` reads; ours is derived from that
  *  same prefix at enqueue time, so it is redundant with the text by construction and nothing treats it as an
- *  independent authority. `priority` is upstream's `Wuo` key (`now`/`next`/`later`, L149146) — every entry we
+ *  independent authority. `priority` is upstream's `Wuo` key (`now`/`next`/`later`, L149153) — every entry we
  *  mint is `"now"` and the ladder that would use the other two (`getCommandsByMaxPriority`, L149130) is not
  *  ported, so the field is carried, not invented. `origin` is the other half of `P5`'s check. */
 export interface QueueEntry {
@@ -50,7 +69,7 @@ export interface QueueEntry {
   origin: "user";
 }
 
-/** `SKg` (L149146) — the one mode upstream refuses to hand back to the composer. */
+/** `SKg` (L149153) — the one mode upstream refuses to hand back to the composer. */
 const NON_EDITABLE_MODES = new Set<string>(["task-notification"]);
 
 /** `P5` (L148879). Ours has no `isMeta` field (nothing in this port mints a meta entry) and one origin, so
@@ -70,6 +89,11 @@ export function isEditableQueueEntry(e: QueueEntry): boolean {
  *  for a recalled entry, for the same reason — so the joined text and the merged map agree by construction.
  *  The counter starts at 0 here and the composer re-mints the whole pair a second time against the LIVE
  *  buffer's counter (`applyQueueDrain`), which is what keeps a queued chip from colliding with a draft one.
+ *
+ *  Reachability: see divergence 2 — nothing in the product fills `pastedContents` on a queued entry yet, so
+ *  this branch is exercised by its tests and by nothing else. It is here because the collision is real the
+ *  moment anything does fill it, and because a silently-crossed paste payload is the kind of bug that is
+ *  invisible until a user pastes two things.
  *
  *  Returns null when nothing is editable, which is `V`'s `if (ce.length === 0) return`. */
 export function joinQueuedForComposer(entries: readonly QueueEntry[]): { text: string; pastedContents?: PastedMap } | null {
