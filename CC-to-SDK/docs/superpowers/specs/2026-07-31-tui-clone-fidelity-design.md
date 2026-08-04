@@ -1380,3 +1380,17 @@ behind those rows — all forty `K1`–`K40` research rows, re-scored — sits a
   sandboxed Bash and the native path gate authorizes lexically, so an in-fixture symlink is not resolved before
   authorization. That limit is recorded in the evidence report rather than claimed closed, because the probe
   runs trusted first-party prompts.
+
+- 2026-08-04 — **F4 constants pack re-verified the transcript census against the bundle: 29
+  contradictions (9 substantive) recorded and the pack made authoritative.**
+  `research/2026-07-31-tui-clone/14-f4-constants-pack.md` extracts every F4-load-bearing constant
+  verbatim; on conflict with `02-transcript.md` the pack wins (header note added there). Substantive
+  corrections folded into the F4 plan: the ERe sentinel router has 15 exits; the VAr error switch
+  has 11 cases + 2 default predicates + a 1000-char truncation; context-line content is undimmed
+  (gutter-only); the word-diff path wraps one column wider; `dVo` nulls `api_error` and suppresses
+  `level==="info"`; the metadata compact hint reads "expand history"; singular "Message" in the
+  collapsed teammate line; a second label-polarity mode exists only when highlighting is globally
+  disabled (unreachable for us). Also settled three census inferences: `aHr` collapses scratchpad
+  paths only (we model none — recorded unreachable), the single-line thinking form is provably
+  dead, and `Pt()` is a build-time `"macos"` constant, so the platform bullet switch is a
+  product-level port, not a bundle-runtime one.

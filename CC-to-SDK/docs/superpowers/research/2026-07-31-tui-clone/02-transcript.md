@@ -1,5 +1,17 @@
 # Static transcript rendering — Claude Code 2.1.220 vs. `cc-harness` TUI
 
+> **2026-08-04 (F4 pre-work):** `14-f4-constants-pack.md` re-extracted this report's load-bearing
+> claims verbatim from the bundle and marked **29 contradictions (9 substantive)** — see the pack's
+> appendix. Where this file and the pack disagree, **the pack wins** (it quotes the bundle). The
+> substantive ones: code-label polarity has a second (highlighting-disabled) mode; context-line
+> content is NOT dimmed (only its number gutter); the word-diff path wraps one column wider; `ERe`
+> has 15 exits, not 10; `VAr` has 11 error cases + 2 default predicates + a 1000-char truncation;
+> `dVo`'s `api_error` → null and `level==="info"` is blanket-suppressed; the metadata compact hint
+> says "expand history"; collapsed-teammate uses singular "Message"; the hljs map also has
+> `quote: vt.reset`. Also settled: `aHr` = isScratchpadDisplayPath; the single-line thinking form
+> is provably dead; `Pt()` is a build-time constant `"macos"` in this bundle; `_vs` is jsdiff
+> `diffWords`; diff context = 3 via an explicit call-site argument.
+
 Scope: everything in the transcript that is **not** a tool call. Reference is
 `~/claude-code-bundle/2.1.220/cli.pretty.js` (579,698 lines). Our side is
 `/Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness/src/tui/`.
