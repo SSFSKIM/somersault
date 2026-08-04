@@ -72,13 +72,11 @@ function envTruthy(v: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(v.toLowerCase().trim());
 }
 
-/** `hon`. */
-export function displayForMode(text: string, mode: "prompt" | "bash"): string { return mode === "bash" ? `!${text}` : text; }
-/** `mP`. */
-export function modeOfDisplay(display: string): "prompt" | "bash" { return display.startsWith("!") ? "bash" : "prompt"; }
-/** `LV`. Strips ONE `!` and only from a bash display, so a prompt that legitimately begins `!!` keeps its
- *  second bang when it comes back. */
-export function stripModePrefix(display: string): string { return modeOfDisplay(display) === "bash" ? display.slice(1) : display; }
+/** `hon`/`mP`/`LV` MOVED OUT (t7 review, I2) to `promptMode.ts`, a leaf with no imports of any kind: this
+ *  module reaches `node:fs`, `node:crypto` and `node:os`, and `editorHistory.ts` needed one `startsWith("!")`
+ *  test from here — which pulled that entire graph into the pure reducer's runtime closure. Re-exported so
+ *  every existing `from "./promptHistory.js"` import keeps resolving; new callers should take the leaf. */
+export { composerMode, displayForMode, modeOfDisplay, stripModePrefix } from "./promptMode.js";
 
 /** `cgr` + `uu_`. Silent on every failure: the caller is the submit path, and a read-only home must cost
  *  the user their history, not their prompt.

@@ -5,7 +5,8 @@ import { Box, Text } from "ink";
 import { readdirSync } from "node:fs";
 import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry } from "./editor.js";
 import { PASTE_LIMIT } from "./pasteChips.js";
-import { appendHistory, hydrateEntry, modeOfDisplay, readHistory } from "./promptHistory.js";
+import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
+import { composerMode } from "./promptMode.js";
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
 import { editExternalAsync as realEditExternal } from "./externalEditor.js";
@@ -75,7 +76,10 @@ function seedHistory(project: string, env: NodeJS.ProcessEnv): HistNavEntry[] {
   const out: HistNavEntry[] = [];
   for (let i = rows.length - 1; i >= 0; i--) {
     const { display, pastedContents } = hydrateEntry(rows[i], env);
-    out.push({ display, mode: modeOfDisplay(rows[i].display) === "bash" ? "bash" : "normal", pastedContents });
+    // ONE derivation with the submit path (t7 review, M1): both read the DISPLAY through `composerMode`,
+    // so a `#note` prompt carries the same mode in-session as it does after a reseed. It reads the RAW line,
+    // not the hydrated display, because a lost-paste rewrite can prepend `[` and would read as prompt mode.
+    out.push({ display, mode: composerMode(rows[i].display), pastedContents });
   }
   return out;
 }
@@ -127,7 +131,9 @@ function MentionPopup({ state }: { state: EditorState }) {
  *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
 export type ComposerEditExternal = (text: string) => string | null | Promise<string | null>;
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>;
+  /** CM56's once-only guard, owned by ChatApp so it outlives this component's remounts (see below). */
+  searchHintFiredRef?: React.MutableRefObject<boolean>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
   /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
    *  one. Absent AND with no provider above, the editor simply runs without a handoff. */
   suspendInput?: SuspendInput; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number;
@@ -196,10 +202,18 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // CM24's hint (`Rpk`/`Yg`/`lh` in the bundle). Its own state + timer, the yank hint's shape exactly.
   const [pasteHint, setPasteHint] = useState(false);
   const pasteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // CM56. `searchHintFired` is upstream's `m.current` — ONCE PER MOUNT, and deliberately not reset by the
-  // walk's own reset (`G` at L489628 clears every other ref in the hook and leaves `m` alone).
+  // CM56. `searchHintFired` is upstream's `m.current` — fired ONCE, and deliberately not reset by the walk's
+  // own reset (`G` at L489628 clears every other ref in the hook and leaves `m` alone).
+  //
+  // DURABLE, not component-local (t7 review, M2). Upstream's composer lives as long as the app; ours is
+  // unmounted and remounted every time a dialog takes the screen, so a plain `useRef` here re-armed the hint
+  // after every permission prompt and the user got told about the search chord over and over. That is the
+  // same lifetime mismatch the disk seed hit two hooks above, and it takes the same answer: the flag lives in
+  // an APP-scoped ref threaded down (ChatApp owns it, exactly as it owns `consumedPrefillTokenRef`). The
+  // local fallback keeps a bare test render — and any future standalone mount — working unchanged.
   const [searchHint, setSearchHint] = useState(false);
-  const searchHintFired = useRef(false);
+  const localSearchHintFiredRef = useRef(false);
+  const searchHintFired = searchHintFiredRef ?? localSearchHintFiredRef;
   const searchHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { disposed.current = true; if (yankTimer.current) clearTimeout(yankTimer.current); if (pasteTimer.current) clearTimeout(pasteTimer.current); if (searchHintTimer.current) clearTimeout(searchHintTimer.current); }, []);
   // F2 task 8 removed the `mounted` one-flush guard that used to sit here. Its whole job was the readable-

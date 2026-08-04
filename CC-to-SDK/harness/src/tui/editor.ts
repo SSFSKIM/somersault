@@ -10,8 +10,12 @@ import { CHIP_CHARS, chipContaining, chipEndingAt, chipStartingAt, deleteTokenBe
 // `bufferText`/`setBuffer`/the state types from here and this file imports the walk from there, all hoisted
 // `function` declarations with nothing called at module-evaluation time, so the cycle resolves either way.
 import { historyNext, historyPrev, pushHistory, type DraftStash, type HistEdit, type HistFilter, type HistNavEntry } from "./editorHistory.js";
+// The prefix→mode reading lives in `promptMode.ts` (a zero-import leaf) so the history seed and this reducer
+// share ONE derivation; `InputMode` moved with it and is re-exported here, so existing imports are unchanged.
+import { composerMode, type InputMode } from "./promptMode.js";
 export { historyEdited, historyLabel, historyPosition, historyView, rebuildChips } from "./editorHistory.js";
 export type { DraftStash, HistEdit, HistFilter, HistNavEntry } from "./editorHistory.js";
+export type { InputMode } from "./promptMode.js";
 export interface Cursor { row: number; col: number }
 export interface Candidate { path: string; score: number }
 export interface MentionState { anchor: Cursor; query: string; files: string[]; items: Candidate[]; index: number }
@@ -88,15 +92,16 @@ const durable = (s: EditorState) => ({ historySeeded: s.historySeeded, stashed: 
 export const UNDO_CAP = 50;
 export const UNDO_COALESCE_MS = 1000;
 
-export type InputMode = "bash" | "memory" | "normal";
 /** The composer's current input mode, derived purely from the buffer: a leading `!` = bash, `#` = memory
- *  (CC's prefix modes). The `/` and `@` popups own their own state, so they suppress this. */
+ *  (CC's prefix modes). The `/` and `@` popups own their own state, so they suppress this.
+ *
+ *  The prefix reading itself is `composerMode` in promptMode.ts, shared with the history seed (t7 review,
+ *  M1): before that, this function's three-valued answer went onto a submitted entry while the disk seed
+ *  wrote a two-valued one, so the same `#note` prompt carried `"memory"` in-session and `"normal"` after a
+ *  restart. One derivation, one answer, whichever side of the file you are on. */
 export function inputMode(s: EditorState): InputMode {
   if (s.command || s.mention) return "normal";
-  const first = s.lines[0] ?? "";
-  if (first.startsWith("!")) return "bash";
-  if (first.startsWith("#")) return "memory";
-  return "normal";
+  return composerMode(s.lines[0] ?? "");
 }
 
 const PASTE_MARKERS = /\x1b?\[20[01]~/g;                    // \x1b[200~ / \x1b[201~ and ESC-stripped [200~/[201~
@@ -242,7 +247,7 @@ function submitTurn(s: EditorState): EditorResult {
   // `cgr({ display: hon(_t, iD), pastedContents: QL })` (L548774). `hon` re-attaches the mode prefix upstream
   // strips off its buffer; ours never took it off, so `t` IS `hon`'s output. The WHOLE live map rides along,
   // upstream's `QL` — `appendHistory` decides per entry whether the body inlines or goes to the paste cache.
-  const entry: HistNavEntry = { display: t, mode: inputMode(s), pastedContents: s.pastedContents };
+  const entry: HistNavEntry = { display: t, mode: composerMode(t), pastedContents: s.pastedContents };
   const history = pushHistory(s.history, entry);
   // The stash SURVIVES a send (2.1.220 chat:stash keeps it in state separate from the buffer) — park a
   // draft, fire a quick question, Ctrl-S restores the draft. The undo stack does reset with the buffer.
@@ -265,7 +270,7 @@ function submitTurn(s: EditorState): EditorResult {
 export function clearToHistory(s: EditorState): EditorState {
   const t = bufferText(s);
   if (t.length === 0) return s;
-  const history = t.trim().length === 0 ? s.history : pushHistory(s.history, { display: t, mode: inputMode(s) });
+  const history = t.trim().length === 0 ? s.history : pushHistory(s.history, { display: t, mode: composerMode(t) });
   return { ...initialEditorState(history), ...durable(s) };
 }
 
@@ -341,7 +346,7 @@ function submitCommand(s: EditorState): EditorResult {
   const c = s.command!;
   const name = c.items.length ? c.items[Math.min(c.index, c.items.length - 1)].name : s.lines[0].slice(1);
   const t = "/" + name;
-  const entry: HistNavEntry = { display: t, mode: "normal" };
+  const entry: HistNavEntry = { display: t, mode: composerMode(t) };
   return { state: { ...initialEditorState(pushHistory(s.history, entry)), ...durable(s) }, submit: t, historyAppend: entry };
 }
 const syncCompletions = (s: EditorState): EditorState => (s.command ? refreshCommand(s) : (s.mention ? refreshMention(s) : s));

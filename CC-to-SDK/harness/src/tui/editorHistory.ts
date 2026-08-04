@@ -49,8 +49,13 @@
 // one entry, and the older label silently expands to the newer payload. `rebuildChips` re-mints every
 // recalled entry onto ids above the live `pasteCounter` and relabels the buffer text to match, so a recalled
 // chip and a live one can never collide.
+//
+// IMPORT HYGIENE (t7 review, I2): the mode helpers come from `promptMode.ts`, a zero-import leaf, NOT from
+// `promptHistory.ts`, which reaches `node:fs`/`node:crypto`/`node:os`. Traced: nothing this module or
+// `editor.ts` pulls in reaches a `node:` builtin, so the reducer graph is filesystem-free and the disk lives
+// only in ChatComposer. Keep it that way — see promptMode.ts's header.
 import { chipLabel, chipSpans, newlineCount } from "./pasteChips.js";
-import { modeOfDisplay } from "./promptHistory.js";
+import { modeOfDisplay } from "./promptMode.js";
 import { bufferText, setBuffer, type EditorState, type InputMode, type PastedEntry, type PastedMap } from "./editor.js";
 
 /** One entry of the composer's history list, OLDEST-FIRST in `EditorState.history` (see divergence 2).
@@ -202,11 +207,17 @@ export function historyNext(s: EditorState, mode: InputMode): EditorState {
   return { ...place(stored, s.stash?.display ?? "", "start"), pastedContents: s.stash?.pastedContents ?? {}, histIndex: null, histRecalled: null };
 }
 
-/** The in-memory push every submit site shares: append unless it repeats the newest entry. Upstream's
- *  equivalent suppressor is `cu_` (L317586), on the PERSIST side; ours has always deduped in memory and
- *  `readHistory` dedups on the way back in, so a walk sees one copy either way. */
+/** The in-memory push every submit site shares: append, dropping ANY earlier entry with the same display.
+ *
+ *  WHOLE-SCAN, NEWEST-WINS, and it has to be (t7 review, I1). The old rule compared only against the newest
+ *  entry, which is upstream's `cu_` (L317586) — but `cu_` is a suppressor on the PERSIST side, sitting in
+ *  front of a file whose READER (`UUd`, L317460) then dedups the whole window by display and keeps the newest
+ *  occurrence. Ours is the in-memory list that same reader seeds, so an adjacent-only rule made the two
+ *  disagree the moment a prompt repeated non-adjacently: with `[ls, pwd]` on disk, submitting `ls` gave a
+ *  three-entry walk (`ls` at 3/3, `pwd` at 2/3, `ls` again at 1/3) that collapsed back to two the next time
+ *  the app started. Matching `readHistory`'s rule here makes the in-session walk and the reseeded walk the
+ *  same list, which is the only version of this a user can reason about. The persisted FILE still keeps both
+ *  lines — `readHistory` hides the older one — so nothing about the on-disk format changes. */
 export function pushHistory(history: readonly HistNavEntry[], entry: HistNavEntry): HistNavEntry[] {
-  const last = history[history.length - 1];
-  if (last && last.display === entry.display) return [...history];
-  return [...history, entry];
+  return [...history.filter((e) => e.display !== entry.display), entry];
 }

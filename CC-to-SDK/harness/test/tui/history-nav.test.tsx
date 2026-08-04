@@ -13,7 +13,7 @@
 //  · L495837  chat:stash parks `{ text, cursorOffset, pastedContents }` and L495833 restores all three
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Text } from "ink";
@@ -99,6 +99,75 @@ describe("CM54 — the per-index edit cache carries the FULL triple", () => {
     expect(text(s)).toBe("two");
     s = up(s);
     expect(text(s)).toBe("one!");
+  });
+});
+
+describe("pushHistory dedups the WHOLE list, newest-wins (t7 review, I1)", () => {
+  it("a repeated NON-adjacent prompt moves to the newest slot instead of appearing twice", () => {
+    const s = initialEditorState([h("ls"), h("pwd")]);
+    const after = applyKey(type(s, "ls"), "", { return: true }).state;
+    expect(after.history.map((e) => e.display)).toEqual(["pwd", "ls"]);
+    // The walk and its labels see two entries, which is what a remount would rebuild from the file.
+    const one = up(after);
+    expect([text(one), historyLabel(one)]).toEqual(["ls", "History 2/2"]);
+    const two = up(one);
+    expect([text(two), historyLabel(two)]).toEqual(["pwd", "History 1/2"]);
+    expect(text(up(two))).toBe("pwd");                               // clamped: there is no third entry
+  });
+  it("still collapses the adjacent repeat the old rule handled", () => {
+    const s = applyKey(type(initialEditorState([h("ls")]), "ls"), "", { return: true }).state;
+    expect(s.history.map((e) => e.display)).toEqual(["ls"]);
+  });
+  it("agrees with readHistory's own dedup, which is what a reseed replays", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ccx-dedup-"));
+    const env = { ...process.env, CCX_FLEET_ROOT: root };
+    try {
+      for (const display of ["ls", "pwd", "ls"]) appendHistory({ display, project: PROJECT }, env);
+      const onDisk = readHistory({ scope: "project", project: PROJECT }, env).map((e) => e.display).reverse();
+      const inMemory = ["ls", "pwd", "ls"].reduce<HistNavEntry[]>((acc, display) => {
+        const next = applyKey(type({ ...initialEditorState(acc) }, display), "", { return: true }).state;
+        return next.history;
+      }, []).map((e) => e.display);
+      expect(inMemory).toEqual(onDisk);                              // ["pwd", "ls"] both ways
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+describe("the reducer's import graph stays filesystem-free (t7 review, I2)", () => {
+  // The reducer's header promises "No React/Ink/fs". Before this pass `editorHistory.ts` took one
+  // `startsWith("!")` helper from `promptHistory.ts`, which reaches node:fs / node:crypto / node:os — so the
+  // promise was false by one import. This walks the real closure rather than trusting the comment.
+  const ROOT = new URL("../../src/tui/", import.meta.url);
+  const closure = (entry: string): Set<string> => {
+    const seen = new Set<string>(); const queue = [entry];
+    while (queue.length) {
+      const file = queue.pop()!;
+      if (seen.has(file)) continue;
+      seen.add(file);
+      const src = readFileSync(new URL(file, ROOT), "utf8");
+      for (const m of src.matchAll(/^\s*(?:import|export)\b[^\n]*?from\s+"(\.\/[^"]+)"/gm)) {
+        // `import type` / `export type` are erased at build time and cost no runtime graph.
+        if (/^\s*(?:import|export)\s+type\b/.test(m[0])) continue;
+        queue.push(m[1].replace(/^\.\//, "").replace(/\.js$/, ".ts"));
+      }
+    }
+    return seen;
+  };
+  it("nothing reachable from editor.ts imports a node: builtin", () => {
+    const files = [...closure("editor.ts")];
+    expect(files).toContain("editorHistory.ts");
+    expect(files).toContain("promptMode.ts");
+    expect(files).not.toContain("promptHistory.ts");
+    const offenders = files.filter((f) => {
+      let src: string;
+      try { src = readFileSync(new URL(f, ROOT), "utf8"); } catch { return false; }
+      return /from\s+"node:/.test(src);
+    });
+    expect(offenders).toEqual([]);
+  });
+  it("promptMode.ts is a true leaf — no imports at all", () => {
+    const src = readFileSync(new URL("promptMode.ts", ROOT), "utf8");
+    expect(src).not.toMatch(/^\s*import\b/m);
   });
 });
 
@@ -353,6 +422,45 @@ describe("<ChatComposer> — the persisted history it seeds from and appends to"
     const expected = expandHintText(["alt+h"], process.platform, HISTORY_SEARCH_HINT);
     await waitFor(() => strip(frame(lastFrame)).includes(expected));
     expect(strip(frame(lastFrame))).not.toContain("ctrl+r");
+  });
+
+  it("M1: a prompt carries the SAME mode in-session as it does after a reseed", async () => {
+    const editorStateRef = { current: initialEditorState() } as React.MutableRefObject<EditorState>;
+    const first = mount({ editorStateRef });
+    await settle();
+    for (const ch of "#remember this") first.stdin.write(ch);
+    await waitFor(() => strip(frame(first.lastFrame)).includes("#remember this"));
+    first.stdin.write("\r");
+    await waitFor(() => editorStateRef.current.history.length === 1);
+    expect(editorStateRef.current.history[0].mode).toBe("memory");
+    first.unmount();
+    // A brand-new app: fresh durable ref, so this one really does seed off the file.
+    const reseeded = { current: initialEditorState() } as React.MutableRefObject<EditorState>;
+    mount({ editorStateRef: reseeded });
+    await settle();
+    expect(reseeded.current.history.map((e) => [e.display, e.mode])).toEqual([["#remember this", "memory"]]);
+  });
+
+  it("M2: CM56's once-only guard survives a remount (the dialog cycle must not re-arm it)", async () => {
+    seed("a one", "b two", "c three");
+    const editorStateRef = { current: initialEditorState() } as React.MutableRefObject<EditorState>;
+    const searchHintFiredRef = { current: false } as React.MutableRefObject<boolean>;
+    const { stdin, lastFrame, rerender } = mount({ editorStateRef, searchHintFiredRef, searchHintMs: 60_000 });
+    await settle();
+    stdin.write(UP); stdin.write(UP);
+    await waitFor(() => strip(frame(lastFrame)).includes(HISTORY_SEARCH_HINT));
+    expect(searchHintFiredRef.current).toBe(true);
+    // A permission prompt takes the screen and hands it back — a genuinely new component instance.
+    rerender(<Text>a dialog owns the screen</Text>);
+    await settle();
+    rerender(<ChatComposer onSubmit={() => {}} cwd={PROJECT} project={PROJECT} historyEnv={env} commandCatalog={[]} columns={() => 72} rows={() => 24} editorStateRef={editorStateRef} searchHintFiredRef={searchHintFiredRef} searchHintMs={60_000} />);
+    await settle();
+    expect(strip(frame(lastFrame))).not.toContain(HISTORY_SEARCH_HINT);   // the remount did not re-show it
+    stdin.write(DOWN); stdin.write(DOWN);                                 // back to the draft
+    await settle();
+    stdin.write(UP); stdin.write(UP);                                     // and a whole fresh run through 2
+    await waitFor(() => strip(frame(lastFrame)).includes("History 2/3"));
+    expect(strip(frame(lastFrame))).not.toContain(HISTORY_SEARCH_HINT);
   });
 
   it("CM56 expires on its own window and does not fire twice in one mount", async () => {
