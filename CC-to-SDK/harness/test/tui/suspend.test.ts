@@ -30,9 +30,11 @@ describe("suspendProcess", () => {
     };
 
     suspendProcess(deps);
-    expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', "once(SIGCONT)", "kill(0,SIGTSTP)"]);
+    // ?2004l before the shell owns the terminal, ?2004h on resume (t3 re-review: readline/zle write ?2004l
+    // before running `fg`, so without the re-enable a Ctrl-Z round trip kills marked pastes for the session).
+    expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', 'write("\\u001b[?2004l")', "once(SIGCONT)", "kill(0,SIGTSTP)"]);
     onResume?.();
-    expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', "once(SIGCONT)", "kill(0,SIGTSTP)", "raw(true)", 'write("\\u001b[?25l")', "repaint"]);
+    expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', 'write("\\u001b[?2004l")', "once(SIGCONT)", "kill(0,SIGTSTP)", "raw(true)", 'write("\\u001b[?25l")', 'write("\\u001b[?2004h")', "repaint"]);
   });
 
   it("registers via `once`, not `on` — repeated suspend/resume cycles register exactly one listener per cycle, never accumulating", () => {
@@ -79,6 +81,6 @@ describe("suspendProcess", () => {
       removeListener: (signal) => calls.push(`remove(${signal})`),
       kill: () => { throw new Error("kill unavailable"); },
     })).toThrow("kill unavailable");
-    expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', "once", "remove(SIGCONT)", "raw(true)", 'write("\\u001b[?25l")']);
+    expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', 'write("\\u001b[?2004l")', "once", "remove(SIGCONT)", "raw(true)", 'write("\\u001b[?25l")', 'write("\\u001b[?2004h")']);
   });
 });

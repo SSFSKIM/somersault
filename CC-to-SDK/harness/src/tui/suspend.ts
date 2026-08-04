@@ -43,11 +43,18 @@ export function suspendProcess(deps: SuspendDeps): void {
   const once = deps.once ?? ((signal, handler) => { process.once(signal as NodeJS.Signals, handler); });
   const removeListener = deps.removeListener ?? ((signal, handler) => { process.removeListener(signal as NodeJS.Signals, handler); });
   const cursor = (visible: boolean) => { if (deps.stdout?.isTTY) deps.stdout.write(visible ? "\x1b[?25h" : "\x1b[?25l"); };
-  const onResume = () => { deps.stdin.setRawMode?.(true); cursor(false); deps.repaint(); };
+  // DECSET 2004 (bracketed paste, owned by KeymapProvider since f5 t3) must come back on resume: bash's
+  // readline and zsh's zle write ?2004l before executing `fg`, so without this a Ctrl-Z round trip leaves
+  // pastes unmarked for the rest of the session (t3 re-review follow-up — upstream shares this hole, its
+  // handleSuspend L177985 pairs cursor/focus/mouse but never lho/Usr). Disable on the way out too: a shell
+  // that does not manage the mode itself must not see paste markers at its own prompt.
+  const paste = (on: boolean) => { if (deps.stdout?.isTTY) deps.stdout.write(on ? "\x1b[?2004h" : "\x1b[?2004l"); };
+  const onResume = () => { deps.stdin.setRawMode?.(true); cursor(false); paste(true); deps.repaint(); };
   let listenerAttempted = false;
   try {
     deps.stdin.setRawMode?.(false);
     cursor(true);
+    paste(false);
     // once-before-kill is load-bearing: a fast `fg` (SIGCONT delivered right back) must not race a listener
     // that hasn't attached yet, so the listener goes up BEFORE the signal that could trigger it.
     listenerAttempted = true;
@@ -57,6 +64,7 @@ export function suspendProcess(deps: SuspendDeps): void {
     if (listenerAttempted) removeListener("SIGCONT", onResume);
     deps.stdin.setRawMode?.(true);
     cursor(false);
+    paste(true);
     throw error;
   }
 }

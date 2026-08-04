@@ -77,6 +77,13 @@ describe("ingestPaste — CM21's threshold", () => {
     expect(s.pastedContents[1]).toEqual({ id: 1, type: "text", content: "x".repeat(900), lineCount: 0 });
     expect(s.cursor).toEqual({ row: 0, col: "[Pasted text #1]".length });
   });
+  it("boundary is STRICT like upstream's `Cn.length > CMt`: exactly 800 chars inserts, 801 chips", () => {
+    const at = ingestPaste(initialEditorState(), "x".repeat(CHIP_CHARS), 24);
+    expect(text(at)).toBe("x".repeat(CHIP_CHARS));
+    expect(at.pasteCounter).toBe(0);
+    const over = ingestPaste(initialEditorState(), "x".repeat(CHIP_CHARS + 1), 24);
+    expect(text(over)).toBe("[Pasted text #1]");
+  });
   it("chips a 3-newline paste at rows 24 with a +3 lines label", () => {
     const s = ingestPaste(initialEditorState(), "a\nb\nc\nd", 24);
     expect(text(s)).toBe("[Pasted text #1 +3 lines]");
