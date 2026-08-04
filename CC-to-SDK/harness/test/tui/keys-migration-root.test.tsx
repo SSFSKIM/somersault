@@ -138,6 +138,20 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     await waitFor(() => frame(lastFrame).includes("Esc again to clear"));  // (idle + text → the local clear arm)
   });
 
+  // F5 t9 review (I2). The mirror of (f): a popup that is in STATE but draws nothing (an `@` matching no
+  // file — the file popup has no empty message upstream) must not own the Autocomplete scope, so the very
+  // FIRST Escape is chat:cancel. Before the fix that Escape vanished into an invisible popup and the user
+  // had to press it twice for no visible reason.
+  it("(f2) an @ popup with nothing in it holds no keys — the first Escape is chat:cancel", async () => {
+    const fake = { ...fakeRemote(), rewindAnchors: async () => [], rewindDryRun: async () => ({ canRewind: true }), rewind: async () => {} };
+    const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake as never} client={{ kind: "loopback" }} cwd="/__ccx-empty-cwd__" />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("@zznomatch");
+    await waitFor(() => frame(lastFrame).includes("@zznomatch"));
+    stdin.write("\x1b");                                      // ONE press
+    await waitFor(() => frame(lastFrame).includes("Esc again to clear"));
+  });
+
   it("(g) ctrl+d exits only on an empty buffer, and only on the second press inside the arm window", async () => {
     let exits = 0;
     const { stdin, lastFrame } = renderWithKeymap(<ChatComposer onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} onExit={() => { exits++; }} />);

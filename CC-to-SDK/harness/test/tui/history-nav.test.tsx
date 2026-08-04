@@ -157,6 +157,9 @@ describe("the reducer's import graph stays filesystem-free (t7 review, I2)", () 
     const files = [...closure("editor.ts")];
     expect(files).toContain("editorHistory.ts");
     expect(files).toContain("promptMode.ts");
+    // F5 t9's trigger-scan split. Named explicitly (t9 review, M6): the walk below would have covered it
+    // silently, and a silent cover is exactly how a module drops out of the closure and nobody notices.
+    expect(files).toContain("completionTriggers.ts");
     expect(files).not.toContain("promptHistory.ts");
     const offenders = files.filter((f) => {
       let src: string;
@@ -168,6 +171,11 @@ describe("the reducer's import graph stays filesystem-free (t7 review, I2)", () 
   it("promptMode.ts is a true leaf — no imports at all", () => {
     const src = readFileSync(new URL("promptMode.ts", ROOT), "utf8");
     expect(src).not.toMatch(/^\s*import\b/m);
+  });
+  it("completionTriggers.ts is a true leaf too — its header claims zero imports, so pin it", () => {
+    const src = readFileSync(new URL("completionTriggers.ts", ROOT), "utf8");
+    expect(src).not.toMatch(/^\s*import\b/m);
+    expect(src).not.toMatch(/^\s*export\b[^\n]*\bfrom\b/m);
   });
 });
 

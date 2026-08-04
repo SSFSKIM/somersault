@@ -7,7 +7,7 @@ import { executesOnEnter, rankCommands, type CommandEntry } from "./commandCompl
 // F5 task 9: the two trigger regexes and the denylist moved out to their own leaf (the plan's second
 // pre-allocated split). Same reason promptMode.ts exists — one derivation of "is a popup open here", shared
 // by every edit and every motion, in a module with no imports at all.
-import { mentionInsertion, scanCommand, scanMention, type CommandTrigger, type MentionTrigger } from "./completionTriggers.js";
+import { isCommandToken, mentionInsertion, scanCommand, scanMention, type CommandTrigger, type MentionTrigger } from "./completionTriggers.js";
 import { CHIP_CHARS, chipContaining, chipEndingAt, chipStartingAt, deleteTokenBefore, ingestPaste, snapOut, substituteChips } from "./pasteChips.js";
 // F5 task 7: the history WALK moved out to its own module (the plan's pre-allocated split), leaving this file
 // the buffer reducer it is. Same deliberate module cycle pasteChips.ts documents — editorHistory imports
@@ -59,7 +59,8 @@ export interface EditorState {
   pasteCounter: number;                                      // monotonic id source for the next chip
   hasUsedBackslashReturn: boolean;                           // CM18: upstream's persisted `markBackslashReturnUsed`
   mention: MentionState | null; command: CommandState | null;
-  /** Upstream's `Se.current` (bundle L490831/L490864): the buffer text `autocomplete:dismiss` was pressed on.
+  /** Upstream's `Se.current` (parked by `autocomplete:dismiss` at bundle L491063, checked and cleared by the
+   *  recompute effect at L490831–36): the buffer text the dismissal was pressed on.
    *  The trigger scan no-ops while the text still equals it, so Escape stays dismissed until the user TYPES
    *  something — which matters here more than upstream, because our scan also runs on cursor motions. */
   completionDismissed: string | null;
@@ -306,8 +307,16 @@ export function withBufferText(s: EditorState, t: string): EditorState { return 
 // F5 task 9. Before this, a popup OPENED on one keystroke (`/` into an empty buffer, `@` at a word boundary)
 // and then survived on a refresh that only ever narrowed. Upstream has no open/refresh pair at all: it
 // re-derives both popups from (text, caret) on every change (`Be`, bundle L490611) and the popup is simply
-// whatever that scan currently says. This is that — one scan, run on every edit AND every motion, with no
-// state of its own beyond the catalog/file lists the composer feeds in.
+// whatever that scan currently says. This is that — one scan, with no state of its own beyond the
+// catalog/file lists the composer feeds in.
+//
+// WHERE it runs, precisely (t9 review, M5): every text edit, and every HORIZONTAL caret motion — the
+// arrow/word/line-end/kill/delete arms all route through `syncCompletions`, which is what lets a Ctrl-A out
+// of a token close the popup and a Ctrl-E back in reopen it. The VERTICAL arms do not rescan: `onUp`/`onDown`
+// are consumed by an active popup (they move its selection) and otherwise walk history or move the caret to
+// another row, and every one of those paths either replaces the buffer or leaves the popup where the last
+// horizontal scan put it. Escape additionally PARKS the text it dismissed (`completionDismissed`), so a
+// motion after a dismissal cannot rescan the popup back into existence.
 
 /** Upstream scans (whole input, flat caret); our buffer is rows. Both trigger regexes exclude `\n` from their
  *  token classes and both count it as the whitespace that OPENS a trigger, so scanning the caret's row behind
@@ -359,6 +368,31 @@ function syncCompletions(s: EditorState): EditorState {
 }
 
 // ─── autocomplete: navigation and acceptance ─────────────────────────────────────────────────────────────
+/** Is there a LIST to move around in and accept from? Ours used to ask whether the popup state existed at
+ *  all, so a `@zz` that matched no file — invisible, since the component draws nothing for an empty list —
+ *  still swallowed Up, Down, Tab and Escape: no history walk, no cancel (t9 review, I2). Upstream's own
+ *  predicate is `Lt = c.length > 0 || !!Y` (bundle L491072), gating `hf("autocomplete", Lt)`,
+ *  `cut("Autocomplete", Lt)` and the binding set on the same line. Every nav/accept arm below goes through
+ *  these two, and they are also what makes `moveCommand`/`acceptCommand` safe to write without guards. */
+export const commandActive = (s: EditorState): boolean => (s.command?.items.length ?? 0) > 0;
+export const mentionActive = (s: EditorState): boolean => (s.mention?.items.length ?? 0) > 0;
+/** CM38 (bundle L490779), and its two upstream guards: a partial name exists (`mt.length > 1`) and that name
+ *  is a plain command token (`KJa`). Lives here rather than in the component because it is also half of
+ *  `completionActive` — the message being on screen is a fact about the MODEL, and the renderer and the key
+ *  router have to read it from the same place or they disagree about what is showing. */
+export function commandEmptyMessage(s: EditorState): string | null {
+  const c = s.command;
+  if (!c || c.items.length > 0 || !c.query || !isCommandToken(c.query)) return null;
+  return `No commands match "/${c.query}"`;
+}
+/** What the `Autocomplete` SCOPE and the Escape arm key off: anything a popup actually DRAWS. Wider than
+ *  `commandActive`/`mentionActive` by exactly one case — the empty-list command popup that is still showing
+ *  CM38's message. Upstream never needs the distinction because its `Lt` covers the same ground with the
+ *  ghost-text term `|| !!Y`; ours has no ghost text, and the empty message is the thing that is visible.
+ *  Getting this wrong in either direction is a live bug: too narrow and Escape cannot dismiss a message the
+ *  user is looking at, too wide and an invisible popup eats the cancel. */
+export const completionActive = (s: EditorState): boolean =>
+  commandActive(s) || mentionActive(s) || commandEmptyMessage(s) !== null;
 /** CM29, bundle L491065/L491067: `selectedSuggestion <= 0 ? c.length - 1 : …- 1` and
  *  `>= c.length - 1 ? 0 : …+ 1` — both popups wrap in both directions. Ours clamped, so the last entry of a
  *  105-command catalog was five presses from the first the long way and unreachable the short way. */
@@ -366,19 +400,19 @@ function moveSuggestion(index: number, delta: number, length: number): number {
   return (index + delta + length) % length;
 }
 function moveMention(s: EditorState, delta: number): EditorState {
-  const m = s.mention!; if (m.items.length === 0) return s;
+  const m = s.mention!;
   return { ...s, mention: { ...m, index: moveSuggestion(m.index, delta, m.items.length) } };
 }
 function moveCommand(s: EditorState, delta: number): EditorState {
-  const c = s.command!; if (c.items.length === 0) return s;
+  const c = s.command!;
   return { ...s, command: { ...c, index: moveSuggestion(c.index, delta, c.items.length) } };
 }
 /** The `H === "file"` accept (bundle L491017–L491027). Note what is NOT in that branch: `onSubmit`. Accepting
  *  a file mention inserts and stops, on Tab and on Enter alike — the only accept arm that never executes. */
 function acceptMention(s: EditorState): EditorState {
-  const m = s.mention; if (!m || m.items.length === 0) return { ...s, mention: null };
+  const m = s.mention!;                                          // only reached via `mentionActive`, so non-empty
   const chosen = m.items[Math.min(m.index, m.items.length - 1)];
-  const repl = mentionInsertion(chosen.path);
+  const repl = mentionInsertion(chosen.path, m.quoted);
   const line = s.lines[m.span.row]; const lines = [...s.lines];
   lines[m.span.row] = line.slice(0, m.span.start) + repl + line.slice(m.span.end);
   return { ...s, lines, cursor: { row: m.span.row, col: m.span.start + repl.length }, mention: null };
@@ -403,11 +437,7 @@ export function setCommandCatalog(s: EditorState, catalog: CommandEntry[]): Edit
  *  buffer replacement, the token being the whole line), execution only on the head arm. Submitting `/name`
  *  out of `see /model` would otherwise throw away the `see`. */
 function acceptCommand(s: EditorState, execute: boolean): EditorResult {
-  const c = s.command!;
-  // Nothing to complete (the popup is showing CM38's empty message): Enter still sends what was typed, which
-  // is how an unknown `/name` reaches the dispatcher and gets its error. `submitTurn` sends the buffer, so it
-  // is also right for a mid-text trigger, where "/" + the query would be a truncation.
-  if (c.items.length === 0) return execute ? submitTurn({ ...s, command: null }) : { state: { ...s, command: null } };
+  const c = s.command!;                                          // only reached via `commandActive`, so non-empty
   const chosen = c.items[Math.min(c.index, c.items.length - 1)];
   const repl = "/" + chosen.name + " ";
   const line = s.lines[c.span.row]; const lines = [...s.lines];
@@ -422,8 +452,19 @@ function acceptCommand(s: EditorState, execute: boolean): EditorResult {
 }
 // The walk takes the CURRENT input mode as an argument (see editorHistory.ts): it decides CM55's latch and
 // rides along on every parked edit, and `inputMode` is this file's to compute.
-function onUp(s: EditorState): EditorState { if (s.command) return moveCommand(s, -1); if (s.mention) return moveMention(s, -1); if (s.cursor.row === 0) return historyPrev(s, inputMode(s)); return moveCursorVert(s, -1); }
-function onDown(s: EditorState): EditorState { if (s.command) return moveCommand(s, 1); if (s.mention) return moveMention(s, 1); if (s.cursor.row === s.lines.length - 1) return historyNext(s, inputMode(s)); return moveCursorVert(s, 1); }
+// An INACTIVE popup (present in state, nothing in its list) declines these, so ↑/↓ reach the history walk
+// exactly as they would with no popup at all — see `commandActive`. Both non-popup paths then rescan: the
+// history walk replaced the buffer, and a vertical caret move left any span pointing at the wrong row.
+function onUp(s: EditorState): EditorState {
+  if (commandActive(s)) return moveCommand(s, -1);
+  if (mentionActive(s)) return moveMention(s, -1);
+  return syncCompletions(s.cursor.row === 0 ? historyPrev(s, inputMode(s)) : moveCursorVert(s, -1));
+}
+function onDown(s: EditorState): EditorState {
+  if (commandActive(s)) return moveCommand(s, 1);
+  if (mentionActive(s)) return moveMention(s, 1);
+  return syncCompletions(s.cursor.row === s.lines.length - 1 ? historyNext(s, inputMode(s)) : moveCursorVert(s, 1));
+}
 
 function clearInput(s: EditorState): EditorState {           // Ctrl-L = CC chat:clearInput (screen clear stays /clear)
   return { ...s, lines: [""], cursor: { row: 0, col: 0 }, pastedContents: {}, mention: null, command: null };
@@ -495,14 +536,18 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags, rows?: numb
     // not insert a newline under a backslash the user meant as the continuation marker (t2 review, Minor).
     if (continuesLine(s)) return { state: continueLine(s) };
     if (key.shift) return { state: insertText(s, "\n") };
-    if (s.command) return acceptCommand(s, true);
-    if (s.mention) return { state: acceptMention(s) };
+    // An INACTIVE command popup falls through to `submitTurn`, which sends the buffer — which is both how an
+    // unknown `/name` reaches the dispatcher and gets its error, and the only right answer for a mid-text
+    // trigger, where `/` + the query would be a truncation.
+    if (commandActive(s)) return acceptCommand(s, true);
+    if (mentionActive(s)) return { state: acceptMention(s) };
     return submitTurn(s);
   }
-  if (key.tab) { if (s.command) return acceptCommand(s, false); return { state: s.mention ? acceptMention(s) : s }; }
-  // `autocomplete:dismiss` (`at`, bundle L490863): close, and PARK the text it was closed on — see
+  if (key.tab) { if (commandActive(s)) return acceptCommand(s, false); return { state: mentionActive(s) ? acceptMention(s) : s }; }
+  // `autocomplete:dismiss` (`at`, bundle L491062): close, and PARK the text it was closed on — see
   // `completionDismissed`. Without the park the very next arrow key would re-open what Escape just dismissed.
-  if (key.escape) { if (s.command || s.mention) return { state: { ...s, command: null, mention: null, completionDismissed: bufferText(s) } }; return { state: s }; }
+  // An inactive popup declines, so the Escape falls through to the composer's cancel.
+  if (key.escape) { if (completionActive(s)) return { state: { ...s, command: null, mention: null, completionDismissed: bufferText(s) } }; return { state: s }; }
   // CM12, bundle L395791: `backspace` is `deleteTokenBefore() ?? backspace()` — a chip goes in one keystroke.
   // `delete` is upstream's forward `del()`; this port has always aliased it to backspace, so it shares the arm.
   if (key.backspace || key.delete) return { state: syncCompletions(deleteTokenBefore(s) ?? deleteLeft(s)) };

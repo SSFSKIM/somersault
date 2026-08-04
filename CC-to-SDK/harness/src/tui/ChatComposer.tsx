@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { readdirSync } from "node:fs";
-import { applyKey, bufferText, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
+import { applyKey, bufferText, commandEmptyMessage, completionActive, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
 import { applyQueueDrain } from "./queue.js";
 import { cachedExampleFiles, examplePool, pickPlaceholder, QUEUED_UP_HINT } from "./placeholder.js";
 import { loadPrefs, savePrefs } from "./prefs.js";
@@ -12,7 +12,6 @@ import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
 import { composerMode } from "./promptMode.js";
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
-import { isCommandToken } from "./completionTriggers.js";
 import { editExternalAsync as realEditExternal } from "./externalEditor.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, newlineHint } from "./composerFrame.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
@@ -101,13 +100,13 @@ export interface PlaceholderMemo { files?: string[]; draws: number[] }
 // handed down as props: this is a leaf render helper, and one lookup in the composer serves both popups.
 function CommandPopup({ state, acceptKey, dismissKey }: { state: EditorState; acceptKey: string; dismissKey: string }) {
   const c = state.command!;
-  // CM38 (bundle L490779): `suggestionsEmptyMessage` is `No commands match "${mt}"` where `mt` is the whole
-  // slash input — verbatim, quotes included. Upstream sets it only when there IS a partial name
-  // (`mt.length > 1`) and that name is a plain command token (`KJa`), so a bare `/` against an empty list
-  // renders nothing rather than an empty-quoted complaint.
-  if (c.items.length === 0) return c.query && isCommandToken(c.query)
-    ? <Box paddingX={1}><Text dimColor>{`No commands match "/${c.query}"`}</Text></Box>
-    : null;
+  // CM38's message and its two upstream guards live in `commandEmptyMessage` (editor.ts), not here: the key
+  // router has to know whether this message is on screen too, and one derivation is the only way the two
+  // cannot disagree (t9 review, I2).
+  if (c.items.length === 0) {
+    const empty = commandEmptyMessage(state);
+    return empty ? <Box paddingX={1}><Text dimColor>{empty}</Text></Box> : null;
+  }
   const start = Math.max(0, Math.min(c.index - 3, Math.max(0, c.items.length - COMMAND_ROWS)));
   const visible = c.items.slice(start, start + COMMAND_ROWS);
   return (
@@ -342,7 +341,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // load-bearing: `handleKey` re-checks the live popup state from the ref, which is what keeps two keys
   // arriving in ONE chunk (no render in between, so the scope flag is one render stale) correct.
   useKeyScope("Chat");
-  useKeyScope("Autocomplete", { active: !!(state.command || state.mention) });
+  // Upstream's own predicate is `c.length > 0 || !!Y` (bundle L491072) — a popup with an EMPTY list holds
+  // no keys, because it draws nothing (t9 review, I2). Keying this on the state instead meant an `@zz` that
+  // matched no file silently ate Up, Down, Tab and Escape.
+  useKeyScope("Autocomplete", { active: completionActive(state) });
   const bindings = useBindingLookup();                 // the footer ladder below reads its chords from here
   const pasting = usePasting();                        // CM25: a bracketed paste still arriving (provider-owned)
   // Read stateRef.current (NOT the closure `state`): the provider dispatches from a listener attached in a
@@ -446,7 +448,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // a popup closed and Escape arrives in the SAME stdin chunk, and this live re-read of the popup state is
     // what keeps that case correct (the scope ordering above is belt-and-braces). With no popup live, an
     // Escape that resolved as the popup's dismissal is the cancel.
-    if (!s.command && !s.mention && key.escape) { cancel(); return; }
+    if (!completionActive(s) && key.escape) { cancel(); return; }
     if (clearArm.current) disarmClear();
     // CM48: the queue is asked BEFORE the editor sees the key, so a pending queue always wins Up/ctrl+p over
     // the history walk (upstream's `Uge` reaches `Z2()` only when the queue declined). Both keys route here
@@ -513,7 +515,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   useKeyActions({
     // A popup owns its own dismissal; with none live this IS the cancel (see `cancel()` and the note in
     // `handleKey`). The event is only consulted for that one question, never for which action fired.
-    "chat:cancel": (e) => { if (stateRef.current.command || stateRef.current.mention) { handleKey(e); return; } cancel(); },
+    "chat:cancel": (e) => { if (completionActive(stateRef.current)) { handleKey(e); return; } cancel(); },
     // The ONE action here whose operation lives in the editor reducer (editor.ts's `clearInput`, reachable
     // only through `applyKey`'s ctrl+l case). So it re-enters `handleKey` on the event ctrl+l would have
     // produced rather than on the key that fired: under the default binding that IS the event, byte for byte,

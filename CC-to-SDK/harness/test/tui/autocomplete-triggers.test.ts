@@ -1,7 +1,7 @@
 // F5 task 9 — the autocomplete TRIGGER contract (when a popup opens, over what span) and the ACCEPT contract
 // (Tab vs Enter, wrapping, the empty-state string). The bundle sites these pin are cited per block.
 import { describe, expect, it } from "vitest";
-import { applyKey, initialEditorState, setCommandCatalog, setMentionFiles, type EditorState } from "../../src/tui/editor.js";
+import { applyKey, commandActive, commandEmptyMessage, completionActive, initialEditorState, setCommandCatalog, setMentionFiles, type EditorState } from "../../src/tui/editor.js";
 import type { CommandEntry } from "../../src/tui/commandComplete.js";
 import { COMMAND_DENYLIST, denylistedCommand, mentionInsertion, scanCommand, scanMention } from "../../src/tui/completionTriggers.js";
 
@@ -41,6 +41,10 @@ describe("completionTriggers — scanners (bundle Pli L489935, ARb L491153)", ()
     expect(scanCommand("/mod", 0)).toBeNull();               // upstream's `kt > 0`
     expect(scanCommand("/mod args", 4)).toBeNull();          // a space ends the name
   });
+  it("the head arm needs the scanned text to BE the whole buffer (upstream feeds YRr the whole input)", () => {
+    expect(scanCommand("/mod", 4, "/mod")).not.toBeNull();
+    expect(scanCommand("/mod", 4, "/mod\nfoo")).toBeNull();      // row 0 of a multiline buffer
+  });
   it("tRb: the denylist suppresses the trigger on both arms, and holds the exact six names", () => {
     expect([...COMMAND_DENYLIST].sort()).toEqual(["add-dir", "cd", "marketplace", "plugin", "plugins", "resume"]);
     expect(denylistedCommand("/resume")).toBe(true);
@@ -57,9 +61,11 @@ describe("completionTriggers — scanners (bundle Pli L489935, ARb L491153)", ()
     expect(scanMention("@\"my file", 9)).toEqual({ start: 0, end: 9, query: "my file", quoted: true });
     expect(scanMention("@\"my file\"", 10)).toEqual({ start: 0, end: 10, query: "my file", quoted: true });
   });
-  it("oQa/needsQuotes: a path with a space inserts quoted", () => {
+  it("oQa: EITHER needsQuotes or isQuoted picks the quoted form (`if (i || o)`, L490426)", () => {
     expect(mentionInsertion("src/a.ts")).toBe("@src/a.ts ");
-    expect(mentionInsertion("my docs/a.ts")).toBe("@\"my docs/a.ts\" ");
+    expect(mentionInsertion("my docs/a.ts")).toBe("@\"my docs/a.ts\" ");          // needsQuotes
+    expect(mentionInsertion("src/a.ts", true)).toBe("@\"src/a.ts\" ");            // isQuoted
+    expect(mentionInsertion("my docs/a.ts", true)).toBe("@\"my docs/a.ts\" ");
   });
 });
 
@@ -170,6 +176,62 @@ describe("acceptance — Tab vs Enter (CM28: XJa L490110, Tab L490855, Enter L49
     s = setMentionFiles(s, ["my docs/a.ts"]);
     const r = applyKey(s, "", { tab: true });
     expect(text(r.state)).toBe("@\"my docs/a.ts\" ");
+  });
+});
+
+describe("t9 review fixes", () => {
+  it("I1: a multiline buffer with the caret back on row 0 opens NO head popup, and Enter cannot eat row 1", () => {
+    let s = initialEditorState();
+    for (const ch of "/model") s = type(s, ch);
+    s = applyKey(s, "", { return: true, shift: true }).state;      // newline, not a submit
+    for (const ch of "foo") s = type(s, ch);
+    expect(text(s)).toBe("/model\nfoo");
+    s = press(s, { upArrow: true });                               // caret to row 0, inside "/model"
+    expect(s.cursor.row).toBe(0);
+    s = s.command ? setCommandCatalog(s, CAT) : s;
+    expect(s.command).toBeNull();                                  // the head arm is gated on the WHOLE buffer
+    const r = applyKey(s, "", { return: true });
+    expect(r.submit).toBe("/model\nfoo");                          // an ordinary turn — "foo" intact
+  });
+  it("I2: an EMPTY popup holds no keys — Up walks history, Escape is not eaten", () => {
+    const hist = [{ display: "earlier prompt", mode: "normal" as const }];
+    let s = initialEditorState(hist);
+    for (const ch of "@zz") s = type(s, ch);
+    expect(s.mention).not.toBeNull();                              // state present…
+    expect(s.mention!.items.length).toBe(0);                       // …but nothing in it
+    expect(completionActive(s)).toBe(false);
+    const up = press(s, { upArrow: true });
+    expect(text(up)).toBe("earlier prompt");                       // the history walk ran, not a selection move
+    const esc = applyKey(s, "", { escape: true });
+    expect(esc.state).toBe(s);                                     // untouched — the composer's cancel gets it
+    expect(applyKey(s, "", { tab: true }).state).toBe(s);
+  });
+  it("I2: an empty COMMAND popup lets Enter submit the buffer, but its VISIBLE message still takes Escape", () => {
+    let s = initialEditorState();
+    for (const ch of "/nosuchcommand") s = type(s, ch);
+    s = setCommandCatalog(s, CAT);
+    expect(s.command!.items.length).toBe(0);
+    // The two predicates split here, and the split is the point: there is no list to accept from, but CM38's
+    // message IS on screen, so the popup still owns the key that dismisses it.
+    expect(commandActive(s)).toBe(false);
+    expect(commandEmptyMessage(s)).toBe('No commands match "/nosuchcommand"');
+    expect(completionActive(s)).toBe(true);
+    expect(applyKey(s, "", { return: true }).submit).toBe("/nosuchcommand");
+    expect(applyKey(s, "", { escape: true }).state.command).toBeNull();
+  });
+  it("I2: a bare '/' against an empty catalog draws nothing and holds nothing", () => {
+    const s = type(initialEditorState(), "/");
+    expect(s.command).not.toBeNull();
+    expect(commandEmptyMessage(s)).toBeNull();                     // upstream's `mt.length > 1` guard
+    expect(completionActive(s)).toBe(false);
+    expect(applyKey(s, "", { escape: true }).state).toBe(s);
+  });
+  it("M3: a quoted trigger inserts the quoted form even when the path has no space", () => {
+    let s = initialEditorState();
+    for (const ch of "@\"src") s = type(s, ch);
+    expect(s.mention!.quoted).toBe(true);
+    s = setMentionFiles(s, ["src/app.ts"]);
+    expect(text(applyKey(s, "", { tab: true }).state)).toBe("@\"src/app.ts\" ");
   });
 });
 

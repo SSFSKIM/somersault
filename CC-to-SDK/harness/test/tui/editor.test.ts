@@ -347,8 +347,11 @@ describe("word movement (Alt/Option)", () => {
 // These tests use that realistic shape so a regression of the too-broad `if (key.meta)` branch fails here.
 describe("meta co-occurring with escape/backspace (Ink's real key shape)", () => {
   it("Escape delivered as {meta:true, escape:true} still closes an open '/' command popup", () => {
-    const s = type(initialEditorState(), "/");
-    expect(s.command).not.toBeNull();
+    // F5 t9 review (I2): the popup needs real ITEMS to hold Escape now — a bare `/` against an empty catalog
+    // draws nothing and deliberately lets the key through to the composer's cancel. This test is about the
+    // meta+escape key SHAPE, so give it a genuinely open popup.
+    const s = setCommandCatalog(type(initialEditorState(), "/"), [{ name: "model", description: "", source: "local" }]);
+    expect(s.command!.items.length).toBe(1);
     const r = applyKey(s, "", { meta: true, escape: true });
     expect(r.state.command).toBeNull();
   });

@@ -26,7 +26,12 @@ export function denylistedCommand(buffer: string): boolean {
  *  match a leading slash (it demands a whitespace/CJK character in front of it), and its `startsWith("/")` arm
  *  is only the denylist guard returning null. Upstream reaches the leading-slash command LIST through a
  *  different branch entirely — `YRr(mt) && kt > 0` at L490747, keyed on the whole input rather than on `Pli` —
- *  and that branch is what this arm transcribes, including its `cursor > 0`. */
+ *  and that branch is what this arm transcribes, including its `cursor > 0` — and including the fact that
+ *  the input it reads is the WHOLE buffer. `scanCommand` is handed one ROW at a time, so the arm additionally
+ *  demands `text === buffer`: upstream's `YRr` feeds the whole input to `KJa`, whose class rejects `\n`, so a
+ *  multiline buffer can never reach the leading-slash list. Without that check `["/model", "foo"]` with the
+ *  caret arrowed back to row 0 opened the head popup, and Enter submitted `/model` and destroyed `foo` —
+ *  the head accept replaces the whole buffer by construction (t9 review, I1). */
 const COMMAND_HEAD = /^\/(\S*)$/;
 /** `Pli`'s trigger (bundle L489941) and the token class it extends with (L489943). */
 const COMMAND_TRIGGER = /[\s。、？！]\/([a-zA-Z0-9._:-]*)$/;
@@ -52,7 +57,7 @@ export interface MentionTrigger { start: number; end: number; query: string; quo
 export function scanCommand(text: string, cursor: number, buffer: string = text): CommandTrigger | null {
   if (denylistedCommand(buffer)) return null;
   const head = COMMAND_HEAD.exec(text);
-  if (head && cursor > 0) return { start: 0, end: text.length, query: head[1], head: true };
+  if (head && cursor > 0 && text === buffer) return { start: 0, end: text.length, query: head[1], head: true };
   const m = COMMAND_TRIGGER.exec(text.slice(0, cursor));
   if (!m || m.index === undefined) return null;
   const start = m.index + 1;                                 // upstream's `o`: the `/`, one past the boundary char
@@ -81,9 +86,12 @@ export function scanMention(text: string, cursor: number): MentionTrigger | null
   return { start, end: start + 1 + whole.length, query: whole, quoted: false };
 }
 
-/** `oQa` (bundle L490424) as the `H === "file"` accept calls it (L491112): `isComplete` adds the trailing
- *  space, and `needsQuotes` — `kt.displayText.includes(" ")` — picks the `@"…"` form, which is the only way a
- *  path with a space survives the round trip back through `ARb`. */
-export function mentionInsertion(path: string): string {
-  return path.includes(" ") ? `@"${path}" ` : `@${path} `;
+/** `oQa` (bundle L490424) as the two file accepts call it (L490938 and L491021): `isComplete` adds the
+ *  trailing space, and the quoted `@"…"` form is picked by `if (i || o)` (L490426) — EITHER argument, where
+ *  `o` is `needsQuotes` (`kt.displayText.includes(" ")`, the only way a path with a space survives the round
+ *  trip back through `ARb`) and `i` is `isQuoted`, the flag the SCANNER set because the user opened a quote.
+ *  Both accept sites pass both. Honouring only `needsQuotes` meant `@"src` + Tab on `src/app.ts` inserted a
+ *  bare `@src/app.ts ` and silently dropped the quote the user had typed (t9 review, M3). */
+export function mentionInsertion(path: string, quoted = false): string {
+  return quoted || path.includes(" ") ? `@"${path}" ` : `@${path} `;
 }
