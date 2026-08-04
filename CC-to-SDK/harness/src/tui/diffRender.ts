@@ -7,12 +7,13 @@
 //   `chH`  L420004–420029 — the numbering, including the remove-run REWIND that puts a paired remove/add block
 //                           on the same line numbers
 //   `shH`  L419906–419943 — remove-run/add-run pairing, k-th to k-th
-//   `lhH`  L419944–419986 — the word diff and its `ohH = 0.4` bail (L420030)
+//   `lhH`  L419947–419986 — the word diff and its `ohH = 0.4` bail (L420030)
 //
 // THE CAP IS GONE. F1's `toolDiffLines` capped a body at 24 rows and appended `… N more lines`; upstream caps
 // nothing — a diff renders whole, and the only elision it has are the three early returns in `fbn` (previewHint,
-// condensed, collapsed), none of which our wire can reach. So this returns every row it is given, and the
-// transcript's existing fold/expand machinery is the only thing that ever shortens a body.
+// condensed, collapsed), none of which our wire can reach. So this returns every row it is given, uncut — and
+// nothing downstream cuts it either: `toolRenderer` emits typed rows before `foldToolOutput` is ever consulted,
+// so a long diff renders whole, exactly as upstream's does.
 //
 // TWO PACK CORRECTIONS TO THE CENSUS are implemented literally rather than as the census described them:
 //   1. a context row's NUMBER GUTTER is dim, its CONTENT is not (`H2p`'s two spans carry different `dimColor`
@@ -106,8 +107,10 @@ const markerOf = (kind: DiffLineRow["kind"]): string => (kind === "add" ? "+" : 
 const bandOf = (kind: DiffLineRow["kind"], tokens: ThemeTokens): string | undefined =>
   kind === "add" ? resolveThemeColor(tokens.diffAdded) : kind === "remove" ? resolveThemeColor(tokens.diffRemoved) : undefined;
 /** `bg` is omitted rather than set to `undefined` on a context row: a segment with no band must be
- *  indistinguishable from one that never had the field. */
-const banded = (text: string, band: string | undefined, extra?: { dim: true }): Segment => ({ text, ...(band === undefined ? {} : { bg: band }), ...extra });
+ *  indistinguishable from one that never had the field. `fg` is NOT optional: upstream forces every span's
+ *  foreground to the theme's `text` color (L419986 / L420000 — the `is()[0]` term is a theme name, always
+ *  truthy), so a band never inherits ink's default foreground. */
+const banded = (text: string, band: string | undefined, fg: string, extra?: { dim: true }): Segment => ({ text, color: fg, ...(band === undefined ? {} : { bg: band }), ...extra });
 
 /** Upstream `lhH` (L419944). `null` is its bail — a changed fraction above `ohH`, which falls back to the
  *  whole-line banding in `H2p`. (Its other bail arm is the whole-diff `dim` flag: upstream sets that only for
@@ -117,7 +120,7 @@ function wordDiffRows(kind: "add" | "remove", text: string, partner: string, num
   const parts = diffWords(oldText, newText, { ignoreCase: false });
   const changed = parts.filter((p) => p.added === true || p.removed === true).reduce((sum, p) => sum + p.value.length, 0);
   if (changed / (oldText.length + newText.length) > WORD_BAIL) return null;
-  const marker = markerOf(kind), band = bandOf(kind, tokens);
+  const marker = markerOf(kind), band = bandOf(kind, tokens), fg = resolveThemeColor(tokens.text);
   const wordBand = resolveThemeColor(kind === "add" ? tokens.diffAddedWord : tokens.diffRemovedWord);
   // `_ = y.length` = 1, so this is `width - gutter - 2` — ONE column wider than the plain path below.
   const limit = Math.max(1, width - (g.prefix.length + g.pad) - 1 - marker.length);
@@ -132,7 +135,7 @@ function wordDiffRows(kind: "add" | "remove", text: string, partner: string, num
     for (const [index, piece] of wrapRows(part.value, limit).entries()) {
       if (piece === "") continue;
       if ((index > 0 || used + stringWidth(piece) > limit) && current.length > 0) { groups.push({ content: current, contentWidth: used }); current = []; used = 0; }
-      current.push(banded(piece, own ? wordBand : band));
+      current.push(banded(piece, own ? wordBand : band, fg));
       used += stringWidth(piece);
     }
   }
@@ -140,14 +143,14 @@ function wordDiffRows(kind: "add" | "remove", text: string, partner: string, num
   return groups.map(({ content, contentWidth }, index) => {
     const cell = numberCell(g, index === 0 ? number : undefined);
     const fill = Math.max(0, width - (cell.length + marker.length + contentWidth));
-    return row(banded(cell + marker, band), ...content, banded(" ".repeat(fill), band));
+    return row(banded(cell + marker, band, fg), ...content, banded(" ".repeat(fill), band, fg));
   });
 }
 
 /** Upstream `H2p`'s per-row body (L419996–420001): wrap at `width - gutter - 3`, emit the number cell + marker
  *  as its own span, then the content plus a right fill that runs the band out to the full width. */
 function plainRows(kind: DiffLineRow["kind"], text: string, number: number, width: number, g: Gutter, tokens: ThemeTokens): RenderLine[] {
-  const marker = markerOf(kind), band = bandOf(kind, tokens);
+  const marker = markerOf(kind), band = bandOf(kind, tokens), fg = resolveThemeColor(tokens.text);
   const limit = Math.max(1, width - (g.prefix.length + g.pad) - 1 - 2);
   return wrapRows(text, limit).map((piece, index) => {
     const cell = numberCell(g, index === 0 ? number : undefined);
@@ -155,7 +158,7 @@ function plainRows(kind: DiffLineRow["kind"], text: string, number: number, widt
     // The two spans' `dimColor` expressions DIFFER, and that difference is the pack's correction to the
     // census: `n || p === "nochange"` on the gutter, bare `n` on the content. With `n` false throughout,
     // that means a context row's number is dim and its text is not.
-    return row(banded(cell + marker, band, kind === "context" ? { dim: true } : undefined), banded(piece + " ".repeat(fill), band));
+    return row(banded(cell + marker, band, fg, kind === "context" ? { dim: true } : undefined), banded(piece + " ".repeat(fill), band, fg));
   });
 }
 

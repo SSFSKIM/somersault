@@ -10,6 +10,7 @@ import { diffHeader, renderDiff } from "../../src/tui/diffRender.js";
 import type { DiffLineRow, ResolvedPatch } from "../../src/tui/diffSource.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 
+const TEXT = () => resolveThemeColor(themeTokens().text);
 const ADDED = () => resolveThemeColor(themeTokens().diffAdded);
 const REMOVED = () => resolveThemeColor(themeTokens().diffRemoved);
 const ADDED_WORD = () => resolveThemeColor(themeTokens().diffAddedWord);
@@ -64,11 +65,11 @@ describe("renderDiff — numbering (`chH`, L420004)", () => {
 });
 
 describe("renderDiff — bands and dimming (`H2p`, L419987–420003)", () => {
-  it("paints add/remove rows with the theme's diff bands, right-padded to the FULL width", () => {
+  it("paints add/remove rows with the theme's diff bands, right-padded to the FULL width — every span carrying the FORCED `text` foreground (L420000: the `is()[0]` term is always truthy, so a band never inherits ink's default)", () => {
     const out = renderDiff(patchOf([{ oldStart: 1, rows: [r("add", "hi")] }]), 20);
     expect(out).toEqual([{
       text: " 1 +hi              ",
-      segments: [{ text: " 1 +", bg: ADDED() }, { text: "hi              ", bg: ADDED() }],
+      segments: [{ text: " 1 +", color: TEXT(), bg: ADDED() }, { text: "hi              ", color: TEXT(), bg: ADDED() }],
     }]);
     expect(out[0]!.text).toHaveLength(20);
   });
@@ -76,7 +77,7 @@ describe("renderDiff — bands and dimming (`H2p`, L419987–420003)", () => {
     const out = renderDiff(patchOf([{ oldStart: 5, rows: [r("context", "ctx")] }]), 20);
     expect(out).toEqual([{
       text: " 5  ctx             ",
-      segments: [{ text: " 5  ", dim: true }, { text: "ctx             " }],
+      segments: [{ text: " 5  ", color: TEXT(), dim: true }, { text: "ctx             ", color: TEXT() }],
     }]);
   });
 });
