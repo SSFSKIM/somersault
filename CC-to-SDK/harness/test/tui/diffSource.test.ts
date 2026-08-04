@@ -42,6 +42,21 @@ describe("resolvePatch — branch 1, the recognized sidecar", () => {
     expect(derived.numbering).toBe("approximate");
     expect({ added: derived.added, removed: derived.removed }).toEqual({ added: 1, removed: 1 });
   });
+  // The recognition-drift pin. `patchLineCounts` alone is STRICTLY LOOSER than the gate the Edit/Write header
+  // runs: toolResult's `editShape`/`writeShape` demand `filePath` plus `oldString`/`newString` (or `content`)
+  // BEFORE the counts are taken, so F1 leaves `structured` unset for a bare-`structuredPatch` sidecar and
+  // `editRows` emits no diff-summary row for it. Rung 1 must recognize EXACTLY that set — otherwise this module
+  // hands out confident absolute line numbers for a call the rest of the clone treats as unrecognized.
+  it("gates rung 1 on the editShape/writeShape guard, not on patchLineCounts alone", () => {
+    const bare = { structuredPatch: [{ oldStart: 40, oldLines: 1, newStart: 40, newLines: 1, lines: ["-a", "+b"] }] };
+    expect(resolvePatch({ input: { command: "ls" }, sidecar: bare, readFile: throwingRead })).toBeUndefined();
+    const derived = resolvePatch({ input: { file_path: "/work/a.ts", old_string: "beta", new_string: "BETA" }, sidecar: bare, readFile: () => undefined })!;
+    expect(derived.numbering).toBe("approximate");                              // fell THROUGH to rung 2, not absolute-from-sidecar
+    expect(derived.hunks.every((h) => h.oldStart === undefined)).toBe(true);
+    // A sidecar missing only `newString` is the same miss: half the Edit shape is not the Edit shape.
+    const half = { filePath: "/work/a.ts", oldString: "old", structuredPatch: bare.structuredPatch };
+    expect(resolvePatch({ input: { file_path: "/work/a.ts" }, sidecar: half, readFile: throwingRead })).toBeUndefined();
+  });
 });
 
 describe("resolvePatch — branch 2, the derived + disk-anchored Edit", () => {
@@ -94,6 +109,27 @@ describe("resolvePatch — nothing diffable", () => {
   });
   it("returns undefined for a non-edit tool input", () => {
     expect(resolvePatch({ input: { command: "ls" }, sidecar: undefined, readFile: throwingRead })).toBeUndefined();
+  });
+  // The create exclusion is EXPLICIT rather than a consequence of the census shape carrying an empty
+  // `structuredPatch` (P94 recorded N=1). A create keeps F3's preview-alone row whatever its patch says.
+  it("never routes a Write CREATE sidecar through rung 1 — empty patch or not", () => {
+    const create = (patch: readonly unknown[]) => ({ type: "create", filePath: "/work/new.ts", content: "a\nb\n", structuredPatch: patch });
+    const input = () => ({ file_path: "/work/new.ts", content: "a\nb\n" });
+    expect(resolvePatch({ input: input(), sidecar: create([]), readFile: throwingRead })).toBeUndefined();
+    expect(resolvePatch({ input: input(), sidecar: create([{ oldStart: 1, oldLines: 0, newStart: 1, newLines: 2, lines: ["+a", "+b"] }]), readFile: throwingRead })).toBeUndefined();
+  });
+  // A RECOGNIZED patch that describes no change is answered by rung 1 — with `undefined`. It does NOT fall
+  // through to the derived rung: the sidecar is the better description of the edit, and it says nothing moved.
+  it("returns undefined for a recognized sidecar whose structuredPatch is empty", () => {
+    expect(resolvePatch({ input: { file_path: "/work/a.ts" }, sidecar: shape([]), readFile: throwingRead })).toBeUndefined();
+    expect(resolvePatch({ input: { file_path: "/work/a.ts", old_string: "beta", new_string: "BETA" }, sidecar: shape([]), readFile: throwingRead })).toBeUndefined();
+  });
+  // `input` is unknown-typed tool input at the call site; a non-record must be answered, not thrown on. The
+  // guard runs BEFORE the memo (a primitive is not a legal WeakMap key), so it precedes rung 1 too.
+  it("returns undefined for a non-record input instead of throwing", () => {
+    expect(resolvePatch({ input: undefined as never, sidecar: undefined, readFile: throwingRead })).toBeUndefined();
+    expect(resolvePatch({ input: "not an object" as never, sidecar: undefined, readFile: throwingRead })).toBeUndefined();
+    expect(resolvePatch({ input: undefined as never, sidecar: shape([{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-a", "+b"] }]), readFile: throwingRead })).toBeUndefined();
   });
 });
 

@@ -9,7 +9,7 @@
 // behind. Purely a source resolver: it renders nothing, and Task 7 owns every glyph.
 import { readFileSync } from "node:fs";
 import { structuredPatch } from "diff";
-import { patchLineCounts } from "./toolResult.js";
+import { editShape, patchLineCounts, writeShape } from "./toolResult.js";
 
 export interface DiffLineRow { kind: "add" | "remove" | "context"; text: string; }
 export interface DiffHunk { oldStart: number | undefined; rows: DiffLineRow[]; }
@@ -27,10 +27,13 @@ const lineNumber = (v: unknown): number | undefined => (typeof v === "number" &&
 const rowsFrom = (lines: readonly string[]): DiffLineRow[] =>
   lines.filter((line) => !line.startsWith("\\")).map((line) => ({ kind: line.startsWith("+") ? "add" : line.startsWith("-") ? "remove" : "context", text: line.slice(1) }));
 
-/** Rung 1. Recognition is DELEGATED to `patchLineCounts` — the recognizer the Edit/Write header already runs, so
- *  a patch this module renders is exactly a patch that module counts, and its one-bad-hunk-rejects-the-whole-patch
- *  rule is inherited rather than re-derived (half a diff would read as a real diff on screen). Its counts are used
- *  verbatim for the same reason: header and body can never disagree about how many lines moved.
+/** Rung 1. Recognition is DELEGATED WHOLE to `toolResult`: `editShape`/`writeShape` first — the same shape guard
+ *  `normalizeToolResult` runs before it sets `structured`, and therefore the same one `editRows`/`writeRows` gate
+ *  the header's diff summary on — and only then `patchLineCounts`, whose one-bad-hunk-rejects-the-whole-patch rule
+ *  is inherited rather than re-derived (half a diff would read as a real diff on screen). Gating on the counts
+ *  ALONE would be strictly looser than the header's gate, and a body that recognizes more than its header does is
+ *  a body handing out absolute line numbers for a call the rest of the clone calls unrecognized. Its counts are
+ *  used verbatim for the matching reason: header and body can never disagree about how many lines moved.
  *  Positions are all-or-nothing. A recognized patch whose hunks do not ALL carry a usable `oldStart` is still a
  *  faithful diff, but it is no longer an absolutely-numbered one, and it says so — it does not fall through to the
  *  disk rung, because a recognized patch already describes the edit better than a re-read of a newer file could. */
@@ -87,9 +90,13 @@ const memo = new WeakMap<object, { sidecar: unknown; patch: ResolvedPatch | unde
 /** The ladder itself. `undefined` means "nothing diffable here" — no recognized patch and no `old_string`/
  *  `new_string` pair — which is also the Write CREATE answer: a create keeps F3's preview-alone row (census
  *  01#58–62), so it must never be routed through here as an all-add diff. A Write-as-UPDATE reaches rung 1
- *  through its own recognized sidecar, which is the only shape that describes it. */
+ *  through its own recognized sidecar, which is the only shape that describes it.
+ *  `input` arrives unknown-typed from the wire, so a non-record is ANSWERED rather than thrown on — and answered
+ *  first, ahead of the memo, because a primitive is not a legal WeakMap key. Substituting a fresh `{}` for it
+ *  would be worse than the throw: every such call would mint a new memo key and re-resolve forever. */
 export function resolvePatch(args: { input: Record<string, unknown>; sidecar?: unknown; readFile?: (p: string) => string | undefined }): ResolvedPatch | undefined {
   const { input, sidecar, readFile = readFromDisk } = args;
+  if (!isRecord(input)) return undefined;
   const cached = memo.get(input);
   if (cached !== undefined && cached.sidecar === sidecar) return cached.patch;
   const patch = resolve(input, sidecar, readFile);
@@ -98,8 +105,12 @@ export function resolvePatch(args: { input: Record<string, unknown>; sidecar?: u
 }
 
 function resolve(input: Record<string, unknown>, sidecar: unknown, readFile: (p: string) => string | undefined): ResolvedPatch | undefined {
-  const counts = isRecord(sidecar) ? patchLineCounts(sidecar) : undefined;
-  if (counts !== undefined) return sidecarPatch(sidecar as Record<string, unknown>, counts);
+  // `type === "create"` is excluded EXPLICITLY, not left to ride on the census create carrying an empty
+  // `structuredPatch` (P94 recorded that shape once): the scope rule is "a create renders its preview, never a
+  // diff", and a create that ever arrived with real hunks must obey it too.
+  const recognized = editShape(sidecar) ?? writeShape(sidecar);
+  const counts = recognized === undefined || recognized.type === "create" ? undefined : patchLineCounts(recognized);
+  if (counts !== undefined) return sidecarPatch(recognized!, counts);
   const oldText = str(input.old_string), newText = str(input.new_string);
   if (oldText === undefined || newText === undefined) return undefined;
   return derivedPatch(oldText, newText, str(input.file_path), readFile);
