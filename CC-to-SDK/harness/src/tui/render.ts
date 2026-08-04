@@ -206,10 +206,11 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
     // sentinel is engine bookkeeping wearing a user frame, not a prompt, and must never be band-wrapped as
     // one. `species.ts` owns the whole decision (upstream `ERe`) including the fallthrough, so the prompt
     // echo is now one exit of the router rather than the only thing this branch knows how to do.
-    // `message.content` is a STRING on roughly half the rows a session file carries (the shape
-    // `sessions/rows.ts` has always had to handle) — iterating that string would walk it CHARACTER by
-    // character and render nothing at all, which is what silently kept disk prompts off the replayed
-    // transcript until this task. Normalising here is what makes live and replay route identically.
+    // `message.content` can be a plain STRING instead of a block array — upstream normalizes the same
+    // shape explicitly (`cke`, L373253), and a 60-file sample of real session files put it at ~6% of user
+    // rows (0% of assistant rows), sentinel-bearing rows included. Iterating that string would walk it
+    // CHARACTER by character and render nothing at all, which is what silently kept those disk prompts off
+    // the replayed transcript until this task. Normalising here is what makes live and replay route identically.
     const raw = m.message?.content;
     const blocks: any[] = typeof raw === "string" ? [{ type: "text", text: raw }] : Array.isArray(raw) ? raw : [];
     const out: RenderLine[] = [];

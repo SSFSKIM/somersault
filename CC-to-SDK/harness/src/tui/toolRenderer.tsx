@@ -394,10 +394,11 @@ export function sdkEntryBase(entry: SdkEntry, occurrence: number): string {
  *  F3 owns the parent/child progress and totals route. */
 const isNested = (message: Record<string, unknown>): boolean => typeof message.parent_tool_use_id === "string" && message.parent_tool_use_id.length > 0;
 
-/** A retained frame's content blocks. `message.content` is a plain STRING on a large share of the rows a
- *  session file carries — `sessions/rows.ts` has always had to handle both shapes — and treating that as
- *  "no blocks" is what kept a replayed disk prompt (and, after F4 Task 10a, every disk sentinel) off the
- *  transcript entirely. Normalising in ONE place means the live path and the disk path see the same blocks. */
+/** A retained frame's content blocks. `message.content` can be a plain STRING instead of a block array —
+ *  upstream normalizes the same shape (`cke`, L373253); a 60-file sample put it at ~6% of user rows, the
+ *  sentinel-bearing ones included — and treating it as "no blocks" is what kept a replayed disk prompt
+ *  (and, after F4 Task 10a, every disk sentinel) off the transcript entirely. Normalising in ONE place
+ *  means the live path and the disk path see the same blocks. */
 function contentBlocks(message: Record<string, unknown>): readonly unknown[] {
   const inner = message.message;
   if (!isRecord(inner)) return [];

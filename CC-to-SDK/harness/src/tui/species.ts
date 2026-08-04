@@ -38,6 +38,10 @@
 // already exists to survive.
 import stringWidth from "string-width";
 import wrapAnsi from "wrap-ansi";
+// The OTHER end of the tui layer's one deliberate import cycle (render.ts:22–27 documents the shape):
+// render.ts routes its user branch through this module, and this module needs the band renderer back.
+// Safe ONLY while both sides stay hoisted `export function` declarations called inside function bodies —
+// turning either into a `const` arrow breaks at RUNTIME (TDZ), not at typecheck.
 import { userEchoLines, type Gutter, type RenderLine, type Segment } from "./render.js";
 import { formatDuration } from "./format.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
@@ -269,8 +273,10 @@ export function speciesLines(kind: SpeciesKind, text: string, opts: SpeciesOptio
       ];
     }
     // `pqo` (L425614) → `r4e` (L423453): stdout (preferring a `<persisted-output>` body), then stderr in
-    // `error`, then — only when both are silent — the `(No output)` note. Upstream folds each body through
-    // `p2`/`y_s`; we do not, because `speciesLines` has no projection/verbose input in this task's contract.
+    // `error`, then — only when both are silent — the `(No output)` note. TWO recorded gaps (t10a review):
+    // upstream folds each body through `p2`/`y_s` (3 rows + expand hint) — Task 10b's, since it threads the
+    // hint this contract lacks; and `r4e` first runs stderr through `w6p`/`C6p` (cleaning + a
+    // `cwdResetWarning` row whose presence also blocks `(No output)`) — not ported, cosmetic and bounded.
     case "bash-output": {
       const raw = tagInner(text, TAG_BASH_STDOUT) ?? "";
       const stdout = tagInner(raw, "persisted-output") ?? unescape(raw);
@@ -282,6 +288,8 @@ export function speciesLines(kind: SpeciesKind, text: string, opts: SpeciesOptio
     }
     // `Sqo` (L425757) → `oEn` (L425772): stdout is dropped when it is empty OR the `(no content)`
     // placeholder, stderr only when empty, and a body-less pair renders NOTHING at all (not a note).
+    // Recorded gap (t10a review): upstream renders the stdout body as MARKDOWN (`km`, L421121) — no fold —
+    // where this port emits plain lines; the real divergence here is markdown, not folding.
     // `oEn` has two earlier branches this port does not carry — the `session running · …` status-chip form
     // (`wpa`, L425722) and the `◇`/`◆` prefixed form — both belong to slash commands (`/agents`) whose own
     // output shapes are outside this task; they fall through to the plain body here.
