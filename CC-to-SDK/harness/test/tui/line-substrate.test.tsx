@@ -17,6 +17,12 @@ describe("F4 Task 1 — line-model substrate", () => {
     const { lastFrame } = render(<Line l={{ text: "x", bg: "rgb(240,240,240)" }} />);
     expect(lastFrame()).toMatch(/\x1b\[48;2;240;240;240m/);
   });
+  it("bg in the ansi:<name> grammar reaches Ink RESOLVED — the one form Ink cannot parse itself", () => {
+    // Ink's colorize parses rgb()/ansi256() natively, so only ansi:<name> proves the resolveThemeColor
+    // route is actually wired (reviewer Minor 1); chalk maps bgRed to \x1b[41m.
+    const { lastFrame } = render(<Line l={{ text: "x", bg: "ansi:red" }} />);
+    expect(lastFrame()).toContain("\x1b[41m");
+  });
   it("single-styled line path forwards the same three fields", () => {
     const { lastFrame } = render(<Line l={{ text: "s", strikethrough: true, underline: true }} />);
     expect(lastFrame()).toContain("\x1b[9m");
