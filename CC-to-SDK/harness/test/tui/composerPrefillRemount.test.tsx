@@ -92,7 +92,7 @@ describe("composer prefill: consumed at most once across a popup remount (Import
 
     // 3. The popup closes — the composer REMOUNTS fresh (a new component instance, ref reset to 0).
     api.closeShortcuts!();
-    await waitFor(() => frame(lastFrame).includes("›"));   // composer remounted (placeholder or otherwise)
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));   // composer remounted (placeholder or otherwise)
     await new Promise((r) => setTimeout(r, 60));           // let the remounted composer's apply-effect settle
 
     // The already-consumed prefill must not resurrect into the freshly-mounted, empty composer.
@@ -120,7 +120,7 @@ describe("app-scoped durable editor state across overlay remounts", () => {
     stdin.write("\x15");
     await waitFor(() => !frame(lastFrame).includes("rescued prompt edited"));
     api.open!(); await waitFor(() => frame(lastFrame).includes("Settings overlay"));
-    api.close!(); await waitFor(() => frame(lastFrame).includes("›"));
+    api.close!(); await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("\x19");
     await waitFor(() => frame(lastFrame).includes("rescued prompt edited"));
@@ -128,7 +128,7 @@ describe("app-scoped durable editor state across overlay remounts", () => {
     stdin.write("\r");
     await waitFor(() => submitted.length === 1);
     api.open!(); await waitFor(() => frame(lastFrame).includes("Settings overlay"));
-    api.close!(); await waitFor(() => frame(lastFrame).includes("›"));
+    api.close!(); await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     expect(frame(lastFrame)).not.toContain("rescued prompt edited");
 
     editorStateRef.current = {
@@ -196,7 +196,7 @@ describe("composer prefill: prepend mode merges with an existing draft (Task 3, 
     );
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("   ");
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     rerender(<ChatComposer onSubmit={(value) => submitted.push(value)} cwd={process.cwd()} commandCatalog={[]} prefill={{ text: "queued", token: 1, mode: "prepend" }} />);
     await waitFor(() => frame(lastFrame).includes("queued"));
     stdin.write("\r");

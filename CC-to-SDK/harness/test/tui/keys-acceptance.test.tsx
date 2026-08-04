@@ -128,7 +128,7 @@ describe("F2 acceptance 1 — ~/.claude/keybindings.json applies live, and `null
 describe("F2 acceptance 2 — an open overlay owns the keyboard", () => {
   it("with the `?` overlay open no keypress reaches the chat: the composer buffer is untouched", async () => {
     const h = renderWithKeymap(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(h.lastFrame).includes("›"));
+    await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     h.stdin.write("?");
     await waitFor(() => frame(h.lastFrame).includes("Keyboard shortcuts"));
     h.stdin.write("hello");
@@ -142,9 +142,9 @@ describe("F2 acceptance 2 — an open overlay owns the keyboard", () => {
     expect(frame(h.lastFrame)).toContain("Keyboard shortcuts");      // still the overlay, nothing behind it acted
     expect(frame(h.lastFrame)).not.toContain("Transcript");          // ctrl+o never reached app:toggleTranscript
     h.stdin.write(ESC);                                              // Help's one binding
-    await waitFor(() => frame(h.lastFrame).includes("›"));
+    await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     expect(frame(h.lastFrame)).not.toContain("hello");               // the composer came back EMPTY
-    expect(frame(h.lastFrame)).toContain("Ask Claude anything");
+    expect(frame(h.lastFrame)).toContain("sk Claude anything");
     h.unmount();
   });
 
@@ -156,7 +156,7 @@ describe("F2 acceptance 2 — an open overlay owns the keyboard", () => {
   it("with a picker open, j/k move its own selection", async () => {
     const fake = fakeRemote();
     const h = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(h.lastFrame).includes("›"));
+    await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "transcript-anchor-line" }] } } });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
@@ -197,7 +197,7 @@ describe("F2 acceptance 3 — the ctrl+x chord machine, on the real chat surface
     const fake = fakeRemote({ stopBgTask: async (id: string) => { stopped.push(id); } });
     const clock = chordClock();
     const h = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />, clock.deps);
-    await waitFor(() => frame(h.lastFrame).includes("›"));
+    await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "t1", task_type: "bash", description: "d1" }] });
     await waitFor(() => frame(h.lastFrame).includes("⚙ 1 bg"));
 
@@ -245,7 +245,7 @@ describe("F2 acceptance 4 — rebinding an action rewrites its hints, with no co
 
   it("a default-mode session prints no parenthetical; the first cycle is what brings it on", async () => {
     const h = renderWithKeymap(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(h.lastFrame).includes("›"));
+    await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     expect(stripAnsi(frame(h.lastFrame))).toContain("mode default");
     expect(stripAnsi(frame(h.lastFrame))).not.toContain("to cycle");    // upstream: default mode, no rung 10
     expect(stripAnsi(frame(h.lastFrame))).toContain("⇧Tab mode");       // the composer ladder is mode-independent
@@ -261,7 +261,7 @@ describe("F2 acceptance 4 — rebinding an action rewrites its hints, with no co
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
       { userLayers: MOVE_CYCLE_MODE },
     );
-    await waitFor(() => frame(h.lastFrame).includes("›"));
+    await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     expect(stripAnsi(frame(h.lastFrame))).toContain("Alt-M mode");             // composer footer ladder
     h.stdin.write(SHIFT_TAB);                                                  // the unbound default does nothing
     await settle();
@@ -285,7 +285,7 @@ describe("F2 acceptance 4 — rebinding an action rewrites its hints, with no co
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
       { userLayers: [{ context: "Global", bindings: { "ctrl+t": null } }] },
     );
-    await waitFor(() => frame(h.lastFrame).includes("›"));
+    await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     h.stdin.write("?");
     await waitFor(() => frame(h.lastFrame).includes("Keyboard shortcuts"));
     const overlay = stripAnsi(frame(h.lastFrame));
@@ -308,7 +308,7 @@ describe("F2 acceptance 4 — rebinding an action rewrites its hints, with no co
         <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
         { userLayers: [{ context: "Chat", bindings: { escape: null } }] },
       );
-      await waitFor(() => frame(h.lastFrame).includes("›"));
+      await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
       h.stdin.write("?");
       await waitFor(() => frame(h.lastFrame).includes("Keyboard shortcuts"));
       const overlay = stripAnsi(frame(h.lastFrame));
@@ -331,7 +331,7 @@ describe("F2 — the mode-chip parenthetical is honest about who owns the keyboa
   it("clears while the `?` overlay and the background-tasks picker are open, and returns with the composer", async () => {
     const fake = fakeRemote();
     const h = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(h.lastFrame).includes("›"));
+    await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     h.stdin.write(SHIFT_TAB);                                        // off `default` — otherwise there is no hint to hide
     await settleUntil(() => stripAnsi(frame(h.lastFrame)).includes("⇧Tab to cycle"));
     expect(stripAnsi(frame(h.lastFrame))).toContain("⇧Tab to cycle");
@@ -422,7 +422,7 @@ describe("F2 — `command:<name>` bindings run the slash command", () => {
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
       { userLayers: [{ context: "Chat", bindings: { "ctrl+k": "command:status" } }] },
     );
-    await waitFor(() => frame(h.lastFrame).includes("›"));
+    await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     h.stdin.write("keep me");
     await waitFor(() => frame(h.lastFrame).includes("keep me"));
     // Park the cursor at the START of the line first. Default ctrl+k is `killToEnd`, so pressing it where
@@ -443,7 +443,7 @@ describe("F2 — `command:<name>` bindings run the slash command", () => {
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
       { userLayers: [{ context: "Chat", bindings: { "alt+k": "command:nosuchthing" } }] },
     );
-    await waitFor(() => frame(h.lastFrame).includes("›"));
+    await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     h.stdin.write("\x1bk");
     await waitFor(() => frame(h.lastFrame).includes("Unknown command: /nosuchthing"));
     h.unmount();

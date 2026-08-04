@@ -336,6 +336,12 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResu
     }
   }
   if (key.return) {
+    // F5 Task 2: shift+Return is a NEWLINE, not a submit. The only thing that produces `return + shift` is
+    // the `\x1b\r` the parser already singles out as "/terminal-setup's shift+enter" (keys/parse.ts:95) —
+    // a terminal only sends that byte pair BECAUSE it was configured to mean newline, so submitting on it
+    // contradicted the very setup that emitted it. This is what makes the composer's `Z_a` rung-1 hint
+    // ("shift + ⏎ for newline", bundle L433225) true here rather than a promise the editor breaks.
+    if (key.shift) return { state: insertText(s, "\n") };
     if (continuesLine(s)) return { state: continueLine(s) };
     if (s.command) return submitCommand(s);
     if (s.mention) return { state: acceptMention(s) };

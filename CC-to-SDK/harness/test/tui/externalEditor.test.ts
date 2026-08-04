@@ -1,7 +1,8 @@
 // tui/test/externalEditor.test.ts — editExternal round-trips the buffer through a fake $EDITOR.
 import { describe, it, expect, afterEach } from "vitest";
-import { readFileSync, writeFileSync, rmSync } from "node:fs";
-import { editExternal, openInEditor } from "../../src/tui/externalEditor.js";
+import { readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { editExternal, editExternalAsync, openInEditor } from "../../src/tui/externalEditor.js";
 
 describe("editExternal", () => {
   it("writes the buffer to the temp file, runs the editor, returns the edited text, restores raw mode", () => {
@@ -107,6 +108,50 @@ describe("editor resolution treats an EMPTY env var as unset", () => {
   it("survives a whitespace-only editor command instead of spawning undefined", () => {
     let seen: string | undefined;
     editExternal("x", { spawn: ((c: string) => { seen = c; return { status: 0 } as any; }) as any, setRaw: () => {}, editorCmd: "   " });
+    expect(seen).toBe("vi");
+  });
+});
+
+// F5 Task 2 (CM8): the same round-trip, awaited. `editExternal` above blocks the event loop for the whole
+// edit — which is why upstream's "Save and close editor to continue..." row could never paint. This form
+// yields between the spawn and the child's exit, so the composer can hold that frame for the duration.
+describe("editExternalAsync", () => {
+  /** A `spawn` stand-in: hands the test the temp file, then closes with `code` on the next tick. */
+  const fakeSpawn = (onFile: (file: string) => void, code: number | null = 0, fail?: Error) =>
+    ((cmd: string, args: string[]) => {
+      const child = new EventEmitter() as any;
+      const file = args[args.length - 1]!;
+      onFile(file);
+      setTimeout(() => { if (fail) child.emit("error", fail); else child.emit("close", code); }, 0);
+      child.spawnCmd = cmd;
+      return child;
+    }) as any;
+
+  it("writes the buffer out, awaits the child's exit, and resolves the edited text", async () => {
+    const rawCalls: boolean[] = []; let seenFile = "";
+    const out = await editExternalAsync("original text", {
+      spawn: fakeSpawn((file) => { seenFile = file; expect(readFileSync(file, "utf8")).toBe("original text"); writeFileSync(file, "edited text\n"); }),
+      setRaw: (on) => rawCalls.push(on), editorCmd: "myeditor",
+    });
+    expect(out).toBe("edited text");                        // trailing newline stripped, as the sync form does
+    expect(rawCalls).toEqual([false, true]);                // released before the child owns the tty, restored after
+    expect(existsSync(seenFile)).toBe(false);               // temp dir cleaned up
+  });
+  it("resolves null (buffer kept) on a non-zero exit, on a spawn error, and on a deleted file", async () => {
+    const io = { setRaw: () => {}, editorCmd: "e" };
+    expect(await editExternalAsync("keep me", { ...io, spawn: fakeSpawn(() => {}, 1) })).toBeNull();
+    expect(await editExternalAsync("keep me", { ...io, spawn: fakeSpawn(() => {}, null, new Error("ENOENT")) })).toBeNull();
+    expect(await editExternalAsync("keep me", { ...io, spawn: fakeSpawn((file) => rmSync(file)) })).toBeNull();
+  });
+  it("restores raw mode even when the spawn itself throws synchronously", async () => {
+    const rawCalls: boolean[] = [];
+    const out = await editExternalAsync("x", { spawn: (() => { throw new Error("bad argv"); }) as any, setRaw: (on) => rawCalls.push(on), editorCmd: "e" });
+    expect(out).toBeNull();
+    expect(rawCalls).toEqual([false, true]);
+  });
+  it("shares the sync form's argv resolution, `vi` default included", async () => {
+    let seen: string | undefined;
+    await editExternalAsync("x", { spawn: ((c: string, a: string[]) => { seen = c; const ch = new EventEmitter() as any; setTimeout(() => ch.emit("close", 0), 0); return ch; }) as any, setRaw: () => {}, editorCmd: "   " });
     expect(seen).toBe("vi");
   });
 });

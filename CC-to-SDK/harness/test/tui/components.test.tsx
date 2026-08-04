@@ -499,12 +499,12 @@ describe("ChatComposer", () => {
   it("shows the placeholder + footer hint when empty, and hides them once you type", async () => {
     const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
     await new Promise((r) => setTimeout(r, 20));
-    expect(lastFrame() ?? "").toContain("Ask Claude anything…");
+    expect(lastFrame() ?? "").toContain("sk Claude anything…");
     expect(lastFrame() ?? "").toContain("⏎ send");
     expect(lastFrame() ?? "").toContain("Esc rewind · ? help");
     stdin.write("hi");
     await waitFor(() => (lastFrame() ?? "").includes("hi"));
-    expect(lastFrame() ?? "").not.toContain("Ask Claude anything…");   // placeholder gone once typing
+    expect(lastFrame() ?? "").not.toContain("sk Claude anything…");   // placeholder gone once typing
     expect(lastFrame() ?? "").not.toContain("? help");                 // '?' inserts in a non-empty draft
   });
   it("hides the Esc-clear hint on the first busy render and does not resurrect after idle", async () => {

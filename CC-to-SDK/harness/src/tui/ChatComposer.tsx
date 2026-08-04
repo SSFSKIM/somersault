@@ -6,7 +6,8 @@ import { readdirSync } from "node:fs";
 import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, type EditorState } from "./editor.js";
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
-import { editExternal as realEditExternal } from "./externalEditor.js";
+import { editExternalAsync as realEditExternal } from "./externalEditor.js";
+import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, newlineHint } from "./composerFrame.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
 import { formatBindings } from "./keys/hints.js";
@@ -15,7 +16,15 @@ import type { KeyEvent, TextEvent } from "./keys/types.js";
 
 // F1 Task 2 role map: the bash-mode composer takes `bashBorder`, the memory-mode composer `remember`.
 // Read per render so a mid-session /theme change repaints the border and its hint on the next frame.
+// F5 Task 2 moved the BORDER's own read into composerFrame.tsx — same grammar, same per-render discipline,
+// one token wider (`promptBorder` is now a real colour instead of Ink's default). This stays for the two
+// mode-hint rows below the frame, which are the only other consumers left here.
 const role = (name: "bashBorder" | "remember") => resolveThemeColor(themeTokens()[name]);
+
+/** CM5's placeholder text. Still a literal — F5 Task 8 replaces it with upstream's rotating generator;
+ *  only the RENDER (first char inverted, rest dim) is this task's business. */
+const PLACEHOLDER = "Ask Claude anything…";
+const DEFAULT_COLUMNS = 80;
 
 const realReaddir = (dir: string): DirEnt[] => {
   try { return readdirSync(dir, { withFileTypes: true }).map((d) => ({ name: d.name, isDir: d.isDirectory() })); }
@@ -78,7 +87,17 @@ function MentionPopup({ state }: { state: EditorState }) {
   );
 }
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800 }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: (text: string) => string | null; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number }) {
+/** An injected editor may be sync (the pre-F5 DI shape, still used by several tests) or async (what the
+ *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
+export type ComposerEditExternal = (text: string) => string | null | Promise<string | null>;
+
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800, columns, label }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number;
+  /** The terminal's width, read per render (a function, not a number, so a resize is visible without a
+   *  new prop identity). ChatApp threads its own `deps.columns ?? stdout.columns ?? 80` source through. */
+  columns?: () => number;
+  /** The `History n/total` text painted into the top rule (upstream `AVf`, L494870). A slot this task:
+   *  F5 Task 7 wires the live history position into it. Nothing is painted while it is undefined. */
+  label?: string }) {
   const [state, setState] = useState<EditorState>(() => {
     const saved = editorStateRef?.current ?? initialEditorState();
     const normalized = saved.mention || saved.command ? { ...saved, mention: null, command: null } : saved;
@@ -146,6 +165,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // caller (cli.pretty.js:183476) is exactly that two-arg no-override call — so 800ms is the SAME constant
   // this file already uses for the Esc-Esc clear arm above (escClearMs), not a coincidence.
   const [dArmed, setDArmed] = useState(false);
+  // CM8: true from the moment the external-edit chord fires until the editor's promise settles. The ref is
+  // the one the key path reads (the action fires from a passive-effect listener, so the state is one
+  // render stale there — the same reason `stateRef`/`busyRef` exist above); the state drives the render.
+  const [editorInFlight, setEditorInFlight] = useState(false);
+  const editorInFlightRef = useRef(false);
   const dArm = useRef(0);
   const dTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (dTimer.current) clearTimeout(dTimer.current); }, []);
@@ -307,16 +331,27 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // command, it did not send what the user was drafting. Registered as the `command:` FAMILY because the
     // name comes from the user's file; without it the resolver consumed the key and nothing ran it.
     "command:*": (_e, action) => { if (interceptChord()) onSubmitRef.current("/" + action.slice("command:".length)); },
+    // CM8: the edit is AWAITED now, not blocked on. `editExternalAsync` yields between spawning the editor
+    // and its exit, which is the only reason the `Save and close editor to continue...` row can paint at
+    // all — the old spawnSync stopped the event loop for the whole edit, so Ink never got a frame.
+    // `Promise.resolve` normalizes an injected SYNC editor (the DI shape several tests still use) onto the
+    // same path. `editorInFlight` is what the render below swaps the whole composer out for.
     "chat:externalEditor": () => {
       const ended = interceptChord();
-      if (!ended) return;
-      const edited = (editExternalRef.current ?? realEditExternal)(ended.lines.join("\n"));
-      // Clear any open mention/command popup too — it was filtered against the pre-edit buffer and would
-      // otherwise show stale items against the freshly-applied text.
-      if (edited !== null && !disposed.current) {
+      if (!ended || editorInFlightRef.current) return;               // a second chord mid-edit is a no-op
+      editorInFlightRef.current = true; setEditorInFlight(true);
+      const done = (edited: string | null) => {
+        if (disposed.current) return;
+        editorInFlightRef.current = false; setEditorInFlight(false);
+        // Clear any open mention/command popup too — it was filtered against the pre-edit buffer and would
+        // otherwise show stale items against the freshly-applied text.
+        if (edited === null) return;                                 // editor errored / exited non-zero: keep the buffer
         if (ended.lines.length === 1 && ended.lines[0] === "" && edited.length > 0) onDraftStartRef.current?.();
         commitState(replaceBufferFromOutside(ended, edited));
-      }
+      };
+      // A rejection is the same outcome as a null: the buffer stands and the in-flight row must lift, or
+      // the composer is stuck showing "Save and close editor…" with no editor to save.
+      Promise.resolve((editExternalRef.current ?? realEditExternal)(ended.lines.join("\n"))).then(done, () => done(null));
     },
   });
 
@@ -336,7 +371,8 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   }, [needCatalog, commandCatalog]);
 
   const mode = inputMode(state);
-  const border = mode === "bash" ? role("bashBorder") : mode === "memory" ? role("remember") : undefined;
+  const borderToken = borderTokenFor(mode);
+  const cols = Math.max(1, Math.floor(columns?.() ?? DEFAULT_COLUMNS));
   // The editor owns these affordances: derive them from this render's state so the first draft/popup
   // frame cannot inherit an out-of-date parent status-bar hint through a passive effect.
   const showFooter = mode === "normal" && !state.mention && !state.command;
@@ -351,21 +387,31 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const exitKey = formatBindings(bindings("app:exit"));                 // the KB3 double-press arm below
   const acceptKey = formatBindings(bindings("autocomplete:accept")), dismissKey = formatBindings(bindings("autocomplete:dismiss"));
   const keyboardHint = busy ? `${escKey} interrupt` : isEmptyNow ? `${escKey} rewind · ? help` : `${escKey} clear`;
+  // CM20: the ladder replaces the invented `\⏎ newline` rung — same slot, upstream's three strings. Read
+  // per render off THIS render's editor state, so the rung shortens on the very frame `\`+Return lands.
+  // Upstream renders `Z_a()` in the `?` help list (L459545) rather than in a composer footer; our footer
+  // is a compressed invention that already carried a newline rung, so the ladder lands there — one hint,
+  // not two. (editor.ts's `markBackslashReturnUsed` note already points at "the composer's newline hint".)
+  const newlineRung = newlineHint(state.hasUsedBackslashReturn);
   const clearVisible = clearArmed && clearArm.current !== 0 && !busy;
+  // CM8's early return, upstream's own shape (L496236): while the editor holds the terminal the composer
+  // is JUST the framed literal — no glyph, no input, and none of the hint rows below, because upstream
+  // returns before it builds any of them. Placed after every hook so the hook order is unconditional.
+  if (editorInFlight) return <ComposerEditorInFlight columns={cols} borderToken={borderToken} />;
   return (
     <Box flexDirection="column">
-      <Box borderStyle="round" borderColor={border} paddingX={1}>
-        <Text>{"› "}</Text>
+      <ComposerFrame columns={cols} borderToken={borderToken} label={label}>
+        <PromptGlyph mode={mode} busy={busy} />
         {isEmptyNow
-          ? <Box flexDirection="row"><Text inverse>{" "}</Text><Text dimColor>Ask Claude anything…</Text></Box>
+          ? <PlaceholderCursor text={PLACEHOLDER} />
           : <Box flexDirection="column">{renderBuffer(state)}</Box>}
-      </Box>
+      </ComposerFrame>
       {mode === "bash" ? <Box paddingX={1}><Text color={role("bashBorder")} dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
       {mode === "memory" ? <Box paddingX={1}><Text color={role("remember")} dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
       {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
       {clearVisible ? <Box paddingX={1}><Text dimColor>{`${escKey} again to clear`}</Text></Box> : null}
       {dArmed && isEmptyNow ? <Box paddingX={1}><Text dimColor>{`Press ${exitKey} again to exit`}</Text></Box> : null}
-      {showFooter ? <Box paddingX={1}><Text dimColor>{`⏎ send · \\⏎ newline · @ files · / commands · ! bash · ${cycleKey} mode${isEmptyNow ? " · ? help" : ""}`}</Text></Box> : null}
+      {showFooter ? <Box paddingX={1}><Text dimColor>{`⏎ send · ${newlineRung} · @ files · / commands · ! bash · ${cycleKey} mode${isEmptyNow ? " · ? help" : ""}`}</Text></Box> : null}
       {showFooter ? <Box paddingX={1}><Text dimColor>{keyboardHint}</Text></Box> : null}
       {state.mention ? <MentionPopup state={state} /> : null}
       {state.command ? <CommandPopup state={state} acceptKey={acceptKey} dismissKey={dismissKey} /> : null}

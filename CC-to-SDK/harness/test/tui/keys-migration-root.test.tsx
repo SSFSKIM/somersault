@@ -42,7 +42,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
       interrupt: async () => { interrupted++; fake.pushEvent({ kind: "turn", phase: "end", seq: 1 }); },
     });
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("go"); await waitFor(() => frame(lastFrame).includes("go"));
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
     stdin.write("\x1b");
@@ -53,7 +53,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
   it("(b) ctrl+x ctrl+k inside the chord window reaches chat:killAgents; after the window it does not", async () => {
     const inWindow = fakeTimers();
     const a = renderWithKeymap(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />, inWindow.deps);
-    await waitFor(() => frame(a.lastFrame).includes("›"));
+    await waitFor(() => frame(a.lastFrame).includes("❯\u00a0"));
     a.stdin.write("hello"); await waitFor(() => frame(a.lastFrame).includes("hello"));
     a.stdin.write("\x18");                                    // ctrl+x — arms the chord, never inserts
     a.stdin.write("\x0b");                                    // ctrl+k within the window → killAgents
@@ -63,7 +63,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
 
     const expired = fakeTimers();
     const b = renderWithKeymap(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />, expired.deps);
-    await waitFor(() => frame(b.lastFrame).includes("›"));
+    await waitFor(() => frame(b.lastFrame).includes("❯\u00a0"));
     b.stdin.write("hello"); await waitFor(() => frame(b.lastFrame).includes("hello"));
     b.stdin.write("\x01");                                    // ctrl+a → cursor to line start
     b.stdin.write("\x18");                                    // ctrl+x arms…
@@ -77,7 +77,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
   it("(c) alt+p opens the model picker (KB8, a binding that never existed before the table)", async () => {
     const fake = fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) });
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x1bp");
     await waitFor(() => frame(lastFrame).includes("switch model"));
   });
@@ -99,7 +99,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     const submitted: string[] = [];
     const fake = fakeRemote({ submit: async (p: string) => { submitted.push(p); return { result: "ok" }; } });
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("multi char run");                            // one chunk → one text event
     await waitFor(() => frame(lastFrame).includes("multi char run"));
     stdin.write("!");                                         // single printable → one key event
@@ -111,7 +111,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
 
   it("(e) ctrl+_ RESTORES the prior buffer through the editor's undo (the raw \\x1f form survives the adapter)", async () => {
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("hello world"); await waitFor(() => frame(lastFrame).includes("hello world"));
     // F5 task 1 (CM17): undo pushes coalesce inside a 1000 ms window, so the kill has to land OUTSIDE it to
     // be its own entry — otherwise it folds into the paste's and undo (correctly) empties the buffer instead.
@@ -127,7 +127,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     let anchors = 0;
     const fake = { ...fakeRemote(), rewindAnchors: async () => { anchors++; return []; }, rewindDryRun: async () => ({ canRewind: true }), rewind: async () => {} };
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake as never} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/");
     await waitFor(() => frame(lastFrame).includes("no matches"));
     stdin.write("\x1b");                                      // Autocomplete owns Escape here
@@ -148,7 +148,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     expect(exits).toBe(0);
     expect(frame(lastFrame)).not.toContain("Press Ctrl-D again to exit");
     expect(frame(lastFrame)).toContain("x");                  // and it certainly did not insert
-    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("Ask Claude anything…"));
+    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("sk Claude anything…"));
     stdin.write("\x04");                                      // empty buffer: first press arms
     await waitFor(() => frame(lastFrame).includes("Press Ctrl-D again to exit"));
     expect(exits).toBe(0);
@@ -164,7 +164,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
       background,
     });
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x18"); stdin.write("\x02");                 // idle: Task is inactive, so the chord dies
     await tick();
     expect(background).not.toHaveBeenCalled();
@@ -184,7 +184,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
       { userLayers: [{ context: "Global", bindings: { "alt+/": "help:show" } }] },
     );
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x1b/");                                     // alt+/
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
     stdin.write("\x1b");                                      // Help's own escape still closes it
@@ -198,7 +198,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
       { userLayers: [{ context: "Global", bindings: { "alt+/": "help:show" } }] },
     );
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("draft"); await waitFor(() => frame(lastFrame).includes("draft"));
     stdin.write("\x1b/");
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
@@ -216,7 +216,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
       { userLayers: [{ context: "Chat", bindings: { escape: null, "alt+c": "chat:cancel" } }] },
     );
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("draft"); await waitFor(() => frame(lastFrame).includes("draft"));
     stdin.write("\x1bc"); await waitFor(() => frame(lastFrame).includes("again to clear"));
     expect(frame(lastFrame)).toContain("draft");                     // armed, buffer intact
@@ -234,7 +234,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
       <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />,
       { userLayers: [{ context: "Chat", bindings: { escape: null, "alt+c": "chat:cancel" } }] },
     );
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("go"); await waitFor(() => frame(lastFrame).includes("go"));
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
     stdin.write("\x1bc"); await waitFor(() => interrupted === 1);
@@ -245,10 +245,10 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
       { userLayers: [{ context: "Chat", bindings: { "ctrl+l": null, "alt+k": "chat:clearInput" } }] },
     );
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("draft"); await waitFor(() => frame(lastFrame).includes("draft"));
     stdin.write("\x1bk"); await waitFor(() => !frame(lastFrame).includes("draft"));
-    expect(frame(lastFrame)).toContain("Ask Claude anything…");
+    expect(frame(lastFrame)).toContain("sk Claude anything…");
   });
 
   it("(k4) a rebound app:exit runs the KB3 double-press arm on an empty composer, and nothing with text", async () => {
@@ -262,7 +262,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     stdin.write("\x1bq"); await tick();                              // with text: no arm, no exit
     expect(exits).toBe(0);
     expect(frame(lastFrame)).not.toContain("again to exit");
-    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("Ask Claude anything…"));
+    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("sk Claude anything…"));
     stdin.write("\x1bq"); await waitFor(() => frame(lastFrame).includes("again to exit"));
     expect(exits).toBe(0);
     stdin.write("\x1bq"); await waitFor(() => exits === 1);

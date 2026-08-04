@@ -2,7 +2,7 @@
 // chat:externalEditor). spawnSync blocks the whole event loop, so Ink cannot repaint while the editor
 // owns the terminal — that blocking IS the handoff. Raw mode must be released first or the editor
 // inherits a raw stdin and its own keymap breaks; always restored in finally.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +14,7 @@ export interface EditorIO { spawn?: typeof spawnSync; setRaw?: (on: boolean) => 
 
 /** The editor command as the user configured it, or null when neither variable is set. `||`, not `??`, for the
  *  reason spelled out in `editExternal` below: an exported-but-empty VISUAL/EDITOR means "unset" in every shell. */
-const editorArgv = (io: EditorIO): string[] | null => {
+const editorArgv = (io: { editorCmd?: string }): string[] | null => {
   const argv = (io.editorCmd || process.env.VISUAL || process.env.EDITOR || "").split(/\s+/).filter(Boolean);
   return argv.length > 0 ? argv : null;
 };
@@ -59,4 +59,43 @@ export function editExternal(text: string, io: EditorIO = {}): string | null {
     setRaw(true);
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* tmp cleanup */ }
   }
+}
+
+export interface EditorIOAsync extends Omit<EditorIO, "spawn"> { spawn?: typeof spawn }
+
+/** F5 Task 2 (CM8): the SAME round-trip, awaited instead of blocking. `editExternal` above stops the event
+ *  loop for the whole edit, which is why upstream's `Save and close editor to continue...` row could never
+ *  paint here — Ink has no chance to repaint between the spawn and the exit. This form yields, so the
+ *  composer can hold an `editorInFlight` frame for the duration and drop it on resolve.
+ *
+ *  Everything else is `editExternal` verbatim: the same argv resolver (including its `||`-not-`??` handling
+ *  of an exported-but-empty VISUAL/EDITOR and its `vi` default), the same temp round-trip, the same
+ *  null-means-keep-the-buffer contract, and the same raw-mode discipline — released before the child owns
+ *  the terminal, restored in the settle path whatever happened. A spawn that never starts (ENOENT) rejects
+ *  on "error", so that arm returns null too rather than hanging the in-flight row forever. */
+export function editExternalAsync(text: string, io: EditorIOAsync = {}): Promise<string | null> {
+  const launch = io.spawn ?? spawn;
+  const setRaw = io.setRaw ?? ((on: boolean) => { try { if (process.stdin.isTTY) process.stdin.setRawMode(on); } catch { /* no tty */ } });
+  const [cmd, ...args] = editorArgv(io) ?? ["vi"];
+  const dir = mkdtempSync(join(tmpdir(), "ccx-edit-"));
+  const file = join(dir, "PROMPT.md");
+  writeFileSync(file, text);
+  const finish = (result: string | null): string | null => {
+    setRaw(true);
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* tmp cleanup */ }
+    return result;
+  };
+  return new Promise<string | null>((resolve) => {
+    setRaw(false);
+    let settled = false;
+    const settle = (result: string | null) => { if (settled) return; settled = true; resolve(finish(result)); };
+    try {
+      const child = launch(cmd, [...args, file], { stdio: "inherit" });
+      child.on("error", () => settle(null));
+      child.on("close", (code) => {
+        if (code !== 0) { settle(null); return; }
+        try { settle(readFileSync(file, "utf8").replace(/\n$/, "")); } catch { settle(null); }   // deleted / atomic-rename quirk
+      });
+    } catch { settle(null); }                                   // a synchronous spawn throw (bad argv shape)
+  });
 }

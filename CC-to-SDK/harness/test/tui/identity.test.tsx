@@ -189,7 +189,7 @@ describe("the same band on every surface", () => {
     });
     const deps = { columns: () => 40, getSessionMessages: async () => [] as any[], getSessionMessagesIn: async () => [] as any[], listHistorySessions: async () => [] };
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} />);
-    await waitFor(() => (lastFrame() ?? "").includes("›"));
+    await waitFor(() => (lastFrame() ?? "").includes("❯\u00a0"));
     stdin.write("start"); await waitFor(() => (lastFrame() ?? "").includes("start"));
     stdin.write("\r"); await waitFor(() => (lastFrame() ?? "").includes("⟳"));
     stdin.write("later prompt"); await waitFor(() => (lastFrame() ?? "").includes("later prompt"));

@@ -53,6 +53,10 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
   "\\⏎ / Ctrl-J": () => {
     expect(applyKey(typed("a\\"), "", { return: true }).state.lines).toEqual(["a", ""]);   // \⏎ continuation
     expect(applyKey(typed("a"), "\n", {}).state.lines).toEqual(["a", ""]);                 // Ctrl-J = 0x0a, no key.return
+    // F5 Task 2: the ladder's rung-1 form is advertised on Apple_Terminal, so the chord behind it has to
+    // work — `\x1b\r` parses to return+shift (keys/parse.ts:95) and the editor splits the line on it.
+    expect(applyKey(typed("a"), "", { return: true, shift: true }).state.lines).toEqual(["a", ""]);
+    expect(applyKey(typed("a"), "", { return: true, shift: true }).submit).toBeUndefined();
   },
 
   "↑↓": () => {
@@ -163,7 +167,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
       },
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("hi"); await waitFor(() => frame(lastFrame).includes("hi"));
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("ok"));   // turn started, hanging
     stdin.write("\x1b");                             // Esc while busy → interrupt, not the rewind arm
@@ -174,7 +178,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
   "Esc Esc": async () => {
     // idle + text present: the SECOND Esc clears the buffer (ChatComposer-owned, CM15).
     const a = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} escClearMs={80} />);
-    await waitFor(() => frame(a.lastFrame).includes("›"));
+    await waitFor(() => frame(a.lastFrame).includes("❯\u00a0"));
     a.stdin.write("hello there"); await waitFor(() => frame(a.lastFrame).includes("hello there"));
     a.stdin.write("\x1b"); await waitFor(() => frame(a.lastFrame).includes("Esc again to clear"));
     a.stdin.write("\x1b"); await waitFor(() => !frame(a.lastFrame).includes("hello there"));
@@ -184,7 +188,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     const ANCHOR: RewindAnchor = { uuid: "u1", prevUuid: "u0", text: "fix it", index: 1 };
     const rewindFake = fakeRewindRemote({ rewindAnchors: async () => { anchorsFetched++; return [ANCHOR]; } });
     const b = render(<ChatApp makeSession={() => rewindFake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(b.lastFrame).includes("›"));
+    await waitFor(() => frame(b.lastFrame).includes("❯\u00a0"));
     b.stdin.write("\x1b"); await waitFor(() => frame(b.lastFrame).includes("Press Esc again to rewind"));
     b.stdin.write("\x1b"); await waitFor(() => anchorsFetched === 1);
     await waitFor(() => frame(b.lastFrame).includes("Rewind to a previous message"));
@@ -207,7 +211,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
 
   "Ctrl-O": async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x0f");                             // Ctrl-O opens the pager
     await waitFor(() => frame(lastFrame).includes("Transcript"));
     stdin.write("\x0f");                             // Ctrl-O again closes it
@@ -221,7 +225,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
       listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
     };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x12");                             // Ctrl-R opens history search
     await waitFor(() => frame(lastFrame).includes("Search prompts"));
     stdin.write("\x1b");                             // Esc accepts the top entry into the composer
@@ -230,7 +234,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
 
   "Ctrl-B": async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x02");                             // Ctrl-B idle → opens the bg-tasks panel
     await waitFor(() => frame(lastFrame).includes("Background tasks"));
     expect(frame(lastFrame)).toContain("none running");
@@ -240,7 +244,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     const stopped: string[] = [];
     const fake = fakeRemote({ stopBgTask: async (id: string) => { stopped.push(id); } });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "t1", task_type: "bash", description: "d1" }] });
     await waitFor(() => frame(lastFrame).includes("⚙ 1 bg"));
     stdin.write("\x18"); await settle(); stdin.write("\x0b");   // first Ctrl-X Ctrl-K chord: arms killAgents' own confirm
@@ -253,7 +257,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
 
   "Ctrl-C ×2": async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x03");                             // Ctrl-C idle → arms
     await waitFor(() => frame(lastFrame).includes("Press Ctrl-C again to exit"));
     stdin.write("\x03");                             // second Ctrl-C within the window → real useApp().exit()
@@ -265,7 +269,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
 
   "Ctrl-D ×2": async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x04");                             // Ctrl-D on an empty composer → arms
     await waitFor(() => frame(lastFrame).includes("Press Ctrl-D again to exit"));
     stdin.write("\x04");                             // second Ctrl-D within the (real, 800ms) window → real exit()
@@ -278,10 +282,10 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
   "Ctrl-Z": async () => {
     let suspended = 0;
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} suspend={() => { suspended++; }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x1a");                             // Ctrl-Z
     await waitFor(() => suspended === 1);
-    expect(frame(lastFrame)).toContain("›");         // never exited/detached — just suspended
+    expect(frame(lastFrame)).toContain("❯\u00a0");         // never exited/detached — just suspended
   },
 
   "!": () => { expect(inputMode(typed("!ls"))).toBe("bash"); },
@@ -291,10 +295,10 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
 
   "?": async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("?");
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
-    expect(frame(lastFrame)).not.toContain("›");     // the composer is replaced by the overlay, not layered under it
+    expect(frame(lastFrame)).not.toContain("❯\u00a0");     // the composer is replaced by the overlay, not layered under it
   },
 };
 
@@ -304,27 +308,42 @@ it("every advertised chord has a proof", () => {
 for (const [k] of ROWS) it(`"${k}" is live`, async () => { await PROOFS[k](); });
 
 it("the composer-owned footer and contextual hints only advertise chords that ROWS carries", async () => {
+  // F5 Task 2 (CM20): the invented `\⏎ newline` rung became upstream's own `Z_a` ladder, so all THREE of
+  // its strings map onto the same row — whichever rung the ladder is standing on still has to be a chord
+  // ROWS can prove. The proof itself is unchanged: `\`+Return and Ctrl-J both split the line.
   const FOOTER_TOKEN_TO_ROW: Record<string, string> = {
-    "⏎ send": "⏎", "\\⏎ newline": "\\⏎ / Ctrl-J", "@ files": "@", "/ commands": "/",
+    "⏎ send": "⏎", "@ files": "@", "/ commands": "/",
+    "backslash (\\) + return (⏎) for newline": "\\⏎ / Ctrl-J", "\\⏎ for newline": "\\⏎ / Ctrl-J", "shift + ⏎ for newline": "\\⏎ / Ctrl-J",
     "! bash": "!", "⇧Tab mode": "⇧Tab", "Esc rewind": "Esc", "Esc clear": "Esc", "Esc interrupt": "Esc", "? help": "?",
   };
   const rowKeys = new Set(ROWS.map(([k]) => k));
+  const savedTerm = process.env.TERM_PROGRAM;
   const composer = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} />);
   await settle();
   const frames = [frame(composer.lastFrame)];
   composer.stdin.write("draft"); await waitFor(() => frame(composer.lastFrame).includes("draft"));
   frames.push(frame(composer.lastFrame));
+  // Each ladder rung is a DIFFERENT advertised string, so each one needs a frame of its own: the terse rung
+  // only appears once `\`+Return has been used, and the shift rung only on an Apple_Terminal.
+  composer.stdin.write("\\"); await waitFor(() => frame(composer.lastFrame).includes("draft\\"));
+  composer.stdin.write("\r"); await waitFor(() => stripAnsi(frame(composer.lastFrame)).includes("\\⏎ for newline"));
+  frames.push(frame(composer.lastFrame));
+  try {
+    process.env.TERM_PROGRAM = "Apple_Terminal";
+    composer.rerender(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} />);
+    await waitFor(() => stripAnsi(frame(composer.lastFrame)).includes("shift + ⏎ for newline"));
+    frames.push(frame(composer.lastFrame));
+  } finally { if (savedTerm === undefined) delete process.env.TERM_PROGRAM; else process.env.TERM_PROGRAM = savedTerm; }
   composer.rerender(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} busy />);
   await waitFor(() => frame(composer.lastFrame).includes("Esc interrupt"));
   frames.push(frame(composer.lastFrame));
 
-  const liveTokens = new Set(frames.flatMap((raw) => stripAnsi(raw).split("\n")
-    .filter((line) => line.includes(" · "))
-    .flatMap((line) => line.trim().split(" · "))
-    .filter((token) => token in FOOTER_TOKEN_TO_ROW)));
-  for (const token of ["Esc rewind", "Esc clear", "Esc interrupt"]) {
-    if (frames.some((raw) => raw.includes(token))) liveTokens.add(token);
-  }
+  // UNWRAP before looking for tokens. The ladder row is one logical line that Ink breaks at the terminal
+  // width, and the break lands mid-row once the verbose newline rung is standing (`? \n help`) — matching
+  // per physical line silently loses whichever token straddles the break, which reads as "the footer stopped
+  // advertising it" rather than "the frame is 100 columns wide".
+  const unwrapped = frames.map((raw) => stripAnsi(raw).replace(/\s*\n\s*/g, " "));
+  const liveTokens = new Set(Object.keys(FOOTER_TOKEN_TO_ROW).filter((token) => unwrapped.some((f) => f.includes(token))));
   for (const token of liveTokens) {
     const row = FOOTER_TOKEN_TO_ROW[token];
     expect(row, `footer token "${token}" has no ROWS mapping`).toBeDefined();

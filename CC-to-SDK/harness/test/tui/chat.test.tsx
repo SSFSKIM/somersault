@@ -35,7 +35,12 @@ const frame = (f: () => string | undefined) => f() ?? "";
 // break the row. Strip and collapse before pinning the gutter. `⋯ queued: …` is gone: a queued prompt is the
 // ordinary band inside `wqo`'s paddingX-2 box (bundle L426002–426022), which is what `isQueued` looks for.
 const stripAnsiAll = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
-const banded = (f: () => string | undefined) => stripAnsiAll(frame(f)).replace(/\s+/g, " ");
+// The collapse deliberately spares U+00A0. F5 Task 2 gave the COMPOSER the same `❯` the band uses, followed
+// by a NBSP (`Ge.pointer` + `\xA0`, bundle L494723) where the band uses a normal space — that one character
+// is the whole difference between "this prompt is queued" and "this prompt is sitting in the composer".
+// `\s` matches NBSP in JS, so a blanket `\s+` collapse made `isQueued` fire on rescued text too, and the
+// queue-rescue tests could never observe the queue emptying.
+const banded = (f: () => string | undefined) => stripAnsiAll(frame(f)).replace(/[^\S\u00a0]+/g, " ");
 const isQueued = (f: () => string | undefined, text: string) => banded(f).includes(`❯ ${text}`);
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
@@ -83,7 +88,7 @@ function fakeSettingsRemote(settingsOpts: SettingsFakeOpts = {}, remoteOpts: Fak
 describe("<ChatApp>", () => {
   it("submits a typed prompt and streams the reply", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));      // composer mounted → TextInput live
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));      // composer mounted → TextInput live
     stdin.write("hi");
     await waitFor(() => frame(lastFrame).includes("hi"));   // typed text landed in the composer before Enter
     stdin.write("\r");
@@ -94,7 +99,7 @@ describe("<ChatApp>", () => {
   it("surfaces a parked permission as a dialog and 'a' allows it", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     fake.parkPermission({ sessionId: "s", toolUseID: "t", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
     await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));   // dialog up
     expect(lastFrame()).toContain("Edit");
@@ -106,7 +111,7 @@ describe("<ChatApp>", () => {
   it("hides the global composer hint under permission, question, and plan input owners", async () => {
     const fake = fakeRemote();
     const { lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     fake.parkPermission({ sessionId: "s", toolUseID: "p", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
     await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
     expect(frame(lastFrame)).not.toContain("Esc interrupt");
@@ -125,7 +130,7 @@ describe("<ChatApp>", () => {
 
   it("never paints a stale editor hint in any frame after a draft or autocomplete takes input ownership", async () => {
     const { stdin, stdout, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/__ccx-empty-cwd__" />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     const expectOwnerFramesHonest = (frames: string[], marker: string) => {
       const owned = frames.filter((f) => f.includes(marker));
       expect(owned.length, `no emitted frame rendered ${JSON.stringify(marker)}`).toBeGreaterThan(0);
@@ -159,7 +164,7 @@ describe("<ChatApp>", () => {
   it("surfaces a parked question as a QuestionDialog (kind dispatcher) and answers it", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     fake.parkPermission({
       sessionId: "s", toolUseID: "t", toolName: "AskUserQuestion", kind: "question",
       input: { questions: [{ question: "Red or blue?", header: "Color", multiSelect: false, options: [{ label: "red" }, { label: "blue" }] }] },
@@ -175,7 +180,7 @@ describe("<ChatApp>", () => {
   it("a second queued question (fewer questions than the first) does not inherit stale progress — dialog remounts per toolUseID", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     // A: 2 questions. Queue B (1 question) behind it BEFORE A is answered — dropPending promotes B
     // straight into `pending` with no intermediate null render once A settles.
     fake.parkPermission({
@@ -208,7 +213,7 @@ describe("<ChatApp>", () => {
   it("Esc on a parked question denies via the dispatcher (never a fabricated answer)", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     fake.parkPermission({
       sessionId: "s", toolUseID: "t2", toolName: "AskUserQuestion", kind: "question",
       input: { questions: [{ question: "Continue?", multiSelect: false, options: [{ label: "yes" }, { label: "no" }] }] },
@@ -222,7 +227,7 @@ describe("<ChatApp>", () => {
 
   it("Ctrl-L now clears the composer input (the editor owns it), not the app-level screen", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("hi");   await waitFor(() => frame(lastFrame).includes("hi"));
     stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("ok"));
     stdin.write("typed"); await waitFor(() => frame(lastFrame).includes("typed"));
@@ -247,7 +252,7 @@ describe("<ChatApp>", () => {
       },
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x03");                                                      // Ctrl-C idle → arm
     await waitFor(() => frame(lastFrame).includes("Press Ctrl-C again to exit"));
     expect(interrupts).toBe(0);
@@ -301,18 +306,18 @@ describe("<ChatApp>", () => {
     let suspended = 0; let detached = 0;
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "attached", short: "abc" }} onDetach={() => { detached++; }} suspend={() => { suspended++; }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x1a");                                     // Ctrl-Z
     await waitFor(() => suspended === 1);
     expect(detached).toBe(0);
-    expect(frame(lastFrame)).toContain("›");                 // composer still alive, never exited
+    expect(frame(lastFrame)).toContain("❯\u00a0");                 // composer still alive, never exited
   });
 
   it("Ctrl-Z routes its resumed Ink write through the render owner exactly once", async () => {
     const owner = { repaint: vi.fn((run: () => void) => run()) };
     const suspend = (deps: any) => deps.repaint();
     const { stdin, stdout, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} suspend={suspend} resumeOutput={owner} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     const framesBefore = stdout.frames.length;
     stdin.write("\x1a");
     await waitFor(() => owner.repaint.mock.calls.length === 1);
@@ -323,11 +328,11 @@ describe("<ChatApp>", () => {
   it("Ctrl-Z invokes a no-op suspend once without breaking the active composer's yank-pop", async () => {
     const suspend = vi.fn();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} suspend={suspend as any} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("one"); await waitFor(() => frame(lastFrame).includes("one"));
     stdin.write("\x15"); await waitFor(() => !frame(lastFrame).includes("one"));
     stdin.write("two"); await waitFor(() => frame(lastFrame).includes("two"));
-    stdin.write("\x15"); await waitFor(() => frame(lastFrame).includes("Ask Claude anything…"));
+    stdin.write("\x15"); await waitFor(() => frame(lastFrame).includes("sk Claude anything…"));
     stdin.write("\x19"); await waitFor(() => frame(lastFrame).includes("two"));
     stdin.write("\x1a"); await waitFor(() => suspend.mock.calls.length === 1);
     stdin.write("\x1by"); await waitFor(() => frame(lastFrame).includes("one"));
@@ -338,7 +343,7 @@ describe("<ChatApp>", () => {
     let suspended = 0;
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "attached", short: "abc" }} suspend={() => { suspended++; }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     const entry: PendingEntry = { sessionId: "s", toolUseID: "t", toolName: "Edit", kind: "permission", input: {}, createdAt: Date.now() };
     fake.parkPermission(entry);
     await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
@@ -367,7 +372,7 @@ describe("<ChatApp>", () => {
     try {
       const fake = fakeRemote();
       const { stdin, stdout, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-      await waitFor(() => frame(lastFrame).includes("›"));
+      await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
       const rawModeSpy = vi.spyOn(stdin, "setRawMode");
       stdin.write("\x1a");                                     // Ctrl-Z, through the REAL suspendProcess
       await waitFor(() => killSpy.mock.calls.length > 0);       // suspend fired (kill is faked — nothing actually stops us)
@@ -392,14 +397,14 @@ describe("<ChatApp>", () => {
     let detachCalls = 0;
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "attached", short: "abc" }} onDetach={() => { detachCalls++; }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/detach"); await waitFor(() => frame(lastFrame).includes("/detach"));
     stdin.write("\r");
     await waitFor(() => detachCalls === 1);
 
     const loopback = fakeRemote();
     const lb = render(<ChatApp makeSession={() => loopback} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lb.lastFrame).includes("›"));
+    await waitFor(() => frame(lb.lastFrame).includes("❯\u00a0"));
     lb.stdin.write("/detach"); await waitFor(() => frame(lb.lastFrame).includes("/detach"));
     lb.stdin.write("\r");
     const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -422,7 +427,7 @@ describe("<ChatApp>", () => {
       },
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("hi"); await waitFor(() => frame(lastFrame).includes("hi"));
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("ok"));   // turn started, hanging
     stdin.write("\x02");                                                       // Ctrl-B busy → background the turn
@@ -434,7 +439,7 @@ describe("<ChatApp>", () => {
   it("Ctrl-B while idle opens the background-tasks panel", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x02");                                                       // Ctrl-B idle → open panel
     await waitFor(() => frame(lastFrame).includes("Background tasks"));
     expect(frame(lastFrame)).toContain("none running");
@@ -443,7 +448,7 @@ describe("<ChatApp>", () => {
   it("the status bar shows a live bg-task count and updates on tasks_changed", async () => {
     const fake = fakeRemote();
     const { lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     expect(frame(lastFrame)).not.toContain("⚙");
     fake.pushEvent({ kind: "tasks_changed", tasks: [
       { task_id: "a", task_type: "local_bash", description: "x" },
@@ -473,7 +478,7 @@ describe("<ChatApp>", () => {
       },
     );
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
 
     stdin.write("\x1b");                                            // Esc idle → arm
     await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
@@ -485,7 +490,7 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
 
     stdin.write("\x1b");                                            // list-stage esc closes the picker (no selection made)
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
 
     stdin.write("hi"); await waitFor(() => frame(lastFrame).includes("hi"));
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("ok"));   // turn started, hanging
@@ -503,7 +508,7 @@ describe("<ChatApp>", () => {
     const ANCHOR: RewindAnchor = { uuid: "u1", prevUuid: "u0", text: "fix the parser", index: 2 };
     const fake = fakeRewindRemote({ rewindAnchors: async () => [ANCHOR], rewind: async () => {} });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
 
     stdin.write("\x1b");                                            // arm
     await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
@@ -520,7 +525,7 @@ describe("<ChatApp>", () => {
     stdin.write("?");                                               // empty composer → shortcuts overlay (composer unmounts)
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
     stdin.write("\x1b");                                            // Escape closes it (KB6) → composer REMOUNTS
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await new Promise((r) => setTimeout(r, 80));
     expect(frame(lastFrame)).not.toContain("fix the parser");       // must not resurrect
   });
@@ -539,7 +544,7 @@ describe("<ChatApp>", () => {
       },
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
 
     stdin.write("\x1b");                                            // arm on an EMPTY composer (CM15: text would arm the clear instead)
     await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
@@ -561,7 +566,7 @@ describe("<ChatApp>", () => {
     const fake = fakeRewindRemote({ rewindAnchors: async () => [ANCHOR], rewind: async () => { await held; } });
     const fakeDeps = { getSessionMessages: async () => [] as any[] };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={fakeDeps} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
 
     stdin.write("\x1b");                                              // Esc: arm
     await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
@@ -588,15 +593,15 @@ describe("<ChatApp>", () => {
 
   it("? on an empty idle composer opens the shortcuts overlay; only Escape closes it back to the composer (KB6)", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("?");
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
-    expect(frame(lastFrame)).not.toContain("›");                     // composer is replaced by the overlay
+    expect(frame(lastFrame)).not.toContain("❯\u00a0");                     // composer is replaced by the overlay
     stdin.write("x");
     await new Promise((r) => setTimeout(r, 30));
     expect(frame(lastFrame)).toContain("Keyboard shortcuts");        // a non-Escape key leaves it open
     stdin.write("\x1b");
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");
   });
 
@@ -614,7 +619,7 @@ describe("<ChatApp>", () => {
       },
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("go"); await waitFor(() => frame(lastFrame).includes("go"));
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("ok"));   // turn running (Task scope live)
     stdin.write("?");
@@ -627,14 +632,14 @@ describe("<ChatApp>", () => {
   it("with the ? overlay open, ctrl+o does NOT open the pager and the overlay stays (F0 acceptance 5)", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("?");
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
     stdin.write("\x0f");                                              // Ctrl-O
     await new Promise((r) => setTimeout(r, 30)); await new Promise((r) => setTimeout(r, 30));
     expect(frame(lastFrame)).toContain("Keyboard shortcuts");         // still open
     stdin.write("\x1b");
-    await waitFor(() => frame(lastFrame).includes("›"));              // back at the composer, not a leaked pager
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));              // back at the composer, not a leaked pager
     expect(frame(lastFrame)).not.toContain("Keyboard shortcuts");
   });
 
@@ -643,7 +648,7 @@ describe("<ChatApp>", () => {
     const suspend = vi.fn();
     const fake = fakeRemote({ setPermissionMode: (mode: string) => { modes.push(mode); } });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} suspend={suspend as any} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
 
     stdin.write("?");
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
@@ -655,7 +660,7 @@ describe("<ChatApp>", () => {
     expect(modes).toEqual([]);
     expect(frame(lastFrame)).not.toContain("Transcript");
     stdin.write("\x1b");                                        // Escape only closes help; it must not arm rewind beneath it
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
     expect(frame(lastFrame)).not.toContain("Transcript");
 
@@ -694,7 +699,7 @@ describe("<ChatApp>", () => {
       const suspend = vi.fn();
       const session = testCase.session();
       const view = render(<ChatApp makeSession={() => session} client={{ kind: "loopback" }} cwd={process.cwd()} deps={testCase.deps} suspend={suspend as any} />);
-      await waitFor(() => frame(view.lastFrame).includes("›"));
+      await waitFor(() => frame(view.lastFrame).includes("❯\u00a0"));
       await testCase.open(view.stdin, view.lastFrame);
       view.stdin.write("\x1a");
       await waitFor(() => suspend.mock.calls.length === 1);
@@ -716,7 +721,7 @@ describe("<ChatApp>", () => {
     for (const testCase of cases) {
       const fake = testCase.session();
       const view = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={testCase.deps} />);
-      await waitFor(() => frame(view.lastFrame).includes("›"));
+      await waitFor(() => frame(view.lastFrame).includes("❯\u00a0"));
       await testCase.open(view.stdin, view.lastFrame);
       fake.parkPermission({ sessionId: "s", toolUseID: `hidden-${testCase.name}`, toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
       view.stdin.write("\x03");                                // Ctrl-C belongs to the visible surface, never hidden pending
@@ -738,21 +743,21 @@ describe("<ChatApp>", () => {
     const modes: string[] = [];
     const fake = fakeRemote({ setPermissionMode: (mode: string) => { modes.push(mode); } });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
 
     fake.parkPermission({ sessionId: "s", toolUseID: "guard", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
     await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
     stdin.write("\x1b[Z");                                      // must not leak to the former composer
     stdin.write("\x1b");                                        // dialog denies; it must not also arm rewind
     await waitFor(() => fake.answeredCalls.length === 1);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     expect(modes).toEqual([]);
     expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
   });
 
   it("? mid-buffer inserts a literal '?' instead of opening the overlay", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("hi"); await waitFor(() => frame(lastFrame).includes("hi"));
     stdin.write("?");
     await waitFor(() => frame(lastFrame).includes("hi?"));
@@ -762,7 +767,7 @@ describe("<ChatApp>", () => {
   it("ctrl+u on ≥3 chars shows 'Ctrl+Y to paste deleted text' and it expires (CM11)", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} yankHintMs={80} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("hello");
     await waitFor(() => frame(lastFrame).includes("hello"));
     stdin.write("\x15");                                   // Ctrl-U
@@ -782,7 +787,7 @@ describe("<ChatApp>", () => {
       listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
     };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x12");                                   // Ctrl-R
     await waitFor(() => frame(lastFrame).includes("Search prompts"));
     stdin.write("\x1b");                                   // Esc = accept
@@ -797,7 +802,7 @@ describe("<ChatApp>", () => {
       listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
     };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x1b");
     await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
     stdin.write("\x12");                                         // Ctrl-R opens history without disarming rewind itself
@@ -821,7 +826,7 @@ describe("<ChatApp>", () => {
       listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
     };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x12");                                   // Ctrl-R opens
     await waitFor(() => frame(lastFrame).includes("Search prompts"));
     stdin.write("\x03");                                   // Ctrl-C → overlay cancels; app exit-arm must NOT fire
@@ -833,7 +838,7 @@ describe("<ChatApp>", () => {
   it("Ctrl-O opens the transcript pager, gates the app keys, and Ctrl-O again closes it", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     // Seed a task so the panel actually renders something — with an empty task list TaskPanel renders
     // null regardless of todosOpen, which would make the Ctrl-T-while-open check below pass vacuously
     // even if the gate leaked (the "still contains Transcript" check alone can't tell the difference).
@@ -868,7 +873,7 @@ describe("<ChatApp>", () => {
       listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
     };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x0f");                                              // Ctrl-O opens the pager
     await waitFor(() => frame(lastFrame).includes("Transcript"));
     stdin.write("\x12");                                              // Ctrl-R must NOT open history search here
@@ -881,7 +886,7 @@ describe("<ChatApp>", () => {
     // have set historyOpen behind it and be revealed right here, the moment the pager unmounts.
     await new Promise((r) => setTimeout(r, 30));
     expect(frame(lastFrame)).not.toContain("Search prompts");
-    expect(frame(lastFrame)).toContain("›");                          // the composer, not a history overlay
+    expect(frame(lastFrame)).toContain("❯\u00a0");                          // the composer, not a history overlay
     stdin.write("\x12");                                              // …and Ctrl-R works again once the pager is gone
     await waitFor(() => frame(lastFrame).includes("Search prompts"));
   });
@@ -890,7 +895,7 @@ describe("<ChatApp>", () => {
   it("/add-dir with no arg opens the entry phase; Esc with no path cancels with the no-path message", async () => {
     const fake = fakeSettingsRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/add-dir"); await waitFor(() => frame(lastFrame).includes("/add-dir"));
     stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
     await waitFor(() => frame(lastFrame).includes("Enter the path to the directory:"));
@@ -904,7 +909,7 @@ describe("<ChatApp>", () => {
     const fake = fakeSettingsRemote({ addDir: async (p) => { calls.push(p); } });
     const target = tmpdir();   // a real, existing directory outside process.cwd()
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write(`/add-dir ${target}`); await waitFor(() => frame(lastFrame).includes(target));
     stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
     await waitFor(() => frame(lastFrame).includes("Add directory to workspace"));
@@ -933,7 +938,7 @@ describe("<ChatApp>", () => {
       write: (p: string, s: string) => { writes.push({ path: p, content: s }); },
     };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ settingsFileDeps }} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write(`/add-dir ${target}`); await waitFor(() => frame(lastFrame).includes(target));
     stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
     await waitFor(() => frame(lastFrame).includes("Add directory to workspace"));
@@ -970,7 +975,7 @@ describe("<ChatApp>", () => {
     };
     const fakeDeps = { getSessionMessages: async () => [] as any[] };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={fakeDeps} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
 
     // Start /add-dir — it suspends on listDirs() (composer stays mounted: local commands don't set busy).
     stdin.write(`/add-dir ${target}`); await waitFor(() => frame(lastFrame).includes(target));
@@ -1002,7 +1007,7 @@ describe("<ChatApp>", () => {
   // W3 T4: /theme
   it("/theme opens the picker with the exact prompt, all 5 rows, and the demo.js preview", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/theme"); await waitFor(() => frame(lastFrame).includes("/theme"));
     stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
     await waitFor(() => frame(lastFrame).includes("Choose the text style that looks best with your terminal"));
@@ -1022,7 +1027,7 @@ describe("<ChatApp>", () => {
   it("/theme Esc restores the theme that was live when the dialog opened, after navigating away from it (sabotage-checked — see task report)", async () => {
     const before = currentTheme();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/theme"); await waitFor(() => frame(lastFrame).includes("/theme"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Choose the text style"));
@@ -1039,7 +1044,7 @@ describe("<ChatApp>", () => {
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
         deps={{ savePrefs: (patch: unknown) => { calls.push(patch); } }} />,
     );
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/theme"); await waitFor(() => frame(lastFrame).includes("/theme"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Choose the text style"));
@@ -1054,7 +1059,7 @@ describe("<ChatApp>", () => {
 
   it("/theme j/k and ctrl+n/ctrl+p navigate the same as ↓/↑ (Select-context keymap parity)", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/theme"); await waitFor(() => frame(lastFrame).includes("/theme"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Choose the text style"));
@@ -1071,7 +1076,7 @@ describe("<ChatApp>", () => {
   // W3 T5: /config
   it("/config opens the Settings dialog at the Config tab, showing all 5 rows and the normal-mode footer", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
     await waitFor(() => frame(lastFrame).includes("Settings"));
@@ -1090,7 +1095,7 @@ describe("<ChatApp>", () => {
 
   it("Config: toggling the Thinking-mode row shows the warning and Esc summarizes 'Set Thinking mode to false' (sabotage-checked — see task report)", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Thinking mode"));
@@ -1108,7 +1113,7 @@ describe("<ChatApp>", () => {
 
   it("Config: Esc with no changes prints 'Config dialog dismissed'", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Settings"));
@@ -1118,7 +1123,7 @@ describe("<ChatApp>", () => {
 
   it("Config: / enters search and filters the row list to the query (case-insensitive label match)", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
@@ -1135,7 +1140,7 @@ describe("<ChatApp>", () => {
 
   it("Config: an unmatched search shows the empty state", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
@@ -1147,7 +1152,7 @@ describe("<ChatApp>", () => {
 
   it("Config: shift+Tab reaches the Status tab, rendering the live status rows (Global Constraints line 34: tab/shift+tab/left/right switch tabs, wrapping)", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));   // confirms we're on Config first
@@ -1166,7 +1171,7 @@ describe("<ChatApp>", () => {
   it("Config: the Model row round trip through the shared ModelPicker reports the change exactly once, and Settings reappears afterward", async () => {
     const fake = fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
@@ -1197,7 +1202,7 @@ describe("<ChatApp>", () => {
     const gate = new Promise<void>((r) => { release = r; });
     const fake = fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }), setModel: () => gate });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
@@ -1227,7 +1232,7 @@ describe("<ChatApp>", () => {
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
         deps={{ savePrefs: (patch: unknown) => { savePrefsCalls.push(patch); } }} />,   // never the real ~/.claude/ccx/prefs.json
     );
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
@@ -1260,7 +1265,7 @@ describe("<ChatApp>", () => {
       <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()}
         deps={{ savePrefs: (patch: unknown) => { savePrefsCalls.push(patch); }, settingsFileDeps }} />,
     );
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
@@ -1292,7 +1297,7 @@ describe("<ChatApp>", () => {
     const gate = new Promise<void>((r) => { release = r; });
     const fake = fakeRemote({ setMaxThinkingTokens: () => gate });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
@@ -1325,7 +1330,7 @@ describe("<ChatApp>", () => {
       <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()}
         deps={{ savePrefs: () => {}, settingsFileDeps }} />,
     );
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
@@ -1351,7 +1356,7 @@ describe("<ChatApp>", () => {
 
   it("Config: '/config bogus=1' prints the unknown-key error and never opens the dialog", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config bogus=1");
     await waitFor(() => frame(lastFrame).includes("/config bogus=1"));
     stdin.write("\r");
@@ -1362,7 +1367,7 @@ describe("<ChatApp>", () => {
 
   it("Config: '/config thinking=maybe' prints the boolean-domain error", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config thinking=maybe");
     await waitFor(() => frame(lastFrame).includes("/config thinking=maybe"));
     stdin.write("\r");
@@ -1371,7 +1376,7 @@ describe("<ChatApp>", () => {
 
   it("Config: '/config permissionMode=weird' prints the enum-domain error", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config permissionMode=weird");
     await waitFor(() => frame(lastFrame).includes("/config permissionMode=weird"));
     stdin.write("\r");
@@ -1382,7 +1387,7 @@ describe("<ChatApp>", () => {
   // the first call must actually turn thinking off before the second call can correctly find it already off.
   it("Config: '/config thinking=false' twice — the first turns it off, the second reports it's already off", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config thinking=false");
     await waitFor(() => frame(lastFrame).includes("/config thinking=false"));
     stdin.write("\r");
@@ -1406,7 +1411,7 @@ describe("<ChatApp>", () => {
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
         deps={{ savePrefs: (patch: unknown) => { calls.push(patch); } }} />,   // never the real ~/.claude/ccx/prefs.json
     );
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config theme=dark");
     await waitFor(() => frame(lastFrame).includes("/config theme=dark"));
     stdin.write("\r");
@@ -1417,7 +1422,7 @@ describe("<ChatApp>", () => {
 
   it("/settings aliases /config — opens the same Settings dialog at the Config tab", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/settings"); await waitFor(() => frame(lastFrame).includes("/settings"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Settings"));
@@ -1428,7 +1433,7 @@ describe("<ChatApp>", () => {
 
   it("/output-style prints the redirect line then opens Settings at the Config tab (not the picker directly)", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/output-style"); await waitFor(() => frame(lastFrame).includes("/output-style"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("/output-style moved → Output style in /config"));
@@ -1448,7 +1453,7 @@ describe("<ChatApp>", () => {
     const openEditor = vi.fn((_file: string, prepare: () => void) => { prepare(); return "opened" as const });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
       deps={{ home, openEditor, readFile: () => null, writeFile: (p, t) => { written.push([p, t]); } }} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/keybindings"); await waitFor(() => frame(lastFrame).includes("/keybindings"));
     stdin.write("\r");
     await waitFor(() => flat(lastFrame).includes("saved changes apply live"));
@@ -1469,7 +1474,7 @@ describe("<ChatApp>", () => {
     const openEditor = vi.fn((_file: string, prepare: () => void) => { prepare(); return "opened" as const });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
       deps={{ home, openEditor }} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     expect(existsSync(join(home, ".claude"))).toBe(false);                  // the precondition the bug needs
     stdin.write("/keybindings"); await waitFor(() => frame(lastFrame).includes("/keybindings"));
     stdin.write("\r");
@@ -1494,7 +1499,7 @@ describe("<ChatApp>", () => {
     const written: string[] = [];
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
       deps={{ home, openEditor: () => "no-editor", readFile: () => null, writeFile: (p) => { written.push(p); } }} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/keybindings"); await waitFor(() => frame(lastFrame).includes("/keybindings"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));   // ShortcutsOverlay is up
@@ -1504,7 +1509,7 @@ describe("<ChatApp>", () => {
 
   it("help owns immediate keys before its passive handler mounts, and Escape closes without opening pager", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("?");
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
     stdin.write("\x0f");                         // Ctrl-O immediately after the help frame appears
@@ -1517,7 +1522,7 @@ describe("<ChatApp>", () => {
   it("ChatApp root handler reads the current suspend callback immediately after rerender", async () => {
     let oldCalls = 0, currentCalls = 0;
     const view = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} suspend={() => { oldCalls++; }} />);
-    await waitFor(() => frame(view.lastFrame).includes("›"));
+    await waitFor(() => frame(view.lastFrame).includes("❯\u00a0"));
     view.rerender(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} suspend={() => { currentCalls++; }} />);
     view.stdin.write("\x1a");
     await waitFor(() => currentCalls === 1);
@@ -1529,7 +1534,7 @@ describe("<ChatApp>", () => {
   it("/permissions opens with all 5 tabs, defaulting to Allow (with its intro + 'Add a new rule…') when there are no recent denials", async () => {
     const fake = fakeSettingsRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Permissions"));
@@ -1551,7 +1556,7 @@ describe("<ChatApp>", () => {
   it("/permissions defaults to the Recently-denied tab (with the just-denied entry) when a denial already happened this session", async () => {
     const fake = fakeSettingsRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     fake.parkPermission({ sessionId: "s", toolUseID: "t1", toolName: "Bash", kind: "permission", input: { command: "rm -rf /" }, createdAt: Date.now() });
     await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
     fake.settlePermission("t1", "auto", "deny");                    // the auto-mode classifier denying it — dropPending records the ledger entry
@@ -1574,7 +1579,7 @@ describe("<ChatApp>", () => {
     };
     const fake = fakeSettingsRemote({ addRule: async (behavior, rule) => { addRuleCalls.push({ behavior, rule }); } });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ settingsFileDeps }} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Add a new rule…"));
@@ -1605,7 +1610,7 @@ describe("<ChatApp>", () => {
       removeRule: async (behavior, rule) => { removeRuleCalls.push({ behavior, rule }); },
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Read"));           // the fetched read-only row rendered
@@ -1644,7 +1649,7 @@ describe("<ChatApp>", () => {
       getSettings: async () => (rules.length ? { sources: [{ source: "flagSettings", settings: { permissions: { allow: rules } } }] } : {}),
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ settingsFileDeps }} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Add a new rule…"));
@@ -1681,7 +1686,7 @@ describe("<ChatApp>", () => {
   it("/permissions Workspace tab: managed cwd rows do not advertise or respond to Enter", async () => {
     const fake = fakeSettingsRemote({ listDirs: async () => [{ path: process.cwd(), source: "cwd" as const }] });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Permissions"));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always ask for confirmation before using these tools."));
@@ -1702,7 +1707,7 @@ describe("<ChatApp>", () => {
       removeDir: async (p) => { removeDirCalls.push(p); },
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Permissions"));
@@ -1741,7 +1746,7 @@ describe("<ChatApp>", () => {
       addDir: async () => { await gate; added = true; },
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Permissions"));
@@ -1765,7 +1770,7 @@ describe("<ChatApp>", () => {
   it("/permissions: Esc at the top level dismisses with the exact upstream line, and /allowed-tools is a full alias", async () => {
     const fake = fakeSettingsRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/allowed-tools"); await waitFor(() => frame(lastFrame).includes("/allowed-tools"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Permissions"));
@@ -1789,7 +1794,7 @@ describe("<ChatApp>", () => {
     });
     const deps = { getSessionMessages: async () => [] as any[], getSessionMessagesIn: async () => [] as any[], listHistorySessions: async () => [] };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("start"); await waitFor(() => frame(lastFrame).includes("start"));
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
     for (const text of ["queued one", "queued two"]) {
@@ -1800,22 +1805,22 @@ describe("<ChatApp>", () => {
     await waitFor(() => interrupted === 1 && frame(lastFrame).includes("queued one") && frame(lastFrame).includes("queued two"));
 
     stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Transcript"));
-    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("\x12"); await waitFor(() => frame(lastFrame).includes("Search prompts"));
-    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await new Promise((r) => setTimeout(r, 20));
 
     fake.parkPermission({ sessionId: "s", toolUseID: "rescue", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
     await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
     stdin.write("\x1b"); await waitFor(() => fake.answeredCalls.length === 1);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await new Promise((r) => setTimeout(r, 20));
     stdin.write(" edited"); await waitFor(() => frame(lastFrame).includes("queued two edited"));
-    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Ask Claude anything…"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("sk Claude anything…"));
 
     stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Transcript"));
-    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Ask Claude anything…"));
+    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("sk Claude anything…"));
   });
 
   it("Esc with a running turn and 3 queued messages: composer holds all three newline-joined, queue empty, turn interrupted (F0 acceptance 1, CM49)", async () => {
@@ -1830,7 +1835,7 @@ describe("<ChatApp>", () => {
       interrupt: async () => { interrupted++; fake.pushEvent({ kind: "turn", phase: "end", seq: 1 }); },
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("start"); await waitFor(() => frame(lastFrame).includes("start"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("⟳"));
@@ -1866,7 +1871,7 @@ describe("<ChatApp>", () => {
       interrupt: async () => { interrupted++; fake.pushEvent({ kind: "turn", phase: "end", seq: 1 }); },
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("start"); await waitFor(() => frame(lastFrame).includes("start"));
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
     stdin.write("queued-one"); await waitFor(() => frame(lastFrame).includes("queued-one"));
@@ -1962,7 +1967,7 @@ describe("<ChatApp> — retained source", () => {
     const clears: number[] = [];
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" clearStaticTranscript={() => clears.push(1)} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/help"); await waitFor(() => frame(lastFrame).includes("/help"));
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("/model"));
     stdin.write("/clear"); await waitFor(() => frame(lastFrame).includes("/clear"));

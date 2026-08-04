@@ -319,19 +319,19 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
   it("a Select overlay (the bg panel) is deaf to every root global, and the composer gets them back on close", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await armTodoRow(fake, stdin, lastFrame);
     stdin.write("\x02");                                            // ctrl+b while idle opens the panel
     await waitFor(() => frame(lastFrame).includes("Background tasks"));
     await eachRootGlobalIsInert(stdin, lastFrame, "Background tasks");
-    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("›"));
+    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x12"); await waitFor(() => frame(lastFrame).includes("Search prompts"));   // scoped, not global
   });
 
   it("a Settings overlay (/config) is deaf to them too", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await armTodoRow(fake, stdin, lastFrame);
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
     stdin.write("\r");
@@ -349,7 +349,7 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
     const fake = settingsRemote();
     const target = tmpdir();                                        // a real directory outside cwd, so validation says ok
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await armTodoRow(fake, stdin, lastFrame);
     stdin.write("/add-dir"); await waitFor(() => frame(lastFrame).includes("/add-dir"));
     stdin.write("\r");                                              // separate write: "text\r" in ONE chunk reads as a paste
@@ -361,7 +361,7 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
     stdin.write("\x1b[B"); await waitFor(() => frame(lastFrame).includes("❯ Yes, and remember this directory"));
     stdin.write("k");      await waitFor(() => frame(lastFrame).includes("❯ Yes, for this session"));   // KB14, inherited from Select
     stdin.write("\x1b");   await waitFor(() => flat(lastFrame).includes("Did not add"));   // esc still cancels the menu
-    expect(frame(lastFrame)).toContain("›");                                               // …back to the composer
+    expect(frame(lastFrame)).toContain("❯\u00a0");                                               // …back to the composer
   });
 
   // The other half of Important 1: with the scope pushed in both phases, the dialog's own keys must still be
@@ -403,7 +403,7 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
       background,
     });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("go");   await waitFor(() => frame(lastFrame).includes("go"));
     stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("⟳"));
     stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Transcript"));   // ctrl+o opens the pager
@@ -427,7 +427,7 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
     const { stdin, lastFrame } = render(
       <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ getSessionMessages: async () => [] as never[] }} />,
     );
-    await waitFor(() => frame(lastFrame).includes("›"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await armTodoRow(fake, stdin, lastFrame);
     stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
     stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("Rewind to a previous message"));
