@@ -3,8 +3,8 @@
 // (L317378) for what counts as a line, `agr` (L317383) for the placeholder grammar, `KF` (L317394) for the
 // recognizer and `fSe` (L317403) for the submit-time expansion.
 import { describe, it, expect } from "vitest";
-import { applyKey, initialEditorState, type EditorState } from "../../src/tui/editor.js";
-import { CHIP_CHARS, CHIP_RE, chipLabel, chipSpans, ingestPaste, newlineCount, newlineThreshold, normalizePaste, stripANSI, substituteChips } from "../../src/tui/pasteChips.js";
+import { applyKey, clearToHistory, initialEditorState, type EditorState } from "../../src/tui/editor.js";
+import { CHIP_CHARS, CHIP_RE, chipLabel, chipSpans, deleteTokenBefore, gcPastedContents, ingestPaste, newlineCount, newlineThreshold, normalizePaste, snapOut, stripANSI, substituteChips } from "../../src/tui/pasteChips.js";
 
 const text = (s: EditorState) => s.lines.join("\n");
 const paste = (s: EditorState, raw: string, rows?: number) => applyKey(s, raw, { paste: true }, Date.now(), rows);
@@ -203,6 +203,169 @@ describe("submitTurn — fSe expansion", () => {
     const s = paste(initialEditorState(), "a\nb\nc\nd", 24).state;
     expect(submitOf(s).state.pastedContents).toEqual({});
     expect(submitOf(s).state.pasteCounter).toBe(0);
+  });
+});
+
+// ─── F5 task 4: chip mechanics ────────────────────────────────────────────────────────────────────────
+// `deleteTokenBefore` (bundle L395149) verbatim, incl. the f18 guard `if (t !== void 0 && !/\s/.test(t)) return null`
+// and the forward arm for a placeholder that STARTS at the cursor; the snap-out effect (L495400) and its
+// midpoint rule `Qe(xe < Cn ? Wt.start : Wt.end)`; the placeholder-aware `left()`/`right()` (L394793/L394803).
+const LABEL3 = "[Pasted text #1 +3 lines]";                 // the label a 4-line paste mints (25 chars)
+const LABEL0 = "[Pasted text #1]";                          // the label a 900-char one-liner mints (16 chars)
+const chipped = () => paste(initialEditorState(), "a\nb\nc\nd", 24).state;
+const bksp = (s: EditorState, now?: number) => applyKey(s, "", { backspace: true }, now);
+
+describe("deleteTokenBefore — the atomic one-keystroke chip delete", () => {
+  it("backspace right after a chip empties the buffer and GCs the entry", () => {
+    const s = chipped();
+    expect(text(s)).toBe(LABEL3);
+    const r = bksp(s);
+    expect(text(r.state)).toBe("");
+    expect(r.state.cursor).toEqual({ row: 0, col: 0 });
+    expect(r.state.pastedContents).toEqual({});
+    expect(r.state.pasteCounter).toBe(1);                   // ids stay monotonic — the counter is not a live count
+  });
+  it("ctrl+h takes the same path (bundle L395676: `h` → `deleteTokenBefore() ?? backspace()`)", () => {
+    const r = applyKey(chipped(), "h", { ctrl: true });
+    expect(text(r.state)).toBe("");
+    expect(r.state.pastedContents).toEqual({});
+  });
+  it("eats only the placeholder, keeping the whitespace that precedes it (`o = n.index + n[1].length`)", () => {
+    let s = applyKey(initialEditorState(), "see ", {}).state;
+    s = paste(s, "a\nb\nc\nd", 24).state;
+    expect(text(s)).toBe("see " + LABEL3);
+    expect(text(bksp(s).state)).toBe("see ");
+  });
+  it("f18 guard: a NON-space character at the cursor blocks the atomic delete", () => {
+    let s = chipped();
+    s = applyKey(s, "x", {}).state;                          // LABEL3 + "x"
+    s = applyKey(s, "", { leftArrow: true }).state;          // cursor between "]" and "x"
+    expect(s.cursor.col).toBe(LABEL3.length);
+    const r = bksp(s);
+    expect(text(r.state)).toBe("[Pasted text #1 +3 linesx"); // a plain backspace ate the "]" …
+    expect(r.state.pastedContents).toEqual({});              // … and the mangled label GC'd the entry
+  });
+  it("whitespace at the cursor passes the guard (a chip mid-line still dies whole)", () => {
+    let s = chipped();
+    s = applyKey(s, " tail", {}).state;
+    s = { ...s, cursor: { row: 0, col: LABEL3.length } };
+    expect(text(bksp(s).state)).toBe(" tail");
+  });
+  it("branch 1 (L395150): with the cursor at a chip's START the chip dies FORWARD, plus one trailing space", () => {
+    let s = chipped();
+    s = applyKey(s, " tail", {}).state;
+    const r = bksp({ ...s, cursor: { row: 0, col: 0 } });
+    expect(text(r.state)).toBe("tail");
+    expect(r.state.cursor).toEqual({ row: 0, col: 0 });
+    expect(r.state.pastedContents).toEqual({});
+  });
+  it("returns null (→ plain backspace) when no placeholder ends at the cursor", () => {
+    const s = applyKey(initialEditorState(), "ab", {}).state;
+    expect(deleteTokenBefore(s)).toBeNull();
+    expect(text(bksp(s).state)).toBe("a");
+  });
+  it("returns null at column 0 with no chip ahead (upstream's `isAtStart()`)", () => {
+    expect(deleteTokenBefore(initialEditorState())).toBeNull();
+  });
+  it("recognizes the other three species the bundle's regex names", () => {
+    for (const label of ["[Image #2]", "[Audio #3]", "[...Truncated text #4 +9 lines...]"]) {
+      const s = applyKey(initialEditorState(), "x " + label, {}).state;
+      expect(text(bksp(s).state)).toBe("x ");
+    }
+  });
+  it("produces exactly ONE undo entry, and undo restores the chip AND its map entry", () => {
+    const pasted = applyKey(initialEditorState(), "a\nb\nc\nd", { paste: true }, 1000, 24).state;
+    const gone = bksp(pasted, 9000).state;
+    expect(text(gone)).toBe("");
+    expect(gone.undo.length).toBe(pasted.undo.length + 1);
+    const back = applyKey(gone, "\x1f", {}, 9001).state;
+    expect(text(back)).toBe(LABEL3);
+    expect(back.pastedContents[1].content).toBe("a\nb\nc\nd");
+  });
+});
+
+describe("snapOut — a cursor strictly inside a chip lands on an edge", () => {
+  it("two cells in from the left edge → the start; two cells in from the right edge → the end", () => {
+    const base = chipped();
+    expect(applyKey({ ...base, cursor: { row: 0, col: 2 } }, "", { rightArrow: true }).state.cursor.col).toBe(0);
+    expect(applyKey({ ...base, cursor: { row: 0, col: LABEL3.length - 2 } }, "", { leftArrow: true }).state.cursor.col).toBe(LABEL3.length);
+  });
+  it("breaks the midpoint tie toward the END (`xe < Cn ? start : end`)", () => {
+    const s = paste(initialEditorState(), "x".repeat(900), 24).state;   // LABEL0, midpoint exactly 8
+    expect(applyKey({ ...s, cursor: { row: 0, col: 9 } }, "", { leftArrow: true }).state.cursor.col).toBe(LABEL0.length);
+  });
+  it("also catches a vertical move that drops the cursor into a chip", () => {
+    let s = applyKey(initialEditorState(), "a long first line", {}).state;
+    s = applyKey(s, "", { return: true, shift: true }).state;
+    s = paste(s, "a\nb\nc\nd", 24).state;
+    const up = applyKey({ ...s, cursor: { row: 0, col: 3 } }, "", { downArrow: true }).state;
+    expect(up.cursor).toEqual({ row: 1, col: 0 });                       // col 3 is inside the chip → start
+  });
+  it("leaves an edge or outside cursor alone (identity, so no spurious state churn)", () => {
+    const s = chipped();
+    expect(snapOut(s)).toBe(s);                                          // sitting on the end edge
+    const atStart = { ...s, cursor: { row: 0, col: 0 } };
+    expect(snapOut(atStart)).toBe(atStart);
+    const plain = applyKey(initialEditorState(), "hello", {}).state;
+    expect(snapOut({ ...plain, cursor: { row: 0, col: 2 } }).cursor.col).toBe(2);
+  });
+  it("never fires on a key that CHANGED the text (the key owns its own cursor)", () => {
+    const s = chipped();
+    const r = applyKey({ ...s, cursor: { row: 0, col: 10 } }, "Z", {});
+    expect(r.state.cursor).toEqual({ row: 0, col: 11 });
+    expect(text(r.state)).toBe("[Pasted teZxt #1 +3 lines]");
+  });
+  it("an arrow AT an edge steps over the whole chip (bundle left()/right())", () => {
+    const s = paste(initialEditorState(), "x".repeat(900), 24).state;
+    expect(applyKey(s, "", { leftArrow: true }).state.cursor.col).toBe(0);
+    expect(applyKey({ ...s, cursor: { row: 0, col: 0 } }, "", { rightArrow: true }).state.cursor.col).toBe(LABEL0.length);
+  });
+  it("a WORD motion crosses the chip instead of stopping at the spaces inside the label", () => {
+    let s = applyKey(initialEditorState(), "one ", {}).state;
+    s = paste(s, "a\nb\nc\nd", 24).state;
+    s = applyKey(s, " two", {}).state;                                   // "one " + LABEL3 + " two"
+    const back = applyKey({ ...s, cursor: { row: 0, col: 4 + LABEL3.length } }, "", { meta: true, leftArrow: true });
+    expect(back.state.cursor.col).toBe(4);                               // prevWord → snapOutOfPlaceholder(…, "start")
+    const fwd = applyKey({ ...s, cursor: { row: 0, col: 4 } }, "", { meta: true, rightArrow: true });
+    expect(fwd.state.cursor.col).toBe(4 + LABEL3.length);                // nextWord → snapOutOfPlaceholder(…, "end")
+  });
+});
+
+describe("map GC — an edit that removes a label removes its entry", () => {
+  it("ctrl+k through half a chip leaves a literal remainder and GCs the entry", () => {
+    const s = chipped();
+    const cut = applyKey({ ...s, cursor: { row: 0, col: 10 } }, "k", { ctrl: true });
+    expect(text(cut.state)).toBe("[Pasted te");
+    expect(cut.state.pastedContents).toEqual({});
+    expect(applyKey(cut.state, "", { return: true }).submit).toBe("[Pasted te");
+  });
+  it("drops only the entry whose label left the buffer", () => {
+    let s = chipped();
+    s = applyKey(s, " ", {}).state;
+    s = paste(s, "e\nf\ng\nh", 24).state;
+    const r = bksp(s);
+    expect(text(r.state)).toBe(LABEL3 + " ");
+    expect(Object.keys(r.state.pastedContents)).toEqual(["1"]);
+  });
+  it("scans EVERY line, so an edit on one line cannot GC a chip living on another", () => {
+    let s = chipped();
+    s = applyKey(s, "", { return: true, shift: true }).state;
+    s = applyKey(s, "hello", {}).state;
+    const r = bksp(s);
+    expect(r.state.lines).toEqual([LABEL3, "hell"]);
+    expect(r.state.pastedContents[1]).toBeDefined();
+  });
+  it("gcPastedContents is identity when nothing died (and on an empty map)", () => {
+    const s = chipped();
+    expect(gcPastedContents(s)).toBe(s);
+    const empty = initialEditorState();
+    expect(gcPastedContents(empty)).toBe(empty);
+  });
+  it("clearToHistory resets the map with the buffer, keeping the label in history", () => {
+    const c = clearToHistory(chipped());
+    expect(c.pastedContents).toEqual({});
+    expect(c.pasteCounter).toBe(0);
+    expect(c.history[c.history.length - 1]).toBe(LABEL3);
   });
 });
 

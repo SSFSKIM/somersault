@@ -61,6 +61,97 @@ export function chipSpans(line: string): ChipSpan[] {
     .filter((s) => s.id > 0);
 }
 
+/** `placeholderStartingAt` / `placeholderEndingAt` / `placeholderContaining` (bundle L394812–L394828), rewritten
+ *  against `chipSpans` rather than upstream's three separately-anchored regexes so all four call sites agree on
+ *  exactly one definition of "a chip" (which, per `KF`, excludes id 0). `containing` is STRICTLY inside: a cursor
+ *  sitting on either edge is outside the placeholder, which is what makes the edges reachable at all. */
+export function chipStartingAt(line: string, col: number): ChipSpan | null { return chipSpans(line).find((s) => s.start === col) ?? null; }
+export function chipEndingAt(line: string, col: number): ChipSpan | null { return chipSpans(line).find((s) => s.end === col) ?? null; }
+export function chipContaining(line: string, col: number): ChipSpan | null { return chipSpans(line).find((s) => col > s.start && col < s.end) ?? null; }
+
+/** `deleteTokenBefore`'s own regex (bundle L395160), verbatim — deliberately NOT `CHIP_RE`. It is anchored (`$`),
+ *  demands a word boundary in front (`(^|\s)`), and spells the four species out with their exact suffixes, so a
+ *  half-typed or mangled label can never be eaten as if it were a whole chip. */
+const TOKEN_BEFORE_RE = /(^|\s)\[(Pasted text #\d+(?: \+\d+ lines)?|Image #\d+|Audio #\d+|\.\.\.Truncated text #\d+ \+\d+ lines\.\.\.)\]$/;
+
+/** Cut `[from, to)` out of `row`, leaving the cursor at `col`. Local rather than editor.ts's `removeRange`, which
+ *  is not exported and spans rows; a chip never does (labels contain no newline). */
+function spliceLine(s: EditorState, row: number, from: number, to: number, col: number): EditorState {
+  const lines = [...s.lines];
+  lines[row] = lines[row].slice(0, from) + lines[row].slice(to);
+  return { ...s, lines, cursor: { row, col } };
+}
+
+/** `deleteTokenBefore` (bundle L395149), the whole function. Backspace and Ctrl-H both go through
+ *  `deleteTokenBefore() ?? backspace()` (L395791 / the ctrl map at L395676), so a chip dies in ONE keystroke
+ *  instead of leaving the user to erase twenty-five characters of a label they never typed. Returns null when
+ *  there is no token to eat — the caller then does an ordinary backspace.
+ *
+ *  Three arms, in upstream's order:
+ *   1. a chip that STARTS at the cursor dies FORWARD, taking one trailing space with it (L395150-L395154). Yes,
+ *      forward: upstream's `this.modifyText(new sd(…, o))` deletes the range between the two cursors and keeps
+ *      the earlier one, which here is the untouched `this.offset`.
+ *   2. the f18 guard (L395157): if the character AT the cursor exists and is not whitespace, bail. Our line model
+ *      has no character for a cursor at end-of-line, so it reads `undefined` there — same verdict as upstream,
+ *      where that position is either end-of-text (`undefined`) or the `\n` joining the next logical line (`\s`).
+ *   3. the anchored backward match, deleting from just after the matched leading whitespace to the cursor.
+ *
+ *  Upstream matches against the whole flat buffer; we match the cursor's line. Same outcome: the only thing the
+ *  wider slice adds is a preceding `\n`, which `(^|\s)` accepts exactly as our `^` does. */
+export function deleteTokenBefore(s: EditorState): EditorState | null {
+  const { row, col } = s.cursor; const line = s.lines[row];
+  const ahead = chipStartingAt(line, col);
+  if (ahead) return spliceLine(s, row, col, line[ahead.end] === " " ? ahead.end + 1 : ahead.end, col);
+  if (col === 0) return null;                                        // upstream's `isAtStart()`
+  const at = line[col];
+  if (at !== undefined && !/\s/.test(at)) return null;
+  const m = TOKEN_BEFORE_RE.exec(line.slice(0, col));
+  if (!m) return null;
+  return spliceLine(s, row, (m.index ?? 0) + m[1].length, col, (m.index ?? 0) + m[1].length);
+}
+
+/** The snap-out effect (bundle L495400): a cursor strictly inside a placeholder is pushed to the NEARER edge,
+ *  `Qe(xe < Cn ? Wt.start : Wt.end)` with `Cn` the midpoint — so a cursor exactly ON the midpoint goes to the END.
+ *  A chip is one object; parking the caret in the middle of a label the user never typed is meaningless.
+ *
+ *  DIVERGENCE, recorded rather than hidden: upstream runs this effect over IMAGE and AUDIO placeholders only
+ *  (`.filter(match.startsWith("[Image") || match.startsWith("[Audio"))`, L495399) because its cursor ops already
+ *  snap out of every placeholder in the direction of travel (`nextWord` → `snapOutOfPlaceholder(t,"end")` L394998,
+ *  `prevWord` → `"start"` L395064, and `left()`/`right()` step over a whole placeholder, L394793/L394803). We have
+ *  no image/audio path (spec non-goal), so this generalised effect is what stands in for that per-op snapping for
+ *  text chips. `left()`/`right()` are ported literally in editor.ts; the word ops are not, so Alt-→ into a chip
+ *  bounces back to the nearer edge instead of clearing it (see the F5 parity note). */
+export function snapOut(s: EditorState): EditorState {
+  const { row, col } = s.cursor;
+  const chip = chipContaining(s.lines[row], col);
+  if (!chip) return s;
+  return { ...s, cursor: { row, col: col < (chip.start + chip.end) / 2 ? chip.start : chip.end } };
+}
+
+/** GC (bundle L495717-L495728): the map is keyed by ids the BUFFER carries. Once an edit removes (or mangles) a label,
+ *  its entry can never be expanded again, so it dies with it — otherwise a submit could resurrect a paste whose
+ *  placeholder the user deleted, and the counter's ids would leak forever. Undo brings both back together
+ *  (the undo entry carries `pastedContents`; see applyKey).
+ *
+ *  Every line is rescanned on every text-changing keystroke. That is a full buffer walk per keypress, which is
+ *  fine at composer scale (a few short lines) and is the only version that cannot go stale — the alternative,
+ *  tracking which ids an edit touched, has to be right in every reducer arm forever.
+ *
+ *  SAME DIVERGENCE as snapOut, same reason: upstream's live-buffer effect prunes only `type === "image" || "audio"`
+ *  entries (L495721) and is gated off entirely when the map holds none (`iD`, L495715) — a stale TEXT entry
+ *  survives in upstream's map until the submit path rebuilds it from the ids actually present (L536788). We have
+ *  no image/audio, so text is the species that gets the treatment. */
+export function gcPastedContents(s: EditorState): EditorState {
+  const ids = Object.keys(s.pastedContents);
+  if (ids.length === 0) return s;
+  const live = new Set<number>();
+  for (const line of s.lines) for (const span of chipSpans(line)) live.add(span.id);
+  if (ids.every((k) => live.has(Number(k)))) return s;
+  const kept: PastedMap = {};
+  for (const k of ids) { const id = Number(k); if (live.has(id)) kept[id] = s.pastedContents[id]; }
+  return { ...s, pastedContents: kept };
+}
+
 /** `fSe`: expand every recognized chip whose id names a text entry. RIGHT TO LEFT, because each replacement
  *  changes the length of everything after it. A chip with no entry (a stale id, an `[Image #N]`) stays literal —
  *  the user typed those characters or the content is gone, and either way inventing text would be worse. */

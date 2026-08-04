@@ -4,7 +4,7 @@
 // continuation. rankCandidates (pure) is added in the mention pass.
 import { rankCandidates } from "./fileComplete.js";
 import { rankCommands, type CommandEntry } from "./commandComplete.js";
-import { CHIP_CHARS, ingestPaste, substituteChips } from "./pasteChips.js";
+import { CHIP_CHARS, chipContaining, chipEndingAt, chipStartingAt, deleteTokenBefore, gcPastedContents, ingestPaste, snapOut, substituteChips } from "./pasteChips.js";
 export interface Cursor { row: number; col: number }
 export interface Candidate { path: string; score: number }
 export interface MentionState { anchor: Cursor; query: string; files: string[]; items: Candidate[]; index: number }
@@ -86,15 +86,19 @@ function deleteLeft(s: EditorState): EditorState {
   if (row > 0) { const prev = lines[row - 1].length; lines[row - 1] = lines[row - 1] + lines[row]; lines.splice(row, 1); return { ...s, lines, cursor: { row: row - 1, col: prev } }; }
   return s;
 }
+// F5 t4: `left()`/`right()` (bundle L394793 / L394803) step over a WHOLE placeholder — `placeholderEndingAt` /
+// `placeholderStartingAt` at the cursor, jump to its far edge. A chip is one object, so it costs one keypress
+// either way. Without this the snap-out in applyKey would make chips impassable: → out of the start edge lands
+// one cell in, and the nearer edge is the one just left, so the caret bounces back forever.
 function moveLeft(s: EditorState): EditorState {
   const { row, col } = s.cursor;
-  if (col > 0) return { ...s, cursor: { row, col: col - 1 } };
+  if (col > 0) { const chip = chipEndingAt(s.lines[row], col); return { ...s, cursor: { row, col: chip ? chip.start : col - 1 } }; }
   if (row > 0) return { ...s, cursor: { row: row - 1, col: s.lines[row - 1].length } };
   return s;
 }
 function moveRight(s: EditorState): EditorState {
   const { row, col } = s.cursor;
-  if (col < s.lines[row].length) return { ...s, cursor: { row, col: col + 1 } };
+  if (col < s.lines[row].length) { const chip = chipStartingAt(s.lines[row], col); return { ...s, cursor: { row, col: chip ? chip.end : col + 1 } }; }
   if (row < s.lines.length - 1) return { ...s, cursor: { row: row + 1, col: 0 } };
   return s;
 }
@@ -141,19 +145,23 @@ function yankPop(s: EditorState): EditorState {              // Alt-Y right afte
   const ins = insertText(base, s.killRing[index]);
   return { ...ins, killRun: false, yankSite: { start: { ...site.start }, end: { ...ins.cursor }, index } };
 }
+// F5 t4: a word boundary that lands INSIDE a chip snaps out in the DIRECTION OF TRAVEL — upstream's
+// `prevWord()` ends in `snapOutOfPlaceholder(r, "start")` (L395064) and `nextWord()` in `…(t, "end")` (L394998).
+// A label is full of spaces, so without this every chip would swallow four or five Alt-arrow presses (and, with
+// applyKey's nearer-edge snap on top, bounce the caret back to the edge it started from).
 function wordLeft(s: EditorState): EditorState {         // Alt/Option-Left (and Alt-b): jump back a word
   let { row, col } = s.cursor;
   if (col === 0) { if (row === 0) return s; return { ...s, cursor: { row: row - 1, col: s.lines[row - 1].length } }; }
   const line = s.lines[row];
   let i = col; while (i > 0 && /\s/.test(line[i - 1])) i--; while (i > 0 && !/\s/.test(line[i - 1])) i--;
-  return { ...s, cursor: { row, col: i } };
+  return { ...s, cursor: { row, col: chipContaining(line, i)?.start ?? i } };
 }
 function wordRight(s: EditorState): EditorState {        // Alt/Option-Right (and Alt-f): jump forward a word
   let { row, col } = s.cursor;
   const line = s.lines[row];
   if (col >= line.length) { if (row === s.lines.length - 1) return s; return { ...s, cursor: { row: row + 1, col: 0 } }; }
   let i = col; while (i < line.length && /\s/.test(line[i])) i++; while (i < line.length && !/\s/.test(line[i])) i++;
-  return { ...s, cursor: { row, col: i } };
+  return { ...s, cursor: { row, col: chipContaining(line, i)?.end ?? i } };
 }
 /** Alt-d (CM12, bundle meta map `["d", () => W.deleteWordAfter()]`): delete forward to the next word boundary.
  *  Upstream's `deleteWordAfter` is a plain text modify — it never dispatches a kill — so this is deliberately
@@ -335,7 +343,7 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags, rows?: numb
       case "e": return { state: syncCompletions(lineEnd(s)) };
       case "b": return { state: syncCompletions(moveLeft(s)) };
       case "f": return { state: syncCompletions(moveRight(s)) };
-      case "h": return { state: syncCompletions(deleteLeft(s)) };   // Task 4 upgrades: deleteTokenBefore() ?? backspace()
+      case "h": return { state: syncCompletions(deleteTokenBefore(s) ?? deleteLeft(s)) };
       case "n": return { state: onDown(s) };                        // history at the bottom edge, popup nav while open
       case "p": return { state: onUp(s) };
       // A kill keystroke ALWAYS reports `killed` (even with empty text) so applyKey's wrapper can tell "a
@@ -367,7 +375,9 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags, rows?: numb
   }
   if (key.tab) { if (s.command) return { state: completeCommandName(s) }; return { state: s.mention ? acceptMention(s) : s }; }
   if (key.escape) { if (s.command) return { state: { ...s, command: null } }; return { state: s.mention ? { ...s, mention: null } : s }; }
-  if (key.backspace || key.delete) return { state: syncCompletions(deleteLeft(s)) };
+  // CM12, bundle L395791: `backspace` is `deleteTokenBefore() ?? backspace()` — a chip goes in one keystroke.
+  // `delete` is upstream's forward `del()`; this port has always aliased it to backspace, so it shares the arm.
+  if (key.backspace || key.delete) return { state: syncCompletions(deleteTokenBefore(s) ?? deleteLeft(s)) };
   if (key.leftArrow) return { state: syncCompletions(moveLeft(s)) };
   if (key.rightArrow) return { state: syncCompletions(moveRight(s)) };
   if (key.upArrow) return { state: onUp(s) };
@@ -447,6 +457,16 @@ export function applyKey(s: EditorState, input: string, key: KeyFlags, now: numb
   } else if (state.yankSite === s.yankSite) {
     state = endKillAndYank(state);                            // any non-kill keystroke ends the run; any non-yank-pop fixes the yank
   }
+  // F5 t4, the two chip mechanics that belong to NO single key, so every arm above stays chip-blind:
+  //  · text changed → GC the paste map (a label that left the buffer takes its entry with it). Runs BEFORE the
+  //    undo push below, which snapshots `s.pastedContents` — the PRIOR map — so undo still resurrects both.
+  //    EXCEPT when the op managed the undo stack itself (`state.undo !== s.undo` — undoEdit's pop, or a submit's
+  //    fresh state): a pop restores a snapshot that was already GC'd when it was taken, so re-deriving the map
+  //    from it would only second-guess it, and the t1 contract is that a pop restores the map with the text.
+  //  · text unchanged but the cursor MOVED → snap out of any chip it landed inside. Only then: a key that
+  //    changed the text has already placed its own cursor deliberately (an insert mid-label must stay put).
+  if (!sameText(state.lines, s.lines)) { if (state.undo === s.undo) state = gcPastedContents(state); }
+  else if (state.cursor.row !== s.cursor.row || state.cursor.col !== s.cursor.col) state = snapOut(state);
   if (r.submit !== undefined) return { ...r, state, killed };
   if (state === s) return { ...r, killed };
   if (sameText(state.lines, s.lines) || state.undo !== s.undo) return { ...r, state, killed };
