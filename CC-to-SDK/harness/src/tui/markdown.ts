@@ -34,8 +34,11 @@ const ROMAN: [number, string][] = [[1000, "m"], [900, "cm"], [500, "d"], [400, "
 /** `XhH` — subtractive roman numerals. */
 function roman(n: number): string { let t = ""; for (const [v, s] of ROMAN) while (n >= v) { t += s; n -= v; } return t; }
 /** `JhH(depth, n)` — depth 0/1 → arabic, 2 → letters, 3 → roman, 4+ → arabic again (the `default`).
- *  `depth` is the list_item's own 0-based nesting depth, so a top-level item numbers `1.`, its child
- *  `1.`, the grandchild `a.`, the great-grandchild `i.`. */
+ *  The depth `JhH` receives is the CHILD's, offset ONE from the indent depth: `case "list"` (L420647) passes
+ *  its own `n` to each item, `list_item` renders its children at `listDepth: n + 1` (L420650) while indenting
+ *  with `"  ".repeat(n)` (L420653), and the marker `JhH(n, o)` is computed inside the text CHILD (L420665),
+ *  whose `n` is already incremented. So indent level k takes the marker style of k+1: a top-level item
+ *  numbers `1.`, its child `a.`, the grandchild `i.`, the great-grandchild `1.` again. */
 function ordinal(depth: number, n: number): string {
   switch (depth) { case 0: case 1: return String(n); case 2: return letters(n); case 3: return roman(n); default: return String(n); }
 }
@@ -63,6 +66,13 @@ interface Ctx { style: InlineStyle; width: number }
 
 const NL = "\n";                                        // `aW` (pack §1.1)
 
+/** marked 18 emits a `space` token after a heading where the bundle's heading regex (L161565) swallowed those
+ *  newlines into the heading's own raw; keeping both would double every post-heading blank, so the token is
+ *  dropped — the heading case already carries upstream's `aW + aW`. Upstream has no such token at ANY depth,
+ *  so this runs over every token list we walk: top level, blockquote children, list-item children. */
+const dropPostHeadingSpace = (all: Token[]): Token[] =>
+  all.filter((t, i) => !(t.type === "space" && all[i - 1]?.type === "heading"));
+
 function styled(ctx: Ctx, text: string, extra?: Partial<Segment>): Run { return { ...ctx.style, ...extra, text }; }
 
 /** `code` (pack §5, L420597–420602) — our current in-harness form: two-space indent, highlighted body for a
@@ -82,7 +92,7 @@ function codeRuns(t: Tokens.Code, ctx: Ctx, out: Run[]): void {
  *  whose content is non-blank only; blank lines inside a quote keep no rail. */
 function quoteRuns(t: Tokens.Blockquote, ctx: Ctx, out: Run[]): void {
   const inner: Run[] = [];
-  for (const child of t.tokens ?? []) blockRuns(child, ctx, inner);
+  for (const child of dropPostHeadingSpace(t.tokens ?? [])) blockRuns(child, ctx, inner);
   for (const line of runsToLines(inner)) {
     if (line.text.trim() === "") { out.push(styled(ctx, NL)); continue; }
     out.push(styled(ctx, "▎ ", { dim: true }));
@@ -110,9 +120,9 @@ function listRuns(t: Tokens.List, depth: number, ctx: Ctx, out: Run[]): void {
  *  `item.task`/`item.checked`, which reproduces upstream's output under the newer token shape. */
 function itemRuns(item: Tokens.ListItem, depth: number, num: number | null, ctx: Ctx, out: Run[]): void {
   const indent = "  ".repeat(depth);
-  const marker = num === null ? "-" : `${ordinal(depth, num)}.`;
+  const marker = num === null ? "-" : `${ordinal(depth + 1, num)}.`;   // L420665: the marker's depth is the CHILD's
   let first = true;
-  for (const child of item.tokens ?? []) {
+  for (const child of dropPostHeadingSpace(item.tokens ?? [])) {
     if ((child as { type: string }).type === "checkbox") continue;
     if (child.type === "list") { listRuns(child as Tokens.List, depth + 1, ctx, out); continue; }
     if (child.type === "text" || child.type === "paragraph") {
@@ -199,10 +209,8 @@ function trimBlanks(lines: RenderLine[]): RenderLine[] {
 export function renderMarkdown(text: string, opts: MarkdownOptions = {}): RenderLine[] {
   if (text === "") return [];
   const ctx: Ctx = { style: opts.dim ? { dim: true } : {}, width: opts.width ?? 80 };
-  // `Oaa`'s three-way split. marked 18 emits a `space` token after a heading where the bundle's older
-  // marked folded those newlines into the heading's own raw; keeping both would double every post-heading
-  // blank, so that one token is dropped — the heading case already carries upstream's `aW + aW`.
-  const tokens = lex(text).filter((t, i, all) => !(t.type === "space" && all[i - 1]?.type === "heading"));
+  // `Oaa`'s three-way split, over the post-heading-space-dropped token list (see `dropPostHeadingSpace`).
+  const tokens = dropPostHeadingSpace(lex(text));
   const chunks: Token[][] = [];
   for (const t of tokens) {
     if (t.type === "table" || t.type === "blockquote") { chunks.push([t]); continue; }

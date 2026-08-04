@@ -22,13 +22,26 @@ describe("F4 markdown — block grammar (census §2.1, bundle f2 L420590–42071
   });
   it("ordered honours start and depth numbering 1./a./i.", () => {
     expect(texts("3. third\n4. fourth")).toEqual(["3. third", "4. fourth"]);
+    // The marker depth is the CHILD depth, offset ONE from the indent depth: bundle L420647 (`case "list"`
+    // passes its own n to its items) → L420650 (`list_item` renders children at n + 1) → L420653 (indent uses
+    // n) → L420665 (`JhH(n, o)` is computed inside the text CHILD, whose n is already incremented). So the
+    // 2-col indent level k carries the marker style of level k+1: arabic, letters, roman, arabic (default).
     const nested = texts("1. a\n   1. b\n      1. c\n         1. d");
-    expect(nested[1]).toBe("  1. b");                    // depth 1 → arabic, 2-col indent
-    expect(nested[2]).toBe("    a. c");                  // depth 2 → letters
-    expect(nested[3]).toBe("      i. d");                // depth 3 → roman
+    expect(nested[0]).toBe("1. a");                      // indent 0 → JhH(1) → arabic
+    expect(nested[1]).toBe("  a. b");                    // indent 1 → JhH(2) → letters
+    expect(nested[2]).toBe("    i. c");                  // indent 2 → JhH(3) → roman
+    expect(nested[3]).toBe("      1. d");                // indent 3 → JhH(4) → arabic (the `default`)
   });
   it("task list renders literal checkbox text", () => {
     expect(texts("- [x] done\n- [ ] open")).toEqual(["- [x] done", "- [ ] open"]);
+  });
+  it("a LOOSE task list boxes each item exactly once (marked 18 nests `checkbox` in the paragraph too)", () => {
+    // No blank line between the two items: marked emits NO `space` token inside a loose list (the loose-ness
+    // shows only as `paragraph` item children), and upstream's paragraph case is content + ONE `aW`
+    // (pack §1.1 L420655) — so the loose list renders exactly like the tight one, boxed once per line.
+    const t = texts("- [x] a\n\n- [ ] b");
+    expect(t).toEqual(["- [x] a", "- [ ] b"]);
+    for (const l of t) expect(l.match(/\[[x ]\]/g)!.length).toBe(1);
   });
   it("hr is the literal ---", () => { expect(texts("above\n\n---\n\nbelow")).toContain("---"); });
   it("blockquote: dim ▎ rail, italic content", () => {
@@ -38,6 +51,11 @@ describe("F4 markdown — block grammar (census §2.1, bundle f2 L420590–42071
     const content = first.segments ? first.segments[first.segments.length - 1] : first;
     expect(content.italic).toBe(true);
     expect(first.segments![0]).toEqual({ text: "▎ ", dim: true });
+  });
+  it("a heading INSIDE a blockquote drops its post-heading `space` too — exactly one blank", () => {
+    // the bundle's heading regex (L161565) swallows the trailing newlines, so no `space` token exists there
+    // at ANY nesting level; the drop must therefore apply to nested walks, not only the top-level token list.
+    expect(texts("> # H\n>\n> body")).toEqual(["▎ H", "", "▎ body"]);
   });
   it("a `space` token becomes exactly one blank line between paragraphs (f2, NOT gap:1)", () => {
     expect(texts("para one\n\npara two")).toEqual(["para one", "", "para two"]);

@@ -32,6 +32,10 @@ export function inlineSegments(tokens: Token[], style: InlineStyle): Segment[] {
         else out.push({ ...style, text: `~~${inlineSegments(t.tokens ?? [], {}).map((s) => s.text).join("")}~~` });
         break;
       case "codespan": out.push({ ...style, text: (t as Tokens.Codespan).text, color: codeColor() }); break;
+      // A LOOSE task list nests marked 18's `checkbox` token inside the item's PARAGRAPH, i.e. right here;
+      // the block walker already synthesizes the one `[x] `/`[ ] ` literal from `item.task`/`item.checked`
+      // (pack §1.5 L420665), so emitting the token's raw on top of it would box the line twice.
+      case "checkbox": break;
       case "escape": case "text": {
         const tt = t as Tokens.Text;
         if (tt.tokens?.length) out.push(...inlineSegments(tt.tokens, style));
