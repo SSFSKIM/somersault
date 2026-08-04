@@ -21,10 +21,12 @@ import { ChatComposer, PASTE_EXPAND_HINT } from "../../src/tui/ChatComposer.js";
 import { applyKey, initialEditorState, type EditorState } from "../../src/tui/editor.js";
 import { PASTE_LIMIT, expandRepeatedPaste, ingestPaste } from "../../src/tui/pasteChips.js";
 import { loadPaste, pasteHash } from "../../src/tui/pasteCache.js";
+import { PASTE_INLINE_MAX } from "../../src/tui/promptHistory.js";
 
-// The composer's DEFAULT `storePaste` is the real one, so this file must own a fleet root or every paste
-// below lands in the developer's actual ~/.claude/ccx. Set on process.env (not an injected object) because
-// that default reads the ambient env, which is exactly the seam under test.
+// Since t7 the composer's disk writes (the prompt-history line and, past the inline cap, the paste cache it
+// points into) go through `appendHistory` at SUBMIT with no injectable writer in front of them — the ambient
+// env IS the seam. So this file owns a fleet root, or every submit below lands in the developer's actual
+// ~/.claude/ccx. Set on process.env rather than injected, because the ambient read is what is under test.
 let root = "";
 let prior: string | undefined;
 beforeAll(() => { prior = process.env.CCX_FLEET_ROOT; root = mkdtempSync(join(tmpdir(), "ccx-pexp-")); process.env.CCX_FLEET_ROOT = root; });
@@ -133,28 +135,50 @@ describe("ChatComposer — the paste cache and `paste again to expand`", () => {
       <ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 60} rows={() => 24} {...over} />,
     );
 
-  it("persists every chip's content under its hash at creation (CM26)", async () => {
+  // ————— CM26's cache write, RELOCATED by t7 —————
+  // Task 5 wrote the cache the moment a chip was minted. That was wrong about upstream and wrong about
+  // privacy: the ONLY `DUd` call in the bundle is inside `uu_` (L317608) — the history append — behind the
+  // `CLAUDE_CODE_SKIP_PROMPT_HISTORY` gate and behind the `content.length <= nu_` inline split, so a body
+  // reaches the disk only when a prompt carrying it is SUBMITTED and is too big to live in the history line.
+  // These three pins were the creation-time assertions; they are inverted here rather than deleted, because
+  // "no file until submit" is the property that has to be guarded from coming back.
+  it("writes NOTHING to the cache when a chip is minted — the file appears only at SUBMIT", async () => {
+    const body = "x".repeat(PASTE_INLINE_MAX + 1);
     const { stdin, lastFrame } = mount();
     await settle();
-    stdin.write(bracketed(BODY));
-    await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1 +3 lines]"));
-    expect(loadPaste(pasteHash(BODY))).toBe(BODY);
+    stdin.write(bracketed(body));
+    await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1]"));
+    expect(loadPaste(pasteHash(body))).toBeNull();               // unsubmitted pastes never touch the disk
+    stdin.write("\r");
+    await waitFor(() => loadPaste(pasteHash(body)) !== null);
+    expect(loadPaste(pasteHash(body))).toBe(body);
   });
 
-  it("routes the write through an injectable seam, and only for chips", async () => {
-    const stored: string[] = [];
-    const { stdin, lastFrame } = mount({ storePaste: (c) => { stored.push(c); } });
+  it("a body at or under the inline cap is never cached at all — it rides inside the history line", async () => {
+    const sent: string[] = [];
+    const { stdin, lastFrame } = mount({ onSubmit: (t) => sent.push(t) });
     await settle();
-    stdin.write(bracketed("small"));
-    await waitFor(() => strip(frame(lastFrame)).includes("small"));
-    expect(stored).toEqual([]);
-    stdin.write(bracketed(BODY));
+    stdin.write(bracketed(BODY));                                 // 25 chars: a chip by the NEWLINE arm, well under nu_
     await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1 +3 lines]"));
-    expect(stored).toEqual([BODY]);
+    stdin.write("\r");
+    await waitFor(() => sent.length > 0);
+    expect(loadPaste(pasteHash(BODY))).toBeNull();
+  });
+
+  it("CLAUDE_CODE_SKIP_PROMPT_HISTORY suppresses the cache write too (the gate wraps the whole append)", async () => {
+    const body = "q".repeat(PASTE_INLINE_MAX + 1);
+    const sent: string[] = [];
+    const { stdin, lastFrame } = mount({ onSubmit: (t) => sent.push(t), historyEnv: { ...process.env, CLAUDE_CODE_SKIP_PROMPT_HISTORY: "1" } });
+    await settle();
+    stdin.write(bracketed(body));
+    await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1]"));
+    stdin.write("\r");
+    await waitFor(() => sent.length > 0);
+    expect(loadPaste(pasteHash(body))).toBeNull();
   });
 
   it("shows the dim hint on a chip and drops it when the window closes", async () => {
-    const { stdin, lastFrame } = mount({ storePaste: () => {}, pasteHintMs: 120 });
+    const { stdin, lastFrame } = mount({ pasteHintMs: 120 });
     await settle();
     expect(strip(frame(lastFrame))).not.toContain(PASTE_EXPAND_HINT);
     stdin.write(bracketed(BODY));
@@ -164,7 +188,7 @@ describe("ChatComposer — the paste cache and `paste again to expand`", () => {
   });
 
   it("EXPANDS long after the hint expired — the 8 s window gates the hint, not the gesture (f4)", async () => {
-    const { stdin, lastFrame } = mount({ storePaste: () => {}, pasteHintMs: 60 });
+    const { stdin, lastFrame } = mount({ pasteHintMs: 60 });
     await settle();
     stdin.write(bracketed(BODY));
     await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1 +3 lines]"));
@@ -175,7 +199,7 @@ describe("ChatComposer — the paste cache and `paste again to expand`", () => {
   });
 
   it("a fresh chip resets the window", async () => {
-    const { stdin, lastFrame } = mount({ storePaste: () => {}, pasteHintMs: 400 });
+    const { stdin, lastFrame } = mount({ pasteHintMs: 400 });
     await settle();
     stdin.write(bracketed(BODY));
     await waitFor(() => strip(frame(lastFrame)).includes(PASTE_EXPAND_HINT));
@@ -187,7 +211,7 @@ describe("ChatComposer — the paste cache and `paste again to expand`", () => {
   });
 
   it("the expand hides the hint immediately (kne's Yg(!1))", async () => {
-    const { stdin, lastFrame } = mount({ storePaste: () => {}, pasteHintMs: 5000 });
+    const { stdin, lastFrame } = mount({ pasteHintMs: 5000 });
     await settle();
     stdin.write(bracketed(BODY));
     await waitFor(() => strip(frame(lastFrame)).includes(PASTE_EXPAND_HINT));
@@ -197,7 +221,7 @@ describe("ChatComposer — the paste cache and `paste again to expand`", () => {
   });
 
   it("a DIFFERENT second paste mints a second chip rather than expanding the first", async () => {
-    const { stdin, lastFrame } = mount({ storePaste: () => {} });
+    const { stdin, lastFrame } = mount({});
     await settle();
     stdin.write(bracketed(BODY));
     await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1 +3 lines]"));
@@ -206,14 +230,13 @@ describe("ChatComposer — the paste cache and `paste again to expand`", () => {
     expect(strip(frame(lastFrame))).toContain("[Pasted text #1 +3 lines]");
   });
 
-  it("over lgr: the chip is cached, the hint never shows, and a re-paste cannot expand", async () => {
-    const stored: string[] = [];
+  it("over lgr: the hint never shows and a re-paste cannot expand (the chip still submits its payload)", async () => {
     const huge = "z".repeat(PASTE_LIMIT + 1);
-    const { stdin, lastFrame } = mount({ storePaste: (c) => { stored.push(c); }, pasteHintMs: 5000 });
+    const { stdin, lastFrame } = mount({ pasteHintMs: 5000 });
     await settle();
     stdin.write(bracketed(huge));
     await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1]"));
-    expect(stored).toEqual([huge]);                                            // CM26 caches it regardless
+    expect(loadPaste(pasteHash(huge))).toBeNull();                             // still nothing on disk pre-submit
     expect(strip(frame(lastFrame))).not.toContain(PASTE_EXPAND_HINT);
     stdin.write(bracketed(huge));
     await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #2]"));  // bDo refused; a second chip
@@ -222,7 +245,7 @@ describe("ChatComposer — the paste cache and `paste again to expand`", () => {
 
   it("an expanded paste submits ONCE, as plain text (the map entry really is gone)", async () => {
     const sent: string[] = [];
-    const { stdin, lastFrame } = mount({ storePaste: () => {}, onSubmit: (t) => sent.push(t) });
+    const { stdin, lastFrame } = mount({ onSubmit: (t) => sent.push(t) });
     await settle();
     stdin.write(bracketed(BODY));
     await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1 +3 lines]"));

@@ -37,6 +37,8 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fleetRoot } from "../fleet/paths.js";
 import { loadPaste, pasteHash, storePaste } from "./pasteCache.js";
+import { chipSpans, newlineCount } from "./pasteChips.js";
+import type { PastedEntry, PastedMap } from "./editor.js";
 import type { HistoryScope } from "./historySearch.js";
 
 /** `gDo`. Post-dedup, so a hundred repetitions of one prompt still leave ninety-nine slots. */
@@ -144,4 +146,46 @@ export function readHistory(opts: { scope: HistoryScope; project?: string; sessi
  *  read a hundred files off disk to render labels that never expand. */
 export function resolvePastedContent(rec: HistoryPaste, env?: NodeJS.ProcessEnv): string | null {
   return rec.content || (rec.contentHash ? loadPaste(rec.contentHash, env) : null);
+}
+
+/** `ou_` (L317398), the `[Pasted text` arm verbatim — an EM DASH (U+2014), not a hyphen. (Its
+ *  `[...Truncated text` arm needs a truncation species this port has no producer for.) */
+export function lostPasteLabel(id: number): string { return `[Pasted text #${id} — content no longer available]`; }
+
+/** `au_` (L317525): rewrite every placeholder whose id is in `lost` to `ou_`'s text, right to left so each
+ *  replacement leaves the earlier match indices valid. `[Image` labels are skipped, upstream's own filter.
+ *  Applied per LINE because a label never contains a newline (`chipSpans` is line-scoped). */
+export function rewriteLostChips(display: string, lost: ReadonlySet<number>): string {
+  if (lost.size === 0) return display;
+  return display.split("\n").map((line) => {
+    const spans = chipSpans(line);
+    let out = line;
+    for (let i = spans.length - 1; i >= 0; i--) {
+      if (!lost.has(spans[i].id) || line.slice(spans[i].start).startsWith("[Image")) continue;
+      out = out.slice(0, spans[i].start) + lostPasteLabel(spans[i].id) + out.slice(spans[i].end);
+    }
+    return out;
+  }).join("\n");
+}
+
+/** `yDo` (L317537), the per-entry hydration upstream runs INSIDE its read walk (`yield await yDo(o)`,
+ *  L317510) — resolve every paste body, and rewrite the labels of the ones that are gone. Kept out of
+ *  `readHistory` for the reason that function's header gives (a Ctrl-R scroll must not read a hundred files
+ *  to render labels that never expand); ChatComposer calls it once per entry at SEED time instead, which is
+ *  what lets the editor's history walk stay pure — by the time a recall happens every body is already in
+ *  memory as a plain `PastedEntry`.
+ *
+ *  `lineCount` is recomputed when the line did not carry one, so a `[Pasted text #N +K lines]` label rebuilt
+ *  against a fresh id (editorHistory's `rebuildChips`) can never print a different K than it went in with. */
+export function hydrateEntry(e: HistoryEntry, env?: NodeJS.ProcessEnv): { display: string; pastedContents: PastedMap } {
+  const pastedContents: PastedMap = {};
+  const lost = new Set<number>();
+  for (const [key, rec] of Object.entries(e.pastedContents ?? {})) {
+    const id = Number(key);
+    const content = resolvePastedContent(rec, env);
+    if (content === null) { if (rec.type === "text") lost.add(id); continue; }
+    const entry: PastedEntry = { id: rec.id, type: "text", content, lineCount: rec.lineCount ?? newlineCount(content) };
+    pastedContents[id] = entry;
+  }
+  return { display: rewriteLostChips(e.display, lost), pastedContents };
 }

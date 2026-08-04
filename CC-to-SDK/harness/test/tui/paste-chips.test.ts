@@ -187,7 +187,7 @@ describe("submitTurn — fSe expansion", () => {
     expect(text(s)).toBe("[Pasted text #1 +50 lines]");
     const r = submitOf(s);
     expect(r.submit).toBe(body);
-    expect(r.state.history[0]).toBe("[Pasted text #1 +50 lines]");   // history keeps the DISPLAY text
+    expect(r.state.history[0].display).toBe("[Pasted text #1 +50 lines]");   // history keeps the DISPLAY text
   });
   it("expands a chip embedded in surrounding prose", () => {
     let s = applyKey(initialEditorState(), "review ", {}).state;
@@ -358,15 +358,17 @@ describe("the map lives until submit — a deleted label's entry is inert, never
     expect(applyKey(r.state, "", { return: true }).submit).toBe("a\nb\nc\nd\nhell");
   });
   it("a history Up/Down round trip keeps the DRAFT's payload (the map parks with the draft text)", () => {
-    // Two independent guarantees now: the live map survives the swap (no GC since t4-fix2) AND `stash` parks a
-    // copy with the draft, as upstream's own park record does. Either alone makes the submit send the payload;
-    // the pin is on the submitted text, which is what the review measured.
-    let s = initialEditorState(["an older turn"]);
+    // Since F5 t7 the stash is the ONLY guarantee, not one of two: a recall now REPLACES the live map with the
+    // recalled entry's (upstream's `x(Uo)`, L489501), so the draft's payload survives the round trip solely
+    // because `stash` parked a copy of it — which is exactly why upstream's park record carries the map.
+    let s = initialEditorState([{ display: "an older turn" }]);
     s = paste(s, "a\nb\nc\nd", 24).state;
     expect(text(s)).toBe(LABEL3);
+    const draftMap = s.pastedContents;
     const up = applyKey(s, "", { upArrow: true }).state;
     expect(text(up)).toBe("an older turn");
-    expect(up.stash).toEqual({ display: LABEL3, pastedContents: up.pastedContents });   // parked with the draft
+    expect(up.pastedContents).toEqual({});                                              // the recalled entry has none
+    expect(up.stash).toEqual({ display: LABEL3, pastedContents: draftMap, mode: "normal" });   // parked with the draft
     const down = applyKey(up, "", { downArrow: true }).state;
     expect(text(down)).toBe(LABEL3);
     expect(down.pastedContents[1].content).toBe("a\nb\nc\nd");
@@ -414,7 +416,7 @@ describe("the map lives until submit — a deleted label's entry is inert, never
     const c = clearToHistory(chipped());
     expect(c.pastedContents).toEqual({});
     expect(c.pasteCounter).toBe(0);
-    expect(c.history[c.history.length - 1]).toBe(LABEL3);
+    expect(c.history[c.history.length - 1].display).toBe(LABEL3);
   });
 });
 

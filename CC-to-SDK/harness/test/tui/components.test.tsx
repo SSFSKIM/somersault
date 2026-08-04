@@ -341,9 +341,12 @@ describe("ChatComposer", () => {
     state = applyKey(state, "u", ctrl).state;
     state = applyKey(state, "y", ctrl).state;
     const editorStateRef = { current: state } as React.MutableRefObject<EditorState>;
-    const beforeSuspend = structuredClone(state);
     const { stdin, lastFrame } = render(<ChatComposer editorStateRef={editorStateRef} onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
     await new Promise((r) => setTimeout(r, 20));
+    // Snapshot AFTER the mount has settled, not before it: since F5 t7 a first mount also seeds the durable
+    // state's prompt history off disk, which is a legitimate mount-time write. What this test is about is that
+    // the SUSPEND changes nothing, so the baseline has to be the post-mount state.
+    const beforeSuspend = structuredClone(editorStateRef.current);
     expect(lastFrame() ?? "").toContain("two");
     stdin.write("\x1a");
     await new Promise((r) => setTimeout(r, 20));
@@ -433,9 +436,9 @@ describe("ChatComposer", () => {
     await exercise(async (stdin) => { stdin.write("\x04"); await new Promise((r) => setTimeout(r, 20)); stdin.write("\x04"); }, { onExit: () => exits++ }, () => expect(exits).toBe(1), makeEmptyPendingState());
 
     const editorStateRef = { current: makeYankedState() } as React.MutableRefObject<EditorState>;
-    const beforeSuspend = structuredClone(editorStateRef.current);
     const suspended = render(<ChatComposer editorStateRef={editorStateRef} onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
     await new Promise((r) => setTimeout(r, 20));
+    const beforeSuspend = structuredClone(editorStateRef.current);   // post-seed baseline, see above
     suspended.stdin.write("\x1a");
     await new Promise((r) => setTimeout(r, 20));
     expect(editorStateRef.current).toEqual(beforeSuspend);

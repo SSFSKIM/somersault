@@ -16,12 +16,15 @@ export default defineConfig({
     // when it decides stdout is not color-capable, which is exactly what a piped CI/agent stdout looks
     // like, so those assertions fail for a reason that has nothing to do with the code under test.
     // Pin a color-capable terminal for the suite instead of weakening the assertions.
+    // Per-FILE throwaway CCX_FLEET_ROOT (t7). The t5 backstop was one static path shared by the whole run,
+    // which was enough while only a couple of tests wrote there; the composer now appends prompt history on
+    // every submit and seeds from it at mount, so a shared root couples test files through the filesystem.
+    // See the file for the full argument. A file that wants to see its own writes still pins its own root.
+    setupFiles: ["./test/setup/fleetRoot.ts"],
     env: {
       FORCE_COLOR: "3",
-      // Safety net, not a substitute for per-file temp roots (t5 review): every fleet-writing test pins its
-      // own CCX_FLEET_ROOT or passes an explicit env, so this shared static root stays EMPTY on a clean run —
-      // its whole job is to catch the next composer test that pastes a chip without pinning, which would
-      // otherwise write into the real ~/.claude/ccx (the t5 footgun). Verified: full suite identical with it.
+      // Still set here as the pre-setup fallback: `setupFiles` runs after the env block is applied, and this
+      // guarantees that nothing evaluated in between can reach the real ~/.claude/ccx.
       CCX_FLEET_ROOT: join(tmpdir(), "ccx-vitest-fleet-backstop"),
     },
   },

@@ -60,7 +60,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
   },
 
   "↑↓": () => {
-    const up = applyKey(initialEditorState(["past"]), "", { upArrow: true }).state;
+    const up = applyKey(initialEditorState([{ display: "past" }]), "", { upArrow: true }).state;
     expect(up.lines).toEqual(["past"]);                        // ↑ on an empty row-0 buffer recalls history
     const idle = applyKey(up, "", { downArrow: true }).state;
     expect(idle.lines).toEqual([""]);                          // ↓ back past the newest entry restores the (empty) draft
@@ -112,7 +112,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     let s = typed("draft prompt");
     s = applyKey(s, "s", { ctrl: true }).state;    // Ctrl-S stashes a non-empty buffer, clearing it
     expect(s.lines).toEqual([""]);
-    expect(s.stashed).toBe("draft prompt");
+    expect(s.stashed?.display).toBe("draft prompt");
     s = applyKey(s, "s", { ctrl: true }).state;    // Ctrl-S on the now-empty buffer restores the stash
     expect(s.lines).toEqual(["draft prompt"]);
     expect(s.stashed).toBeNull();

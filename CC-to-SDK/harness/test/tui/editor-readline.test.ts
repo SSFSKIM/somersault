@@ -67,7 +67,7 @@ describe("CM12 ctrl+n/ctrl+p mirror down/up exactly (`n`→Re(), `p`→he())", (
     { name: "mcp", description: "list servers", source: "local" },
   ];
   it("ctrl+p recalls history at the top edge and ctrl+n walks back toward the draft", () => {
-    let s = type(initialEditorState(["first", "second"]), "draft");
+    let s = type(initialEditorState([{ display: "first" }, { display: "second" }]), "draft");
     s = applyKey(s, "p", CTRL).state;
     expect(text(s)).toBe("second");
     s = applyKey(s, "p", CTRL).state;
@@ -78,7 +78,7 @@ describe("CM12 ctrl+n/ctrl+p mirror down/up exactly (`n`→Re(), `p`→he())", (
     expect(text(s)).toBe("draft");                                // the stashed draft comes back
   });
   it("ctrl+p/ctrl+n move the cursor inside a multi-line buffer instead of touching history", () => {
-    let s = type(initialEditorState(["old"]), "aa\nbb\ncc");
+    let s = type(initialEditorState([{ display: "old" }]), "aa\nbb\ncc");
     expect(s.cursor).toEqual({ row: 2, col: 2 });
     s = applyKey(s, "p", CTRL).state;
     expect(s.cursor).toEqual({ row: 1, col: 2 });

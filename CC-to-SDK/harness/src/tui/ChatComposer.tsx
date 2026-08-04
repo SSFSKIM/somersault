@@ -3,16 +3,16 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { readdirSync } from "node:fs";
-import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, type EditorState } from "./editor.js";
+import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry } from "./editor.js";
 import { PASTE_LIMIT } from "./pasteChips.js";
-import { storePaste as storePasteToDisk } from "./pasteCache.js";
+import { appendHistory, hydrateEntry, modeOfDisplay, readHistory } from "./promptHistory.js";
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
 import { editExternalAsync as realEditExternal } from "./externalEditor.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, newlineHint } from "./composerFrame.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope, usePasting, useSuspendInput, type SuspendInput } from "./keys/KeymapProvider.js";
-import { formatBindings } from "./keys/hints.js";
+import { expandHintText, formatBindings } from "./keys/hints.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
 
@@ -34,6 +34,13 @@ const PASTING_TEXT = "Pasting…";
 export const PASTE_EXPAND_HINT = "paste again to expand";
 /** `k0`'s 8000 ms (L495759). The hint's whole life; the EXPAND itself has no deadline (pasteChips.ts). */
 const PASTE_HINT_MS = 8000;
+/** CM56, the DESCRIPTION half of upstream's second-Up hint (bundle L489537): `<bn action="history:search"
+ *  context="Global" fallback="ctrl+r" description="search history" />`. The CHORD half is never a literal —
+ *  it is derived from the live binding table through `expandHintText`, the same `$e` composer every other
+ *  advertised chord in this port goes through, so a rebind moves it and an unbind removes the row. */
+export const HISTORY_SEARCH_HINT = "search history";
+/** `Lli` (L489464) — the `timeoutMs` upstream puts on that notification. */
+const HISTORY_HINT_MS = 5000;
 
 const realReaddir = (dir: string): DirEnt[] => {
   try { return readdirSync(dir, { withFileTypes: true }).map((d) => ({ name: d.name, isDir: d.isDirectory() })); }
@@ -52,6 +59,26 @@ function renderBuffer(state: EditorState): React.ReactNode {
 }
 
 const COMMAND_ROWS = 8;                            // visible rows; the selection scrolls through the full list
+
+/** CM52's seed. `readHistory` answers NEWEST-first (`UUd`'s backward walk) and the editor's list is
+ *  OLDEST-first, so the reversal is here, at the one seam that crosses between the two conventions.
+ *
+ *  `project` is passed EXPLICITLY, never left to `readHistory`'s `process.cwd()` default: the composer knows
+ *  the session's cwd and the process's may be something else entirely (a daemon-hosted session, a `ccx
+ *  attach` from another directory), and silently scoping a user's history to the wrong project reads as an
+ *  empty history rather than as a bug.
+ *
+ *  Each line is hydrated on the way in — upstream's own placement (`yDo` inside the read walk) — so every
+ *  recall afterwards is pure state assignment with no disk in it. */
+function seedHistory(project: string, env: NodeJS.ProcessEnv): HistNavEntry[] {
+  const rows = readHistory({ scope: "project", project }, env);
+  const out: HistNavEntry[] = [];
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const { display, pastedContents } = hydrateEntry(rows[i], env);
+    out.push({ display, mode: modeOfDisplay(rows[i].display) === "bash" ? "bash" : "normal", pastedContents });
+  }
+  return out;
+}
 
 /** The event a real ctrl+l produces — see the `chat:clearInput` registration for why the action re-enters the
  *  key path on this rather than on whatever key the user bound to it. */
@@ -100,7 +127,7 @@ function MentionPopup({ state }: { state: EditorState }) {
  *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
 export type ComposerEditExternal = (text: string) => string | null | Promise<string | null>;
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, storePaste = storePasteToDisk, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
   /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
    *  one. Absent AND with no provider above, the editor simply runs without a handoff. */
   suspendInput?: SuspendInput; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number;
@@ -108,13 +135,17 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
    *  see `expandRepeatedPaste`. Injectable for the same reason `yankHintMs` is: so a test can watch the
    *  window close in real time instead of faking the clock under Ink. */
   pasteHintMs?: number;
-  /** CM26's disk write, THE side effect of a chip being minted. It lives here rather than in `ingestPaste`
-   *  because that reducer is pure and is called from `applyKey`, which several tests drive thousands of
-   *  times; the composer is the one place that knows a real user really pasted. Injectable so a component
-   *  test can watch the call without a filesystem — the DEFAULT is the real writer, deliberately, so that a
-   *  future mount site cannot silently ship with the cache turned off. Tests that render this component and
-   *  paste MUST therefore either inject or pin `CCX_FLEET_ROOT` (test/tui/paste-expand.test.tsx does both). */
-  storePaste?: (content: string) => void;
+  /** CM56's window (`Lli`). Injectable for the same reason `pasteHintMs` is. */
+  searchHintMs?: number;
+  /** CM52's two persisted columns. `project` is the SESSION's cwd and defaults to the `cwd` prop rather than
+   *  to `process.cwd()` — see `seedHistory`. `sessionId` is written but never read by this task's walk; it is
+   *  what makes `scope:"session"` answerable at all, and a line written without it can never be recovered
+   *  into that scope later. */
+  sessionId?: string; project?: string;
+  /** The env every history/paste-cache path in this component reads (`CCX_FLEET_ROOT`,
+   *  `CLAUDE_CODE_SKIP_PROMPT_HISTORY`). A prop rather than an ambient read so a test can point the whole
+   *  feature at a temp root without mutating `process.env` for the rest of the suite. */
+  historyEnv?: NodeJS.ProcessEnv;
   /** The terminal's width, read per render (a function, not a number, so a resize is visible without a
    *  new prop identity). ChatApp threads its own `deps.columns ?? stdout.columns ?? 80` source through. */
   columns?: () => number;
@@ -125,11 +156,25 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   /** The `History n/total` text painted into the top rule (upstream `AVf`, L494870). A slot this task:
    *  F5 Task 7 wires the live history position into it. Nothing is painted while it is undefined. */
   label?: string }) {
+  const historyProject = project ?? cwd;
+  const historyEnvRef = useRef(historyEnv ?? process.env); historyEnvRef.current = historyEnv ?? process.env;
+  const historyProjectRef = useRef(historyProject); historyProjectRef.current = historyProject;
+  const sessionIdRef = useRef(sessionId); sessionIdRef.current = sessionId;
+  // THE SEED-ON-REMOUNT RULE. `editorStateRef` is APP-scoped (ChatApp owns the ref; this component is
+  // unmounted and remounted every time a dialog takes the screen), so "seed at mount" would re-read the file
+  // — and clobber every in-session append, plus any live walk — each time a permission prompt closed. The
+  // gate is therefore a DURABLE flag on the state itself, not a mount-local one: `historySeeded` rides in the
+  // ref alongside the history list it describes, so exactly one composer instance per app ever seeds, and it
+  // is whichever one first finds the ref holding a fresh `initialEditorState()`. A test that hands in its own
+  // pre-seeded ref gets no disk read at all, which is the other half of the same property.
   const [state, setState] = useState<EditorState>(() => {
     const saved = editorStateRef?.current ?? initialEditorState();
     const normalized = saved.mention || saved.command ? { ...saved, mention: null, command: null } : saved;
-    if (editorStateRef) editorStateRef.current = normalized;
-    return normalized;
+    const seeded = normalized.historySeeded
+      ? normalized
+      : { ...normalized, history: seedHistory(historyProject, historyEnvRef.current), historySeeded: true };
+    if (editorStateRef) editorStateRef.current = seeded;
+    return seeded;
   });
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -151,7 +196,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // CM24's hint (`Rpk`/`Yg`/`lh` in the bundle). Its own state + timer, the yank hint's shape exactly.
   const [pasteHint, setPasteHint] = useState(false);
   const pasteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { disposed.current = true; if (yankTimer.current) clearTimeout(yankTimer.current); if (pasteTimer.current) clearTimeout(pasteTimer.current); }, []);
+  // CM56. `searchHintFired` is upstream's `m.current` — ONCE PER MOUNT, and deliberately not reset by the
+  // walk's own reset (`G` at L489628 clears every other ref in the hook and leaves `m` alone).
+  const [searchHint, setSearchHint] = useState(false);
+  const searchHintFired = useRef(false);
+  const searchHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { disposed.current = true; if (yankTimer.current) clearTimeout(yankTimer.current); if (pasteTimer.current) clearTimeout(pasteTimer.current); if (searchHintTimer.current) clearTimeout(searchHintTimer.current); }, []);
   // F2 task 8 removed the `mounted` one-flush guard that used to sit here. Its whole job was the readable-
   // before-data window: Ink reads stdin on "readable" and the keymap listens for "data" (emitted second), so
   // an unmigrated dialog could handle a key by unmounting itself and remounting this composer BEFORE our
@@ -177,7 +227,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const onPrefillAppliedRef = useRef(onPrefillApplied); onPrefillAppliedRef.current = onPrefillApplied;
   const yankHintMsRef = useRef(yankHintMs); yankHintMsRef.current = yankHintMs;
   const pasteHintMsRef = useRef(pasteHintMs); pasteHintMsRef.current = pasteHintMs;
-  const storePasteRef = useRef(storePaste); storePasteRef.current = storePaste;
+  const searchHintMsRef = useRef(searchHintMs); searchHintMsRef.current = searchHintMs;
   const escClearMsRef = useRef(escClearMs); escClearMsRef.current = escClearMs;
   const exitArmMsRef = useRef(exitArmMs); exitArmMsRef.current = exitArmMs;
   // Read through a ref for the same reason as stateRef/busyRef: `handleKey` runs from the keymap's passive-
@@ -273,6 +323,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // double-press clear (pushing the buffer to history on the second press); idle on an EMPTY buffer is
   // forwarded to onInterrupt so ChatApp's rewind-picker arm gets it — the picker is structurally unreachable
   // while text is present, since only the empty branch ever reaches onInterrupt outside the busy case.
+  // `cgr` (L317622) — THE persist seam, and now the only path to a paste-cache write in the product. Every
+  // failure inside it is swallowed by `appendHistory` itself, and the `CLAUDE_CODE_SKIP_PROMPT_HISTORY` gate
+  // wraps the whole thing, cache write included: with it set, nothing this composer does reaches the disk.
+  const persistHistory = (entry: { display: string; pastedContents?: EditorState["pastedContents"] }) => {
+    appendHistory({ display: entry.display, pastedContents: entry.pastedContents, project: historyProjectRef.current, sessionId: sessionIdRef.current }, historyEnvRef.current);
+  };
   const cancel = () => {
     if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
     const s = stateRef.current;
@@ -282,6 +338,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
         const ended = endInterceptedEditorAction(s);
         clearArm.current = 0; setClearArmed(false);
         if (clearTimer.current) clearTimeout(clearTimer.current);
+        // Upstream L395632: `if (e.trim() !== "") cgr(e)` — the bare TEXT, which `uu_` widens to
+        // `{ display: e, pastedContents: {} }`. So an Esc-Esc'd draft persists WITHOUT its pastes; see
+        // `clearToHistory`'s note for why that omission is worth transcribing rather than "fixing".
+        const cleared = ended.lines.join("\n");
+        if (cleared.trim() !== "") persistHistory({ display: cleared });
         commitState(clearToHistory(ended)); return;
       }
       endInterceptedEditorAction(s);
@@ -323,13 +384,20 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       if (yankTimer.current) clearTimeout(yankTimer.current);
       yankTimer.current = setTimeout(() => setYankHint(false), yankHintMsRef.current);
     }
-    // CM24/CM26, `k0`'s tail (bundle L495753-L495762). A minted chip is cached unconditionally — that is
-    // CM26's whole contract, and task 7 needs the payload of chips the hint never advertised — but only a
-    // chip at or under `lgr` raises the hint, because only one at or under `lgr` can actually be expanded
-    // (`bDo`'s cap). An over-cap chip is transcribed to leave any hint already on screen ALONE: upstream's
-    // `if (Cn.length <= lgr)` guards the whole `Yg(!0)` + reschedule block, and nothing else touches it.
+    // CM24, `k0`'s tail (bundle L495753-L495762). Only a chip at or under `lgr` raises the hint, because only
+    // one at or under `lgr` can actually be expanded (`bDo`'s cap). An over-cap chip is transcribed to leave
+    // any hint already on screen ALONE: upstream's `if (Cn.length <= lgr)` guards the whole `Yg(!0)` +
+    // reschedule block, and nothing else touches it.
+    //
+    // WHAT IS NO LONGER HERE (t7): the CM26 disk write. Task 5 put a `storePaste` call on this line, reading
+    // `k0`'s tail as if the cache were a side effect of MINTING a chip. It is not: upstream's only `DUd` call
+    // is inside `uu_` (L317608), i.e. inside the history append, gated by the same
+    // `CLAUDE_CODE_SKIP_PROMPT_HISTORY` check and reached only for a body over `nu_` that could not be
+    // inlined. Writing at creation instead meant every paste a user typed over, undid, or abandoned was on
+    // disk at 0600 forever — a privacy leak with no reader, since only a SUBMITTED prompt's line can ever
+    // name that hash. The expand gesture is unaffected: `expandRepeatedPaste` compares against the live
+    // in-memory map (`s.pastedContents[s.pasteCounter]`), never the cache.
     if (r.paste?.kind === "chip") {
-      storePasteRef.current(r.paste.content);
       if (r.paste.content.length <= PASTE_LIMIT) {
         setPasteHint(true);
         if (pasteTimer.current) clearTimeout(pasteTimer.current);              // a fresh chip restarts the window
@@ -339,7 +407,20 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       setPasteHint(false);                                                     // `kne`'s `Yg(!1)` + `lh.current()`
       if (pasteTimer.current) { clearTimeout(pasteTimer.current); pasteTimer.current = null; }
     }
+    // CM56 (L489587): `if (te >= 2 && !se && !m.current) m.current = !0, q()`. `te` is the index the Up just
+    // moved TO, so the trigger is the SECOND recall of a run and only on the way up — hence the comparison
+    // against the index before the key, rather than a bare `>= 2` that a Down onto position 2 would also
+    // satisfy. (`!se` is upstream's "entries were supplied by a parent transcript" arm — `On` at L495280 is
+    // defined only inside a teammate's composer, so for the top-level chat it is always false.)
+    const beforeAt = historyPosition(s)?.index ?? 0, afterAt = historyPosition(r.state)?.index ?? 0;
+    if (afterAt >= 2 && afterAt > beforeAt && !searchHintFired.current) {
+      searchHintFired.current = true;
+      setSearchHint(true);
+      if (searchHintTimer.current) clearTimeout(searchHintTimer.current);
+      searchHintTimer.current = setTimeout(() => { setSearchHint(false); searchHintTimer.current = null; }, searchHintMsRef.current);
+    }
     if (s.lines.length === 1 && s.lines[0] === "" && !(r.state.lines.length === 1 && r.state.lines[0] === "")) onDraftStartRef.current?.();
+    if (r.historyAppend) persistHistory(r.historyAppend);
     if (r.submit != null) onSubmitRef.current(r.submit); commitState(r.state);
   };
   useKeyFallback(handleKey);
@@ -449,6 +530,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const escKey = formatBindings(bindings("chat:cancel"));
   const exitKey = formatBindings(bindings("app:exit"));                 // the KB3 double-press arm below
   const acceptKey = formatBindings(bindings("autocomplete:accept")), dismissKey = formatBindings(bindings("autocomplete:dismiss"));
+  // CM56's chord, DERIVED — `(ctrl+r to search history)` under the defaults, `` when `history:search` is
+  // unbound (`expandHintText`'s own three-state contract), never a literal.
+  const searchHintRow = expandHintText(bindings("history:search"), process.platform, HISTORY_SEARCH_HINT);
+  // CM4: the live walk position owns the top rule. The `label` prop stays as the fallback slot Task 2 built —
+  // nothing else writes it today, and a caller that does should not be silently overridden while idle.
+  const ruleLabel = historyLabel(state) ?? label;
   const keyboardHint = busy ? `${escKey} interrupt` : isEmptyNow ? `${escKey} rewind · ? help` : `${escKey} clear`;
   // CM20: the ladder replaces the invented `\⏎ newline` rung — same slot, upstream's three strings. Read
   // per render off THIS render's editor state, so the rung shortens on the very frame `\`+Return lands.
@@ -463,7 +550,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   if (editorInFlight) return <ComposerEditorInFlight columns={cols} borderToken={borderToken} />;
   return (
     <Box flexDirection="column">
-      <ComposerFrame columns={cols} borderToken={borderToken} label={label}>
+      <ComposerFrame columns={cols} borderToken={borderToken} label={ruleLabel}>
         <PromptGlyph mode={mode} busy={busy} />
         {isEmptyNow
           ? <PlaceholderCursor text={PLACEHOLDER} />
@@ -473,6 +560,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       {mode === "memory" ? <Box paddingX={1}><Text color={role("remember")} dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
       {pasting ? <Box paddingX={1}><Text dimColor>{PASTING_TEXT}</Text></Box> : null}
       {pasteHint ? <Box paddingX={1}><Text dimColor>{PASTE_EXPAND_HINT}</Text></Box> : null}
+      {/* RECORDED DIVERGENCE (F7 owns the fix): upstream pushes this through the notification queue
+          (`addNotification`, L489537), which renders it in the queue's own slot below the composer and lets
+          `dismissSearchHint` pull it when the history-search overlay opens. No notification queue here yet,
+          so it renders in the composer's hint-row stack — same place, same dim paint, same 5 s life. */}
+      {searchHint && searchHintRow ? <Box paddingX={1}><Text dimColor>{searchHintRow}</Text></Box> : null}
       {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
       {clearVisible ? <Box paddingX={1}><Text dimColor>{`${escKey} again to clear`}</Text></Box> : null}
       {dArmed && isEmptyNow ? <Box paddingX={1}><Text dimColor>{`Press ${exitKey} again to exit`}</Text></Box> : null}

@@ -5,6 +5,13 @@
 import { rankCandidates } from "./fileComplete.js";
 import { rankCommands, type CommandEntry } from "./commandComplete.js";
 import { CHIP_CHARS, chipContaining, chipEndingAt, chipStartingAt, deleteTokenBefore, ingestPaste, snapOut, substituteChips } from "./pasteChips.js";
+// F5 task 7: the history WALK moved out to its own module (the plan's pre-allocated split), leaving this file
+// the buffer reducer it is. Same deliberate module cycle pasteChips.ts documents — editorHistory imports
+// `bufferText`/`setBuffer`/the state types from here and this file imports the walk from there, all hoisted
+// `function` declarations with nothing called at module-evaluation time, so the cycle resolves either way.
+import { historyNext, historyPrev, pushHistory, type DraftStash, type HistEdit, type HistFilter, type HistNavEntry } from "./editorHistory.js";
+export { historyEdited, historyLabel, historyPosition, historyView, rebuildChips } from "./editorHistory.js";
+export type { DraftStash, HistEdit, HistFilter, HistNavEntry } from "./editorHistory.js";
 export interface Cursor { row: number; col: number }
 export interface Candidate { path: string; score: number }
 export interface MentionState { anchor: Cursor; query: string; files: string[]; items: Candidate[]; index: number }
@@ -15,16 +22,23 @@ export interface CommandState { query: string; items: CommandEntry[]; catalog: C
  *  as an argument instead. We keep it so a re-render of the label never has to re-walk the content. */
 export interface PastedEntry { id: number; type: "text"; content: string; lineCount: number }
 export type PastedMap = Record<number, PastedEntry>;
-/** The draft parked by the FIRST history Up, restored by the Down that walks off the end of the list. It carries
- *  the paste map as well as the text, exactly as upstream's own park record does (`{ display, pastedContents }`,
- *  bundle L489580/L489583; the `mode` T7 adds is the third field of that same record). Since t4-fix2 dropped the
- *  live GC the live map would survive the round trip anyway — this is now belt and braces, and it is upstream's
- *  belt, so it stays: it is the only thing that keeps the draft's map correct if history browsing ever starts
- *  replacing the map (T6/T7's persistence work) rather than merely the text. */
-export interface DraftStash { display: string; pastedContents: PastedMap }
+/** CM-stash, upstream's `chat:stash` record (bundle L495837): the Ctrl-S park is `{ text, cursorOffset,
+ *  pastedContents }` and the restore (L495833) puts all three back — `At(A.text), Qe(A.cursorOffset),
+ *  x(A.pastedContents)`. Ours was a bare string until t7, which silently dropped a stashed draft's chips
+ *  (the labels came back, the payloads did not, and the submit sent the literal `[Pasted text #1 …]`) and
+ *  its caret. `cursorOffset` is a flat offset upstream and a `{row, col}` here, the same difference every
+ *  other cursor in this file carries. */
+export interface StashRecord { display: string; cursor: Cursor; pastedContents: PastedMap }
 export interface EditorState {
-  lines: string[]; cursor: Cursor; history: string[]; histIndex: number | null; stash: DraftStash | null;
-  stashed: string | null;                                    // Ctrl-S input stash (distinct from history-nav `stash`)
+  lines: string[]; cursor: Cursor;
+  /** OLDEST-first (see editorHistory.ts's divergence 2). Seeded from disk by ChatComposer at mount and
+   *  appended to by every submit; `historySeeded` is what keeps a composer REMOUNT from re-seeding over it. */
+  history: HistNavEntry[]; histIndex: number | null; stash: DraftStash | null;
+  histEdits: Map<number, HistEdit>;                          // CM54, upstream `w.current` — keyed by history-VIEW index
+  histMode: HistFilter;                                      // CM55's latch, upstream `T.current`
+  histRecalled: string | null;                               // upstream `H.current`: the text the last recall installed
+  historySeeded: boolean;                                    // ChatComposer's one-shot disk seed (see there)
+  stashed: StashRecord | null;                               // Ctrl-S input stash (distinct from history-nav `stash`)
   undo: { lines: string[]; cursor: Cursor; pastedContents: PastedMap; at: number }[];   // see UNDO_CAP / applyKey
   pastedContents: PastedMap;                                 // collapsed pastes keyed by id; dies with the buffer
   pasteCounter: number;                                      // monotonic id source for the next chip
@@ -43,7 +57,14 @@ export interface EditorState {
  *  `pasteCounter`, which reads as an expand, and undo restores an older map, which reads as either. Scoped
  *  to the arm, the derivation below is exact. */
 export type PasteSignal = { kind: "chip"; content: string } | { kind: "expand" };
-export interface EditorResult { state: EditorState; submit?: string; killed?: { text: string; dir: "append" | "prepend" }; paste?: PasteSignal }
+export interface EditorResult {
+  state: EditorState; submit?: string; killed?: { text: string; dir: "append" | "prepend" }; paste?: PasteSignal;
+  /** F5 task 7: what this submit put into the history list, for the composer to PERSIST (`cgr`, L548774).
+   *  Reported rather than re-derived because the two submit arms disagree with `submit` in both directions —
+   *  a turn's history text keeps the chip LABELS while `submit` carries the expanded payload, and a command's
+   *  is the completed `/name` rather than whatever half-typed prefix was in the buffer. */
+  historyAppend?: HistNavEntry;
+}
 /** Minimal structural subset of ink's Key the reducer reads (so editor.ts needs no ink import). */
 export interface KeyFlags {
   return?: boolean; backspace?: boolean; delete?: boolean; ctrl?: boolean; meta?: boolean; shift?: boolean;
@@ -55,9 +76,13 @@ export interface KeyFlags {
   paste?: boolean;
 }
 
-export function initialEditorState(history: string[] = []): EditorState {
-  return { lines: [""], cursor: { row: 0, col: 0 }, history: [...history], histIndex: null, stash: null, stashed: null, undo: [], pastedContents: {}, pasteCounter: 0, hasUsedBackslashReturn: false, mention: null, command: null, killRing: [], killRun: false, yankSite: null };
+export function initialEditorState(history: HistNavEntry[] = []): EditorState {
+  return { lines: [""], cursor: { row: 0, col: 0 }, history: [...history], histIndex: null, stash: null, histEdits: new Map(), histMode: undefined, histRecalled: null, historySeeded: false, stashed: null, undo: [], pastedContents: {}, pasteCounter: 0, hasUsedBackslashReturn: false, mention: null, command: null, killRing: [], killRun: false, yankSite: null };
 }
+/** The fields that outlive a submit, a clear, or a composer remount: the history list and its seed flag, the
+ *  Ctrl-S stash, the kill ring, and the one-way backslash flag. Everything else is buffer state and dies with
+ *  the buffer. Named once so the three reset sites cannot drift apart. */
+const durable = (s: EditorState) => ({ historySeeded: s.historySeeded, stashed: s.stashed, killRing: s.killRing, hasUsedBackslashReturn: s.hasUsedBackslashReturn });
 /** CM17, upstream `o9f({ maxBufferSize: 50, debounceMs: 1000 })` (bundle L495478). Upstream debounces pushes on
  *  a real timer; a pure reducer has none, so `applyKey` coalesces on the elapsed `now` instead (see there). */
 export const UNDO_CAP = 50;
@@ -77,7 +102,9 @@ export function inputMode(s: EditorState): InputMode {
 const PASTE_MARKERS = /\x1b?\[20[01]~/g;                    // \x1b[200~ / \x1b[201~ and ESC-stripped [200~/[201~
 export function stripPasteMarkers(s: string): string { return s.replace(PASTE_MARKERS, ""); }
 const splitLines = (t: string): string[] => t.split(/\r\n|\r|\n/);
-const bufferText = (s: EditorState): string => s.lines.join("\n");
+/** Exported for editorHistory.ts, which parks and restores whole buffers and must do it the one way this
+ *  file does — a second `lines.join("\n")`/`split` pair over there is the definition guaranteed to drift. */
+export const bufferText = (s: EditorState): string => s.lines.join("\n");
 const isBlank = (s: EditorState): boolean => bufferText(s).trim().length === 0;
 
 /** Exported for pasteChips.ts's `ingestPaste`, which inserts either a chip label or the normalized payload and
@@ -212,7 +239,11 @@ const continuesLine = (s: EditorState): boolean => s.cursor.col > 0 && s.lines[s
 function submitTurn(s: EditorState): EditorResult {
   if (isBlank(s)) return { state: s };
   const t = bufferText(s);
-  const history = s.history.length && s.history[s.history.length - 1] === t ? s.history : [...s.history, t];   // dedup consecutive
+  // `cgr({ display: hon(_t, iD), pastedContents: QL })` (L548774). `hon` re-attaches the mode prefix upstream
+  // strips off its buffer; ours never took it off, so `t` IS `hon`'s output. The WHOLE live map rides along,
+  // upstream's `QL` — `appendHistory` decides per entry whether the body inlines or goes to the paste cache.
+  const entry: HistNavEntry = { display: t, mode: inputMode(s), pastedContents: s.pastedContents };
+  const history = pushHistory(s.history, entry);
   // The stash SURVIVES a send (2.1.220 chat:stash keeps it in state separate from the buffer) — park a
   // draft, fire a quick question, Ctrl-S restores the draft. The undo stack does reset with the buffer.
   // The kill ring survives too (like the stash) — a submit is not a keystroke that should clear it. So does
@@ -222,20 +253,24 @@ function submitTurn(s: EditorState): EditorResult {
   // `fSe` (F5 task 3): the buffer showed `[Pasted text #1 +40 lines]`, the MODEL gets the forty lines. History
   // keeps the display text — that is what the user typed and what Up must bring back, chip label and all (the
   // map that makes it expandable is task 6's problem to persist).
-  return { state: { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing, hasUsedBackslashReturn: s.hasUsedBackslashReturn }, submit: substituteChips(t, s.pastedContents) };
+  return { state: { ...initialEditorState(history), ...durable(s) }, submit: substituteChips(t, s.pastedContents), historyAppend: entry };
 }
 
-/** Esc-Esc's second press (CC `cgr`): push nonblank text to history, then clear. Blank buffer = clear-only. */
+/** Esc-Esc's second press (upstream L395630-L395634): `if (e.trim() !== "") cgr(e)`, then clear. Blank buffer
+ *  = clear-only. Note what upstream hands `cgr` there: the bare TEXT, which `uu_` widens to
+ *  `{ display: e, pastedContents: {} }` (L317597) — so an Esc-Esc'd draft persists WITHOUT its pastes, unlike
+ *  a submit. Transcribed, including the omission: the gesture is "throw this away", and writing an
+ *  unsubmitted paste body to the on-disk cache on the way out is the last thing it should do. The in-memory
+ *  entry drops them for the same reason, so the recalled labels behave identically in both directions. */
 export function clearToHistory(s: EditorState): EditorState {
   const t = bufferText(s);
   if (t.length === 0) return s;
-  const history = t.trim().length === 0 || (s.history.length && s.history[s.history.length - 1] === t)
-    ? s.history
-    : [...s.history, t];
-  return { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing, hasUsedBackslashReturn: s.hasUsedBackslashReturn };
+  const history = t.trim().length === 0 ? s.history : pushHistory(s.history, { display: t, mode: inputMode(s) });
+  return { ...initialEditorState(history), ...durable(s) };
 }
 
-function setBuffer(s: EditorState, t: string): EditorState {
+/** Replace the buffer text, cursor at the end. Exported for editorHistory.ts (see `bufferText`). */
+export function setBuffer(s: EditorState, t: string): EditorState {
   const lines = splitLines(t); const r = lines.length - 1;
   return { ...s, lines, cursor: { row: r, col: lines[r].length } };
 }
@@ -243,22 +278,10 @@ function setBuffer(s: EditorState, t: string): EditorState {
 /** Replace text supplied by a non-editor source; old-buffer navigation, popup, kill, and undo state cannot survive it. */
 export function replaceBufferFromOutside(s: EditorState, t: string): EditorState {
   const lines = splitLines(t); const r = lines.length - 1;
-  return { ...s, lines, cursor: { row: r, col: lines[r].length }, histIndex: null, stash: null, undo: [], pastedContents: {}, mention: null, command: null, killRun: false, yankSite: null };
+  return { ...s, lines, cursor: { row: r, col: lines[r].length }, histIndex: null, stash: null, histEdits: new Map(), histMode: undefined, histRecalled: null, undo: [], pastedContents: {}, mention: null, command: null, killRun: false, yankSite: null };
 }
 /** Replace the buffer's text wholesale, cursor at the end — the composer's rewind prefill (edit-and-resend). */
 export function withBufferText(s: EditorState, t: string): EditorState { return replaceBufferFromOutside(s, t); }
-function historyPrev(s: EditorState): EditorState {
-  if (s.history.length === 0) return s;
-  // Park the draft — text AND paste map — on the way in, the pair upstream parks (see DraftStash).
-  if (s.histIndex === null) { const idx = s.history.length - 1; return setBuffer({ ...s, stash: { display: bufferText(s), pastedContents: s.pastedContents }, histIndex: idx }, s.history[idx]); }
-  const idx = Math.max(0, s.histIndex - 1); return setBuffer({ ...s, histIndex: idx }, s.history[idx]);
-}
-function historyNext(s: EditorState): EditorState {
-  if (s.histIndex === null) return s;
-  const idx = s.histIndex + 1;
-  if (idx >= s.history.length) return setBuffer({ ...s, histIndex: null, stash: null, pastedContents: s.stash?.pastedContents ?? {} }, s.stash?.display ?? "");
-  return setBuffer({ ...s, histIndex: idx }, s.history[idx]);
-}
 function atWordBoundary(s: EditorState): boolean {
   const { row, col } = s.cursor; const at = col - 1;            // the just-inserted '@' is at col-1
   if (at <= 0) return true;
@@ -318,8 +341,8 @@ function submitCommand(s: EditorState): EditorResult {
   const c = s.command!;
   const name = c.items.length ? c.items[Math.min(c.index, c.items.length - 1)].name : s.lines[0].slice(1);
   const t = "/" + name;
-  const history = s.history.length && s.history[s.history.length - 1] === t ? s.history : [...s.history, t];
-  return { state: { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing, hasUsedBackslashReturn: s.hasUsedBackslashReturn }, submit: t };
+  const entry: HistNavEntry = { display: t, mode: "normal" };
+  return { state: { ...initialEditorState(pushHistory(s.history, entry)), ...durable(s) }, submit: t, historyAppend: entry };
 }
 const syncCompletions = (s: EditorState): EditorState => (s.command ? refreshCommand(s) : (s.mention ? refreshMention(s) : s));
 function afterInsert(next: EditorState, prev: EditorState, t: string): EditorState {
@@ -328,15 +351,23 @@ function afterInsert(next: EditorState, prev: EditorState, t: string): EditorSta
   if (t === "@" && atWordBoundary(next)) return openMention(next);
   return prev.mention ? refreshMention(next) : next;
 }
-function onUp(s: EditorState): EditorState { if (s.command) return moveCommand(s, -1); if (s.mention) return moveMention(s, -1); if (s.cursor.row === 0) return historyPrev(s); return moveCursorVert(s, -1); }
-function onDown(s: EditorState): EditorState { if (s.command) return moveCommand(s, 1); if (s.mention) return moveMention(s, 1); if (s.cursor.row === s.lines.length - 1) return historyNext(s); return moveCursorVert(s, 1); }
+// The walk takes the CURRENT input mode as an argument (see editorHistory.ts): it decides CM55's latch and
+// rides along on every parked edit, and `inputMode` is this file's to compute.
+function onUp(s: EditorState): EditorState { if (s.command) return moveCommand(s, -1); if (s.mention) return moveMention(s, -1); if (s.cursor.row === 0) return historyPrev(s, inputMode(s)); return moveCursorVert(s, -1); }
+function onDown(s: EditorState): EditorState { if (s.command) return moveCommand(s, 1); if (s.mention) return moveMention(s, 1); if (s.cursor.row === s.lines.length - 1) return historyNext(s, inputMode(s)); return moveCursorVert(s, 1); }
 
 function clearInput(s: EditorState): EditorState {           // Ctrl-L = CC chat:clearInput (screen clear stays /clear)
   return { ...s, lines: [""], cursor: { row: 0, col: 0 }, pastedContents: {}, mention: null, command: null };
 }
-function stashToggle(s: EditorState): EditorState {          // Ctrl-S = CC chat:stash: park non-empty input, restore when empty
-  if (!isBlank(s)) return { ...clearInput(s), stashed: bufferText(s) };
-  if (s.stashed != null) return { ...setBuffer(s, s.stashed), stashed: null };
+/** Ctrl-S = CC `chat:stash` (`PPe`, L495831): park non-empty input, restore when empty. The record is the
+ *  full triple in BOTH directions (see `StashRecord`) — `x({})` clears the live map on the way out and
+ *  `x(A.pastedContents)` puts it back on the way in, so a stashed draft's chips still expand after the round
+ *  trip. `clearInput` is our `At("") + x({})`; the parked cursor is re-applied over `setBuffer`'s end-of-text
+ *  default, which is upstream's `Qe(A.cursorOffset)`. */
+function stashToggle(s: EditorState): EditorState {
+  if (!isBlank(s)) return { ...clearInput(s), stashed: { display: bufferText(s), cursor: s.cursor, pastedContents: s.pastedContents } };
+  const parked = s.stashed;
+  if (parked != null) return { ...setBuffer(s, parked.display), cursor: parked.cursor, pastedContents: parked.pastedContents, stashed: null };
   return s;
 }
 function undoEdit(s: EditorState): EditorState {             // Ctrl-_ / Ctrl-- = CC chat:undo (terminals send 0x1F for both)

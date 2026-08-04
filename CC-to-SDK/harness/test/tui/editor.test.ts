@@ -42,7 +42,7 @@ describe("editor core", () => {
     const r = applyKey(s, "", { return: true });
     expect(r.submit).toBe("hello");
     expect(r.state.lines).toEqual([""]);                            // reset
-    expect(r.state.history).toEqual(["hello"]);                     // recorded
+    expect(r.state.history.map((h) => h.display)).toEqual(["hello"]);                     // recorded
   });
   it("ignores a whitespace-only submit", () => {
     const r = applyKey(type(initialEditorState(), "   "), "", { return: true });
@@ -72,8 +72,8 @@ describe("editor composer prefill", () => {
     expect(s.cursor).toEqual({ row: 1, col: 1 });
   });
   it("external replacement clears stale buffer-derived state but preserves durable history, stash, and kill ring", () => {
-    let s = initialEditorState(["old"]);
-    s = { ...s, lines: ["draft"], cursor: { row: 0, col: 5 }, histIndex: 0, stash: { display: "draft", pastedContents: {} }, stashed: "parked", undo: [{ lines: ["before"], cursor: { row: 0, col: 6 }, pastedContents: {}, at: 1 }], mention: { anchor: { row: 0, col: 0 }, query: "d", files: ["draft.ts"], items: [], index: 0 }, command: { query: "mod", items: [], catalog: [], index: 0 }, killRing: ["keep"], killRun: true, yankSite: { start: { row: 0, col: 0 }, end: { row: 0, col: 4 }, index: 0 } };
+    let s = initialEditorState([{ display: "old" }]);
+    s = { ...s, lines: ["draft"], cursor: { row: 0, col: 5 }, histIndex: 0, stash: { display: "draft", pastedContents: {} }, stashed: { display: "parked", cursor: { row: 0, col: 6 }, pastedContents: {} }, undo: [{ lines: ["before"], cursor: { row: 0, col: 6 }, pastedContents: {}, at: 1 }], mention: { anchor: { row: 0, col: 0 }, query: "d", files: ["draft.ts"], items: [], index: 0 }, command: { query: "mod", items: [], catalog: [], index: 0 }, killRing: ["keep"], killRun: true, yankSite: { start: { row: 0, col: 0 }, end: { row: 0, col: 4 }, index: 0 } };
     const replaced = withBufferText(s, "queued\n/mod");
     expect(replaced.lines).toEqual(["queued", "/mod"]);
     expect(replaced.cursor).toEqual({ row: 1, col: 4 });
@@ -84,14 +84,14 @@ describe("editor composer prefill", () => {
     expect(replaced.command).toBeNull();
     expect(replaced.killRun).toBe(false);
     expect(replaced.yankSite).toBeNull();
-    expect(replaced.history).toEqual(["old"]);
-    expect(replaced.stashed).toBe("parked");
+    expect(replaced.history).toEqual([{ display: "old" }]);
+    expect(replaced.stashed?.display).toBe("parked");
     expect(replaced.killRing).toEqual(["keep"]);
   });
 });
 
 describe("editor history", () => {
-  const withHistory = (h: string[]) => initialEditorState(h);
+  const withHistory = (h: string[]) => initialEditorState(h.map((display) => ({ display })));
   it("Up on the first line recalls the previous prompt; Down returns toward the draft", () => {
     let s = withHistory(["first", "second"]);
     s = type(s, "draft");                                          // a live draft
@@ -193,10 +193,10 @@ describe("editor / command palette", () => {
     expect(r.state.command).toBeNull();
   });
   it("slash-command submission preserves the durable stash and kill ring", () => {
-    const s = { ...open(), stashed: "parked", killRing: ["keep me"] };
+    const s = { ...open(), stashed: { display: "parked", cursor: { row: 0, col: 6 }, pastedContents: {} }, killRing: ["keep me"] };
     const r = applyKey(s, "", { return: true });
     expect(r.submit).toBe("/brainstorming");
-    expect(r.state.stashed).toBe("parked");
+    expect(r.state.stashed?.display).toBe("parked");
     expect(r.state.killRing).toEqual(["keep me"]);
   });
   it("a space ends the command name and closes the popup (now typing args)", () => {
@@ -396,7 +396,7 @@ describe("Wave-1 keymap: clear input, newline, undo, stash", () => {
     let s = type(initialEditorState(), "draft prompt");
     s = applyKey(s, "s", { ctrl: true }).state;
     expect(s.lines).toEqual([""]);
-    expect(s.stashed).toBe("draft prompt");
+    expect(s.stashed?.display).toBe("draft prompt");
     s = applyKey(s, "s", { ctrl: true }).state;
     expect(s.lines).toEqual(["draft prompt"]);
     expect(s.stashed).toBeNull();
@@ -415,7 +415,7 @@ describe("Wave-1 keymap: clear input, newline, undo, stash", () => {
     const r = applyKey(s, "", { return: true });
     expect(r.submit).toBe("quick question");
     expect(r.state.undo).toEqual([]);                        // undo dies with the buffer
-    expect(r.state.stashed).toBe("long draft I want to keep");
+    expect(r.state.stashed?.display).toBe("long draft I want to keep");
     const restored = applyKey(r.state, "s", { ctrl: true }).state;   // Ctrl-S on the fresh empty buffer
     expect(restored.lines).toEqual(["long draft I want to keep"]);
     expect(restored.stashed).toBeNull();
@@ -563,26 +563,26 @@ describe("ctrl+_ undo reachability (KB4/KB23, F0 acceptance 4)", () => {
 
 describe("Escape semantics — clearToHistory (CM15)", () => {
   it("clearToHistory pushes the buffer as the newest history entry, clears, and keeps stash + kill ring", () => {
-    let s = initialEditorState(["old"]);
-    s = { ...s, stashed: "parked", killRing: ["killed"] };
+    let s = initialEditorState([{ display: "old" }]);
+    s = { ...s, stashed: { display: "parked", cursor: { row: 0, col: 6 }, pastedContents: {} }, killRing: ["killed"] };
     s = [..."new text"].reduce((st, ch) => applyKey(st, ch, {}).state, s);
     const c = clearToHistory(s);
     expect(c.lines).toEqual([""]);
-    expect(c.history).toEqual(["old", "new text"]);
-    expect(c.stashed).toBe("parked");
+    expect(c.history).toEqual([{ display: "old" }, { display: "new text", mode: "normal" }]);
+    expect(c.stashed?.display).toBe("parked");
     expect(c.killRing).toEqual(["killed"]);
     expect(clearToHistory(initialEditorState())).toEqual(initialEditorState());  // truly empty = no-op
   });
 
   it("clearToHistory clears whitespace-only buffers without adding them to history", () => {
-    const spaces = clearToHistory(type(initialEditorState(["old"]), "   "));
+    const spaces = clearToHistory(type(initialEditorState([{ display: "old" }]), "   "));
     expect(spaces.lines).toEqual([""]);
-    expect(spaces.history).toEqual(["old"]);
+    expect(spaces.history).toEqual([{ display: "old" }]);
     expect(press(spaces, { upArrow: true }).lines).toEqual(["old"]);
 
-    const blankLines = clearToHistory(type(initialEditorState(["old"]), " \n  \n "));
+    const blankLines = clearToHistory(type(initialEditorState([{ display: "old" }]), " \n  \n "));
     expect(blankLines.lines).toEqual([""]);
-    expect(blankLines.history).toEqual(["old"]);
+    expect(blankLines.history).toEqual([{ display: "old" }]);
     expect(press(blankLines, { upArrow: true }).lines).toEqual(["old"]);
   });
 });
