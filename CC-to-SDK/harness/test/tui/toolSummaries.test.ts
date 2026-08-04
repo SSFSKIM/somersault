@@ -64,18 +64,41 @@ describe("F3 typed result rows — Read", () => {
 describe("F3 typed result rows — Edit and Write", () => {
   const patch = (added: number, removed: number) => [{ oldStart: 1, oldLines: removed, newStart: 1, newLines: added, lines: [...Array.from({ length: removed }, (_, i) => `-old ${i}`), ...Array.from({ length: added }, (_, i) => `+new ${i}`)] }];
   const edit = (added: number, removed: number) => eventFor("Edit", { file_path: "/work/a.ts", old_string: "old", new_string: "new" }, "Updated /work/a.ts", { filePath: "/work/a.ts", oldString: "old", newString: "new", originalFile: "old", replaceAll: false, userModified: false, structuredPatch: patch(added, removed) });
+  // F4 Task 7: the header is now row 0 of a header-PLUS-DIFF-BODY unit, so these read `head()` rather than
+  // the whole row list. The sentence itself is unchanged — `diffRender.diffHeader` is the same `fbn` port,
+  // imported rather than duplicated.
+  const head = (event: ToolEvent, projection?: ResultProjection) => texts(event, projection)[0];
   it("joins the two clauses with `, ` and pluralizes with `> 1`, not with the ordinary pluralizer", () => {
-    expect(one(edit(1, 3))).toBe("Added 1 line, removed 3 lines");
+    expect(head(edit(1, 3))).toBe("Added 1 line, removed 3 lines");
     expect(bolds(edit(1, 3))).toEqual(["1", "3"]);
-    expect(one(edit(2, 2))).toBe("Added 2 lines, removed 2 lines");
+    expect(head(edit(2, 2))).toBe("Added 2 lines, removed 2 lines");
   });
   it("capitalizes the removed clause POSITIONALLY and omits a zero clause entirely", () => {
-    expect(one(edit(0, 1))).toBe("Removed 1 line");
-    expect(one(edit(0, 3))).toBe("Removed 3 lines");
-    expect(one(edit(4, 0))).toBe("Added 4 lines");
+    expect(head(edit(0, 1))).toBe("Removed 1 line");
+    expect(head(edit(0, 3))).toBe("Removed 3 lines");
+    expect(head(edit(4, 0))).toBe("Added 4 lines");
   });
-  it("returns no typed row for an Edit with no recognized patch — a line-count guess is not a diff", () => {
-    expect(rows(eventFor("Edit", { file_path: "/work/a.ts", old_string: "a\nb\nc", new_string: "a\nB\nc" }, "Updated /work/a.ts"))).toBeUndefined();
+  // THE PROJECTION ADJUDICATION, pinned. Upstream `fbn`'s only bodyless paths are its three early returns
+  // (previewHint L423903, condensed L423912, collapsed L423914); the live transcript's message renderer
+  // (L453729) passes no `style`, so the DEFAULT transcript falls through to header + hunks at L423935/423940.
+  // Both of our projections are therefore header + body — the compact one is not a header-only summary.
+  it("renders the diff BODY under the header in BOTH projections, numbered off the patch's own hunks", () => {
+    for (const projection of ["compact", "detail-all"] as const)
+      expect(texts(edit(2, 1), projection)).toEqual([
+        "Added 2 lines, removed 1 line",
+        " 1 -old 0".padEnd(88), " 1 +new 0".padEnd(88), " 2 +new 1".padEnd(88),
+      ]);
+  });
+  // F4 Task 6 changed this ruling deliberately: a flat-only Edit used to render NOTHING, because counting
+  // `old_string`/`new_string` whole is a derivation but not an honest one. Task 6's second rung computes the
+  // real diff locally, and — with nothing on disk to anchor it — says so, with a `~` in the number gutter.
+  it("now renders a flat-only Edit as a header plus a visibly APPROXIMATE body", () => {
+    expect(texts(eventFor("Edit", { file_path: "/work/a.ts", old_string: "a\nb\nc", new_string: "a\nB\nc" }, "Updated /work/a.ts"))).toEqual([
+      "Added 1 line, removed 1 line",
+      "~ 1  a".padEnd(88), "~ 2 -b".padEnd(88), "~ 2 +B".padEnd(88), "~ 3  c".padEnd(88),
+    ]);
+  });
+  it("still returns no typed row where there is no countable change and no diffable input at all", () => {
     expect(rows(edit(0, 0))).toBeUndefined();
     expect(rows(eventFor("Edit", { file_path: "/work/a.ts" }, "Updated", { filePath: "/work/a.ts", oldString: "o", newString: "n", structuredPatch: [{ lines: "not-an-array" }] }))).toBeUndefined();
   });
@@ -86,8 +109,9 @@ describe("F3 typed result rows — Edit and Write", () => {
     expect(one(eventFor("Write", { file_path: "/work/n.md", content: "solo" }, "Created"))).toBe("solo");
     expect(one(eventFor("Write", { file_path: "/work/n.md" }, "Created"))).toBe("Wrote 1 line");           // no content anywhere ⇒ no preview
   });
-  it("routes a Write UPDATE through the same diff summary as Edit", () => {
-    expect(one(eventFor("Write", { file_path: "/work/a.ts", content: "new" }, "Updated", { type: "update", filePath: "/work/a.ts", content: "new", originalFile: "old", structuredPatch: patch(2, 1), userModified: false }))).toBe("Added 2 lines, removed 1 line");
+  it("routes a Write UPDATE through the same diff header and body as Edit", () => {
+    const update = eventFor("Write", { file_path: "/work/a.ts", content: "new" }, "Updated", { type: "update", filePath: "/work/a.ts", content: "new", originalFile: "old", structuredPatch: patch(2, 1), userModified: false });
+    expect(texts(update)).toEqual(["Added 2 lines, removed 1 line", " 1 -old 0".padEnd(88), " 1 +new 0".padEnd(88), " 2 +new 1".padEnd(88)]);
   });
 });
 

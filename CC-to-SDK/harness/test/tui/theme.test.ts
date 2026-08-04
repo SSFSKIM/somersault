@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ACCENT, ANSI_COLOR_NAMES, THEMES, THEME_LABELS, THEME_TOKEN_NAMES, currentTheme, isLightTheme, isThemeColor, resolveThemeColor, setTheme, themeGeneration, themeTokens } from "../../src/tui/theme.js";
 import { loadPrefs, savePrefs } from "../../src/tui/prefs.js";
-import { toolDiffLines } from "../../src/tui/render.js";
+import { renderDiff } from "../../src/tui/diffRender.js";
+import type { ResolvedPatch } from "../../src/tui/diffSource.js";
 
 afterEach(() => setTheme("auto"));
 
@@ -95,20 +96,24 @@ describe("theme.ts", () => {
   });
 });
 
-describe("render.ts diff lines read the CURRENT theme's tokens", () => {
-  it("auto (default): diff colors are the dark palette's §2.2 diff pair", () => {
-    const out = toolDiffLines("Edit", { file_path: "f.ts", old_string: "a", new_string: "b" });
-    expect(out).toContainEqual({ text: "  1 - a", color: resolveThemeColor(themeTokens().diffRemoved) });
-    expect(out).toContainEqual({ text: "  1 + b", color: resolveThemeColor(themeTokens().diffAdded) });
+// F1 Task 2's live-theme-repaint proof, RE-POINTED (not dropped) by F4 Task 7: it used to drive
+// `render.toolDiffLines`, which Task 7 retired. `diffRender.renderDiff` is the diff renderer now, and it must
+// keep the same property — theme tokens read PER CALL, so a setTheme() (including the /theme picker's live
+// preview navigation) colors the very next frame with no cache to invalidate. The bands moved from `color` to
+// `bg` with Task 1's substrate, which is the only thing that changed about the assertion.
+describe("diffRender bands read the CURRENT theme's tokens", () => {
+  const patch: ResolvedPatch = { hunks: [{ oldStart: 1, rows: [{ kind: "remove", text: "aaaa" }, { kind: "add", text: "bbbb" }] }], numbering: "absolute", added: 1, removed: 1 };
+  const bands = () => renderDiff(patch, 20).map((line) => line.segments![0]!.bg);
+  it("auto (default): diff bands are the dark palette's §2.2 diff pair", () => {
+    expect(bands()).toEqual([resolveThemeColor(themeTokens().diffRemoved), resolveThemeColor(themeTokens().diffAdded)]);
   });
-  it("dark-daltonized: the diff pair swaps to that palette's own values", () => {
-    const before = toolDiffLines("Edit", { file_path: "f.ts", old_string: "a", new_string: "b" });
+  it("dark-daltonized: the diff pair swaps to that palette's own values on the very next call", () => {
+    const before = bands();
     setTheme("dark-daltonized");
-    const out = toolDiffLines("Edit", { file_path: "f.ts", old_string: "a", new_string: "b" });
-    expect(out).toContainEqual({ text: "  1 - a", color: resolveThemeColor(THEMES["dark-daltonized"].diffRemoved) });
-    expect(out).toContainEqual({ text: "  1 + b", color: resolveThemeColor(THEMES["dark-daltonized"].diffAdded) });
-    expect(out.find((l) => l.text === "  1 + b")!.color).not.toBe(before.find((l) => l.text === "  1 + b")!.color);
-    expect(out.find((l) => l.text === "  1 - a")!.color).not.toBe(before.find((l) => l.text === "  1 - a")!.color);
+    const after = bands();
+    expect(after).toEqual([resolveThemeColor(THEMES["dark-daltonized"].diffRemoved), resolveThemeColor(THEMES["dark-daltonized"].diffAdded)]);
+    expect(after[0]).not.toBe(before[0]);
+    expect(after[1]).not.toBe(before[1]);
   });
 });
 

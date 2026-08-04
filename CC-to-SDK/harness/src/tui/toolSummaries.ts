@@ -25,7 +25,9 @@
 import type { RenderLine, Segment } from "./render.js";
 import type { ProjectionOptions } from "./toolRenderer.js";     // type-only: erased, so there is no import cycle
 import { foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
-import { callSidecar, countTextLines, patchLineCounts, readVariant, textLines, type NormalizedToolResult } from "./toolResult.js";
+import { callSidecar, readVariant, textLines, type NormalizedToolResult } from "./toolResult.js";
+import { DIFF_BODY_INSET, diffHeader, renderDiff } from "./diffRender.js";
+import { resolvePatch } from "./diffSource.js";
 import { formatDuration, formatFileSize, plural } from "./format.js";
 import { highlightCode, KNOWN_LANGS } from "./highlight.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
@@ -81,26 +83,31 @@ function readRows(normalized: NormalizedToolResult): readonly RenderLine[] {
 const basename = (path: string): string => path.split(/[\\/]/).filter((part) => part !== "").at(-1) ?? path;
 
 // ── Edit / Write (upstream `fbn` L423885 and `lbH` L424341) ────────────────────────────────────────────
-/** `Added {N} line|lines, removed {M} line|lines`. Three details that are NOT the obvious ones: a clause is
- *  emitted only when its count is positive, the separator is the literal `", "`, and the removed clause's
- *  capitalization is POSITIONAL (`gXe === 0 ? "R" : "r"`) so it reads `Removed 3 lines` standing alone. The
- *  pluralization here is `> 1`, not the ordinary pluralizer — a difference with no visible effect at these
- *  counts, kept because a future zero-add/zero-remove path would diverge. */
-function diffSummaryRow(added: number, removed: number): RenderLine | undefined {
-  const segments: Segment[] = [];
-  if (added > 0) segments.push(plain("Added "), bold(String(added)), plain(` ${added > 1 ? "lines" : "line"}`));
-  if (added > 0 && removed > 0) segments.push(plain(", "));
-  if (removed > 0) segments.push(plain(`${added === 0 ? "R" : "r"}emoved `), bold(String(removed)), plain(` ${removed > 1 ? "lines" : "line"}`));
-  return segments.length === 0 ? undefined : row(...segments);
+/** THE HEADER LIVES IN `diffRender.ts` NOW (F4 Task 7). `fbn` builds the header and the body in one component
+ *  off ONE pair of counts, so two implementations of the sentence could drift from the diff sitting under it;
+ *  this is an import, not a copy.
+ *  THE BODY IS THE DIFF. F3 left this a header-only stopgap ("The real diff is F4's") because counting
+ *  `old_string`/`new_string` whole is a derivation but not an honest one. Task 6's `resolvePatch` supplies the
+ *  honest one — a recognized `structuredPatch` first, a locally computed and disk-anchored diff second — so the
+ *  flat-only Edit that used to render NOTHING now renders a header and a visibly-approximate body.
+ *  BOTH PROJECTIONS render the body. That is a bundle reading, not a convenience: `fbn`'s three early returns
+ *  (previewHint L423903, `style === "condensed"` L423912, `collapsed` L423914) are the ONLY ways a diff renders
+ *  without its hunks, and the live transcript's message renderer (L453729) passes no `style` prop at all, so the
+ *  default path is the fall-through at L423935/423940 — `<Cr><Box column>{header}{<K3e hunks/>}</Box></Cr>`.
+ *  The condensed style appears only on compacted-history and cloud-detail surfaces (L429726, L430886, L479698).
+ *  `previewHint` (plan-mode paths) and `collapsed` (`aHr` = isScratchpadDisplayPath) are upstream states our wire
+ *  does not carry — recorded unreachable in the parity doc, not built.
+ *  Width is upstream's own body expression, `columns - 12` (L423932), which is also what leaves room for the
+ *  five-column `⎿` gutter this body renders behind. */
+function editRows(event: ToolEvent, options: ProjectionOptions): readonly RenderLine[] | undefined {
+  const patch = resolvePatch({ input: isRecord(event.input) ? event.input : {}, sidecar: callSidecar(event) });
+  if (patch === undefined) return undefined;
+  // The header gates the whole row, exactly as it did in F3: a recognized patch with no `+`/`-` line at all
+  // renders no sentence, and a body under no header would be a diff the rest of the clone calls unrecognized.
+  const header = diffHeader(patch.added, patch.removed);
+  if (header === undefined) return undefined;
+  return [header, ...renderDiff(patch, options.columns - DIFF_BODY_INSET)];
 }
-/** No recognized patch ⇒ NO row. Counting `old_string`/`new_string` whole would be a derivation, but not an
- *  honest one: upstream diffs the file (`rte`) and reports changed lines, so a 3-line edit that touches one line
- *  would read `Added 3 lines, removed 3 lines` here. The real diff is F4's; until then the generic body stands. */
-const editRows = (normalized: NormalizedToolResult): readonly RenderLine[] | undefined => {
-  const counts = patchLineCounts(normalized.structured);
-  const summary = counts === undefined ? undefined : diffSummaryRow(counts.added, counts.removed);
-  return summary === undefined ? undefined : [summary];
-};
 /** Upstream `jme` (L423783) with `C8o = 10` (L423857): the create row's default (non-condensed, non-scratchpad,
  *  non-plan) form is a syntax-highlighted preview of the written content's first ten lines, then `bM({count:
  *  total - 10})`. Census 01 (L60–62) records that `bM` call WITHOUT `expandable` — so this is the one marker in
@@ -130,9 +137,9 @@ function previewRows(written: string, filePath: string | undefined): readonly Re
   const hidden = lines.length - WRITE_PREVIEW_LINES;
   return hidden > 0 ? [...shown, dim(`… +${hidden} ${plural(hidden, "line")}`)] : shown;
 }
-function writeRows(event: ToolEvent, normalized: NormalizedToolResult): readonly RenderLine[] | undefined {
+function writeRows(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderLine[] | undefined {
   const structured = normalized.structured;
-  if (structured?.type === "update") return editRows(normalized);
+  if (structured?.type === "update") return editRows(event, options);
   // `create`: recognized sidecar content first, the complete retained input second (P94 decision 5). Upstream's
   // default create row is the preview ALONE (census 01#58–62; controller review of t6 dropped the stacked
   // `Wrote N lines` header — upstream reserves that row for the condensed/scratchpad styles this clone does not
@@ -330,8 +337,8 @@ export function summaryLines(event: ToolEvent, normalized: NormalizedToolResult,
   const input = isRecord(event.input) ? event.input : {};
   switch (normalized.tool) {
     case "Read": return readRows(normalized);
-    case "Edit": return editRows(normalized);
-    case "Write": return writeRows(event, normalized);
+    case "Edit": return editRows(event, options);
+    case "Write": return writeRows(event, normalized, options);
     case "Grep": case "Glob": return searchRows(event, options);
     case "Bash": return bashRows(input, normalized, options);
     case "WebFetch": return webFetchRows(event, options);

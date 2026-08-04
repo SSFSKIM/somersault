@@ -5,7 +5,7 @@
 // styling (mixed bold/italic/code in one line); when `segments` is present the <Line> view renders those
 // and `text` is the plain fallback. `gutter` is a leading styled marker (the CC `●` bullet / `⎿` connector).
 // `strikethrough`/`underline`/`bg` (F4 Task 1) are the substrate the rest of F4 builds on: markdown `~~…~~`
-// and `<u>…</u>` (Task 3) set the first two, the diff background bands (Task 6) set `bg`. `bg` is a color in
+// and `<u>…</u>` (Task 3) set the first two, the diff background bands (Task 7) set `bg`. `bg` is a color in
 // the same §2.2 TH2 grammar as `color` and is resolved by the <Line> view, not by its producers.
 export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; strikethrough?: boolean; underline?: boolean; bg?: string; gutter?: Gutter; segments?: Segment[]; }
 // `italic` on the gutter: the `∴` thinking gutter (pack §8.3, Task 9) is dim+italic while its line is not.
@@ -17,7 +17,7 @@ export interface Gutter { text: string; color?: string; dim?: boolean; italic?: 
 // dim). Passthrough is the only way to put bold inside a dim run. Style fields are ignored when set.
 export interface Segment { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; strikethrough?: boolean; underline?: boolean; bg?: string; preStyled?: true; }
 import { renderMarkdown } from "./markdown.js";
-import { ACCENT, resolveThemeColor, themeTokens } from "./theme.js";
+import { ACCENT } from "./theme.js";
 
 /** Prepend `pad` to a line's leading text — to BOTH the plain fallback and the first segment (if any). */
 function indentLine(l: RenderLine, pad: string): RenderLine {
@@ -46,40 +46,12 @@ export function toolTarget(name: string, input: Record<string, unknown>): string
   return firstArg(input);
 }
 
-/** Truncation-aware Edit/Write diff: ● header + a real hunk body + a "… N more lines" note. Reused by liveTurn
- *  (which slices index 0 — the head — off, pairing its own status glyph with this body; that contract is unchanged).
- *  When both old_string/new_string are given (Edit) the body is a hunk: a common prefix/suffix between the two
- *  becomes dim numbered context (≤3 lines each side), the differing middle becomes numbered -/+ rows. Numbering is
- *  1-based and relative to the old_string/new_string snippet — we never read the file, so absolute line numbers
- *  are not available. Write (content only, no old_string) keeps the flat all-+ body. */
-export function toolDiffLines(name: string, input: Record<string, unknown>, cap = 24): RenderLine[] {
-  const tokens = themeTokens();   // read per-call, not cached: a setTheme() (incl. the /theme picker's live preview) must color the very next render
-  const added = resolveThemeColor(tokens.diffAdded), removed = resolveThemeColor(tokens.diffRemoved);
-  const head: RenderLine = { text: `${name} ${path(input)}`, gutter: { text: "● " } };
-  const body: RenderLine[] = [];
-  const oldS = typeof input.old_string === "string" ? input.old_string : undefined;
-  const newS = typeof input.new_string === "string" ? input.new_string : typeof input.content === "string" ? input.content : undefined;
-  if (oldS !== undefined && newS !== undefined) {
-    const o = oldS.split("\n"), n = newS.split("\n");
-    let pre = 0; while (pre < o.length && pre < n.length && o[pre] === n[pre]) pre++;
-    // Bounded by (length − pre) on BOTH sides so the suffix scan can never walk back past the prefix — this
-    // is what keeps old_string === new_string (or a strict prefix/suffix relationship) from producing negative
-    // ranges below (e.g. `o.length - suf` going below `pre`).
-    let suf = 0; while (suf < o.length - pre && suf < n.length - pre && o[o.length - 1 - suf] === n[n.length - 1 - suf]) suf++;
-    const num = (i: number) => String(i + 1).padStart(3);
-    const CTX = 3;
-    for (let i = Math.max(0, pre - CTX); i < pre; i++) body.push({ text: `${num(i)}  ${o[i]}`, dim: true });
-    for (let i = pre; i < o.length - suf; i++) body.push({ text: `${num(i)} - ${o[i]}`, color: removed });
-    for (let i = pre; i < n.length - suf; i++) body.push({ text: `${num(i)} + ${n[i]}`, color: added });
-    for (let i = o.length - suf; i < Math.min(o.length, o.length - suf + CTX); i++) body.push({ text: `${num(i)}  ${o[i]}`, dim: true });
-  } else if (newS !== undefined) {
-    for (const l of newS.split("\n")) body.push({ text: `  + ${l}`, color: added });
-  } else if (oldS !== undefined) {                     // removal-only shape: keep the pre-hunk all-red rendering
-    for (const l of oldS.split("\n")) body.push({ text: `  - ${l}`, color: removed });
-  }
-  if (body.length <= cap) return [head, ...body];
-  return [head, ...body.slice(0, cap), { text: `  … ${body.length - cap} more lines`, dim: true }];
-}
+// F4 Task 7 RETIRED `toolDiffLines`. It was F1's hand-rolled Edit/Write diff — a `● Name path` head, a
+// prefix/suffix hunk numbered 1-based off the snippet, and a 24-row cap with a `… N more lines` note. Every
+// part of that is now wrong: the header belongs to `diffRender.diffHeader` (upstream `fbn`), the body to
+// `diffRender.renderDiff` (upstream `K3e`/`H2p`/`chH`), line numbers come off Task 6's patch ladder, and
+// upstream caps a diff at nothing. It had no production caller left — the "reused by liveTurn" note above it
+// was stale — so this is a deletion, not a migration.
 
 /** The renderer's per-call context (F4 Task 5). `width` is the terminal column count the markdown walker
  *  fits width-sensitive blocks (tables) to; `platform` selects the bullet glyph (Task 8) and `showThinking`
