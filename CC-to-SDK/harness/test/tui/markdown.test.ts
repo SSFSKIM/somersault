@@ -120,8 +120,16 @@ describe("F4 markdown — block grammar (census §2.1, bundle f2 L420590–42071
     expect(lines("```rust\nfn main() {}\n```")).toEqual([{ text: "fn main() {}" }]);
     expect(lines("```weirdlang\nfn main() {}\n```")).toEqual([{ text: "weirdlang", dim: true }, { text: "fn main() {}" }]);
   });
-  it("a table falls through to raw pipe lines until Task 4's renderTable", () => {
-    expect(texts("| a | b |\n|---|---|\n| 1 | 2 |")).toEqual(["| a | b |", "|---|---|", "| 1 | 2 |"]);
+  it("a top-level table is the Task-4 box; a NESTED one keeps `f2`'s pipe form", () => {
+    // The full grid/fitting/fallback matrix is pinned in mdTable.test.ts; these two keep the ROUTING
+    // honest — `Oaa` (L421143) sends only top-level tables to `IBp`, and `f2`'s own case is what a table
+    // inside a list item or blockquote still takes.
+    expect(texts("| a | b |\n|---|---|\n| 1 | 2 |")).toEqual([
+      "┌─────┬─────┐", "│  a  │  b  │", "├─────┼─────┤", "│ 1   │ 2   │", "└─────┴─────┘",
+    ]);
+    expect(texts("> | a | b |\n> |---|---|\n> | 1 | 2 |")).toEqual([
+      "▎ | a   | b   |", "▎ |-----|-----|", "▎ | 1   | 2   |",
+    ]);
   });
   it("a lone `|`-containing prose line is NOT a table", () => {
     expect(texts("just a | pipe")).toEqual(["just a | pipe"]);

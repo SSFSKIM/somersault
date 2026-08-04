@@ -13,6 +13,8 @@ import { marked } from "marked";
 import type { Token, Tokens } from "marked";
 import type { RenderLine, Segment } from "./render.js";
 import { inlineSegments, type InlineStyle } from "./markdownInline.js";
+import { foldLine, lineAsSegment } from "./lineFold.js";
+import { renderTable } from "./mdTable.js";
 import { highlightCode, KNOWN_LANGS, UPSTREAM_LANGS } from "./highlight.js";
 
 export interface MarkdownOptions { width?: number; dim?: boolean }
@@ -113,10 +115,34 @@ function quoteRuns(t: Tokens.Blockquote, ctx: Ctx, out: Run[]): void {
   }
 }
 
-/** `table` — RAW pipe lines for now. Task 4 replaces this with `renderTable(token, width)` (`mdTable.ts`). */
-function tableRuns(t: Tokens.Table, ctx: Ctx, out: Run[]): void {
-  void ctx.width;                                       // Task 4: the width the box table fits itself to
-  for (const line of t.raw.replace(/\n+$/, "").split(NL)) { out.push(styled(ctx, line)); out.push(styled(ctx, NL)); }
+/** `table` — `f2`'s OWN table case (pack §4.9, L420669–420697), reachable only for a table NESTED inside
+ *  another block: `Oaa` (L421143) routes every TOP-LEVEL table to the box engine instead (see
+ *  `renderMarkdown` below), so this is the plain pipe form and nothing here is terminal-width aware.
+ *  Facts that differ from the box: minimum column width is the literal `3` (L420683, not `_Hn`); the
+ *  header takes `align?.[y]` with NO forced centering; the separator is ASCII `-` with no colons, so
+ *  alignment is not encoded in it even though `bWo` honours it in the cells; no row cap; and the row is
+ *  `trimEnd()`ed AFTER a `" | "` suffix, which strips the trailing space and LEAVES the closing `|`
+ *  attached. The case ends on `m + aW` — a second newline past the last row's own. */
+function nestedTableRuns(t: Tokens.Table, ctx: Ctx, out: Run[]): void {
+  const segsOf = (c: Tokens.TableCell | undefined) => inlineSegments(c?.tokens ?? [], ctx.style);
+  const widthOf = (c: Tokens.TableCell | undefined) => segsOf(c).map((s) => s.text).join("").replace(/\x1b\]8;;[^\x07]*\x07|\x1b\[[0-9;]*m/g, "").length;
+  const colW = t.header.map((h, i) => Math.max(t.rows.reduce((m, r) => Math.max(m, widthOf(r[i])), widthOf(h)), 3));
+  const row = (cells: Tokens.TableCell[]) => {
+    out.push(styled(ctx, "| "));
+    cells.forEach((c, i) => {
+      const o = Math.max(0, colW[i] - widthOf(c)), align = t.align?.[i];
+      const lead = align === "center" ? Math.floor(o / 2) : align === "right" ? o : 0;
+      out.push(styled(ctx, " ".repeat(lead)));
+      for (const s of segsOf(c)) out.push(s as Run);
+      out.push(styled(ctx, `${" ".repeat(o - lead)} | `));
+    });
+    out[out.length - 1] = { ...out[out.length - 1], text: out[out.length - 1].text.trimEnd() };   // `m = m.trimEnd()`
+    out.push(styled(ctx, NL));
+  };
+  row(t.header);
+  out.push(styled(ctx, `|${colW.map((w) => "-".repeat(w + 2)).join("|")}|${NL}`));
+  for (const r of t.rows) row(r);
+  out.push(styled(ctx, NL));                            // the case's closing `+ aW`
 }
 
 /** `list` → items (pack §1.4, L420646–420647); the ordered seed honours markdown `start`. */
@@ -166,33 +192,14 @@ function blockRuns(t: Token, ctx: Ctx, out: Run[]): void {
     case "hr": out.push(styled(ctx, "---")); break;      // pack §1.3: the literal, unstyled, no trailing newline
     case "code": codeRuns(t as Tokens.Code, ctx, out); break;
     case "blockquote": quoteRuns(t as Tokens.Blockquote, ctx, out); break;
-    case "table": tableRuns(t as Tokens.Table, ctx, out); break;
+    case "table": nestedTableRuns(t as Tokens.Table, ctx, out); break;
     case "list": listRuns(t as Tokens.List, 0, ctx, out); break;
     case "def": break;                                  // pack §1.10 L420702: the empty string
     default: for (const s of inlineSegments([t], ctx.style)) out.push(s as Run);
   }
 }
 
-// ── runs → lines ────────────────────────────────────────────────────────────────────────────────────
-const STYLE_KEYS = ["color", "dim", "bold", "italic", "strikethrough", "underline", "bg", "preStyled"] as const;
-const styleKey = (s: Segment) => STYLE_KEYS.map((k) => String(s[k] ?? "")).join(" ");
-const lineAsSegment = (l: RenderLine): Segment => { const { text, color, dim, bold, italic, strikethrough, underline, bg } = l; return { text, ...(color && { color }), ...(dim && { dim }), ...(bold && { bold }), ...(italic && { italic }), ...(strikethrough && { strikethrough }), ...(underline && { underline }), ...(bg && { bg }) }; };
-
-/** One line's segments → a RenderLine. A line whose segments all share ONE style folds into a bare/single-
- *  styled line (matching the old renderer's `inlineLine` folding, so downstream consumers and their tests
- *  keep seeing the simple shape); a mixed line carries `segments` with `text` as the plain fallback. */
-function foldLine(segs: Segment[]): RenderLine {
-  const kept = segs.filter((s) => s.text !== "");
-  if (kept.length === 0) return { text: "" };
-  const text = kept.map((s) => s.text).join("");
-  const k = styleKey(kept[0]);
-  if (kept.every((s) => styleKey(s) === k)) {
-    const { color, dim, bold, italic, strikethrough, underline, bg } = kept[0];
-    return { text, ...(color && { color }), ...(dim && { dim }), ...(bold && { bold }), ...(italic && { italic }), ...(strikethrough && { strikethrough }), ...(underline && { underline }), ...(bg && { bg }) };
-  }
-  return { text, segments: kept };
-}
-
+// ── runs → lines (the fold itself lives in lineFold.ts — mdTable.ts folds its own rows with it) ──────
 /** Split the run stream on its embedded `\n`s. A trailing newline closes the last line without adding an
  *  empty one; `"\n\n"` in the middle is what produces a blank line. */
 function runsToLines(runs: Run[]): RenderLine[] {
@@ -232,9 +239,15 @@ export function renderMarkdown(text: string, opts: MarkdownOptions = {}): Render
   }
   const out: RenderLine[] = [];
   for (const chunk of chunks) {
-    const runs: Run[] = [];
-    for (const t of chunk) blockRuns(t, ctx, runs);
-    const lines = trimBlanks(runsToLines(runs));
+    // A top-level table chunk goes to the BOX engine (`Oaa` L421143 → `TWo` → `IBp`), never through `f2`
+    // — `blockRuns`' own `table` case is the nested pipe form and is unreachable from here.
+    let lines: RenderLine[];
+    if (chunk[0].type === "table") lines = renderTable(chunk[0] as Tokens.Table, ctx.width);
+    else {
+      const runs: Run[] = [];
+      for (const t of chunk) blockRuns(t, ctx, runs);
+      lines = trimBlanks(runsToLines(runs));
+    }
     if (lines.length === 0) continue;
     if (out.length) out.push({ text: "", ...(opts.dim && { dim: true }) });   // gap: 1
     out.push(...lines);
