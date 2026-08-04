@@ -370,12 +370,14 @@ export function endKillAndYank(s: EditorState): EditorState {
  *  the ring (coalescing an unbroken run) and tracks when that run / a yank-pop site ends.
  *
  *  CM17 coalescing, and the one deliberate divergence in this file. Upstream (`o9f`, bundle L489735-L489748)
- *  DEBOUNCES on a real timer: a change less than `debounceMs` (1000) after the last push is rescheduled and
- *  lands later, so a rapid typing run eventually leaves ONE entry. A pure reducer has no timer and no way to
- *  land a deferred push, so we drop the change instead of deferring it: a change inside the window pushes
- *  nothing, which reaches the same observable end state (undo reverts the whole run) by a simpler route. The
- *  visible difference is a pause with no further keystroke — upstream's rescheduled push lands, ours never
- *  does, so the run stays folded into the next entry. `now` is injectable so the window is testable. */
+ *  DEBOUNCES on a real timer: each in-window change CANCELS and RESCHEDULES the pending push with its own
+ *  captured prior-state, so a continuous typing run of any length lands exactly ONE entry after quiescence —
+ *  and that entry holds the buffer as of just before the run's LAST keystroke (pushes carry prior state,
+ *  L495497/L495808), so upstream's undo after fast-typing "hello" reverts one character. A pure reducer has
+ *  no timer, so we drop in-window changes instead of deferring: our undo after the same run reverts the
+ *  WHOLE run to the pre-run buffer, and a run longer than the window lands one entry per 1000 ms where
+ *  upstream lands one total. Both directions of that gap are the accepted divergence (t1 review; transcribe
+ *  as-is into the F5 parity note). `now` is injectable so the window is testable. */
 export function applyKey(s: EditorState, input: string, key: KeyFlags, now: number = Date.now()): EditorResult {
   const r = applyKeyInner(s, input, key);
   let state = r.state;
