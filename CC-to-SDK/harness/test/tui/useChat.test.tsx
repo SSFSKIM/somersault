@@ -328,7 +328,7 @@ describe("useChat", () => {
       const c = useChat(makeSession, {}, deps);
       pick = (c as any).pickSession;
       api.run = c.submit;
-      return <Text>{c.state.busy ? "BUSY" : "IDLE"} {c.state.picker.open ? `PICKER:${c.state.picker.sessions.length}` : "NOPICK"} q:{c.state.queue.join(",")} {allText(c)}</Text>;
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"} {c.state.picker.open ? `PICKER:${c.state.picker.sessions.length}` : "NOPICK"} q:{c.state.queue.map((e) => e.value).join(",")} {allText(c)}</Text>;
     }
     const { lastFrame } = render(<H />);
     await waitFor(() => frame(lastFrame).includes("NOPICK"));
@@ -429,7 +429,7 @@ describe("useChat", () => {
       return { result: "done" };
     } });
     const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")}</Text>; }
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.map((e) => e.value).join(",")}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("first");  await waitFor(() => frame(lastFrame).includes("BUSY"));
@@ -455,7 +455,7 @@ describe("useChat", () => {
       return { result: "done" };
     } });
     const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")}</Text>; }
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.map((e) => e.value).join(",")}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("first");  await waitFor(() => frame(lastFrame).includes("BUSY"));            // turn A (submits=1)
@@ -504,7 +504,7 @@ describe("useChat", () => {
       },
     });
     const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")}</Text>; }
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.map((e) => e.value).join(",")}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("first");  await waitFor(() => frame(lastFrame).includes("BUSY"));
@@ -578,7 +578,7 @@ describe("useChat", () => {
       setModel: (m?: string) => { modelSet = m ?? ""; },
     });
     const api: { run?: (s: string) => void; stop?: () => void } = {};
-    function H() { const c = useChat(() => fake); api.run = c.submit; api.stop = c.interrupt; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.join(",")} m:{c.state.model ?? "-"}</Text>; }
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.stop = c.interrupt; return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.map((e) => e.value).join(",")} m:{c.state.model ?? "-"}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("turn");          await waitFor(() => frame(lastFrame).includes("BUSY"));

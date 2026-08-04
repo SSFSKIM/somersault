@@ -502,12 +502,16 @@ describe("ChatComposer", () => {
   it("shows the placeholder + footer hint when empty, and hides them once you type", async () => {
     const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
     await new Promise((r) => setTimeout(r, 20));
-    expect(lastFrame() ?? "").toContain("sk Claude anything…");
+    // F5 task 8: the placeholder is CM47's ladder now, not one literal — a fresh composer (nothing
+    // submitted, no messages, nothing queued) lands on rule 4's `Try "…"` suggestion.
+    // The first char is inverted and the rest dim, so the two halves are separated by SGR in the raw frame.
+    expect(lastFrame() ?? "").toContain("\x1b[7mT\x1b[27m");
+    expect(lastFrame() ?? "").toContain("ry \"");
     expect(lastFrame() ?? "").toContain("⏎ send");
     expect(lastFrame() ?? "").toContain("Esc rewind · ? help");
     stdin.write("hi");
     await waitFor(() => (lastFrame() ?? "").includes("hi"));
-    expect(lastFrame() ?? "").not.toContain("sk Claude anything…");   // placeholder gone once typing
+    expect(lastFrame() ?? "").not.toContain("ry \"");                  // placeholder gone once typing (rule 1)
     expect(lastFrame() ?? "").not.toContain("? help");                 // '?' inserts in a non-empty draft
   });
   it("hides the Esc-clear hint on the first busy render and does not resurrect after idle", async () => {

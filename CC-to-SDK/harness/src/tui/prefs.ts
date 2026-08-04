@@ -9,7 +9,12 @@ import { dirname, join } from "node:path";
 import { fleetRoot } from "../fleet/paths.js";
 import { THEMES, type ThemeId } from "./theme.js";
 
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string }
+/** `queuedUpHintSessions` is upstream's `queuedCommandUpHintCount` (bundle L377294/L495114) — how many
+ *  sessions have already shown `Press up to edit queued messages`; the hint stops at `QUEUED_UP_HINT_LIMIT`.
+ *  `exampleFiles` is the git-log harvest `placeholder.ts` draws the `Try "…"` filename from, cached with the
+ *  stamp that decides its weekly expiry (upstream keeps the two as `exampleFiles` + `exampleFilesGeneratedAt`;
+ *  one record here so a half-written pair can't outlive its stamp). */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number } }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 

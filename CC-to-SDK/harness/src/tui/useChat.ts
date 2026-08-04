@@ -49,6 +49,9 @@ import { shortCwd } from "./banner.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
 import type { RawContextUsage } from "../index.js";
 import { promptEntries, mergeEntries, type HistEntry, type HistoryScope } from "./historySearch.js";
+import { isEditableQueueEntry, joinQueuedForComposer, type QueueEntry } from "./queue.js";
+import { composerMode } from "./promptMode.js";
+import type { PastedMap } from "./editor.js";
 
 // F1 Task 2 role map: every line useChat itself emits is themed — failures `error`, the `! command`
 // echo `bashBorder`. Read per emission so a mid-session /theme change colors the next line correctly.
@@ -63,7 +66,12 @@ export interface SessionInfo { sessionId: string; summary: string; firstPrompt?:
  *  the returned state, so this closure is how a source-backed detail projection reaches the pager without
  *  anyone reaching into the document itself. */
 export type DetailItems = (projection: "detail-all" | "detail-collapsed") => readonly RenderItem[];
-export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: string[]; staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend" } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[]; }
+export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
+  /** The composer's placeholder ladder reads both (`placeholder.ts` rule 4 — upstream's `submitCount` /
+   *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
+   *  conversation message at all (a resumed or attached session does before the user types anything). */
+  submitCount: number; hasMessages: boolean;
+  staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend" } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[]; }
 
 // Tab cycles these; bypassPermissions stays off-cycle (/yolo). Single source with settingsRows.ts's own
 // permissionMode row (review finding 3) — importing it here instead of a second literal array means the
@@ -216,8 +224,12 @@ export function useChat(
   const killArmAt = useRef(0);
   const [bgPanelOpen, setBgPanelOpen] = useState(false);
   const [turnTokens, setTurnTokens] = useState(0);    // live output-token count for the in-flight turn (spinner)
-  const [queue, setQueue] = useState<string[]>([]);   // prompts/turns submitted while busy; drained FIFO on turn end
-  const queueRef = useRef<string[]>([]); queueRef.current = queue;
+  // Prompts/turns submitted while busy; drained FIFO on turn end, or ALL AT ONCE back into the composer on
+  // Up/ctrl+p (F5 task 8, CM48). `QueueEntry` (queue.ts) is upstream's own record shape — the raw text with
+  // its prefix, the mode that text implies, the priority rung, and the paste map an entry was composed with.
+  const [queue, setQueue] = useState<QueueEntry[]>([]);
+  const queueRef = useRef<QueueEntry[]>([]); queueRef.current = queue;
+  const [submitCount, setSubmitCount] = useState(0);   // upstream's `submitCount` — the placeholder ladder's rule 4
   const drainGen = useRef(0);                          // bumped by interrupt → invalidates any scheduled drain (no post-interrupt dispatch)
   const [staticEpoch, setStaticEpoch] = useState(0);  // bumped at a terminal boundary → mounts a FRESH append-only <Static>
   const disposed = useRef(false);
@@ -1124,7 +1136,7 @@ export function useChat(
   function drainNext() {
     const q = queueRef.current;
     if (disposed.current || q.length === 0) return;
-    const next = q[0]; setQueue(q.slice(1));
+    const next = q[0].value; setQueue(q.slice(1));
     const gen = drainGen.current;
     setTimeout(() => { if (disposed.current || drainGen.current !== gen) return; if (!dispatch(next)) drainNext(); }, 0);
   }
@@ -1161,11 +1173,33 @@ export function useChat(
   // !/# run immediately (control-channel / local — safe mid-turn). Type-ahead while Claude works (CC parity).
   function submit(prompt: string) {
     if (disposed.current || !prompt.trim()) return;
+    setSubmitCount((n) => n + 1);
     if (!busy) { dispatch(prompt); return; }
     if (prompt.startsWith("!") || prompt.startsWith("#")) { dispatch(prompt); return; }
     const cmd = parseCommand(prompt);
     if (cmd && LOCAL_NAMES.has(cmd.name)) { dispatch(prompt); return; }
-    setQueue((q) => [...q, prompt]);                                            // turn while busy → enqueue
+    setQueue((q) => [...q, makeQueueEntry(prompt)]);                            // turn while busy → enqueue
+  }
+  /** CM51. The mode is DERIVED from the text's own prefix, the one derivation `composerMode` owns for the
+   *  whole port — so a queued `!git status` re-enters the composer in bash mode when the drain hands it back
+   *  (queue.ts's divergence 1). Nothing reaching this line today can be bash (`submit` dispatches `!`/`#`
+   *  immediately, above), which is why the mapping is written out rather than hardcoded to `"prompt"`. */
+  function makeQueueEntry(prompt: string): QueueEntry {
+    return { value: prompt, mode: composerMode(prompt) === "bash" ? "bash" : "prompt", priority: "now", origin: "user" };
+  }
+  /** CM48's drain, the useChat half (`popAllEditable`, bundle L149093): hand EVERY editable entry back to the
+   *  composer as one `\n`-joined block and clear them from the queue; a non-editable entry survives it. The
+   *  composer merges the block above its live draft — see `queue.ts` and `ChatComposer`'s `queuePop` prop.
+   *  Synchronous, and answers with a value rather than routing through `composerPrefill`: the Up keystroke
+   *  has to know in the same tick whether the queue answered it, or it cannot decide to walk history. */
+  function popQueueToComposer(): { text: string; pastedContents?: PastedMap } | null {
+    if (disposed.current) return null;
+    const q = queueRef.current;
+    const popped = joinQueuedForComposer(q);
+    if (!popped) return null;
+    const kept = q.filter((e) => !isEditableQueueEntry(e));
+    queueRef.current = kept; setQueue(kept);
+    return popped;
   }
   // Answer the head entry via the remote feed; the dialog clears/advances on the SETTLED event (dropPending),
   // never optimistically here — a race (someone else answered first) still needs the settle to land.
@@ -1267,12 +1301,12 @@ export function useChat(
   function interrupt() {
     drainGen.current++;
     const q = queueRef.current;
-    if (q.length) setComposerPrefill({ text: q.join("\n"), token: Date.now(), mode: "prepend" });
+    if (q.length) setComposerPrefill({ text: q.map((e) => e.value).join("\n"), token: Date.now(), mode: "prepend" });
     queueRef.current = [];
     setQueue([]);
     void session.interrupt().catch(() => {});
   }
   function clear() { if (!disposed.current) { clearScreen(); replaceDocument(new TranscriptDocument()); } }   // /clear: wipe screen + model (session context kept)
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials } as ChatState, detailItems, submit, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
 }

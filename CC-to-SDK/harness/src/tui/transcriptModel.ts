@@ -82,6 +82,14 @@ export class TranscriptDocument {
   private identities = new Set<string>();
   private seq = 0;
   private rev = 0;
+  private msgs = 0;
+
+  /** Upstream's `pf.length` (bundle L548980: `hasMessages = pf.length > 0`) — how many CONVERSATION messages
+   *  this document holds, which is not the same as how many rows it renders. A welcome banner, a `/help`
+   *  listing or a notice is a local visual, not a message, and must not make a fresh session look used to
+   *  the composer's placeholder ladder (`placeholder.ts` rule 4). Counted as it is appended rather than
+   *  scanned on demand: the composer reads it every render. */
+  get messageCount(): number { return this.msgs; }
 
   /** Retain one COMPLETE SDK message. Returns false when it is not a completed assistant/user message, or when
    *  its source-stable identity was already retained (disk bootstrap vs. live follow repetition). */
@@ -103,7 +111,7 @@ export class TranscriptDocument {
       if (sidecar?.scope === "call") { const call = uniqueCall(results[0]?.tool_use_id, this.callsById); if (call?.result) call.result.sidecar = sidecar; }
       else if (sidecar) entry.sidecar = sidecar;
     }
-    this.list.push(entry); this.rev++;
+    this.list.push(entry); this.rev++; this.msgs++;
     return true;
   }
 
@@ -113,6 +121,9 @@ export class TranscriptDocument {
     if (this.identities.has(identity)) return false;
     this.identities.add(identity);
     this.list.push({ sequence: ++this.seq, source: "local", kind: "local-event", identity, event }); this.rev++;
+    // A locally-echoed prompt IS a conversation message (upstream pushes it into `pf` before the turn even
+    // starts); every other local kind is a visual and is not counted. See `messageCount`.
+    if (event.kind === "user-echo") this.msgs++;
     return true;
   }
 

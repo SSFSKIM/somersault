@@ -332,7 +332,7 @@ describe("<ChatApp>", () => {
     stdin.write("one"); await waitFor(() => frame(lastFrame).includes("one"));
     stdin.write("\x15"); await waitFor(() => !frame(lastFrame).includes("one"));
     stdin.write("two"); await waitFor(() => frame(lastFrame).includes("two"));
-    stdin.write("\x15"); await waitFor(() => frame(lastFrame).includes("sk Claude anything…"));
+    stdin.write("\x15"); await waitFor(() => frame(lastFrame).includes("? help"));
     stdin.write("\x19"); await waitFor(() => frame(lastFrame).includes("two"));
     stdin.write("\x1a"); await waitFor(() => suspend.mock.calls.length === 1);
     stdin.write("\x1by"); await waitFor(() => frame(lastFrame).includes("one"));
@@ -1817,10 +1817,10 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await new Promise((r) => setTimeout(r, 20));
     stdin.write(" edited"); await waitFor(() => frame(lastFrame).includes("queued two edited"));
-    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("sk Claude anything…"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("? help"));
 
     stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Transcript"));
-    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("sk Claude anything…"));
+    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("? help"));
   });
 
   it("Esc with a running turn and 3 queued messages: composer holds all three newline-joined, queue empty, turn interrupted (F0 acceptance 1, CM49)", async () => {

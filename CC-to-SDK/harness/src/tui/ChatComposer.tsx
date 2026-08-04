@@ -3,7 +3,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { readdirSync } from "node:fs";
-import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry } from "./editor.js";
+import { applyKey, bufferText, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
+import { applyQueueDrain } from "./queue.js";
+import { cachedExampleFiles, examplePool, pickPlaceholder, QUEUED_UP_HINT } from "./placeholder.js";
+import { loadPrefs, savePrefs } from "./prefs.js";
 import { PASTE_LIMIT } from "./pasteChips.js";
 import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
 import { composerMode } from "./promptMode.js";
@@ -24,9 +27,6 @@ import type { KeyEvent, TextEvent } from "./keys/types.js";
 // mode-hint rows below the frame, which are the only other consumers left here.
 const role = (name: "bashBorder" | "remember") => resolveThemeColor(themeTokens()[name]);
 
-/** CM5's placeholder text. Still a literal — F5 Task 8 replaces it with upstream's rotating generator;
- *  only the RENDER (first char inverted, rest dim) is this task's business. */
-const PLACEHOLDER = "Ask Claude anything…";
 const DEFAULT_COLUMNS = 80;
 /** CM25, bundle L493764: `Pasting…` — one ellipsis CHARACTER, not three dots, dim, below the frame. */
 const PASTING_TEXT = "Pasting…";
@@ -131,7 +131,7 @@ function MentionPopup({ state }: { state: EditorState }) {
  *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
 export type ComposerEditExternal = (text: string) => string | null | Promise<string | null>;
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>;
   /** CM56's once-only guard, owned by ChatApp so it outlives this component's remounts (see below). */
   searchHintFiredRef?: React.MutableRefObject<boolean>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
   /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
@@ -161,7 +161,20 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   rows?: () => number;
   /** The `History n/total` text painted into the top rule (upstream `AVf`, L494870). A slot this task:
    *  F5 Task 7 wires the live history position into it. Nothing is painted while it is undefined. */
-  label?: string }) {
+  label?: string;
+  /** CM48's drain seam (F5 task 8). ONE synchronous call, consulted by the Up/ctrl+p path BEFORE the history
+   *  walk: it returns the queued block to merge above the live draft, or null when the queue has nothing
+   *  editable to give. Synchronous and not a prefill round-trip because the same keystroke must fall through
+   *  to `historyPrev` when the queue declines — a state-then-effect handoff cannot answer in time. */
+  queuePop?: () => { text: string; pastedContents?: PastedMap } | null;
+  /** The placeholder ladder's four remaining inputs (`placeholder.ts` / upstream `NVf`, L495107).
+   *  `suggestionEnabled` is upstream's `promptSuggestionEnabled` setting, which this port has no UI for and
+   *  therefore leaves at its default of true — carried as a prop so the ladder is exhaustive over all six of
+   *  upstream's inputs rather than over five plus an assumption. */
+  queueHasEditable?: boolean; submitCount?: number; hasMessages?: boolean; suggestionEnabled?: boolean;
+  /** The queued-up hint's once-per-SESSION guard, owned by ChatApp so it outlives this component's remounts
+   *  — exactly like `searchHintFiredRef` above, and for exactly the same reason. */
+  queueHintCountedRef?: React.MutableRefObject<boolean> }) {
   const historyProject = project ?? cwd;
   const historyEnvRef = useRef(historyEnv ?? process.env); historyEnvRef.current = historyEnv ?? process.env;
   const historyProjectRef = useRef(historyProject); historyProjectRef.current = historyProject;
@@ -367,6 +380,34 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     }
     endInterceptedEditorAction(s); onInterruptRef.current?.();          // idle + empty: ChatApp owns rewind arming
   };
+  // CM48 (`Uge`, bundle L495509–L495533). Upstream's whole Up handler is:
+  //     if (j4.length > 1) return;                       // a suggestion popup with real choices owns the key
+  //     let Wt = te.indexOf("\n"); if (Wt !== -1 && xe > Wt) return;   // caret past the first newline
+  //     … if (Cn > 0) { GU(); return; }                  // some entry is editable → DRAIN
+  //     Z2();                                            // otherwise walk history
+  // Two transcription notes:
+  //  · guard (b) is EXACTLY `cursor.row === 0` on our model. An offset can only exceed `lines[0].length`
+  //    (which is `te.indexOf("\n")`) by crossing that newline, and crossing it is what row ≥ 1 means; with
+  //    no newline at all `Wt === -1` and upstream skips the check, which row 0 also always satisfies.
+  //  · upstream RETURNS on a live popup, killing history nav too; ours only declines to DRAIN and lets the
+  //    key fall through, because in this port the popup's own ↑/↓ selection lives in the editor reducer
+  //    (`onUp` → `moveCommand`/`moveMention`) rather than in a separate component above it.
+  const queuePopRef = useRef(queuePop); queuePopRef.current = queuePop;
+  const isUpNav = (input: string, key: ReturnType<typeof toKeyFlags>["key"]) =>
+    !!key.upArrow || (!!key.ctrl && !key.meta && input === "p");     // ctrl+p IS the onUp body (F5 task 1)
+  const tryQueueDrain = (s: EditorState): boolean => {
+    const pop = queuePopRef.current;
+    if (!pop) return false;
+    const items = s.command?.items ?? s.mention?.items;
+    if (items && items.length > 1) return false;                    // (a) `j4.length > 1`
+    if (s.cursor.row !== 0) return false;                           // (b) `xe > te.indexOf("\n")`
+    const popped = pop();
+    if (!popped) return false;                                      // `Cn > 0` — nothing editable to hand back
+    const drained = applyQueueDrain(s, popped);
+    if (bufferText(s).length === 0 && drained.lines.join("\n").length > 0) onDraftStartRef.current?.();
+    commitState(drained);
+    return true;
+  };
   const handleKey = (e: KeyEvent | TextEvent) => {
     if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
     const { input, key } = toKeyFlags(e);
@@ -390,6 +431,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // Escape that resolved as the popup's dismissal is the cancel.
     if (!s.command && !s.mention && key.escape) { cancel(); return; }
     if (clearArm.current) disarmClear();
+    // CM48: the queue is asked BEFORE the editor sees the key, so a pending queue always wins Up/ctrl+p over
+    // the history walk (upstream's `Uge` reaches `Z2()` only when the queue declined). Both keys route here
+    // — ctrl+p is `onUp`'s body in the reducer, so intercepting one and not the other would split them.
+    if (isUpNav(input, key) && tryQueueDrain(s)) return;
     // `rows` is passed positionally after `now`, so `now` is given explicitly here — same value the default
     // would have produced. A paste-tagged event is the only consumer (editor.ts's `KeyFlags.paste` arm).
     const r = applyKey(s, input, key, Date.now(), rowsRef.current?.());
@@ -528,6 +573,45 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     if (!disposed.current) commitState((s) => setCommandCatalog(s, commandCatalog));
   }, [needCatalog, commandCatalog]);
 
+  // ── CM47/CM3, the placeholder (F5 task 8). Upstream memoizes the `Try "…"` draw once per PROCESS (`Vr`,
+  // L495095) and re-evaluates the LADDER on every render (`NVf`'s useMemo, L495109). Both halves are kept:
+  // `draws` freezes the random sequence at first use so the sentence never changes under the user, while
+  // the ladder itself is computed below on each render so a prompt queued mid-session promotes rule 3.
+  const draws = useRef<number[]>([]);
+  const drawIndex = useRef(0); drawIndex.current = 0;
+  const stableRand = () => { const i = drawIndex.current++; if (draws.current[i] === undefined) draws.current[i] = Math.random(); return draws.current[i]; };
+  // The CACHE, read once at mount (upstream's `Cd().exampleFiles`): a first run in a repo shows `<filepath>`
+  // and the harvest below fills the cache for the next launch — divergence 4 in placeholder.ts.
+  // The composer only READS the cache. Filling it (`DVf`, L495100) is a once-per-process side effect that
+  // shells out to git, so it lives at the process entry point (`chatMain.tsx`) rather than in a component
+  // that is unmounted and remounted behind every dialog.
+  const [exampleNames] = useState(() => cachedExampleFiles(historyEnvRef.current));
+  // Read ONCE at mount, not per render: upstream's `Ct()` is a cached in-memory config and ours is a file, so
+  // consulting it inside the ladder meant a disk read on every keystroke. The value only has to be right for
+  // the session anyway — the increment below is what the NEXT session reads.
+  const [upHintSessions] = useState(() => loadPrefs(historyEnvRef.current).queuedUpHintSessions ?? 0);
+  const placeholder = pickPlaceholder({
+    inputEmpty: isEmptyNow, queueHasEditable: !!queueHasEditable, upHintSessions,
+    submitCount, hasMessages, suggestionEnabled,
+    pool: examplePool(exampleNames, stableRand), rand: stableRand,
+  });
+  // Divergence 2 (placeholder.ts): upstream never writes `queuedCommandUpHintCount`, so its own `< 3` gate
+  // can never close. Ours counts a SESSION that showed the hint, once, which is the reading that makes `LNb`
+  // mean something. In an effect, not in render: it is a disk write.
+  //
+  // The once-flag is APP-scoped for the same reason CM56's `searchHintFiredRef` above is: this composer is
+  // unmounted and remounted behind every dialog, so a component-local ref would re-arm after each permission
+  // prompt and burn all three sessions' worth of hint inside one session. The local fallback keeps a bare
+  // test render — and any future standalone mount — counting per mount, which is what a fresh app would do.
+  const hintShown = placeholder === QUEUED_UP_HINT;
+  const localHintCountedRef = useRef(false);
+  const hintCounted = queueHintCountedRef ?? localHintCountedRef;
+  useEffect(() => {
+    if (!hintShown || hintCounted.current) return;
+    hintCounted.current = true;
+    const env = historyEnvRef.current;
+    savePrefs({ queuedUpHintSessions: (loadPrefs(env).queuedUpHintSessions ?? 0) + 1 }, env);
+  }, [hintShown]);
   const mode = inputMode(state);
   const borderToken = borderTokenFor(mode);
   const cols = Math.max(1, Math.floor(columns?.() ?? DEFAULT_COLUMNS));
@@ -566,8 +650,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     <Box flexDirection="column">
       <ComposerFrame columns={cols} borderToken={borderToken} label={ruleLabel}>
         <PromptGlyph mode={mode} busy={busy} />
+        {/* CM5 (`t_p`, L395963): an empty buffer paints the PLACEHOLDER with its first character inverted —
+            that inversion is the cursor. With no placeholder to show (the ladder's "otherwise none" arm) the
+            same component degrades to the one inverted space upstream's `i(" ")` branch paints. */}
         {isEmptyNow
-          ? <PlaceholderCursor text={PLACEHOLDER} />
+          ? <PlaceholderCursor text={placeholder ?? ""} />
           : <Box flexDirection="column">{renderBuffer(state)}</Box>}
       </ComposerFrame>
       {mode === "bash" ? <Box paddingX={1}><Text color={role("bashBorder")} dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}

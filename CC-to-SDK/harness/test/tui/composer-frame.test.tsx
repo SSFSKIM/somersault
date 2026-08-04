@@ -162,8 +162,10 @@ describe("ChatComposer wears the frame", () => {
     for (const ch of ["│", "╭", "╮", "╰", "╯"]) expect(raw).not.toContain(ch);
     expect(raw).toContain(GLYPH);
     expect(raw).not.toContain("› ");                                  // the old, wrong glyph is gone
-    expect(raw).toContain("\x1b[7mA\x1b[27m");                        // placeholder cursor
-    expect(raw).toContain("\x1b[2msk Claude anything…");
+    // F5 task 8 replaced the literal with CM47's ladder; the SHAPE this test guards is unchanged — a fresh
+    // composer shows rule 4's `Try "…"`, so the inverted cell is its `T` and the dim remainder its `ry "`.
+    expect(raw).toContain("\x1b[7mT\x1b[27m");                        // placeholder cursor
+    expect(raw).toContain("\x1b[2mry \"");
   });
   it("dims the glyph while a turn runs, and swaps it for `!`+NBSP in bash mode", async () => {
     const view = renderWithKeymap(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 40} busy />);

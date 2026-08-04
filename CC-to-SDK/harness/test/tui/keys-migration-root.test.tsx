@@ -148,7 +148,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     expect(exits).toBe(0);
     expect(frame(lastFrame)).not.toContain("Press Ctrl-D again to exit");
     expect(frame(lastFrame)).toContain("x");                  // and it certainly did not insert
-    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("sk Claude anything…"));
+    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("? help"));
     stdin.write("\x04");                                      // empty buffer: first press arms
     await waitFor(() => frame(lastFrame).includes("Press Ctrl-D again to exit"));
     expect(exits).toBe(0);
@@ -248,7 +248,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("draft"); await waitFor(() => frame(lastFrame).includes("draft"));
     stdin.write("\x1bk"); await waitFor(() => !frame(lastFrame).includes("draft"));
-    expect(frame(lastFrame)).toContain("sk Claude anything…");
+    expect(frame(lastFrame)).toContain("? help");
   });
 
   it("(k4) a rebound app:exit runs the KB3 double-press arm on an empty composer, and nothing with text", async () => {
@@ -262,7 +262,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     stdin.write("\x1bq"); await tick();                              // with text: no arm, no exit
     expect(exits).toBe(0);
     expect(frame(lastFrame)).not.toContain("again to exit");
-    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("sk Claude anything…"));
+    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("? help"));
     stdin.write("\x1bq"); await waitFor(() => frame(lastFrame).includes("again to exit"));
     expect(exits).toBe(0);
     stdin.write("\x1bq"); await waitFor(() => exits === 1);

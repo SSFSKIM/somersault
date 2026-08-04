@@ -144,7 +144,7 @@ describe("F2 acceptance 2 — an open overlay owns the keyboard", () => {
     h.stdin.write(ESC);                                              // Help's one binding
     await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     expect(frame(h.lastFrame)).not.toContain("hello");               // the composer came back EMPTY
-    expect(frame(h.lastFrame)).toContain("sk Claude anything");
+    expect(frame(h.lastFrame)).toContain("? help");
     h.unmount();
   });
 

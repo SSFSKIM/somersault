@@ -10,6 +10,7 @@ import { formatIssues, userBindingsPath } from "./keys/userBindings.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import type { InitialResume } from "./commands.js";
 import { loadPrefs } from "./prefs.js";
+import { refreshExampleFiles } from "./placeholder.js";
 import { setTheme } from "./theme.js";
 
 export interface ChatClientOpts {
@@ -115,6 +116,14 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // there is no console to print into.
   const keybindingsFile = userBindingsPath();
   const notices = createNoticeBridge();
+  // F5 task 8 — `DVf` (bundle L495100): top up the `Try "${file}"` example-file cache if it is empty or over
+  // a week old. Fire-and-forget and deliberately HERE rather than in the composer: it shells out to `git log`
+  // exactly once per process, while the composer is remounted behind every dialog. A `setTimeout(0)` keeps
+  // the (synchronous) git call off the first paint; upstream gets the same effect from an async spawn. The
+  // composer reads the CACHE at mount, so like upstream the very first session in a repo shows `<filepath>`
+  // and the harvested names appear from the next launch on.
+  const harvest = setTimeout(() => refreshExampleFiles({ cwd: opts.cwd }), 0);
+  harvest.unref?.();
   const app = render(
     <UserKeymap file={keybindingsFile} onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
       <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}

@@ -42,6 +42,7 @@ import { Line } from "./Line.js";
 import { userEchoLines } from "./render.js";
 import { ChatComposer, type InputOwner } from "./ChatComposer.js";
 import { initialEditorState, type EditorState } from "./editor.js";
+import { isEditableQueueEntry } from "./queue.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { QuestionDialog } from "./QuestionDialog.js";
 import { PlanDialog } from "./PlanDialog.js";
@@ -102,7 +103,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
-  const { state, detailItems, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
+  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
   // The queued band's own column budget: what is left inside the `paddingX: 2` box. `deps.columns` first for
   // the same reason useChat prefers it — the frame-capture fixture and the tests pin a width.
   const terminalColumns = () => deps?.columns?.() ?? stdout?.columns ?? 80;
@@ -123,6 +124,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // switch does NOT re-show the hint — same lifetime as the project-scoped history list it describes, and
   // upstream's own guard (m.current, L489587) is never cleared by resetHistory either.
   const searchHintFiredRef = useRef(false);
+  // F5 task 8: the queued-up hint's session counter is bumped ONCE per app, for the same lifetime reason —
+  // the composer below is replaced by every dialog, and a counter it owned itself would count each remount.
+  const queueHintCountedRef = useRef(false);
   // Input subscriptions are passive. This ref changes during render, before the visible owner swaps, so a
   // retiring composer can reject the next key even before its own registration has been torn down — the Chat
   // scope outlives the unmount by one passive flush, and shift+tab/escape would otherwise still reach it from
@@ -235,7 +239,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           message hands 3, and `paddingWidth` is `paddingX * 2` = 4. */}
       {state.queue.length > 0 ? (
         <Box flexDirection="column" paddingX={QUEUE_PAD}>
-          {state.queue.flatMap((q, i) => userEchoLines(q, { width: queueWidth }).map((l, j) => <Line key={`${i}:${j}`} l={l} />))}
+          {state.queue.flatMap((q, i) => userEchoLines(q.value, { width: queueWidth }).map((l, j) => <Line key={`${i}:${j}`} l={l} />))}
         </Box>
       ) : null}
       {state.shortcutsOpen
@@ -303,7 +307,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     : state.pending.kind === "plan"
                       ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
                       : <PermissionDialog key={state.pending.toolUseID} req={state.pending} onDecision={(d) => resolveDecision(d)} />
-                  : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} searchHintFiredRef={searchHintFiredRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} sessionId={state.sessionId} project={cwd} />}
+                  : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} searchHintFiredRef={searchHintFiredRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} sessionId={state.sessionId} project={cwd}
+                      queuePop={popQueueToComposer} queueHasEditable={state.queue.some(isEditableQueueEntry)}
+                      submitCount={state.submitCount} hasMessages={state.hasMessages} queueHintCountedRef={queueHintCountedRef} />}
       {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
       {escArmed ? <Box paddingX={1}><Text dimColor>Press Esc again to rewind</Text></Box> : null}
       {/* `composerOwnsKeys` is the SAME render-time disjunction the composer's own guard reads, handed to the
