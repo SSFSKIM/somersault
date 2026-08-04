@@ -4,6 +4,7 @@
 // real `Segment`s, so bold/italic/codespan/link styling inside a cell survives instead of being baked
 // into escape bytes. Nested tables do NOT come here — they take `f2`'s own pipe form (pack §4.9), which
 // lives in markdown.ts; `Oaa` (L421143) is what splits the two apart.
+import stringWidth from "string-width";
 import wrapAnsi from "wrap-ansi";
 import type { Tokens } from "marked";
 import { inlineSegments } from "./markdownInline.js";
@@ -27,14 +28,14 @@ type Align = "left" | "center" | "right";
 
 // ── width, in DISPLAY columns ───────────────────────────────────────────────────────────────────────
 // Upstream's `Ut` is `Bun.stringWidth(s, { ambiguousIsNarrow: true })`: escape-aware and East-Asian-aware.
-// `string-width` is only a transitive dependency here, so this measures the escape-stripped text by code
-// unit instead. DIVERGENCE: a cell of CJK/emoji text measures narrow and its column comes out too tight
-// (the grid stays square — every column is padded to the width we measured — but wide glyphs overflow it).
-// Everything else is byte-identical, and swapping in a real width function is this one function.
+// `string-width` (a direct dependency since the Task-4 fix round) is that function: ANSI/OSC-8-stripping,
+// East-Asian-aware, and `ambiguousIsNarrow` is its DEFAULT since v5 — so box-drawing `│`/`─` measure 1 and
+// a CJK glyph measures 2, matching `Ut` exactly. The earlier code-unit approximation is gone with it.
 const ESCAPES = /\x1b\]8;;[^\x07]*\x07|\x1b\[[0-9;]*m/g;   // the OSC-8 + SGR pair Task 3 introduced
-const dw = (s: string) => s.replace(ESCAPES, "").length;
+const dw = (s: string) => stringWidth(s);
+/** The escape-stripped text of a segment run, in CODE UNITS — the coordinate space `sliceSegs` indexes. */
 const plain = (segs: Segment[]) => segs.map((s) => s.text).join("").replace(ESCAPES, "");
-const segWidth = (segs: Segment[]) => plain(segs).length;
+const segWidth = (segs: Segment[]) => stringWidth(plain(segs));
 
 /** Adjacent segments that render identically collapse into one — keeps a plain grid row a single segment
  *  (so `foldLine` can flatten it to a bare line) instead of one per pad/border piece. */
@@ -101,10 +102,11 @@ function collapse(segs: Segment[]): Segment[] {
   return out;
 }
 
-/** `ogH` (L420894) — `String.trim()` over a segment line. */
+/** `ogH` (L420894) — `String.trim()` over a segment line. Both bounds are CODE-UNIT offsets, because that
+ *  is what `sliceSegs` indexes; feeding a DISPLAY width in here would cut a non-ASCII line short. */
 const trimSegs = (segs: Segment[]): Segment[] => {
-  const w = segWidth(segs), lead = plain(segs).length - plain(segs).trimStart().length;
-  return sliceSegs(segs, lead, w - (plain(segs).length - plain(segs).trimEnd().length));
+  const p = plain(segs);
+  return sliceSegs(segs, p.length - p.trimStart().length, p.trimEnd().length);
 };
 
 /** `bWo` (L420839) VERBATIM: centering biases LEFT (`floor` on the left pad, the remainder on the right). */
@@ -129,8 +131,8 @@ export function renderTable(t: Tokens.Table, width: number): RenderLine[] {
   const bare = (text: string) => line([{ text }]);
 
   // ── three-way width fitting (pack §4.3, L420926–420960) ───────────────────────────────────────────
-  const longest = (c: Cell) => { const w = textOf(c).split(/\s+/).filter((x) => x.length > 0); return w.length === 0 ? MIN_COL : Math.max(...w.map((x) => x.length), MIN_COL); };   // `d`
-  const natural = (c: Cell) => Math.max(textOf(c).length, MIN_COL);                                                                                                               // `p`
+  const longest = (c: Cell) => { const w = textOf(c).split(/\s+/).filter((x) => x.length > 0); return w.length === 0 ? MIN_COL : Math.max(...w.map((x) => stringWidth(x)), MIN_COL); };   // `d`
+  const natural = (c: Cell) => Math.max(stringWidth(textOf(c)), MIN_COL);                                                                                                                // `p`
   const perColumn = (f: (c: Cell) => number) => t.header.map((h, i) => rows.reduce((m, r) => Math.max(m, f(r[i])), f(h)));
   const minW = perColumn(longest), natW = perColumn(natural);              // `f` and `m`
   const cols = t.header.length, chrome = 1 + cols * 3;                     // `y` — one leading │, then " " + cell + " │" each

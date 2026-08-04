@@ -73,6 +73,39 @@ describe("F4 Task 4 — box grid (pack §4.4/§4.5)", () => {
     ]);
   });
 
+  it("mode 3 (hard scale) still emits a BOX when the scaled cells stay within ngH lines", () => {
+    // width 40, 2 columns: chrome 7, `_ = max(40 - 7 - 4, 6) = 29`. Both body cells are ONE 40-char word,
+    // so f = m = [40, 40] and E = 80 > 29 → mode 3: scale = 29/80, T = [floor(14.5), floor(14.5)] = [14,14]
+    // and `H` (hard) is on. 40 chars hard-wrapped at 14 = 3 lines (14/14/12) — 3 <= ngH = 4, so trigger 1
+    // misses; the assembled row is 7 + 28 = 35 <= 40 - 4, so trigger 2 misses too. The box survives.
+    const y = "y".repeat(40), z = "z".repeat(40), H = "─".repeat(16);
+    expect(texts(`| a | b |\n|---|---|\n| ${y} | ${z} |`, 40)).toEqual([
+      `┌${H}┬${H}┐`,
+      `│ ${" ".repeat(6)}a${" ".repeat(7)} │ ${" ".repeat(6)}b${" ".repeat(7)} │`,   // o = 13, i = floor(13/2) = 6
+      `├${H}┼${H}┤`,
+      `│ ${"y".repeat(14)} │ ${"z".repeat(14)} │`,
+      `│ ${"y".repeat(14)} │ ${"z".repeat(14)} │`,
+      `│ ${"y".repeat(12)}   │ ${"z".repeat(12)}   │`,                               // last line + 2 left-align pad
+      `└${H}┴${H}┘`,
+    ]);
+  });
+
+  it("a short cell is vertically CENTRED against a 3-line neighbour (`U` = floor((n - w)/2))", () => {
+    // width 19, 2 columns: chrome 7, `_ = max(19 - 7 - 4, 6) = 8`. col0: longest word "three" → f = 5,
+    // natural "one two three" → 13; col1 floors to 3 both ways. A = 16 > 8, E = 8 <= 8 → mode 2 with
+    // slack 0, so T = f = [5, 3]. "one two three" word-wraps at 5 into 3 lines, "z" is 1 → n = 3 and
+    // U = [0, floor((3-1)/2) = 1]: the "z" sits on the MIDDLE line, with blank cells above and below.
+    expect(texts("| a | b |\n|---|---|\n| one two three | z |", 19)).toEqual([
+      "┌───────┬─────┐",
+      "│   a   │  b  │",
+      "├───────┼─────┤",
+      "│ one   │     │",
+      "│ two   │ z   │",
+      "│ three │     │",
+      "└───────┴─────┘",
+    ]);
+  });
+
   it("borders and rules carry NO style — the bundle prints the assembled table through a bare <wc>", () => {
     const out = renderTable(table("| a | b |\n|---|---|\n| 1 | 2 |"), 80);
     expect(out[0]).toEqual({ text: "┌─────┬─────┐" });
@@ -101,6 +134,21 @@ describe("F4 Task 4 — box grid (pack §4.4/§4.5)", () => {
       ]);
       expect(out[3].text).toContain("\x1b]8;;https://example.com\x07");   // the hyperlink really is intact
     } finally { if (saved === undefined) delete process.env.FORCE_HYPERLINK; else process.env.FORCE_HYPERLINK = saved; }
+  });
+
+  it("a CJK cell is sized in DISPLAY columns, not code units (`Ut` = Bun.stringWidth)", () => {
+    // "日本語テキスト" is 7 code units but 14 display columns, and it is ONE word, so `d`/`p` both give
+    // 14 for col0 (header "name" = 4 loses); col1 floors to _Hn = 3. A = 17 <= `_` = max(80-7-4, 6) = 69
+    // → mode 1, T = [14, 3]. `D` fills 16 and 5. The forced-centre header pads o = 14-4 = 10, i = 5 —
+    // an even offset, so this fixture's centring is symmetric; the floor bias is pinned separately below.
+    // Measured by code unit instead, col0 would be 7 wide and the whole box a column narrower.
+    expect(texts("| name | v |\n|---|---|\n| 日本語テキスト | 1 |")).toEqual([
+      "┌────────────────┬─────┐",
+      "│      name      │  v  │",
+      "├────────────────┼─────┤",
+      "│ 日本語テキスト │ 1   │",
+      "└────────────────┴─────┘",
+    ]);
   });
 
   it("a table is NOT dimmed by an ambient `dim` — `Oaa` gives dimColor to the prose <wc>s only", () => {
@@ -162,6 +210,16 @@ describe("F4 Task 4 — vertical/record fallback (pack §4.7 ngH = 4 / §4.8 `ka
     const out = renderTable(table(md), 40);
     expect(out[0]).toEqual({ text: "id: 1", segments: [{ text: "id:", bold: true }, { text: " 1" }] });
     expect(out[2]).toEqual({ text: "─".repeat(39) });
+  });
+
+  it("the record rule is CLAMPED at 40 once the terminal is wider than 41 (`ZhH` L421023)", () => {
+    // Same fixture at width 80: `_ = 69`, E = 303 > 69 → mode 3, T = [3, 68]; 300 chars hard-wrapped at
+    // 68 is 5 lines > ngH = 4, so the fallback still fires. The rule is `min(width - 1, 40)` — at width 40
+    // that was 39 (above), and here the 40 clamp wins over 79.
+    const out = texts(md, 80);
+    expect(out).toEqual(["id: 1", `note: ${long}`, "─".repeat(40), "id: 2", "note: short"]);
+    expect(out[2]).toBe("─".repeat(40));
+    expect(out[2].length).toBe(40);
   });
 
   it("also fires when the ASSEMBLED box is wider than width − 4 (pack §4.7 trigger 2)", () => {

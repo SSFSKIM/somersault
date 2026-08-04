@@ -785,14 +785,22 @@ Lines **420669–420697** VERBATIM:
 
 Reachable only for tables **nested inside another block** (top-level tables are split out by `Oaa`,
 line 421149). Facts:
-- Prefix `"| "`, cell suffix `" | "`, each row `trimEnd()`ed then `+ aW`. So the **trailing `|` is
-  trimmed off every row** — rows read `| a | b` with no closing pipe.
+- Prefix `"| "`, cell suffix `" | "`, each row `trimEnd()`ed then `+ aW`. `trimEnd()` removes only the
+  **trailing SPACE** of that last `" | "`, so the **closing `|` stays** — rows read `| a | b |`.
 - Separator: `"|"` then `"-".repeat(width + 2) + "|"` per column — ASCII hyphens, no colons, so
   **alignment is not encoded** in the separator even though `bWo` honours `align` in the cells.
 - Minimum column width here is the literal **`3`** (line 420683), not `_Hn`.
 - The header row uses `u.align?.[y]` — **no forced centering**, unlike the box renderer.
 - No row cap, no width fitting, no terminal-width awareness at all.
 - Screen-reader mode (`l`) short-circuits to `Caa` (line 420849) + two newlines.
+
+⚠ **PACK SELF-CORRECTION (2026-08-04, F4 Task 4 review).** The first bullet above originally read "the
+**trailing `|` is trimmed off every row** — rows read `| a | b` with no closing pipe". That is wrong, and
+the two cited lines say so: L420687 appends `bWo(...) + " | "` per cell, so the row ends `…b | ` — and
+L420688's `m = m.trimEnd()` strips only the trailing SPACE, leaving `…b |`. Every row therefore keeps its
+closing pipe. The bullet has been rewritten to the correct reading; the shipped `nestedTableRuns` in
+`src/tui/markdown.ts` already followed the lines rather than this sentence, and its pin
+(`test/tui/mdTable.test.ts`, "a NESTED table keeps `f2`'s plain pipe form") asserts `| 1   | 2   |`.
 
 ---
 

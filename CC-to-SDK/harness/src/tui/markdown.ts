@@ -10,6 +10,7 @@
 // the walker. `gap: 1` (upstream's <Box gap={1}>) is one blank line at CHUNK boundaries only; the blank
 // lines between paragraphs inside a chunk come from `space` tokens, nothing else.
 import { marked } from "marked";
+import stringWidth from "string-width";
 import type { Token, Tokens } from "marked";
 import type { RenderLine, Segment } from "./render.js";
 import { inlineSegments, type InlineStyle } from "./markdownInline.js";
@@ -125,7 +126,7 @@ function quoteRuns(t: Tokens.Blockquote, ctx: Ctx, out: Run[]): void {
  *  attached. The case ends on `m + aW` — a second newline past the last row's own. */
 function nestedTableRuns(t: Tokens.Table, ctx: Ctx, out: Run[]): void {
   const segsOf = (c: Tokens.TableCell | undefined) => inlineSegments(c?.tokens ?? [], ctx.style);
-  const widthOf = (c: Tokens.TableCell | undefined) => segsOf(c).map((s) => s.text).join("").replace(/\x1b\]8;;[^\x07]*\x07|\x1b\[[0-9;]*m/g, "").length;
+  const widthOf = (c: Tokens.TableCell | undefined) => stringWidth(segsOf(c).map((s) => s.text).join(""));   // `Ut` — strips ANSI/OSC-8 itself
   const colW = t.header.map((h, i) => Math.max(t.rows.reduce((m, r) => Math.max(m, widthOf(r[i])), widthOf(h)), 3));
   const row = (cells: Tokens.TableCell[]) => {
     out.push(styled(ctx, "| "));
