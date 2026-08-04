@@ -157,6 +157,73 @@ export function substituteChips(text: string, map: PastedMap): string {
   return out;
 }
 
+/** `lgr`, bundle L317645 = `1e5`. ONE upstream constant with TWO jobs, and the difference between them is
+ *  the whole of CM24: `bDo` refuses to expand an entry longer than this (L317420), and `k0` shows the
+ *  `paste again to expand` hint only for a new chip at or under it (L495756). The 8-second window that sits
+ *  beside the second use gates the HINT alone — see `expandRepeatedPaste`. */
+export const PASTE_LIMIT = 100_000;
+
+/** `bDo` (bundle L317410): the highest-id TEXT chip actually present in the buffer, or null.
+ *
+ *  Upstream scans the flat buffer string; a label can never contain a newline, so a per-line scan finds
+ *  exactly the same set of chips and, taking the max id across all of them, the same winner.
+ *
+ *  The `> lgr` cap is upstream's and sits HERE, on the WINNER, not on the candidates: a buffer whose newest
+ *  chip is over the limit yields null even when a shorter, older chip is sitting right beside it. Faithful,
+ *  and not accidental — the check is a guard on the string this is about to build, not a filter. */
+function newestTextChip(s: EditorState): { row: number; span: ChipSpan; content: string } | null {
+  let best: { row: number; span: ChipSpan } | null = null;
+  for (let row = 0; row < s.lines.length; row++)
+    for (const span of chipSpans(s.lines[row]))
+      if (s.pastedContents[span.id]?.type === "text" && (!best || span.id > best.span.id)) best = { row, span };
+  if (!best) return null;
+  const content = s.pastedContents[best.span.id].content;
+  if (content.length > PASTE_LIMIT) return null;
+  return { ...best, content };
+}
+
+/** CM24, `k0`'s expand short-circuit (bundle L495750-L495752) together with the `kne` it calls (L495730-740).
+ *  Re-pasting the content of the last chip, while that chip is still the newest one in the buffer, replaces
+ *  the label with the text instead of minting a second chip — and drops the map entry, because the payload
+ *  now lives in the buffer where `substituteChips` can no longer double it.
+ *
+ *  WHAT `Uo` IS. Upstream reads `Ln.current - 1`: the id `k0` handed out LAST, not the largest key in the
+ *  map and not whatever the hint happens to remember. For us that is exactly `pasteCounter` — `ingestPaste`
+ *  mints `pasteCounter + 1` and stores it back — so there is deliberately no second `lastPasteId` field. A
+ *  second monotonic counter that must never disagree with the first is a bug waiting for its first
+ *  divergence, and this one would diverge on the first history recall or undo that rewrites the map.
+ *
+ *  THREE GATES, and which of them is a timer is the point of this whole task:
+ *   1. content equality against `pastedContents[pasteCounter]` — the ENTRY, not the hint's memory of it;
+ *   2. `bDo` names that same id as the newest text chip in the buffer (a deleted label cannot expand, and a
+ *      newer chip in front of it shadows it);
+ *   3. `bDo`'s own `> lgr` refusal.
+ *  There is NO timer here. The 8-second window gates only whether ChatComposer paints the hint; the gesture
+ *  itself works an hour later, and the t3/f4 review corrected the plan on exactly that point. What the same
+ *  review got wrong in the other direction is gate 3: the brief says the expand has no length cap. It does —
+ *  it is inside `bDo`, shared with the hint — so a paste over `PASTE_LIMIT` can never round-trip. Bundle wins.
+ *
+ *  Cursor lands at the END of the inserted text (`cursorOffset: r.index + n.length`, L317422), which is NOT
+ *  the end of the line when anything followed the label. */
+export function expandRepeatedPaste(s: EditorState, content: string): EditorState | null {
+  const last = s.pastedContents[s.pasteCounter];
+  if (last?.type !== "text" || last.content !== content) return null;
+  const found = newestTextChip(s);
+  if (!found || found.span.id !== s.pasteCounter) return null;
+  const line = s.lines[found.row];
+  const head = line.slice(0, found.span.start) + content;
+  const headLines = head.split("\n");
+  const merged = (head + line.slice(found.span.end)).split("\n");
+  const pastedContents = { ...s.pastedContents };
+  delete pastedContents[s.pasteCounter];
+  return {
+    ...s,
+    lines: [...s.lines.slice(0, found.row), ...merged, ...s.lines.slice(found.row + 1)],
+    cursor: { row: found.row + headLines.length - 1, col: headLines[headLines.length - 1].length },
+    pastedContents,
+  };
+}
+
 /** CM21/CM27: normalise the payload, then either collapse it behind a chip or insert it as-is.
  *
  *  The id counter advances ONLY when a chip is actually minted — a sub-threshold paste is indistinguishable
@@ -166,6 +233,12 @@ export function substituteChips(text: string, map: PastedMap): string {
 export function ingestPaste(s: EditorState, raw: string, rows: number = DEFAULT_ROWS): EditorState {
   const content = normalizePaste(raw);
   if (content.length === 0) return s;
+  // `k0` runs this BEFORE `kmt` and before `Ln.current++` (L495750): a re-paste is a gesture about a chip
+  // that already exists, not a new paste, so it must not be able to burn an id or mint a second label. It
+  // also has to sit after normalisation, because the comparison is against the NORMALIZED entry content —
+  // the same text pasted from a CRLF source expands the LF chip it made.
+  const expanded = expandRepeatedPaste(s, content);
+  if (expanded) return expanded;
   const lineCount = newlineCount(content);
   if (content.length <= CHIP_CHARS && lineCount <= newlineThreshold(rows)) return insertText(s, content);
   const id = s.pasteCounter + 1;

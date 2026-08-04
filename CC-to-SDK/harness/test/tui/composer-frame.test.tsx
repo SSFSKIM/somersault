@@ -6,13 +6,23 @@
 //  · CM20 (L433221) the `Z_a` newline-hint ladder
 //  · CM8  (L496237) an external edit in flight replaces the whole composer with one italic dim literal
 import React from "react";
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
 import { render } from "ink-testing-library";
 import { renderWithKeymap } from "./keysTestUtil.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
 import { ComposerFrame, PlaceholderCursor, promptGlyph, newlineHint, EDITOR_IN_FLIGHT_TEXT, NBSP, POINTER } from "../../src/tui/composerFrame.js";
 import { setTheme, themeTokens, resolveThemeColor } from "../../src/tui/theme.js";
+
+// F5 Task 5 gave ChatComposer a real side effect on a chip: it writes the payload to the 0600 paste cache
+// under `fleetRoot()`. The paste tests at the bottom of this file mint chips, so this file has to own a
+// fleet root or they write into the developer's actual ~/.claude/ccx.
+let fleetRootDir = "";
+let priorFleetRoot: string | undefined;
+beforeAll(() => { priorFleetRoot = process.env.CCX_FLEET_ROOT; fleetRootDir = mkdtempSync(join(tmpdir(), "ccx-cf-")); process.env.CCX_FLEET_ROOT = fleetRootDir; });
+afterAll(() => { if (priorFleetRoot === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = priorFleetRoot; rmSync(fleetRootDir, { recursive: true, force: true }); });
 
 const frame = (f: () => string | undefined) => f() ?? "";
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");

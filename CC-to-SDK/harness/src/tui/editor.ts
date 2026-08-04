@@ -34,7 +34,16 @@ export interface EditorState {
   killRun: boolean;                                          // an unbroken run of kill keystrokes coalesces into the newest entry
   yankSite: { start: Cursor; end: Cursor; index: number } | null;   // set by yank; alt+y pops only while it holds
 }
-export interface EditorResult { state: EditorState; submit?: string; killed?: { text: string; dir: "append" | "prepend" } }
+/** What the paste arm just did, for the two side effects the composer owns and the reducer must not: the
+ *  0600 disk cache (`pasteCache.ts`) and the `paste again to expand` hint. Same out-of-band channel `killed`
+ *  already uses for the yank hint, and used for the same reason — an impure reaction to a pure transition.
+ *
+ *  It is a REPORTED signal rather than something the composer diffs out of (prev, next) because that diff is
+ *  ambiguous everywhere except inside the paste arm: Ctrl-L also empties `pastedContents` without touching
+ *  `pasteCounter`, which reads as an expand, and undo restores an older map, which reads as either. Scoped
+ *  to the arm, the derivation below is exact. */
+export type PasteSignal = { kind: "chip"; content: string } | { kind: "expand" };
+export interface EditorResult { state: EditorState; submit?: string; killed?: { text: string; dir: "append" | "prepend" }; paste?: PasteSignal }
 /** Minimal structural subset of ink's Key the reducer reads (so editor.ts needs no ink import). */
 export interface KeyFlags {
   return?: boolean; backspace?: boolean; delete?: boolean; ctrl?: boolean; meta?: boolean; shift?: boolean;
@@ -417,7 +426,13 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags, rows?: numb
   if (key.paste || input.length > CHIP_CHARS) {
     const next = ingestPaste(s, input, rows);
     if (next === s) return { state: s };
-    return { state: afterInsert(next, s, input) };
+    // Which of ingestPaste's three outcomes this was (F5 task 5). A minted chip advanced the counter; an
+    // expand left it alone and removed the entry it names; a sub-threshold insert did neither.
+    const minted = next.pasteCounter > s.pasteCounter ? next.pastedContents[next.pasteCounter] : undefined;
+    const paste: PasteSignal | undefined = minted ? { kind: "chip", content: minted.content }
+      : s.pastedContents[s.pasteCounter] !== undefined && next.pastedContents[s.pasteCounter] === undefined ? { kind: "expand" }
+      : undefined;
+    return { state: afterInsert(next, s, input), paste };
   }
   if (input) { const t = stripPasteMarkers(input); if (!t) return { state: s }; return { state: afterInsert(insertText(s, t), s, t) }; }
   return { state: s };

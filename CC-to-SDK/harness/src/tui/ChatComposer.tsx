@@ -4,6 +4,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { readdirSync } from "node:fs";
 import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, type EditorState } from "./editor.js";
+import { PASTE_LIMIT } from "./pasteChips.js";
+import { storePaste as storePasteToDisk } from "./pasteCache.js";
 import { collectFiles, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
 import { editExternalAsync as realEditExternal } from "./externalEditor.js";
@@ -27,6 +29,11 @@ const PLACEHOLDER = "Ask Claude anything…";
 const DEFAULT_COLUMNS = 80;
 /** CM25, bundle L493764: `Pasting…` — one ellipsis CHARACTER, not three dots, dim, below the frame. */
 const PASTING_TEXT = "Pasting…";
+/** CM24, bundle L493772: the dim row that advertises paste-again-to-expand. Exported because the pin in
+ *  test/tui/paste-expand.test.tsx has to assert the literal, and a second copy of it there would drift. */
+export const PASTE_EXPAND_HINT = "paste again to expand";
+/** `k0`'s 8000 ms (L495759). The hint's whole life; the EXPAND itself has no deadline (pasteChips.ts). */
+const PASTE_HINT_MS = 8000;
 
 const realReaddir = (dir: string): DirEnt[] => {
   try { return readdirSync(dir, { withFileTypes: true }).map((d) => ({ name: d.name, isDir: d.isDirectory() })); }
@@ -93,10 +100,21 @@ function MentionPopup({ state }: { state: EditorState }) {
  *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
 export type ComposerEditExternal = (text: string) => string | null | Promise<string | null>;
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, storePaste = storePasteToDisk, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
   /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
    *  one. Absent AND with no provider above, the editor simply runs without a handoff. */
   suspendInput?: SuspendInput; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number;
+  /** How long `paste again to expand` stays up (`k0`'s 8000 ms). The gesture it advertises outlives it —
+   *  see `expandRepeatedPaste`. Injectable for the same reason `yankHintMs` is: so a test can watch the
+   *  window close in real time instead of faking the clock under Ink. */
+  pasteHintMs?: number;
+  /** CM26's disk write, THE side effect of a chip being minted. It lives here rather than in `ingestPaste`
+   *  because that reducer is pure and is called from `applyKey`, which several tests drive thousands of
+   *  times; the composer is the one place that knows a real user really pasted. Injectable so a component
+   *  test can watch the call without a filesystem — the DEFAULT is the real writer, deliberately, so that a
+   *  future mount site cannot silently ship with the cache turned off. Tests that render this component and
+   *  paste MUST therefore either inject or pin `CCX_FLEET_ROOT` (test/tui/paste-expand.test.tsx does both). */
+  storePaste?: (content: string) => void;
   /** The terminal's width, read per render (a function, not a number, so a resize is visible without a
    *  new prop identity). ChatApp threads its own `deps.columns ?? stdout.columns ?? 80` source through. */
   columns?: () => number;
@@ -130,7 +148,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const disposed = useRef(false);
   const [yankHint, setYankHint] = useState(false);
   const yankTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { disposed.current = true; if (yankTimer.current) clearTimeout(yankTimer.current); }, []);
+  // CM24's hint (`Rpk`/`Yg`/`lh` in the bundle). Its own state + timer, the yank hint's shape exactly.
+  const [pasteHint, setPasteHint] = useState(false);
+  const pasteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { disposed.current = true; if (yankTimer.current) clearTimeout(yankTimer.current); if (pasteTimer.current) clearTimeout(pasteTimer.current); }, []);
   // F2 task 8 removed the `mounted` one-flush guard that used to sit here. Its whole job was the readable-
   // before-data window: Ink reads stdin on "readable" and the keymap listens for "data" (emitted second), so
   // an unmigrated dialog could handle a key by unmounting itself and remounting this composer BEFORE our
@@ -155,6 +176,8 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const suspendInputRef = useRef<SuspendInput | null>(null); suspendInputRef.current = suspendInput ?? providerSuspend;
   const onPrefillAppliedRef = useRef(onPrefillApplied); onPrefillAppliedRef.current = onPrefillApplied;
   const yankHintMsRef = useRef(yankHintMs); yankHintMsRef.current = yankHintMs;
+  const pasteHintMsRef = useRef(pasteHintMs); pasteHintMsRef.current = pasteHintMs;
+  const storePasteRef = useRef(storePaste); storePasteRef.current = storePaste;
   const escClearMsRef = useRef(escClearMs); escClearMsRef.current = escClearMs;
   const exitArmMsRef = useRef(exitArmMs); exitArmMsRef.current = exitArmMs;
   // Read through a ref for the same reason as stateRef/busyRef: `handleKey` runs from the keymap's passive-
@@ -300,6 +323,22 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       if (yankTimer.current) clearTimeout(yankTimer.current);
       yankTimer.current = setTimeout(() => setYankHint(false), yankHintMsRef.current);
     }
+    // CM24/CM26, `k0`'s tail (bundle L495753-L495762). A minted chip is cached unconditionally — that is
+    // CM26's whole contract, and task 7 needs the payload of chips the hint never advertised — but only a
+    // chip at or under `lgr` raises the hint, because only one at or under `lgr` can actually be expanded
+    // (`bDo`'s cap). An over-cap chip is transcribed to leave any hint already on screen ALONE: upstream's
+    // `if (Cn.length <= lgr)` guards the whole `Yg(!0)` + reschedule block, and nothing else touches it.
+    if (r.paste?.kind === "chip") {
+      storePasteRef.current(r.paste.content);
+      if (r.paste.content.length <= PASTE_LIMIT) {
+        setPasteHint(true);
+        if (pasteTimer.current) clearTimeout(pasteTimer.current);              // a fresh chip restarts the window
+        pasteTimer.current = setTimeout(() => { setPasteHint(false); pasteTimer.current = null; }, pasteHintMsRef.current);
+      }
+    } else if (r.paste?.kind === "expand") {
+      setPasteHint(false);                                                     // `kne`'s `Yg(!1)` + `lh.current()`
+      if (pasteTimer.current) { clearTimeout(pasteTimer.current); pasteTimer.current = null; }
+    }
     if (s.lines.length === 1 && s.lines[0] === "" && !(r.state.lines.length === 1 && r.state.lines[0] === "")) onDraftStartRef.current?.();
     if (r.submit != null) onSubmitRef.current(r.submit); commitState(r.state);
   };
@@ -433,6 +472,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       {mode === "bash" ? <Box paddingX={1}><Text color={role("bashBorder")} dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
       {mode === "memory" ? <Box paddingX={1}><Text color={role("remember")} dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
       {pasting ? <Box paddingX={1}><Text dimColor>{PASTING_TEXT}</Text></Box> : null}
+      {pasteHint ? <Box paddingX={1}><Text dimColor>{PASTE_EXPAND_HINT}</Text></Box> : null}
       {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
       {clearVisible ? <Box paddingX={1}><Text dimColor>{`${escKey} again to clear`}</Text></Box> : null}
       {dArmed && isEmptyNow ? <Box paddingX={1}><Text dimColor>{`Press ${exitKey} again to exit`}</Text></Box> : null}
