@@ -15,6 +15,7 @@ import { Box, Text } from "ink";
 import wrapAnsi from "wrap-ansi";
 import type { RenderLine, Segment } from "./render.js";
 import { renderMessage } from "./render.js";
+import { classifyUserText, INTERRUPT_PLAIN, INTERRUPT_TOOL, TOOL_RESULT_GUTTER } from "./species.js";
 import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
 import { resolveThemeColor, themeGeneration, themeTokens } from "./theme.js";
@@ -29,8 +30,11 @@ import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcrip
 
 /** Five columns, and the FIFTH is U+00A0: upstream emits `["  ", "⎿ \xA0"]` so the cell after the connector is not a
  *  break opportunity and no terminal (or trailing-space trim) can eat it. Written with the escape so no editor can
- *  normalize it back to a plain space. */
-export const TOOL_RESULT_GUTTER = "  \u23bf \u00a0" as const;
+ *  normalize it back to a plain space. F4 Task 10a MOVED the definition into `species.ts` (`Cr` L406895 is the
+ *  connector both a tool result and the new standalone interrupt row wear) so that pure module \u2014 which
+ *  `sessions/rows.ts` imports \u2014 can use it without pulling React into its graph. Re-exported here unchanged,
+ *  so every existing importer and the `RenderItem` union below are untouched. */
+export { TOOL_RESULT_GUTTER };
 /** The ACTIVE group row's own hint gutter (R4.6, `X8o = 5`): 2 spaces, the connector, 2 PLAIN spaces. Upstream
  *  keeps it distinct from the tool-result gutter above (which ends in the NBSP); both are exactly five columns. */
 export const GROUP_HINT_GUTTER = "  \u23bf  " as const;
@@ -390,20 +394,38 @@ export function sdkEntryBase(entry: SdkEntry, occurrence: number): string {
  *  F3 owns the parent/child progress and totals route. */
 const isNested = (message: Record<string, unknown>): boolean => typeof message.parent_tool_use_id === "string" && message.parent_tool_use_id.length > 0;
 
+/** A retained frame's content blocks. `message.content` is a plain STRING on a large share of the rows a
+ *  session file carries — `sessions/rows.ts` has always had to handle both shapes — and treating that as
+ *  "no blocks" is what kept a replayed disk prompt (and, after F4 Task 10a, every disk sentinel) off the
+ *  transcript entirely. Normalising in ONE place means the live path and the disk path see the same blocks. */
+function contentBlocks(message: Record<string, unknown>): readonly unknown[] {
+  const inner = message.message;
+  if (!isRecord(inner)) return [];
+  if (Array.isArray(inner.content)) return inner.content;
+  return typeof inner.content === "string" ? [{ type: "text", text: inner.content }] : [];
+}
+
 /** LT14. `query.interrupt()` puts the interrupt on the wire as a plain `user` frame whose sole content block is
- *  the bracketed sentinel (P80 § A frame 2) — no subtype, no `isMeta`, nothing but the text to go on. The SDK's
- *  own first-prompt extractor filters it with this very regex (P80's static half, `sdk.mjs`), which is both the
- *  precedent for matching on text and the proof upstream expects it as a USER row. We RETAIN it (it is source)
- *  and render nothing for it: its surface is the preceding tool row's `Interrupted · What should Claude do
- *  instead?`, and a second `❯ [Request interrupted by user]` line would say the same thing twice. Anchored at
- *  both ends and one block only, so a user who quotes the sentence inside a longer prompt still gets their row. */
-const INTERRUPT_SENTINEL = /^\[Request interrupted by user[^\]]*\]$/;
-function isInterruptSentinel(message: Record<string, unknown>): boolean {
-  if (message.type !== "user") return false;
-  const inner = message.message, content = isRecord(inner) && Array.isArray(inner.content) ? inner.content : [];
-  if (content.length !== 1) return false;
+ *  the bracketed sentinel (P80 § A frame 2) — no subtype, no `isMeta`, nothing but the text to go on. Upstream
+ *  routes BOTH spellings (`Tq`/`Wk`, L108575) to the same `BP` row at `ERe` exit 9, and F4 Task 10a splits them:
+ *
+ *  · the TOOL form `[Request interrupted by user for tool use]` still renders nothing here, because the tool row
+ *    it interrupted already carries `Interrupted · What should Claude do instead?` and a second line would say
+ *    the same thing twice. That divergence is F3's and it stands.
+ *  · the PLAIN form `[Request interrupted by user]` has no tool row behind it — an interrupt taken between turns
+ *    or during pure text generation — and until this task it suppressed with NO surface anywhere. It now falls
+ *    through to `renderMessage`, where `species.ts` gives it upstream's standalone dim `⎿` row.
+ *
+ *  Still exact-match on a single block, so a user who quotes the sentence inside a longer prompt gets their own
+ *  prompt row: the classifier's exit 9 is `text === Tq || text === Wk`, equality and not a substring test. */
+function isInterruptSentinel(message: Record<string, unknown>): "plain" | "tool" | null {
+  if (message.type !== "user") return null;
+  const content = contentBlocks(message);
+  if (content.length !== 1) return null;
   const block = content[0];
-  return isRecord(block) && block.type === "text" && typeof block.text === "string" && INTERRUPT_SENTINEL.test(block.text.trim());
+  if (!isRecord(block) || block.type !== "text" || typeof block.text !== "string") return null;
+  const kind = classifyUserText(block.text.trim());
+  return kind === "interrupt-tool" ? "tool" : kind === "interrupt-plain" ? "plain" : null;
 }
 
 /** The sole non-tool completed-SDK adapter: it reuses render.ts for assistant/user text and every other
@@ -419,9 +441,8 @@ function isInterruptSentinel(message: Record<string, unknown>): boolean {
 export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions, base?: string): readonly RenderItem[] {
   const renderOpts = { width: options.columns, platform: options.platform, showThinking: options.projection !== "compact" || options.verbose };
   const message = entry.message;
-  if (isNested(message) || isInterruptSentinel(message)) return [];
-  const inner = message.message;
-  const content = isRecord(inner) && Array.isArray(inner.content) ? inner.content : [];
+  if (isNested(message) || isInterruptSentinel(message) === "tool") return [];
+  const content = contentBlocks(message);
   const id = base ?? sdkEntryBase(entry, 0);
   const items: RenderItem[] = [];
   content.forEach((block, index) => {
@@ -587,7 +608,7 @@ function entryAtom(entry: TranscriptEntry, items: readonly RenderItem[]): "break
   // inside it — so the predicate is asked directly here rather than inferred from what projected.
   if (isInterruptSentinel(entry.message)) return "breaker";
   if (items.length === 0) return "neutral";
-  const inner = entry.message.message, content = isRecord(inner) && Array.isArray(inner.content) ? inner.content : [];
+  const content = contentBlocks(entry.message);
   const rendered = content.filter((block) => isRecord(block) && block.type !== "tool_use" && block.type !== "tool_result");
   const real = rendered.some((block) => {
     const b = block as Record<string, unknown>;

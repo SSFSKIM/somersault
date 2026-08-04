@@ -5,7 +5,8 @@
 // the projection's decision. Only the three display frames are local entries, each with a stable identity
 // derived from POSITION in the persisted array (never from its text) so replaying the same session twice
 // neither duplicates nor silently drops a row.
-import { trunc, userEchoLines, type RenderLine } from "./render.js";
+import { trunc, type RenderLine } from "./render.js";
+import { speciesLines } from "./species.js";
 import { TranscriptDocument } from "./transcriptModel.js";
 import { rowKind, promptText } from "../sessions/rows.js";
 
@@ -40,11 +41,16 @@ export function replayDocument(messages: readonly unknown[], options: ReplayOpti
   document.appendLocal({ kind: "resume-divider", lines: [divider(`${label}: ${title} · ${turns} turn${turns === 1 ? "" : "s"}${time ? " · " + time : ""}`)] }, `replay:${session}:head`);
   rows.forEach((m, index) => {
     const kind = rowKind(m);
-    if (kind === "command_output" || kind === "caveat") return;               // engine bookkeeping, never a visible row
+    // F4 Task 10a: replay no longer decides what a sentinel LOOKS like — `species.ts` does, for the disk path
+    // and the live path alike. Two consequences. (1) Local-command output and caveats are no longer dropped on
+    // the floor: they are retained like every other row and the router paints them (a caveat still paints
+    // nothing — `ERe` exit 6 returns null — but it is now source we kept rather than source we destroyed).
+    // (2) The command echo keeps its LOCAL entry, because its position-derived identity is what makes
+    // replaying the same session twice idempotent (F1 Task 4), but its LINES come from the router, so the
+    // `<command-args>` and `skill-format` shapes a hand-rolled `<command-name>` regex never saw now render.
     if (kind === "command_echo") {
-      const name = /<command-name>\s*\/?([^<]+)</.exec(promptText(m))?.[1] ?? "command";
-      // Same band as a live command echo and a live prompt — `userEchoLines` is the one renderer (F4 Task 8).
-      document.appendLocal({ kind: "command-echo", lines: userEchoLines(`/${name.trim()}`, { width: options.width }) }, `replay:${session}:${index}:command_echo`);
+      const lines = speciesLines("command-echo", promptText(m), { width: options.width });
+      if (lines) document.appendLocal({ kind: "command-echo", lines }, `replay:${session}:${index}:command_echo`);
       return;
     }
     if (kind === "compact_summary") {

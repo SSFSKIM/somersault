@@ -19,6 +19,12 @@ export interface Segment { text: string; color?: string; dim?: boolean; bold?: b
 import stringWidth from "string-width";
 import wrapAnsi from "wrap-ansi";
 import { renderMarkdown } from "./markdown.js";
+// The one deliberate import CYCLE in the tui layer (F4 Task 10a): species.ts needs `userEchoLines` for the
+// routes upstream renders as an ordinary echo, and this module needs species.ts to route to it. Both sides
+// are `export function` declarations used only inside function bodies, so ESM has them initialised before
+// either module's body runs, in whichever order the graph is entered. The alternative — a third module
+// holding the band — would split the one prompt renderer in two, which is exactly what Task 8 killed.
+import { classifyUserText, speciesLines } from "./species.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 
 /** Prepend `pad` to a line's leading text — to BOTH the plain fallback and the first segment (if any). */
@@ -196,11 +202,20 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
     return out;
   }
   if (m.type === "user") {
-    // Task 10a routes sentinels before this path: an interrupt/local-command sentinel is engine bookkeeping
-    // wearing a user frame, not a prompt, and must never be band-wrapped as one.
+    // Task 10a routes sentinels HERE, ahead of the echo: an interrupt/local-command/task-notification
+    // sentinel is engine bookkeeping wearing a user frame, not a prompt, and must never be band-wrapped as
+    // one. `species.ts` owns the whole decision (upstream `ERe`) including the fallthrough, so the prompt
+    // echo is now one exit of the router rather than the only thing this branch knows how to do.
+    // `message.content` is a STRING on roughly half the rows a session file carries (the shape
+    // `sessions/rows.ts` has always had to handle) — iterating that string would walk it CHARACTER by
+    // character and render nothing at all, which is what silently kept disk prompts off the replayed
+    // transcript until this task. Normalising here is what makes live and replay route identically.
+    const raw = m.message?.content;
+    const blocks: any[] = typeof raw === "string" ? [{ type: "text", text: raw }] : Array.isArray(raw) ? raw : [];
     const out: RenderLine[] = [];
-    for (const b of m.message?.content ?? []) {
-      if (b?.type === "text" && b.text) out.push(...userEchoLines(String(b.text), { width: opts.width }));
+    for (const b of blocks) {
+      if (b?.type !== "text" || typeof b.text !== "string") continue;
+      out.push(...(speciesLines(classifyUserText(b.text), b.text, { width: opts.width, platform: opts.platform }) ?? []));
     }
     return out;
   }

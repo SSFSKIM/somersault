@@ -52,7 +52,10 @@ describe("replayDocument", () => {
     expect(detail).toContain("Read 3 lines");
     expect(detail).not.toContain("two");
   });
-  it("hides command stdout/caveat rows, renders command echoes as banded slash lines, and marks compact summaries", () => {
+  // F4 Task 10a changed what "hides" means here. Command stdout is no longer dropped on the floor: the row is
+  // retained and the species router paints its BODY (upstream `Sqo` L425757), so what must never appear is the
+  // TAG, not the output. A caveat still paints nothing at all (`ERe` exit 6 returns null).
+  it("renders command stdout through the species router without leaking its tag, bands command echoes, and marks compact summaries", () => {
     const msgs = [
       { type: "user", uuid: "u1", timestamp: "2026-07-28T08:00:00Z", message: { role: "user", content: "hi" } },
       { type: "user", uuid: "u2", message: { role: "user", content: "<command-name>/compact</command-name> <command-message>compact</command-message>" } },
@@ -61,6 +64,7 @@ describe("replayDocument", () => {
     ];
     const text = compactText(replayDocument(msgs, {}));
     expect(text).toContain("❯ /compact");        // F4 Task 8: a command echo wears the same band as a prompt
+    expect(text).toContain("Compacted");         // F4 Task 10a: the body of the local-command output now shows
     expect(text).not.toContain("local-command-stdout");
     expect(text).not.toContain("Summary…");
     expect(text).toContain("─── context compacted earlier ───");
