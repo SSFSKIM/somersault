@@ -406,8 +406,18 @@ export function speciesLines(kind: SpeciesKind, text: string, opts: SpeciesOptio
  *  boundary frame carries no summary text, and `getSessionMessages` strips even the `isCompactSummary` flag
  *  off the row that does (P81's TR36 trap) — which is exactly why `replay.ts` keeps its own honest
  *  `context compacted earlier` divider off `rows.ts`'s `compact_summary` shape instead of this form.
- *  `marginTop: 1` is not modelled, consistent with every other `addMargin`/`marginTop` in this clone. */
+ *  `marginTop: 1` is not modelled, consistent with every other `addMargin`/`marginTop` in this clone.
+ *
+ *  TRANSCRIPT MODE DROPS THE HINT. `NAr` is `!iRe && <h dimColor>{" "}<bn action="app:toggleTranscript"…/></h>`
+ *  (L422289): under ctrl+O the clause is not rendered at all, because ctrl+O IS the expansion it offers.
+ *  The boundary row is baked once at ingest (`useChat` stores a `RenderLine[]` on the local event), so the
+ *  DETAIL projection re-derives it with an empty hint rather than storing two copies — see the
+ *  `COMPACT_SUMMARY_SPECIES` marker below and `projectLocalEvent`. */
 export const COMPACT_SUMMARY_TITLE = "Compact summary";
+/** The tag `useChat` stamps on the boundary's local event (`event.data.species`) so projection can tell that
+ *  one baked notice apart from every other one. A string rather than a new event kind: `LocalTranscriptEvent`
+ *  kinds are the STORAGE shape shared with the bootstrap handoff, and this is a render-time discriminator. */
+export const COMPACT_SUMMARY_SPECIES = "compact-summary";
 export function compactSummaryLines(expandHint: string = EXPAND_HINT_FALLBACK, platform?: NodeJS.Platform): RenderLine[] {
   const segments: Segment[] = [{ text: COMPACT_SUMMARY_TITLE, bold: true }];
   if (expandHint !== "") segments.push({ text: ` ${expandHint}`, bold: true, dim: true });
@@ -452,6 +462,27 @@ const wrapBody = (text: string, width: number): string[] =>
   text.split("\n").flatMap((line) => wrapAnsi(line, Math.max(1, width), { trim: false, hard: true }).split("\n"));
 /** `Sha`'s body box (L428616) and `lca`'s (L422904) are both `columns - 10`. */
 const BODY_INSET = 10;
+/** The `⎿` forms' own column. `Cr` (L406887) is a five-column gutter BOX plus a `flexShrink:1 flexGrow:1`
+ *  SIBLING column holding the children — so a `⎿` sentence wraps to `width − 5`, and EVERY row of that column
+ *  after the first (a wrapped tail, `gap: 1`'s blank, a second sentence) sits at column 5 under the gutter,
+ *  never flush-left. `gutterRows` does the indent; this adds the wrap and keeps a blank row blank (Ink trims
+ *  a row's trailing whitespace — output.js:139 — so padding an empty row would print nothing anyway and only
+ *  lie in the line model).
+ *
+ *  ONE RECORDED DEVIATION. Four of the arms below carry `height: 1` on their `Cr` (L422736 `XG`, L422744
+ *  `PYr`, L422760 `cir`, L422775 `uir`, plus `ect` at L422785), which CLIPS the overflow row instead of
+ *  showing it — at 80 columns that eats the billing URL out of `PYr` entirely. Our line substrate has no
+ *  clip, and dropping half a sentence to reproduce one would destroy information the user needs; we wrap
+ *  every arm. Identical wherever the sentence fits, strictly more of the truth where it does not. The arms
+ *  that genuinely wrap upstream — `Apo`/`Spo`/`vpo` (L422767), `Qlt`/`Zlt` (L422800/422813) and
+ *  default-predicate-1 (L422834), the one shape P80 §C proved live — are exact. */
+function gutterColumn(width: number, rows: readonly RenderLine[]): RenderLine[] {
+  const pad = " ".repeat(stringWidth(TOOL_RESULT_GUTTER));
+  const inner = Math.max(1, Math.floor(width) - pad.length);
+  const wrapped = rows.flatMap((row) => (row.text === "" ? [row] : wrapBody(row.text, inner).map((text) => ({ ...row, text }))));
+  return wrapped.map((row, i) => (i === 0 ? { ...row, gutter: { text: TOOL_RESULT_GUTTER, dim: true } }
+    : row.text === "" ? row : { ...row, text: pad + row.text }));
+}
 /** One bulleted block: `Za` in `token`, the body wrapped in the same colour beside it, continuation rows
  *  aligned under the TEXT (the body is a sibling column of a `minWidth: 2` box, never under the glyph). */
 function bulletBlock(body: string, width: number, token: string | undefined, platform: NodeJS.Platform | undefined, extra?: { dim?: boolean; bold?: boolean; dot?: boolean }): RenderLine[] {
@@ -493,7 +524,7 @@ function bulletBlock(body: string, width: number, token: string | undefined, pla
 export function errorSentinelLines(text: string, opts: SpeciesOptions = {}): RenderLine[] | undefined {
   const width = Math.floor(opts.width ?? 80), tokens = themeTokens();
   const color = (name: keyof typeof tokens) => resolveThemeColor(tokens[name] as string);
-  const errorRow = (body: string): RenderLine[] => [gutterLine(TOOL_RESULT_GUTTER, body, { color: color("error") })];
+  const errorRow = (body: string): RenderLine[] => gutterColumn(width, [{ text: body, color: color("error") }]);
   // `dHr` (L374375) — the guard before the switch. Whitespace-only or the `(no content)` placeholder.
   if (typeof text !== "string" || text.trim() === "" || text.trim() === NO_CONTENT) return [];
   switch (text) {
@@ -512,14 +543,16 @@ export function errorSentinelLines(text: string, opts: SpeciesOptions = {}): Ren
       const ms = process.env.API_TIMEOUT_MS;
       return errorRow(ms ? `${REQUEST_TIMED_OUT} (API_TIMEOUT_MS=${ms}ms, try increasing it)` : REQUEST_TIMED_OUT);
     }
-    // `gap: 1` on the column is a real blank row between the two sentences, not styling.
+    // `gap: 1` on the column is a real blank row between the two sentences, not styling — and the column is
+    // `Cr`'s, so BOTH later rows are indented five columns under the `⎿` (L422800/422813). The error colour
+    // is on the FIRST sentence only: upstream's second `<h>` names no colour.
     case OPUS_HIGH_LOAD: case FABLE_HIGH_LOAD: {
       const family = text === OPUS_HIGH_LOAD ? "Opus 4." : "Fable 5.";
-      return [
-        gutterLine(TOOL_RESULT_GUTTER, `We are experiencing high demand for ${family}`, { color: color("error") }),
+      return gutterColumn(width, [
+        { text: `We are experiencing high demand for ${family}`, color: color("error") },
         { text: "" },
         { text: "To continue immediately, use /model to switch to Sonnet and continue coding." },
-      ];
+      ]);
     }
     // `<BP/>` — the SAME row `ERe` exit 9 paints for a plain interrupt. An aborted request is an interruption.
     case API_ERROR_ABORTED:
@@ -591,8 +624,10 @@ export function systemNoticeLines(frame: Record<string, unknown>, opts: SpeciesO
   if (SILENT_SUBTYPES.has(subtype)) return null;
   const content = frame.content;
   if (typeof content !== "string") return null;
+  // NO empty guard: `Sha` (L428608) trims its content and paints it whatever it is, so a frame whose content
+  // is whitespace renders the bullet with an empty body — an upstream row that says "something arrived and
+  // said nothing". Returning null here instead would silently swallow a frame the CLI shows.
   const trimmed = content.trim();
-  if (trimmed === "") return null;
   // `Sha`'s level→presentation table (§9.5) verbatim: `info` alone loses the dot and gains `dimColor`;
   // `warning`/`notice` name a token; anything else (including `suggestion`) keeps the dot and no colour.
   const token = level === "warning" ? color("warning") : level === "notice" ? color("inactive") : undefined;

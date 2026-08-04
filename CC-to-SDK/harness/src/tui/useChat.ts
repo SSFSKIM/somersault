@@ -22,7 +22,7 @@ import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import { userEchoLines, type RenderLine } from "./render.js";
-import { compactSummaryLines, systemNoticeLines } from "./species.js";
+import { compactSummaryLines, systemNoticeLines, COMPACT_SUMMARY_SPECIES } from "./species.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { LiveTurn } from "./liveTurn.js";
@@ -443,7 +443,12 @@ export function useChat(
           // a bold `Compact summary`, and the LIVE expand hint. Shape A ("Summarized N messages …") needs
           // `summarizeMetadata`, which P81 read the wire frame key-by-key and did not find, so it is recorded
           // unreachable in species.ts rather than built from `compact_metadata` it does not describe.
-          const divider: LocalTranscriptEvent = { kind: "notice", lines: compactSummaryLines(expandHintRef.current, platform) };
+          // The `species` tag is what lets the DETAIL projection drop the hint clause (`NAr = !iRe && …`,
+          // L422289): the row is baked here, so projection needs to know which baked notice this is.
+          const divider: LocalTranscriptEvent = {
+            kind: "notice", lines: compactSummaryLines(expandHintRef.current, platform),
+            data: { species: COMPACT_SUMMARY_SPECIES },
+          };
           if (nonEmptyString(data.uuid)) appendLocalIdentified(divider, `compact-divider:${data.uuid}`); else appendNewLocal(divider);
         }
         // Task 10b: `dVo` (L428358). A `system` frame carrying a renderable string `content` is a notice the

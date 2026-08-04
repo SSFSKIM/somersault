@@ -15,7 +15,7 @@ import { Box, Text } from "ink";
 import wrapAnsi from "wrap-ansi";
 import type { RenderLine, Segment } from "./render.js";
 import { renderMessage } from "./render.js";
-import { classifyUserText, INTERRUPT_PLAIN, INTERRUPT_TOOL, TOOL_RESULT_GUTTER } from "./species.js";
+import { classifyUserText, compactSummaryLines, COMPACT_SUMMARY_SPECIES, INTERRUPT_PLAIN, INTERRUPT_TOOL, TOOL_RESULT_GUTTER } from "./species.js";
 import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
 import { resolveThemeColor, themeGeneration, themeTokens } from "./theme.js";
@@ -478,9 +478,18 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions,
 
 /** Every `event.lines[index]` maps straight through: the local event already owns its exact RenderLine
  *  styling, so projection adds no second style rule (that is what makes `appendFollowGap`'s dim line
- *  identical in compact and detail). */
-export function projectLocalEvent(entry: LocalEntry): readonly RenderItem[] {
-  return entry.event.lines.map((line, index) => ({ kind: "line" as const, id: localItemId(entry.identity, index), line }));
+ *  identical in compact and detail).
+ *
+ *  ONE exception, F4 Task 10b: the compact-summary boundary. Upstream's `NAr` is `!isTranscriptMode && …`
+ *  (L422289), so shape B shows `⏺ Compact summary` with NO expand clause under ctrl+O — offering the very
+ *  view you are already in is the same dishonesty a stale chord is. The row is baked at ingest, so the
+ *  detail projection re-derives it hintless off the `COMPACT_SUMMARY_SPECIES` tag rather than storing a
+ *  second copy; the compact projection keeps the baked line untouched. */
+export function projectLocalEvent(entry: LocalEntry, options?: ProjectionOptions): readonly RenderItem[] {
+  const transcriptMode = options !== undefined && options.projection !== "compact";
+  const lines = transcriptMode && entry.event.data?.species === COMPACT_SUMMARY_SPECIES
+    ? compactSummaryLines("", options.platform) : entry.event.lines;
+  return lines.map((line, index) => ({ kind: "line" as const, id: localItemId(entry.identity, index), line }));
 }
 
 /** Re-key one call's items onto its ANCHOR (the call id + the sequence it publishes at), which is what keeps
@@ -667,7 +676,7 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
   const anchored: Anchored[] = [];
   const occurrences = new Map<string, number>();
   for (const entry of document.entries()) {
-    if (entry.kind === "local-event") { anchored.push({ sequence: entry.sequence, rank: 0, items: projectLocalEvent(entry), atom: "breaker" }); continue; }
+    if (entry.kind === "local-event") { anchored.push({ sequence: entry.sequence, rank: 0, items: projectLocalEvent(entry, options), atom: "breaker" }); continue; }
     const key = entry.identity ?? hashMessage(entry.message);
     const occurrence = occurrences.get(key) ?? 0;
     occurrences.set(key, occurrence + 1);
@@ -704,7 +713,9 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
  *  remaining `ProjectionOptions` fields are deliberately NOT in the key: `cwd`/`home`/`now`/`thoughtMs`/
  *  `pending`/`agentMeta`/`toolEvents`/`bashHint` enter strictly LATER, in `renderToolEvent`, `groupItems`
  *  and `segmentRuns`, none of which is cached (that is what lets the 600 ms blink and the ticking thinking
- *  clause move while this stream holds still). `projectLocalEvent` still takes no options at all.
+ *  clause move while this stream holds still). `projectLocalEvent` reads exactly two of them — `projection`
+ *  and `platform`, for the compact boundary's transcript-mode hint (F4 Task 10b) — and both are already key
+ *  inputs, so its one derived row cannot be served across a projection switch.
  *
  *  The theme is a key input because `renderMessage` → markdown/highlight resolve theme tokens PER CALL
  *  (deliberately: a setTheme() must color the very next render — render.ts:47). A setTheme() touches no

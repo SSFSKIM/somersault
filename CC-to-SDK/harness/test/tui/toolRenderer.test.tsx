@@ -473,6 +473,23 @@ describe("F1 anchored-stream memoization", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  // F4 Task 10b fix round. The stream RENDERS the expand hint (every group row, fold marker and search
+  // sentence carries the chord), so a rebind that touches no document must not be served the old sentence
+  // out of cache — the stale-hint dishonesty F2 exists to end. Both of Task 10b's rebind tests install the
+  // keymap layer BEFORE the first frame, so neither ever creates the stale entry this one creates on purpose.
+  it("keys on the expand hint: a mid-session rebind re-projects an UNTOUCHED document", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
+    const first = groupRows(projectCompact(doc, { ...context, expandHint: "(ctrl+o to expand)" }));
+    expect((first[0] as { line: RenderLine }).line.text).toBe("  Read 1 file (ctrl+o to expand)");
+    const spy = vi.spyOn(projectionDeps, "buildAnchored");
+    // Same document, same revision, same theme, same width — only the live keymap moved.
+    const after = groupRows(projectCompact(doc, { ...context, expandHint: "(ctrl+t to expand)" }));
+    expect((after[0] as { line: RenderLine }).line.text).toBe("  Read 1 file (ctrl+t to expand)");
+    expect(spy).toHaveBeenCalledTimes(1);
+    // …and an UNBIND drops the clause on that same untouched document.
+    expect((groupRows(projectCompact(doc, { ...context, expandHint: "" }))[0] as { line: RenderLine }).line.text).toBe("  Read 1 file");
+  });
+
   it("still cache-hits when neither the document nor the theme moved", () => {
     setTheme("light");
     const doc = built(prose("use `x` now"));

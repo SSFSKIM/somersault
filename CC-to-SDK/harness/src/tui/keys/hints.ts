@@ -109,6 +109,20 @@ export const EXPAND_HINT_FALLBACK = "(ctrl+o to expand)";
  *  own control (`TranscriptPager`), which F1 renders from its own literal, so deriving only this half would
  *  put two different truths on one row. Recorded, not ported. */
 export const SHOW_ALL_HINT = "(ctrl+e to show all)";
+/** TWO-STATE HERE, THREE-STATE AT THE BOUNDARY — deliberate, and this is the reasoning rather than a claim of
+ *  a verbatim port. `pA` (L183751) computes THREE outcomes from `ugo`'s (L183087) two-valued miss:
+ *  `undefined` (no entry anywhere names the action — `reason:"action_not_found"`, or no keymap context at
+ *  all) → the literal fallback; `null` (entries exist but every chord is shadowed by a later layer) → `""`;
+ *  otherwise the chord. This function sees only `bindingsFor`'s `string[]`, which is empty for BOTH misses,
+ *  and answers `""` — the shadowed answer.
+ *  That cannot diverge for our one caller. `ugo`'s `undefined` needs the action to be absent from the WHOLE
+ *  binding list, and `useBindingLookup()` compiles `[...DEFAULT_BINDINGS, ...userLayers]`, where
+ *  `DEFAULT_BINDINGS` binds `ctrl+o` → `app:toggleTranscript` unconditionally (bindings.ts:26) — a user layer
+ *  can only rebind that chord away, which is exactly `ugo`'s `null`. The third state is not lost, either: it
+ *  is carried one level up, as the ABSENCE of `ProjectionOptions.expandHint`, where `resolveExpandHint`
+ *  supplies `EXPAND_HINT_FALLBACK` — the "no keymap in scope" arm, which is the only way `undefined` can
+ *  reach a caller of ours. A three-state signature here would add an unreachable branch and an
+ *  `action_not_found` distinction whose only upstream consumer is a telemetry `reason` field. */
 export function expandHintText(keys: readonly string[], platform: NodeJS.Platform = process.platform, description: string = EXPAND_HINT_ACTION): string {
   const key = keys.find((k) => !k.includes(" ")) ?? keys[0];             // plain beats chord, the resolver's own rule
   if (key === undefined) return "";

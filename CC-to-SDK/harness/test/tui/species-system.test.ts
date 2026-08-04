@@ -19,7 +19,7 @@
 //    honest render is NO clause at all rather than a dead chord.
 import { describe, it, expect } from "vitest";
 import {
-  speciesLines, systemNoticeLines, errorSentinelLines, compactSummaryLines,
+  speciesLines, systemNoticeLines, errorSentinelLines, compactSummaryLines, COMPACT_SUMMARY_SPECIES,
   API_ERROR, PROMPT_TOO_LONG, CREDIT_BALANCE_LOW, NOT_LOGGED_IN, INVALID_API_KEY, OAUTH_REVOKED,
   REQUEST_TIMED_OUT, OPUS_HIGH_LOAD, FABLE_HIGH_LOAD, API_ERROR_ABORTED, NO_RESPONSE_REQUESTED,
   DISABLED_ORG_UPDATE, DISABLED_ORG_UNSET, GATEWAY_AUTH_FAILED, API_ERROR_TRUNCATION,
@@ -29,7 +29,8 @@ import { expandHintText, EXPAND_HINT_FALLBACK } from "../../src/tui/keys/hints.j
 import { renderMessage } from "../../src/tui/render.js";
 import { summaryLines } from "../../src/tui/toolSummaries.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
-import type { ProjectionOptions } from "../../src/tui/toolRenderer.js";
+import { projectCompact, projectDetail, type ProjectionOptions, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import type { ToolEvent } from "../../src/tui/transcriptModel.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 
@@ -74,6 +75,21 @@ describe("compactSummaryLines — `XWo` shape B (L422282–422305)", () => {
   it("paints `●` off darwin — `Za` is per-platform (L41484)", () => {
     expect(compactSummaryLines(EXPAND_HINT_FALLBACK, "linux")![0]!.gutter!.text).toBe("● ");
   });
+
+  // `NAr = !iRe && <h dimColor>{" "}<bn action="app:toggleTranscript" …/></h>` (L422289): under ctrl+O the
+  // clause is not rendered at all, because ctrl+O IS the expansion it offers. The row is baked at ingest, so
+  // the DETAIL projection re-derives it hintless off the `species` tag — every other baked notice is verbatim
+  // in both projections, which is what keeps `appendFollowGap`'s dim line identical everywhere.
+  it("drops the hint clause in TRANSCRIPT mode, and only for the boundary", () => {
+    const doc = new TranscriptDocument();
+    doc.appendLocal({ kind: "notice", lines: compactSummaryLines(EXPAND_HINT_FALLBACK, "darwin"), data: { species: COMPACT_SUMMARY_SPECIES } }, "compact-divider:u1");
+    doc.appendLocal({ kind: "notice", lines: [{ text: "plain notice (ctrl+o to expand)", dim: true }] }, "notice:n1");
+    const ctx = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
+    const rows = (items: readonly RenderItem[]) => items.filter((i) => i.kind === "line").map((i) => (i as { line: { text: string } }).line.text);
+    expect(rows(projectCompact(doc, ctx))).toEqual(["Compact summary (ctrl+o to expand)", "plain notice (ctrl+o to expand)"]);
+    for (const projection of ["detail-all", "detail-collapsed"] as const)
+      expect(rows(projectDetail(doc, { ...ctx, projection }))).toEqual(["Compact summary", "plain notice (ctrl+o to expand)"]);
+  });
 });
 
 // ── `VAr` error sentinels ──────────────────────────────────────────────────────────────────────────────
@@ -90,17 +106,27 @@ describe("errorSentinelLines — the eleven `VAr` cases (L422726–422825)", () 
   it("`XG` → `Context limit reached · /compact or /clear to continue`", () => {
     expect(errorSentinelLines(PROMPT_TOO_LONG, opts)).toEqual([guttered("Context limit reached · /compact or /clear to continue")]);
   });
-  it("`PYr` → the billing URL row", () => {
-    expect(errorSentinelLines(CREDIT_BALANCE_LOW, opts))
-      .toEqual([guttered("Credit balance too low · Add funds: https://platform.claude.com/settings/billing")]);
+  it("`PYr` → the billing URL row, wrapped inside `Cr`'s column with the five-column hanging indent", () => {
+    // The body is a SIBLING column of the five-column gutter box (`Cr`, L406887), so it wraps to `width − 5`
+    // and the continuation sits under the `⎿`, never flush-left. At the ubiquitous 80 columns this sentence
+    // is 80 characters, so the wrap is not hypothetical.
+    expect(errorSentinelLines(CREDIT_BALANCE_LOW, opts)).toEqual([
+      guttered("Credit balance too low · Add funds: "),
+      { text: "     https://platform.claude.com/settings/billing", color: tok("error") },
+    ]);
+    // Wide enough and it is one row again — the wrap is the column's, not a hardcoded break.
+    expect(texts(errorSentinelLines(CREDIT_BALANCE_LOW, { ...opts, width: 200 })))
+      .toEqual(["Credit balance too low · Add funds: https://platform.claude.com/settings/billing"]);
   });
   it("`cir` / `uir` echo their own sentinel", () => {
     expect(errorSentinelLines(INVALID_API_KEY, opts)).toEqual([guttered(INVALID_API_KEY)]);
     expect(errorSentinelLines(OAUTH_REVOKED, opts)).toEqual([guttered(OAUTH_REVOKED)]);
   });
+  // Width 200 so these stay a byte-for-byte echo of the three sentinels (all of them over 100 characters);
+  // the wrap geometry itself is pinned by `PYr` above and by default-predicate-1 below.
   it("the `Apo`/`Spo`/`vpo` group echoes the sentinel too (one branch, three labels)", () => {
     for (const s of [DISABLED_ORG_UPDATE, DISABLED_ORG_UNSET, GATEWAY_AUTH_FAILED])
-      expect(errorSentinelLines(s, opts)).toEqual([guttered(s)]);
+      expect(errorSentinelLines(s, { ...opts, width: 200 })).toEqual([guttered(s)]);
   });
   it("`ect` → `Request timed out`, plus the API_TIMEOUT_MS clause when the env var is set", () => {
     expect(errorSentinelLines(REQUEST_TIMED_OUT, opts)).toEqual([guttered("Request timed out")]);
@@ -111,10 +137,28 @@ describe("errorSentinelLines — the eleven `VAr` cases (L422726–422825)", () 
         .toEqual(["Request timed out (API_TIMEOUT_MS=60000ms, try increasing it)"]);
     } finally { if (saved === undefined) delete process.env.API_TIMEOUT_MS; else process.env.API_TIMEOUT_MS = saved; }
   });
-  // `gap: 1` on the column (L422800) is a real blank ROW between the two sentences, not a style.
-  it("`Qlt` / `Zlt` → the high-demand pair with upstream's `gap: 1` blank between them", () => {
-    expect(texts(errorSentinelLines(OPUS_HIGH_LOAD, opts)))
-      .toEqual(["We are experiencing high demand for Opus 4.", "", "To continue immediately, use /model to switch to Sonnet and continue coding."]);
+  // `gap: 1` on the column (L422800) is a real blank ROW between the two sentences, not a style — and the
+  // column is `Cr`'s SIBLING column (L406887), so the blank and the second sentence are INDENTED five
+  // columns under the `⎿`, not flush-left. The blank stays blank: Ink trims a row's trailing whitespace
+  // (output.js:139), so padding it would print nothing and only lie in the line model.
+  it("`Qlt` / `Zlt` → the high-demand pair, `gap: 1` blank included, all of it under the gutter", () => {
+    const rows = errorSentinelLines(OPUS_HIGH_LOAD, { ...opts, width: 120 })!;
+    expect(texts(rows)).toEqual([
+      "We are experiencing high demand for Opus 4.",
+      "",
+      "     To continue immediately, use /model to switch to Sonnet and continue coding.",
+    ]);
+    expect(rows[0]!.gutter).toEqual({ text: TOOL_RESULT_GUTTER, dim: true });
+    expect(rows[1]!.gutter).toBeUndefined(); expect(rows[2]!.gutter).toBeUndefined();
+    // Only the FIRST sentence is error-coloured — upstream's second `<h>` names no colour (L422800).
+    expect(rows[0]!.color).toBe(tok("error")); expect(rows[2]!.color).toBeUndefined();
+    // …and the second sentence wraps inside that same column, every row of it still indented.
+    expect(texts(errorSentinelLines(OPUS_HIGH_LOAD, opts))).toEqual([
+      "We are experiencing high demand for Opus 4.",
+      "",
+      "     To continue immediately, use /model to switch to Sonnet and continue ",
+      "     coding.",
+    ]);
     expect(texts(errorSentinelLines(FABLE_HIGH_LOAD, opts))[0]).toBe("We are experiencing high demand for Fable 5.");
   });
   it("`wq` → `<BP/>`, the very interrupted row exit 9 paints", () => {
@@ -124,9 +168,16 @@ describe("errorSentinelLines — the eleven `VAr` cases (L422726–422825)", () 
   it("`lir` is RECORDED UNREACHABLE (upstream renders an interactive `<aca/>` login box) — no sentinel branch", () => {
     expect(errorSentinelLines(NOT_LOGGED_IN, opts)).toBeUndefined();
   });
-  it("default predicate 1 — the `Prompt is too long · …` prefix P80 §C proved live", () => {
+  // The one arm with LIVE evidence, and the longest: ~89 characters, so at 80 columns it is also the arm
+  // whose wrapping the user actually meets. `Cr` carries no `height: 1` here (L422834), so upstream wraps
+  // it too — inside the column, indented under the gutter.
+  it("default predicate 1 — the `Prompt is too long · …` prefix P80 §C proved live, wrapped under the gutter", () => {
     const live = `${PROMPT_TOO_LONG} · the request is ~347706 tokens (limit 200000)`;
-    expect(texts(errorSentinelLines(live, opts))).toEqual([`${live} · /clear to start fresh`]);
+    expect(texts(errorSentinelLines(live, { ...opts, width: 200 }))).toEqual([`${live} · /clear to start fresh`]);
+    expect(texts(errorSentinelLines(live, opts))).toEqual([
+      "Prompt is too long · the request is ~347706 tokens (limit 200000) · /clear ",
+      "     to start fresh",
+    ]);
   });
   it("default predicate 2 — `JG` routes to `lca`: a warning bullet, warning text, no `⎿` gutter", () => {
     const lines = errorSentinelLines(`${API_ERROR}: 500 upstream exploded`, opts)!;
@@ -154,7 +205,7 @@ describe("errorSentinelLines — the eleven `VAr` cases (L422726–422825)", () 
 describe("renderMessage — an assistant frame routes through the sentinel switch first", () => {
   const assistant = (text: string) => ({ type: "assistant", message: { content: [{ type: "text", text }] } });
   it("renders the sentinel row, not the markdown bullet", () => {
-    expect(texts(renderMessage(assistant(CREDIT_BALANCE_LOW), { width: 80 })))
+    expect(texts(renderMessage(assistant(CREDIT_BALANCE_LOW), { width: 200 })))
       .toEqual(["Credit balance too low · Add funds: https://platform.claude.com/settings/billing"]);
   });
   it("leaves ordinary prose on the markdown path", () => {
@@ -169,14 +220,19 @@ describe("systemNoticeLines — `dVo` (L428358) and the generic `Sha` (L428608)"
     const lines = systemNoticeLines(sysFrame({ subtype: "informational", content: "  hello world  ", level: "warning" }), { width: 80, platform: "darwin" })!;
     expect(lines).toEqual([{ text: "hello world", color: tok("warning"), gutter: { text: "⏺ ", color: tok("warning") } }]);
   });
-  it("wraps the body at `columns - 10` (L428616), not at the full width", () => {
-    const content = Array.from({ length: 12 }, (_, i) => `word${i}`).join(" ");   // 5-6 cols each
-    const lines = systemNoticeLines(sysFrame({ subtype: "informational", content, level: "notice" }), { width: 30 })!;
-    expect(lines.length).toBeGreaterThan(1);
+  // The inset is EXACT, not "roughly ten": `Sha`'s body box is `width: columns - 10` (L428616). A corpus that
+  // merely "fits" would pass at 8 or 12 too, so this pins the break POSITION — a 20-character token plus a
+  // one-character word is one row at 22 columns of budget and two at 20, and the 20-char token itself is
+  // hard-broken at 18. Changing BODY_INSET to 8 or 12 fails on the first or third expectation.
+  it("wraps the body at exactly `columns - 10` (L428616), not at the full width", () => {
+    const at = (width: number, content: string) =>
+      texts(systemNoticeLines(sysFrame({ subtype: "informational", content, level: "notice" }), { width }));
+    const token = "x".repeat(20);
     // Ink's own `wrap="wrap"` is `wrapAnsi(…, {trim:false, hard:true})` (ink/build/wrap-text.js), so a break
-    // carries its whitespace onto the next row — the CONTENT is what fits the 20-column box.
-    for (const l of lines) expect(l.text.trim().length).toBeLessThanOrEqual(20);
-    expect(lines.every((l) => l.text.length <= 30)).toBe(true);
+    // carries its whitespace onto the next row; the continuation is indented two columns under the bullet.
+    expect(at(30, `${token} y`)).toEqual([token, "   y"]);                  // budget 20 → the space breaks
+    expect(at(32, `${token} y`)).toEqual([`${token} y`]);                   // budget 22 → one row
+    expect(at(28, token)).toEqual(["x".repeat(18), "  xx"]);                // budget 18 → hard break
   });
   it("level → presentation, the §9.5 table verbatim", () => {
     const at = (level: string) => systemNoticeLines(sysFrame({ subtype: "informational", content: "x", level }), { width: 80, verbose: true })![0]!;
@@ -223,6 +279,15 @@ describe("systemNoticeLines — `dVo` (L428358) and the generic `Sha` (L428608)"
       sysFrame({ subtype: "api_retry", attempt: 1, max_retries: 3 }),
       sysFrame({ subtype: "compact_boundary", compact_metadata: {} }),
     ]) expect(systemNoticeLines(f, { width: 80 })).toBeNull();
+  });
+  // `Sha` has NO empty guard: it trims its content and paints whatever is left (L428618–428626), so a frame
+  // whose content is whitespace still shows the bullet with an empty body — "something arrived and said
+  // nothing". Returning null instead would swallow a frame the CLI shows.
+  it("an EMPTY trimmed content still paints the bulleted row, body and all", () => {
+    expect(systemNoticeLines(sysFrame({ subtype: "informational", content: "   ", level: "warning" }), { width: 80, platform: "darwin" }))
+      .toEqual([{ text: "", color: tok("warning"), gutter: { text: "⏺ ", color: tok("warning") } }]);
+    expect(systemNoticeLines(sysFrame({ subtype: "informational", content: "" }), { width: 80, platform: "darwin" }))
+      .toEqual([{ text: "", gutter: { text: "⏺ " } }]);
   });
   it("`local_command_output` has no `dVo` branch, so it takes the generic row", () => {
     expect(texts(systemNoticeLines(sysFrame({ subtype: "local_command_output", content: "done" }), { width: 80 }))).toEqual(["done"]);
