@@ -24,7 +24,8 @@ import { renderMarkdown } from "./markdown.js";
 // are `export function` declarations used only inside function bodies, so ESM has them initialised before
 // either module's body runs, in whichever order the graph is entered. The alternative — a third module
 // holding the band — would split the one prompt renderer in two, which is exactly what Task 8 killed.
-import { classifyUserText, speciesLines } from "./species.js";
+import { classifyUserText, errorSentinelLines, speciesLines } from "./species.js";
+import type { ResultProjection } from "./outputFold.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 
 /** Prepend `pad` to a line's leading text — to BOTH the plain fallback and the first segment (if any). */
@@ -173,7 +174,11 @@ export function toolTarget(name: string, input: Record<string, unknown>): string
  *  and hidden is upstream's default: `Gha`'s guard (L429455–429457) is `if (!isTranscriptMode && !verbose)
  *  return null`, so a caller that names no projection is by definition NOT in transcript mode. Defaulting
  *  the other way is what made F1's always-dim thinking lines the transcript's largest divergence. */
-export interface RenderMessageOptions { width?: number; platform?: NodeJS.Platform; showThinking?: boolean }
+/** F4 Task 10b adds two more, both threaded from the same `ProjectionOptions` the three above come from:
+ *  `projection` (a folded species — `bash-output` — must show everything under ctrl+o, nothing under the
+ *  transcript) and `expandHint` (the LIVE `(chord to expand)` sentence; see `keys/hints.ts`). Both reach
+ *  `species.ts`, which owns every surface that folds or offers an expansion on this path. */
+export interface RenderMessageOptions { width?: number; platform?: NodeJS.Platform; showThinking?: boolean; projection?: ResultProjection; expandHint?: string }
 
 /** Map one SDK message to renderable lines — the NON-TOOL species only. `tool_use`/`tool_result` blocks are
  *  deliberately absent since F1 Task 4: every tool row goes through `renderToolEvent` instead, so there is
@@ -184,6 +189,15 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
   if (m.type === "assistant") {
     const out: RenderLine[] = [];
     for (const b of m.message?.content ?? []) {
+      // F4 Task 10b: `VAr` (L422714) is the assistant renderer, and its FIRST act is to ask whether the text
+      // is an API-error sentinel — before a word of markdown is walked. P80 proved that channel real: the CLI
+      // mints these as ordinary assistant text frames (`_u`, L373192) rather than throwing, and the trailing
+      // `result` frame even says `subtype:"success"`. `undefined` back means "not a sentinel", which is
+      // upstream's own default arm: the ordinary bulleted markdown message below.
+      if (b?.type === "text" && typeof b.text === "string") {
+        const sentinel = errorSentinelLines(String(b.text), { width: opts.width, platform: opts.platform, expandHint: opts.expandHint, verbose: opts.projection === "detail-all" });
+        if (sentinel !== undefined) { out.push(...sentinel); continue; }
+      }
       if (b?.type === "text" && b.text) out.push(...withAssistantBullet(renderMarkdown(String(b.text), { width: opts.width }), opts.platform));
       // Thinking (Task 9). The guard comes FIRST: hidden is the ordinary transcript's answer, and only a
       // detail/verbose projection turns it on. When it is on, `zAr` trims the text (L422969 `B5p.trim()`)
@@ -216,7 +230,7 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
     const out: RenderLine[] = [];
     for (const b of blocks) {
       if (b?.type !== "text" || typeof b.text !== "string") continue;
-      out.push(...(speciesLines(classifyUserText(b.text), b.text, { width: opts.width, platform: opts.platform }) ?? []));
+      out.push(...(speciesLines(classifyUserText(b.text), b.text, { width: opts.width, platform: opts.platform, projection: opts.projection, expandHint: opts.expandHint }) ?? []));
     }
     return out;
   }

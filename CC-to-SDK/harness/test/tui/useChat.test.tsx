@@ -969,15 +969,20 @@ describe("model picker", () => {
 });
 
 describe("useChat: compact divider + /copy (Task 9)", () => {
-  it("a system/compact_boundary message event (mid-turn, like the real host emits it) appends the compacted divider", async () => {
+  // F4 Task 10b re-points this at upstream's real form. The hand-rolled `─── context compacted ───` rule was
+  // F1's invention; `XWo` shape B (L422282) is a bulleted `Compact summary` carrying the live expand hint,
+  // and P81 caught the `compact_boundary` frame on the wire, so the row is evidence-backed rather than a
+  // stand-in. (Replay from DISK keeps its own divider — `getSessionMessages` strips the boundary, P81's TR36
+  // trap — which is why `replay.test.ts`'s "context compacted earlier" assertion still stands.)
+  it("a system/compact_boundary message event (mid-turn, like the real host emits it) appends the compact-summary row", async () => {
     const fake = fakeRemote();
     function H() { const c = useChat(() => fake); return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     fake.pushEvent({ kind: "message", data: { type: "system", subtype: "compact_boundary" } });
-    await waitFor(() => frame(lastFrame).includes("context compacted"));
-    expect(frame(lastFrame)).toContain("─── context compacted ───");
+    await waitFor(() => frame(lastFrame).includes("Compact summary"));
+    expect(frame(lastFrame)).toContain("Compact summary (ctrl+o to expand)");
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
   });
   // F1 Task 4 inverts the old "no live turn ⇒ ignore" guard: a COMPLETED record landing in the disk-read/
@@ -1700,7 +1705,8 @@ describe("useChat: one retained document behind every surface", () => {
   // Round-1 review finding 1: a compact boundary is a SYSTEM frame, which the document never retains, so
   // document dedup cannot suppress a redelivered one — the divider's identity has to come from the boundary
   // itself.
-  it("publishes ONE compacted divider when the same compact_boundary frame is redelivered", async () => {
+  // Re-pointed at the bulleted form by F4 Task 10b; the GUARD is unchanged and is the reason this test exists.
+  it("publishes ONE compact-summary row when the same compact_boundary frame is redelivered", async () => {
     const fake = fakeRemote();
     let items: readonly RenderItem[] = [];
     function H() { const c = useChat(() => fake); items = c.state.staticItems; return <Text>{allText(c)}</Text>; }
@@ -1708,10 +1714,10 @@ describe("useChat: one retained document behind every surface", () => {
     await new Promise((r) => setTimeout(r, 20));
     const boundary = { type: "system", subtype: "compact_boundary", uuid: "compact-boundary-1" };
     fake.pushEvent({ kind: "message", data: boundary });
-    await waitFor(() => frame(lastFrame).includes("context compacted"));
+    await waitFor(() => frame(lastFrame).includes("Compact summary"));
     fake.pushEvent({ kind: "message", data: boundary });                  // the same boundary, redelivered by a follow replay
     await new Promise((r) => setTimeout(r, 30));
-    expect(items.flatMap(itemLines).filter((t) => t.includes("context compacted"))).toHaveLength(1);
+    expect(items.flatMap(itemLines).filter((t) => t.includes("Compact summary"))).toHaveLength(1);
   });
 
   // Round-1 review finding 2 (A): a turn that ends with a call still open leaves an ORPHAN. The document
@@ -2024,6 +2030,77 @@ describe("useChat: F3 final review", () => {
     rerender(withLayers([{ context: "Global", bindings: { "ctrl+b": null, "ctrl+k": "task:background" } }]));
     await waitFor(() => frame(lastFrame).includes("(ctrl+k to run in background)"));
     expect(frame(lastFrame)).not.toContain("(ctrl+b to run in background)");
+  });
+
+  // ── F4 Task 10b: the expand hint, at every site that offers one ───────────────────────────────────────
+  // `(ctrl+o to expand)` used to be a literal typed at four separate places, so a user who moved
+  // `app:toggleTranscript` in keybindings.json was told to press a key that did nothing — everywhere at once,
+  // in the busiest surface of the app. These two tests are the structural proof that the string is DERIVED:
+  // the sentence has to follow the user's chord, and an unbind has to remove the offer rather than keep a
+  // dead one on screen (E2). The layers go on BEFORE the frames because Ink's `<Static>` is append-only: the
+  // guarantee is that every row printed from a rebind onward is honest, not that printed ink rewrites itself.
+  describe("expand hint (Task 10b)", () => {
+    const REBIND: readonly ContextBindings[] = [{ context: "Global", bindings: { "ctrl+o": null, "ctrl+t": "app:toggleTranscript" } }];
+    const UNBIND: readonly ContextBindings[] = [{ context: "Global", bindings: { "ctrl+o": null } }];
+    const read = (n: number) => ({ type: "assistant", message: { id: `m${n}`, content: [{ type: "tool_use", id: `r${n}`, name: "Read", input: { file_path: `/tmp/f${n}.ts` } }] } });
+    const readResult = (n: number) => ({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: `r${n}`, content: "x" }] } });
+    // THREE of the four sites are reachable from a live compact transcript: the collapsed tool-GROUP row
+    // (toolRenderer, twice over — reads and the search), the generic output FOLD marker (outputFold), and the
+    // compact boundary (species). The fourth, `toolSummaries`' `Found N files` sentence, is NOT reachable
+    // here and that is upstream's own doing: its hint is compact-only (`$Wo`'s non-verbose branch), while a
+    // compact projection folds every read/search call INTO the group row above, which replaces the typed body.
+    // It is pinned instead in `species-system.test.ts`, where the projection can be named directly.
+    async function paint(fake: FakeRemote, lastFrame: () => string | undefined) {
+      fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+      for (const n of [1, 2, 3]) { fake.pushEvent({ kind: "message", data: read(n) }); fake.pushEvent({ kind: "message", data: readResult(n) }); }
+      fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "mb", content: [{ type: "tool_use", id: "b1", name: "Bash", input: { command: "seq 40" } }] } } });
+      fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "b1", content: Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n") }] } } });
+      fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "mg", content: [{ type: "tool_use", id: "g1", name: "Grep", input: { pattern: "x" } }] } } });
+      fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "g1", content: "a.ts" }] }, tool_use_result: { mode: "files_with_matches", numFiles: 3, filenames: ["a.ts", "b.ts", "c.ts"] } } });
+      fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+      fake.pushEvent({ kind: "message", data: { type: "system", subtype: "compact_boundary", uuid: "cb-1" } });
+      await waitFor(() => frame(lastFrame).includes("Compact summary"));
+    }
+
+    it("renders the USER'S chord at the group row, the fold marker, the search sentence and the compact boundary", async () => {
+      const fake = fakeRemote();
+      function H() { const c = useChat(() => fake, {}, { ...noRepaint, platform: "darwin", columns: () => 80 }); return <Text>{allText(c)}</Text>; }
+      const { lastFrame } = render(<KeymapProvider deps={{ userLayers: REBIND }}><H /></KeymapProvider>);
+      await new Promise((r) => setTimeout(r, 20));
+      await paint(fake, lastFrame);
+      const painted = frame(lastFrame);
+      expect(painted).toContain("Read 3 files (ctrl+t to expand)");            // toolRenderer's group row
+      expect(painted).toContain("Searched for 1 pattern (ctrl+t to expand)");  // …and a second run through it
+      expect(painted).toMatch(/… \+\d+ lines \(ctrl\+t to expand\)/);           // outputFold's overflow marker
+      expect(painted).toContain("Compact summary (ctrl+t to expand)");         // species' compact boundary
+      expect(painted).not.toContain("ctrl+o to expand");
+    });
+
+    it("an UNBOUND `app:toggleTranscript` removes the offer everywhere instead of naming a dead chord", async () => {
+      const fake = fakeRemote();
+      function H() { const c = useChat(() => fake, {}, { ...noRepaint, platform: "darwin", columns: () => 80 }); return <Text>{allText(c)}</Text>; }
+      const { lastFrame } = render(<KeymapProvider deps={{ userLayers: UNBIND }}><H /></KeymapProvider>);
+      await new Promise((r) => setTimeout(r, 20));
+      await paint(fake, lastFrame);
+      const painted = frame(lastFrame);
+      expect(painted).not.toContain("to expand");
+      expect(painted).toContain("Read 3 files");                                // the rows themselves survive…
+      expect(painted).toContain("Searched for 1 pattern");
+      expect(painted).toContain("Compact summary");
+      expect(painted).toMatch(/… \+\d+ lines/);                                  // …and so does the overflow count
+    });
+
+    it("with the DEFAULT keymap every site still reads ctrl+o", async () => {
+      const fake = fakeRemote();
+      function H() { const c = useChat(() => fake, {}, { ...noRepaint, platform: "darwin", columns: () => 80 }); return <Text>{allText(c)}</Text>; }
+      const { lastFrame } = render(<KeymapProvider deps={{ userLayers: [] }}><H /></KeymapProvider>);
+      await new Promise((r) => setTimeout(r, 20));
+      await paint(fake, lastFrame);
+      const painted = frame(lastFrame);
+      expect(painted).toContain("Read 3 files (ctrl+o to expand)");
+      expect(painted).toContain("Searched for 1 pattern (ctrl+o to expand)");
+      expect(painted).toContain("Compact summary (ctrl+o to expand)");
+    });
   });
 
   // F5a. `ccx attach` mid-turn: host.follow() drains the turn buffer as `replay`-marked message frames.

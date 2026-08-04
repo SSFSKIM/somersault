@@ -22,6 +22,7 @@ import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import { userEchoLines, type RenderLine } from "./render.js";
+import { compactSummaryLines, systemNoticeLines } from "./species.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { LiveTurn } from "./liveTurn.js";
@@ -43,7 +44,7 @@ import { appendMemory as realAppendMemory } from "./memory.js";
 import { openInEditor } from "./externalEditor.js";
 import { STARTER_KEYBINDINGS, userBindingsPath } from "./keys/userBindings.js";
 import { useBindingLookup } from "./keys/KeymapProvider.js";
-import { backgroundHintText } from "./keys/hints.js";
+import { backgroundHintText, expandHintText } from "./keys/hints.js";
 import { shortCwd } from "./banner.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
 import type { RawContextUsage } from "../index.js";
@@ -90,7 +91,14 @@ export function useChat(
   // `task:background` moves the sentence, an unbind removes the row (`backgroundHintText` returns undefined)
   // — and the tmux variant reads an INJECTED env, so a frame-pinning test is not at the mercy of the terminal
   // the suite runs under. Resolved here rather than inside the projection, which stays pure.
-  const bashHint = backgroundHintText(useBindingLookup()("task:background"), (deps.env ?? process.env).TMUX !== undefined, platform);
+  const lookup = useBindingLookup();
+  const bashHint = backgroundHintText(lookup("task:background"), (deps.env ?? process.env).TMUX !== undefined, platform);
+  // F4 Task 10b, the SAME derivation for the other advertised chord. Before this, `(ctrl+o to expand)` was a
+  // literal typed at four separate sites, so a `keybindings.json` that moved `app:toggleTranscript` left every
+  // fold marker, group row and search sentence in the transcript naming a key that no longer did anything —
+  // the exact dishonesty F2 shipped to end, still standing in the busiest surface of the app. It is read from
+  // the LIVE lookup (user layers included), never from `defaultLookup`, which cannot see an override.
+  const expandHint = expandHintText(lookup("app:toggleTranscript"), platform);
   // Read through a REF, not off the render closure (F3 final review). The projection is driven by callbacks
   // that outlive the render that created them — the 600 ms repaint interval is captured by an effect keyed
   // `[liveOpen, session]`, and the event subscription by one keyed `[session]` — so a keybindings.json
@@ -98,7 +106,8 @@ export function useChat(
   // itself had already moved. That is precisely the hint-honesty rule F2 shipped, so the hint has to reach
   // the projection at projection time, not at the time some effect was last re-subscribed.
   const bashHintRef = useRef(bashHint); bashHintRef.current = bashHint;
-  const projectionContext = (): ProjectionContext => ({ cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current });
+  const expandHintRef = useRef(expandHint); expandHintRef.current = expandHint;
+  const projectionContext = (): ProjectionContext => ({ cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: expandHintRef.current });
   // ── The ONE retained transcript document (F1 Task 4). Every visible row — live, replay, attach, resume,
   // rewind, Ctrl-O — is projected from it; `publishedIds` is what makes reconciliation append-only, so a
   // duplicate follow record, a rehydration or a redelivered bootstrap entry can never publish a row twice.
@@ -370,6 +379,16 @@ export function useChat(
     paintedHint.current = bashHint;
     repaintPending();
   }, [bashHint]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // The expand hint gets the same treatment, with one honest limit worth naming: it also rides rows that are
+  // already PUBLISHED into Ink's `<Static>`, which is append-only by construction (the F1 lesson) — a row
+  // printed under the old chord stays printed. Re-projecting is what makes every row from here on correct,
+  // and the projection cache keys on the hint so the rebind is not served the stale sentence out of cache.
+  const paintedExpand = useRef(expandHint);
+  useEffect(() => {
+    if (paintedExpand.current === expandHint) return;
+    paintedExpand.current = expandHint;
+    reconcile(); repaintPending();
+  }, [expandHint]);   // eslint-disable-line react-hooks/exhaustive-deps
   // Dispose the PREVIOUS session whenever it changes (a /resume swap) and on unmount. Must not touch `disposed`.
   useEffect(() => () => { void session.dispose().catch(() => {}); }, [session]);
   // The host event stream is the SINGLE rendering source (spec A2b §2+§5, acceptance 7): a turn started by
@@ -420,8 +439,25 @@ export function useChat(
         // never suppress a redelivered one. Its identity therefore comes from the boundary itself; only a
         // uuid-less frame (nothing stable to dedup on) falls back to a fresh monotonic identity.
         if (data?.type === "system" && data.subtype === "compact_boundary") {
-          const divider: LocalTranscriptEvent = { kind: "notice", lines: [{ text: "─── context compacted ───", dim: true }] };
+          // F4 Task 10b: upstream `XWo` shape B (L422282–422305) replaces the hand-rolled rule — a `⏺` bullet,
+          // a bold `Compact summary`, and the LIVE expand hint. Shape A ("Summarized N messages …") needs
+          // `summarizeMetadata`, which P81 read the wire frame key-by-key and did not find, so it is recorded
+          // unreachable in species.ts rather than built from `compact_metadata` it does not describe.
+          const divider: LocalTranscriptEvent = { kind: "notice", lines: compactSummaryLines(expandHintRef.current, platform) };
           if (nonEmptyString(data.uuid)) appendLocalIdentified(divider, `compact-divider:${data.uuid}`); else appendNewLocal(divider);
+        }
+        // Task 10b: `dVo` (L428358). A `system` frame carrying a renderable string `content` is a notice the
+        // transcript shows; everything else — every structured frame, every `level:"info"` line outside
+        // verbose, `api_error`, the refusal-no-fallback pair — paints nothing, which `systemNoticeLines`
+        // decides. The document retains NO system frame (`appendSdk` rejects them), so the identity comes
+        // from the frame's own uuid exactly as the compact boundary's does, and a follow replay of the same
+        // frame publishes once.
+        if (data?.type === "system" && data.subtype !== "compact_boundary") {
+          const lines = systemNoticeLines(data, { width: columnsFn(), platform, expandHint: expandHintRef.current });
+          if (lines && lines.length) {
+            const notice: LocalTranscriptEvent = { kind: "notice", lines };
+            if (nonEmptyString(data.uuid)) appendLocalIdentified(notice, `system-notice:${data.uuid}`); else appendNewLocal(notice);
+          }
         }
         // Retention is unconditional now: a completed record landing in the disk-read/follow window is
         // appended even though no new active turn starts, and document dedup — not a no-live-turn guard —

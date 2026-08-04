@@ -17,6 +17,7 @@
 //      is honest; `Done (… · 10.6k tokens · …)` off a sum would be a 265% lie.
 import type { RenderLine } from "./render.js";
 import { formatCompactNumber, formatDuration } from "./format.js";
+import { EXPAND_HINT_FALLBACK } from "./keys/hints.js";
 import { callSidecar } from "./toolResult.js";
 import type { ToolEvent } from "./transcriptModel.js";
 
@@ -212,7 +213,8 @@ export function agentDoneText(totals: AgentTotals): string {
 }
 /** Upstream `bM({count, unit:"tool use", expandable:true})` (429740) — the same dim `… +N …` marker the
  *  output fold and the Write preview use, with the tool-use unit and the expand hint. */
-export const hiddenToolUsesLine = (hidden: number): RenderLine => ({ text: `… +${hidden} tool use${hidden === 1 ? "" : "s"} (ctrl+o to expand)`, dim: true });
+export const hiddenToolUsesLine = (hidden: number, expandHint: string = EXPAND_HINT_FALLBACK): RenderLine =>
+  ({ text: `… +${hidden} tool use${hidden === 1 ? "" : "s"}${expandHint === "" ? "" : ` ${expandHint}`}`, dim: true });
 
 /** Prepend `pad` as its OWN plain segment (never merged into the first one): a tool header's first segment is
  *  the status-coloured bullet, and folding the indent into it would paint two coloured cells that upstream

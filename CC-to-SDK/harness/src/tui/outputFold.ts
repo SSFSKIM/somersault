@@ -3,12 +3,22 @@
 // the typed dim rows) without importing the renderer that imports IT. The only edit is the move: every rule,
 // bound and comment below is F1's, byte for byte.
 import wrapAnsi from "wrap-ansi";
+import { EXPAND_HINT_FALLBACK, SHOW_ALL_HINT } from "./keys/hints.js";
 import type { RenderLine } from "./render.js";
 
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
  *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). */
 export type ResultProjection = "compact" | "detail-all" | "detail-collapsed";
-export interface FoldOptions { projection: ResultProjection; compactRows: number; revealOneExtraWithoutMarker: boolean; }
+/** `expandHint` (F4 Task 10b) is the RESOLVED `(chord to expand)` sentence, threaded from the live keymap the
+ *  same way `bashHint` is — see `keys/hints.ts`'s `expandHintText` for the three-state contract. ABSENT means
+ *  no keymap was in scope, which is `pA`'s fallback case and keeps the literal; EMPTY means the user unbound
+ *  `app:toggleTranscript`, and then the marker carries no offer at all rather than a dead chord. */
+export interface FoldOptions { projection: ResultProjection; compactRows: number; revealOneExtraWithoutMarker: boolean; expandHint?: string; }
+/** The marker's trailing clause for one projection, already spaced. `""` when there is nothing honest to offer. */
+export const foldHint = (options: Pick<FoldOptions, "projection" | "expandHint">): string => {
+  const hint = options.projection === "compact" ? options.expandHint ?? EXPAND_HINT_FALLBACK : SHOW_ALL_HINT;
+  return hint === "" ? "" : ` ${hint}`;
+};
 
 /** Slice to VISUAL rows first, then clip — so the overflow count is what the reader actually cannot see, not a
  *  logical-line count that undercounts a wrapped row. `revealOneExtraWithoutMarker` is upstream's four-row
@@ -37,8 +47,8 @@ export function foldToolOutput(lines: readonly string[], columns: number, option
   // while its clipped prefix wraps to few visual rows, and returning here would silently drop the tail.
   if (length <= bound && visual.length <= options.compactRows + (options.revealOneExtraWithoutMarker ? 1 : 0)) return visual.map((text) => ({ text }));
   const estimated = length > bound ? Math.max(lines.length, Math.ceil(length / width)) - options.compactRows : 0;
-  const hidden = Math.max(visual.length - options.compactRows, estimated), hint = options.projection === "compact" ? "ctrl+o to expand" : "ctrl+e to show all";
-  return [...visual.slice(0, options.compactRows).map((text) => ({ text })), { text: `… +${hidden} ${hidden === 1 ? "line" : "lines"} (${hint})`, dim: true }];
+  const hidden = Math.max(visual.length - options.compactRows, estimated);
+  return [...visual.slice(0, options.compactRows).map((text) => ({ text })), { text: `… +${hidden} ${hidden === 1 ? "line" : "lines"}${foldHint(options)}`, dim: true }];
 }
 
 /** Upstream `y_s` `trimEnd`s the WHOLE result before it folds anything, so trailing blank rows never buy a fold slot

@@ -21,7 +21,8 @@ import { Line } from "./Line.js";
 import { resolveThemeColor, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
 import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type GroupCounts } from "./toolFold.js";
-import { foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
+import { foldHint, foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
+import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
 import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
 import type { FoldPendingHooks } from "./foldPendingState.js";
@@ -78,7 +79,13 @@ export type { ResultProjection };
  *  the same reason `thoughtMs` does: this projection is pure, and reading a React keymap context (or
  *  `process.env`) from inside it would make a row depend on where it was rendered. `undefined` means the
  *  caller found `task:background` unbound — and then there is no row at all, never `(unbound)`. */
-export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; }
+/** `expandHint` (F4 Task 10b) is the SAME mechanism for the other derived sentence — `(ctrl+o to expand)`, the
+ *  offer every folded surface in this file makes. Pre-composed for the same reason `bashHint` is. Its three
+ *  states are upstream `pA`'s own (see `keys/hints.ts`): ABSENT = no keymap was in scope, so `pA`'s literal
+ *  `ctrl+o` fallback stands (which is what every caller and test that predates this task keeps getting,
+ *  unchanged); a STRING = the user's resolved chord; EMPTY = `app:toggleTranscript` is unbound, and then every
+ *  site drops its clause rather than advertising a dead chord. */
+export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; }
 
 /** Upstream's exact interruption surface — the row is a prompt, not a copy of whatever partial output arrived. */
 const INTERRUPTED_TEXT = "Interrupted · What should Claude do instead?";
@@ -153,12 +160,12 @@ function headerLine(event: ToolEvent, status: ToolStatus, options: ProjectionOpt
  *  so it never carries the error colour — and it appears only when the overflow is positive (`bM` returns null at
  *  count ≤ 0). `detail-all` is unbounded, exactly as it is for ordinary output. */
 const ERROR_PHYSICAL_ROWS = 10;
-function errorBody(lines: readonly string[], projection: ResultProjection, color: string): readonly RenderLine[] {
+function errorBody(lines: readonly string[], options: ProjectionOptions, color: string): readonly RenderLine[] {
+  const projection = options.projection;
   const rows = (projection === "detail-all" ? lines : lines.slice(0, ERROR_PHYSICAL_ROWS)).map((line) => ({ text: line.trimEnd(), color }));
   const overflow = projection === "detail-all" ? 0 : lines.length - ERROR_PHYSICAL_ROWS;
   if (overflow <= 0) return rows;
-  const hint = projection === "compact" ? "ctrl+o to expand" : "ctrl+e to show all";
-  return [...rows, { text: `… +${overflow} ${overflow === 1 ? "line" : "lines"} (${hint})`, dim: true }];
+  return [...rows, { text: `… +${overflow} ${overflow === 1 ? "line" : "lines"}${foldHint(options)}`, dim: true }];
 }
 
 /** F3 Task 5 (LT1): the TYPED row is consulted first and is the result body in BOTH projections — a completed
@@ -177,8 +184,8 @@ function resultBody(event: ToolEvent, normalized: NormalizedToolResult, options:
   if (typed !== undefined) return typed;
   const lines = withoutTrailingBlanks(normalized.outputLines);
   if (!lines.length) return [];
-  if (normalized.status === "error") return errorBody(lines, options.projection, resolveThemeColor(themeTokens().error));
-  return foldToolOutput(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true });
+  if (normalized.status === "error") return errorBody(lines, options, resolveThemeColor(themeTokens().error));
+  return foldToolOutput(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true, expandHint: options.expandHint });
 }
 
 // ── F3 Task 7: the Agent unit (LT16 / LT17) ────────────────────────────────────────────────────────────
@@ -190,7 +197,15 @@ const AGENT_INDENT = "  ";
  *  `task_notification` totals do not exist yet. Emphatically NOT a `Done (0 tool uses)` row — the agent has
  *  not finished, and its child frames arrive AFTER its result (P83 [Q4]), so the derived rung would be
  *  counting an empty list. */
-const BACKGROUNDED_TEXT = "Backgrounded agent", BACKGROUNDED_HINT = " (↓ to manage · ctrl+o to expand)";
+const BACKGROUNDED_TEXT = "Backgrounded agent";
+/** 429646 composes this out of TWO `$e` calls inside one literal pair of parens — `chord:"down" action:"manage"`
+ *  and the `app:toggleTranscript` lookup — so the expand half is keymap-derived like every other and needs the
+ *  BARE clause (`hintWithoutParens`), not a second pair of parens. An unbound chord drops that half and leaves
+ *  ` (↓ to manage)`; `Qt` joins whatever survives with ` · `, so the separator goes with the clause. */
+const backgroundedHint = (options: ProjectionOptions): string => {
+  const expand = hintWithoutParens(resolveExpandHint(options.expandHint));
+  return ` (↓ to manage${expand === "" ? "" : ` · ${expand}`})`;
+};
 /** Bundle 429641, the OTHER launch surface: a cloud dispatch, with its identifiers dim behind a plain space. */
 const CLOUD_LAUNCHED_TEXT = "Cloud agent launched";
 const sidecarStatus = (event: ToolEvent): string | undefined => { const status = callSidecar(event)?.status; return typeof status === "string" ? status : undefined; };
@@ -227,7 +242,7 @@ function agentProgressItems(event: ToolEvent, options: ProjectionOptions): reado
   if (children.length === 0) return [agentGutter(`${event.id}:progress`, [{ text: AGENT_INITIALIZING, dim: true }])];
   const shown = children.slice(-AGENT_PROGRESS_ROWS), hidden = children.length - shown.length;
   const items = nestedItems(shown, options, /* linesOnly */ true);
-  if (hidden > 0) items.push({ kind: "line", id: `${event.id}:progress-hidden`, line: indentRenderLine(hiddenToolUsesLine(hidden), AGENT_INDENT) });
+  if (hidden > 0) items.push({ kind: "line", id: `${event.id}:progress-hidden`, line: indentRenderLine(hiddenToolUsesLine(hidden, resolveExpandHint(options.expandHint)), AGENT_INDENT) });
   return items;
 }
 /** `undefined` means `Vha`'s `return null` (429649): a terminal shape it does not recognise paints NO typed
@@ -242,11 +257,13 @@ function agentTerminalItems(event: ToolEvent, options: ProjectionOptions): reado
   // the same rule `foundRow` follows, and the detail projections ARE that verbose form (R6.3).
   const compact = options.projection === "compact";
   if (status === "async_launched" && totals.source === "derived")
-    return [agentGutter(`${event.id}:launched`, [{ text: compact ? `${BACKGROUNDED_TEXT}${BACKGROUNDED_HINT}` : BACKGROUNDED_TEXT }])];
+    return [agentGutter(`${event.id}:launched`, [{ text: compact ? `${BACKGROUNDED_TEXT}${backgroundedHint(options)}` : BACKGROUNDED_TEXT }])];
   if (totals.source === "derived" && children.length === 0) return undefined;
   const items: RenderItem[] = [agentGutter(`${event.id}:done`, [{ text: agentDoneText(totals) }])];
   // The hint is a SIBLING of the block, two literal spaces then `(ctrl+o to expand)` (429654).
-  if (compact) return [...items, { kind: "line", id: `${event.id}:done-hint`, line: { text: `  ${EXPAND_HINT}`, dim: true } }];
+  // `!i && <Text dimColor>["  ", <Bg/>]</Text>` (429654). `Bg` returning null takes the whole row with it,
+  // which is exactly what an unbound `app:toggleTranscript` must do here: no offer, not an empty indent.
+  if (compact) { const hint = resolveExpandHint(options.expandHint); return hint === "" ? items : [...items, { kind: "line", id: `${event.id}:done-hint`, line: { text: `  ${hint}`, dim: true } }]; }
   // What ctrl+o expands TO: the nested rows the compact unit folds away, with their own typed result rows.
   return [...items, ...nestedItems(children, options, /* linesOnly */ false)];
 }
@@ -301,7 +318,7 @@ function agentBatchItems(batch: AgentBatch, form: "published" | "pending", optio
   if (header.manage) segments.push({ text: " " }, { text: AGENT_MANAGE_HINT, dim: true });
   // `Bg` returns null inside the transcript/verbose contexts, so the hint is compact-only — the same rule
   // Task 7's `Done (…)` sibling hint follows, and the detail projections ARE that verbose form (R6.3).
-  if (header.expand && options.projection === "compact") segments.push({ text: " " }, { text: EXPAND_HINT, dim: true, color: grey });
+  if (header.expand && options.projection === "compact" && resolveExpandHint(options.expandHint) !== "") segments.push({ text: " " }, { text: resolveExpandHint(options.expandHint), dim: true, color: grey });
   const part = (name: string) => agentBatchItemId(batch.memberIds, form === "pending" ? `pending-${name}` : name);
   const items: RenderItem[] = [{ kind: "line", id: part("header"), line: segmented(segments) }];
   view.members.forEach((member, index) => items.push(...agentBatchMemberItems(member, view.hideType, index === view.members.length - 1, part, options)));
@@ -440,7 +457,10 @@ function isInterruptSentinel(message: Record<string, unknown>): "plain" | "tool"
  *  hidden only in the default folded view — every detail (ctrl+o) projection and every verbose read shows it,
  *  which is exactly `projection !== "compact" || verbose`. */
 export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions, base?: string): readonly RenderItem[] {
-  const renderOpts = { width: options.columns, platform: options.platform, showThinking: options.projection !== "compact" || options.verbose };
+  // F4 Task 10b adds `projection` + `expandHint`: `species.ts`'s `bash-output` is a FOLDED body (upstream folds
+  // it through the very `p2`/`y_s` a tool result uses), so it needs the same "how much" knob every other body
+  // takes, and its overflow marker offers the same live chord.
+  const renderOpts = { width: options.columns, platform: options.platform, showThinking: options.projection !== "compact" || options.verbose, projection: options.projection, expandHint: options.expandHint };
   const message = entry.message;
   if (isNested(message) || isInterruptSentinel(message) === "tool") return [];
   const content = contentBlocks(message);
@@ -474,7 +494,6 @@ const reid = (items: readonly RenderItem[], id: string, sequence: number | "pend
 // Task 5b's pure model decides WHAT a run collapses to; everything below decides how that reads on screen.
 // Only `projection === "compact" && !verbose` folds — both detail projections (and therefore the Ctrl-O
 // pager) keep the per-call `⏺ Read(a.ts)` rows, because those ARE upstream's ctrl+o verbose form (R6).
-const EXPAND_HINT = "(ctrl+o to expand)";
 /** Every segment on a group row is dim (R3.5 as corrected below), so the only remaining axis is colour:
  *  the settled clause run carries the row grey, the active one is dim-and-uncoloured like the golden's. */
 const dimmed = (text: string, color?: string): Segment => ({ text, dim: true, ...(color === undefined ? {} : { color }) });
@@ -522,7 +541,8 @@ function groupRowLine(counts: GroupCounts, active: boolean, options: ProjectionO
     ? [{ text: Math.floor(options.now / 600) % 2 === 0 ? (options.platform === "darwin" ? "⏺" : "●") : " ", dim: true, color: grey }, { text: " ", dim: true }]
     : [{ text: "  " }];
   const run = composeFoldRun(foldClauses(counts, active), active ? "active" : "settled", { ellipsis: active });
-  const segments: Segment[] = [...leader, { text: run, preStyled: true }, dimmed(" "), { text: EXPAND_HINT, dim: true, color: grey }];
+  const hint = resolveExpandHint(options.expandHint);
+  const segments: Segment[] = [...leader, { text: run, preStyled: true }, ...(hint === "" ? [] : [dimmed(" "), { text: hint, dim: true, color: grey } as Segment])];
   // `run` is the ONE segment whose `text` carries SGR bytes, so the line's plain text is stripped rather
   // than joined raw — width math, the pager and every text assertion must still see the bare sentence.
   return { text: segments.map((segment) => (segment.preStyled === true ? stripSgr(segment.text) : segment.text)).join(""), segments };
@@ -703,7 +723,11 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
  *  onto it and sort it in place — while the `Anchored` records inside it are never mutated and are shared. */
 const KNOB_KEYS = 8;
 const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; theme: number; byKnobs: Map<string, readonly Anchored[]> }>();
-const knobKey = (options: ProjectionOptions): string => `${options.columns}|${options.projection}|${options.verbose}|${options.platform}`;
+// `expandHint` joined the key with F4 Task 10b for exactly the reason `platform` joined it with Task 8: this
+// stream now renders it (a `bash-output` sentinel's fold marker carries the chord), so a rebind that changes
+// nothing in the document would otherwise be served the OLD sentence out of cache until the next append —
+// which is the stale-hint dishonesty F2 shipped to end. A key input is decided by what the render reads.
+const knobKey = (options: ProjectionOptions): string => `${options.columns}|${options.projection}|${options.verbose}|${options.platform}|${options.expandHint ?? ""}`;
 /** DI-by-deps test seam: the builder is reached through this record, so a test can count rebuilds without
  *  reading the cache itself. Production never reassigns it. */
 export const projectionDeps = { buildAnchored: buildAnchoredEntries };

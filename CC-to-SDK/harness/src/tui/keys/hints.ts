@@ -88,6 +88,43 @@ export function backgroundHintText(keys: readonly string[], tmux: boolean, platf
   return `(${tmux && chord === "ctrl+b" ? TMUX_BACKGROUND_CHORD : chord} to ${BACKGROUND_HINT_ACTION})`;
 }
 
+/** F4 Task 10b, upstream `Bg` (L421333) — the OTHER derived hint, and the one the whole transcript leans on:
+ *  `pA("app:toggleTranscript", "Global", "ctrl+o")` resolves the chord, then `$e({action:"expand", parens:!0,
+ *  format:{keyCase:"lower"}})` composes `("(", chord, " to ", action, ")")` (L183875). Every
+ *  `(ctrl+o to expand)` on screen — the output fold's overflow marker, the collapsed tool-group row, the
+ *  Grep/Glob `Found N files` sentence, the compact-summary boundary, the truncated-API-error offer — is that
+ *  one component, so all of them move together when the user rebinds.
+ *
+ *  THE THREE-STATE CONTRACT, which is upstream's and not an invention (`pA`, L183751–183758):
+ *   · the action resolves        → the composed sentence with the user's chord;
+ *   · the action is UNBOUND      → `pA` returns `""`, `$e` returns `null` → **no clause at all**. E2: being
+ *                                  shown nothing is honest, being shown a dead chord is not;
+ *   · no keymap in scope at all  → `pA` returns its literal FALLBACK. That is `EXPAND_HINT_FALLBACK` below,
+ *                                  and it is what every projection that was never threaded a hint keeps
+ *                                  printing — the same string those surfaces hardcoded before this task. */
+export const EXPAND_HINT_ACTION = "expand";
+/** `bn`'s `fallback: "ctrl+o"` (L422267/429646/421333), already composed through `$e`'s parens form. */
+export const EXPAND_HINT_FALLBACK = "(ctrl+o to expand)";
+/** The detail projections' sibling offer. NOT keymap-derived here: upstream's ctrl+e surface is the pager's
+ *  own control (`TranscriptPager`), which F1 renders from its own literal, so deriving only this half would
+ *  put two different truths on one row. Recorded, not ported. */
+export const SHOW_ALL_HINT = "(ctrl+e to show all)";
+export function expandHintText(keys: readonly string[], platform: NodeJS.Platform = process.platform, description: string = EXPAND_HINT_ACTION): string {
+  const key = keys.find((k) => !k.includes(" ")) ?? keys[0];             // plain beats chord, the resolver's own rule
+  if (key === undefined) return "";
+  const chord = formatBindingLower(key, platform);
+  return chord === "" ? "" : `(${chord} to ${description})`;
+}
+/** `$e`'s `parens` prop is the ONLY difference between its two output forms (L183875 vs L183883), so the bare
+ *  clause is the parens form minus its wrapper. One site needs it: `Vha`'s backgrounded-agent row (429646)
+ *  nests the chord hint inside a LARGER parenthesised list (`(↓ to manage · ctrl+o to expand)`), where a
+ *  second pair of parens would be wrong. Empty in, empty out — an unbound chord still contributes nothing. */
+/** ABSENT → `pA`'s literal fallback; anything else (including `""`, the unbound answer) is the caller's truth.
+ *  It lives here rather than on `ProjectionOptions` so `toolSummaries.ts` can reach it without a value import
+ *  from `toolRenderer.tsx`, which imports IT back (the existing type-only import is what keeps that acyclic). */
+export const resolveExpandHint = (hint: string | undefined): string => hint ?? EXPAND_HINT_FALLBACK;
+export const hintWithoutParens = (hint: string): string => (hint.startsWith("(") && hint.endsWith(")") ? hint.slice(1, -1) : hint);
+
 /** A canonical binding (a chord is space-separated) → its display string. `null`/absent → `(unbound)`. */
 export function formatBinding(key: string | null | undefined): string {
   if (!key) return UNBOUND;

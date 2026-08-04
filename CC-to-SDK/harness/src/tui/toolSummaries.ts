@@ -25,6 +25,7 @@
 import type { RenderLine, Segment } from "./render.js";
 import type { ProjectionOptions } from "./toolRenderer.js";     // type-only: erased, so there is no import cycle
 import { foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
+import { resolveExpandHint } from "./keys/hints.js";
 import { callSidecar, readVariant, textLines, type NormalizedToolResult } from "./toolResult.js";
 import { DIFF_BODY_INSET, diffHeader, renderDiff } from "./diffRender.js";
 import { resolvePatch } from "./diffSource.js";
@@ -48,16 +49,17 @@ const bold = (text: string): Segment => ({ text, bold: true });
 const plain = (text: string): Segment => ({ text });
 const dim = (text: string): RenderLine => ({ text, dim: true });
 const errored = (text: string): RenderLine => ({ text, color: resolveThemeColor(themeTokens().error) });
-/** Upstream's `Bg` component, which resolves `app:toggleTranscript` through the keymap. F1 already hard-codes the
- *  same literal in `foldToolOutput`/the group row, so it stays one constant here rather than two spellings. */
-const EXPAND_HINT = "(ctrl+o to expand)";
+/** Upstream's `Bg` component (L421333), which resolves `app:toggleTranscript` through the keymap. F4 Task 10b
+ *  makes that real: the sentence is threaded on `ProjectionOptions` from the LIVE table, and every site below
+ *  reads it through `expandHintOf` so a rebind moves all of them at once. An UNBOUND chord yields `""`, and
+ *  each site then drops its clause entirely — `$e` returns `null` there, and a dead chord is worse than none. */
 /** Upstream `p2` (L420173), reached wherever a typed row still frames RAW output: Bash stdout and stderr, the
  *  Grep/Glob verbose match dump, the WebFetch verbose body, a TaskOutput agent result. Same three-row compact
  *  fold and same unbounded `detail-all` the generic body uses — it IS the generic body, borrowed. The dim
  *  overflow marker keeps its own styling; only the content rows take an error colour. */
 const bodyRows = (text: string, options: ProjectionOptions, color?: string): readonly RenderLine[] => {
   const lines = withoutTrailingBlanks(text.split("\n"));
-  const folded = foldToolOutput(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true });
+  const folded = foldToolOutput(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true, expandHint: options.expandHint });
   return color === undefined ? folded : folded.map((line) => (line.dim === true ? line : { ...line, color }));
 };
 
@@ -165,7 +167,7 @@ function writeRows(event: ToolEvent, normalized: NormalizedToolResult, options: 
 /** `Found {N} {label}[ across {M} {label2}]` + the expand hint when N > 0. The pluralization is the unusual one:
  *  the label is stored PLURAL and its trailing `s` is stripped at exactly 1 (`count === 0 || count > 1`), so zero
  *  reads `Found 0 files`. Upstream bolds `{count}` TOGETHER WITH the space after it. */
-function foundRow(n: number, label: string, projection: ResultProjection, secondary?: { n: number; label: string }): RenderLine {
+function foundRow(n: number, label: string, options: ProjectionOptions, secondary?: { n: number; label: string }): RenderLine {
   const segments: Segment[] = [plain("Found "), bold(`${n} `), plain(n === 0 || n > 1 ? label : label.slice(0, -1))];
   if (secondary !== undefined) segments.push(plain(" across "), bold(`${secondary.n} `), plain(secondary.n === 0 || secondary.n > 1 ? secondary.label : secondary.label.slice(0, -1)));
   // Upstream always emits the separating space and lets the hint be `false` at zero; a trailing space is invisible
@@ -173,16 +175,17 @@ function foundRow(n: number, label: string, projection: ResultProjection, second
   // COMPACT-ONLY (t5 review): only `$Wo`'s non-verbose branch (L421528) appends `Bg` — the verbose form
   // (L421505) has no hint, and `Bg` itself returns null in transcript contexts. Our detail projections ARE
   // that verbose/transcript form, so the hint would land exactly where upstream never shows it.
-  if (n > 0 && projection === "compact") segments.push(plain(` ${EXPAND_HINT}`));
+  const hint = resolveExpandHint(options.expandHint);
+  if (n > 0 && options.projection === "compact" && hint !== "") segments.push(plain(` ${hint}`));
   return row(...segments);
 }
 function searchRows(event: ToolEvent, options: ProjectionOptions): readonly RenderLine[] | undefined {
   const s = callSidecar(event);
   if (s === undefined) return undefined;                                     // no honest count source ⇒ keep the raw matches
   const mode = s.mode, files = count(s.numFiles) ?? (Array.isArray(s.filenames) ? s.filenames.length : undefined);
-  const head = mode === "content" ? (count(s.numLines) === undefined ? undefined : foundRow(count(s.numLines)!, "lines", options.projection))
-    : mode === "count" ? (count(s.numMatches) === undefined || files === undefined ? undefined : foundRow(count(s.numMatches)!, "matches", options.projection, { n: files, label: "files" }))
-      : files === undefined ? undefined : foundRow(files, "files", options.projection);
+  const head = mode === "content" ? (count(s.numLines) === undefined ? undefined : foundRow(count(s.numLines)!, "lines", options))
+    : mode === "count" ? (count(s.numMatches) === undefined || files === undefined ? undefined : foundRow(count(s.numMatches)!, "matches", options, { n: files, label: "files" }))
+      : files === undefined ? undefined : foundRow(files, "files", options);
   if (head === undefined) return undefined;
   // Census 01#144: the VERBOSE form keeps the same sentence and appends the raw matches indented under it. Our
   // gutter block already supplies that five-column indent, so the rows simply follow the sentence.
@@ -315,7 +318,7 @@ function taskOutputRows(event: ToolEvent, normalized: NormalizedToolResult, opti
   if (task.task_type === "local_agent") {
     if (status === "success") {
       const result = str(task.result);
-      if (!verbose) return [dim(`Read output ${EXPAND_HINT}`)];
+      if (!verbose) { const hint = resolveExpandHint(options.expandHint); return [dim(hint === "" ? "Read output" : `Read output ${hint}`)]; }
       const lines = result === undefined ? 0 : result.split("\n").length;     // upstream `au(result,"\n") + 1`
       const head = row(plain(`${description} (${lines} lines)`));
       return result === undefined ? [head] : [head, ...bodyRows(result, options)];
@@ -327,7 +330,9 @@ function taskOutputRows(event: ToolEvent, normalized: NormalizedToolResult, opti
   const head = row(plain(`  ${description} [${str(task.status) ?? ""}]`));
   const output = str(task.output);
   if (output === undefined) return [head];
-  return verbose ? [head, ...bodyRows(output, options)] : [head, dim(`     ${EXPAND_HINT}`)];
+  if (verbose) return [head, ...bodyRows(output, options)];
+  const hint = resolveExpandHint(options.expandHint);
+  return hint === "" ? [head] : [head, dim(`     ${hint}`)];
 }
 
 /** `undefined` means "no typed row — use the existing body path". The caller has already handled `running`,
