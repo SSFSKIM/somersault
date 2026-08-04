@@ -34,9 +34,16 @@ export class LiveTurn {
   private openThinking = new Map<string, number>();       // `${msgId}:${index}` → local arrival of its content_block_start
   private thoughtMs = new Map<string, number>();          // message id → summed ms of its STOPPED thinking blocks
   private clock: () => number;
+  private columns: () => number;
   /** `now` is injected for the same reason the projection's is: a test (and the frame-capture fixture)
-   *  has to pin arrival stamps that would otherwise read the host wall clock. */
-  constructor(deps: { now?: () => number } = {}) { this.clock = deps.now ?? (() => Date.now()); }
+   *  has to pin arrival stamps that would otherwise read the host wall clock. `columns` (F4 Task 5) mirrors
+   *  it exactly: the live region renders markdown, markdown fits width-sensitive blocks to the terminal, and
+   *  the REPL's own `columnsFn` is the honest source — read PER SNAPSHOT, never captured, so a mid-turn
+   *  resize repaints the in-flight message. Default 80: `renderMarkdown`'s own. */
+  constructor(deps: { now?: () => number; columns?: () => number } = {}) {
+    this.clock = deps.now ?? (() => Date.now());
+    this.columns = deps.columns ?? (() => 80);
+  }
   /** Real running output-token count for the WHOLE turn (committed messages + the in-flight one). */
   get outputTokens(): number { return this.committedTokens + this.currentMsgTokens; }
 
@@ -128,7 +135,7 @@ export class LiveTurn {
   }
 
   private renderBlock(b: Block): RenderLine[] {
-    if (b.kind === "text") return b.text ? withAssistantBullet(renderMarkdown(b.text)) : [];
+    if (b.kind === "text") return b.text ? withAssistantBullet(renderMarkdown(b.text, { width: this.columns() })) : [];
     return b.collapsed ? [{ text: "✦ Thinking", dim: true }]
       : (b.text ? b.text.split("\n").map((t) => ({ text: t, dim: true })) : []);
   }

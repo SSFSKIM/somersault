@@ -403,7 +403,9 @@ describe("F1 5c fixes: silent absorption and the unclosed trailing group", () =>
 // ── The blink path's memoized anchored stream ───────────────────────────────────────────────────────────
 // `useChat` re-projects the transient region every 600 ms while a tool is open, and `projectPending` folds the
 // WHOLE anchored stream — so an unmemoized build re-renders every retained message (markdown included) per
-// blink frame. The stream depends on the document AND the live theme, so the key is `revision()` × `themeGeneration()`.
+// blink frame. The stream depends on the document, the live theme and (since F4 Task 5) the render knobs the
+// message adapter forwards, so the key is `revision() × themeGeneration() × columns × projection × verbose`;
+// markdown-integration.test.tsx pins the three new components, this file the original two.
 describe("F1 anchored-stream memoization", () => {
   afterEach(() => { vi.restoreAllMocks(); setTheme("auto"); });
 
@@ -414,10 +416,14 @@ describe("F1 anchored-stream memoization", () => {
     expect(lineTexts(projectPending(doc, context))).toEqual(["⏺ Reading 1 file… (ctrl+o to expand)"]);
     expect(lineTexts(projectPending(doc, { ...context, now: 600 }))).toEqual(["  Reading 1 file… (ctrl+o to expand)"]);
     expect(spy).toHaveBeenCalledTimes(1);
-    // Every other projection of the same document shares the one cache entry — including the detail (ctrl+o)
-    // and compact reads, whose columns/verbose/projection knobs never reach this stage.
-    projectCompact(doc, context); projectDetail(doc, { ...context, projection: "detail-all", columns: 40 });
+    // A projection at the SAME knobs shares that entry — `projectPending` and `projectCompact` are both
+    // compact/non-verbose, so the blink and the published read never rebuild for each other. F4 Task 5:
+    // columns/projection/verbose ARE part of the key now (`projectMessageEntry` forwards them into
+    // `renderMessage`), so a detail read at another width is a different entry, by design.
+    projectCompact(doc, context);
     expect(spy).toHaveBeenCalledTimes(1);
+    projectDetail(doc, { ...context, projection: "detail-all", columns: 40 });
+    expect(spy).toHaveBeenCalledTimes(2);
   });
 
   it("rebuilds when a retained append changes the document, and the projection follows", () => {

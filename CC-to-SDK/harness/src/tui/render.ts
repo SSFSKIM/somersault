@@ -81,16 +81,23 @@ export function toolDiffLines(name: string, input: Record<string, unknown>, cap 
   return [head, ...body.slice(0, cap), { text: `  … ${body.length - cap} more lines`, dim: true }];
 }
 
+/** The renderer's per-call context (F4 Task 5). `width` is the terminal column count the markdown walker
+ *  fits width-sensitive blocks (tables) to; `platform` selects the bullet glyph (Task 8) and `showThinking`
+ *  decides whether a `thinking` block draws at all (Task 9). All three are THREADED from the projection now
+ *  — `projectMessageEntry` forwards `columns`/`platform`/`projection`+`verbose` — so the two later tasks
+ *  change only this file. Omitting the bag keeps the pre-F4 defaults (80 columns, current glyph, thinking on). */
+export interface RenderMessageOptions { width?: number; platform?: NodeJS.Platform; showThinking?: boolean }
+
 /** Map one SDK message to renderable lines — the NON-TOOL species only. `tool_use`/`tool_result` blocks are
  *  deliberately absent since F1 Task 4: every tool row goes through `renderToolEvent` instead, so there is
  *  exactly ONE tool grammar and no hand-rolled `⎿` gutter survives outside `TOOL_RESULT_GUTTER`.
  *  Unknown/empty/result/system → []. */
-export function renderMessage(m: any): RenderLine[] {
+export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLine[] {
   if (!m || typeof m !== "object") return [];
   if (m.type === "assistant") {
     const out: RenderLine[] = [];
     for (const b of m.message?.content ?? []) {
-      if (b?.type === "text" && b.text) out.push(...withAssistantBullet(renderMarkdown(String(b.text))));
+      if (b?.type === "text" && b.text) out.push(...withAssistantBullet(renderMarkdown(String(b.text), { width: opts.width })));
       else if (b?.type === "thinking" && b.thinking) for (const l of String(b.thinking).split("\n")) out.push({ text: l, dim: true });
     }
     return out;

@@ -408,9 +408,16 @@ function isInterruptSentinel(message: Record<string, unknown>): boolean {
 
 /** The sole non-tool completed-SDK adapter: it reuses render.ts for assistant/user text and every other
  *  non-tool species, and SKIPS `tool_use`/`tool_result` so tools keep the one renderer route above. One
- *  block at a time, so the item id can carry the content index that makes it stable across a rehydration. */
-export function projectMessageEntry(entry: SdkEntry, options: ProjectionContext, base?: string): readonly RenderItem[] {
-  void options;
+ *  block at a time, so the item id can carry the content index that makes it stable across a rehydration.
+ *
+ *  F4 Task 5: it stops voiding its options. It takes the FULL `ProjectionOptions` (not `ProjectionContext`)
+ *  because `showThinking` is derived from the two knobs `ProjectionContext` deliberately omits — its one
+ *  caller, `buildAnchoredEntries`, already holds them. `renderMessage` consumes `width` today; `platform`
+ *  and `showThinking` are threaded here so Tasks 8/9 land inside render.ts alone. The DERIVATION: thinking is
+ *  hidden only in the default folded view — every detail (ctrl+o) projection and every verbose read shows it,
+ *  which is exactly `projection !== "compact" || verbose`. */
+export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions, base?: string): readonly RenderItem[] {
+  const renderOpts = { width: options.columns, platform: options.platform, showThinking: options.projection !== "compact" || options.verbose };
   const message = entry.message;
   if (isNested(message) || isInterruptSentinel(message)) return [];
   const inner = message.message;
@@ -419,7 +426,7 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionContext,
   const items: RenderItem[] = [];
   content.forEach((block, index) => {
     if (!isRecord(block) || block.type === "tool_use" || block.type === "tool_result") return;
-    for (const [lineIndex, line] of renderMessage({ type: message.type, message: { content: [block] } }).entries())
+    for (const [lineIndex, line] of renderMessage({ type: message.type, message: { content: [block] } }, renderOpts).entries())
       // `block:<i>:<line>` rather than the bare `block:<i>`: one markdown block legitimately renders many
       // lines, and two items sharing an id would publish once and lose the rest.
       items.push({ kind: "line", id: sdkItemId(id, `block:${index}:${lineIndex}`), line });
@@ -636,33 +643,52 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
  *  `projectPending`, which folds the WHOLE anchored stream — so without a cache every frame re-renders every
  *  retained message, markdown and all, and a long resumed/attached transcript pays that per blink.
  *
- *  The stream is cacheable because its inputs are the DOCUMENT plus the LIVE THEME, and nothing else —
- *  verified, not assumed: `projectLocalEvent` takes no options at all, and `projectMessageEntry` `void`s
- *  them, its one renderer (`renderMessage`) being a single-argument function of the message. Nothing here
- *  reads cwd, home, platform, columns, now, verbose or projection; those enter strictly LATER, in
- *  `renderToolEvent`, `groupItems` and `segmentRuns`, all of which stay uncached.
+ *  THE KEY IS `revision() × themeGeneration() × columns × projection × verbose`, and a hit requires ALL FIVE
+ *  unchanged. The last three arrived with F4 Task 5 and are not optional: `projectMessageEntry` no longer
+ *  voids its options — it forwards `columns` (the width the markdown walker fits a table to), `platform` and
+ *  a `projection`/`verbose`-derived `showThinking` into `renderMessage`. So one unmutated document at one
+ *  revision now projects DIFFERENTLY per knob, and the old `revision × theme` key would serve whichever
+ *  projection ran first to the other: compact and detail (ctrl+o) reads of the same document would agree on
+ *  thinking visibility by call ORDER, and a terminal resize would serve stale-width markdown forever. The
+ *  remaining `ProjectionOptions` fields are deliberately NOT in the key: `cwd`/`home`/`now`/`thoughtMs`/
+ *  `pending`/`agentMeta`/`toolEvents`/`bashHint` enter strictly LATER, in `renderToolEvent`, `groupItems`
+ *  and `segmentRuns`, none of which is cached (that is what lets the 600 ms blink and the ticking thinking
+ *  clause move while this stream holds still). `projectLocalEvent` still takes no options at all.
  *
- *  The theme is the second input because `renderMessage` → markdown/highlight resolve theme tokens PER CALL
+ *  The theme is a key input because `renderMessage` → markdown/highlight resolve theme tokens PER CALL
  *  (deliberately: a setTheme() must color the very next render — render.ts:47). A setTheme() touches no
- *  document, so `revision()` alone would serve the old palette out of cache; the key is therefore
- *  `revision()` × `themeGeneration()`, and a hit requires BOTH unchanged. (Every theme-changing UI path
+ *  document, so `revision()` alone would serve the old palette out of cache. (Every theme-changing UI path
  *  today also appends a local notice, which bumps the revision — but that is an incidental coincidence, not
  *  something the cache may lean on, so the theme dependency is named here rather than assumed away.)
+ *
+ *  ACCUMULATION. `revision`/`theme` stay on the OUTER entry and any change to either replaces it whole, so
+ *  the inner per-knob map lives exactly one revision×theme epoch. Within one epoch the live key set is tiny
+ *  (compact, detail-collapsed, detail-all at one width) — but a resize DRAG bumps no revision, so an
+ *  unbounded map would retain one fully projected transcript per column count crossed. Hence the LRU bound:
+ *  insertion-ordered with a recency bump, `KNOB_KEYS` deep, the same idiom as markdown.ts's lexer cache.
  *
  *  Keyed by document in a WeakMap, so a replaced document (rewind, resume) drops its entry with itself. The
  *  cached array is copied out because callers own their list — `projectAll`/`projectPending` push tool anchors
  *  onto it and sort it in place — while the `Anchored` records inside it are never mutated and are shared. */
-const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; theme: number; anchored: readonly Anchored[] }>();
+const KNOB_KEYS = 8;
+const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; theme: number; byKnobs: Map<string, readonly Anchored[]> }>();
+const knobKey = (options: ProjectionOptions): string => `${options.columns}|${options.projection}|${options.verbose}`;
 /** DI-by-deps test seam: the builder is reached through this record, so a test can count rebuilds without
  *  reading the cache itself. Production never reassigns it. */
 export const projectionDeps = { buildAnchored: buildAnchoredEntries };
 
 function anchoredEntries(document: TranscriptDocument, options: ProjectionOptions): Anchored[] {
-  const revision = document.revision(), theme = themeGeneration();
-  const hit = anchoredCache.get(document);
-  if (hit !== undefined && hit.revision === revision && hit.theme === theme) return [...hit.anchored];
+  const revision = document.revision(), theme = themeGeneration(), key = knobKey(options);
+  let entry = anchoredCache.get(document);
+  if (entry === undefined || entry.revision !== revision || entry.theme !== theme) {
+    entry = { revision, theme, byKnobs: new Map() };
+    anchoredCache.set(document, entry);
+  }
+  const hit = entry.byKnobs.get(key);
+  if (hit !== undefined) { entry.byKnobs.delete(key); entry.byKnobs.set(key, hit); return [...hit]; }   // recency bump
   const anchored = projectionDeps.buildAnchored(document, options);
-  anchoredCache.set(document, { revision, theme, anchored });
+  if (entry.byKnobs.size >= KNOB_KEYS) { const oldest = entry.byKnobs.keys().next().value; if (oldest !== undefined) entry.byKnobs.delete(oldest); }
+  entry.byKnobs.set(key, anchored);
   return [...anchored];
 }
 

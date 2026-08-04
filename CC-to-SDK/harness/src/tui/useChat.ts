@@ -391,7 +391,7 @@ export function useChat(
         // The SAME injected clock the projection uses: the thinking clock's arrival stamps and the `now`
         // the fold row is rendered against must not come from two different sources (a frame-capture
         // fixture pins one of them, and a live-reading LiveTurn would make its output unreproducible).
-        liveTurnRef.current = new LiveTurn({ now: nowFn }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]);
+        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]);
       }
       else if (ev.kind === "message") {
         const data = ev.data as any;

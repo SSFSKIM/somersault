@@ -258,3 +258,41 @@ describe("live and replay share ONE tool grammar", () => {
     expect(projectPending(live, projectionOptions)).toEqual([]);         // the call settled — nothing stays pending
   });
 });
+
+// ── F4 Task 5: the live region's own width seam, and the mid-stream fence ────────────────────────────────
+describe("LiveTurn markdown width + streaming fence (F4 Task 5)", () => {
+  const stream = (lt: LiveTurn, text: string) => {
+    lt.ingest(se({ type: "message_start" }));
+    lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
+    lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }));
+  };
+  // A table is the one block whose rendering is a function of the terminal width, so it is what makes the
+  // `columns` DI observable. The dep mirrors `now`'s: the REPL passes its own `columnsFn`, tests pin a value.
+  const TABLE = "| name | value |\n| --- | --- |\n| alphabeticalcolumnvalue | oneoneoneoneoneoneone |\n";
+  const streamed = (cols?: number) => { const lt = cols === undefined ? new LiveTurn() : new LiveTurn({ columns: () => cols }); stream(lt, TABLE); return texts(lt); };
+
+  it("renders live markdown at the injected column count, defaulting to 80", () => {
+    expect(streamed(40)[0]!.length).toBeLessThan(streamed(100)[0]!.length);
+    expect(streamed()).toEqual(streamed(80));
+  });
+
+  it("re-reads `columns()` per snapshot, so a mid-turn resize repaints the in-flight message", () => {
+    let cols = 100;
+    const lt = new LiveTurn({ columns: () => cols }); stream(lt, TABLE);
+    const wide = texts(lt);
+    cols = 40;
+    expect(texts(lt)).not.toEqual(wide);
+  });
+
+  // TR18 (spec settlement 4): a mid-stream OPEN fence has no closer yet. `marked` treats the unterminated
+  // fence as a code block, so the partial body is HIGHLIGHTED as it arrives — it does not read as prose and
+  // then flip. Pinned here, at the only place a half-typed fence exists.
+  it("highlights the body of an unterminated fence while it is still streaming", () => {
+    const lt = new LiveTurn();
+    stream(lt, "```ts\nconst x = 1");
+    const line = lt.snapshot()[0]!;
+    expect(line.text).toBe("const x = 1");
+    expect(line.segments?.map((s) => s.text)).toEqual(["const", " x = ", "1"]);
+    expect(line.segments?.filter((s) => s.color !== undefined).length).toBeGreaterThan(0);
+  });
+});
