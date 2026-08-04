@@ -859,6 +859,28 @@ drift with no argument for it. And the `⟳ streaming` chip: the spinner already
   through an unstyled `<Text>`; a TDD passthrough test must pin that an unstyled Text preserves raw
   SGR before anything builds on it. Rejected: a "corrected" writer that keeps dim after the count
   (diverges from the golden forever — better-than-upstream is still divergence under this brief).
+- **F4 design settlements (2026-08-04).** (1) **Markdown renders marked tokens into our
+  `RenderLine[]`/`Segment[]` model, not glued ANSI strings.** Upstream glues chalk output into one
+  wrapping `<Text>`; we keep the line model so the one `renderMarkdown` swap upgrades all three call
+  sites (render.ts, liveTurn, PlanDialog), the frame corpus and pager keep working, and `preStyled`
+  stays the narrow fold-row escape hatch. Consequence: `Segment`/`RenderLine` gain
+  `strikethrough`/`underline`/`bg` and `Line.tsx` forwards them — substrate-first task. Rejected:
+  emitting glued ANSI through preStyled segments (forfeits theme resolution, frame-corpus
+  comparability, and every existing Line-model consumer). (2) **Take `diff` (jsdiff) as F4's second
+  dependency.** Upstream itself calls jsdiff (`_vs`/diffWords; `structuredPatch` shapes match); the
+  flat-only Edit fallback needs real hunk construction and the word-level intra-line diff needs a
+  word differ. Same argument that admitted `marked`: maintaining a diff engine forever is the wrong
+  trade. Rejected: hand-rolled LCS. (3) **Species are reachability-scoped.** The ten sentinel routes
+  and ~12 system subtypes are upstream-internal kinds; we build a renderer for every species
+  reachable on the SDK wire (declared in the `SDKMessage` union or observed live) and record the
+  rest unreachable with evidence — the F2/F3 discipline applied to message species. (4) **`TR18` is
+  satisfied by architecture:** we re-lex the accumulated text each repaint and marked already treats
+  an unterminated fence as code, so the fence re-prepend trick is unnecessary; pinned by a
+  mid-stream open-fence test rather than ported. (5) **`TR33` is already F3's shipped mechanism**
+  (local-clock thinking durations + the fold clause); F4 verifies and pins rather than rebuilds.
+  (6) **The highlighter keeps the `TR22` exception but adopts upstream's hljs scope colour map**
+  (keyword→blue, string→red, number→green, comment→green) — an S-effort fidelity gain inside the
+  recorded exception, not a reopening of it.
 
 ## Surprises & Discoveries
 
