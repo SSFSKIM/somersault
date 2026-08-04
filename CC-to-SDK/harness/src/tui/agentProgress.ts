@@ -224,7 +224,20 @@ export function indentRenderLine(line: RenderLine, pad: string): RenderLine {
   return { ...line, text: pad + line.text, segments: [{ text: pad }, ...line.segments] };
 }
 
+let generation = 0;
+/** Monotonic counter of WRITES into any `agentMeta` map — the exact analogue of `themeGeneration()`, and for
+ *  the exact same reason. The map is a LIVE ref the caller owns and both writers below mutate IN PLACE, on a
+ *  `task` event that need not append anything to the transcript; so a consumer that CACHES a render keyed on
+ *  `TranscriptDocument.revision()` cannot see the write at all. `toolRenderer`'s anchored-stream memo is now
+ *  such a consumer (F4 Task 10c: a teammate row's `@name` is read from this map), and a `task_started` naming
+ *  a dispatch we did not hold would otherwise leave the anonymous `@Agent` header on screen until the next
+ *  document write. Deliberately module-global and process-wide rather than per-map: it is a staleness upper
+ *  bound, so a second session's write costing this one an extra rebuild is cheap and a stale name is not.
+ *  Bumped by `entryFor` (the sole creation/lookup point of every write path) plus the one direct-mutation
+ *  site below — i.e. every path that can write, whether or not the field it writes is a cached input. */
+export function agentMetaGeneration(): number { return generation; }
 const entryFor = (meta: Map<string, AgentMeta>, id: string): AgentMeta => {
+  generation++;
   const existing = meta.get(id);
   if (existing !== undefined) return existing;
   const fresh: AgentMeta = {}; meta.set(id, fresh); return fresh;
@@ -288,6 +301,6 @@ export function stampAgentCalls(meta: Map<string, AgentMeta>, message: unknown, 
     const id = str(block.tool_use_id);
     if (block.type !== "tool_result" || id === undefined) continue;
     const entry = meta.get(id);                                                // only a call we stamped a dispatch for
-    if (entry !== undefined) entry.resultAt ??= now;
+    if (entry !== undefined) { generation++; entry.resultAt ??= now; }         // the one write that does not go through `entryFor`
   }
 }

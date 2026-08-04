@@ -667,16 +667,21 @@ const padLine = (line: RenderLine, pad: string): RenderLine =>
     ? { ...line, text: pad + line.text, segments: [{ text: pad }, ...line.segments] }
     : { ...line, text: pad + line.text };
 
-export interface TeammateMessageOptions { width?: number; summary?: string }
+export interface TeammateMessageOptions { width?: number }
 /** `Cvr` (L425444–425476): the LIVE attribution. The header Text carries `color: inkColor` and its children
  *  are `["@ ", displayName, <Text aria-hidden>{Ge.pointer}</Text>]` — literal at-sign, ONE space, the name,
- *  then `❯` flush against it. The optional summary is a SIBLING Text with no colour of its own, so it prints
- *  in the default foreground: `[" ", summary]`. The content goes through the markdown walker (`km`, with
+ *  then `❯` flush against it. The content goes through the markdown walker (`km`, with
  *  `stripPromptTags: false`) inside the `paddingLeft: 2` box, and an empty content renders no rows at all
- *  (upstream's `tpa && …` guard) — leaving a bare attributed header, which is what a summary-only frame is. */
+ *  (upstream's `tpa && …` guard) — leaving a bare attributed header.
+ *
+ *  ONE PART OF `Cvr` IS NOT PORTED: its optional SUMMARY, a sibling Text `[" ", summary]` with no colour of
+ *  its own, printed after the pointer. It is read off the teammate message's own `summary` field, which
+ *  exists only on the agent-teams teammate transport (`Wme`) — our nested frames are ordinary assistant
+ *  messages and carry no such field, so a `summary` parameter here could never be anything but dead weight
+ *  and a test-only code path. Recorded rather than built; if a wire summary ever appears, the shape is a
+ *  plain uncoloured segment appended to `header` below. */
 export function teammateMessageLines(displayName: string, inkColor: string, content: string, opts: TeammateMessageOptions = {}): RenderLine[] {
   const header: Segment[] = [{ text: `@ ${displayName}${TEAMMATE_POINTER}`, color: inkColor }];
-  if (opts.summary !== undefined && opts.summary !== "") header.push({ text: ` ${opts.summary}` });
   const rows: RenderLine[] = [{ text: header.map((s) => s.text).join(""), segments: header }];
   const width = Math.floor(opts.width ?? 80);
   // The markdown fits the INSET column (the pad is a sibling of the content box, not part of it), floored so

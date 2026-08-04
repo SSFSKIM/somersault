@@ -2571,6 +2571,44 @@ Note `orange` and `red` collide in the ANSI themes (both `ansi:redBright` in dar
 and `purple` collide (`ansi:magentaBright`) — so the eight-colour agent palette degrades to six
 distinguishable colours on ANSI terminals.
 
+⚠ **PACK SELF-CORRECTION (2026-08-04, F4 Task 10c review).** The table above is **incomplete and one
+row is mislabelled**. Line 156475 carries **SIX** theme objects, not four, and the pack extracted only
+the first four. Reading the line's own assignments (`<identifier> = {`) gives the six object names in
+file order, and each one's identity follows from matching its ordinary 30-token cells (`text`,
+`success`, `error`, `claude`, `planMode`) against the theme table this port already shipped in
+`src/tui/theme.ts`:
+
+| # | object | theme | identified by |
+|---|---|---|---|
+| 1 | `bZg` | **light** | `text: rgb(0,0,0)` · `success: rgb(44,122,57)` · `claude: rgb(215,119,87)` |
+| 2 | `EZg` | light-ansi | all cells `ansi:*`, `text: ansi:black` |
+| 3 | `SZg` | dark-ansi | all cells `ansi:*`, `text: ansi:whiteBright` |
+| 4 | `AZg` | **light-daltonized** | `text: rgb(0,0,0)` · `success: rgb(0,102,153)` · `claude: rgb(255,153,51)` |
+| 5 | `vZg` | **dark** | `text: rgb(255,255,255)` · `success: rgb(78,186,101)` · `claude: rgb(215,119,87)` |
+| 6 | `TZg` | **dark-daltonized** | `text: rgb(255,255,255)` · `success: rgb(51,153,255)` · `claude: rgb(255,153,51)` |
+
+So the "4th (daltonized)" row above is **light**-daltonized, and the pack never extracted blocks 5 and
+6 — the two (dark, dark-daltonized) a terminal port needs most, `dark` being what `auto` resolves to.
+All six blocks' subagent tokens, in file order:
+
+| # | theme | red | blue | green | yellow | purple | orange | pink | cyan |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | light | `rgb(220,38,38)` | `rgb(106,155,204)` | `rgb(22,163,74)` | `rgb(202,138,4)` | `rgb(130,125,189)` | `rgb(217,119,87)` | `rgb(196,102,134)` | `rgb(8,145,178)` |
+| 2 | light-ansi | `ansi:red` | `ansi:blue` | `ansi:green` | `ansi:yellow` | `ansi:magenta` | `ansi:redBright` | `ansi:magentaBright` | `ansi:cyan` |
+| 3 | dark-ansi | `ansi:redBright` | `ansi:blueBright` | `ansi:greenBright` | `ansi:yellowBright` | `ansi:magentaBright` | `ansi:redBright` | `ansi:magentaBright` | `ansi:cyanBright` |
+| 4 | light-daltonized | `rgb(204,0,0)` | `rgb(0,102,204)` | `rgb(0,204,0)` | `rgb(255,204,0)` | `rgb(128,0,128)` | `rgb(255,128,0)` | `rgb(255,102,178)` | `rgb(0,178,178)` |
+| 5 | dark | `rgb(220,38,38)` | `rgb(106,155,204)` | `rgb(22,163,74)` | `rgb(202,138,4)` | `rgb(130,125,189)` | `rgb(217,119,87)` | `rgb(196,102,134)` | `rgb(8,145,178)` |
+| 6 | dark-daltonized | `rgb(255,102,102)` | `rgb(102,178,255)` | `rgb(102,255,102)` | `rgb(255,255,102)` | `rgb(178,102,255)` | `rgb(255,178,102)` | `rgb(255,153,204)` | `rgb(102,204,204)` |
+
+Blocks 1 and 5 are **byte-identical**: 2.1.220 ships the same eight subagent colours for light and
+dark. That is a faithful reading, not a transcription slip — these eight are chosen for mutual
+distinguishability, not for contrast against a background — so do not "fix" it.
+
+**Shipped source of truth: `CC-to-SDK/harness/src/tui/theme.ts`** (`SUBAGENT_TOKEN_NAMES`,
+`SUB_LIGHT`/`SUB_DARK`/`SUB_LIGHT_DALTONIZED`/`SUB_DARK_DALTONIZED`, `SUBAGENT_THEMES`), pinned
+byte-exactly for all 8 tokens × all 4 non-ANSI blocks by `harness/test/tui/teammate.test.tsx`. The two
+ANSI blocks stay out of scope, exactly as the 30 ordinary tokens do.
+
 Related tokens on the same line, for reference:
 
 ```js

@@ -24,7 +24,7 @@ import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGr
 import { foldHint, foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
-import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentSubagentType, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
+import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentMetaGeneration, agentSubagentType, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
 import type { FoldPendingHooks } from "./foldPendingState.js";
 import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
@@ -505,9 +505,12 @@ function teammateColorIndex(agentId: string, options: ProjectionOptions): number
   }
   return fnv1a(agentId) % SUBAGENT_TOKEN_NAMES.length;
 }
-/** Which chord the collapsed row may honestly offer, decided exactly like every other folded body's: the
- *  compact view offers the threaded `(ctrl+o to expand)`, a detail view offers its own `(ctrl+e to show
- *  all)`, and an unbound chord offers nothing. `foldHint` returns it already spaced for a marker suffix. */
+/** Which chord the collapsed row offers. ONE reachable answer today: the row exists only in
+ *  `detail-collapsed` (see the projection split above), and there `foldHint` is the constant
+ *  `(ctrl+e to show all)` — `foldHint`'s other two arms (compact's threaded `(ctrl+o to expand)`, and `""`
+ *  for an unbound chord) belong to the compact projection this row never enters. It still goes THROUGH
+ *  `foldHint` rather than naming the literal, because that is the one place hint honesty is decided for
+ *  every folded body in this file and a second copy of the sentence is exactly what F4 Task 10b removed. */
 const teammateHint = (options: ProjectionOptions): string => foldHint(options).trim();
 
 /** One nested frame → its rows. `[]` covers compact (F3's surface), every non-assistant child, and a child
@@ -538,13 +541,17 @@ function nestedTeammateItems(message: Record<string, unknown>, options: Projecti
  *  arm. Detail-only, like the collapsed form and for the same reason: compact is F3's surface, where the
  *  `Done (…)` rung is already the agent's terminal row.
  *
- *  IT ALSO REQUIRES A NAME, which is a gate the attributed message rows deliberately do NOT share. An
- *  anonymous dispatch — `general-purpose`/`worker`, which `agentSubagentType` folds back to the bare noun —
- *  has no identity to close on, and `⏺ Teammate @Agent finished` under a `⏺ Agent(…)` header states nothing
- *  the `Done (…)` rung above it has not. That is upstream's own rule for this feature in the one place it is
- *  visible: `Out` (L188606) opens with `if (e === "general-purpose") return`, and `agentBatchView.sharedType`
- *  refuses to qualify a header noun with it. A message ROW keeps its `@Agent` header regardless, because
- *  there the question is "whose prose is this", which an anonymous agent still answers. */
+ *  IT ALSO REQUIRES A NAME, which is a gate the attributed message rows deliberately do NOT share — and
+ *  this one is OURS, not a port. Upstream renders the lifecycle row for `general-purpose` too; its
+ *  `general-purpose` special-case is only about COLOUR (`Out`, L188606, opens `if (e === "general-purpose")
+ *  return`, so that agent carries no custom colour and `t4` falls back to `cyan_FOR_SUBAGENTS_ONLY`). The
+ *  gate is reachability-grounded instead: on our wire the anonymous dispatch is the COMMON case, not the
+ *  exception — `agentSubagentType` folds `general-purpose`/`worker` back to the bare noun, and F3's own
+ *  batches are full of them — so `⏺ Teammate @Agent finished` under a `⏺ Agent(…)` header would be a row of
+ *  pure noise repeating what the `Done (…)` rung directly above it already said. (Upstream's own
+ *  `agentBatchView.sharedType` makes the same judgement about the bare noun in a different row: it refuses
+ *  to qualify a header with it.) A message ROW keeps its `@Agent` header regardless, because there the
+ *  question is "whose prose is this", which even the bare noun answers. */
 const IDLE_REASON: Partial<Record<ToolStatus, TeammateIdleReason>> = { success: "available", error: "failed", interrupted: "interrupted", rejected: "interrupted" };
 function agentLifecycleItem(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): RenderItem | undefined {
   if (!isAgentTool(event.name) || options.projection === "compact") return undefined;
@@ -833,8 +840,9 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
  *  `projectPending`, which folds the WHOLE anchored stream — so without a cache every frame re-renders every
  *  retained message, markdown and all, and a long resumed/attached transcript pays that per blink.
  *
- *  THE KEY IS `revision() × themeGeneration() × columns × projection × verbose × platform`, and a hit
- *  requires ALL SIX unchanged. The last four arrived with F4 Task 5 and are not optional: `projectMessageEntry`
+ *  THE KEY IS `revision() × themeGeneration() × agentMetaGeneration() × columns × projection × verbose ×
+ *  platform × expandHint`, and a hit requires ALL EIGHT unchanged. The knob half arrived with F4 Task 5
+ *  and none of it is optional: `projectMessageEntry`
  *  no longer voids its options — it forwards `columns` (the width the markdown walker fits a table to),
  *  `platform` and a `projection`/`verbose`-derived `showThinking` into `renderMessage`. So one unmutated document at one
  *  revision now projects DIFFERENTLY per knob, and the old `revision × theme` key would serve whichever
@@ -848,13 +856,27 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
  *  started switching `⏺`/`●` on it, `renderMessage` became platform-dependent and any caller that projects
  *  ONE document under two platforms (every test that does so, and any future host that reports a peer's
  *  platform) would be served the first one's glyph out of cache. A key input is decided by what the render
- *  reads, not by how often it changes. The
- *  remaining `ProjectionOptions` fields are deliberately NOT in the key: `cwd`/`home`/`now`/`thoughtMs`/
- *  `pending`/`agentMeta`/`toolEvents`/`bashHint` enter strictly LATER, in `renderToolEvent`, `groupItems`
- *  and `segmentRuns`, none of which is cached (that is what lets the 600 ms blink and the ticking thinking
- *  clause move while this stream holds still). `projectLocalEvent` reads exactly two of them — `projection`
- *  and `platform`, for the compact boundary's transcript-mode hint (F4 Task 10b) — and both are already key
- *  inputs, so its one derived row cannot be served across a projection switch.
+ *  reads, not by how often it changes.
+ *
+ *  WHAT THE CACHED BUILDER ACTUALLY READS, field by field — the honest list, because F4 Task 10c made the
+ *  old blanket sentence ("everything else enters strictly later, in uncached code") false:
+ *   · `columns`/`projection`/`verbose`/`platform`/`expandHint` — read here, and keyed (above).
+ *   · `toolEvents` — read here since Task 10c (`teammateName`/`teammateColorIndex` walk it to name and
+ *     colour a child frame's agent), and NOT keyed: it is `document.toolEvents()`, injected by `projectAll`
+ *     from the very document this cache is keyed on, so every write that can change it bumps `revision()`.
+ *   · `agentMeta` — read here since Task 10c through the same two helpers, and KEYED via
+ *     `agentMetaGeneration()`, because it is the one live input that is NOT document-derived: a `useRef`
+ *     map that `ingestTaskFrame` mutates in place on a `task` event which appends nothing. A `task_started`
+ *     naming a dispatch we never held (an attach) would otherwise leave the cached anonymous `@Agent`
+ *     header standing until some unrelated write bumped the revision.
+ *   · `cwd`/`home`/`now`/`thoughtMs`/`pending`/`bashHint` — genuinely NOT read here. They enter strictly
+ *     LATER, in `renderToolEvent`, `groupItems` and `segmentRuns`, none of which is cached, which is what
+ *     lets the 600 ms blink and the ticking thinking clause move while this stream holds still. (The
+ *     teammate LIFECYCLE row rides that same uncached path — `renderToolEvent` — so it is fresh by
+ *     construction; only the message/collapsed rows built in here need the generation.)
+ *  `projectLocalEvent` reads exactly two — `projection` and `platform`, for the compact boundary's
+ *  transcript-mode hint (F4 Task 10b) — and both are already key inputs, so its one derived row cannot be
+ *  served across a projection switch.
  *
  *  The theme is a key input because `renderMessage` → markdown/highlight resolve theme tokens PER CALL
  *  (deliberately: a setTheme() must color the very next render — render.ts:47). A setTheme() touches no
@@ -862,8 +884,8 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
  *  today also appends a local notice, which bumps the revision — but that is an incidental coincidence, not
  *  something the cache may lean on, so the theme dependency is named here rather than assumed away.)
  *
- *  ACCUMULATION. `revision`/`theme` stay on the OUTER entry and any change to either replaces it whole, so
- *  the inner per-knob map lives exactly one revision×theme epoch. Within one epoch the live key set is tiny
+ *  ACCUMULATION. `revision`/`theme`/`agents` stay on the OUTER entry and any change to any of them replaces
+ *  it whole, so the inner per-knob map lives exactly one revision×theme×agents epoch. Within one epoch the live key set is tiny
  *  (compact, detail-collapsed, detail-all at one width) — but a resize DRAG bumps no revision, so an
  *  unbounded map would retain one fully projected transcript per column count crossed. Hence the LRU bound:
  *  insertion-ordered with a recency bump, `KNOB_KEYS` deep, the same idiom as markdown.ts's lexer cache.
@@ -872,7 +894,7 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
  *  cached array is copied out because callers own their list — `projectAll`/`projectPending` push tool anchors
  *  onto it and sort it in place — while the `Anchored` records inside it are never mutated and are shared. */
 const KNOB_KEYS = 8;
-const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; theme: number; byKnobs: Map<string, readonly Anchored[]> }>();
+const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; theme: number; agents: number; byKnobs: Map<string, readonly Anchored[]> }>();
 // `expandHint` joined the key with F4 Task 10b for exactly the reason `platform` joined it with Task 8: this
 // stream now renders it (a `bash-output` sentinel's fold marker carries the chord), so a rebind that changes
 // nothing in the document would otherwise be served the OLD sentence out of cache until the next append —
@@ -883,10 +905,14 @@ const knobKey = (options: ProjectionOptions): string => `${options.columns}|${op
 export const projectionDeps = { buildAnchored: buildAnchoredEntries };
 
 function anchoredEntries(document: TranscriptDocument, options: ProjectionOptions): Anchored[] {
-  const revision = document.revision(), theme = themeGeneration(), key = knobKey(options);
+  // `agents` sits on the OUTER epoch beside `revision`/`theme`, not inside `knobKey`, for the reason the
+  // ACCUMULATION note below gives: it is a global mutation counter, so a bump invalidates every knob at
+  // once. Folding it into the knob string instead would leave the superseded compact/detail entries in the
+  // LRU as dead weight and churn the 8-deep bound on a sidechannel that fires several times a turn.
+  const revision = document.revision(), theme = themeGeneration(), agents = agentMetaGeneration(), key = knobKey(options);
   let entry = anchoredCache.get(document);
-  if (entry === undefined || entry.revision !== revision || entry.theme !== theme) {
-    entry = { revision, theme, byKnobs: new Map() };
+  if (entry === undefined || entry.revision !== revision || entry.theme !== theme || entry.agents !== agents) {
+    entry = { revision, theme, agents, byKnobs: new Map() };
     anchoredCache.set(document, entry);
   }
   const hit = entry.byKnobs.get(key);
