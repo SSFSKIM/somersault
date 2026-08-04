@@ -13,12 +13,15 @@ import { marked } from "marked";
 import stringWidth from "string-width";
 import type { Token, Tokens } from "marked";
 import type { RenderLine, Segment } from "./render.js";
-import { inlineSegments, type InlineStyle } from "./markdownInline.js";
+import { inlineSegments, type InlineEnv, type InlineStyle } from "./markdownInline.js";
 import { foldLine, lineAsSegment } from "./lineFold.js";
 import { renderTable } from "./mdTable.js";
 import { highlightCode, KNOWN_LANGS, UPSTREAM_LANGS } from "./highlight.js";
 
-export interface MarkdownOptions { width?: number; dim?: boolean }
+/** `cwd` is the SESSION's working directory, threaded so a relative `file:` link normalises against the
+ *  project the transcript is about rather than whatever directory this REPL process happens to sit in
+ *  (`ccx --cwd`, `ccx attach`). Omit it and `markdownInline` falls back to `process.cwd()`. */
+export interface MarkdownOptions { width?: number; dim?: boolean; cwd?: string }
 
 /** A run is a segment whose text may contain `\n`s — the newline positions ARE the block grammar. */
 type Run = Segment & { text: string };
@@ -60,7 +63,7 @@ function lex(text: string): Token[] {
 }
 
 // ── the run walker ──────────────────────────────────────────────────────────────────────────────────
-interface Ctx { style: InlineStyle; width: number }
+interface Ctx { style: InlineStyle; width: number; env: InlineEnv }
 
 const NL = "\n";                                        // `aW` (pack §1.1)
 
@@ -125,7 +128,7 @@ function quoteRuns(t: Tokens.Blockquote, ctx: Ctx, out: Run[]): void {
  *  `trimEnd()`ed AFTER a `" | "` suffix, which strips the trailing space and LEAVES the closing `|`
  *  attached. The case ends on `m + aW` — a second newline past the last row's own. */
 function nestedTableRuns(t: Tokens.Table, ctx: Ctx, out: Run[]): void {
-  const segsOf = (c: Tokens.TableCell | undefined) => inlineSegments(c?.tokens ?? [], ctx.style);
+  const segsOf = (c: Tokens.TableCell | undefined) => inlineSegments(c?.tokens ?? [], ctx.style, ctx.env);
   const widthOf = (c: Tokens.TableCell | undefined) => stringWidth(segsOf(c).map((s) => s.text).join(""));   // `Ut` — strips ANSI/OSC-8 itself
   const colW = t.header.map((h, i) => Math.max(t.rows.reduce((m, r) => Math.max(m, widthOf(r[i])), widthOf(h)), 3));
   const row = (cells: Tokens.TableCell[]) => {
@@ -170,7 +173,7 @@ function itemRuns(item: Tokens.ListItem, depth: number, num: number | null, ctx:
       // bullet.
       const box = first && item.task ? (item.checked ? "[x] " : "[ ] ") : "";
       out.push(styled(ctx, first ? `${indent}${marker} ${box}` : indent));
-      for (const s of inlineSegments((child as Tokens.Text | Tokens.Paragraph).tokens ?? [], ctx.style)) out.push(s as Run);
+      for (const s of inlineSegments((child as Tokens.Text | Tokens.Paragraph).tokens ?? [], ctx.style, ctx.env)) out.push(s as Run);
       out.push(styled(ctx, NL));
       first = false; continue;
     }
@@ -182,12 +185,12 @@ function blockRuns(t: Token, ctx: Ctx, out: Run[]): void {
   switch (t.type) {
     case "heading": {                                   // pack §1.2: depth 1 → bold+italic+underline, else bold; TWO newlines
       const h = t as Tokens.Heading;
-      const segs = inlineSegments(h.tokens ?? [], { ...ctx.style, bold: true, ...(h.depth === 1 ? { italic: true } : {}) });
+      const segs = inlineSegments(h.tokens ?? [], { ...ctx.style, bold: true, ...(h.depth === 1 ? { italic: true } : {}) }, ctx.env);
       for (const s of segs) out.push((h.depth === 1 ? { ...s, underline: true } : s) as Run);
       out.push(styled(ctx, NL + NL));
       break;
     }
-    case "paragraph": for (const s of inlineSegments((t as Tokens.Paragraph).tokens ?? [], ctx.style)) out.push(s as Run);
+    case "paragraph": for (const s of inlineSegments((t as Tokens.Paragraph).tokens ?? [], ctx.style, ctx.env)) out.push(s as Run);
       out.push(styled(ctx, NL)); break;
     case "space": case "br": out.push(styled(ctx, NL)); break;
     case "hr": out.push(styled(ctx, "---")); break;      // pack §1.3: the literal, unstyled, no trailing newline
@@ -196,7 +199,7 @@ function blockRuns(t: Token, ctx: Ctx, out: Run[]): void {
     case "table": nestedTableRuns(t as Tokens.Table, ctx, out); break;
     case "list": listRuns(t as Tokens.List, 0, ctx, out); break;
     case "def": break;                                  // pack §1.10 L420702: the empty string
-    default: for (const s of inlineSegments([t], ctx.style)) out.push(s as Run);
+    default: for (const s of inlineSegments([t], ctx.style, ctx.env)) out.push(s as Run);
   }
 }
 
@@ -228,7 +231,7 @@ function trimBlanks(lines: RenderLine[]): RenderLine[] {
 
 export function renderMarkdown(text: string, opts: MarkdownOptions = {}): RenderLine[] {
   if (text === "") return [];
-  const ctx: Ctx = { style: opts.dim ? { dim: true } : {}, width: opts.width ?? 80 };
+  const ctx: Ctx = { style: opts.dim ? { dim: true } : {}, width: opts.width ?? 80, env: { cwd: opts.cwd } };
   // `Oaa`'s three-way split, over the post-heading-space-dropped token list (see `dropPostHeadingSpace`).
   const tokens = dropPostHeadingSpace(lex(text));
   const chunks: Token[][] = [];
@@ -243,7 +246,7 @@ export function renderMarkdown(text: string, opts: MarkdownOptions = {}): Render
     // A top-level table chunk goes to the BOX engine (`Oaa` L421143 → `TWo` → `IBp`), never through `f2`
     // — `blockRuns`' own `table` case is the nested pipe form and is unreachable from here.
     let lines: RenderLine[];
-    if (chunk[0].type === "table") lines = renderTable(chunk[0] as Tokens.Table, ctx.width);
+    if (chunk[0].type === "table") lines = renderTable(chunk[0] as Tokens.Table, ctx.width, ctx.env);
     else {
       const runs: Run[] = [];
       for (const t of chunk) blockRuns(t, ctx, runs);

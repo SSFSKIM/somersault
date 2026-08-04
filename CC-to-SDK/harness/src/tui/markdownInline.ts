@@ -10,6 +10,9 @@ import type { Segment } from "./render.js";
 import { currentTheme, isLightTheme, resolveThemeColor, themeTokens } from "./theme.js";
 
 export interface InlineStyle { bold?: boolean; italic?: boolean; strikethrough?: boolean; color?: string; dim?: boolean }
+/** Everything the inline walker needs that is NOT a visual style. Separate from `InlineStyle` on purpose:
+ *  a style is spread into every emitted `Segment`, so a `cwd` living there would leak onto the wire. */
+export interface InlineEnv { cwd?: string }
 
 // ── terminal-capability gates ───────────────────────────────────────────────────────────────────────
 // Both take an optional `env` (house DI shape) so a test can pin the matrix without touching the process;
@@ -66,8 +69,14 @@ const OSC8 = "\x1b]8;;", BEL = "\x07";                  // `vgp` / `Tgp` (bundle
 const stripDriveSlash = (p: string) => (/^\/[A-Za-z]:(?=[\\/]|$)/.test(p) && isAbsolute(p.slice(1)) ? p.slice(1) : p);
 
 /** `jhH` (L420707) — a `file:` href is normalised to an ABSOLUTE `file://` href (localhost authority
- *  dropped, percent-decoded, relative paths resolved against cwd, `#`/`?` tail preserved). */
-function fileHref(href: string): string {
+ *  dropped, percent-decoded, relative paths resolved against cwd, `#`/`?` tail preserved).
+ *  THE CWD IS THE SESSION'S, not the process's. Upstream is one process per project so the two coincide;
+ *  ours do not — `ccx --cwd <dir>`, and an `ccx attach` onto a session started elsewhere, both leave the
+ *  REPL's own `process.cwd()` pointing somewhere the transcript never talks about, and a relative `file:`
+ *  link would then resolve to (and OPEN) a file in the wrong project. `env.cwd` is the value `useChat` puts
+ *  in its `ProjectionContext`; `process.cwd()` remains the fallback for the bare `renderMarkdown` callers
+ *  that have no session behind them (PlanDialog, local command output). */
+function fileHref(href: string, cwd: string | undefined): string {
   if (!/^file:/i.test(href)) return href;
   let rest = href.slice(5);
   if (rest.startsWith("//")) { rest = rest.slice(2); if (rest === "localhost") rest = "/"; else if (rest.startsWith("localhost/")) rest = rest.slice(9); }
@@ -76,7 +85,7 @@ function fileHref(href: string): string {
   if (p === "") return href;
   try { p = decodeURIComponent(p); } catch { /* upstream swallows a malformed escape and keeps the raw path */ }
   p = stripDriveSlash(p);
-  return pathToFileURL(isAbsolute(p) ? p : resolve(process.cwd(), p)).href + tail;
+  return pathToFileURL(isAbsolute(p) ? p : resolve(cwd ?? process.cwd(), p)).href + tail;
 }
 
 /** `ZF` (bundle L393098). `o` is "the text IS the url" (upstream strips ANSI from it first; ours is
@@ -100,12 +109,12 @@ const codeColor = () => resolveThemeColor(themeTokens().permission);
 
 /** marked inline tokens → segments, accumulating `style` down the tree. `text` tokens may themselves
  *  carry nested tokens (entity escapes, or the inline body of a list item's text token). */
-export function inlineSegments(tokens: Token[], style: InlineStyle): Segment[] {
+export function inlineSegments(tokens: Token[], style: InlineStyle, env: InlineEnv = {}): Segment[] {
   const out: Segment[] = [];
   for (const t of tokens) {
     switch (t.type) {
-      case "strong": out.push(...inlineSegments(t.tokens ?? [], { ...style, bold: true })); break;
-      case "em": out.push(...inlineSegments(t.tokens ?? [], { ...style, italic: true })); break;
+      case "strong": out.push(...inlineSegments(t.tokens ?? [], { ...style, bold: true }, env)); break;
+      case "em": out.push(...inlineSegments(t.tokens ?? [], { ...style, italic: true }, env)); break;
       case "link": {
         // `case "link"` (bundle L420625–420645). Two upstream branches are NOT PORTED: the `Oro(href)` arm
         // (L420631–420639, plus the `oPi` return at L420644) and every `⧉` (`Ib`) mechanic that hangs off it.
@@ -124,8 +133,8 @@ export function inlineSegments(tokens: Token[], style: InlineStyle): Segment[] {
           break;
         }
         const supported = hyperlinksSupported();
-        const href = supported ? fileHref(lk.href) : lk.href;                  // `d = c ? jhH(href) : href`
-        const inner = inlineSegments(lk.tokens ?? [], {}).map((s) => s.text).join("");
+        const href = supported ? fileHref(lk.href, env.cwd) : lk.href;                  // `d = c ? jhH(href) : href`
+        const inner = inlineSegments(lk.tokens ?? [], {}, env).map((s) => s.text).join("");
         out.push({ ...style, ...(supported && { color: linkColor() }), text: osc8(href, inner && inner !== lk.href ? inner : lk.href, supported) + suffix });
         break;
       }
@@ -137,8 +146,8 @@ export function inlineSegments(tokens: Token[], style: InlineStyle): Segment[] {
         break;
       }
       case "del":
-        if (strikethroughSupported()) out.push(...inlineSegments(t.tokens ?? [], { ...style, strikethrough: true }));
-        else out.push({ ...style, text: `~~${inlineSegments(t.tokens ?? [], {}).map((s) => s.text).join("")}~~` });
+        if (strikethroughSupported()) out.push(...inlineSegments(t.tokens ?? [], { ...style, strikethrough: true }, env));
+        else out.push({ ...style, text: `~~${inlineSegments(t.tokens ?? [], {}, env).map((s) => s.text).join("")}~~` });
         break;
       case "codespan": out.push({ ...style, text: (t as Tokens.Codespan).text, color: codeColor() }); break;
       // A LOOSE task list nests marked 18's `checkbox` token inside the item's PARAGRAPH, i.e. right here;
@@ -147,7 +156,7 @@ export function inlineSegments(tokens: Token[], style: InlineStyle): Segment[] {
       case "checkbox": break;
       case "escape": case "text": {
         const tt = t as Tokens.Text;
-        if (tt.tokens?.length) out.push(...inlineSegments(tt.tokens, style));
+        if (tt.tokens?.length) out.push(...inlineSegments(tt.tokens, style, env));
         else out.push({ ...style, text: tt.text });
         break;
       }

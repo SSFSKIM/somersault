@@ -34,6 +34,31 @@ describe("F4 Task 5 — renderMessage options bag", () => {
   });
 });
 
+describe("F4 final review, finding 3 — the session cwd reaches the inline link normaliser", () => {
+  // A relative `file:` link is normalised against a directory. The ambient `process.cwd()` is the wrong one
+  // whenever the REPL was launched with `--cwd`, or attached to a session that lives elsewhere.
+  const LINK = "[cfg](file:notes/todo.md)";
+  const saved = process.env.TERM_PROGRAM;
+  afterEach(() => { vi.restoreAllMocks(); setTheme("auto"); if (saved === undefined) delete process.env.TERM_PROGRAM; else process.env.TERM_PROGRAM = saved; });
+
+  it("threads `cwd` through renderMessage's bag into the href", () => {
+    process.env.TERM_PROGRAM = "iTerm.app";                                     // OSC-8 on: normalisation only runs when links are supported
+    expect(renderMessage(asst(LINK), { cwd: "/projects/alpha" })[0]!.text).toContain("file:///projects/alpha/notes/todo.md");
+    expect(renderMessage(asst(LINK), { cwd: "/projects/beta" })[0]!.text).toContain("file:///projects/beta/notes/todo.md");
+  });
+  // TWO DOCUMENTS on purpose, and the reason is the cache: `cwd` is deliberately NOT part of `knobKey`
+  // because it is fixed for the life of a `useChat`, so re-projecting ONE document under a second cwd would
+  // (correctly) be served from cache. Two sessions are what two cwds actually look like.
+  it("carries it through the projection, so a published transcript row links into its OWN project", () => {
+    process.env.TERM_PROGRAM = "iTerm.app";
+    const alpha = lineTexts(projectCompact(built(prose(LINK)), { ...context, cwd: "/projects/alpha" })).join("\n");
+    const beta = lineTexts(projectCompact(built(prose(LINK)), { ...context, cwd: "/projects/beta" })).join("\n");
+    expect(alpha).toContain("file:///projects/alpha/notes/todo.md");
+    expect(beta).toContain("file:///projects/beta/notes/todo.md");
+    expect(alpha).not.toContain("/projects/beta/");
+  });
+});
+
 describe("F4 Task 5 — projectMessageEntry forwards the projection's knobs", () => {
   afterEach(() => { vi.restoreAllMocks(); setTheme("auto"); });
   it("puts `columns` on screen: the same document renders a narrower table at a narrower terminal", () => {

@@ -15,7 +15,7 @@ import { Box, Text } from "ink";
 import wrapAnsi from "wrap-ansi";
 import type { RenderLine, Segment } from "./render.js";
 import { renderMessage } from "./render.js";
-import { classifyUserText, compactSummaryLines, COMPACT_SUMMARY_SPECIES, INTERRUPT_PLAIN, INTERRUPT_TOOL, TOOL_RESULT_GUTTER, teammateCollapsedLine, teammateLifecycleLine, teammateMessageLines, type TeammateIdleReason } from "./species.js";
+import { classifyUserText, compactSummaryLines, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES, INTERRUPT_PLAIN, INTERRUPT_TOOL, TOOL_RESULT_GUTTER, teammateCollapsedLine, teammateLifecycleLine, teammateMessageLines, type TeammateIdleReason } from "./species.js";
 import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
@@ -579,7 +579,7 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions,
   // F4 Task 10b adds `projection` + `expandHint`: `species.ts`'s `bash-output` is a FOLDED body (upstream folds
   // it through the very `p2`/`y_s` a tool result uses), so it needs the same "how much" knob every other body
   // takes, and its overflow marker offers the same live chord.
-  const renderOpts = { width: options.columns, platform: options.platform, showThinking: options.projection !== "compact" || options.verbose, projection: options.projection, expandHint: options.expandHint };
+  const renderOpts = { width: options.columns, platform: options.platform, showThinking: options.projection !== "compact" || options.verbose, projection: options.projection, expandHint: options.expandHint, cwd: options.cwd };
   const message = entry.message;
   // F4 Task 10c: the nested branch stops being a hole. It STILL renders nothing in compact — see the
   // teammate section above for why that is F3's surface — but the detail projections now attribute it.
@@ -606,9 +606,17 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions,
  *  (L422289), so shape B shows `⏺ Compact summary` with NO expand clause under ctrl+O — offering the very
  *  view you are already in is the same dishonesty a stale chord is. The row is baked at ingest, so the
  *  detail projection re-derives it hintless off the `COMPACT_SUMMARY_SPECIES` tag rather than storing a
- *  second copy; the compact projection keeps the baked line untouched. */
+ *  second copy; the compact projection keeps the baked line untouched.
+ *
+ *  A SECOND exception, the mirror of the first: a `level:"info"` system notice. sdk.d.ts's `level` doc says
+ *  info "shows only in transcript mode", and `dVo`'s gate agrees (see `isTranscriptOnlyNotice`) — so the row
+ *  is retained, baked, and projected to NOTHING here in compact. Retaining rather than dropping is the point:
+ *  the old ingest-time drop meant ctrl+O could not show what compact was hiding, which is not "hidden", it is
+ *  gone. `transcriptMode` (not `verbose`) is the port of upstream's screen, exactly as above: the transcript
+ *  screen is the surface that passes `verbose: !0` down (L476168), and both our detail projections are it. */
 export function projectLocalEvent(entry: LocalEntry, options?: ProjectionOptions): readonly RenderItem[] {
   const transcriptMode = options !== undefined && options.projection !== "compact";
+  if (!transcriptMode && entry.event.data?.species === SYSTEM_INFO_SPECIES) return [];
   const lines = transcriptMode && entry.event.data?.species === COMPACT_SUMMARY_SPECIES
     ? compactSummaryLines("", options.platform) : entry.event.lines;
   return lines.map((line, index) => ({ kind: "line" as const, id: localItemId(entry.identity, index), line }));
@@ -809,7 +817,14 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
   const occurrences = new Map<string, number>();
   let open: { name: string; count: number; record: Anchored } | undefined;
   for (const entry of document.entries()) {
-    if (entry.kind === "local-event") { open = undefined; anchored.push({ sequence: entry.sequence, rank: 0, items: projectLocalEvent(entry, options), atom: "breaker" }); continue; }
+    // A local visual breaks a fold run because it DRAWS between the two halves. One that projects to nothing
+    // in this projection (a transcript-only info notice under compact) draws no such thing, so it is neutral
+    // there and the reads around it still fold into one row — the same reasoning as the absorbed teammate
+    // frame below, and the opposite of the interrupt sentinel, whose break is asserted rather than observed.
+    if (entry.kind === "local-event") {
+      const items = projectLocalEvent(entry, options);
+      open = undefined; anchored.push({ sequence: entry.sequence, rank: 0, items, atom: items.length === 0 ? "neutral" : "breaker" }); continue;
+    }
     const key = entry.identity ?? hashMessage(entry.message);
     const occurrence = occurrences.get(key) ?? 0;
     occurrences.set(key, occurrence + 1);
@@ -899,7 +914,17 @@ const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; theme:
 // stream now renders it (a `bash-output` sentinel's fold marker carries the chord), so a rebind that changes
 // nothing in the document would otherwise be served the OLD sentence out of cache until the next append —
 // which is the stale-hint dishonesty F2 shipped to end. A key input is decided by what the render reads.
-const knobKey = (options: ProjectionOptions): string => `${options.columns}|${options.projection}|${options.verbose}|${options.platform}|${options.expandHint ?? ""}`;
+// ABSENT ≠ EMPTY, and the two are opposite renders: an absent `expandHint` means "no hint threaded", and the
+// producers fall back to `EXPAND_HINT_FALLBACK` (`(ctrl+o to expand)`); an explicit `""` means the chord is
+// UNBOUND and the clause must not be printed at all. Collapsing both to `""` in the key served the fallback
+// sentence to a projection that had just asked for silence — the dead-chord dishonesty again, cached. Hence
+// the `=` marker: absent keys as nothing, an explicit value keys as `=<value>`, empty string included.
+// `cwd` is deliberately NOT a key input even though the markdown walker now reads it (finding 3): it is fixed
+// for the life of a `useChat` (`opts.cwd ?? process.cwd()`, never re-set — /add-dir adds ADDITIONAL dirs and
+// leaves cwd alone, and an attach builds a fresh REPL rather than re-pointing a live one), so no cached row
+// can outlive the value it was rendered against. Widening the key would only cost.
+const knobKey = (options: ProjectionOptions): string =>
+  `${options.columns}|${options.projection}|${options.verbose}|${options.platform}|${options.expandHint === undefined ? "" : `=${options.expandHint}`}`;
 /** DI-by-deps test seam: the builder is reached through this record, so a test can count rebuilds without
  *  reading the cache itself. Production never reassigns it. */
 export const projectionDeps = { buildAnchored: buildAnchoredEntries };

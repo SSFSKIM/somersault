@@ -80,6 +80,49 @@ describe("resolvePatch — branch 2, the derived + disk-anchored Edit", () => {
     expect(patch.hunks[0]!.oldStart).toBe(3);                                   // snippet 1 + anchor offset 2
     expect(patch.hunks[1]!.oldStart).toBe(12);                                  // snippet 10 + anchor offset 2
   });
+  // THE ORDINARY DISK-REPLAY SHAPE, and the one this rung exists for. Rung 2 is reached only when there is no
+  // recognized sidecar — which is exactly what `getSessionMessages` hands back — and by then a SUCCESSFUL Edit
+  // has already written `new_string` to the file. Searching for `old_string` alone could therefore never match
+  // on the path that needs it, so every ordinary flat-only Edit was stuck approximate forever.
+  it("anchors a POST-EDIT file on new_string and reports the same pre-edit line numbers", () => {
+    const postEdit = "one\ntwo\nalpha\nBETA\ngamma\nseven\n";                  // the edit already applied
+    const patch = resolvePatch({ input: editInput(), sidecar: undefined, readFile: () => postEdit })!;
+    expect(patch.numbering).toBe("absolute");
+    expect(patch.hunks.map((h) => h.oldStart)).toEqual([3]);                   // identical to the pre-edit read above
+    expect(flat(patch.hunks[0]!.rows)).toEqual(["context:alpha", "remove:beta", "add:BETA", "context:gamma"]);
+  });
+  // The bytes BEFORE the replaced span are identical pre/post edit, which is the whole justification — so a
+  // multi-hunk edit shifts by the same anchor whichever side of it matched.
+  it("offsets every hunk by the new_string anchor too", () => {
+    const old = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m"].join("\n");
+    const next = old.replace("a", "A").replace("m", "M");
+    const patch = resolvePatch({ input: { file_path: "/f", old_string: old, new_string: next }, sidecar: undefined, readFile: () => `x\ny\n${next}\n` })!;
+    expect(patch.numbering).toBe("absolute");
+    expect(patch.hunks.map((h) => h.oldStart)).toEqual([3, 12]);               // the same two numbers the pre-edit read gives
+  });
+  // CONTAINMENT. `old_string` survives inside `new_string` for the commonest Edit shape there is — inserting a
+  // line above an anchor line — so a post-edit file matches BOTH needles, and the `old_string` match sits one
+  // line late. The enclosing match is the one that names the pre-edit position.
+  it("prefers the enclosing new_string match when old_string survives inside it", () => {
+    const input = { file_path: "/f", old_string: "beta", new_string: "alpha\nbeta" };
+    const patch = resolvePatch({ input, sidecar: undefined, readFile: () => "one\ntwo\nalpha\nbeta\nnine\n" })!;
+    expect(patch.numbering).toBe("absolute");
+    expect(patch.hunks[0]!.oldStart).toBe(3);                                  // "beta" was pre-edit line 3, not 4
+  });
+  // …and the reverse containment (a deletion, `new_string` inside `old_string`) must still read the PRE-edit
+  // file off `old_string`, which is the wider match there and therefore not overridden.
+  it("keeps the old_string anchor on a pre-edit file whose new_string is a substring of it", () => {
+    const input = { file_path: "/f", old_string: "alpha\nbeta", new_string: "beta" };
+    const patch = resolvePatch({ input, sidecar: undefined, readFile: () => "one\ntwo\nalpha\nbeta\nnine\n" })!;
+    expect(patch.numbering).toBe("absolute");
+    expect(patch.hunks[0]!.oldStart).toBe(3);                                  // the span starts at "alpha", line 3
+  });
+  it("stays approximate when the POST-edit content appears twice as well", () => {
+    const twice = "alpha\nBETA\ngamma\nfiller\nalpha\nBETA\ngamma\n";
+    const patch = resolvePatch({ input: editInput(), sidecar: undefined, readFile: () => twice })!;
+    expect(patch.numbering).toBe("approximate");
+    expect(patch.hunks.every((h) => h.oldStart === undefined)).toBe(true);
+  });
   it("stays approximate when the expected content appears twice (a replace_all edit included)", () => {
     const twice = "alpha\nbeta\ngamma\nfiller\nalpha\nbeta\ngamma\n";
     const patch = resolvePatch({ input: editInput(), sidecar: undefined, readFile: () => twice })!;
@@ -87,6 +130,8 @@ describe("resolvePatch — branch 2, the derived + disk-anchored Edit", () => {
     expect(patch.hunks.every((h) => h.oldStart === undefined)).toBe(true);
     expect({ added: patch.added, removed: patch.removed }).toEqual({ added: 1, removed: 1 });
   });
+  // "Changed under us" now means content carrying NEITHER side of the edit — with both needles live, a file
+  // holding either one is anchorable, and only a genuinely unrecognizable file refuses to be numbered.
   it("stays approximate when the file is missing or has changed under us", () => {
     expect(resolvePatch({ input: editInput(), sidecar: undefined, readFile: () => undefined })!.numbering).toBe("approximate");
     expect(resolvePatch({ input: editInput(), sidecar: undefined, readFile: () => "something\nelse\n" })!.numbering).toBe("approximate");

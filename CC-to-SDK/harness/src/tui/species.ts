@@ -606,6 +606,21 @@ const refusalFallbackEnabled = (): boolean => !process.env.CLAUDE_CODE_DISABLE_R
  *  the two differently; it shares its bytes with `LOCAL_OUTPUT_GUTTER` by coincidence, not by construction. */
 const REFUSAL_TIP = "  ⎿  Tip: You can configure model switch behavior in /config";
 
+/** Pack §9.6 correction 2 (L428497) as a PREDICATE, because the gate has two readers now. `dVo`'s test is
+ *  `subtype !== "stop_hook_summary" && !verbose && level === "info"`, and an `info` frame is not DROPPED by it
+ *  — it is TRANSCRIPT-ONLY. Both authorities say so and agree: sdk.d.ts's `level` doc ("Render level. 'info'
+ *  shows only in transcript mode") and the bundle, where the transcript screen renders the whole message list
+ *  with `verbose: !0` (L476168) so `dVo`'s `!verbose` arm is false there while the ordinary prompt screen
+ *  passes the plain `--verbose` flag (L456975, `verbose: n || At(ve)`).
+ *  Exported so the INGEST that bakes these lines can tag the row transcript-only instead of swallowing it: our
+ *  clone decides `level` once, at ingest, but the visibility it decides is a PROJECTION question, and a
+ *  compact-only decision made at ingest is what made every info notice unreachable even under ctrl+O. */
+export const isTranscriptOnlyNotice = (frame: Record<string, unknown>): boolean =>
+  frame.subtype !== "stop_hook_summary" && frame.level === "info";
+/** The tag `useChat` stamps on such a notice, read by `projectLocalEvent` exactly as `COMPACT_SUMMARY_SPECIES`
+ *  is: compact projects it to NO rows, the detail projections project it whole. */
+export const SYSTEM_INFO_SPECIES = "system-info";
+
 export function systemNoticeLines(frame: Record<string, unknown>, opts: SpeciesOptions = {}): RenderLine[] | null {
   const subtype = typeof frame.subtype === "string" ? frame.subtype : "";
   const level = typeof frame.level === "string" ? frame.level : undefined;
@@ -620,9 +635,9 @@ export function systemNoticeLines(frame: Record<string, unknown>, opts: SpeciesO
     if (content === "") return null;
     return [...bulletBlock(content, width, color("warning"), opts.platform, { bold: true }), { text: REFUSAL_TIP, dim: true }];
   }
-  // Pack §9.6 correction 2 (L428497): the BLANKET info gate. It sits after the nine subtype branches (so it
-  // cannot silence them) and before everything below, `stop_hook_summary` alone excepted.
-  if (subtype !== "stop_hook_summary" && opts.verbose !== true && level === "info") return null;
+  // The BLANKET info gate (predicate above). It sits after the nine subtype branches (so it cannot silence
+  // them) and before everything below, `stop_hook_summary` alone excepted.
+  if (opts.verbose !== true && isTranscriptOnlyNotice(frame)) return null;
   if (SILENT_SUBTYPES.has(subtype)) return null;
   const content = frame.content;
   if (typeof content !== "string") return null;

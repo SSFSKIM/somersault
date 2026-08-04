@@ -73,6 +73,31 @@ describe("F4 Task 3 — links (bundle `case \"link\"` L420625–420645 → `ZF` 
     expect(texts("[h](file://localhost/tmp/a.txt)")[0]).toBe(OSC("file:///tmp/a.txt", "h"));
   });
 
+  // F4 final review, finding 3. A RELATIVE `file:` link resolves against a directory, and until this fix that
+  // directory was the REPL process's ambient cwd. Upstream is one process per project so the two coincide;
+  // ours do not (`ccx --cwd <dir>`, and an `ccx attach` onto a session started elsewhere), and the link then
+  // opens a same-named file in the wrong project. One link, two session cwds, two different targets.
+  it("resolves a RELATIVE file: link against the threaded session cwd, not process.cwd()", () => {
+    setEnv(ITERM);
+    const link = "[cfg](file:notes/todo.md)";
+    expect(renderMarkdown(link, { cwd: "/projects/alpha" })[0]!.text).toBe(OSC("file:///projects/alpha/notes/todo.md", "cfg"));
+    expect(renderMarkdown(link, { cwd: "/projects/beta" })[0]!.text).toBe(OSC("file:///projects/beta/notes/todo.md", "cfg"));
+    // No cwd threaded (PlanDialog and the local-command-output callers) keeps the process fallback…
+    expect(renderMarkdown(link)[0]!.text).toBe(OSC(`file://${process.cwd()}/notes/todo.md`, "cfg"));
+    // …and an ABSOLUTE file: url is untouched by any of it.
+    expect(renderMarkdown("[f](file:///tmp/a.txt)", { cwd: "/projects/alpha" })[0]!.text).toBe(OSC("file:///tmp/a.txt", "f"));
+  });
+
+  // The walker is recursive and the cwd rides an env bag beside the style bag, so a link nested inside other
+  // inline markup — and one inside a TABLE cell, which is a separate engine (`mdTable`) — must see it too.
+  it("threads the session cwd into nested inline markup and into table cells", () => {
+    setEnv(ITERM);
+    const nested = renderMarkdown("**bold [cfg](file:notes/todo.md) tail**", { cwd: "/projects/alpha" })[0]!.text;
+    expect(nested).toContain(OSC("file:///projects/alpha/notes/todo.md", "cfg"));
+    const table = renderMarkdown("| a |\n| --- |\n| [cfg](file:notes/todo.md) |", { cwd: "/projects/alpha", width: 60 }).map((l) => l.text).join("\n");
+    expect(table).toContain("file:///projects/alpha/notes/todo.md");
+  });
+
   it("no `⧉` ever reaches our OSC-8 runs — including on a REAL artifact href that `AIg` matches", () => {
     setEnv(ITERM);
     // `AIg` (L100700) is `^https://(claude\.ai|claude-ai\.staging\.ant\.dev)/code/(artifact|frame)/<uuid>/?$`,

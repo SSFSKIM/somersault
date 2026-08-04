@@ -22,7 +22,7 @@ import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import { userEchoLines, type RenderLine } from "./render.js";
-import { compactSummaryLines, systemNoticeLines, COMPACT_SUMMARY_SPECIES } from "./species.js";
+import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES } from "./species.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { LiveTurn } from "./liveTurn.js";
@@ -410,7 +410,7 @@ export function useChat(
         // The SAME injected clock the projection uses: the thinking clock's arrival stamps and the `now`
         // the fold row is rendered against must not come from two different sources (a frame-capture
         // fixture pins one of them, and a live-reading LiveTurn would make its output unreproducible).
-        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]);
+        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]);
       }
       else if (ev.kind === "message") {
         const data = ev.data as any;
@@ -458,9 +458,16 @@ export function useChat(
         // from the frame's own uuid exactly as the compact boundary's does, and a follow replay of the same
         // frame publishes once.
         if (data?.type === "system" && data.subtype !== "compact_boundary") {
-          const lines = systemNoticeLines(data, { width: columnsFn(), platform, expandHint: expandHintRef.current });
+          // `verbose: true` — deliberately, and it is NOT a claim that this client is verbose. The only thing
+          // verbosity decides inside `systemNoticeLines` is the `level:"info"` gate, and that gate is a
+          // PROJECTION question, not an ingest one: sdk.d.ts says info "shows only in transcript mode" and the
+          // bundle's transcript screen renders the list with `verbose: !0` (L476168). Baking the row with the
+          // gate OPEN and tagging it transcript-only is what lets compact hide it and ctrl+O show it; baking it
+          // shut (the pre-fix shape) dropped the frame before it reached the document, so no projection —
+          // detail included — could ever get it back.
+          const lines = systemNoticeLines(data, { width: columnsFn(), platform, expandHint: expandHintRef.current, verbose: true });
           if (lines && lines.length) {
-            const notice: LocalTranscriptEvent = { kind: "notice", lines };
+            const notice: LocalTranscriptEvent = { kind: "notice", lines, ...(isTranscriptOnlyNotice(data) && { data: { species: SYSTEM_INFO_SPECIES } }) };
             if (nonEmptyString(data.uuid)) appendLocalIdentified(notice, `system-notice:${data.uuid}`); else appendNewLocal(notice);
           }
         }

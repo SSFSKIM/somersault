@@ -1720,6 +1720,31 @@ describe("useChat: one retained document behind every surface", () => {
     expect(items.flatMap(itemLines).filter((t) => t.includes("Compact summary"))).toHaveLength(1);
   });
 
+  // F4 final review, finding 2. An `info` system notice is TRANSCRIPT-ONLY, not dropped: sdk.d.ts's `level`
+  // doc says "'info' shows only in transcript mode", and the bundle's transcript screen renders the message
+  // list with `verbose: !0` (L476168), which is precisely the arm `dVo`'s `!verbose` info gate (L428497) reads.
+  // Before the fix the frame was gated at INGEST and never entered the document, so ctrl+O could not show what
+  // compact was hiding — the notice was unreachable in every projection.
+  it("keeps a level:info system notice out of compact and IN the ctrl+O detail projections", async () => {
+    const fake = fakeRemote();
+    const api: { detail?: (p: "detail-all" | "detail-collapsed") => readonly RenderItem[] } = {};
+    let items: readonly RenderItem[] = [];
+    function H() { const c = useChat(() => fake); api.detail = c.detailItems; items = c.state.staticItems; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "informational", uuid: "sys-info-1", level: "info", content: "QUIET-INFO-LINE" } });
+    // A `notice`-level frame beside it proves the gate is about LEVEL, not about system frames in general.
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "informational", uuid: "sys-notice-1", level: "notice", content: "LOUD-NOTICE-LINE" } });
+    await waitFor(() => frame(lastFrame).includes("LOUD-NOTICE-LINE"));
+    expect(frame(lastFrame)).not.toContain("QUIET-INFO-LINE");                 // compact hides it…
+    expect(items.flatMap(itemLines).some((t) => t.includes("QUIET-INFO-LINE"))).toBe(false);
+    for (const projection of ["detail-all", "detail-collapsed"] as const) {    // …detail shows it, in BOTH modes
+      const lines = api.detail!(projection).flatMap(itemLines);
+      expect(lines.some((t) => t.includes("QUIET-INFO-LINE"))).toBe(true);
+      expect(lines.some((t) => t.includes("LOUD-NOTICE-LINE"))).toBe(true);
+    }
+  });
+
   // Round-1 review finding 2 (A): a turn that ends with a call still open leaves an ORPHAN. The document
   // keeps it verbatim (never a fabricated result), but nothing is running, so the blink epoch must end and
   // the transient row must go.

@@ -178,7 +178,11 @@ export function toolTarget(name: string, input: Record<string, unknown>): string
  *  `projection` (a folded species — `bash-output` — must show everything under ctrl+o, nothing under the
  *  transcript) and `expandHint` (the LIVE `(chord to expand)` sentence; see `keys/hints.ts`). Both reach
  *  `species.ts`, which owns every surface that folds or offers an expansion on this path. */
-export interface RenderMessageOptions { width?: number; platform?: NodeJS.Platform; showThinking?: boolean; projection?: ResultProjection; expandHint?: string }
+/** `cwd` (F4 final review, finding 3) is the SESSION's directory, not this process's: it reaches the inline
+ *  markdown walker so a relative `file:` link in a reply resolves against the project the transcript is
+ *  about. Under `ccx --cwd <dir>`, and under an `ccx attach` onto a session started elsewhere, the two are
+ *  different directories and the ambient one opens the wrong file. */
+export interface RenderMessageOptions { width?: number; platform?: NodeJS.Platform; showThinking?: boolean; projection?: ResultProjection; expandHint?: string; cwd?: string }
 
 /** Map one SDK message to renderable lines — the NON-TOOL species only. `tool_use`/`tool_result` blocks are
  *  deliberately absent since F1 Task 4: every tool row goes through `renderToolEvent` instead, so there is
@@ -198,7 +202,7 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
         const sentinel = errorSentinelLines(String(b.text), { width: opts.width, platform: opts.platform, expandHint: opts.expandHint, verbose: opts.projection === "detail-all" });
         if (sentinel !== undefined) { out.push(...sentinel); continue; }
       }
-      if (b?.type === "text" && b.text) out.push(...withAssistantBullet(renderMarkdown(String(b.text), { width: opts.width }), opts.platform));
+      if (b?.type === "text" && b.text) out.push(...withAssistantBullet(renderMarkdown(String(b.text), { width: opts.width, cwd: opts.cwd }), opts.platform));
       // Thinking (Task 9). The guard comes FIRST: hidden is the ordinary transcript's answer, and only a
       // detail/verbose projection turns it on. When it is on, `zAr` trims the text (L422969 `B5p.trim()`)
       // and bails on an empty one (`nI` at L422953 strips `<cc-memory>` tags, not whitespace — upstream
@@ -209,7 +213,7 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
       // `redacted_thinking` carries no readable text at all, so it renders the placeholder instead (L429450).
       else if (b?.type === "thinking" && opts.showThinking === true) {
         const thinking = String(b.thinking ?? "").trim();
-        if (thinking) out.push(...withThinkingGutter(renderMarkdown(thinking, { width: opts.width, dim: true })));
+        if (thinking) out.push(...withThinkingGutter(renderMarkdown(thinking, { width: opts.width, dim: true, cwd: opts.cwd })));
       }
       else if (b?.type === "redacted_thinking" && opts.showThinking === true) out.push({ ...THINKING_PLACEHOLDER });
     }

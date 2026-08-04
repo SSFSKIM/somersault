@@ -7,7 +7,7 @@
 import stringWidth from "string-width";
 import wrapAnsi from "wrap-ansi";
 import type { Tokens } from "marked";
-import { inlineSegments } from "./markdownInline.js";
+import { inlineSegments, type InlineEnv } from "./markdownInline.js";
 import { foldLine, styleKey } from "./lineFold.js";
 import type { RenderLine, Segment } from "./render.js";
 
@@ -121,11 +121,11 @@ function pad(cell: Segment[], width: number, align: Align): Segment[] {
  *  ambient-style parameter ON PURPOSE: `Oaa` hands `dimColor` to the prose `wc`s but NOT to `TWo`
  *  (L421146 vs L421150), so a table inside a dimmed markdown block renders UNDIMMED upstream. A nested
  *  table does inherit it, because that one is glued into the prose string — see markdown.ts. */
-export function renderTable(t: Tokens.Table, width: number): RenderLine[] {
+export function renderTable(t: Tokens.Table, width: number, env: InlineEnv = {}): RenderLine[] {
   const dropped = Math.max(0, t.rows.length - ROW_CAP);                     // L420908
   const rows = dropped > 0 ? t.rows.slice(0, ROW_CAP) : t.rows;
   const memo = new Map<Cell, Segment[]>();                                  // `l = new Map` — one walk per cell
-  const segsOf = (c: Cell): Segment[] => { const hit = memo.get(c); if (hit) return hit; const v = inlineSegments(c?.tokens ?? [], {}); memo.set(c, v); return v; };
+  const segsOf = (c: Cell): Segment[] => { const hit = memo.get(c); if (hit) return hit; const v = inlineSegments(c?.tokens ?? [], {}, env); memo.set(c, v); return v; };
   const textOf = (c: Cell) => plain(segsOf(c));
   const line = (segs: Segment[]) => foldLine(merge(segs));
   const bare = (text: string) => line([{ text }]);

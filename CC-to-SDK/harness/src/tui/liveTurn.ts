@@ -36,6 +36,7 @@ export class LiveTurn {
   private clock: () => number;
   private columns: () => number;
   private platform: NodeJS.Platform;
+  private cwd?: string;
   /** `now` is injected for the same reason the projection's is: a test (and the frame-capture fixture)
    *  has to pin arrival stamps that would otherwise read the host wall clock. `columns` (F4 Task 5) mirrors
    *  it exactly: the live region renders markdown, markdown fits width-sensitive blocks to the terminal, and
@@ -44,11 +45,16 @@ export class LiveTurn {
    *  `platform` (F4 Task 8) is the SAME value `useChat` puts in its `ProjectionContext`, and it is threaded
    *  for one reason: the streaming bullet and the settled bullet are the same glyph, so a live message must
    *  not paint `⏺` and then re-paint as `●` the instant it lands in the retained document. Captured, not a
-   *  thunk — unlike width and the clock, a host does not change platform mid-turn. */
-  constructor(deps: { now?: () => number; columns?: () => number; platform?: NodeJS.Platform } = {}) {
+   *  thunk — unlike width and the clock, a host does not change platform mid-turn.
+   *  `cwd` is threaded for the SAME live-vs-settled reason: the streaming region renders markdown, a relative
+   *  `file:` link in it normalises against a directory, and the settled row will use the session's — so a
+   *  live message must not point a link at this process's cwd and then silently re-point on landing.
+   *  Captured for the same reason platform is: a session's cwd is fixed for its whole life. */
+  constructor(deps: { now?: () => number; columns?: () => number; platform?: NodeJS.Platform; cwd?: string } = {}) {
     this.clock = deps.now ?? (() => Date.now());
     this.columns = deps.columns ?? (() => 80);
     this.platform = deps.platform ?? process.platform;
+    this.cwd = deps.cwd;
   }
   /** Real running output-token count for the WHOLE turn (committed messages + the in-flight one). */
   get outputTokens(): number { return this.committedTokens + this.currentMsgTokens; }
@@ -141,7 +147,7 @@ export class LiveTurn {
   }
 
   private renderBlock(b: Block): RenderLine[] {
-    if (b.kind === "text") return b.text ? withAssistantBullet(renderMarkdown(b.text, { width: this.columns() }), this.platform) : [];
+    if (b.kind === "text") return b.text ? withAssistantBullet(renderMarkdown(b.text, { width: this.columns(), cwd: this.cwd }), this.platform) : [];
     // F4 Task 9 (+ t9 review): an OPEN thinking block renders NOTHING here. Upstream's stream handler never
     // accumulates thinking text — a thinking delta feeds only a token counter (L374721–374730), in pointed
     // contrast to text deltas (L374708–374716) — so the live surfaces for in-flight thinking are the

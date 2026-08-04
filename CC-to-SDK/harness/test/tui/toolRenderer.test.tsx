@@ -490,6 +490,25 @@ describe("F1 anchored-stream memoization", () => {
     expect((groupRows(projectCompact(doc, { ...context, expandHint: "" }))[0] as { line: RenderLine }).line.text).toBe("  Read 1 file");
   });
 
+  // F4 final review, finding 4. ABSENT and EMPTY are two DIFFERENT renders of the hint slot — absent means
+  // "nothing threaded", and the producers print `EXPAND_HINT_FALLBACK`; empty means the chord is UNBOUND and
+  // nothing may be printed. A key that folded both into `""` served the cached fallback sentence to the
+  // projection that had just asked for silence, i.e. cached the dead-chord dishonesty.
+  // Driven through a folded `bash-output` sentinel, which is a MESSAGE-entry projection and therefore the
+  // thing this cache actually holds — the group row above is refolded on every call and would pass the pin
+  // with the key collapsed, proving nothing.
+  it("distinguishes an ABSENT expand hint from an explicitly UNBOUND one in the cache key", () => {
+    const body = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n");
+    const doc = built({ type: "user", message: { content: [{ type: "text", text: `<bash-stdout>${body}</bash-stdout>` }] } } as Record<string, unknown>);
+    const marker = (options: Parameters<typeof projectCompact>[1]) => lineTexts(projectCompact(doc, options)).find((t) => t.includes("+37 lines"));
+    const { expandHint: _drop, ...absent } = { ...context, expandHint: undefined as string | undefined };
+    expect(marker(absent)).toBe("     … +37 lines (ctrl+o to expand)");        // absent ⇒ EXPAND_HINT_FALLBACK
+    // Same document, same revision, same theme, same width — only the hint went from absent to UNBOUND.
+    expect(marker({ ...context, expandHint: "" })).toBe("     … +37 lines");
+    // …and back, which is the direction that proves neither state overwrote the other's cache entry.
+    expect(marker(absent)).toBe("     … +37 lines (ctrl+o to expand)");
+  });
+
   it("still cache-hits when neither the document nor the theme moved", () => {
     setTheme("light");
     const doc = built(prose("use `x` now"));

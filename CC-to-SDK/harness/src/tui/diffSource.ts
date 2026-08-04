@@ -3,7 +3,8 @@
 //   1. a RECOGNIZED `tool_use_result.structuredPatch` — absolute hunk positions taken verbatim, disk NEVER read
 //      (a re-read observes state NEWER than the completed edit it would be numbering);
 //   2. a flat-only Edit — diffed locally from the complete retained input, and anchored against disk ONLY when
-//      the expected content is still there EXACTLY once; otherwise the hunks carry no position at all.
+//      one of the two sides of the edit (pre-edit `old_string`, else post-edit `new_string`) is still there
+//      EXACTLY once; otherwise the hunks carry no position at all.
 // The rule under both: being visibly approximate beats being confidently wrong. `numbering` is the wire that
 // carries that admission to the renderer — an unanchored patch never hands out a line number it cannot stand
 // behind. Purely a source resolver: it renders nothing, and Task 7 owns every glyph.
@@ -45,18 +46,42 @@ function sidecarPatch(sidecar: Record<string, unknown>, counts: { added: number;
   return { hunks: positioned ? hunks : hunks.map((h) => ({ ...h, oldStart: undefined })), numbering: positioned ? "absolute" : "approximate", ...counts };
 }
 
-/** The anchor: the 0-based line offset at which the pre-edit snippet still sits in the file on disk, or
- *  `undefined` when we cannot prove it. Every rejection here is deliberate — no path (a Bash-shaped input), a
- *  file that is gone or unreadable, an empty `old_string` (an insertion matches everywhere), content that has
- *  changed since the edit, and a SECOND occurrence (a `replace_all` edit, or the same snippet twice) which makes
- *  "the" position a guess. A guess is exactly what the approximate mode exists to avoid. */
-function anchorOffset(oldText: string, filePath: string | undefined, readFile: (p: string) => string | undefined): number | undefined {
-  if (filePath === undefined || oldText.length === 0) return undefined;
+/** The anchor: the 0-based line offset at which the edited span sits in the file on disk, or `undefined` when
+ *  we cannot prove it. TWO needles, in this order, because the disk we read is not always the disk the edit was
+ *  computed against:
+ *    · `old_string` — right when the file is still PRE-edit: a failed, rejected or interrupted Edit, or a file
+ *      reverted behind us. Then the snippet is literally still there and names its own position.
+ *    · `new_string` — right when the file is POST-edit, which is the ORDINARY case on the very path this rung
+ *      exists for. A SUCCESSFUL Edit leaves `new_string` on disk, so `indexOf(old_string)` can only miss; and
+ *      rung 2 is reached exactly when there is no recognized sidecar, which is the disk-replay shape
+ *      (`getSessionMessages` strips sidecars). Without this fallback every ordinary flat-only Edit was stuck
+ *      approximate forever — it could never once anchor.
+ *  THE ARITHMETIC IS THE SAME IN BOTH DIRECTIONS. An Edit replaces ONE contiguous span and touches nothing
+ *  ahead of it, so the bytes before the replacement are byte-identical pre- and post-edit: the line offset of
+ *  the `new_string` match in the post-edit file IS the line offset of the `old_string` match in the pre-edit
+ *  file, which is the pre-edit coordinate system `oldStart` is expressed in. Nothing after the span is read.
+ *  Every rejection is deliberate — no path (a Bash-shaped input), a file that is gone or unreadable, an empty
+ *  needle (which matches everywhere, so it is skipped PER NEEDLE rather than failing the whole anchor), and a
+ *  SECOND occurrence (a `replace_all` edit, or the same snippet twice) which makes "the" position a guess. A
+ *  guess is exactly what the approximate mode exists to avoid.
+ *  CONTAINMENT settles the one case where both needles resolve: an `old_string` that survives INSIDE the
+ *  `new_string` match — `old:"bar"` → `new:"foo\nbar"`, i.e. an insertion above an anchor line, the commonest
+ *  Edit shape there is — is the post-edit file quoting itself, and its offset is short by exactly the lines
+ *  inserted ahead of it. The enclosing (new) match wins there; everywhere else `old_string` leads. */
+function anchorOffset(oldText: string, newText: string, filePath: string | undefined, readFile: (p: string) => string | undefined): number | undefined {
+  if (filePath === undefined) return undefined;
   const content = readFile(filePath);
   if (content === undefined) return undefined;
-  const first = content.indexOf(oldText);
-  if (first < 0 || content.indexOf(oldText, first + 1) >= 0) return undefined;
-  return content.slice(0, first).split("\n").length - 1;
+  const once = (needle: string): number | undefined => {
+    if (needle.length === 0) return undefined;
+    const first = content.indexOf(needle);
+    return first < 0 || content.indexOf(needle, first + 1) >= 0 ? undefined : first;
+  };
+  const pre = once(oldText), post = once(newText);
+  const at = pre === undefined ? post
+    : post !== undefined && post <= pre && pre + oldText.length <= post + newText.length ? post
+    : pre;
+  return at === undefined ? undefined : content.slice(0, at).split("\n").length - 1;
 }
 
 /** Rung 2. jsdiff over the two retained strings with upstream's 3 lines of context; the hunks come back numbered
@@ -67,7 +92,7 @@ function anchorOffset(oldText: string, filePath: string | undefined, readFile: (
 function derivedPatch(oldText: string, newText: string, filePath: string | undefined, readFile: (p: string) => string | undefined): ResolvedPatch | undefined {
   const raw = structuredPatch("a", "a", oldText, newText, undefined, undefined, { context: 3 }).hunks;
   if (raw.length === 0) return undefined;                                     // old and new are the same text: nothing changed
-  const anchor = anchorOffset(oldText, filePath, readFile);
+  const anchor = anchorOffset(oldText, newText, filePath, readFile);
   const hunks = raw.map((h): DiffHunk => ({ oldStart: anchor === undefined ? undefined : anchor + h.oldStart, rows: rowsFrom(h.lines) }));
   let added = 0, removed = 0;
   for (const row of hunks.flatMap((h) => h.rows)) { if (row.kind === "add") added++; else if (row.kind === "remove") removed++; }
