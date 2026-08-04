@@ -118,7 +118,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const editorStateRef = useRef<EditorState>(initialEditorState());
   const consumedPrefillTokenRef = useRef(0);
   // CM56's search-history hint fires ONCE — and the composer unmounts behind every dialog, so the flag has to
-  // live out here with the durable editor state rather than in the component it gates (F5 t7 review).
+  // live out here with the durable editor state rather than in the component it gates (F5 t7 review). This
+  // scope is PROCESS lifetime, deliberately: /resume swaps the session under a live ChatApp, so a session
+  // switch does NOT re-show the hint — same lifetime as the project-scoped history list it describes, and
+  // upstream's own guard (m.current, L489587) is never cleared by resetHistory either.
   const searchHintFiredRef = useRef(false);
   // Input subscriptions are passive. This ref changes during render, before the visible owner swaps, so a
   // retiring composer can reject the next key even before its own registration has been torn down — the Chat
