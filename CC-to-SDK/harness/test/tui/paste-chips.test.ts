@@ -361,6 +361,31 @@ describe("map GC — an edit that removes a label removes its entry", () => {
     const empty = initialEditorState();
     expect(gcPastedContents(empty)).toBe(empty);
   });
+  it("a history Up/Down round trip keeps the DRAFT's payload (the map parks with the draft text)", () => {
+    // The buffer swap is a text change, so the GC empties the live map on the way into history. `stash` therefore
+    // has to park the map alongside the draft text, or Down restores a label with nothing behind it and the
+    // submit sends `[Pasted text #1 +3 lines]` literally (t4 review, Critical).
+    let s = initialEditorState(["an older turn"]);
+    s = paste(s, "a\nb\nc\nd", 24).state;
+    expect(text(s)).toBe(LABEL3);
+    const up = applyKey(s, "", { upArrow: true }).state;
+    expect(text(up)).toBe("an older turn");
+    expect(up.pastedContents).toEqual({});                      // GC'd — the label is not in the history text
+    const down = applyKey(up, "", { downArrow: true }).state;
+    expect(text(down)).toBe(LABEL3);
+    expect(down.pastedContents[1].content).toBe("a\nb\nc\nd");
+    expect(applyKey(down, "", { return: true }).submit).toBe("a\nb\nc\nd");
+  });
+  it("ctrl+w right after a chip kills the WHOLE label into the ring and GCs the entry", () => {
+    let s = applyKey(initialEditorState(), "keep ", {}).state;
+    s = paste(s, "a\nb\nc\nd", 24).state;
+    const r = applyKey(s, "w", { ctrl: true });
+    expect(text(r.state)).toBe("keep ");
+    expect(r.killed?.text).toBe(LABEL3);
+    expect(r.state.killRing[r.state.killRing.length - 1]).toBe(LABEL3);   // …so Ctrl-Y reinserts a live label
+    expect(r.state.pastedContents).toEqual({});
+    expect(text(applyKey(r.state, "y", { ctrl: true }).state)).toBe("keep " + LABEL3);
+  });
   it("clearToHistory resets the map with the buffer, keeping the label in history", () => {
     const c = clearToHistory(chipped());
     expect(c.pastedContents).toEqual({});

@@ -119,8 +119,10 @@ export function deleteTokenBefore(s: EditorState): EditorState | null {
  *  snap out of every placeholder in the direction of travel (`nextWord` → `snapOutOfPlaceholder(t,"end")` L394998,
  *  `prevWord` → `"start"` L395064, and `left()`/`right()` step over a whole placeholder, L394793/L394803). We have
  *  no image/audio path (spec non-goal), so this generalised effect is what stands in for that per-op snapping for
- *  text chips. `left()`/`right()` are ported literally in editor.ts; the word ops are not, so Alt-→ into a chip
- *  bounces back to the nearer edge instead of clearing it (see the F5 parity note). */
+ *  text chips. The per-op snapping is ported too, so this effect is a net rather than the only guard: editor.ts
+ *  steps `left()`/`right()` over a whole chip and snaps `wordLeft`/`wordRight`/`killWordBack` in the direction of
+ *  travel. What reaches this effect is a cursor that landed inside a chip some OTHER way — a vertical move, a
+ *  history recall, a buffer replaced from outside (see the F5 parity note). */
 export function snapOut(s: EditorState): EditorState {
   const { row, col } = s.cursor;
   const chip = chipContaining(s.lines[row], col);

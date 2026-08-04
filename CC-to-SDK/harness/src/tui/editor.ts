@@ -15,8 +15,14 @@ export interface CommandState { query: string; items: CommandEntry[]; catalog: C
  *  as an argument instead. We keep it so a re-render of the label never has to re-walk the content. */
 export interface PastedEntry { id: number; type: "text"; content: string; lineCount: number }
 export type PastedMap = Record<number, PastedEntry>;
+/** The draft parked by the FIRST history Up, restored by the Down that walks off the end of the list. It carries
+ *  the paste map as well as the text: the buffer swap into a history entry is a text change, so applyKey's GC
+ *  empties the live map on the way in, and a draft that came back as label-without-entry would submit the literal
+ *  `[Pasted text #1 …]` (t4 review, Critical). Upstream parks the same pair (`{ display, pastedContents }`,
+ *  bundle L489580/L489583); the `mode` T7 adds there is the third field of that same record. */
+export interface DraftStash { display: string; pastedContents: PastedMap }
 export interface EditorState {
-  lines: string[]; cursor: Cursor; history: string[]; histIndex: number | null; stash: string | null;
+  lines: string[]; cursor: Cursor; history: string[]; histIndex: number | null; stash: DraftStash | null;
   stashed: string | null;                                    // Ctrl-S input stash (distinct from history-nav `stash`)
   undo: { lines: string[]; cursor: Cursor; pastedContents: PastedMap; at: number }[];   // see UNDO_CAP / applyKey
   pastedContents: PastedMap;                                 // collapsed pastes keyed by id; dies with the buffer
@@ -113,6 +119,11 @@ function killToStart(s: EditorState): { state: EditorState; text: string } {   /
   const { row, col } = s.cursor; const lines = [...s.lines]; const text = lines[row].slice(0, col);
   lines[row] = lines[row].slice(col); return { state: { ...s, lines, cursor: { row, col: 0 } }, text };
 }
+// F5 t4-fix: upstream's `deleteWordBefore` (bundle L395146) opens with
+// `snapOutOfPlaceholder(this.prevWord().offset, "start")` — the boundary is snapped BEFORE the range is cut, so a
+// Ctrl-W right after a chip kills the WHOLE label into the ring instead of the `lines]` tail (a label is full of
+// spaces). Killing the whole thing is also what makes the ring round-trip: Ctrl-Y reinserts a label the
+// recognizer still knows, where a fragment would paste back as dead text.
 function killWordBack(s: EditorState): { state: EditorState; text: string } {  // Ctrl-W → ring, prepend
   const { row, col } = s.cursor;
   if (col === 0) {
@@ -121,6 +132,7 @@ function killWordBack(s: EditorState): { state: EditorState; text: string } {  /
     let i = previous.length;
     while (i > 0 && /\s/.test(previous[i - 1])) i--;
     while (i > 0 && !/\s/.test(previous[i - 1])) i--;
+    i = chipContaining(previous, i)?.start ?? i;
     const lines = [...s.lines];
     lines[row - 1] = previous.slice(0, i) + lines[row];
     lines.splice(row, 1);
@@ -128,6 +140,7 @@ function killWordBack(s: EditorState): { state: EditorState; text: string } {  /
   }
   const line = s.lines[row];
   let i = col; while (i > 0 && /\s/.test(line[i - 1])) i--; while (i > 0 && !/\s/.test(line[i - 1])) i--;
+  i = chipContaining(line, i)?.start ?? i;
   const lines = [...s.lines]; lines[row] = line.slice(0, i) + line.slice(col);
   return { state: { ...s, lines, cursor: { row, col: i } }, text: line.slice(i, col) };
 }
@@ -224,13 +237,15 @@ export function replaceBufferFromOutside(s: EditorState, t: string): EditorState
 export function withBufferText(s: EditorState, t: string): EditorState { return replaceBufferFromOutside(s, t); }
 function historyPrev(s: EditorState): EditorState {
   if (s.history.length === 0) return s;
-  if (s.histIndex === null) { const idx = s.history.length - 1; return setBuffer({ ...s, stash: bufferText(s), histIndex: idx }, s.history[idx]); }
+  // Park the draft — text AND paste map — on the way in; the GC in applyKey will empty the live map against the
+  // history text a line later, and only this copy can give the payload back (see DraftStash).
+  if (s.histIndex === null) { const idx = s.history.length - 1; return setBuffer({ ...s, stash: { display: bufferText(s), pastedContents: s.pastedContents }, histIndex: idx }, s.history[idx]); }
   const idx = Math.max(0, s.histIndex - 1); return setBuffer({ ...s, histIndex: idx }, s.history[idx]);
 }
 function historyNext(s: EditorState): EditorState {
   if (s.histIndex === null) return s;
   const idx = s.histIndex + 1;
-  if (idx >= s.history.length) return setBuffer({ ...s, histIndex: null, stash: null }, s.stash ?? "");
+  if (idx >= s.history.length) return setBuffer({ ...s, histIndex: null, stash: null, pastedContents: s.stash?.pastedContents ?? {} }, s.stash?.display ?? "");
   return setBuffer({ ...s, histIndex: idx }, s.history[idx]);
 }
 function atWordBoundary(s: EditorState): boolean {

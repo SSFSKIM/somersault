@@ -73,7 +73,7 @@ describe("editor composer prefill", () => {
   });
   it("external replacement clears stale buffer-derived state but preserves durable history, stash, and kill ring", () => {
     let s = initialEditorState(["old"]);
-    s = { ...s, lines: ["draft"], cursor: { row: 0, col: 5 }, histIndex: 0, stash: "draft", stashed: "parked", undo: [{ lines: ["before"], cursor: { row: 0, col: 6 }, pastedContents: {}, at: 1 }], mention: { anchor: { row: 0, col: 0 }, query: "d", files: ["draft.ts"], items: [], index: 0 }, command: { query: "mod", items: [], catalog: [], index: 0 }, killRing: ["keep"], killRun: true, yankSite: { start: { row: 0, col: 0 }, end: { row: 0, col: 4 }, index: 0 } };
+    s = { ...s, lines: ["draft"], cursor: { row: 0, col: 5 }, histIndex: 0, stash: { display: "draft", pastedContents: {} }, stashed: "parked", undo: [{ lines: ["before"], cursor: { row: 0, col: 6 }, pastedContents: {}, at: 1 }], mention: { anchor: { row: 0, col: 0 }, query: "d", files: ["draft.ts"], items: [], index: 0 }, command: { query: "mod", items: [], catalog: [], index: 0 }, killRing: ["keep"], killRun: true, yankSite: { start: { row: 0, col: 0 }, end: { row: 0, col: 4 }, index: 0 } };
     const replaced = withBufferText(s, "queued\n/mod");
     expect(replaced.lines).toEqual(["queued", "/mod"]);
     expect(replaced.cursor).toEqual({ row: 1, col: 4 });
