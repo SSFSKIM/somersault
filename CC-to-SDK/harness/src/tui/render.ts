@@ -4,14 +4,18 @@
 // A line is EITHER single-styled (`text` + the style fields) OR carries `segments` for per-span inline
 // styling (mixed bold/italic/code in one line); when `segments` is present the <Line> view renders those
 // and `text` is the plain fallback. `gutter` is a leading styled marker (the CC `●` bullet / `⎿` connector).
-export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; gutter?: Gutter; segments?: Segment[]; }
-export interface Gutter { text: string; color?: string; dim?: boolean; }
+// `strikethrough`/`underline`/`bg` (F4 Task 1) are the substrate the rest of F4 builds on: markdown `~~…~~`
+// and `<u>…</u>` (Task 3) set the first two, the diff background bands (Task 6) set `bg`. `bg` is a color in
+// the same §2.2 TH2 grammar as `color` and is resolved by the <Line> view, not by its producers.
+export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; strikethrough?: boolean; underline?: boolean; bg?: string; gutter?: Gutter; segments?: Segment[]; }
+// `italic` on the gutter: the `∴` thinking gutter (pack §8.3, Task 9) is dim+italic while its line is not.
+export interface Gutter { text: string; color?: string; dim?: boolean; italic?: boolean; }
 // `preStyled` (F3 Task 1, the bold-count mechanism of spec Decision Log 2026-08-04): the segment's `text`
 // is ALREADY a raw-SGR byte string and the <Line> view must render it through an UNSTYLED <Text> — no
 // color/dim/bold/italic props. F1 proved `<Text dimColor bold>` never emits `\x1b[1m` (bold is dropped) and
 // that chalk REWRITES a raw `\x1b[22m` nested inside a styled <Text> into `\x1b[2m` (a plain tail comes out
 // dim). Passthrough is the only way to put bold inside a dim run. Style fields are ignored when set.
-export interface Segment { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; preStyled?: true; }
+export interface Segment { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; strikethrough?: boolean; underline?: boolean; bg?: string; preStyled?: true; }
 import { renderMarkdown } from "./markdown.js";
 import { ACCENT, resolveThemeColor, themeTokens } from "./theme.js";
 

@@ -17,13 +17,13 @@ const ink = (color?: string) => (color === undefined ? undefined : resolveThemeC
  *  renderer, so a styling-rule change can't silently drift between the transcript and the dialogs. */
 export const Line = ({ l, wrap }: { l: RenderLine; wrap?: "wrap" | "truncate-end" }) => (
   <Text wrap={wrap}>
-    {l.gutter ? <Text color={ink(l.gutter.color)} dimColor={l.gutter.dim}>{l.gutter.text}</Text> : null}
+    {l.gutter ? <Text color={ink(l.gutter.color)} dimColor={l.gutter.dim} italic={l.gutter.italic}>{l.gutter.text}</Text> : null}
     {l.segments
       // A `preStyled` segment carries its own SGR bytes (F3 Task 1) — it goes through a BARE <Text> so no
       // chalk wrapper can rewrite them; every other segment takes the ordinary styled-prop path.
       ? l.segments.map((s, i) => s.preStyled
         ? <Text key={i}>{s.text}</Text>
-        : <Text key={i} color={ink(s.color)} dimColor={s.dim} bold={s.bold} italic={s.italic}>{s.text}</Text>)
-      : <Text color={ink(l.color)} dimColor={l.dim} bold={l.bold} italic={l.italic}>{l.text || " "}</Text>}
+        : <Text key={i} color={ink(s.color)} backgroundColor={ink(s.bg)} dimColor={s.dim} bold={s.bold} italic={s.italic} strikethrough={s.strikethrough} underline={s.underline}>{s.text}</Text>)
+      : <Text color={ink(l.color)} backgroundColor={ink(l.bg)} dimColor={l.dim} bold={l.bold} italic={l.italic} strikethrough={l.strikethrough} underline={l.underline}>{l.text || " "}</Text>}
   </Text>
 );
