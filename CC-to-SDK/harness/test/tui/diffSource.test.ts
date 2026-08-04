@@ -118,6 +118,15 @@ describe("resolvePatch — nothing diffable", () => {
     expect(resolvePatch({ input: input(), sidecar: create([]), readFile: throwingRead })).toBeUndefined();
     expect(resolvePatch({ input: input(), sidecar: create([{ oldStart: 1, oldLines: 0, newStart: 1, newLines: 2, lines: ["+a", "+b"] }]), readFile: throwingRead })).toBeUndefined();
   });
+  // Write shapes ride a POSITIVE `type === "update"` gate (writeRows' own rule) — an off-census write
+  // sidecar with a missing or unknown `type` must NOT mint a headerless absolute body (t6 re-review).
+  it("rejects a write-shaped sidecar whose type is missing or unknown", () => {
+    const hunk = [{ oldStart: 4, oldLines: 1, newStart: 4, newLines: 1, lines: ["-a", "+b"] }];
+    const noType = { filePath: "/work/a.ts", content: "b\n", structuredPatch: hunk };
+    const renamed = { type: "renamed", filePath: "/work/a.ts", content: "b\n", structuredPatch: hunk };
+    expect(resolvePatch({ input: { file_path: "/work/a.ts", content: "b\n" }, sidecar: noType, readFile: throwingRead })).toBeUndefined();
+    expect(resolvePatch({ input: { file_path: "/work/a.ts", content: "b\n" }, sidecar: renamed, readFile: throwingRead })).toBeUndefined();
+  });
   // A RECOGNIZED patch that describes no change is answered by rung 1 — with `undefined`. It does NOT fall
   // through to the derived rung: the sidecar is the better description of the edit, and it says nothing moved.
   it("returns undefined for a recognized sidecar whose structuredPatch is empty", () => {

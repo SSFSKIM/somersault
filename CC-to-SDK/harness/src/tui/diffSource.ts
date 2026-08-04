@@ -105,12 +105,14 @@ export function resolvePatch(args: { input: Record<string, unknown>; sidecar?: u
 }
 
 function resolve(input: Record<string, unknown>, sidecar: unknown, readFile: (p: string) => string | undefined): ResolvedPatch | undefined {
-  // `type === "create"` is excluded EXPLICITLY, not left to ride on the census create carrying an empty
-  // `structuredPatch` (P94 recorded that shape once): the scope rule is "a create renders its preview, never a
-  // diff", and a create that ever arrived with real hunks must obey it too.
-  const recognized = editShape(sidecar) ?? writeShape(sidecar);
-  const counts = recognized === undefined || recognized.type === "create" ? undefined : patchLineCounts(recognized);
-  if (counts !== undefined) return sidecarPatch(recognized!, counts);
+  // Write shapes are gated POSITIVELY on `type === "update"` — the same rule `writeRows` applies — so a
+  // create renders its preview, never a diff, and an off-census write shape (missing or unknown `type`)
+  // cannot produce a body with no header above it (t6 re-review residual). Edit shapes pass unconditionally,
+  // mirroring `normalizeToolResult`'s Edit branch, which ignores `type` entirely.
+  const written = writeShape(sidecar);
+  const recognized = editShape(sidecar) ?? (written?.type === "update" ? written : undefined);
+  const counts = recognized === undefined ? undefined : patchLineCounts(recognized);
+  if (counts !== undefined && recognized !== undefined) return sidecarPatch(recognized, counts);
   const oldText = str(input.old_string), newText = str(input.new_string);
   if (oldText === undefined || newText === undefined) return undefined;
   return derivedPatch(oldText, newText, str(input.file_path), readFile);
