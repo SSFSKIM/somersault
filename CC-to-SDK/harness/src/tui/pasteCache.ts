@@ -41,9 +41,8 @@ export function pastePath(hash: string, env?: NodeJS.ProcessEnv): string { retur
  *  full disk must cost the user their paste cache, not their keystroke. */
 export function storePaste(content: string, env?: NodeJS.ProcessEnv): void {
   try {
-    const dir = pasteCacheDir(env);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, `${pasteHash(content)}.txt`), content, { mode: 0o600 });
+    mkdirSync(pasteCacheDir(env), { recursive: true });
+    writeFileSync(pastePath(pasteHash(content), env), content, { mode: 0o600 });
   } catch { /* CM26: the cache is best-effort; task 7 renders `content no longer available` on the miss. */ }
 }
 

@@ -40,6 +40,11 @@ describe("storePaste / loadPaste", () => {
     storePaste(body, env);
     expect(loadPaste(pasteHash(body), env)).toBe(body);
   });
+  it("round-trips leading/trailing whitespace byte-exactly (t5 review: a trailing newline is the common real shape)", () => {
+    const body = "\n  body with edges  \n";
+    storePaste(body, env);
+    expect(loadPaste(pasteHash(body), env)).toBe(body);
+  });
   it("creates the directory it needs (mkdir -p, first run)", () => {
     expect(existsSync(pasteCacheDir(env))).toBe(false);
     storePaste("body", env);
