@@ -145,9 +145,12 @@ describe("F4 markdown — block grammar (census §2.1, bundle f2 L420590–42071
   it("ordered honours start and depth numbering 1./a./i.", () => {
     expect(texts("3. third\n4. fourth")).toEqual(["3. third", "4. fourth"]);
     const nested = texts("1. a\n   1. b\n      1. c\n         1. d");
-    expect(nested[1]).toBe("  1. b");                    // depth 1 → arabic, 2-col indent
-    expect(nested[2]).toBe("    a. c");                  // depth 2 → letters
-    expect(nested[3]).toBe("      i. d");                // depth 3 → roman
+    // T2-review bundle adjudication (L420647/420650/420665): marker depth is the CHILD depth (n+1),
+    // offset one from the indent depth — letters at level 2, roman at 3, arabic again at 4+.
+    // The census/first-draft reading (arabic at 2, letters at 3) was one level off.
+    expect(nested[1]).toBe("  a. b");                    // level 2 → letters, 2-col indent
+    expect(nested[2]).toBe("    i. c");                  // level 3 → roman
+    expect(nested[3]).toBe("      1. d");                // level 4 → arabic (default)
   });
   it("task list renders literal checkbox text", () => {
     expect(texts("- [x] done\n- [ ] open")).toEqual(["- [x] done", "- [ ] open"]);
