@@ -469,10 +469,12 @@ const BODY_INSET = 10;
  *  a row's trailing whitespace — output.js:139 — so padding an empty row would print nothing anyway and only
  *  lie in the line model).
  *
- *  ONE RECORDED DEVIATION. Four of the arms below carry `height: 1` on their `Cr` (L422736 `XG`, L422744
- *  `PYr`, L422760 `cir`, L422775 `uir`, plus `ect` at L422785), which CLIPS the overflow row instead of
- *  showing it — at 80 columns that eats the billing URL out of `PYr` entirely. Our line substrate has no
- *  clip, and dropping half a sentence to reproduce one would destroy information the user needs; we wrap
+ *  ONE RECORDED DEVIATION. Five of the arms below carry `height: 1` on their `Cr` (L422737 `XG`, L422745
+ *  `PYr`, L422761 `cir`, L422779 `uir`, L422787 `ect`), which CLIPS the overflow row instead of showing
+ *  it. At 80 columns the divergence is ONE arm wide: the other four sentences fit a single row, so our
+ *  output is byte-identical there — only `PYr` overflows, and upstream's clip eats its billing URL (a
+ *  44-char token that can't share the first row) entirely. Our line substrate has no clip, and adding one
+ *  purely to delete the row's one actionable payload would destroy information the user needs; we wrap
  *  every arm. Identical wherever the sentence fits, strictly more of the truth where it does not. The arms
  *  that genuinely wrap upstream — `Apo`/`Spo`/`vpo` (L422767), `Qlt`/`Zlt` (L422800/422813) and
  *  default-predicate-1 (L422834), the one shape P80 §C proved live — are exact. */
