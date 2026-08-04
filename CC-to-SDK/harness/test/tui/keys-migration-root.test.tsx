@@ -139,9 +139,12 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
   });
 
   // F5 t9 review (I2). The mirror of (f): a popup that is in STATE but draws nothing (an `@` matching no
-  // file — the file popup has no empty message upstream) must not own the Autocomplete scope, so the very
-  // FIRST Escape is chat:cancel. Before the fix that Escape vanished into an invisible popup and the user
-  // had to press it twice for no visible reason.
+  // file — the file popup has no empty message upstream) must release Escape, so the very FIRST Escape is
+  // chat:cancel. Before the fix that Escape vanished into an invisible popup and the user had to press it
+  // twice for no visible reason. This is an OUTCOME pin (t9 re-review): the three composer-level Escape
+  // gates (scope predicate, handleKey arm, chat:cancel guard) are mutually redundant on this path, so it
+  // fails only when all three regress together — it does NOT pin the scope predicate alone; a per-gate pin
+  // would need a key only the scope routes (e.g. Up → autocomplete:previous vs the history walk).
   it("(f2) an @ popup with nothing in it holds no keys — the first Escape is chat:cancel", async () => {
     const fake = { ...fakeRemote(), rewindAnchors: async () => [], rewindDryRun: async () => ({ canRewind: true }), rewind: async () => {} };
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake as never} client={{ kind: "loopback" }} cwd="/__ccx-empty-cwd__" />);

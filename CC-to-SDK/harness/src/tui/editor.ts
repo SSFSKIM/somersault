@@ -387,8 +387,11 @@ export function commandEmptyMessage(s: EditorState): string | null {
 }
 /** What the `Autocomplete` SCOPE and the Escape arm key off: anything a popup actually DRAWS. Wider than
  *  `commandActive`/`mentionActive` by exactly one case — the empty-list command popup that is still showing
- *  CM38's message. Upstream never needs the distinction because its `Lt` covers the same ground with the
- *  ghost-text term `|| !!Y`; ours has no ghost text, and the empty message is the thing that is visible.
+ *  CM38's message. A DELIBERATE WIDENING of upstream (t9 re-review, traced): upstream's `Lt = c.length > 0
+ *  || !!Y` (L491072) is FALSE while the empty message shows — the message needs a head-arm input (YRr) and
+ *  a head-arm input is exactly what Pli's whitespace-before-slash can never match, so the ghost term never
+ *  rescues it. Upstream's Escape falls through to cancel with the message still drawn until the buffer
+ *  changes. Ours dismisses what the user can see first; one extra Escape before cancel arms, on purpose.
  *  Getting this wrong in either direction is a live bug: too narrow and Escape cannot dismiss a message the
  *  user is looking at, too wide and an invisible popup eats the cancel. */
 export const completionActive = (s: EditorState): boolean =>
