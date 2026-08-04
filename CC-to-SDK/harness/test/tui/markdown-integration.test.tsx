@@ -63,10 +63,15 @@ describe("F4 Task 5 — the anchored cache key is revision × theme × columns �
   });
 
   it("is INDEPENDENT OF CALL ORDER across projections of one unmutated document", () => {
+    // The detail projection runs at width 40 while compact stays at the context default — the two
+    // projections MUST differ in cached content, so a key reverted to revision×theme serves the
+    // first-run items to the second and the cross-order pins below bite TODAY (t5 review I1: with
+    // equal widths, compact and detail are identical until Task 9 and this test was inert).
     const doc = built(prose(TABLE));
-    const compactFirst = { compact: lineTexts(projectCompact(doc, context)), detail: lineTexts(projectDetail(doc, { ...context, projection: "detail-all" })) };
+    const compactFirst = { compact: lineTexts(projectCompact(doc, context)), detail: lineTexts(projectDetail(doc, { ...context, projection: "detail-all", columns: 40 })) };
     const other = built(prose(TABLE));                                       // a pristine document, opposite order
-    const detailFirst = { detail: lineTexts(projectDetail(other, { ...context, projection: "detail-all" })), compact: lineTexts(projectCompact(other, context)) };
+    const detailFirst = { detail: lineTexts(projectDetail(other, { ...context, projection: "detail-all", columns: 40 })), compact: lineTexts(projectCompact(other, context)) };
+    expect(compactFirst.detail).not.toEqual(compactFirst.compact);           // the two projections genuinely differ
     expect(detailFirst.compact).toEqual(compactFirst.compact);
     expect(detailFirst.detail).toEqual(compactFirst.detail);
   });

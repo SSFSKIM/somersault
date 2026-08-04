@@ -649,7 +649,10 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
  *  a `projection`/`verbose`-derived `showThinking` into `renderMessage`. So one unmutated document at one
  *  revision now projects DIFFERENTLY per knob, and the old `revision × theme` key would serve whichever
  *  projection ran first to the other: compact and detail (ctrl+o) reads of the same document would agree on
- *  thinking visibility by call ORDER, and a terminal resize would serve stale-width markdown forever. The
+ *  thinking visibility by call ORDER, and a ctrl+o read after a resize would serve stale-width markdown
+ *  until the next document event (projection is event-driven; nothing re-projects on resize itself). Note
+ *  `verbose` is currently implied by `projection` (only projectDetail sets it, as detail-all) but is keyed
+ *  because it is an independent field on the type — same reasoning as showThinking's derivation. The
  *  remaining `ProjectionOptions` fields are deliberately NOT in the key: `cwd`/`home`/`now`/`thoughtMs`/
  *  `pending`/`agentMeta`/`toolEvents`/`bashHint` enter strictly LATER, in `renderToolEvent`, `groupItems`
  *  and `segmentRuns`, none of which is cached (that is what lets the 600 ms blink and the ticking thinking
