@@ -446,7 +446,9 @@ export class SessionHost {
     // the client or it is a promise we do not keep — a follower shown a partial turn with no marker
     // reads it as the whole turn — so a truncated idle replay keeps the old bare start frame.
     else if (snap.truncated) this.deliver(cb, { kind: "turn", phase: "start", truncated: true });
-    for (const m of snap.messages) this.deliver(cb, { kind: "message", data: m });
+    // MARKED as replay: every one of these is buffered history, and a joiner that stamped them with its own
+    // arrival clock would fabricate durations for work that finished before it connected (wire.ts's note).
+    for (const m of snap.messages) this.deliver(cb, { kind: "message", data: m, replay: true });
     // A request parked before this follower attached is otherwise invisible to it forever: the
     // `decision` event fires exactly once, at park time, over the followers registered at that
     // instant. A socket-borne follower's registration is not synchronous with its client's `follow()`

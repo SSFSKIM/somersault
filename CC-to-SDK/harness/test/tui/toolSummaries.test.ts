@@ -109,7 +109,15 @@ describe("F3 typed result rows — the Write create preview", () => {
     expect(preview(write(ts(10)))).toEqual(Array.from({ length: 10 }, (_, i) => `const v${i} = ${i};`));
     expect(rows(write(ts(10)))).toHaveLength(10);
     expect(one(write("a\nb\n"))).toBe("a\nb");                                  // the phantom trailing row is neither counted nor previewed
-    expect(preview(write("", "/work/empty.ts"))).toEqual(["Wrote 1 line"]);      // empty content is no content (Task 5's `str` guard): the honest count fallback stands alone
+    // F3 FINAL controller review (external codex reviewer, finding F4). This used to read `["Wrote 1 line"]`
+    // — the t6 fix round's pin — because `str()`'s length guard collapsed an explicit `content: ""` to
+    // "absent", which dropped the create through to the count fallback, which then counted the FLAT result
+    // text ("Created") and reported one line for a file that has none. An explicit empty string is a KNOWN
+    // source, so preview-alone semantics apply as they do to any other content: zero preview rows, i.e. the
+    // create renders its header and NO body at all. The count row is now reachable ONLY where the content
+    // field is genuinely missing (the case pinned above at `eventFor("Write", {file_path}, "Created")`).
+    expect(preview(write("", "/work/empty.ts"))).toEqual([]);
+    expect(rows(write("", "/work/empty.ts"))).toEqual([]);                       // an empty body, NOT `undefined` — undefined would hand the row back to the generic fold
   });
   it("syntax-highlights on the file extension and leaves an unknown extension PLAIN, not dim", () => {
     const highlighted = rows(write("const x = 42;"))![0]!;

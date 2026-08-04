@@ -91,7 +91,14 @@ export function useChat(
   // — and the tmux variant reads an INJECTED env, so a frame-pinning test is not at the mercy of the terminal
   // the suite runs under. Resolved here rather than inside the projection, which stays pure.
   const bashHint = backgroundHintText(useBindingLookup()("task:background"), (deps.env ?? process.env).TMUX !== undefined, platform);
-  const projectionContext = (): ProjectionContext => ({ cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint });
+  // Read through a REF, not off the render closure (F3 final review). The projection is driven by callbacks
+  // that outlive the render that created them — the 600 ms repaint interval is captured by an effect keyed
+  // `[liveOpen, session]`, and the event subscription by one keyed `[session]` — so a keybindings.json
+  // rebind landing while a Bash is running left every later frame advertising the DEAD chord while the key
+  // itself had already moved. That is precisely the hint-honesty rule F2 shipped, so the hint has to reach
+  // the projection at projection time, not at the time some effect was last re-subscribed.
+  const bashHintRef = useRef(bashHint); bashHintRef.current = bashHint;
+  const projectionContext = (): ProjectionContext => ({ cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current });
   // ── The ONE retained transcript document (F1 Task 4). Every visible row — live, replay, attach, resume,
   // rewind, Ctrl-O — is projected from it; `publishedIds` is what makes reconciliation append-only, so a
   // duplicate follow record, a rehydration or a redelivered bootstrap entry can never publish a row twice.
@@ -352,6 +359,17 @@ export function useChat(
     if (!liveOpen) return;
     return scheduleRepaint(() => repaintPending(), 600);
   }, [liveOpen, session]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // The ref above makes the NEXT projection honest; this makes one happen. A rebind changes no document and
+  // fires no host event, so without a repaint of its own the corrected hint would wait for whatever event
+  // came next — up to the whole remaining lifetime of the running call the hint is attached to. Keyed on the
+  // hint VALUE (a re-render that resolves the same sentence is not a change), and the mount-time run is
+  // skipped because the very first projection already read this value.
+  const paintedHint = useRef(bashHint);
+  useEffect(() => {
+    if (paintedHint.current === bashHint) return;
+    paintedHint.current = bashHint;
+    repaintPending();
+  }, [bashHint]);   // eslint-disable-line react-hooks/exhaustive-deps
   // Dispose the PREVIOUS session whenever it changes (a /resume swap) and on unmount. Must not touch `disposed`.
   useEffect(() => () => { void session.dispose().catch(() => {}); }, [session]);
   // The host event stream is the SINGLE rendering source (spec A2b §2+§5, acceptance 7): a turn started by
@@ -376,11 +394,28 @@ export function useChat(
         liveTurnRef.current = new LiveTurn({ now: nowFn }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]);
       }
       else if (ev.kind === "message") {
+        const data = ev.data as any;
+        // A `stream_event` is a PARTIAL, and it changes NOTHING outside the live turn: `appendSdk` rejects
+        // partials outright, the bg harvest and the task list read only complete assistant/user frames, and
+        // so do `stampAgentCalls`/`syncLiveOpen`. So the retained document cannot move here — and with
+        // partials now default-on interactively a single turn carries THOUSANDS of these frames, which made
+        // `reconcile()` (copy + sort + fold the whole transcript, twice, plus two setStates) run per token:
+        // deltas × history. The live region is the only thing a delta may touch.
+        if (data?.type === "stream_event") {
+          const partial = liveTurnRef.current;
+          if (partial) { partial.ingest(data); setStreaming(partial.snapshot()); setTurnTokens(partial.outputTokens); if (partial.model) setModel(partial.model); }
+          return;
+        }
         // Harvest bg-task metadata (command/output-file) first: a reconnect-buffer replay carries no live
         // turn but still needs to reach the (idempotent) harvest.
         bgHarvest.current.ingestMessage(ev.data);
-        const data = ev.data as any;
         taskListRef.current.ingest(ev.data); setTasks(taskListRef.current.snapshot());
+        // The `system/task_*` sidechannel reaches a LIVE client as its own `task` event — but the follow
+        // drain replays the turn buffer as `message` frames, so an attaching client used to lose the
+        // notification rung entirely and fall through to a derived duration it had no honest stamps for.
+        // Ingested WITHOUT a clock: the totals on the frame are the host's measurements and stay true, the
+        // arrival stamps would be ours and would be the attach instant (agentProgress.ingestTaskFrame).
+        if (ev.replay) ingestTaskFrame(agentMetaRef.current, data, undefined);
         // A compact boundary is a SYSTEM frame — appendSdk retains none of those, so document dedup can
         // never suppress a redelivered one. Its identity therefore comes from the boundary itself; only a
         // uuid-less frame (nothing stable to dedup on) falls back to a fresh monotonic identity.
@@ -392,7 +427,12 @@ export function useChat(
         // appended even though no new active turn starts, and document dedup — not a no-live-turn guard —
         // is what stops a redelivered copy from showing twice. /copy follows the SAME rule, so it can only
         // capture a reply that actually entered the transcript.
-        stampAgentCalls(agentMetaRef.current, data, nowFn());   // BEFORE the append: the stamp is arrival, not retention
+        // BEFORE the append: the stamp is arrival, not retention. NEVER for a replayed frame — its arrival
+        // here is the moment this client attached, not the moment the work happened, and stamping a
+        // completed Agent's dispatch and result microseconds apart is what made a mid-turn `ccx attach`
+        // render `Done (2 tool uses · 0s)`. Spec §F3 Depends-on: a replay omits durations, it does not
+        // invent them, and an unstamped call falls back to the clause-less honest row.
+        if (!ev.replay) stampAgentCalls(agentMetaRef.current, data, nowFn());
         const appended = documentRef.current!.appendSdk("host", data);
         if (appended && data?.type === "assistant" && data.parent_tool_use_id === undefined) {
           const t = (data.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");

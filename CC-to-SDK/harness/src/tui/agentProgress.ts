@@ -232,8 +232,13 @@ const entryFor = (meta: Map<string, AgentMeta>, id: string): AgentMeta => {
  *  it, NOT ptid-routed), so a frame without one — the host's synthetic rewind notification — is ignored
  *  rather than guessed at. Both wire shapes are accepted because the host forwards whichever arrived: a
  *  `system` envelope with a `subtype`, or a bare type tag. `task_progress` is deliberately NOT ingested: it
- *  is a RUNNING counter and the completed row must read the settled one. */
-export function ingestTaskFrame(meta: Map<string, AgentMeta>, frame: unknown, now: number): void {
+ *  is a RUNNING counter and the completed row must read the settled one.
+ *
+ *  `now` is `undefined` for a REPLAYED frame (F3 final review): the wire totals it carries are as true after
+ *  an attach as they were live, but its LOCAL arrival stamp would be the attach clock rather than the
+ *  dispatch's — so the notification rung survives the replay while the derived rung correctly finds nothing
+ *  to measure and the row omits the clause instead of showing a fabricated ~0s. */
+export function ingestTaskFrame(meta: Map<string, AgentMeta>, frame: unknown, now: number | undefined): void {
   if (!isRecord(frame)) return;
   const sub = frame.type === "system" ? frame.subtype : frame.type;
   const id = str(frame.tool_use_id);
@@ -245,7 +250,7 @@ export function ingestTaskFrame(meta: Map<string, AgentMeta>, frame: unknown, no
     if (subagentType !== undefined) entry.subagentType = subagentType;
     if (taskType !== undefined) entry.taskType = taskType;
     if (description !== undefined) entry.description = description;
-    entry.startedAt ??= now;
+    if (now !== undefined) entry.startedAt ??= now;
     return;
   }
   if (sub !== "task_notification") return;

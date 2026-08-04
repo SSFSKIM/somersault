@@ -11,7 +11,12 @@ import type { HostStatus } from "./ops.js";
  *  union entirely. A pre-Goal-B host's frames still arrive shaped that way over the wire; reading them is
  *  the CLIENT's job (chatAdapter.ts's route() read-alias), not this type's. */
 export type HostEvent =
-  | { kind: "message"; data: unknown }                                      // one SDK message from the turn
+  // `replay` marks a frame the follow() drain handed a LATE joiner out of the turn buffer rather than one
+  // that just arrived. It is history, not news: a client may render it, but must not stamp it with an
+  // arrival clock (F3 final review — `ccx attach` mid-turn was deriving a ~0s Agent duration from
+  // dispatch/result stamps taken microseconds apart at attach time). Absent on every live frame.
+  | { kind: "message"; data: unknown; replay?: true }                        // one SDK message from the turn
+
   | { kind: "decision"; entry: PendingDecision }                            // a decision just parked (any kind)
   | { kind: "decision_settled"; toolUseID: string; by: string; decision: string }
   | { kind: "tasks_changed"; tasks: BackgroundTaskInfo[] }                   // REPLACE snapshot (Task 4 emits)

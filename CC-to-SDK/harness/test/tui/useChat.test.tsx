@@ -12,6 +12,8 @@ import type { PendingEntry } from "../../src/permissions/pending.js";
 import type { DecisionOutcome } from "../../src/permissions/types.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 import type { RenderItem } from "../../src/tui/toolRenderer.js";
+import { KeymapProvider } from "../../src/tui/keys/KeymapProvider.js";
+import type { ContextBindings } from "../../src/tui/keys/bindings.js";
 import { READ_CALL, READ_RESULT_FLAT, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
 
 // Ink hard-wraps a long single-line <Text> at the terminal width, inserting a real "\n" at whichever word
@@ -1954,5 +1956,119 @@ describe("useChat: latched counters and the throttled group hint", () => {
     clock.now = 7200; fake.pushEvent(POKE);
     await waitFor(() => hintText(api)[0] === "a.ts");
     expect(hintLines(api)[0]!.italic).toBeUndefined();                // back to the ordinary dim hint
+  });
+});
+
+// ── F3 FINAL controller review (external codex reviewer): four findings, one describe ──────────────────
+describe("useChat: F3 final review", () => {
+  const streamEvent = (event: unknown) => ({ kind: "message" as const, data: { type: "stream_event", event } });
+  const noRepaint = { scheduleRepaint: () => () => {} };   // the 600 ms blink would re-project on its own and mask what these pin
+  const agentCall = (replay?: true) => ({
+    kind: "message" as const, ...(replay ? { replay } : {}),
+    data: { type: "assistant", uuid: "a1", message: { id: "m1", content: [{ type: "tool_use", id: "agent-1", name: "Agent", input: { description: "review the diff", prompt: "go" } }] } },
+  });
+  const agentResult = (replay?: true) => ({
+    kind: "message" as const, ...(replay ? { replay } : {}),
+    data: { type: "user", uuid: "u1", message: { content: [{ type: "tool_result", tool_use_id: "agent-1", content: "the report" }] } },
+  });
+  // One nested call, so the DERIVED rung has a tool-use count to report at all (`agentTerminalItems` paints
+  // no row for a derived rung with zero observed children — that count would itself be fabricated).
+  const agentChildFrames = (replay?: true) => [
+    { kind: "message" as const, ...(replay ? { replay } : {}), data: { type: "assistant", uuid: "a2", parent_tool_use_id: "agent-1", message: { id: "m2", content: [{ type: "tool_use", id: "read-9", name: "Read", input: { file_path: "/work/a.ts" } }] } } },
+    { kind: "message" as const, ...(replay ? { replay } : {}), data: { type: "user", uuid: "u2", parent_tool_use_id: "agent-1", message: { content: [{ type: "tool_result", tool_use_id: "read-9", content: "x" }] } } },
+  ];
+
+  // F1. Partials are default-on interactively now, so a turn carries thousands of deltas. Reprojecting the
+  // whole retained transcript on each one is deltas × history — and it buys nothing, because `appendSdk`
+  // rejects partials and the document therefore cannot have changed.
+  it("a stream_event updates ONLY the live turn — pendingItems keeps its identity across a burst of deltas", async () => {
+    const fake = fakeRemote();
+    const seen: (readonly RenderItem[])[] = [];
+    function H() {
+      const c = useChat(() => fake, {}, noRepaint);
+      seen.push(c.state.pendingItems);
+      return <Text>{c.state.streaming.map((l) => l.text).join("") || "-"}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "sleep 5" } }] } } });
+    await waitFor(() => (seen.at(-1)?.length ?? 0) > 0);          // the running call owns a transient row
+    const projected = seen.at(-1)!, before = seen.length;
+    fake.pushEvent(streamEvent({ type: "message_start", message: { id: "m2" } }));
+    fake.pushEvent(streamEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
+    for (const text of ["to", "ken", "s"]) fake.pushEvent(streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }));
+    await waitFor(() => frame(lastFrame).includes("tokens"));      // the deltas DID reach the live region
+    expect(seen.length).toBeGreaterThan(before);                   // …and did re-render
+    expect(seen.slice(before).every((items) => items === projected)).toBe(true);   // …without rebuilding the projection
+  });
+
+  // F2. The hint is derived from the live binding table at RENDER time, but the projection runs from
+  // callbacks captured by effects keyed on `[session]` — so a rebind used to leave the old sentence on
+  // screen while the key itself had already moved, which is exactly the dishonesty F2 shipped to end.
+  it("a keybindings rebind moves the running-Bash background hint on the next projection", async () => {
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake, {}, { ...noRepaint, env: {}, platform: "darwin" }); return <Text>{allText(c)}</Text>; }
+    const withLayers = (layers: readonly ContextBindings[]) => <KeymapProvider deps={{ userLayers: layers }}><H /></KeymapProvider>;
+    const { lastFrame, rerender } = render(withLayers([]));
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "sleep 5" } }] } } });
+    fake.pushEvent({ kind: "task", data: { type: "system", subtype: "task_started", task_id: "t1", tool_use_id: "bash-1", task_type: "local_bash", description: "sleep" } });
+    await waitFor(() => frame(lastFrame).includes("(ctrl+b to run in background)"));
+    rerender(withLayers([{ context: "Global", bindings: { "ctrl+b": null, "ctrl+k": "task:background" } }]));
+    await waitFor(() => frame(lastFrame).includes("(ctrl+k to run in background)"));
+    expect(frame(lastFrame)).not.toContain("(ctrl+b to run in background)");
+  });
+
+  // F5a. `ccx attach` mid-turn: host.follow() drains the turn buffer as `replay`-marked message frames.
+  // Stamping them with the attach clock gave a completed, sidecar-less Agent a duration measured between
+  // two frames that arrived milliseconds apart — a number about the attach, not about the work.
+  it("a REPLAYED Agent result omits the duration instead of deriving one from attach-time stamps", async () => {
+    const fake = fakeRemote(), clock = { now: 1000 };
+    function H() { const c = useChat(() => fake, {}, { ...noRepaint, now: () => clock.now }); return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 7 });
+    fake.pushEvent(agentCall(true));
+    for (const ev of agentChildFrames(true)) fake.pushEvent(ev);
+    clock.now = 9000;                                              // the attach drain takes real time; it is not the agent's
+    fake.pushEvent(agentResult(true));
+    fake.pushEvent({ kind: "state", status: { state: "working", status: "busy" } });
+    await waitFor(() => frame(lastFrame).includes("Done ("));
+    expect(frame(lastFrame)).toContain("Done (1 tool use)");
+    expect(frame(lastFrame)).not.toContain("8s");                  // the fabricated 1000 → 9000 span
+  });
+
+  it("a LIVE Agent still derives its duration from the dispatch→result clock (the suppression is replay-only)", async () => {
+    const fake = fakeRemote(), clock = { now: 1000 };
+    function H() { const c = useChat(() => fake, {}, { ...noRepaint, now: () => clock.now }); return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 7 });
+    fake.pushEvent(agentCall());
+    for (const ev of agentChildFrames()) fake.pushEvent(ev);
+    clock.now = 9000;
+    fake.pushEvent(agentResult());
+    await waitFor(() => frame(lastFrame).includes("Done ("));
+    expect(frame(lastFrame)).toContain("Done (1 tool use · 8s)");
+  });
+
+  // F5b. The `system/task_*` sidechannel reaches a LIVE client as its own `task` event, but the follow drain
+  // replays it as an ordinary `message` frame — so an attaching client used to lose the notification rung
+  // (whose totals are the host's own measurements, valid whenever they are read) along with the stamps.
+  it("a task_notification REPLAYED as a message frame still supplies the notification rung", async () => {
+    const fake = fakeRemote(), clock = { now: 1000 };
+    function H() { const c = useChat(() => fake, {}, { ...noRepaint, now: () => clock.now }); return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 7 });
+    fake.pushEvent(agentCall(true));
+    fake.pushEvent({ kind: "message", replay: true, data: { type: "system", subtype: "task_notification", task_id: "t1", tool_use_id: "agent-1", status: "completed", usage: { total_tokens: 4195, tool_uses: 2, duration_ms: 4484 } } });
+    clock.now = 9000;
+    fake.pushEvent(agentResult(true));
+    fake.pushEvent({ kind: "state", status: { state: "working", status: "busy" } });
+    await waitFor(() => frame(lastFrame).includes("Done ("));
+    expect(frame(lastFrame)).toContain("Done (2 tool uses · 4.2k tokens · 4s)");   // from the wire, not from our clock
   });
 });

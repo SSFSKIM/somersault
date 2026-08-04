@@ -973,3 +973,31 @@ describe("F3 Task 9 — the interrupt sentinel user frame (LT14)", () => {
     expect(groups.map((item) => (item.kind === "line" ? item.line.text : ""))).toEqual(["  Read 2 files (ctrl+o to expand)", "  Read 2 files (ctrl+o to expand)"]);
   });
 });
+
+// ── F3 FINAL controller review (external codex reviewer, finding F3) ───────────────────────────────────
+// The Write create preview is the ONE typed row whose job is to reproduce a file verbatim, so a row it drops
+// is a row the reader will look for in the file and not find. `previewRows` used to emit an empty line as a
+// SEGMENTED `{text:"", segments:[{text:""}]}`, and `Line`'s segmented branch renders one `<Text>` per segment
+// — an empty one paints nothing, and the blank row vanished. The un-segmented branch's `l.text || " "` is
+// what holds the row open, so this pins the RENDERED frame, not just the RenderLine.
+describe("F3 final review: blank lines survive a Write preview", () => {
+  const write = {
+    id: "write-1", name: "Write", route: "top-level" as const, callSequence: 1,
+    input: { file_path: "/work/a.txt", content: "a\n\nb" },
+    result: { content: "Created", isError: false, resultSequence: 2 },
+  };
+  const items = () => renderToolEvent(write, normalizeToolResult(write), { ...options, columns: 40 });
+
+  it("emits the blank row WITHOUT segments, so it takes Line's `text || ' '` branch", () => {
+    const body = bodyOf(items());
+    expect(body.map((line) => line.text)).toEqual(["a", "", "b"]);
+    expect(body[1]).toEqual({ text: "" });                       // no `segments: [{text: ""}]` — that is what Ink collapses
+  });
+
+  it("paints three rows with the middle one blank", async () => {
+    const painted = plain(await rawInk(<>{items().map((item) => <RenderItemView key={item.id} item={item} />)}</>, 40)).split("\n");
+    const start = painted.findIndex((line) => line.includes(TOOL_RESULT_GUTTER));
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(painted.slice(start, start + 3).map((line) => line.replace(TOOL_RESULT_GUTTER, "").trim())).toEqual(["a", "", "b"]);
+  });
+});

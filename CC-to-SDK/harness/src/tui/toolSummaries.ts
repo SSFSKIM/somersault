@@ -33,6 +33,10 @@ import type { ToolEvent } from "./transcriptModel.js";
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
+/** `str` with the length guard dropped: an EXPLICIT `""` is a value the wire actually carried, not an absent
+ *  field. Only `writeRows` needs the distinction (F3 final review) — everywhere else an empty string and a
+ *  missing one are equally unusable, which is why `str` stays the default reader. */
+const anyStr = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const count = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined);
 /** A row with a bold count inside it is a SEGMENT list — never a `**` literal and never a raw-SGR string: these
  *  rows are not dim, so ordinary segments carry both attributes correctly (the raw-SGR writer exists only because
@@ -114,7 +118,12 @@ const extensionOf = (path: string | undefined): string => {
 };
 function previewRows(written: string, filePath: string | undefined): readonly RenderLine[] {
   const lines = textLines(written), lang = extensionOf(filePath), known = KNOWN_LANGS.has(lang);
-  const shown = lines.slice(0, WRITE_PREVIEW_LINES).map((line) => {
+  const shown = lines.slice(0, WRITE_PREVIEW_LINES).map((line): RenderLine => {
+    // A BLANK line is emitted WITHOUT segments (F3 final review). `Line.tsx` renders a segmented row as one
+    // `<Text>` per segment and Ink collapses an empty one, so `[{text:""}]` painted nothing at all and a
+    // preview of `a\n\nb` came back two rows — no longer the file. Only the segment-LESS branch reaches
+    // `l.text || " "`, which is what holds the empty row open, so a blank line must take it.
+    if (line === "") return { text: "" };
     const segments = known ? highlightCode(line, lang) : [];
     return row(...(segments.length > 0 ? segments : [plain(line)]));           // an empty line highlights to nothing
   });
@@ -131,7 +140,13 @@ function writeRows(event: ToolEvent, normalized: NormalizedToolResult): readonly
   // no-content fallback, where there is nothing to preview. The condensed (` to {relativePath}`), scratchpad
   // (`… (ctrl+o to expand)`) and plan-mode (`/plan to preview`) variants stay recorded as skipped.
   const input = isRecord(event.input) ? event.input : {};
-  const written = str(structured?.content) ?? str(input.content);
+  // `anyStr`, not `str` (F3 final review): an EXPLICIT `content: ""` is a KNOWN source — the file has zero
+  // lines — and `str`'s length guard used to collapse it to "absent", dropping the create through to the
+  // count fallback, which then counted the flat result text ("Created") and reported `Wrote 1 line` for an
+  // empty file. Preview-alone semantics give a zero-line file zero preview rows, so the create renders its
+  // header and NO body; the count row survives only where the content field is genuinely MISSING and there
+  // is therefore nothing to preview.
+  const written = anyStr(structured?.content) ?? anyStr(input.content);
   if (written === undefined) {
     const lines = normalized.outputLines.length;
     return [row(plain("Wrote "), bold(String(lines)), plain(` ${plural(lines, "line")}`))];
