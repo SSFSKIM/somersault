@@ -103,12 +103,15 @@ describe("F4 markdown — block grammar (census §2.1, bundle f2 L420590–42071
   it("a blockquote is its own chunk: one blank line either side of surrounding prose", () => {
     expect(texts("before\n\n> quoted\n\nafter")).toEqual(["before", "", "▎ quoted", "", "after"]);
   });
-  it("fenced code: known language highlights, unknown stays dim `inactive` (Task 3 moves it flush-left)", () => {
+  // Task 3 moved fenced code to upstream's own form: FLUSH-LEFT, the label-polarity rule, a plain
+  // (not dim) body for an unresolved language, and the theme-independent DhH scope colours. The full
+  // matrix lives in `markdown-links-code.test.ts`; these three keep the block-grammar file honest.
+  it("fenced code is flush-left: recognized → highlighted+unlabelled, unknown → dim label + plain body", () => {
     expect(lines("```ts\nconst x = 1;\n```")).toEqual([
-      { text: "  const x = 1;", segments: [{ text: "  " }, { text: "const", color: tok("suggestion") }, { text: " x = " }, { text: "1", color: tok("warning") }, { text: ";" }] },
+      { text: "const x = 1;", segments: [{ text: "const", color: "blue" }, { text: " x = " }, { text: "1", color: "green" }, { text: ";" }] },
     ]);
-    expect(lines("```\nplain text\n```")).toEqual([{ text: "  plain text", color: tok("inactive"), dim: true }]);
-    expect(lines("```rust\nfn main() {}\n```")).toEqual([{ text: "  fn main() {}", color: tok("inactive"), dim: true }]);
+    expect(lines("```\nplain text\n```")).toEqual([{ text: "plain text" }]);
+    expect(lines("```rust\nfn main() {}\n```")).toEqual([{ text: "rust", dim: true }, { text: "fn main() {}" }]);
   });
   it("a table falls through to raw pipe lines until Task 4's renderTable", () => {
     expect(texts("| a | b |\n|---|---|\n| 1 | 2 |")).toEqual(["| a | b |", "|---|---|", "| 1 | 2 |"]);
@@ -119,12 +122,16 @@ describe("F4 markdown — block grammar (census §2.1, bundle f2 L420590–42071
 });
 
 describe("F4 markdown — inline walker", () => {
-  it("strikethroughSupported is exported (Task 3 fills the dHn allowlist)", () => {
+  it("strikethroughSupported is exported (Task 3 filled the dHn allowlist)", () => {
     expect(typeof strikethroughSupported()).toBe("boolean");
   });
   it("del applies strikethrough to its children", () => {
-    const l = lines("~~gone~~")[0];
-    expect(l).toMatchObject({ text: "gone", strikethrough: true });
+    // Task 3 gated `del` on the real `dHn` allowlist, which reads `process.env` — so this case has to
+    // name a supported terminal now (the gate matrix itself is pinned in markdown-links-code.test.ts).
+    const before = process.env.TERM_PROGRAM;
+    process.env.TERM_PROGRAM = "iTerm.app";
+    try { expect(lines("~~gone~~")[0]).toMatchObject({ text: "gone", strikethrough: true }); }
+    finally { if (before === undefined) delete process.env.TERM_PROGRAM; else process.env.TERM_PROGRAM = before; }
   });
   it("inlineSegments accumulates the incoming style down the tree", () => {
     const segs = inlineSegments([{ type: "strong", raw: "**a**", text: "a", tokens: [{ type: "text", raw: "a", text: "a" }] } as never], { dim: true });

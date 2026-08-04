@@ -76,10 +76,22 @@ describe("theme.ts", () => {
     // ChatComposer has `const border = mode === "bash" ? "magenta" : mode === "memory" ? "blue" : undefined`.
     // Those are the permission-mode chip and the composer border — two of the roles §2.2 names — so an
     // attribute-anchored guard would go green with the requirement unmet. Safe once migration is complete.
-    for (const file of ["render.ts", "highlight.ts", "markdown.ts", "ChatStatusBar.tsx", "ChatComposer.tsx"]) {
+    for (const file of ["render.ts", "markdown.ts", "ChatStatusBar.tsx", "ChatComposer.tsx"]) {
       const source = await readFile(new URL(`../../src/tui/${file}`, import.meta.url), "utf8");
       expect(source, file).not.toMatch(/["'](?:red|green|yellow|blue|magenta|cyan|white|black|gray|grey)(?:Bright)?["']/);
     }
+  });
+  it("highlight.ts names EXACTLY the four DhH scope colors, and no other bare color", () => {
+    // F4 Task 3 made highlight.ts a deliberate, single exception to the rule above: upstream's hljs scope
+    // map `DhH` (constants pack §1.10, bundle L420495) is built from CHALK CONSTANTS — `keyword: vt.blue`,
+    // `string: vt.red`, `number: vt.green`, `comment: vt.green` — so fenced-code colours are theme-
+    // INDEPENDENT upstream and we adopt them verbatim (recorded divergence: no /theme repaint for fenced
+    // code, and red/green survive under the daltonized themes). The guard is NARROWED, not dropped: any
+    // bare colour word beyond those three literals still fails here.
+    return readFile(new URL("../../src/tui/highlight.ts", import.meta.url), "utf8").then((source) => {
+      const bare = source.match(/["'](?:red|green|yellow|blue|magenta|cyan|white|black|gray|grey)(?:Bright)?["']/g) ?? [];
+      expect(new Set(bare)).toEqual(new Set(['"blue"', '"red"', '"green"']));
+    });
   });
 });
 

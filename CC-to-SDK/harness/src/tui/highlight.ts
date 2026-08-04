@@ -7,10 +7,18 @@
 import type { Segment } from "./render.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 
-// Semantic roles (F1 Task 2 role map): keywords take `suggestion`, string literals `success`, numbers
-// `warning`, and comments / unrecognised languages `inactive`. Read per call, never cached at import, so a
-// mid-session setTheme() (incl. the /theme picker live preview) repaints the very next highlight pass.
-const role = (name: "suggestion" | "success" | "warning" | "inactive") => resolveThemeColor(themeTokens()[name]);
+// F4 Task 3 — the scope colors are upstream's hljs map `DhH` (pack §1.10, bundle L420495), which is built
+// from CHALK CONSTANTS and is therefore theme-INDEPENDENT: `keyword: vt.blue`, `string: vt.red`,
+// `number: vt.green`, `comment: vt.green`. Upstream paints fenced code those four colors in every theme it
+// ships, daltonized ones included, and its code colors do not repaint on a theme switch. Fidelity wins over
+// our house theme-token pattern; the two costs (no /theme live repaint for fenced code; red/green present
+// under the daltonized themes) are recorded divergences in the parity doc, not accidents. These are bare
+// ANSI names, which `resolveThemeColor` passes through unchanged, so Ink accepts them as-is.
+const KEYWORD = "blue", STRING = "red", NUMBER_COLOR = "green", COMMENT = "green";
+// The ONE remaining theme-token role: `highlightCode`'s own unknown-language fallback, which has no upstream
+// counterpart (upstream resolves an unknown fence to hljs "plaintext" instead). Read per call so a
+// mid-session setTheme() repaints the very next pass.
+const role = (name: "inactive") => resolveThemeColor(themeTokens()[name]);
 
 const KW: Record<string, RegExp> = {
   ts: /\b(const|let|var|function|return|if|else|for|while|class|interface|type|import|export|from|new|await|async|try|catch|throw|extends|implements|readonly|public|private|switch|case|default|break|continue|typeof|instanceof|in|of|null|undefined|true|false|this)\b/g,
@@ -30,9 +38,9 @@ const QUOTES = new Set(["\"", "'", "`"]);
 function styleWords(text: string, kwRe: RegExp): Segment[] {
   const spans: { start: number; end: number; seg: Partial<Segment> }[] = [];
   kwRe.lastIndex = 0;
-  for (let m: RegExpExecArray | null; (m = kwRe.exec(text)); ) spans.push({ start: m.index, end: m.index + m[0].length, seg: { color: role("suggestion") } });
+  for (let m: RegExpExecArray | null; (m = kwRe.exec(text)); ) spans.push({ start: m.index, end: m.index + m[0].length, seg: { color: KEYWORD } });
   NUMBER.lastIndex = 0;
-  for (let m: RegExpExecArray | null; (m = NUMBER.exec(text)); ) spans.push({ start: m.index, end: m.index + m[0].length, seg: { color: role("warning") } });
+  for (let m: RegExpExecArray | null; (m = NUMBER.exec(text)); ) spans.push({ start: m.index, end: m.index + m[0].length, seg: { color: NUMBER_COLOR } });
   spans.sort((a, b) => a.start - b.start);
   const accepted: typeof spans = [];
   for (const s of spans) if (!accepted.length || s.start >= accepted[accepted.length - 1].end) accepted.push(s);
@@ -57,7 +65,7 @@ export function highlightCode(line: string, lang: string): Segment[] {
   for (let i = 0; i < line.length; ) {
     if (marker && line.startsWith(marker, i)) {
       out.push(...styleWords(line.slice(plainStart, i), kwRe));
-      out.push({ text: line.slice(i), color: role("inactive"), dim: true });
+      out.push({ text: line.slice(i), color: COMMENT, dim: true });
       return out;
     }
     if (QUOTES.has(line[i])) {
@@ -66,7 +74,7 @@ export function highlightCode(line: string, lang: string): Segment[] {
       let j = i + 1;
       while (j < line.length && line[j] !== quote) j += line[j] === "\\" ? 2 : 1;
       j = Math.min(j + 1, line.length);
-      out.push({ text: line.slice(i, j), color: role("success") });
+      out.push({ text: line.slice(i, j), color: STRING });
       plainStart = i = j;
       continue;
     }

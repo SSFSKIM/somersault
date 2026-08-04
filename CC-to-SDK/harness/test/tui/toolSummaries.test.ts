@@ -121,11 +121,13 @@ describe("F3 typed result rows — the Write create preview", () => {
   });
   it("syntax-highlights on the file extension and leaves an unknown extension PLAIN, not dim", () => {
     const highlighted = rows(write("const x = 42;"))![0]!;
-    expect(highlighted.segments?.find((s) => s.text === "const")?.color).toBe(resolveThemeColor(themeTokens().suggestion));
-    expect(highlighted.segments?.find((s) => s.text === "42")?.color).toBe(resolveThemeColor(themeTokens().warning));
+    // F4 Task 3 re-pinned highlightCode's scope colours to upstream's theme-INDEPENDENT hljs map `DhH`
+    // (constants pack §1.10, bundle L420495): keyword `vt.blue`, number `vt.green`. Bare ANSI names.
+    expect(highlighted.segments?.find((s) => s.text === "const")?.color).toBe("blue");
+    expect(highlighted.segments?.find((s) => s.text === "42")?.color).toBe("green");
     expect(highlighted.dim).toBeUndefined();
     const python = rows(eventFor("Write", { file_path: "/work/s.py", content: "def go():" }, "Created"))![0]!;
-    expect(python.segments?.find((s) => s.text === "def")?.color).toBe(resolveThemeColor(themeTokens().suggestion));
+    expect(python.segments?.find((s) => s.text === "def")?.color).toBe("blue");
     const unknown = rows(write("const x = 42;", "/work/notes.md"))![0]!;       // `highlightCode` would dim this; the preview must not
     expect(unknown).toEqual({ text: "const x = 42;", segments: [{ text: "const x = 42;" }] });
   });
@@ -133,7 +135,7 @@ describe("F3 typed result rows — the Write create preview", () => {
     const sidecar = eventFor("Write", { file_path: "/work/a.md", content: "input\ncontent" }, "Created",
       { type: "create", filePath: "/work/real.ts", content: "const y = 1;\n", originalFile: null, structuredPatch: [], userModified: false });
     expect(preview(sidecar)).toEqual(["const y = 1;"]);
-    expect(rows(sidecar)![0]!.segments?.find((s) => s.text === "const")?.color).toBe(resolveThemeColor(themeTokens().suggestion));
+    expect(rows(sidecar)![0]!.segments?.find((s) => s.text === "const")?.color).toBe("blue");
   });
   it("keeps the ten-line cap in the detail projections — the census records no verbose expansion of `jme`", () => {
     expect(preview(write(ts(12)), "detail-all")).toEqual([...Array.from({ length: 10 }, (_, i) => `const v${i} = ${i};`), "… +2 lines"]);

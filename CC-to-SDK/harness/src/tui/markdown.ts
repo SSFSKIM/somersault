@@ -14,16 +14,11 @@ import type { Token, Tokens } from "marked";
 import type { RenderLine, Segment } from "./render.js";
 import { inlineSegments, type InlineStyle } from "./markdownInline.js";
 import { highlightCode, KNOWN_LANGS } from "./highlight.js";
-import { resolveThemeColor, themeTokens } from "./theme.js";
 
 export interface MarkdownOptions { width?: number; dim?: boolean }
 
 /** A run is a segment whose text may contain `\n`s — the newline positions ARE the block grammar. */
 type Run = Segment & { text: string };
-
-/** Unknown/unlabelled fenced code keeps the `inactive` role (F1 Task 2 role map); read per call so a
- *  mid-session setTheme() repaints the next render. */
-const inactive = () => resolveThemeColor(themeTokens().inactive);
 
 // ── depth numbering: `JhH`/`KhH`/`XhH`/`YhH` (pack §1.6, L420810–420838) ────────────────────────────
 /** `KhH` — bijective base-26 lowercase (1→a, 26→z, 27→aa); the `n--` before the modulo is what makes it
@@ -75,14 +70,26 @@ const dropPostHeadingSpace = (all: Token[]): Token[] =>
 
 function styled(ctx: Ctx, text: string, extra?: Partial<Segment>): Run { return { ...ctx.style, ...extra, text }; }
 
-/** `code` (pack §5, L420597–420602) — our current in-harness form: two-space indent, highlighted body for a
- *  known language, a dim `inactive` body otherwise. Task 3 moves it flush-left and adds the label polarity. */
+/** `code` (pack §5, L420597–420602) VERBATIM in shape: `f + body + aW`, where `f` is the label.
+ *  FLUSH-LEFT — nothing is prepended to a body line — and no border, no line numbers, no length cap, no
+ *  horizontal truncation anywhere in this case.
+ *  Language resolution is full `lang` → its `/^[\w.+#-]+/` prefix → `"plaintext"`; hljs leaves plaintext
+ *  unscoped, so an unresolved body renders PLAIN (not dim — that was the pre-Task-3 house form).
+ *  LABEL POLARITY `f = u && !s?.supportsLanguage(u) ? vt.dim(u) + aW : ""`: a dim line carrying the RAW
+ *  lang string sits above the block exactly when `lang` is non-empty and the FULL string is unrecognised.
+ *  The test is on `u`, not the prefix `d` — so ```ts title=x is BOTH labelled `ts title=x` AND highlighted
+ *  as ts, and a recognised bare ```ts gets no label at all.
+ *  NOT PORTED (pack §5's correction): with highlighting globally off (`!s`) upstream labels EVERY tagged
+ *  fence, because `s?.supportsLanguage` short-circuits to undefined. We ship no `syntaxHighlightingDisabled`
+ *  setting, so that mode is unreachable here; recorded in the parity doc. */
 function codeRuns(t: Tokens.Code, ctx: Ctx, out: Run[]): void {
-  const lang = (t.lang ?? "").match(/^[\w.+#-]+/)?.[0] ?? "";
-  const known = lang !== "" && KNOWN_LANGS.has(lang);
+  const lang = t.lang ?? "";
+  const prefix = lang.match(/^[\w.+#-]+/)?.[0] ?? "";
+  const resolved = KNOWN_LANGS.has(lang) ? lang : KNOWN_LANGS.has(prefix) ? prefix : "";   // "" is upstream's "plaintext"
+  if (lang !== "" && !KNOWN_LANGS.has(lang)) { out.push(styled(ctx, lang, { dim: true })); out.push(styled(ctx, NL)); }
   for (const line of t.text.split(NL)) {
-    if (known) { out.push(styled(ctx, "  ")); for (const s of highlightCode(line, lang)) out.push({ ...ctx.style, ...s }); }
-    else out.push(styled(ctx, "  " + line, { color: inactive(), dim: true }));
+    if (resolved !== "") for (const s of highlightCode(line, resolved)) out.push({ ...ctx.style, ...s });
+    else out.push(styled(ctx, line));
     out.push(styled(ctx, NL));
   }
 }
