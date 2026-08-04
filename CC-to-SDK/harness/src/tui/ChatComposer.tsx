@@ -9,7 +9,7 @@ import type { CommandEntry } from "./commandComplete.js";
 import { editExternalAsync as realEditExternal } from "./externalEditor.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, newlineHint } from "./composerFrame.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
-import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope, useSuspendInput, type SuspendInput } from "./keys/KeymapProvider.js";
+import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope, usePasting, useSuspendInput, type SuspendInput } from "./keys/KeymapProvider.js";
 import { formatBindings } from "./keys/hints.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
@@ -25,6 +25,8 @@ const role = (name: "bashBorder" | "remember") => resolveThemeColor(themeTokens(
  *  only the RENDER (first char inverted, rest dim) is this task's business. */
 const PLACEHOLDER = "Ask Claude anything…";
 const DEFAULT_COLUMNS = 80;
+/** CM25, bundle L493764: `Pasting…` — one ellipsis CHARACTER, not three dots, dim, below the frame. */
+const PASTING_TEXT = "Pasting…";
 
 const realReaddir = (dir: string): DirEnt[] => {
   try { return readdirSync(dir, { withFileTypes: true }).map((d) => ({ name: d.name, isDir: d.isDirectory() })); }
@@ -91,13 +93,17 @@ function MentionPopup({ state }: { state: EditorState }) {
  *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
 export type ComposerEditExternal = (text: string) => string | null | Promise<string | null>;
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800, columns, label }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
   /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
    *  one. Absent AND with no provider above, the editor simply runs without a handoff. */
   suspendInput?: SuspendInput; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number;
   /** The terminal's width, read per render (a function, not a number, so a resize is visible without a
    *  new prop identity). ChatApp threads its own `deps.columns ?? stdout.columns ?? 80` source through. */
   columns?: () => number;
+  /** The terminal's HEIGHT, read the same per-render way and for one consumer: the paste-chip threshold
+   *  (`max(0, min(rows - 10, 2))`, F5 task 3), which upstream reads off the live terminal so that a short
+   *  window collapses a paste the tall one would have inlined. */
+  rows?: () => number;
   /** The `History n/total` text painted into the top rule (upstream `AVf`, L494870). A slot this task:
    *  F5 Task 7 wires the live history position into it. Nothing is painted while it is undefined. */
   label?: string }) {
@@ -151,6 +157,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const yankHintMsRef = useRef(yankHintMs); yankHintMsRef.current = yankHintMs;
   const escClearMsRef = useRef(escClearMs); escClearMsRef.current = escClearMs;
   const exitArmMsRef = useRef(exitArmMs); exitArmMsRef.current = exitArmMs;
+  // Read through a ref for the same reason as stateRef/busyRef: `handleKey` runs from the keymap's passive-
+  // effect listener, so a closure read of `rows` lags a render — and after a resize the stale value is exactly
+  // the one that decides wrong.
+  const rowsRef = useRef(rows); rowsRef.current = rows;
   const [clearArmed, setClearArmed] = useState(false);
   const clearArm = useRef(0);
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -217,6 +227,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   useKeyScope("Chat");
   useKeyScope("Autocomplete", { active: !!(state.command || state.mention) });
   const bindings = useBindingLookup();                 // the footer ladder below reads its chords from here
+  const pasting = usePasting();                        // CM25: a bracketed paste still arriving (provider-owned)
   // Read stateRef.current (NOT the closure `state`): the provider dispatches from a listener attached in a
   // passive effect that flushes after commit, so a closure read lags one render and would submit stale text.
   // The ref updates every render.
@@ -281,7 +292,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // Escape that resolved as the popup's dismissal is the cancel.
     if (!s.command && !s.mention && key.escape) { cancel(); return; }
     if (clearArm.current) disarmClear();
-    const r = applyKey(s, input, key);
+    // `rows` is passed positionally after `now`, so `now` is given explicitly here — same value the default
+    // would have produced. A paste-tagged event is the only consumer (editor.ts's `KeyFlags.paste` arm).
+    const r = applyKey(s, input, key, Date.now(), rowsRef.current?.());
     if (key.ctrl && input === "u" && r.killed && r.killed.text.length >= 3) {
       setYankHint(true);
       if (yankTimer.current) clearTimeout(yankTimer.current);
@@ -419,6 +432,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       </ComposerFrame>
       {mode === "bash" ? <Box paddingX={1}><Text color={role("bashBorder")} dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
       {mode === "memory" ? <Box paddingX={1}><Text color={role("remember")} dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
+      {pasting ? <Box paddingX={1}><Text dimColor>{PASTING_TEXT}</Text></Box> : null}
       {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
       {clearVisible ? <Box paddingX={1}><Text dimColor>{`${escKey} again to clear`}</Text></Box> : null}
       {dArmed && isEmptyNow ? <Box paddingX={1}><Text dimColor>{`Press ${exitKey} again to exit`}</Text></Box> : null}

@@ -25,7 +25,11 @@ const NAMED: Record<string, keyof KeyFlags> = Object.assign(Object.create(null),
 const RAW: Record<string, string> = Object.assign(Object.create(null), { "_": "\x1f", j: "\n" });
 
 export function toKeyFlags(e: KeyEvent | TextEvent): { input: string; key: KeyFlags } {
-  if (e.kind === "text") return { input: e.text, key: {} };
+  // `paste` is the one piece of event identity that survives this projection. Everything else about a text
+  // event is already in `input`, but provenance is not recoverable from the characters — and it is the whole
+  // basis of the chip decision (editor.ts `KeyFlags.paste`), so dropping it here would silently chip a
+  // fast-typed run and never chip a real paste.
+  if (e.kind === "text") return { input: e.text, key: e.paste ? { paste: true } : {} };
   if (e.ctrl && !e.alt && !e.super && e.name in RAW) return { input: RAW[e.name], key: {} };
   const key: KeyFlags = {};
   if (e.ctrl) key.ctrl = true;

@@ -11,7 +11,7 @@ import React from "react";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
-import { useKeyScope, useKeyActions, useKeyFallback, useSwallowKeys, useBinding, useBindingLookup, useSuspendInput, type SuspendInput } from "../../src/tui/keys/KeymapProvider.js";
+import { useKeyScope, useKeyActions, useKeyFallback, useSwallowKeys, useBinding, useBindingLookup, usePasting, useSuspendInput, type SuspendInput } from "../../src/tui/keys/KeymapProvider.js";
 import type { KeyContextName, KeyEvent, TextEvent } from "../../src/tui/keys/types.js";
 
 // The matched ACTION is the second argument (only a `family:*` handler reads it — see the family block below).
@@ -28,6 +28,10 @@ function Probe(props: { scope: KeyContextName; actions?: Handlers; fallback?: (e
   useSwallowKeys(!!props.swallow);
   return <Text>{props.scope}</Text>;
 }
+
+/** Renders the provider's `pasting` flag (F5 task 3) so a keyless test can observe it the way the composer's
+ *  dim `Pasting…` row does. */
+function PastingProbe() { return <Text>{usePasting() ? "PASTING" : "idle"}</Text>; }
 
 const ESC = "\x1b", CTRL_X = "\x18", CTRL_K = "\x0b", CTRL_O = "\x0f", CTRL_Z = "\x1a";
 
@@ -357,6 +361,83 @@ describe("KeymapProvider — byte-stream hygiene", () => {
     await tick();
     h.stdin.write("\x1b[200~pasted\x1b[201~");
     expect(seen).toEqual(["text:pasted"]);
+    h.unmount();
+  });
+});
+
+// F5 task 3. The chip path keys off PROVENANCE, not size: a 900-character run someone typed (or a test built by
+// hand) must stay literal, and only a bracketed paste may collapse into `[Pasted text #N]`. parse.ts sees one
+// chunk and cannot answer that question — the markers can be torn across reads and the overflow latch emits a
+// capped prefix with no end marker at all — so the tag is applied HERE, where the stream lives.
+describe("KeymapProvider — paste provenance and the Pasting… flag", () => {
+  const tagged = (fallback: ReturnType<typeof vi.fn>) =>
+    fallback.mock.calls.filter((c) => c[0].kind === "text").map((c) => `${c[0].paste ? "paste" : "typed"}:${c[0].text}`);
+
+  it("tags a paste that completes in ONE chunk", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+    await tick();
+    h.stdin.write("\x1b[200~pasted\x1b[201~");
+    expect(tagged(fallback)).toEqual(["paste:pasted"]);
+    h.unmount();
+  });
+
+  it("tags a paste ASSEMBLED across two chunks", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+    await tick();
+    h.stdin.write("\x1b[200~line one\r");
+    h.stdin.write("line two\x1b[201~");
+    expect(tagged(fallback)).toEqual(["paste:line one\rline two"]);
+    h.unmount();
+  });
+
+  it("does NOT tag a plain multi-character run typed into the same chunk", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+    await tick();
+    h.stdin.write("hello");
+    expect(tagged(fallback)).toEqual(["typed:hello"]);
+    h.unmount();
+  });
+
+  it("keeps text around a paste untagged, and the payload tagged, within one chunk", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+    await tick();
+    h.stdin.write("ab\x1b[200~body\x1b[201~cd");
+    expect(tagged(fallback)).toEqual(["typed:ab", "paste:body", "typed:cd"]);
+    h.unmount();
+  });
+
+  it("tags the capped prefix the overflow latch releases (an unterminated paste)", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+    await tick();
+    h.stdin.write("\x1b[200~" + "x".repeat((1 << 20) + 1));      // past PASTE_CAP: prefix emitted, latch set
+    expect(tagged(fallback).map((s) => s.slice(0, 8))).toEqual(["paste:xx"]);
+    h.unmount();
+  });
+
+  it("exposes `pasting` while a paste is held open, and clears it on release", async () => {
+    const h = renderWithKeymap(<><Probe scope="Chat" /><PastingProbe /></>);
+    await tick();
+    expect(h.lastFrame()).toContain("idle");
+    h.stdin.write("\x1b[200~line one\r");
+    await tick();
+    expect(h.lastFrame()).toContain("PASTING");
+    h.stdin.write("line two\x1b[201~");
+    await tick();
+    expect(h.lastFrame()).toContain("idle");
+    h.unmount();
+  });
+
+  it("never reports `pasting` for a paste that arrives whole", async () => {
+    const h = renderWithKeymap(<><Probe scope="Chat" /><PastingProbe /></>);
+    await tick();
+    h.stdin.write("\x1b[200~whole\x1b[201~");
+    await tick();
+    expect(h.lastFrame()).toContain("idle");
     h.unmount();
   });
 });

@@ -4,6 +4,7 @@
 // continuation. rankCandidates (pure) is added in the mention pass.
 import { rankCandidates } from "./fileComplete.js";
 import { rankCommands, type CommandEntry } from "./commandComplete.js";
+import { ingestPaste, substituteChips } from "./pasteChips.js";
 export interface Cursor { row: number; col: number }
 export interface Candidate { path: string; score: number }
 export interface MentionState { anchor: Cursor; query: string; files: string[]; items: Candidate[]; index: number }
@@ -29,6 +30,10 @@ export interface EditorResult { state: EditorState; submit?: string; killed?: { 
 export interface KeyFlags {
   return?: boolean; backspace?: boolean; delete?: boolean; ctrl?: boolean; meta?: boolean; shift?: boolean;
   leftArrow?: boolean; rightArrow?: boolean; upArrow?: boolean; downArrow?: boolean; escape?: boolean; tab?: boolean;
+  /** NOT an ink flag: the event's PROVENANCE, carried through `toKeyFlags` from the keymap's `TextEvent`. The
+   *  chip path keys off it and never off size — a 900-character run someone typed must stay literal, and only
+   *  a bracketed paste (`\x1b[200~ … \x1b[201~`, assembled by KeymapProvider) may collapse (F5 task 3). */
+  paste?: boolean;
 }
 
 export function initialEditorState(history: string[] = []): EditorState {
@@ -56,7 +61,9 @@ const splitLines = (t: string): string[] => t.split(/\r\n|\r|\n/);
 const bufferText = (s: EditorState): string => s.lines.join("\n");
 const isBlank = (s: EditorState): boolean => bufferText(s).trim().length === 0;
 
-function insertText(s: EditorState, t: string): EditorState {
+/** Exported for pasteChips.ts's `ingestPaste`, which inserts either a chip label or the normalized payload and
+ *  must land it exactly the way every other insertion does (see that file's cycle note). */
+export function insertText(s: EditorState, t: string): EditorState {
   const lines = [...s.lines]; const { row, col } = s.cursor; const cur = lines[row];
   const before = cur.slice(0, col), after = cur.slice(col); const parts = splitLines(t);
   if (parts.length === 1) { lines[row] = before + parts[0] + after; return { ...s, lines, cursor: { row, col: col + parts[0].length } }; }
@@ -175,7 +182,11 @@ function submitTurn(s: EditorState): EditorResult {
   // The kill ring survives too (like the stash) — a submit is not a keystroke that should clear it. So does
   // `hasUsedBackslashReturn`: upstream keeps it in PERSISTED config (`markBackslashReturnUsed`), so nothing
   // inside a session can unlearn it. The paste chips do NOT — they are placeholders in the buffer that just left.
-  return { state: { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing, hasUsedBackslashReturn: s.hasUsedBackslashReturn }, submit: t };
+  //
+  // `fSe` (F5 task 3): the buffer showed `[Pasted text #1 +40 lines]`, the MODEL gets the forty lines. History
+  // keeps the display text — that is what the user typed and what Up must bring back, chip label and all (the
+  // map that makes it expandable is task 6's problem to persist).
+  return { state: { ...initialEditorState(history), stashed: s.stashed, killRing: s.killRing, hasUsedBackslashReturn: s.hasUsedBackslashReturn }, submit: substituteChips(t, s.pastedContents) };
 }
 
 /** Esc-Esc's second press (CC `cgr`): push nonblank text to history, then clear. Blank buffer = clear-only. */
@@ -299,7 +310,7 @@ function undoEdit(s: EditorState): EditorState {             // Ctrl-_ / Ctrl-- 
   return { ...s, lines: last.lines, cursor: last.cursor, pastedContents: last.pastedContents, undo: s.undo.slice(0, -1), mention: null, command: null };
 }
 
-function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResult {
+function applyKeyInner(s: EditorState, input: string, key: KeyFlags, rows?: number): EditorResult {
   if (input === "\x1f") return { state: undoEdit(s) };       // Ctrl-_ / Ctrl-- arrive as the bare C0 byte; Ink sets NO flags on it
   // Alt/Option word movement (Alt-←→, Alt-b/f) — checked BEFORE key.ctrl so no meta combo ever falls through to
   // insert. Ink also sets key.meta on a BARE Escape and on ESC-prefixed backspace/delete (use-input.js:
@@ -358,6 +369,18 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResu
   if (key.rightArrow) return { state: syncCompletions(moveRight(s)) };
   if (key.upArrow) return { state: onUp(s) };
   if (key.downArrow) return { state: onDown(s) };
+  // A BRACKETED paste (the keymap tagged it; see KeyFlags.paste): normalise it, then chip it or insert it —
+  // `ingestPaste` owns that decision because it also owns the id counter and the map, and returns `s` unchanged
+  // when the payload normalises to nothing. The result still goes through the SAME `afterInsert` an ordinary
+  // insertion runs, so an open `/` or `@` popup refreshes against the new text. `input` is handed to it RAW:
+  // afterInsert's two open-a-popup triggers are the single characters `/` and `@`, which normalisation cannot
+  // produce from anything but themselves, so every branch it takes is the same one the normalized token would
+  // have taken — and a megabyte paste is not walked twice to learn that.
+  if (key.paste) {
+    const next = ingestPaste(s, input, rows);
+    if (next === s) return { state: s };
+    return { state: afterInsert(next, s, input) };
+  }
   if (input) { const t = stripPasteMarkers(input); if (!t) return { state: s }; return { state: afterInsert(insertText(s, t), s, t) }; }
   return { state: s };
 }
@@ -387,9 +410,13 @@ export function endKillAndYank(s: EditorState): EditorState {
  *  no timer, so we drop in-window changes instead of deferring: our undo after the same run reverts the
  *  WHOLE run to the pre-run buffer, and a run longer than the window lands one entry per 1000 ms where
  *  upstream lands one total. Both directions of that gap are the accepted divergence (t1 review; transcribe
- *  as-is into the F5 parity note). `now` is injectable so the window is testable. */
-export function applyKey(s: EditorState, input: string, key: KeyFlags, now: number = Date.now()): EditorResult {
-  const r = applyKeyInner(s, input, key);
+ *  as-is into the F5 parity note). `now` is injectable so the window is testable.
+ *
+ *  `rows` is the terminal's CURRENT height, threaded from the composer (same source as its `columns`) purely
+ *  for the paste-chip threshold, which upstream reads off the live terminal. The reducer stays pure: the value
+ *  is a parameter, never a read. */
+export function applyKey(s: EditorState, input: string, key: KeyFlags, now: number = Date.now(), rows?: number): EditorResult {
+  const r = applyKeyInner(s, input, key, rows);
   let state = r.state;
   // A kill keystroke that killed nothing (Ctrl-K at end of line, Ctrl-U at col 0, Ctrl-W at col 0) must
   // NEVER break the run — it just doesn't have anything to fold in. `killed` is stripped to undefined on

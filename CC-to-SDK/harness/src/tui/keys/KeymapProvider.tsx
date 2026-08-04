@@ -15,7 +15,7 @@
 // Registration discipline (the F0 lesson): scopes, handlers and fallbacks are written into ref-held registry
 // entries DURING RENDER, not in effects. Input subscriptions are passive — a key can arrive after a newer
 // render has painted but before its effects flush — so anything a handler reads must already be current.
-import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useStdin } from "ink";
 import { parseBytes } from "./parse.js";
 import type { InputEvent, KeyContextName, KeyEvent, TextEvent } from "./types.js";
@@ -41,7 +41,7 @@ const PASTE_CAP = 1 << 20;
 /** Hand fd 0 to a CHILD PROCESS for the duration of `fn`, then take it back. See `useSuspendInput`. */
 export type SuspendInput = <T>(fn: () => Promise<T>) => Promise<T>;
 
-interface KeymapValue { reg: Registry; table: CompiledTable; suspendInput: SuspendInput }
+interface KeymapValue { reg: Registry; table: CompiledTable; suspendInput: SuspendInput; pasting: boolean }
 const KeymapCtx = createContext<KeymapValue | null>(null);
 
 /** True when a chunk ends INSIDE a bracketed paste (only possible if some other party enabled `?2004h`; F2
@@ -99,6 +99,11 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   // split across two reads is invisible to indexOf and the latch never releases — total keyboard death, since
   // the latch sits above even the ctrl+z pre-table hook (final-fix re-review).
   const overflowTailRef = useRef("");
+  // F5 task 3: the composer's dim `Pasting…` row (bundle L493764) is the user-visible face of `pasteRef` holding
+  // an unterminated paste. The ref is the truth (it is written from the stdin listener, where a render is a tick
+  // away); the state exists only to repaint, and `pastingRef` keeps that setState down to the two edges.
+  const [pasting, setPasting] = useState(false);
+  const pastingRef = useRef(false);
 
   const clearChord = () => {
     if (timerRef.current !== null) { (depsRef.current?.clearTimeout ?? clearTimeout)(timerRef.current); timerRef.current = null; }
@@ -135,7 +140,32 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     fallbackHandler(reg)?.(ev);
   };
 
-  const consume = (chunk: string) => {
+  // Parse and dispatch one already-assembled run of bytes, TAGGING bracketed-paste payloads as they go.
+  //
+  // parse.ts already collapses `\x1b[200~ … \x1b[201~` into one text event (`parsePaste`), but it cannot say
+  // where that text CAME FROM, and provenance is the entire basis of the chip decision downstream (a
+  // hand-typed 900-character run must stay literal). It also cannot ever learn: the markers arrive torn across
+  // reads, and the overflow latch below hands it a capped prefix with no end marker at all. Both of those are
+  // STREAM facts, and the stream is this file's — so the split happens here and parse.ts stays pure.
+  // Everything outside a paste still goes through the parser untouched, and the common no-paste chunk costs
+  // exactly one `indexOf`.
+  const emit = (data: string) => {
+    let i = 0;
+    while (i < data.length) {
+      const start = data.indexOf(PASTE_START, i);
+      if (start === -1) break;
+      if (start > i) for (const ev of parseBytes(data.slice(i, start))) dispatch(ev);
+      const from = start + PASTE_START.length;
+      const end = data.indexOf(PASTE_END, from);
+      const consumed = end === -1 ? data.length : end + PASTE_END.length;      // unterminated = the overflow prefix
+      const text = data.slice(from, end === -1 ? data.length : end);
+      if (text.length > 0) dispatch({ kind: "text", text, raw: data.slice(start, consumed), paste: true });
+      i = consumed;
+    }
+    if (i < data.length) for (const ev of parseBytes(data.slice(i))) dispatch(ev);
+  };
+
+  const consumeInner = (chunk: string) => {
     // Mid-overflow: every byte still belongs to a paste whose payload was already capped and emitted. DISCARD
     // it — parsing it would hand an embedded `\r` to the keypress path and submit the composer mid-paste,
     // which is the accident paste protection exists to prevent. Only the end marker is looked for, and only
@@ -165,9 +195,16 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     // Hold back a torn trailing character for the next chunk — but never while overflowing, where the tail is
     // about to be discarded anyway and prepending it to the post-marker remainder would corrupt it.
     const cut = overflowRef.current ? -1 : incompleteTail(data);
-    if (cut === -1) { for (const ev of parseBytes(data)) dispatch(ev); return; }
+    if (cut === -1) { emit(data); return; }
     carryRef.current = data.slice(cut);
-    for (const ev of parseBytes(data.slice(0, cut))) dispatch(ev);
+    emit(data.slice(0, cut));
+  };
+  // One place to reconcile `pasting` with the buffer, AFTER the chunk is fully handled — `consumeInner` returns
+  // from five different points and every one of them can have opened or closed a paste.
+  const consume = (chunk: string) => {
+    consumeInner(chunk);
+    const open = pasteRef.current !== "";
+    if (open !== pastingRef.current) { pastingRef.current = open; setPasting(open); }
   };
   // The `data` listener is attached once; everything it reaches goes through this ref so it always runs the
   // current render's closure without re-subscribing (and without ever missing a keystroke in between).
@@ -253,7 +290,7 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const value = useMemo(() => ({ reg, table, suspendInput }), [reg, table, suspendInput]);
+  const value = useMemo(() => ({ reg, table, suspendInput, pasting }), [reg, table, suspendInput, pasting]);
   return <KeymapCtx.Provider value={value}>{children}</KeymapCtx.Provider>;
 }
 
@@ -306,6 +343,14 @@ export function useKeySuspend(handler: () => void): void {
  *  with no input path has nothing to hand over, and the caller runs `fn` as-is. */
 export function useSuspendInput(): SuspendInput | null {
   return useContext(KeymapCtx)?.suspendInput ?? null;
+}
+
+/** True while a bracketed paste is still ARRIVING — the provider is holding an `\x1b[200~` run whose end marker
+ *  has not landed yet. The composer paints upstream's dim `Pasting…` row off it (bundle L493764). A paste that
+ *  fits in one chunk never sets it, which is correct: there was no interval to report. False with no provider
+ *  above (no input path, so nothing can be arriving). */
+export function usePasting(): boolean {
+  return useContext(KeymapCtx)?.pasting ?? false;
 }
 
 /** Help semantics: while active, only this component's own context resolves — every other scope, `Global`

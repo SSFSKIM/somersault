@@ -281,3 +281,52 @@ describe("external editor in flight (CM8)", () => {
     expect(strip(frame(lastFrame))).not.toContain(EDITOR_IN_FLIGHT_TEXT);
   });
 });
+
+// F5 Task 3: paste ingestion as the composer actually experiences it — real bracketed-paste bytes down the
+// provider's stdin, upstream's `Pasting…` row (L493764) while a paste is still arriving, and the chip that
+// expands back to its content on submit.
+describe("ChatComposer — paste chips and the Pasting… row", () => {
+  it("collapses a large paste into `[Pasted text #1 …]` and sends the full content on submit", async () => {
+    const sent: string[] = [];
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatComposer onSubmit={(t) => sent.push(t)} cwd={tmpdir()} commandCatalog={[]} columns={() => 60} rows={() => 24} />,
+    );
+    await settle();
+    const body = "alpha\nbravo\ncharlie\ndelta";
+    stdin.write("\x1b[200~" + body + "\x1b[201~");
+    await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1 +3 lines]"));
+    expect(strip(frame(lastFrame))).not.toContain("bravo");
+    stdin.write("\r");
+    await waitFor(() => sent.length > 0);
+    expect(sent[0]).toBe(body);
+  });
+  it("inserts a small paste verbatim — no chip", async () => {
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 60} rows={() => 24} />,
+    );
+    await settle();
+    stdin.write("\x1b[200~one\r\ntwo\x1b[201~");
+    await waitFor(() => strip(frame(lastFrame)).includes("two"));
+    expect(strip(frame(lastFrame))).not.toContain("Pasted text");
+  });
+  it("uses the LIVE row count: the same two-line paste chips on a 10-row terminal", async () => {
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 60} rows={() => 10} />,
+    );
+    await settle();
+    stdin.write("\x1b[200~one\ntwo\x1b[201~");
+    await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1 +1 lines]"));
+  });
+  it("paints the dim `Pasting…` row while a paste is torn across chunks, and drops it on release", async () => {
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 60} rows={() => 24} />,
+    );
+    await settle();
+    expect(strip(frame(lastFrame))).not.toContain("Pasting…");
+    stdin.write("\x1b[200~first half\r");
+    await waitFor(() => strip(frame(lastFrame)).includes("Pasting…"));
+    expect(frame(lastFrame)).toContain("\x1b[2mPasting…");                 // dimColor, upstream L493764
+    stdin.write("second half\x1b[201~");
+    await waitFor(() => !strip(frame(lastFrame)).includes("Pasting…"));
+  });
+});

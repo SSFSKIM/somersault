@@ -106,6 +106,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // The queued band's own column budget: what is left inside the `paddingX: 2` box. `deps.columns` first for
   // the same reason useChat prefers it — the frame-capture fixture and the tests pin a width.
   const terminalColumns = () => deps?.columns?.() ?? stdout?.columns ?? 80;
+  // The composer's paste-chip threshold reads the terminal HEIGHT (F5 task 3). No `deps` override: nothing
+  // pins a row count the way the frame fixtures pin a width, and 24 is the same POSIX default pasteChips uses.
+  const terminalRows = () => stdout?.rows ?? 24;
   const queueWidth = Math.max(8, terminalColumns() - QUEUE_PAD * 2);
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
@@ -294,7 +297,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     : state.pending.kind === "plan"
                       ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
                       : <PermissionDialog key={state.pending.toolUseID} req={state.pending} onDecision={(d) => resolveDecision(d)} />
-                  : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} />}
+                  : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} />}
       {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
       {escArmed ? <Box paddingX={1}><Text dimColor>Press Esc again to rewind</Text></Box> : null}
       {/* `composerOwnsKeys` is the SAME render-time disjunction the composer's own guard reads, handed to the
