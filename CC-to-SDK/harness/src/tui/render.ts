@@ -46,13 +46,14 @@ export function withAssistantBullet(lines: RenderLine[], platform: NodeJS.Platfo
 }
 
 // ── Thinking (F4 Task 9, pack §8) ──────────────────────────────────────────────────────────────────────
-/** `e8o` (L422457–422471), the STREAMING placeholder: a bare `<Text dimColor italic>` holding an
+/** `e8o` (L422457–422471), the `Thinking…` placeholder: a bare `<Text dimColor italic>` holding an
  *  `aria-hidden` `"✻ "` (U+273B `i5`, L41482 — NOT the `∴` of the settled form, and not F1's `✦` U+2726)
  *  followed by `"Thinking…"` with a real U+2026 ellipsis. It is not a gutter+content row — there is no Box
- *  around it — so it is ONE styled line and both its users share this constant: liveTurn paints it for a
- *  collapsed in-flight thinking block, and `renderMessage` for a `redacted_thinking` block, which upstream
- *  routes to the very same component (`Gha` L429450, `Xp.jsx(e8o, …)`). Frozen so a consumer can't mutate
- *  the shared object out from under the other. */
+ *  around it — so it is ONE styled line. In the bundle its ONE call site is the `redacted_thinking` case
+ *  (`Gha` L429450, `Xp.jsx(e8o, …)`) — upstream's live region never renders it while streaming (t9 review:
+ *  thinking deltas feed only a token counter, L374721–374730). Our liveTurn's collapsed in-flight form
+ *  reuses it as a brief-mandated, better-than-`✦` stand-in — a recorded divergence, not a port. Frozen so
+ *  one consumer can't mutate the shared object out from under the other. */
 export const THINKING_PLACEHOLDER: RenderLine = Object.freeze({ text: "✻ Thinking…", dim: true, italic: true });
 /** `q3r` (L41482) inside `zAr`'s `<Box minWidth={2}>` (L422963) — the glyph plus the column the box pads to. */
 const THINKING_GUTTER = "∴ ";
@@ -179,8 +180,10 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
     for (const b of m.message?.content ?? []) {
       if (b?.type === "text" && b.text) out.push(...withAssistantBullet(renderMarkdown(String(b.text), { width: opts.width }), opts.platform));
       // Thinking (Task 9). The guard comes FIRST: hidden is the ordinary transcript's answer, and only a
-      // detail/verbose projection turns it on. When it is on, `zAr` trims the text (L422969 `B5p.trim()`),
-      // bails on an all-whitespace one (`nI` → null, L422953) and runs the rest through the MARKDOWN walker
+      // detail/verbose projection turns it on. When it is on, `zAr` trims the text (L422969 `B5p.trim()`)
+      // and bails on an empty one (`nI` at L422953 strips `<cc-memory>` tags, not whitespace — upstream
+      // bails only on a genuinely empty string; our whitespace bail is a superset, unreachable in practice
+      // past `.trim()`) and runs the rest through the MARKDOWN walker
       // — the `Y40 = isTranscriptMode || verbose` branch, which is the only one reachable past the guard, so
       // upstream's whitespace-flattened single-line form is dead code and is deliberately not ported.
       // `redacted_thinking` carries no readable text at all, so it renders the placeholder instead (L429450).

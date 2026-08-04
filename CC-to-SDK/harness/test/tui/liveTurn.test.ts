@@ -49,12 +49,15 @@ describe("LiveTurn", () => {
     expect(b.length).toBeGreaterThan(a.length);
   });
 
-  it("streams thinking then collapses it once a later block opens", () => {
+  it("never shows live thinking prose — an open block is silent, a collapsed one is the placeholder", () => {
+    // t9 review: upstream's stream handler feeds thinking deltas ONLY to a token counter (L374721–374730);
+    // no thinking-text accumulator exists, so prose that streamed and then vanished from the settled
+    // transcript was OUR divergence, not a port.
     const lt = new LiveTurn();
     lt.ingest(se({ type: "message_start" }));
     lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }));
     lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "pondering" } }));
-    expect(texts(lt)).toContain("pondering");                    // live, dim
+    expect(texts(lt)).not.toContain("pondering");                // open: nothing — the spinner is the surface
     lt.ingest(se({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "t2", name: "Read", input: {} } }));
     expect(texts(lt)).toContain("✻ Thinking…");                  // collapsed — F4 Task 9's `e8o` form
     expect(texts(lt)).not.toContain("pondering");

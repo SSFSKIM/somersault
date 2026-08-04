@@ -142,10 +142,13 @@ export class LiveTurn {
 
   private renderBlock(b: Block): RenderLine[] {
     if (b.kind === "text") return b.text ? withAssistantBullet(renderMarkdown(b.text, { width: this.columns() }), this.platform) : [];
-    // F4 Task 9: the collapsed form is upstream's `e8o` VERBATIM (`✻ Thinking…`, dim + italic) and lives in
-    // render.ts so the transcript's `redacted_thinking` row and this one cannot drift. F1's `✦ Thinking`
-    // was the wrong glyph (U+2726 vs U+273B), missing the ellipsis, and not italic.
-    return b.collapsed ? [{ ...THINKING_PLACEHOLDER }]
-      : (b.text ? b.text.split("\n").map((t) => ({ text: t, dim: true })) : []);
+    // F4 Task 9 (+ t9 review): an OPEN thinking block renders NOTHING here. Upstream's stream handler never
+    // accumulates thinking text — a thinking delta feeds only a token counter (L374721–374730), in pointed
+    // contrast to text deltas (L374708–374716) — so the live surfaces for in-flight thinking are the
+    // spinner's stream-mode label and the flattened summary in the active group slot, both ported elsewhere.
+    // F1's dim live prose was a divergence: it showed text the settled transcript then hides. The COLLAPSED
+    // form keeps `e8o`'s `✻ Thinking…` verbatim (shared with the transcript's `redacted_thinking` row via
+    // render.ts) — a recorded better-than-blank invention; upstream shows nothing there either.
+    return b.collapsed ? [{ ...THINKING_PLACEHOLDER }] : [];
   }
 }

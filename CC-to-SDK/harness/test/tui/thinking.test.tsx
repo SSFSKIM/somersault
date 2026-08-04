@@ -60,7 +60,7 @@ describe("F4 Task 9 — the `∴` detail form (zAr, L422947/L422963/L422969)", (
     expect(out[0]!.segments).toContainEqual({ text: "both", dim: true, bold: true });
     expect(out[0]!.italic).toBeUndefined();                                     // the GUTTER is italic; the content is not
   });
-  it("trims the thinking text and renders nothing at all for a blank one (`nI(thinking)` → null, L422953)", () => {
+  it("trims the thinking text and renders nothing at all for a blank one (upstream bails on empty post-trim; `nI` L422953 is a `<cc-memory>` tag stripper, not this test)", () => {
     expect(renderMessage(asst([{ type: "thinking", thinking: "   \n\n  " }]), { showThinking: true })).toEqual([]);
     expect(renderMessage(asst([{ type: "thinking", thinking: "\n  padded  \n" }]), { showThinking: true })[0]!.text).toBe("padded");
   });
@@ -72,12 +72,14 @@ describe("F4 Task 9 — the `∴` detail form (zAr, L422947/L422963/L422969)", (
 describe("F4 Task 9 — the frame-level dim pin (plan-review finding 11)", () => {
   // RenderLine-level assertions alone once blessed a shape `Line.tsx` renders UNDIMMED. The only honest
   // proof that the detail form reaches the terminal dim is the bytes Ink emits.
-  it("emits `\\x1b[2m` for a detail-projected thinking block containing `**bold**`", () => {
+  it("emits a dim run SPANNING the body text — not merely somewhere in the frame", () => {
     const out = renderMessage(asst([{ type: "thinking", thinking: "weighing **both** options" }]), { showThinking: true, width: 60 });
     const { lastFrame } = render(<Line l={out[0]!} />);
-    expect(lastFrame()).toContain("\x1b[2m");
+    // The ∴ gutter is itself dim, so a bare `toContain("\x1b[2m")` is satisfied even when the BODY renders
+    // undimmed (t9 review Important 1 proved it by deleting Line.tsx's segment dim under the old assertion).
+    // The honest pin: a dim run that reaches "weighing" with no `\x1b[22m` reset in between.
+    expect(lastFrame()).toMatch(/\x1b\[2m(?:(?!\x1b\[22m)[\s\S])*weighing/);
     expect(lastFrame()).toContain("∴");
-    expect(lastFrame()).toContain("weighing");
   });
 });
 
