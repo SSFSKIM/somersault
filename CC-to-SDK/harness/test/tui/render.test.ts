@@ -18,8 +18,11 @@ describe("renderMessage", () => {
       { text: "hello", gutter: BULLET }, { text: "  world" },
     ]);
   });
-  it("renders thinking dimmed", () => {
-    expect(renderMessage(asst([{ type: "thinking", thinking: "hmm" }]))).toEqual([{ text: "hmm", dim: true }]);
+  // F4 Task 9 REPLACED F1's always-dim thinking lines: upstream's `Gha` guard returns null unless the view
+  // is transcript-mode or verbose, so a bag-less call renders nothing at all. The `∴` detail form, the
+  // `✻ Thinking…` placeholder and the cache-order pins all live in thinking.test.tsx.
+  it("renders NOTHING for thinking by default — `showThinking` is off unless a projection turns it on", () => {
+    expect(renderMessage(asst([{ type: "thinking", thinking: "hmm" }]))).toEqual([]);
   });
   // F1 Task 4: renderMessage is the NON-TOOL adapter. Every tool row — call header and result body alike —
   // goes through renderToolEvent instead, so no hand-rolled `⎿` gutter survives outside TOOL_RESULT_GUTTER.
@@ -71,13 +74,13 @@ describe("trunc", () => { it("truncates with an ellipsis", () => { expect(trunc(
 // against the bundle constants rather than against F1's hand-rolled hunk. Nothing production called it.
 
 describe("renderMessage (markdown wiring)", () => {
-  it("renders assistant text as markdown (whole-line bold) and leaves thinking plain", () => {
+  it("renders assistant text as markdown (whole-line bold) and drops the sibling thinking block", () => {
     const lines = renderMessage({ type: "assistant", message: { content: [
       { type: "text", text: "**hi**" },
       { type: "thinking", thinking: "**not parsed**" },
     ] } }, LINUX);
-    expect(lines).toContainEqual({ text: "hi", bold: true, gutter: BULLET }); // text → markdown + ● bullet
-    expect(lines).toContainEqual({ text: "**not parsed**", dim: true });      // thinking → raw dim (NOT parsed, no bullet)
+    expect(lines).toEqual([{ text: "hi", bold: true, gutter: BULLET }]);      // text → markdown + ● bullet
+    // Task 9: thinking is hidden here, and in the detail projection it is markdown-PARSED (dim), never raw.
   });
 });
 

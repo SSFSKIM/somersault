@@ -45,6 +45,28 @@ export function withAssistantBullet(lines: RenderLine[], platform: NodeJS.Platfo
   return lines.map((l, i) => (i === 0 ? { ...l, gutter } : indentLine(l, "  ")));
 }
 
+// ── Thinking (F4 Task 9, pack §8) ──────────────────────────────────────────────────────────────────────
+/** `e8o` (L422457–422471), the STREAMING placeholder: a bare `<Text dimColor italic>` holding an
+ *  `aria-hidden` `"✻ "` (U+273B `i5`, L41482 — NOT the `∴` of the settled form, and not F1's `✦` U+2726)
+ *  followed by `"Thinking…"` with a real U+2026 ellipsis. It is not a gutter+content row — there is no Box
+ *  around it — so it is ONE styled line and both its users share this constant: liveTurn paints it for a
+ *  collapsed in-flight thinking block, and `renderMessage` for a `redacted_thinking` block, which upstream
+ *  routes to the very same component (`Gha` L429450, `Xp.jsx(e8o, …)`). Frozen so a consumer can't mutate
+ *  the shared object out from under the other. */
+export const THINKING_PLACEHOLDER: RenderLine = Object.freeze({ text: "✻ Thinking…", dim: true, italic: true });
+/** `q3r` (L41482) inside `zAr`'s `<Box minWidth={2}>` (L422963) — the glyph plus the column the box pads to. */
+const THINKING_GUTTER = "∴ ";
+/** `zAr`'s row (L422947–422969): a `minWidth: 2` gutter box carrying `<Text aria-label="thinking:" dimColor
+ *  italic>∴</Text>` beside a `flexDirection: "column"` body. The gutter is dim AND italic; the BODY is only
+ *  dim (`<Markdown dimColor>`), which is why `italic` had to move onto `Gutter` in Task 1 rather than ride
+ *  the line. Continuation alignment is the assistant bullet's: the body is a sibling column of the gutter
+ *  box, so a wrapped line sits under the text, not under the glyph. */
+function withThinkingGutter(lines: RenderLine[]): RenderLine[] {
+  if (lines.length === 0) return lines;
+  const gutter: Gutter = { text: THINKING_GUTTER, dim: true, italic: true };
+  return lines.map((l, i) => (i === 0 ? { ...l, gutter } : indentLine(l, "  ")));
+}
+
 // ── The user prompt echo (pack §7.3–7.6) ───────────────────────────────────────────────────────────────
 // Upstream `Mqo` (L426143–426181) wraps `xqo` (L426067–426082) in a Box carrying
 // `backgroundColor: "userMessageBackground"` + `paddingRight: 1`; `xqo` is a ROW of a `flexShrink: 0` gutter
@@ -139,8 +161,11 @@ export function toolTarget(name: string, input: Record<string, unknown>): string
  *  decides whether a `thinking` block draws at all (Task 9). All three are THREADED from the projection now
  *  — `projectMessageEntry` forwards `columns`/`platform`/`projection`+`verbose` — so the two later tasks
  *  change only this file. Omitting the bag falls back to 80 columns, the HOST's own `process.platform` and
- *  thinking on — the width default is `renderMarkdown`'s, the platform default is the honest answer for a
- *  caller that has no projection to thread one from (liveTurn takes an explicit one; see its constructor). */
+ *  thinking OFF — the width default is `renderMarkdown`'s, the platform default is the honest answer for a
+ *  caller that has no projection to thread one from (liveTurn takes an explicit one; see its constructor),
+ *  and hidden is upstream's default: `Gha`'s guard (L429455–429457) is `if (!isTranscriptMode && !verbose)
+ *  return null`, so a caller that names no projection is by definition NOT in transcript mode. Defaulting
+ *  the other way is what made F1's always-dim thinking lines the transcript's largest divergence. */
 export interface RenderMessageOptions { width?: number; platform?: NodeJS.Platform; showThinking?: boolean }
 
 /** Map one SDK message to renderable lines — the NON-TOOL species only. `tool_use`/`tool_result` blocks are
@@ -153,7 +178,17 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
     const out: RenderLine[] = [];
     for (const b of m.message?.content ?? []) {
       if (b?.type === "text" && b.text) out.push(...withAssistantBullet(renderMarkdown(String(b.text), { width: opts.width }), opts.platform));
-      else if (b?.type === "thinking" && b.thinking) for (const l of String(b.thinking).split("\n")) out.push({ text: l, dim: true });
+      // Thinking (Task 9). The guard comes FIRST: hidden is the ordinary transcript's answer, and only a
+      // detail/verbose projection turns it on. When it is on, `zAr` trims the text (L422969 `B5p.trim()`),
+      // bails on an all-whitespace one (`nI` → null, L422953) and runs the rest through the MARKDOWN walker
+      // — the `Y40 = isTranscriptMode || verbose` branch, which is the only one reachable past the guard, so
+      // upstream's whitespace-flattened single-line form is dead code and is deliberately not ported.
+      // `redacted_thinking` carries no readable text at all, so it renders the placeholder instead (L429450).
+      else if (b?.type === "thinking" && opts.showThinking === true) {
+        const thinking = String(b.thinking ?? "").trim();
+        if (thinking) out.push(...withThinkingGutter(renderMarkdown(thinking, { width: opts.width, dim: true })));
+      }
+      else if (b?.type === "redacted_thinking" && opts.showThinking === true) out.push({ ...THINKING_PLACEHOLDER });
     }
     return out;
   }

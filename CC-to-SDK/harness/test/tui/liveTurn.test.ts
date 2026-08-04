@@ -56,7 +56,7 @@ describe("LiveTurn", () => {
     lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "pondering" } }));
     expect(texts(lt)).toContain("pondering");                    // live, dim
     lt.ingest(se({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "t2", name: "Read", input: {} } }));
-    expect(texts(lt)).toContain("✦ Thinking");                   // collapsed
+    expect(texts(lt)).toContain("✻ Thinking…");                  // collapsed — F4 Task 9's `e8o` form
     expect(texts(lt)).not.toContain("pondering");
   });
 

@@ -4,7 +4,7 @@
 // `TranscriptDocument` (Task 1) and an open tool call to `projectPending` (Task 3), so nothing here can put a
 // second copy of either on screen. Pure reducer — no React, no SDK.
 import type { RenderLine } from "./render.js";
-import { withAssistantBullet } from "./render.js";
+import { withAssistantBullet, THINKING_PLACEHOLDER } from "./render.js";
 import { renderMarkdown } from "./markdown.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 
@@ -142,7 +142,10 @@ export class LiveTurn {
 
   private renderBlock(b: Block): RenderLine[] {
     if (b.kind === "text") return b.text ? withAssistantBullet(renderMarkdown(b.text, { width: this.columns() }), this.platform) : [];
-    return b.collapsed ? [{ text: "✦ Thinking", dim: true }]
+    // F4 Task 9: the collapsed form is upstream's `e8o` VERBATIM (`✻ Thinking…`, dim + italic) and lives in
+    // render.ts so the transcript's `redacted_thinking` row and this one cannot drift. F1's `✦ Thinking`
+    // was the wrong glyph (U+2726 vs U+273B), missing the ellipsis, and not italic.
+    return b.collapsed ? [{ ...THINKING_PLACEHOLDER }]
       : (b.text ? b.text.split("\n").map((t) => ({ text: t, dim: true })) : []);
   }
 }
