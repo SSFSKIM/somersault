@@ -11,7 +11,7 @@
 //  · `iu_`  (L317513)  the resolve — `e.content || (e.contentHash ? load(e.contentHash) : null)`
 //  · `hon`/`mP`/`LV` (L236123/L236131/L236136) mode ⇄ the display's `!` prefix
 //
-// FOUR recorded divergences, each one deliberate:
+// SIX recorded divergences, each one deliberate (5 and 6 added by the t6 review):
 //  1. LOCATION. Upstream's file is `~/.claude/history.jsonl`; ours is `history.jsonl` at the ccx fleet
 //     root, by the prefs.ts:14 precedent — same format, our root, so `CCX_FLEET_ROOT` isolates tests and
 //     we never write into the real Claude Code user's prompt log. (Task 13 carries the note.)
@@ -28,6 +28,11 @@
 //     brief sketched a `mode` field; a second source of truth for the same bit is exactly how a recalled
 //     "!git status" ends up in prompt mode, so the prefix stays canonical and `displayForMode` /
 //     `modeOfDisplay` / `stripModePrefix` below are what task 7 composes with.
+//  5. NO `cu_` WRITE SUPPRESSOR. Upstream skips the append when the immediately preceding entry has the
+//     same display/project/session and neither carries pastes (L317587–595). Ours writes the duplicate
+//     line; `readHistory`'s dedup hides it from every reader, so the only cost is file growth.
+//  6. A STRICTER VALIDITY GUARD. `UUd` (L317462) type-checks `project` only; ours also requires a string
+//     `display` (our HistoryEntry promises one). Rejects strictly more garbage, changes no valid entry.
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fleetRoot } from "../fleet/paths.js";
@@ -108,7 +113,10 @@ export function readHistory(opts: { scope: HistoryScope; project?: string; sessi
   let raw: string;
   try { raw = readFileSync(historyPath(env), "utf8"); } catch { return []; }   // ENOENT on first run, EISDIR on a hand-mangled root
   const project = opts.project ?? process.cwd();
-  const limit = opts.limit ?? HISTORY_CAP;
+  // `limit` is a DEFAULT-onlier, clamped: upstream's `gDo` is an unconditional ceiling, so a caller asking
+  // for 500 still gets at most 100 (t6 review). `scope:"session"` with no sessionId matches only the
+  // sessionless entries — no current caller does it; T7/T12 must pass a real id.
+  const limit = Math.min(opts.limit ?? HISTORY_CAP, HISTORY_CAP);
   const lines = raw.split("\n");
   const seen = new Set<string>();
   const out: HistoryEntry[] = [];
