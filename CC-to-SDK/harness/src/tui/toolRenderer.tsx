@@ -15,16 +15,16 @@ import { Box, Text } from "ink";
 import wrapAnsi from "wrap-ansi";
 import type { RenderLine, Segment } from "./render.js";
 import { renderMessage } from "./render.js";
-import { classifyUserText, compactSummaryLines, COMPACT_SUMMARY_SPECIES, INTERRUPT_PLAIN, INTERRUPT_TOOL, TOOL_RESULT_GUTTER } from "./species.js";
+import { classifyUserText, compactSummaryLines, COMPACT_SUMMARY_SPECIES, INTERRUPT_PLAIN, INTERRUPT_TOOL, TOOL_RESULT_GUTTER, teammateCollapsedLine, teammateLifecycleLine, teammateMessageLines, type TeammateIdleReason } from "./species.js";
 import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
-import { resolveThemeColor, themeGeneration, themeTokens } from "./theme.js";
+import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
 import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type GroupCounts } from "./toolFold.js";
 import { foldHint, foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
-import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
+import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentSubagentType, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
 import type { FoldPendingHooks } from "./foldPendingState.js";
 import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
@@ -348,6 +348,14 @@ function backgroundHintItem(event: ToolEvent, options: ProjectionOptions): Rende
 /** One retained call → its renderable items. A `suppressed` tool projects to nothing — driven by the status Task 1's
  *  normalizer assigns, never by a renderer-side name check, so the suppression list has exactly one home. */
 export function renderToolEvent(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
+  const items = toolEventItems(event, normalized, options);
+  // F4 Task 10c: `xvr`'s close, appended ONCE here rather than at each of the three returns below — an
+  // Agent's terminal shape is decided in three different places (the `Vha` route, the generic body, the
+  // launched-in-background early exit) and the attribution row must not be able to miss one of them.
+  const lifecycle = agentLifecycleItem(event, normalized, options);
+  return lifecycle === undefined ? items : [...items, lifecycle];
+}
+function toolEventItems(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
   if (normalized.status === "suppressed") return [];
   const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, normalized.status, options), wrap: "truncate-end" }];
   if (normalized.status === "running") {
@@ -397,11 +405,13 @@ export const agentBatchItemId = (memberIds: readonly string[], part: string): st
  *  payload (two equal-looking calls can be genuinely distinct turns), but a retained entry with no
  *  source-stable identity still needs a deterministic, collision-free item id; the occurrence counter is
  *  what keeps two byte-identical retained rows from collapsing into one published item. FNV-1a. */
-function hashMessage(message: Record<string, unknown>): string {
-  const text = JSON.stringify(message) ?? "";
+function fnv1a(text: string): number {
   let h = 2166136261;
   for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return (h >>> 0).toString(36);
+  return h >>> 0;
+}
+function hashMessage(message: Record<string, unknown>): string {
+  return fnv1a(JSON.stringify(message) ?? "").toString(36);
 }
 export function sdkEntryBase(entry: SdkEntry, occurrence: number): string {
   return entry.identity ?? `${hashMessage(entry.message)}:${occurrence}`;
@@ -446,6 +456,108 @@ function isInterruptSentinel(message: Record<string, unknown>): "plain" | "tool"
   return kind === "interrupt-tool" ? "tool" : kind === "interrupt-plain" ? "plain" : null;
 }
 
+// ── F4 Task 10c (TR39): teammate attribution ──────────────────────────────────────────
+// `species.ts` owns the three LINE forms (pack §9.8); this section owns every PROJECTION decision they need:
+// which agent a child frame belongs to, what that agent is called, which of the eight colours it wears, and
+// which projection sees which form.
+//
+// THE PROJECTION SPLIT, and the one deliberate divergence in it. Upstream computes `BGp = verbose ||
+// isTranscriptMode` (L425393) and shows the expanded `Cvr` form under either, collapsing to `Ivr` only in
+// the DEFAULT view. Our default view is `compact`, and there the child frames stay silent: F3 Task 7 already
+// owns that surface with the agent's own progress rows (`⎿ Initializing…`, the last three child calls, the
+// `Done (…)` rung), and adding a second running commentary beside it would report one dispatch twice. So the
+// two forms land on the pager's own two levels instead — `detail-collapsed` collapses, `detail-all` expands
+// — which is the same adaptation `outputFold.ts` already made for every other body ("the detail view's OWN
+// collapsed form, which offers ctrl+e rather than ctrl+o"). Both upstream forms ship; only their homes move.
+//
+// Only ASSISTANT children render. A nested `user` frame on our wire is a subagent's tool RESULT, whose
+// blocks this projection already skips, and a nested `thinking` block belongs to the subagent's own reasoning
+// — upstream's teammate transport carries prose, and attributing a child's thinking to the parent transcript
+// is exactly what `sdkMessageIdentity` refuses to do for the thinking clock.
+const nestedTexts = (message: Record<string, unknown>): string[] =>
+  message.type !== "assistant" ? []
+    : contentBlocks(message).filter((b): b is Record<string, unknown> => isRecord(b) && b.type === "text" && typeof b.text === "string" && b.text.trim() !== "").map((b) => String(b.text));
+
+/** What the row calls the agent. `agentSubagentType` is F3's rule and stays the ONE spelling — including its
+ *  fold of `general-purpose`/`worker` back to the bare `Agent` — so a teammate row and the dispatch header
+ *  above it can never disagree about a name. A dispatch we no longer hold (attached mid-session, rewound
+ *  past) falls back to the `task_started` sidechannel, then to the bare noun. */
+function teammateName(agentId: string, options: ProjectionOptions): string {
+  const event = (options.toolEvents ?? []).find((candidate) => candidate.id === agentId);
+  const meta = options.agentMeta?.get(agentId);
+  return event === undefined ? meta?.subagentType ?? "Agent" : agentSubagentType(event, meta);
+}
+/** Which of the eight colours one agent wears. UPSTREAM HAS NO CYCLING: `t4` (L424866) reads a colour the
+ *  teammate message itself carries — sourced from the agent definition or a user override (`Out`, L188606)
+ *  — and defaults everything else to `cyan_FOR_SUBAGENTS_ONLY`. Our SDK stream carries no colour field at
+ *  all, so a per-agent assignment has to be derived, and the choice is DISPATCH ORDER rather than a hash of
+ *  the id: a parallel batch of agents (F3 Task 8's normal case) then gets eight distinct colours, where a
+ *  hash collides at a rate of 1-in-8 per pair and would paint two concurrent teammates the same. Document
+ *  order is deterministic and stable — tool ids are unique and the tool list only grows — so an agent's
+ *  colour never moves under it. The hash is kept only for the frames whose dispatch we do not hold (an
+ *  attach mid-session), where there is no order to read; a stable arbitrary colour beats no colour. */
+function teammateColorIndex(agentId: string, options: ProjectionOptions): number {
+  let index = 0;
+  for (const event of options.toolEvents ?? []) {
+    if (!isAgentTool(event.name)) continue;
+    if (event.id === agentId) return index;
+    index++;
+  }
+  return fnv1a(agentId) % SUBAGENT_TOKEN_NAMES.length;
+}
+/** Which chord the collapsed row may honestly offer, decided exactly like every other folded body's: the
+ *  compact view offers the threaded `(ctrl+o to expand)`, a detail view offers its own `(ctrl+e to show
+ *  all)`, and an unbound chord offers nothing. `foldHint` returns it already spaced for a marker suffix. */
+const teammateHint = (options: ProjectionOptions): string => foldHint(options).trim();
+
+/** One nested frame → its rows. `[]` covers compact (F3's surface), every non-assistant child, and a child
+ *  whose blocks are all tool traffic. The collapsed row here is a SINGLE-frame count; `buildAnchoredEntries`
+ *  coalesces the adjacent ones, which is upstream's `Jbn` and cannot be seen from inside one entry. */
+function nestedTeammateItems(message: Record<string, unknown>, options: ProjectionOptions, id: string): readonly RenderItem[] {
+  if (options.projection === "compact") return [];
+  const texts = nestedTexts(message);
+  if (texts.length === 0) return [];
+  const agentId = String(message.parent_tool_use_id), name = teammateName(agentId, options);
+  if (options.projection === "detail-collapsed")
+    return [{ kind: "line", id: sdkItemId(id, "teammate:collapsed"), line: teammateCollapsedLine(name, texts.length, teammateHint(options)) }];
+  const color = subagentColor(teammateColorIndex(agentId, options));
+  const items: RenderItem[] = [];
+  texts.forEach((text, index) => {
+    // `block:<i>:<line>` for `projectMessageEntry`'s reason: one markdown block renders many lines and two
+    // items sharing an id publish once into Static, losing the rest.
+    for (const [lineIndex, line] of teammateMessageLines(name, color, text, { width: options.columns }).entries())
+      items.push({ kind: "line", id: sdkItemId(id, `teammate:${index}:${lineIndex}`), line });
+  });
+  return items;
+}
+
+/** The lifecycle close, `xvr`'s row. Upstream's trigger is an `idle_notification` frame a teammate sends
+ *  itself; our wire has no such frame, so the honest equivalent is the dispatch's OWN terminal status — the
+ *  same signal the `Done (…)` rung and the header bullet already read, which is why it cannot disagree with
+ *  them. `rejected` joins `interrupted`: both are what the USER did to the call, and upstream has no third
+ *  arm. Detail-only, like the collapsed form and for the same reason: compact is F3's surface, where the
+ *  `Done (…)` rung is already the agent's terminal row.
+ *
+ *  IT ALSO REQUIRES A NAME, which is a gate the attributed message rows deliberately do NOT share. An
+ *  anonymous dispatch — `general-purpose`/`worker`, which `agentSubagentType` folds back to the bare noun —
+ *  has no identity to close on, and `⏺ Teammate @Agent finished` under a `⏺ Agent(…)` header states nothing
+ *  the `Done (…)` rung above it has not. That is upstream's own rule for this feature in the one place it is
+ *  visible: `Out` (L188606) opens with `if (e === "general-purpose") return`, and `agentBatchView.sharedType`
+ *  refuses to qualify a header noun with it. A message ROW keeps its `@Agent` header regardless, because
+ *  there the question is "whose prose is this", which an anonymous agent still answers. */
+const IDLE_REASON: Partial<Record<ToolStatus, TeammateIdleReason>> = { success: "available", error: "failed", interrupted: "interrupted", rejected: "interrupted" };
+function agentLifecycleItem(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): RenderItem | undefined {
+  if (!isAgentTool(event.name) || options.projection === "compact") return undefined;
+  if (teammateName(event.id, options) === "Agent") return undefined;
+  const idleReason = IDLE_REASON[normalized.status];
+  if (idleReason === undefined) return undefined;                            // `running`/`suppressed`: nothing has finished
+  // `flatText`, not `output`: the normalizer's display copy prefixes an error body with `Error: `, and
+  // `failed: Error: boom` stutters where upstream's `failureReason` is a bare sentence off the notification.
+  const failure = idleReason === "failed" ? normalized.flatText || normalized.output : undefined;
+  const line = teammateLifecycleLine(teammateName(event.id, options), subagentColor(teammateColorIndex(event.id, options)), idleReason, failure, options.platform);
+  return { kind: "line", id: `${event.id}:teammate-lifecycle`, line };
+}
+
 /** The sole non-tool completed-SDK adapter: it reuses render.ts for assistant/user text and every other
  *  non-tool species, and SKIPS `tool_use`/`tool_result` so tools keep the one renderer route above. One
  *  block at a time, so the item id can carry the content index that makes it stable across a rehydration.
@@ -462,7 +574,10 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions,
   // takes, and its overflow marker offers the same live chord.
   const renderOpts = { width: options.columns, platform: options.platform, showThinking: options.projection !== "compact" || options.verbose, projection: options.projection, expandHint: options.expandHint };
   const message = entry.message;
-  if (isNested(message) || isInterruptSentinel(message) === "tool") return [];
+  // F4 Task 10c: the nested branch stops being a hole. It STILL renders nothing in compact — see the
+  // teammate section above for why that is F3's surface — but the detail projections now attribute it.
+  if (isNested(message)) return nestedTeammateItems(message, options, base ?? sdkEntryBase(entry, 0));
+  if (isInterruptSentinel(message) === "tool") return [];
   const content = contentBlocks(message);
   const id = base ?? sdkEntryBase(entry, 0);
   const items: RenderItem[] = [];
@@ -672,20 +787,44 @@ function thinkingSummaryOf(message: Record<string, unknown>): string | undefined
   return text === "" ? undefined : text.replace(/\s+/g, " ");
 }
 
+/** F4 Task 10c: `Jbn` (L425363) — how many messages a collapsed teammate row is standing in for. A per-entry
+ *  projection cannot answer it: upstream coalesces ADJACENT same-name messages and anything else in the
+ *  stream (a panel, a leader message, a local visual) closes the run. `undefined` means "this entry is not
+ *  part of any run", which is also the signal that closes an open one. */
+const teammateRun = (message: Record<string, unknown>, options: ProjectionOptions): { name: string; count: number } | undefined => {
+  if (options.projection !== "detail-collapsed" || !isNested(message)) return undefined;
+  const count = nestedTexts(message).length;
+  return count === 0 ? undefined : { name: teammateName(String(message.parent_tool_use_id), options), count };
+};
+
 function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionOptions): Anchored[] {
   const anchored: Anchored[] = [];
   const occurrences = new Map<string, number>();
+  let open: { name: string; count: number; record: Anchored } | undefined;
   for (const entry of document.entries()) {
-    if (entry.kind === "local-event") { anchored.push({ sequence: entry.sequence, rank: 0, items: projectLocalEvent(entry, options), atom: "breaker" }); continue; }
+    if (entry.kind === "local-event") { open = undefined; anchored.push({ sequence: entry.sequence, rank: 0, items: projectLocalEvent(entry, options), atom: "breaker" }); continue; }
     const key = entry.identity ?? hashMessage(entry.message);
     const occurrence = occurrences.get(key) ?? 0;
     occurrences.set(key, occurrence + 1);
+    const run = teammateRun(entry.message, options);
+    // ABSORB. The run's row belongs to the FIRST frame's anchor — it is already published there, and moving
+    // it would re-key a settled item — so the count is rewritten in place and this frame anchors nothing.
+    // The record is still pushed (empty) rather than skipped: sequences must stay dense for the sort.
+    if (run !== undefined && open !== undefined && open.name === run.name) {
+      open.count += run.count;
+      const first = open.record.items[0];
+      if (first?.kind === "line") open.record.items = [{ ...first, line: teammateCollapsedLine(open.name, open.count, teammateHint(options)) }];
+      anchored.push({ sequence: entry.sequence, rank: 0, items: [], atom: "neutral" });
+      continue;
+    }
     const items = projectMessageEntry(entry, options, entry.identity ?? `${key}:${occurrence}`);
     const identity = sdkMessageIdentity(entry.message), thinking = identity === undefined ? undefined : thinkingSummaryOf(entry.message);
-    anchored.push({
+    const record: Anchored = {
       sequence: entry.sequence, rank: 0, items, atom: entryAtom(entry, items),
       ...(identity === undefined || thinking === undefined ? {} : { identity, thinking }),
-    });
+    };
+    anchored.push(record);
+    open = run === undefined ? undefined : { name: run.name, count: run.count, record };
   }
   return anchored;
 }

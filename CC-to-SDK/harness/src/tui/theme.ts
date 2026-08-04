@@ -69,6 +69,53 @@ const LIGHT_DALTONIZED: ThemeTokens = {
 
 export const THEMES: Record<ThemeId, ThemeTokens> = { auto: DARK, dark: DARK, light: LIGHT, "dark-daltonized": DARK_DALTONIZED, "light-daltonized": LIGHT_DALTONIZED };
 
+// ── F4 Task 10c: the eight `*_FOR_SUBAGENTS_ONLY` tokens (pack §9.9, bundle L156475) ───────────────────
+// A SEPARATE table rather than eight more names in `THEME_TOKEN_NAMES`, because they are a separate thing:
+// the 30 above are semantic ROLES (`error`, `success`, `permission`) and every consumer picks one by
+// meaning; these eight are a PALETTE picked by index, and upstream keeps them behind their own shouting
+// suffix precisely so nothing reads `red_FOR_SUBAGENTS_ONLY` as "the error colour". Widening `ThemeTokens`
+// would put them in reach of `speciesLines`'s `color(name)` helper, which is the mistake the suffix names.
+//
+// ORDER IS LOAD-BEARING: `Ov` (bundle L188627) is `["red","blue","green","yellow","purple","orange","pink",
+// "cyan"]` and `fV` maps each to its token — that array is what `subagentColor(index)` cycles.
+//
+// Values are the four NON-ANSI blocks of L156475 in file order (1st light, 4th light-daltonized, 5th dark,
+// 6th dark-daltonized; the 2nd/3rd are the two ANSI themes this port leaves out of scope, exactly as the 30
+// above do). Pack §9.9 tabulates only the first four blocks and labels the 4th "daltonized" — a direct
+// bundle read resolves it as LIGHT-daltonized and supplies the two blocks the pack never extracted.
+export const SUBAGENT_TOKEN_NAMES = ["red", "blue", "green", "yellow", "purple", "orange", "pink", "cyan"] as const;
+export type SubagentTokenName = typeof SUBAGENT_TOKEN_NAMES[number];
+export type SubagentTokens = Readonly<Record<SubagentTokenName, ThemeColor>>;
+const SUB_DARK: SubagentTokens = {
+  red: "rgb(220,38,38)", blue: "rgb(106,155,204)", green: "rgb(22,163,74)", yellow: "rgb(202,138,4)",
+  purple: "rgb(130,125,189)", orange: "rgb(217,119,87)", pink: "rgb(196,102,134)", cyan: "rgb(8,145,178)",
+};
+// The light block is byte-identical to the dark one in 2.1.220 — a faithful capture, not a copy-paste slip:
+// these eight are picked for mutual distinguishability rather than for contrast against a background.
+const SUB_LIGHT: SubagentTokens = { ...SUB_DARK };
+const SUB_DARK_DALTONIZED: SubagentTokens = {
+  red: "rgb(255,102,102)", blue: "rgb(102,178,255)", green: "rgb(102,255,102)", yellow: "rgb(255,255,102)",
+  purple: "rgb(178,102,255)", orange: "rgb(255,178,102)", pink: "rgb(255,153,204)", cyan: "rgb(102,204,204)",
+};
+const SUB_LIGHT_DALTONIZED: SubagentTokens = {
+  red: "rgb(204,0,0)", blue: "rgb(0,102,204)", green: "rgb(0,204,0)", yellow: "rgb(255,204,0)",
+  purple: "rgb(128,0,128)", orange: "rgb(255,128,0)", pink: "rgb(255,102,178)", cyan: "rgb(0,178,178)",
+};
+export const SUBAGENT_THEMES: Record<ThemeId, SubagentTokens> = {
+  auto: SUB_DARK, dark: SUB_DARK, light: SUB_LIGHT, "dark-daltonized": SUB_DARK_DALTONIZED, "light-daltonized": SUB_LIGHT_DALTONIZED,
+};
+/** The palette for the CURRENT theme — read per render, never captured, exactly like `themeTokens()`. */
+export function subagentTokens(): SubagentTokens { return SUBAGENT_THEMES[current]; }
+/** One agent's INDEX → an Ink-safe colour, cycling `Ov`'s order. Upstream has no cycling at all (`t4`,
+ *  L424866, reads a colour the teammate MESSAGE carries, which comes from the agent definition or a user
+ *  override via `Out`, L188606, and defaults to `cyan_FOR_SUBAGENTS_ONLY`) — our SDK stream carries no such
+ *  field, so the index is the substitute and `toolRenderer` owns how an agent id becomes one. Negative-safe
+ *  so a caller cannot fall off the front of the array. */
+export function subagentColor(index: number): string {
+  const name = SUBAGENT_TOKEN_NAMES[((Math.trunc(index) % SUBAGENT_TOKEN_NAMES.length) + SUBAGENT_TOKEN_NAMES.length) % SUBAGENT_TOKEN_NAMES.length]!;
+  return resolveThemeColor(subagentTokens()[name]);
+}
+
 // CC 2.1.220's /theme picker row order + labels, verbatim (plan Global Constraints line 32).
 export const THEME_LABELS: [ThemeId, string][] = [
   ["auto", "Auto (match terminal)"], ["dark", "Dark mode"], ["light", "Light mode"],

@@ -635,3 +635,82 @@ export function systemNoticeLines(frame: Record<string, unknown>, opts: SpeciesO
   const token = level === "warning" ? color("warning") : level === "notice" ? color("inactive") : undefined;
   return bulletBlock(trimmed, width, token, opts.platform, { dim: level === "info", dot: level !== "info" });
 }
+
+// ── F4 Task 10c (TR39): teammate attribution — `Cvr` / `Ivr` / `xvr`, pack §9.8 (bundle L425444–425520) ──
+// Three forms for ONE question the transcript could not answer before this task: who said this? Every child
+// (subagent) message on our wire carries a `parent_tool_use_id` and, until Task 10c, projected to nothing at
+// all — the prose was retained and shown nowhere.
+//
+// WHAT THESE ARE UPSTREAM, and the adaptation. `Cvr`/`Ivr`/`xvr` are the AGENT-TEAMS teammate transcript
+// (`cqo`, L425393), which this module's header already records as UNREACHABLE on our wire: its `ERe` exit is
+// double-gated on `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` + a statsig flag AND on a `<teammate-message …>`
+// tag only the CLI's teammate transport writes. That record stands — nothing here classifies a text sentinel.
+// What is ported is the FORM: upstream's teammate is a peer agent whose messages interleave with the
+// leader's, which is structurally what a dispatched subagent's frames are, and these are the only rows
+// 2.1.220 has for "an agent that is not the one you are talking to said this". The builders below are pure
+// line producers with no router attached; `toolRenderer` decides which child frame reaches which one.
+/** `Ge.pointer` (L104968) U+276F — the header's trailing glyph, `aria-hidden` and with NO separating space
+ *  before it, so it inherits the agent colour off the enclosing Text. */
+export const TEAMMATE_POINTER = "❯";
+/** `Ge.pointerSmall` (L104968) U+203A — the collapsed row's lead, followed by one literal space. */
+export const TEAMMATE_POINTER_SMALL = "›";
+/** `snn` (L229750) — the failure-reason cap, applied AFTER `gp` takes the first line. */
+export const TEAMMATE_FAILURE_MAX = 200;
+/** `Yze`'s `idleReason` enum (L229771). `available` is upstream's own name for the ordinary finish. */
+export type TeammateIdleReason = "available" | "interrupted" | "failed";
+
+/** Upstream's `<Box paddingLeft: 2>` around the content: a Box pad applies to EVERY row of the block, not
+ *  just the first, so a wrapped markdown line stays inside the inset. Its own segment rather than a merge
+ *  into the first one, for `indentRenderLine`'s reason — a merged pad would inherit a coloured first cell. */
+const padLine = (line: RenderLine, pad: string): RenderLine =>
+  line.segments !== undefined && line.segments.length > 0
+    ? { ...line, text: pad + line.text, segments: [{ text: pad }, ...line.segments] }
+    : { ...line, text: pad + line.text };
+
+export interface TeammateMessageOptions { width?: number; summary?: string }
+/** `Cvr` (L425444–425476): the LIVE attribution. The header Text carries `color: inkColor` and its children
+ *  are `["@ ", displayName, <Text aria-hidden>{Ge.pointer}</Text>]` — literal at-sign, ONE space, the name,
+ *  then `❯` flush against it. The optional summary is a SIBLING Text with no colour of its own, so it prints
+ *  in the default foreground: `[" ", summary]`. The content goes through the markdown walker (`km`, with
+ *  `stripPromptTags: false`) inside the `paddingLeft: 2` box, and an empty content renders no rows at all
+ *  (upstream's `tpa && …` guard) — leaving a bare attributed header, which is what a summary-only frame is. */
+export function teammateMessageLines(displayName: string, inkColor: string, content: string, opts: TeammateMessageOptions = {}): RenderLine[] {
+  const header: Segment[] = [{ text: `@ ${displayName}${TEAMMATE_POINTER}`, color: inkColor }];
+  if (opts.summary !== undefined && opts.summary !== "") header.push({ text: ` ${opts.summary}` });
+  const rows: RenderLine[] = [{ text: header.map((s) => s.text).join(""), segments: header }];
+  const width = Math.floor(opts.width ?? 80);
+  // The markdown fits the INSET column (the pad is a sibling of the content box, not part of it), floored so
+  // a very narrow terminal cannot ask the walker for a nonpositive width.
+  if (content !== "") for (const line of renderMarkdown(content, { width: Math.max(width - 2, 10) })) rows.push(padLine(line, "  "));
+  return rows;
+}
+
+/** `Ivr` (L425477–425495): the COLLAPSED run, every segment dim. PACK §9.8's correction to census §6.7 is
+ *  the whole point of the branch — at `count === 1` the literal is `"Message"`, capitalised and with NO
+ *  number, not `"1 message"`. `hint` is already-composed and already-decided by the caller (which projection
+ *  is honest here is a projection question, not a line question); `""` drops the clause AND the space before
+ *  it rather than advertising a chord that does nothing. */
+export function teammateCollapsedLine(displayName: string, count: number, hint: string): RenderLine {
+  const noun = count === 1 ? "Message" : `${count} messages`;
+  return { text: `${TEAMMATE_POINTER_SMALL} ${noun} from @${displayName}${hint === "" ? "" : ` ${hint}`}`, dim: true };
+}
+
+/** `xvr` (L425496–425520): the LIFECYCLE row. Two independent three-way maps off one `idleReason` — the
+ *  bullet's THEME TOKEN and the VERB — and the `@name` is BOLD here where `Cvr`'s header is not. The
+ *  `: <reason>` suffix is dim and appears ONLY on the failed arm with a reason present (`wvr === "failed"
+ *  && apa`), first-lined by `gp` (L15186) and then sliced to `snn`. Tokens resolve per call so a /theme
+ *  switch repaints. */
+export function teammateLifecycleLine(displayName: string, inkColor: string, idleReason: TeammateIdleReason, failureReason?: string, platform?: NodeJS.Platform): RenderLine {
+  const tokens = themeTokens();
+  const token = idleReason === "failed" ? "error" : idleReason === "interrupted" ? "warning" : "success";
+  const verb = idleReason === "failed" ? "failed" : idleReason === "interrupted" ? "was interrupted" : "finished";
+  const segments: Segment[] = [
+    { text: bulletGlyph(platform).trimEnd(), color: resolveThemeColor(tokens[token]) },
+    { text: " Teammate " },
+    { text: `@${displayName}`, color: inkColor, bold: true },
+    { text: ` ${verb}` },
+  ];
+  const reason = idleReason === "failed" && failureReason ? failureReason.split("\n")[0]!.slice(0, TEAMMATE_FAILURE_MAX) : "";
+  if (reason !== "") segments.push({ text: `: ${reason}`, dim: true });
+  return { text: segments.map((s) => s.text).join(""), segments };
+}
