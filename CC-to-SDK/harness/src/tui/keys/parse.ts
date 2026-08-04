@@ -167,7 +167,12 @@ function parseStringSeq(s: string, i: number, out: InputEvent[]): number {
 }
 
 /** `\x1b[200~ … \x1b[201~` → one text event, markers stripped. An unterminated paste takes the rest of the
- *  chunk as payload (a paste torn across reads is better delivered late than dropped). */
+ *  chunk as payload (a paste torn across reads is better delivered late than dropped).
+ *
+ *  NOT the live copy since F5 task 3: KeymapProvider's `emit()` cuts complete bracketed pastes out of the
+ *  stream BEFORE `parseBytes` is called (only it can tag provenance and re-join markers torn across reads), so
+ *  what still reaches here is the hand-fed / torn case — a test that calls the parser directly, or a chunk the
+ *  provider handed over with its markers already consumed. Keep the two in step. */
 function parsePaste(s: string, i: number, headLen: number, out: InputEvent[]): number {
   const start = i + headLen;
   const end = s.indexOf(PASTE_END, start);

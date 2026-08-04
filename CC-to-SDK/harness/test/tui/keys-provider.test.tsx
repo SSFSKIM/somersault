@@ -365,10 +365,10 @@ describe("KeymapProvider — byte-stream hygiene", () => {
   });
 });
 
-// F5 task 3. The chip path keys off PROVENANCE, not size: a 900-character run someone typed (or a test built by
-// hand) must stay literal, and only a bracketed paste may collapse into `[Pasted text #N]`. parse.ts sees one
-// chunk and cannot answer that question — the markers can be torn across reads and the overflow latch emits a
-// capped prefix with no end marker at all — so the tag is applied HERE, where the stream lives.
+// F5 task 3. PROVENANCE is what the editor's chip path keys off first (size is only the untagged fallback, see
+// paste-chips.test.ts): a marked paste collapses into `[Pasted text #N]` at any size. parse.ts sees one chunk
+// and cannot answer the provenance question — the markers can be torn across reads and the overflow latch emits
+// a capped prefix with no end marker at all — so the tag is applied HERE, where the stream lives.
 describe("KeymapProvider — paste provenance and the Pasting… flag", () => {
   const tagged = (fallback: ReturnType<typeof vi.fn>) =>
     fallback.mock.calls.filter((c) => c[0].kind === "text").map((c) => `${c[0].paste ? "paste" : "typed"}:${c[0].text}`);
@@ -439,6 +439,65 @@ describe("KeymapProvider — paste provenance and the Pasting… flag", () => {
     await tick();
     expect(h.lastFrame()).toContain("idle");
     h.unmount();
+  });
+
+  // t3 review, Minor. The overflow latch is still INSIDE the paste — it is discarding its bytes — but the flag
+  // was computed from the paste buffer alone, which the latch empties. `Pasting…` flickered off on the chunk
+  // that crossed the cap and stayed off for the rest of a gesture the user was still making.
+  it("keeps `pasting` true through the overflow latch, until the end marker lands", async () => {
+    const h = renderWithKeymap(<><Probe scope="Chat" /><PastingProbe /></>);
+    await tick();
+    h.stdin.write("\x1b[200~" + "a".repeat((1 << 20) + 1));       // past PASTE_CAP: prefix emitted, latch set
+    await tick();
+    expect(h.lastFrame()).toContain("PASTING");
+    h.stdin.write("still inside");                                 // discarded bytes, same gesture
+    await tick();
+    expect(h.lastFrame()).toContain("PASTING");
+    h.stdin.write("done\x1b[201~");
+    await tick();
+    expect(h.lastFrame()).toContain("idle");
+    h.unmount();
+  });
+});
+
+// t3 review, Critical. Nothing in the tree wrote `\x1b[?2004h`, so no real terminal ever sent paste markers and
+// every paste-shaped behaviour above was reachable only from hand-fed bytes. Upstream enables the mode the
+// moment it takes raw mode (`ev.BRACKETED_PASTE`, bundle L177069; written at L177900) — the provider owns raw
+// mode here, so it owns this too. ink-testing-library's stdout stub IS the frame buffer and carries no `isTTY`,
+// so the writes are observed through the `deps.stdout` seam instead of polluting `lastFrame()`.
+describe("KeymapProvider — DECSET 2004", () => {
+  const sink = (isTTY?: boolean) => {
+    const writes: string[] = [];
+    return { writes, stdout: { isTTY, write: (d: string) => { writes.push(d); return true; } } };
+  };
+
+  it("enables the mode on mount and disables it at teardown", async () => {
+    const out = sink(true);
+    const h = renderWithKeymap(<Probe scope="Chat" />, { stdout: out.stdout });
+    await tick();
+    expect(out.writes).toEqual(["\x1b[?2004h"]);
+    h.unmount(); await tick();
+    expect(out.writes).toEqual(["\x1b[?2004h", "\x1b[?2004l"]);    // the terminal is left as we found it
+  });
+
+  it("hands the mode back for a suspendInput flight and re-enables it on restore", async () => {
+    const out = sink(true);
+    let seam: SuspendInput | null = null;
+    function Grab() { seam = useSuspendInput(); return <Text>g</Text>; }
+    const h = renderWithKeymap(<><Probe scope="Chat" /><Grab /></>, { stdout: out.stdout });
+    await tick();
+    out.writes.length = 0;
+    await seam!(async () => { out.writes.push("child-owns-tty"); });
+    expect(out.writes).toEqual(["\x1b[?2004l", "child-owns-tty", "\x1b[?2004h"]);
+    h.unmount();
+  });
+
+  it("writes nothing to a sink that is not a TTY", async () => {
+    const out = sink();                                              // no `isTTY` at all: a pipe, or ink-testing-library
+    const h = renderWithKeymap(<Probe scope="Chat" />, { stdout: out.stdout });
+    await tick();
+    h.unmount(); await tick();
+    expect(out.writes).toEqual([]);
   });
 });
 

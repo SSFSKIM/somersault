@@ -118,14 +118,33 @@ describe("ingestPaste — CM21's threshold", () => {
   });
 });
 
-describe("applyKey routing — only a PASTE-TAGGED event chips", () => {
+describe("applyKey routing — a PASTE-TAGGED event at any size, or an untagged run past CHIP_CHARS", () => {
   it("a paste-tagged text event above the threshold becomes a chip", () => {
     const r = paste(initialEditorState(), "z".repeat(900), 24);
     expect(text(r.state)).toBe("[Pasted text #1]");
   });
-  it("an untagged 900-char text event (hand-built, or a fast typist's run) inserts verbatim", () => {
-    const r = applyKey(initialEditorState(), "z".repeat(900), {});
-    expect(text(r.state)).toBe("z".repeat(900));
+  // `zhn`'s keydown arm, bundle L395998–L396004: `!ctrl && !meta && T.key.length > CMt` goes down the SAME
+  // onPaste path as a marked paste. It is the fallback for a terminal that never sent `\x1b[200~`.
+  it("an UNTAGGED 900-char event chips too (the no-DECSET-2004 fallback)", () => {
+    const r = applyKey(initialEditorState(), "z".repeat(900), {}, Date.now(), 24);
+    expect(text(r.state)).toBe("[Pasted text #1]");
+    expect(r.state.pasteCounter).toBe(1);
+    expect(r.state.pastedContents[1].content).toBe("z".repeat(900));
+  });
+  it("compares the RAW length, before normalisation (upstream's `T.key.length`)", () => {
+    // 900 raw characters that normalise to NOTHING still take the paste path — where `ingestPaste` discards an
+    // empty payload. The plain-insert path would have put all 900 ANSI bytes in the buffer.
+    const r = applyKey(initialEditorState(), "\x1b[31m".repeat(180), {}, Date.now(), 24);
+    expect(text(r.state)).toBe("");
+    // …and the converse: 780 raw tabs are under the threshold even though they would normalise to 3120
+    // characters, so they insert verbatim, tabs and all, with no id burned.
+    const t = applyKey(initialEditorState(), "\t".repeat(780), {}, Date.now(), 24);
+    expect(text(t.state)).toBe("\t".repeat(780));
+    expect(t.state.pastedContents).toEqual({});
+  });
+  it("an untagged SHORT multi-character run stays a plain insert", () => {
+    const r = applyKey(initialEditorState(), "hello world", {}, Date.now(), 24);
+    expect(text(r.state)).toBe("hello world");
     expect(r.state.pasteCounter).toBe(0);
     expect(r.state.pastedContents).toEqual({});
   });

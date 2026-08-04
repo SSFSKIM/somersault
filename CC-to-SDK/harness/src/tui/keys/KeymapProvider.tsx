@@ -16,7 +16,7 @@
 // entries DURING RENDER, not in effects. Input subscriptions are passive — a key can arrive after a newer
 // render has painted but before its effects flush — so anything a handler reads must already be current.
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useStdin } from "ink";
+import { useStdin, useStdout } from "ink";
 import { parseBytes } from "./parse.js";
 import type { InputEvent, KeyContextName, KeyEvent, TextEvent } from "./types.js";
 import { DEFAULT_BINDINGS, type ContextBindings } from "./bindings.js";
@@ -30,11 +30,20 @@ export interface KeymapDeps {
   now?: () => number; setTimeout?: typeof setTimeout; clearTimeout?: typeof clearTimeout;
   userLayers?: readonly ContextBindings[];            // task 9 feeds live ~/.claude/keybindings.json here
   suspend?: () => void;                               // ctrl+z pre-table hook; `useKeySuspend` outranks it
+  /** Test seam for the DECSET 2004 writes below. Real runs take `useStdout()`; ink-testing-library's stdout
+   *  stub has no `isTTY`, so without this a keyless test cannot observe the mode toggles at all (and the real
+   *  writes would otherwise pollute `lastFrame()`, since that stub's `write` IS the frame buffer). */
+  stdout?: { isTTY?: boolean; write: (data: string) => unknown };
 }
 
 /** Chord inter-key timeout (spec KB22). */
 const CHORD_MS = 1000;
 const PASTE_START = "\x1b[200~", PASTE_END = "\x1b[201~";
+/** DECSET 2004 — bracketed paste. Upstream names the mode `ev.BRACKETED_PASTE` (bundle L177069) and writes the
+ *  enable the moment it takes raw mode (L177900), which is what makes a terminal wrap pasted text in
+ *  `\x1b[200~ … \x1b[201~` at all. Without this write nothing downstream of it exists: the provider's paste
+ *  assembly, the `paste: true` tag and the chip are all reachable only from marked input (t3 review, Critical). */
+const PASTE_MODE_ON = "\x1b[?2004h", PASTE_MODE_OFF = "\x1b[?2004l";
 /** Cap on a paste held across chunks: past this we flush rather than grow unboundedly on a stuck stream. */
 const PASTE_CAP = 1 << 20;
 
@@ -44,9 +53,9 @@ export type SuspendInput = <T>(fn: () => Promise<T>) => Promise<T>;
 interface KeymapValue { reg: Registry; table: CompiledTable; suspendInput: SuspendInput; pasting: boolean }
 const KeymapCtx = createContext<KeymapValue | null>(null);
 
-/** True when a chunk ends INSIDE a bracketed paste (only possible if some other party enabled `?2004h`; F2
- *  never does). Parsing it now would hand the tail to the keypress path — `\r` included — which is exactly
- *  the enter-mid-paste that paste protection exists to prevent. */
+/** True when a chunk ends INSIDE a bracketed paste (the provider asks for the markers itself — see
+ *  `PASTE_MODE_ON`). Parsing it now would hand the tail to the keypress path — `\r` included — which is
+ *  exactly the enter-mid-paste that paste protection exists to prevent. */
 const pasteOpen = (s: string): boolean => {
   const start = s.lastIndexOf(PASTE_START);
   return start !== -1 && s.indexOf(PASTE_END, start) === -1;
@@ -78,6 +87,7 @@ function incompleteTail(s: string): number {
 
 export function KeymapProvider({ children, deps }: { children: React.ReactNode; deps?: KeymapDeps }): React.ReactElement {
   const { stdin, setRawMode, isRawModeSupported } = useStdin();
+  const { stdout } = useStdout();
   const regRef = useRef<Registry>(); if (!regRef.current) regRef.current = createRegistry();
   const reg = regRef.current;
   const depsRef = useRef(deps); depsRef.current = deps;
@@ -203,7 +213,10 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   // from five different points and every one of them can have opened or closed a paste.
   const consume = (chunk: string) => {
     consumeInner(chunk);
-    const open = pasteRef.current !== "";
+    // The overflow latch counts as OPEN: its bytes still belong to a paste that is still arriving (they are
+    // being discarded, but the user is mid-gesture), and reporting idle there flickered `Pasting…` off for
+    // every chunk after the cap and back on at nothing (t3 review, Minor).
+    const open = pasteRef.current !== "" || overflowRef.current;
     if (open !== pastingRef.current) { pastingRef.current = open; setPasting(open); }
   };
   // The `data` listener is attached once; everything it reaches goes through this ref so it always runs the
@@ -219,6 +232,15 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   // disable — so any raw-mode toggle after mount clobbers our latin1 flip and has to re-apply it. Same gate as
   // the mount effect: a provider with no registered consumer must not touch an encoding nobody is decoding.
   const applyEncoding = () => { if (reg.scopes.size + reg.actions.size + reg.fallbacks.size > 0) stdin.setEncoding?.("latin1"); };
+
+  // DECSET 2004 on/off. Gated on `isTTY`, the same gate `suspend.ts` and `useChat`'s clearScreen use for their
+  // own out-of-band escape writes: a pipe or a test stub must not receive terminal mode bytes. Every caller is
+  // already inside an `isRawModeSupported` branch, so the enable and the disable stay paired.
+  const stdoutRef = useRef(stdout); stdoutRef.current = stdout;
+  const bracketedPaste = (on: boolean) => {
+    const out = depsRef.current?.stdout ?? stdoutRef.current;
+    if (out?.isTTY) out.write(on ? PASTE_MODE_ON : PASTE_MODE_OFF);
+  };
 
   // suspendInput (t2 review, Important). An external editor spawned with stdio "inherit" shares fd 0 with us,
   // and our `data` listener keeps the stream FLOWING — so the harness races the child for its keystrokes and a
@@ -240,12 +262,15 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   const suspendInput = useMemo<SuspendInput>(() => async (fn) => {
     if (suspendedRef.current) return fn();
     suspendedRef.current = true;
-    if (isRawModeSupported) setRawMode(false);
+    // (d) hand back DECSET 2004 too. The child owns the tty next and sets whatever modes it wants; leaving our
+    // enable standing would have the terminal wrap ITS pastes in markers it never asked for. Symmetric with the
+    // mount effect, and re-enabled in the `finally` beside raw mode and the encoding (t3 review).
+    if (isRawModeSupported) { bracketedPaste(false); setRawMode(false); }
     stdin.pause?.();
     try { return await fn(); }
     finally {
       stdin.resume?.();
-      if (isRawModeSupported) setRawMode(true);
+      if (isRawModeSupported) { setRawMode(true); bracketedPaste(true); }
       applyEncoding();
       suspendedRef.current = false;
     }
@@ -260,6 +285,10 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   useEffect(() => {
     if (!isRawModeSupported) return;
     setRawMode(true);
+    // Ask the terminal to bracket pastes. Ungated by the registered-consumer check that guards the encoding:
+    // the mode costs nothing when nobody reads it, and gating it would risk an enable/disable pair that
+    // disagreed about whether a consumer existed.
+    bracketedPaste(true);
     // Gate the latin1 flip on a registered consumer existing (children register during render, so by the time
     // this parent-last passive effect runs, the registry is truthful). It is what kept the flip from handing
     // raw bytes to a still-unmigrated `useInput` component — mojibake for every non-ASCII character typed at
@@ -285,6 +314,7 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
       // half-character goes the same way (it was never a complete character), and so does the overflow latch.
       pasteRef.current = ""; carryRef.current = ""; overflowRef.current = false; overflowTailRef.current = "";
       clearChord();
+      bracketedPaste(false);                                     // leave the terminal as we found it
       setRawMode(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

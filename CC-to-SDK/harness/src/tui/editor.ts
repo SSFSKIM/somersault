@@ -4,13 +4,15 @@
 // continuation. rankCandidates (pure) is added in the mention pass.
 import { rankCandidates } from "./fileComplete.js";
 import { rankCommands, type CommandEntry } from "./commandComplete.js";
-import { ingestPaste, substituteChips } from "./pasteChips.js";
+import { CHIP_CHARS, ingestPaste, substituteChips } from "./pasteChips.js";
 export interface Cursor { row: number; col: number }
 export interface Candidate { path: string; score: number }
 export interface MentionState { anchor: Cursor; query: string; files: string[]; items: Candidate[]; index: number }
 export interface CommandState { query: string; items: CommandEntry[]; catalog: CommandEntry[]; index: number }
 /** One collapsed paste, rendered in the buffer as a `[Pasted text #id +N lines]` placeholder (F5 task 3 fills
- *  the map). Declared HERE, with the undo entry that carries it, so the undo shape never has to reopen. */
+ *  the map). Declared HERE, with the undo entry that carries it, so the undo shape never has to reopen.
+ *  `lineCount` is OURS: upstream stores `{ id, type, content }` (bundle L495755) and passes the count to `agr`
+ *  as an argument instead. We keep it so a re-render of the label never has to re-walk the content. */
 export interface PastedEntry { id: number; type: "text"; content: string; lineCount: number }
 export type PastedMap = Record<number, PastedEntry>;
 export interface EditorState {
@@ -30,9 +32,10 @@ export interface EditorResult { state: EditorState; submit?: string; killed?: { 
 export interface KeyFlags {
   return?: boolean; backspace?: boolean; delete?: boolean; ctrl?: boolean; meta?: boolean; shift?: boolean;
   leftArrow?: boolean; rightArrow?: boolean; upArrow?: boolean; downArrow?: boolean; escape?: boolean; tab?: boolean;
-  /** NOT an ink flag: the event's PROVENANCE, carried through `toKeyFlags` from the keymap's `TextEvent`. The
-   *  chip path keys off it and never off size — a 900-character run someone typed must stay literal, and only
-   *  a bracketed paste (`\x1b[200~ … \x1b[201~`, assembled by KeymapProvider) may collapse (F5 task 3). */
+  /** NOT an ink flag: the event's PROVENANCE, carried through `toKeyFlags` from the keymap's `TextEvent`. A
+   *  bracketed paste (`\x1b[200~ … \x1b[201~`, assembled by KeymapProvider) takes the chip path on this flag
+   *  ALONE, at any size. An untagged run takes it only past CHIP_CHARS — upstream's terminal-without-DECSET-2004
+   *  fallback; see the `key.paste ||` arm in applyKeyInner (F5 task 3). */
   paste?: boolean;
 }
 
@@ -376,7 +379,15 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags, rows?: numb
   // afterInsert's two open-a-popup triggers are the single characters `/` and `@`, which normalisation cannot
   // produce from anything but themselves, so every branch it takes is the same one the normalized token would
   // have taken — and a megabyte paste is not walked twice to learn that.
-  if (key.paste) {
+  //
+  // …OR an UNTAGGED run longer than CHIP_CHARS. Upstream chips that too — `zhn`'s keydown arm (bundle
+  // L395998–L396004) sends `!ctrl && !meta && T.key.length > CMt` down the very same `onPaste` path as a
+  // marked paste — and it is precisely the fallback for a terminal that never sent `\x1b[200~` (one that
+  // ignores DECSET 2004, or a `ccx` attached through something that strips it). The comparison is on the RAW
+  // `input` length, before normalisation, exactly like upstream's `T.key.length`. ctrl/meta combos returned
+  // long before this line, so the guard upstream spells out is already in force here. No human types 800
+  // characters into one read; a short multi-character run still inserts literally (t3 review, Important).
+  if (key.paste || input.length > CHIP_CHARS) {
     const next = ingestPaste(s, input, rows);
     if (next === s) return { state: s };
     return { state: afterInsert(next, s, input) };
