@@ -93,6 +93,28 @@ describe("SessionHost.follow", () => {
     s.finish(); await turn; await host.stop();
   });
 
+  it("marks DRAINED frames replay:true and live frames not at all — the stamp-honesty wire contract (F3 final re-review)", async () => {
+    // The flag is what lets a client skip arrival-time stamps on catch-up frames (fabricated Agent
+    // durations otherwise) while keeping them on live ones. Unpinned, a stray `replay: true` on the
+    // live emit would silently strip the duration from every Agent row in the foreground REPL — the
+    // re-review's sabotage of exactly that passed 2701 tests before this one existed.
+    const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();
+    const liveEvents: HostEvent[] = [];
+    host.follow((e) => liveEvents.push(e));
+    const turn = host.runTask("hi");
+    s.emit({ type: "assistant", n: 1 });
+    const liveMsgs = liveEvents.filter((e) => e.kind === "message") as { replay?: true }[];
+    expect(liveMsgs).toHaveLength(1);
+    expect(liveMsgs[0]!.replay).toBeUndefined();
+    const lateEvents: HostEvent[] = [];
+    host.follow((e) => lateEvents.push(e));
+    const drained = lateEvents.filter((e) => e.kind === "message") as { replay?: true }[];
+    expect(drained).toHaveLength(1);
+    expect(drained[0]!.replay).toBe(true);
+    s.finish(); await turn; await host.stop();
+  });
+
   it("stream_event partials fan out LIVE but never enter the reconnect replay (F3 t3 review)", async () => {
     // The interactive host now runs with includePartialMessages on, so a turn carries thousands of
     // token-delta frames. The 500-message TurnBuffer would evict the turn's REAL frames for stale
