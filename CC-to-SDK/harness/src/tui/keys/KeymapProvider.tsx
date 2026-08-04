@@ -38,7 +38,10 @@ const PASTE_START = "\x1b[200~", PASTE_END = "\x1b[201~";
 /** Cap on a paste held across chunks: past this we flush rather than grow unboundedly on a stuck stream. */
 const PASTE_CAP = 1 << 20;
 
-interface KeymapValue { reg: Registry; table: CompiledTable }
+/** Hand fd 0 to a CHILD PROCESS for the duration of `fn`, then take it back. See `useSuspendInput`. */
+export type SuspendInput = <T>(fn: () => Promise<T>) => Promise<T>;
+
+interface KeymapValue { reg: Registry; table: CompiledTable; suspendInput: SuspendInput }
 const KeymapCtx = createContext<KeymapValue | null>(null);
 
 /** True when a chunk ends INSIDE a bracketed paste (only possible if some other party enabled `?2004h`; F2
@@ -175,6 +178,43 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   const aliveRef = useRef(true);
   useLayoutEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
 
+  // Ink's `handleSetRawMode` (node_modules/ink/build/components/App.js:114) sets utf8 on EVERY call, enable or
+  // disable — so any raw-mode toggle after mount clobbers our latin1 flip and has to re-apply it. Same gate as
+  // the mount effect: a provider with no registered consumer must not touch an encoding nobody is decoding.
+  const applyEncoding = () => { if (reg.scopes.size + reg.actions.size + reg.fallbacks.size > 0) stdin.setEncoding?.("latin1"); };
+
+  // suspendInput (t2 review, Important). An external editor spawned with stdio "inherit" shares fd 0 with us,
+  // and our `data` listener keeps the stream FLOWING — so the harness races the child for its keystrokes and a
+  // stolen `\r` reaches submitTurn mid-edit. Upstream never has this problem: its external edit is still
+  // spawnSync (L317767/L317708), and blocking the event loop IS its terminal handoff. Ours awaits, so the
+  // handoff has to be explicit:
+  //   (a) `setRawMode(false)` through Ink's own function, per this file's raw-mode rule. It is a REFERENCE
+  //       COUNT (see suspend.ts's header for the full reasoning), but the provider's own enable/disable pair is
+  //       symmetric, so the count returns to exactly where it was — unlike ctrl+z, which must drain an unknown
+  //       count and therefore bypasses Ink entirely.
+  //   (b) `stdin.pause()` — a paused stream emits no "data" and libuv stops reading fd 0, so the child owns
+  //       the tty for real rather than merely being raced less often.
+  //   (c) the flag below, which DROPS anything that still reaches us. Bytes arriving here during the flight were
+  //       stolen from the child; dropping them is the honest option (the same call the teardown path makes for
+  //       a paste in flight), and it is the part a keyless test can observe.
+  // Re-entrant calls just run `fn`: the terminal is already handed over, and a nested restore would take it back
+  // while the outer edit is still running.
+  const suspendedRef = useRef(false);
+  const suspendInput = useMemo<SuspendInput>(() => async (fn) => {
+    if (suspendedRef.current) return fn();
+    suspendedRef.current = true;
+    if (isRawModeSupported) setRawMode(false);
+    stdin.pause?.();
+    try { return await fn(); }
+    finally {
+      stdin.resume?.();
+      if (isRawModeSupported) setRawMode(true);
+      applyEncoding();
+      suspendedRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stdin, setRawMode, isRawModeSupported]);
+
   // Deliberately PASSIVE, not layout: React runs passive effects child-first, so our latin1 lands AFTER any
   // Ink `handleSetRawMode` that forced utf8. A layout effect here would run first and lose the encoding to the
   // next child. As of task 8 nothing under src/tui subscribes to Ink's input at all, so Ink re-sets utf8 only
@@ -189,10 +229,9 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     // launch (t5 review, Important). The migration is finished, so in the real tree this is always true; it
     // stays because a bare <KeymapProvider> with no consumers (a test harness, a future embed) must not touch
     // an encoding nobody is decoding.
-    const migrated = reg.scopes.size + reg.actions.size + reg.fallbacks.size > 0;
-    if (migrated) stdin.setEncoding?.("latin1");
+    applyEncoding();
     const onData = (data: string | Buffer) => {
-      if (!aliveRef.current) return;
+      if (!aliveRef.current || suspendedRef.current) return;         // suspended: these bytes belong to the child
       consumeRef.current(typeof data === "string" ? data : data.toString("latin1"));
     };
     // Ordering note (task 6, measured; RESOLVED in task 8): Ink reads stdin on "readable"
@@ -214,7 +253,7 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const value = useMemo(() => ({ reg, table }), [reg, table]);
+  const value = useMemo(() => ({ reg, table, suspendInput }), [reg, table, suspendInput]);
   return <KeymapCtx.Provider value={value}>{children}</KeymapCtx.Provider>;
 }
 
@@ -259,6 +298,14 @@ export function useKeyFallback(handler: (e: KeyEvent | TextEvent) => void): void
 export function useKeySuspend(handler: () => void): void {
   const ctx = useContext(KeymapCtx);
   useRegistration<SuspendEntry>(ctx?.reg.suspends, () => ({ seq: nextSeq(), handler }), (e) => { e.handler = handler; });
+}
+
+/** The terminal handoff for anything that gives fd 0 to a child process (today: the composer's external
+ *  editor). `suspendInput(fn)` releases raw mode, stops reading stdin, awaits `fn`, and restores all of it in a
+ *  `finally` — so a throw or a rejection can never leave the harness deaf. Null with no provider above: a tree
+ *  with no input path has nothing to hand over, and the caller runs `fn` as-is. */
+export function useSuspendInput(): SuspendInput | null {
+  return useContext(KeymapCtx)?.suspendInput ?? null;
 }
 
 /** Help semantics: while active, only this component's own context resolves — every other scope, `Global`

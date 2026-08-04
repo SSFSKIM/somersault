@@ -11,7 +11,7 @@ import React from "react";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
-import { useKeyScope, useKeyActions, useKeyFallback, useSwallowKeys, useBinding, useBindingLookup } from "../../src/tui/keys/KeymapProvider.js";
+import { useKeyScope, useKeyActions, useKeyFallback, useSwallowKeys, useBinding, useBindingLookup, useSuspendInput, type SuspendInput } from "../../src/tui/keys/KeymapProvider.js";
 import type { KeyContextName, KeyEvent, TextEvent } from "../../src/tui/keys/types.js";
 
 // The matched ACTION is the second argument (only a `family:*` handler reads it — see the family block below).
@@ -561,6 +561,93 @@ describe("KeymapProvider — family handlers (`family:*`)", () => {
     h.stdin.write("\x11");
     expect(inner).toHaveBeenCalledTimes(1);
     expect(outer).not.toHaveBeenCalled();
+    h.unmount();
+  });
+});
+
+// t2 review, Important. An external editor spawned with stdio "inherit" shares fd 0 with us; while our `data`
+// listener keeps the stream flowing we RACE the child for its keystrokes, and a stolen `\r` submits the turn
+// mid-edit. `suspendInput` is the explicit handoff upstream gets for free from spawnSync blocking the loop.
+describe("KeymapProvider — suspendInput (the external-editor terminal handoff)", () => {
+  /** Grab the provider's seam out of the tree, and register a probe under the same provider. */
+  const mount = () => {
+    const cancel = vi.fn(), fallback = vi.fn();
+    let seam: SuspendInput | null = null;
+    function Grab() { seam = useSuspendInput(); return <Text>g</Text>; }
+    const h = renderWithKeymap(<><Probe scope="Chat" actions={{ "chat:cancel": cancel }} fallback={fallback} /><Grab /></>);
+    return { h, cancel, fallback, seam: () => seam! };
+  };
+
+  it("dispatches NOTHING while suspended, and hands the keyboard back afterwards", async () => {
+    const { h, cancel, fallback, seam } = mount();
+    await tick();
+    h.stdin.write(ESC);
+    expect(cancel).toHaveBeenCalledTimes(1);                     // baseline: the key path is live
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => { release = r; });
+    const flight = seam()(async () => {
+      // ink-testing-library's stdin stub has a NO-OP pause(), so every one of these still emits "data" — which
+      // is precisely why the provider must drop them itself rather than trusting the pause.
+      h.stdin.write(ESC); h.stdin.write("\r"); h.stdin.write("typed");
+      await held;
+      return "edited";
+    });
+    await tick();
+    expect(cancel).toHaveBeenCalledTimes(1);                     // …and nothing reached it during the flight
+    expect(fallback).not.toHaveBeenCalled();
+    release();
+    expect(await flight).toBe("edited");
+    h.stdin.write(ESC);
+    expect(cancel).toHaveBeenCalledTimes(2);                     // restored
+    h.unmount();
+  });
+
+  it("releases raw mode for the flight and takes it back, balanced, even when fn throws", async () => {
+    const { h, seam } = mount();
+    const calls: boolean[] = [];
+    (h.stdin as unknown as { setRawMode: (v: boolean) => void }).setRawMode = (v) => { calls.push(v); };
+    await tick();
+    calls.length = 0;
+    await expect(seam()(async () => { throw new Error("editor blew up"); })).rejects.toThrow("editor blew up");
+    expect(calls).toEqual([false, true]);                        // symmetric: Ink's refcount ends where it started
+    h.unmount();
+  });
+
+  it("pauses and resumes the stream, and re-applies the latin1 encoding Ink resets on every toggle", async () => {
+    const { h, seam } = mount();
+    const order: string[] = [];
+    const stub = h.stdin as unknown as { pause: () => void; resume: () => void; setEncoding: (e: string) => void };
+    stub.pause = () => order.push("pause");
+    stub.resume = () => order.push("resume");
+    stub.setEncoding = (e) => order.push("encoding:" + e);
+    await tick();
+    order.length = 0;
+    await seam()(async () => { order.push("edit"); });
+    // Ink's handleSetRawMode sets utf8 on BOTH the disable and the enable (App.js:114) — without the re-flip the
+    // provider would decode every later keystroke as utf8 and mangle high bytes.
+    expect(order.filter((o) => o === "pause" || o === "edit" || o === "resume")).toEqual(["pause", "edit", "resume"]);
+    expect(order[order.length - 1]).toBe("encoding:latin1");
+    h.unmount();
+  });
+
+  it("a re-entrant call just runs fn (the terminal is already handed over)", async () => {
+    const { h, seam } = mount();
+    const calls: boolean[] = [];
+    (h.stdin as unknown as { setRawMode: (v: boolean) => void }).setRawMode = (v) => { calls.push(v); };
+    await tick();
+    calls.length = 0;
+    const inner = await seam()(async () => seam()(async () => "nested"));
+    expect(inner).toBe("nested");
+    expect(calls).toEqual([false, true]);                        // ONE handoff, not two
+    h.unmount();
+  });
+
+  it("is null with no provider above — a tree with no input path has nothing to hand over", async () => {
+    let seam: SuspendInput | null | undefined;
+    function Grab() { seam = useSuspendInput(); return <Text>g</Text>; }
+    const h = render(<Grab />);
+    await tick();
+    expect(seam).toBeNull();
     h.unmount();
   });
 });

@@ -534,6 +534,10 @@ describe("ChatComposer", () => {
       view.stdin.write("draft"); await waitFor(() => (view.lastFrame() ?? "").includes("draft"));
       view.stdin.write("\x1b"); await waitFor(() => (view.lastFrame() ?? "").includes("Esc again to clear"));
       if (chord === "\x1b[Z") view.stdin.write(chord); else { view.stdin.write("\x18"); view.stdin.write("\x07"); }
+      // The external-editor chord now runs inside the keymap's `suspendInput` (t2 review): for as long as the
+      // editor holds the terminal the provider reads NOTHING, so a key written in the same synchronous breath as
+      // the chord is dropped rather than raced. This fake editor settles on the next microtask; wait for it.
+      await new Promise((r) => setTimeout(r, 0));
       view.stdin.write("\x1b"); await waitFor(() => (view.lastFrame() ?? "").includes("Esc again to clear"));
       expect(view.lastFrame() ?? "").toContain("draft");
       view.stdin.write("\x1b"); await waitFor(() => !(view.lastFrame() ?? "").includes("draft"));

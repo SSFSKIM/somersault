@@ -10,10 +10,20 @@
 //
 // CM-label (bundle L496126): the composer's `borderText` for the history label is
 //   { content: ` ${vt.dim(SO)} `, position: "top", align: "start", offset: 2 }
-// — the label REPLACES rule cells starting at offset 2, the label TEXT is dim, and the two spaces
-// framing it are unstyled. The dashes on both sides keep the border colour and are NOT dim: the
-// painter colours them with `Xsr(B, a, d)` where `d` is `borderTopDimColor ?? borderDimColor`, both
-// unset here, and splices the content in raw between them (L179494–179496).
+// — the label REPLACES rule cells, the label TEXT is dim, and the two spaces framing it are unstyled.
+// The dashes on both sides keep the border colour and are NOT dim: the painter colours them with
+// `Xsr(B, a, d)` where `d` is `borderTopDimColor ?? borderDimColor`, both unset here, and splices the
+// content in raw between them (L179494–179496).
+//
+// The splice itself is `$Bu(H, content, align, offset, top)` (L179465–179482), transcribed:
+//   · `i = Ut(content)`, `s = H.length` (= our `columns`, since with both verticals off H is a bare run)
+//   · OVERFLOW first: `if (i >= s - 2)` → lead is EMPTY, the content is sliced to width `s`, and the
+//     remainder of the row is dashes. That is what keeps an over-long label from overflowing the row and
+//     making Ink wrap it (t2 review, Minor).
+//   · otherwise, align "start" → `a = offset + 1`, clamped by `Math.max(1, Math.min(a, s - i - 1))`, and
+//     the lead is `H[0] + Pm(top, a - 1)` — a - 1 MORE dashes after the first, so **`offset: 2` paints
+//     THREE lead dashes, not two** (t2 review, Important: we shipped two). The tail is
+//     `Pm(top, s - a - i - 1) + H[s-1]`, i.e. `s - a - i` dashes, which keeps the total at `s`.
 import React from "react";
 import { Box, Text } from "ink";
 import stringWidth from "string-width";
@@ -68,13 +78,38 @@ export function PlaceholderCursor({ text }: { text: string }) {
   return <Box flexDirection="row"><Text inverse>{text[0]}</Text><Text dimColor>{text.slice(1)}</Text></Box>;
 }
 
-/** One rule. With no label it is a bare `─` run; with one, `─`×offset + ` ` + dim(label) + ` ` + `─`×rest.
+/** Cells of `s` that fit in `max` columns, never overshooting. Upstream's `$$` (L174842) can overshoot on a
+ *  wide character straddling the cut, which is the only reason `$Bu` re-slices at `s - 1`; this one cannot,
+ *  so that second slice has no work to do here and is not transcribed. */
+function sliceWidth(s: string, max: number): string {
+  let out = "", w = 0;
+  for (const ch of s) { const cw = stringWidth(ch); if (w + cw > max) break; out += ch; w += cw; }
+  return out;
+}
+
+/** One rule. With no label it is a bare `─` run; with one, the `$Bu` splice transcribed in the header —
+ *  `─`×(offset+1) + ` ` + dim(label) + ` ` + `─`×rest, or the truncating overflow branch on a narrow row.
  *  The label span is the ONLY dim part: dimming the dashes too is the exact failure the frame test guards. */
 function Rule({ columns, color, label }: { columns: number; color: string; label?: string }) {
   const width = Math.max(0, Math.floor(columns));
   if (label === undefined || label === "") return <Text color={color}>{RULE.repeat(width)}</Text>;
-  const lead = Math.min(LABEL_OFFSET, width);
-  const tail = Math.max(0, width - lead - stringWidth(label) - 2);
+  const content = " " + label + " ";
+  const i = stringWidth(content);
+  if (i >= width - 2) {                                  // `$Bu`'s overflow arm: no lead, content clamped, dashes fill
+    const u = sliceWidth(content, width);
+    const dashes = RULE.repeat(Math.max(0, width - stringWidth(u)));
+    const rest = u.slice(1), trailing = rest.endsWith(" ");
+    return (
+      <Text>
+        <Text>{u.slice(0, 1)}</Text>
+        <Text dimColor>{trailing ? rest.slice(0, -1) : rest}</Text>
+        {trailing ? <Text>{" "}</Text> : null}
+        <Text color={color}>{dashes}</Text>
+      </Text>
+    );
+  }
+  const lead = Math.max(1, Math.min(LABEL_OFFSET + 1, width - i - 1));
+  const tail = width - lead - i;
   return (
     <Text>
       <Text color={color}>{RULE.repeat(lead)}</Text>

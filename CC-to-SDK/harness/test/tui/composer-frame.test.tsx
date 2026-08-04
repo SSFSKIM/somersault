@@ -44,11 +44,13 @@ describe("ComposerFrame (CM1): two rules, no box", () => {
   });
 });
 
-describe("ComposerFrame label (borderText offset 2)", () => {
-  it("splices ` label ` into the top rule at offset 2, keeping the total width", () => {
+// `offset: 2` does NOT mean two lead dashes. `$Bu` (L179465–179482) takes `a = offset + 1` for align "start"
+// and paints `H[0] + Pm(top, a - 1)` — the first cell plus a-1 more, so THREE. We shipped two (t2 review).
+describe("ComposerFrame label (borderText offset 2 → THREE lead dashes)", () => {
+  it("splices ` label ` into the top rule after three dashes, keeping the total width", () => {
     const { lastFrame } = render(<ComposerFrame columns={40} label="History 3/57" />);
     const top = strip(frame(lastFrame)).split("\n")[0]!;
-    expect(top).toBe("── History 3/57 " + "─".repeat(40 - 2 - 14));
+    expect(top).toBe("─── History 3/57 " + "─".repeat(40 - 3 - 14));
     expect(top.length).toBe(40);
   });
   it("dims the label TEXT and leaves the dashes on both sides undimmed", () => {
@@ -59,7 +61,7 @@ describe("ComposerFrame label (borderText offset 2)", () => {
     // Everything before the dim run is leading dashes; everything after the dim CLOSE is trailing dashes.
     // Neither may sit inside a dim span — that is the sabotage this test exists to catch.
     const before = top.slice(0, dimOpen), after = top.slice(top.indexOf("\x1b[22m") + "\x1b[22m".length);
-    expect(strip(before)).toBe("── ");
+    expect(strip(before)).toBe("─── ");
     expect(strip(after).startsWith(" ─")).toBe(true);
     expect(before).not.toContain("\x1b[2m");
     expect(after).not.toContain("\x1b[2m");
@@ -69,6 +71,30 @@ describe("ComposerFrame label (borderText offset 2)", () => {
   it("renders nothing extra when the label is absent", () => {
     const top = strip(frame(render(<ComposerFrame columns={20} />).lastFrame)).split("\n")[0]!;
     expect(top).toBe("─".repeat(20));
+  });
+  // `$Bu`'s FIRST branch, `if (Ut(content) >= s - 2)`: the label is clamped to the row instead of overflowing
+  // it (which in Ink means the rule wraps onto a second line and the composer grows a phantom row).
+  it("truncates an over-long label instead of overflowing the rule (t2 review, Minor)", () => {
+    const top = (columns: number) => {
+      const lines = strip(frame(render(<ComposerFrame columns={columns} label="History 3/57" />).lastFrame)).split("\n");
+      expect(lines[0]!.length, `columns=${columns}`).toBeLessThanOrEqual(columns);   // never wraps onto a second row
+      expect(lines.filter((l) => l.length > 0).length, `columns=${columns}`).toBe(2);
+      return lines[0]!;
+    };
+    // `content` here is ` History 3/57 ` = 14 columns. The clamp at `Math.min(a, s - i - 1)` bites BEFORE the
+    // overflow arm does: at 17 there is only room for 2 lead dashes, at 16 for none.
+    expect(top(24)).toBe("─── History 3/57 " + "─".repeat(7));
+    expect(top(17)).toBe("── History 3/57 ─");
+    expect(top(16)).toBe(" History 3/57 ──");
+    expect(top(15)).toBe(" History 3/57 ─");
+    expect(top(14)).toBe(" History 3/57");                  // Ink trims the trailing cell; the row is still 14 wide
+    expect(top(8)).toBe(" History");                        // …and below its own width the label TEXT is cut
+  });
+  it("still keeps the dashes undimmed in the truncating arm", () => {
+    const top = frame(render(<ComposerFrame columns={16} label="History 3/57" />).lastFrame).split("\n")[0]!;
+    const after = top.slice(top.indexOf("\x1b[22m") + "\x1b[22m".length);
+    expect(after).not.toContain("\x1b[2m");
+    expect(strip(after)).toBe(" ──");
   });
 });
 
@@ -143,7 +169,7 @@ describe("ChatComposer wears the frame", () => {
   it("paints the label into the top rule when given one, and nothing when not", async () => {
     const withLabel = renderWithKeymap(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 40} label="History 3/57" />);
     await settle();
-    expect(strip(frame(withLabel.lastFrame)).split("\n")[0]).toBe("── History 3/57 " + "─".repeat(24));
+    expect(strip(frame(withLabel.lastFrame)).split("\n")[0]).toBe("─── History 3/57 " + "─".repeat(23));
     const without = renderWithKeymap(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 40} />);
     await settle();
     expect(strip(frame(without.lastFrame)).split("\n")[0]).toBe("─".repeat(40));
@@ -196,6 +222,48 @@ describe("external editor in flight (CM8)", () => {
     await waitFor(() => strip(frame(lastFrame)).includes("draft"));
     stdin.write("\x07");
     await waitFor(() => strip(frame(lastFrame)).includes("draft [sync]"));
+  });
+  // t2 review, Important: the editor is spawned with stdio "inherit", so the harness must stop reading fd 0 for
+  // the flight or it races the child for its keystrokes. The seam is the keymap provider's `suspendInput`; here
+  // it is injected so the ordering is observable without a real terminal.
+  it("runs the editor INSIDE the keymap's terminal handoff", async () => {
+    const order: string[] = [];
+    let release: (v: string | null) => void = () => {};
+    const pending = new Promise<string | null>((r) => { release = r; });
+    const suspendInput = async <T,>(fn: () => Promise<T>): Promise<T> => {
+      order.push("suspend");
+      try { return await fn(); } finally { order.push("resume"); }
+    };
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 40}
+        suspendInput={suspendInput} editExternal={() => { order.push("edit"); return pending; }} />,
+    );
+    await settle();
+    stdin.write("\x07");
+    await waitFor(() => strip(frame(lastFrame)).includes(EDITOR_IN_FLIGHT_TEXT));
+    expect(order).toEqual(["suspend", "edit"]);                  // NOT resumed while the editor still holds the tty
+    release("done");
+    await waitFor(() => strip(frame(lastFrame)).includes("done"));
+    expect(order).toEqual(["suspend", "edit", "resume"]);
+  });
+  it("resumes the handoff even when the editor rejects", async () => {
+    const order: string[] = [];
+    const suspendInput = async <T,>(fn: () => Promise<T>): Promise<T> => {
+      order.push("suspend");
+      try { return await fn(); } finally { order.push("resume"); }
+    };
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 40}
+        suspendInput={suspendInput} editExternal={() => Promise.reject(new Error("no editor"))} />,
+    );
+    await settle();
+    stdin.write("keep");
+    await waitFor(() => strip(frame(lastFrame)).includes("keep"));
+    stdin.write("\x07");
+    await waitFor(() => order.includes("resume"));
+    await waitFor(() => !strip(frame(lastFrame)).includes(EDITOR_IN_FLIGHT_TEXT));
+    expect(order).toEqual(["suspend", "resume"]);
+    expect(strip(frame(lastFrame))).toContain("keep");
   });
   it("keeps the buffer and clears the in-flight row when the editor returns null", async () => {
     let release: (v: string | null) => void = () => {};

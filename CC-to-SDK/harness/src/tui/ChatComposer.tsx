@@ -9,7 +9,7 @@ import type { CommandEntry } from "./commandComplete.js";
 import { editExternalAsync as realEditExternal } from "./externalEditor.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, newlineHint } from "./composerFrame.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
-import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
+import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope, useSuspendInput, type SuspendInput } from "./keys/KeymapProvider.js";
 import { formatBindings } from "./keys/hints.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
@@ -91,7 +91,10 @@ function MentionPopup({ state }: { state: EditorState }) {
  *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
 export type ComposerEditExternal = (text: string) => string | null | Promise<string | null>;
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, prefill, onPrefillApplied, editExternal, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800, columns, label }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, busy, escClearMs = 800, exitArmMs = 800, columns, label }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
+  /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
+   *  one. Absent AND with no provider above, the editor simply runs without a handoff. */
+  suspendInput?: SuspendInput; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number;
   /** The terminal's width, read per render (a function, not a number, so a resize is visible without a
    *  new prop identity). ChatApp threads its own `deps.columns ?? stdout.columns ?? 80` source through. */
   columns?: () => number;
@@ -142,6 +145,8 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const onDraftStartRef = useRef(onDraftStart); onDraftStartRef.current = onDraftStart;
   const onKillAgentsRef = useRef(onKillAgents); onKillAgentsRef.current = onKillAgents;
   const editExternalRef = useRef(editExternal); editExternalRef.current = editExternal;
+  const providerSuspend = useSuspendInput();
+  const suspendInputRef = useRef<SuspendInput | null>(null); suspendInputRef.current = suspendInput ?? providerSuspend;
   const onPrefillAppliedRef = useRef(onPrefillApplied); onPrefillAppliedRef.current = onPrefillApplied;
   const yankHintMsRef = useRef(yankHintMs); yankHintMsRef.current = yankHintMs;
   const escClearMsRef = useRef(escClearMs); escClearMsRef.current = escClearMs;
@@ -349,9 +354,15 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
         if (ended.lines.length === 1 && ended.lines[0] === "" && edited.length > 0) onDraftStartRef.current?.();
         commitState(replaceBufferFromOutside(ended, edited));
       };
+      // …and the whole flight runs INSIDE the keymap's terminal handoff (t2 review, Important): the child is
+      // spawned with stdio "inherit", so while it runs, fd 0 belongs to it and not to us. Without the handoff
+      // our still-flowing `data` listener raced the editor for its keystrokes and a stolen `\r` submitted the
+      // turn mid-edit. `suspendInput` restores raw mode in a `finally`, so both arms below are covered.
+      const run = () => Promise.resolve((editExternalRef.current ?? realEditExternal)(ended.lines.join("\n")));
+      const suspend = suspendInputRef.current;
       // A rejection is the same outcome as a null: the buffer stands and the in-flight row must lift, or
       // the composer is stuck showing "Save and close editor…" with no editor to save.
-      Promise.resolve((editExternalRef.current ?? realEditExternal)(ended.lines.join("\n"))).then(done, () => done(null));
+      (suspend ? suspend(run) : run()).then(done, () => done(null));
     },
   });
 

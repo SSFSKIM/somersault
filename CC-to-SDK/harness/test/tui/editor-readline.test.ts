@@ -201,6 +201,20 @@ describe("CM18 backslash-Enter continues from the CURSOR, not the line end (bund
     expect(r.submit).toBe("a\\b");
     expect(r.state.hasUsedBackslashReturn).toBe(false);
   });
+  // `ae` (L395679) tests the `\`-continuation BEFORE `meta || shift`; we had it the other way round, so
+  // shift+Return on a buffer ending in `\` inserted a newline UNDER the backslash and never set the flag
+  // (t2 review, Minor).
+  it("shift+Return on a trailing backslash is the CONTINUATION, not a plain newline", () => {
+    const s = type(initialEditorState(), "foo\\");
+    const r = applyKey(s, "", { return: true, shift: true });
+    expect(r.submit).toBeUndefined();
+    expect(r.state.lines).toEqual(["foo", ""]);                   // the backslash is eaten
+    expect(r.state.hasUsedBackslashReturn).toBe(true);
+    // …and with no backslash before the cursor, shift+Return is still the plain newline.
+    const plain = applyKey(type(initialEditorState(), "foo"), "", { return: true, shift: true });
+    expect(plain.state.lines).toEqual(["foo", ""]);
+    expect(plain.state.hasUsedBackslashReturn).toBe(false);
+  });
   it("the flag survives a submit and an Esc-Esc clear (upstream persists it globally)", () => {
     let s = type(initialEditorState(), "x\\");
     s = applyKey(s, "", { return: true }).state;

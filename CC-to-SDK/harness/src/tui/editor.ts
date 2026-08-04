@@ -341,8 +341,12 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags): EditorResu
     // a terminal only sends that byte pair BECAUSE it was configured to mean newline, so submitting on it
     // contradicted the very setup that emitted it. This is what makes the composer's `Z_a` rung-1 hint
     // ("shift + ⏎ for newline", bundle L433225) true here rather than a promise the editor breaks.
-    if (key.shift) return { state: insertText(s, "\n") };
+    //
+    // ORDER, from `ae` (bundle L395679): the `\`-continuation is tested BEFORE `meta || shift`. It matters —
+    // shift+Return on a buffer ending in `\` must EAT the backslash and set the used-flag (upstream's `CXs`),
+    // not insert a newline under a backslash the user meant as the continuation marker (t2 review, Minor).
     if (continuesLine(s)) return { state: continueLine(s) };
+    if (key.shift) return { state: insertText(s, "\n") };
     if (s.command) return submitCommand(s);
     if (s.mention) return { state: acceptMention(s) };
     return submitTurn(s);

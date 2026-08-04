@@ -72,7 +72,13 @@ export interface EditorIOAsync extends Omit<EditorIO, "spawn"> { spawn?: typeof 
  *  of an exported-but-empty VISUAL/EDITOR and its `vi` default), the same temp round-trip, the same
  *  null-means-keep-the-buffer contract, and the same raw-mode discipline — released before the child owns
  *  the terminal, restored in the settle path whatever happened. A spawn that never starts (ENOENT) rejects
- *  on "error", so that arm returns null too rather than hanging the in-flight row forever. */
+ *  on "error", so that arm returns null too rather than hanging the in-flight row forever.
+ *
+ *  Raw mode is NOT the whole handoff for this form, and this function cannot do the rest of it. `spawnSync`
+ *  above hands the terminal over by stopping the event loop; awaiting does not, so the harness's own stdin
+ *  listener keeps reading fd 0 while the child is on it. The party that owns that listener is the keymap
+ *  provider, so the caller wraps this call in its `suspendInput` (KeymapProvider.tsx) — see ChatComposer's
+ *  `chat:externalEditor`. The `setRaw` pair here stays for callers with no provider above them. */
 export function editExternalAsync(text: string, io: EditorIOAsync = {}): Promise<string | null> {
   const launch = io.spawn ?? spawn;
   const setRaw = io.setRaw ?? ((on: boolean) => { try { if (process.stdin.isTTY) process.stdin.setRawMode(on); } catch { /* no tty */ } });
