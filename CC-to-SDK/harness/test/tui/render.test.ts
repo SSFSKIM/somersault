@@ -1,17 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { renderMessage, trunc, toolTarget } from "../../src/tui/render.js";
+import { renderMessage, trunc, toolTarget, userEchoLines } from "../../src/tui/render.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import { replayDocument } from "../../src/tui/replay.js";
 import { projectCompact } from "../../src/tui/toolRenderer.js";
 import { READ_CALL, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
-import { ACCENT } from "../../src/tui/theme.js";
+import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 
 const asst = (content: unknown[]) => ({ type: "assistant", message: { content } });
-const BULLET = { text: "● ", color: ACCENT };
+// F4 Task 8: the bullet is `Za` (per-platform) in the `text` token, not the accent — every call below names
+// its platform so the expectation does not depend on the machine the suite runs on. Full pins: identity.test.tsx.
+const LINUX = { platform: "linux" as NodeJS.Platform };
+const BULLET = { text: "● ", color: resolveThemeColor(themeTokens().text) };
 
 describe("renderMessage", () => {
   it("renders assistant text with the ● bullet gutter + indented continuation", () => {
-    expect(renderMessage(asst([{ type: "text", text: "hello\nworld" }]))).toEqual([
+    expect(renderMessage(asst([{ type: "text", text: "hello\nworld" }]), LINUX)).toEqual([
       { text: "hello", gutter: BULLET }, { text: "  world" },
     ]);
   });
@@ -72,15 +75,18 @@ describe("renderMessage (markdown wiring)", () => {
     const lines = renderMessage({ type: "assistant", message: { content: [
       { type: "text", text: "**hi**" },
       { type: "thinking", thinking: "**not parsed**" },
-    ] } });
+    ] } }, LINUX);
     expect(lines).toContainEqual({ text: "hi", bold: true, gutter: BULLET }); // text → markdown + ● bullet
     expect(lines).toContainEqual({ text: "**not parsed**", dim: true });      // thinking → raw dim (NOT parsed, no bullet)
   });
 });
 
 describe("renderMessage (replay additions)", () => {
-  it("renders a user-text prompt as a dim '› ' line", () => {
+  // F4 Task 8: the `› ` + dim hand-roll is gone — a user frame is the `userEchoLines` band, same as the live
+  // and queued echoes. The band's own shape is pinned in identity.test.tsx; this asserts the ROUTING.
+  it("renders a user-text prompt through the one prompt-echo renderer", () => {
     const m = { type: "user", message: { role: "user", content: [{ type: "text", text: "fix the parser" }] } };
-    expect(renderMessage(m)).toEqual([{ text: "› fix the parser", dim: true }]);
+    expect(renderMessage(m, { width: 40 })).toEqual(userEchoLines("fix the parser", { width: 40 }));
+    expect(renderMessage(m, { width: 40 })[0]!.text.startsWith("❯ fix the parser")).toBe(true);
   });
 });

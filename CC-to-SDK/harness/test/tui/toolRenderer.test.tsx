@@ -451,7 +451,10 @@ describe("F1 anchored-stream memoization", () => {
     expect(doc.entries().length).toBe(entries); expect(doc.revision()).toBe(revision + 1);
     const after = lineTexts(projectCompact(doc, context));
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(before).not.toContain("› upgraded note"); expect(after).toContain("› upgraded note");
+    // F4 Task 8: the user text now arrives as the `userEchoLines` band, so the row is padded — match on the
+    // row's leading content rather than on an exact element.
+    expect(before.some((t) => t.startsWith("❯ upgraded note"))).toBe(false);
+    expect(after.some((t) => t.startsWith("❯ upgraded note"))).toBe(true);
   });
 
   // The stream is NOT a pure function of the document: `renderMessage` → markdown/highlight read the LIVE

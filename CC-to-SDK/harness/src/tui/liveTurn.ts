@@ -35,14 +35,20 @@ export class LiveTurn {
   private thoughtMs = new Map<string, number>();          // message id → summed ms of its STOPPED thinking blocks
   private clock: () => number;
   private columns: () => number;
+  private platform: NodeJS.Platform;
   /** `now` is injected for the same reason the projection's is: a test (and the frame-capture fixture)
    *  has to pin arrival stamps that would otherwise read the host wall clock. `columns` (F4 Task 5) mirrors
    *  it exactly: the live region renders markdown, markdown fits width-sensitive blocks to the terminal, and
    *  the REPL's own `columnsFn` is the honest source — read PER SNAPSHOT, never captured, so a mid-turn
-   *  resize repaints the in-flight message. Default 80: `renderMarkdown`'s own. */
-  constructor(deps: { now?: () => number; columns?: () => number } = {}) {
+   *  resize repaints the in-flight message. Default 80: `renderMarkdown`'s own.
+   *  `platform` (F4 Task 8) is the SAME value `useChat` puts in its `ProjectionContext`, and it is threaded
+   *  for one reason: the streaming bullet and the settled bullet are the same glyph, so a live message must
+   *  not paint `⏺` and then re-paint as `●` the instant it lands in the retained document. Captured, not a
+   *  thunk — unlike width and the clock, a host does not change platform mid-turn. */
+  constructor(deps: { now?: () => number; columns?: () => number; platform?: NodeJS.Platform } = {}) {
     this.clock = deps.now ?? (() => Date.now());
     this.columns = deps.columns ?? (() => 80);
+    this.platform = deps.platform ?? process.platform;
   }
   /** Real running output-token count for the WHOLE turn (committed messages + the in-flight one). */
   get outputTokens(): number { return this.committedTokens + this.currentMsgTokens; }
@@ -135,7 +141,7 @@ export class LiveTurn {
   }
 
   private renderBlock(b: Block): RenderLine[] {
-    if (b.kind === "text") return b.text ? withAssistantBullet(renderMarkdown(b.text, { width: this.columns() })) : [];
+    if (b.kind === "text") return b.text ? withAssistantBullet(renderMarkdown(b.text, { width: this.columns() }), this.platform) : [];
     return b.collapsed ? [{ text: "✦ Thinking", dim: true }]
       : (b.text ? b.text.split("\n").map((t) => ({ text: t, dim: true })) : []);
   }

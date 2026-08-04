@@ -5,12 +5,15 @@
 // the projection's decision. Only the three display frames are local entries, each with a stable identity
 // derived from POSITION in the persisted array (never from its text) so replaying the same session twice
 // neither duplicates nor silently drops a row.
-import { trunc } from "./render.js";
-import type { RenderLine } from "./render.js";
+import { trunc, userEchoLines, type RenderLine } from "./render.js";
 import { TranscriptDocument } from "./transcriptModel.js";
 import { rowKind, promptText } from "../sessions/rows.js";
 
-export interface ReplayOptions { id?: string; label?: string }
+/** `width` (F4 Task 8): the terminal column budget the command-echo band is padded to. The prompt rows
+ *  themselves are retained SDK frames and get their width from the projection, but a `command_echo` is a
+ *  LOCAL entry whose lines are baked here — so it needs the caller's width or it would default to 80 and
+ *  wear a narrower band than the prompt above it. `useChat` passes its own `columnsFn()`. */
+export interface ReplayOptions { id?: string; label?: string; width?: number }
 
 function firstUserText(messages: readonly any[]): string {
   for (const m of messages) {
@@ -40,7 +43,8 @@ export function replayDocument(messages: readonly unknown[], options: ReplayOpti
     if (kind === "command_output" || kind === "caveat") return;               // engine bookkeeping, never a visible row
     if (kind === "command_echo") {
       const name = /<command-name>\s*\/?([^<]+)</.exec(promptText(m))?.[1] ?? "command";
-      document.appendLocal({ kind: "command-echo", lines: [{ text: `› /${name.trim()}`, dim: true }] }, `replay:${session}:${index}:command_echo`);
+      // Same band as a live command echo and a live prompt — `userEchoLines` is the one renderer (F4 Task 8).
+      document.appendLocal({ kind: "command-echo", lines: userEchoLines(`/${name.trim()}`, { width: options.width }) }, `replay:${session}:${index}:command_echo`);
       return;
     }
     if (kind === "compact_summary") {

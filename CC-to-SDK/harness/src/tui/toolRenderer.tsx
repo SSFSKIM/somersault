@@ -643,16 +643,22 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
  *  `projectPending`, which folds the WHOLE anchored stream — so without a cache every frame re-renders every
  *  retained message, markdown and all, and a long resumed/attached transcript pays that per blink.
  *
- *  THE KEY IS `revision() × themeGeneration() × columns × projection × verbose`, and a hit requires ALL FIVE
- *  unchanged. The last three arrived with F4 Task 5 and are not optional: `projectMessageEntry` no longer
- *  voids its options — it forwards `columns` (the width the markdown walker fits a table to), `platform` and
- *  a `projection`/`verbose`-derived `showThinking` into `renderMessage`. So one unmutated document at one
+ *  THE KEY IS `revision() × themeGeneration() × columns × projection × verbose × platform`, and a hit
+ *  requires ALL SIX unchanged. The last four arrived with F4 Task 5 and are not optional: `projectMessageEntry`
+ *  no longer voids its options — it forwards `columns` (the width the markdown walker fits a table to),
+ *  `platform` and a `projection`/`verbose`-derived `showThinking` into `renderMessage`. So one unmutated document at one
  *  revision now projects DIFFERENTLY per knob, and the old `revision × theme` key would serve whichever
  *  projection ran first to the other: compact and detail (ctrl+o) reads of the same document would agree on
  *  thinking visibility by call ORDER, and a ctrl+o read after a resize would serve stale-width markdown
  *  until the next document event (projection is event-driven; nothing re-projects on resize itself). Note
  *  `verbose` is currently implied by `projection` (only projectDetail sets it, as detail-all) but is keyed
- *  because it is an independent field on the type — same reasoning as showThinking's derivation. The
+ *  because it is an independent field on the type — same reasoning as showThinking's derivation. `platform`
+ *  joined the key with F4 Task 8 and is NOT optional either, though the reasoning is different: it is
+ *  process-constant in production, so Task 5 deliberately left it out — but the moment `withAssistantBullet`
+ *  started switching `⏺`/`●` on it, `renderMessage` became platform-dependent and any caller that projects
+ *  ONE document under two platforms (every test that does so, and any future host that reports a peer's
+ *  platform) would be served the first one's glyph out of cache. A key input is decided by what the render
+ *  reads, not by how often it changes. The
  *  remaining `ProjectionOptions` fields are deliberately NOT in the key: `cwd`/`home`/`now`/`thoughtMs`/
  *  `pending`/`agentMeta`/`toolEvents`/`bashHint` enter strictly LATER, in `renderToolEvent`, `groupItems`
  *  and `segmentRuns`, none of which is cached (that is what lets the 600 ms blink and the ticking thinking
@@ -675,7 +681,7 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
  *  onto it and sort it in place — while the `Anchored` records inside it are never mutated and are shared. */
 const KNOB_KEYS = 8;
 const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; theme: number; byKnobs: Map<string, readonly Anchored[]> }>();
-const knobKey = (options: ProjectionOptions): string => `${options.columns}|${options.projection}|${options.verbose}`;
+const knobKey = (options: ProjectionOptions): string => `${options.columns}|${options.projection}|${options.verbose}|${options.platform}`;
 /** DI-by-deps test seam: the builder is reached through this record, so a test can count rebuilds without
  *  reading the cache itself. Production never reassigns it. */
 export const projectionDeps = { buildAnchored: buildAnchoredEntries };

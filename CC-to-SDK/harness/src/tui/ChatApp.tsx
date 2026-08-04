@@ -38,6 +38,8 @@ import { useKeyActions, useKeyScope, useKeySuspend, useSwallowKeys } from "./key
 import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
+import { Line } from "./Line.js";
+import { userEchoLines } from "./render.js";
 import { ChatComposer, type InputOwner } from "./ChatComposer.js";
 import { initialEditorState, type EditorState } from "./editor.js";
 import { PermissionDialog } from "./PermissionDialog.js";
@@ -66,6 +68,9 @@ import { PermissionsDialog } from "./PermissionsDialog.js";
  *  swallow covers `Global` too (registry.ts: a swallower with no scope of its own swallows everything), which
  *  is why ChatApp's `Task` scope is deactivated while `rewinding` — it would otherwise be the innermost live
  *  scope and its ctrl+x ctrl+b chord would survive the hold. */
+/** `$jp = 2` (bundle L426022) — the `paddingX` `wqo` puts around a queued prompt in normal layout. */
+const QUEUE_PAD = 2;
+
 function RestoringModal(): React.ReactElement {
   useSwallowKeys(true);
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
@@ -98,6 +103,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
   const { state, detailItems, submit, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
+  // The queued band's own column budget: what is left inside the `paddingX: 2` box. `deps.columns` first for
+  // the same reason useChat prefers it — the frame-capture fixture and the tests pin a width.
+  const queueWidth = Math.max(8, (deps?.columns?.() ?? stdout?.columns ?? 80) - QUEUE_PAD * 2);
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
@@ -208,9 +216,16 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       <Transcript key={state.staticEpoch} staticItems={state.staticItems} pendingItems={state.pendingItems} streaming={state.streaming} />
       {todosOpen ? <TaskPanel tasks={state.tasks} /> : null}
       {state.busy ? <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} /> : null}
+      {/* F4 Task 8 — upstream `wqo` (pack §7.7, bundle L426002–426022): a queued prompt is the ORDINARY
+          prompt echo wrapped in `<Box paddingX={$jp}>` with `$jp = 2`, and nothing else. It carries no
+          prefix, no clip and no dimming (the `subtle` flip at L426034 lives inside the brief-layout branch,
+          which this clone does not model) — so our `⋯ queued: ` + 60-char clip was an over-ship on both
+          counts and dies here. The band is minted at `columns - 2*QUEUE_PAD`, which reproduces upstream's
+          queued rule inset exactly: it hands `Sg` a padding of `3 + paddingWidth` = 7 where a normal
+          message hands 3, and `paddingWidth` is `paddingX * 2` = 4. */}
       {state.queue.length > 0 ? (
-        <Box flexDirection="column" paddingX={1}>
-          {state.queue.map((q, i) => <Text key={i} dimColor>⋯ queued: {q.length > 60 ? q.slice(0, 59) + "…" : q}</Text>)}
+        <Box flexDirection="column" paddingX={QUEUE_PAD}>
+          {state.queue.flatMap((q, i) => userEchoLines(q, { width: queueWidth }).map((l, j) => <Line key={`${i}:${j}`} l={l} />))}
         </Box>
       ) : null}
       {state.shortcutsOpen

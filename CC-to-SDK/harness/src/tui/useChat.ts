@@ -21,7 +21,7 @@ import { OUTPUT_STYLE_REDIRECT } from "./OutputStylePicker.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
-import type { RenderLine } from "./render.js";
+import { userEchoLines, type RenderLine } from "./render.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { LiveTurn } from "./liveTurn.js";
@@ -391,7 +391,7 @@ export function useChat(
         // The SAME injected clock the projection uses: the thinking clock's arrival stamps and the `now`
         // the fold row is rendered against must not come from two different sources (a frame-capture
         // fixture pins one of them, and a live-reading LiveTurn would make its output unreproducible).
-        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]);
+        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]);
       }
       else if (ev.kind === "message") {
         const data = ev.data as any;
@@ -565,7 +565,8 @@ export function useChat(
   }
 
   async function handleCommand(cmd: ParsedCommand) {
-    appendNewLocal({ kind: "command-echo", lines: [{ text: `› /${cmd.name}${cmd.args ? " " + cmd.args : ""}`, dim: true }] });
+    // F4 Task 8: a slash command echoes through the SAME band as a prompt — `› ` + dim was our invention.
+    appendNewLocal({ kind: "command-echo", lines: userEchoLines(`/${cmd.name}${cmd.args ? " " + cmd.args : ""}`, { width: columnsFn() }) });
     try {
       switch (cmd.name) {
         case "model":
@@ -777,7 +778,7 @@ export function useChat(
     // ids nobody has seen. Replacing it with disk-only rows would erase every prior local notice and
     // command output from later Ctrl-O detail — a real session change is the only terminal boundary.
     if (sameSession) { for (const m of msgs) documentRef.current!.appendSdk("disk", m); setStreaming([]); reconcile(); }
-    else replaceDocument(replayDocument(msgs, { id }));
+    else replaceDocument(replayDocument(msgs, { id, width: columnsFn() }));
     lastAssistant.current = lastAssistantText(msgs);            // /copy follows what is ON SCREEN, not just live turns
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
@@ -1016,7 +1017,7 @@ export function useChat(
     if (disposed.current) return;
     // A rewind is a deliberate session transition: the fresh document derives ONLY the restored persisted
     // messages. (Ctrl-O never uses this path.)
-    if (msgs.length) replaceDocument(replayDocument(msgs, { id, label: "⏪ rewound" }));
+    if (msgs.length) replaceDocument(replayDocument(msgs, { id, label: "⏪ rewound", width: columnsFn() }));
     else { const fresh = new TranscriptDocument(); fresh.appendLocal({ kind: "rewind-divider", lines: [{ text: "⏪ rewound", dim: true }] }, "rewind:empty"); replaceDocument(fresh); }
     lastAssistant.current = lastAssistantText(msgs);        // /copy follows what is on screen
     taskListRef.current.reset(); setTasks([]);
@@ -1054,7 +1055,10 @@ export function useChat(
   // attached client renders identically (spec A2b acceptance 7). onMessage is a deliberate no-op: the
   // events, not the submit callback, own the render.
   function runTurn(prompt: string) {
-    appendNewLocal({ kind: "user-echo", lines: [{ text: `› ${prompt}`, dim: true }] });
+    // THE live prompt echo. It shares `userEchoLines` with replay and the queued list so the band a prompt
+    // wears cannot depend on which surface minted it. Baked at the width of the moment: a local entry's lines
+    // project verbatim (`projectLocalEvent`), so an already-echoed prompt keeps its band across a resize.
+    appendNewLocal({ kind: "user-echo", lines: userEchoLines(prompt, { width: columnsFn() }) });
     session.submit(prompt, () => {}).catch((e) => {
       append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]);
       // Only reclaim busy/drain when no turn is event-owned (liveTurnRef null): a live turn — another
@@ -1099,7 +1103,7 @@ export function useChat(
       if (LOCAL_NAMES.has(cmd.name)) { void handleCommand(cmd); return false; }   // local → engine switch
       // U1: a catalogued client-side control gets an honest message, never a prompt the model can't act
       // on. hasOwn, not `in`: a bare object's prototype chain would match "/toString" etc.
-      if (Object.hasOwn(CLIENT_SIDE_NOTES, cmd.name)) { append([{ text: `› /${cmd.name}${cmd.args ? " " + cmd.args : ""}`, dim: true }, ...formatClientSide(cmd.name)]); return false; }
+      if (Object.hasOwn(CLIENT_SIDE_NOTES, cmd.name)) { append([...userEchoLines(`/${cmd.name}${cmd.args ? " " + cmd.args : ""}`, { width: columnsFn() }), ...formatClientSide(cmd.name)]); return false; }
       if (catalogNames.current.has(cmd.name)) { runTurn(prompt); return true; }   // catalog → run "/name …" as a turn (probe 31)
       void handleCommand(cmd); return false;                                       // unknown → formatUnknown (switch default)
     }

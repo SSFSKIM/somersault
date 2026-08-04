@@ -7,9 +7,11 @@ import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import { replayDocument } from "../../src/tui/replay.js";
 import { projectCompact, projectPending } from "../../src/tui/toolRenderer.js";
 import { READ_CALL, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
-import { ACCENT, resolveThemeColor, setTheme, themeTokens } from "../../src/tui/theme.js";
+import { resolveThemeColor, setTheme, themeTokens } from "../../src/tui/theme.js";
 
-const tok = (name: "error") => resolveThemeColor(themeTokens()[name]);
+const tok = (name: "error" | "text") => resolveThemeColor(themeTokens()[name]);
+/** F4 Task 8: `Za` for a non-darwin host, in the `text` token — the accent bullet died with the task. */
+const BULLET = { text: "● ", color: tok("text") };
 const projectionOptions = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
 
 const se = (event: unknown) => ({ type: "stream_event", event });
@@ -99,13 +101,13 @@ describe("LiveTurn", () => {
   });
 
   it("appends a red line on fail() and keeps the partial that was streaming beside it", () => {
-    const lt = new LiveTurn();
+    const lt = new LiveTurn({ platform: "linux" });
     lt.ingest(se({ type: "message_start" }));
     lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
     lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } }));
     lt.fail("stream died");
     const out = lt.snapshot();
-    expect(out).toContainEqual({ text: "partial", gutter: { text: "● ", color: ACCENT } });
+    expect(out).toContainEqual({ text: "partial", gutter: BULLET });
     expect(out).toContainEqual({ text: "✗ stream died", color: tok("error") });
   });
 
@@ -116,14 +118,24 @@ describe("LiveTurn", () => {
     expect(lt.snapshot()).toEqual([]);
   });
 
-  it("renders live assistant text as markdown with the ● bullet", () => {
-    const lt = new LiveTurn();
+  // F4 Task 8: the streaming bullet is the SETTLED bullet — `Za` per platform in the `text` token, threaded
+  // through LiveTurn's own `platform` dep so a live message never repaints its glyph when it lands.
+  it("renders live assistant text as markdown with the platform bullet", () => {
+    const lt = new LiveTurn({ platform: "linux" });
     lt.ingest(se({ type: "message_start" }));
     lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
     lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "# Heading" } }));
     // F4 Task 2: an h1 is bold+italic+underline (`vt.bold.italic.underline`, constants pack §1.2 /
     // bundle L420613–420616); depth ≥2 is bold only.
-    expect(lt.snapshot()).toContainEqual({ text: "Heading", bold: true, italic: true, underline: true, gutter: { text: "● ", color: ACCENT } });
+    expect(lt.snapshot()).toContainEqual({ text: "Heading", bold: true, italic: true, underline: true, gutter: BULLET });
+  });
+
+  it("switches the live bullet to ⏺ on darwin", () => {
+    const lt = new LiveTurn({ platform: "darwin" });
+    lt.ingest(se({ type: "message_start" }));
+    lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
+    lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hi" } }));
+    expect(lt.snapshot()[0]!.gutter).toEqual({ text: "⏺ ", color: tok("text") });
   });
 
   it("captures the running output-token count from message_delta usage", () => {

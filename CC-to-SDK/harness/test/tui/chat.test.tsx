@@ -30,6 +30,13 @@ const tmpHome = (): string => { const d = mkdtempSync(join(tmpdir(), "ccx-kb-hom
 afterEach(() => { for (const d of homes.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 const frame = (f: () => string | undefined) => f() ?? "";
+// F4 Task 8: the prompt echo — live, replayed and QUEUED alike — is now `userEchoLines`'s band: a `❯ ` cell
+// and the text in separate <Text> spans (they carry different colors), so ANSI sits between them and Ink may
+// break the row. Strip and collapse before pinning the gutter. `⋯ queued: …` is gone: a queued prompt is the
+// ordinary band inside `wqo`'s paddingX-2 box (bundle L426002–426022), which is what `isQueued` looks for.
+const stripAnsiAll = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
+const banded = (f: () => string | undefined) => stripAnsiAll(frame(f)).replace(/\s+/g, " ");
+const isQueued = (f: () => string | undefined, text: string) => banded(f).includes(`❯ ${text}`);
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await new Promise((r) => setTimeout(r, 0)); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
@@ -287,7 +294,7 @@ describe("<ChatApp>", () => {
   it("initialPrompt submits once on mount", async () => {
     const { lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} initialPrompt="do the thing" />);
     await waitFor(() => frame(lastFrame).includes("ok"));
-    expect(lastFrame()).toContain("› do the thing");
+    expect(banded(lastFrame)).toContain("❯ do the thing");
   });
 
   it("Ctrl-Z calls the injected suspend and does not exit or detach (KB5: detach moved to /detach)", async () => {
@@ -1787,7 +1794,7 @@ describe("<ChatApp>", () => {
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
     for (const text of ["queued one", "queued two"]) {
       stdin.write(text); await waitFor(() => frame(lastFrame).includes(text));
-      stdin.write("\r"); await waitFor(() => frame(lastFrame).includes(`⋯ queued: ${text}`));
+      stdin.write("\r"); await waitFor(() => isQueued(lastFrame, text));
     }
     stdin.write("\x1b");
     await waitFor(() => interrupted === 1 && frame(lastFrame).includes("queued one") && frame(lastFrame).includes("queued two"));
@@ -1830,11 +1837,11 @@ describe("<ChatApp>", () => {
     for (const q of ["first queued", "second queued", "third queued"]) {
       stdin.write(q); await waitFor(() => frame(lastFrame).includes(q));
       stdin.write("\r");
-      await waitFor(() => frame(lastFrame).includes(`⋯ queued: ${q}`));
+      await waitFor(() => isQueued(lastFrame, q));
     }
     stdin.write("\x1b");                                              // Esc: interrupt + rescue
     await waitFor(() => interrupted === 1);
-    await waitFor(() => !frame(lastFrame).includes("⋯ queued:"));
+    await waitFor(() => !isQueued(lastFrame, "first queued"));
     const f = frame(lastFrame);
     expect(f).toMatch(/first queued[\s\S]*second queued[\s\S]*third queued/);
     expect(f).toMatch(/third queued(?:\x1b\[[0-9;]*m)*\x1b\[7m /);   // cursor-at-end marker on the final line
@@ -1863,11 +1870,11 @@ describe("<ChatApp>", () => {
     stdin.write("start"); await waitFor(() => frame(lastFrame).includes("start"));
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
     stdin.write("queued-one"); await waitFor(() => frame(lastFrame).includes("queued-one"));
-    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⋯ queued: queued-one"));
+    stdin.write("\r"); await waitFor(() => isQueued(lastFrame, "queued-one"));
     stdin.write("/"); await waitFor(() => frame(lastFrame).includes("/"));
     stdin.write("mod"); await waitFor(() => frame(lastFrame).includes("/model"));
     stdin.write("\x03");
-    await waitFor(() => interrupted === 1 && !frame(lastFrame).includes("⋯ queued:"));
+    await waitFor(() => interrupted === 1 && !isQueued(lastFrame, "queued-one"));
     expect(frame(lastFrame)).toContain("queued-one");
     expect(frame(lastFrame)).toContain("/mod");
     expect(frame(lastFrame)).not.toContain("↑/↓");

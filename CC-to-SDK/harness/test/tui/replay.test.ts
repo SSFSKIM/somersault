@@ -36,7 +36,7 @@ describe("replayDocument", () => {
     const doc = replayDocument([userText("add a flag"), READ_CALL, READ_RESULT_FLAT, asstText("added", "a-2")], replayOptions);
     expect(doc.toolEvents()).toHaveLength(1);
     const rendered = compactText(doc);
-    expect(rendered).toContain("› add a flag");
+    expect(rendered).toContain("❯ add a flag");   // F4 Task 8: the one prompt band, not the old `› ` hand-roll
     // Task 5c: the DEFAULT view collapses the read into one summary row and shows no result body at all —
     // the per-call header and the body are upstream's ctrl+o form, so they must still be there under detail.
     expect(rendered).toContain("Read 1 file (ctrl+o to expand)");
@@ -52,7 +52,7 @@ describe("replayDocument", () => {
     expect(detail).toContain("Read 3 lines");
     expect(detail).not.toContain("two");
   });
-  it("hides command stdout/caveat rows, renders command echoes as dim slash lines, and marks compact summaries", () => {
+  it("hides command stdout/caveat rows, renders command echoes as banded slash lines, and marks compact summaries", () => {
     const msgs = [
       { type: "user", uuid: "u1", timestamp: "2026-07-28T08:00:00Z", message: { role: "user", content: "hi" } },
       { type: "user", uuid: "u2", message: { role: "user", content: "<command-name>/compact</command-name> <command-message>compact</command-message>" } },
@@ -60,7 +60,7 @@ describe("replayDocument", () => {
       { type: "user", uuid: "u4", message: { role: "user", content: "This session is being continued from a previous conversation that ran out of context. Summary…" } },
     ];
     const text = compactText(replayDocument(msgs, {}));
-    expect(text).toContain("› /compact");
+    expect(text).toContain("❯ /compact");        // F4 Task 8: a command echo wears the same band as a prompt
     expect(text).not.toContain("local-command-stdout");
     expect(text).not.toContain("Summary…");
     expect(text).toContain("─── context compacted earlier ───");

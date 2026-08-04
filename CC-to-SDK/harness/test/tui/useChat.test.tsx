@@ -21,6 +21,11 @@ import { READ_CALL, READ_RESULT_FLAT, READ_RESULT_WITH_SIDECAR } from "../fixtur
 // grows or shrinks (e.g. the /help catalog gaining a command). De-wrap before substring checks so those
 // checks assert on rendered CONTENT, not on an incidental wrap point.
 const frame = (f: () => string | undefined) => (f() ?? "").replace(/\n/g, " ");
+// F4 Task 8: a prompt echo is now a full-width BAND (`userEchoLines`) — gutter cell, text, then a right fill
+// out to `width - 1`. Ink can legally break the joined <Text> between the `❯` cell and the text, and the fill
+// makes that likelier, so an assertion that pins the gutter collapses whitespace runs first. Content-only
+// assertions keep using `frame`.
+const flat = (f: () => string | undefined) => frame(f).replace(/\s+/g, " ");
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
@@ -79,7 +84,7 @@ describe("useChat: the host event stream is the single rendering source", () => 
     await new Promise((r) => setTimeout(r, 10));
     api.run!("hi");
     await waitFor(() => frame(lastFrame).includes("VIA-EVENTS"));
-    expect(frame(lastFrame)).toContain("› hi");
+    expect(flat(lastFrame)).toContain("❯ hi");
     expect(frame(lastFrame)).toContain("VIA-EVENTS");
     expect(frame(lastFrame)).not.toContain("SHOULD-NOT-RENDER-VIA-CALLBACK");   // onMessage callback is a no-op passthrough
     expect(typeof capturedOnMessage).toBe("function");
@@ -300,7 +305,7 @@ describe("useChat", () => {
     (ResumeHost as any).run("/resume");
     await waitFor(() => frame(lastFrame).includes("PICKER:1"));
     pick!({ sessionId: "old1234567890", summary: "prior", lastModified: 1 });
-    await waitFor(() => frame(lastFrame).includes("› prior prompt"));
+    await waitFor(() => flat(lastFrame).includes("❯ prior prompt"));
     await waitFor(() => frame(lastFrame).includes("resumed here · live"));
     await waitFor(() => disposed === 1);
     expect(disposed).toBe(1);
@@ -374,7 +379,7 @@ describe("useChat", () => {
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.run!("/continue");
-    await waitFor(() => (lastFrame() ?? "").includes("No sessions to continue"));
+    await waitFor(() => flat(lastFrame).includes("No sessions to continue"));
   });
 
   it("dispatches /model, /compact, /context, /clear, /help locally — never to the model", async () => {
@@ -551,7 +556,7 @@ describe("useChat", () => {
     api.run!("/resume");
     await waitFor(() => frame(lastFrame).includes("PICKER:1"));
     pick!({ sessionId: "old1234567890", summary: "prior", lastModified: 1 });
-    await waitFor(() => frame(lastFrame).includes("› prior prompt"));   // the swap landed
+    await waitFor(() => flat(lastFrame).includes("❯ prior prompt"));   // the swap landed
 
     expect(frame(lastFrame)).toContain("bg:0:0");   // no ghost ⟳ running row survives the swap
   });
@@ -609,7 +614,7 @@ describe("useChat", () => {
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("/detach");
-    await waitFor(() => frame(lastFrame).includes("not detachable — run with --detachable, or ccx attach from another terminal"));
+    await waitFor(() => flat(lastFrame).includes("not detachable — run with --detachable, or ccx attach from another terminal"));
     expect(submitted).toBe(0);
   });
 
@@ -1564,7 +1569,7 @@ describe("useChat: one retained document behind every surface", () => {
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     await waitFor(() => frame(lastFrame).includes("IDLE"));
     api.run!("after the duplicate");                                      // the command channel is still live
-    await waitFor(() => frame(lastFrame).includes("› after the duplicate"));
+    await waitFor(() => flat(lastFrame).includes("❯ after the duplicate"));
   });
 
   it("publishes every stable RenderItem id exactly once — local visual, assistant text and divider alike", async () => {
@@ -1593,9 +1598,9 @@ describe("useChat: one retained document behind every surface", () => {
     await new Promise((r) => setTimeout(r, 20));
     api.run!("/help");
     await waitFor(() => frame(lastFrame).includes("/model"));
-    const before = (frame(lastFrame).match(/› \/help/g) ?? []).length;
+    const before = (flat(lastFrame).match(/❯ \/help/g) ?? []).length;
     api.run!("/help");
-    await waitFor(() => (frame(lastFrame).match(/› \/help/g) ?? []).length === before + 1);
+    await waitFor(() => (flat(lastFrame).match(/❯ \/help/g) ?? []).length === before + 1);
   });
 
   it("same-session /resume APPENDS only unseen persisted rows and keeps the pre-resume local event in detail-all", async () => {
@@ -1615,7 +1620,7 @@ describe("useChat: one retained document behind every surface", () => {
     await waitFor(() => frame(lastFrame).includes("! echo local"));
     const beforeIds = [...published];
     api.pick!({ sessionId: "same-1", summary: "s", lastModified: 1 });
-    await waitFor(() => frame(lastFrame).includes("› prior prompt"));
+    await waitFor(() => flat(lastFrame).includes("❯ prior prompt"));
     expect(epoch).toBe(0);                                        // NOT a terminal boundary: no fresh <Static>
     expect(published.slice(0, beforeIds.length)).toEqual(beforeIds);   // every earlier identity preserved
     expect(JSON.stringify(api.detail!("detail-all"))).toContain("! echo local");   // the local event survives into Ctrl-O detail
@@ -1670,7 +1675,7 @@ describe("useChat: one retained document behind every surface", () => {
     first.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "open-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/b.ts" } }] } } });
     await waitFor(() => scheduler.armed === 1);
     api.pick!({ sessionId: "other-1", summary: "s", lastModified: 1 });   // replace the session while a call is OPEN
-    await waitFor(() => frame(view.lastFrame).includes("› swapped"));
+    await waitFor(() => flat(view.lastFrame).includes("❯ swapped"));
     await waitFor(() => scheduler.armed === 0);                   // the swap disarmed the old epoch
     expect(scheduler.armed).toBe(0);
     view.unmount();
