@@ -1,84 +1,115 @@
-import { describe, it, expect } from "vitest";
-import { renderMarkdown } from "../../src/tui/markdown.js";
+import { describe, expect, it } from "vitest";
+import { renderMarkdown, type MarkdownOptions } from "../../src/tui/markdown.js";
+import { inlineSegments, strikethroughSupported } from "../../src/tui/markdownInline.js";
+import type { Segment } from "../../src/tui/render.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 
-// F1 Task 2 semantic roles: inline code + keywords `suggestion`, numbers `warning`, unknown/unlabelled
-// fenced code `inactive` — resolved through resolveThemeColor exactly as the renderers do.
-const tok = (name: "suggestion" | "warning" | "inactive") => resolveThemeColor(themeTokens()[name]);
+const lines = (s: string, o?: MarkdownOptions) => renderMarkdown(s, o);
+const texts = (s: string, o?: MarkdownOptions) => lines(s, o).map((l) => l.text);
+const tok = (name: "permission" | "suggestion" | "warning" | "inactive") => resolveThemeColor(themeTokens()[name]);
 
-describe("renderMarkdown", () => {
-  it("plain text passes through unchanged, one line each", () => {
-    expect(renderMarkdown("hello\nworld")).toEqual([{ text: "hello" }, { text: "world" }]);
+describe("F4 markdown — block grammar (census §2.1, bundle f2 L420590–420711)", () => {
+  it("h1 is bold+italic+underline; h2+ bold only; blank line follows a heading", () => {
+    const out = lines("# One\n\nbody");
+    expect(out[0]).toMatchObject({ bold: true, italic: true, underline: true });
+    expect(out[1].text).toBe("");                        // the \n\n transcription
+    const h2 = lines("## Two\n\nbody")[0];
+    expect(h2.bold).toBe(true); expect(h2.italic).toBeFalsy(); expect(h2.underline).toBeFalsy();
   });
-  it("whole-line bold / italic / inline-code take that style", () => {
-    expect(renderMarkdown("**bold**")).toEqual([{ text: "bold", bold: true }]);
-    expect(renderMarkdown("__bold__")).toEqual([{ text: "bold", bold: true }]);
-    expect(renderMarkdown("*it*")).toEqual([{ text: "it", italic: true }]);
-    expect(renderMarkdown("`code`")).toEqual([{ text: "code", color: tok("suggestion") }]);
+  it("unordered marker is the literal '- ', not a bullet glyph", () => {
+    expect(texts("- item")[0]).toBe("- item");
+    expect(texts("* item")[0]).toBe("- item");
   });
-  it("headers become bold with the # stripped", () => {
-    expect(renderMarkdown("# Title")).toEqual([{ text: "Title", bold: true }]);
-    expect(renderMarkdown("### Sub")).toEqual([{ text: "Sub", bold: true }]);
+  it("ordered honours start and depth numbering 1./a./i.", () => {
+    expect(texts("3. third\n4. fourth")).toEqual(["3. third", "4. fourth"]);
+    const nested = texts("1. a\n   1. b\n      1. c\n         1. d");
+    expect(nested[1]).toBe("  1. b");                    // depth 1 → arabic, 2-col indent
+    expect(nested[2]).toBe("    a. c");                  // depth 2 → letters
+    expect(nested[3]).toBe("      i. d");                // depth 3 → roman
   });
-  it("plain bullet / numbered get a • / keep the number (no inline markup → bare line)", () => {
-    expect(renderMarkdown("- item")).toEqual([{ text: "• item" }]);
-    expect(renderMarkdown("* item")).toEqual([{ text: "• item" }]);
-    expect(renderMarkdown("1. first")).toEqual([{ text: "1. first" }]);
+  it("task list renders literal checkbox text", () => {
+    expect(texts("- [x] done\n- [ ] open")).toEqual(["- [x] done", "- [ ] open"]);
   });
-  it("blockquote → dim with a │ prefix", () => {
-    expect(renderMarkdown("> quoted")).toEqual([{ text: "│ quoted", dim: true }]);
+  it("hr is the literal ---", () => { expect(texts("above\n\n---\n\nbelow")).toContain("---"); });
+  it("blockquote: dim ▎ rail, italic content", () => {
+    const q = lines("> quoted");
+    const first = q[0];
+    expect(first.text.startsWith("▎ ")).toBe(true);
+    const content = first.segments ? first.segments[first.segments.length - 1] : first;
+    expect(content.italic).toBe(true);
+    expect(first.segments![0]).toEqual({ text: "▎ ", dim: true });
   });
-  it("fenced code → fences dropped, body dim `inactive` + indented", () => {
-    expect(renderMarkdown("```\nconst x = 1;\n```")).toEqual([{ text: "  const x = 1;", color: tok("inactive"), dim: true }]);
+  it("a `space` token becomes exactly one blank line between paragraphs (f2, NOT gap:1)", () => {
+    expect(texts("para one\n\npara two")).toEqual(["para one", "", "para two"]);
   });
-  it("a mixed-style line carries per-span segments (text is the plain fallback)", () => {
-    expect(renderMarkdown("**bold** and normal")).toEqual([
-      { text: "bold and normal", segments: [{ text: "bold", bold: true }, { text: " and normal" }] },
-    ]);
-    expect(renderMarkdown("see `x` here")).toEqual([
-      { text: "see x here", segments: [{ text: "see " }, { text: "x", color: tok("suggestion") }, { text: " here" }] },
-    ]);
+  it("gap:1 fires only at prose-run/table/blockquote chunk boundaries — one blank line, never two", () => {
+    const t = texts("before\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nafter");
+    // prose chunk, ONE blank, table lines, ONE blank, prose chunk — no doubled blanks anywhere
+    expect(t.filter((x, i) => x === "" && t[i + 1] === "")).toEqual([]);
+    expect(t[0]).toBe("before"); expect(t[1]).toBe(""); expect(t[t.length - 1]).toBe("after");
   });
-  it("a bullet with an inline span keeps the • marker as a plain leading segment", () => {
-    expect(renderMarkdown("- use `foo`")).toEqual([
-      { text: "• use foo", segments: [{ text: "• " }, { text: "use " }, { text: "foo", color: tok("suggestion") }] },
-    ]);
+  it("inline nesting composes: bold containing italic", () => {
+    const l = lines("**bold *both***")[0];
+    const both = l.segments!.find((s) => s.bold && s.italic);
+    expect(both?.text).toBe("both");
   });
-  it("inline italic + bold mix in one line", () => {
-    const out = renderMarkdown("run *fast* and **safe**");
-    expect(out[0].segments).toEqual([{ text: "run " }, { text: "fast", italic: true }, { text: " and " }, { text: "safe", bold: true }]);
+  // TR15 (codespan → `permission` token): the implementation switches role("suggestion") → permission,
+  // but `permission` and `suggestion` are byte-identical in ALL FOUR shipped themes, so no test can
+  // observe the change (plan-review finding 12). No test here; the parity doc records
+  // TR15 as satisfied-by-value with this note.
+  it("fast path: plain prose renders without markdown mangling", () => {
+    expect(texts("just words, nothing else")).toEqual(["just words, nothing else"]);
+    expect(texts("hello\nworld")).toEqual(["hello", "world"]);
+  });
+  it("dim option dims every SEGMENT (Line.tsx ignores line-level dim when segments exist)", () => {
+    for (const l of lines("**b** and plain", { dim: true }))
+      expect((l.segments ?? [l as unknown as Segment]).every((s) => s.dim)).toBe(true);
   });
 
-  it("a 2-col table renders padded columns, bold header, a dim rule sized to the header, plain data row", () => {
-    const out = renderMarkdown("| a | b |\n|---|---|\n| 1 | 2 |");
-    expect(out).toEqual([
-      { text: "a │ b", bold: true },
-      { text: "─".repeat("a │ b".length), dim: true },
-      { text: "1 │ 2" },
+  it("a codespan takes the `permission` theme token", () => {
+    const l = lines("see `x` here")[0];
+    expect(l.segments).toEqual([{ text: "see " }, { text: "x", color: tok("permission") }, { text: " here" }]);
+  });
+  it("a whole-line single style folds into the line (no segments array)", () => {
+    expect(lines("**bold**")).toEqual([{ text: "bold", bold: true }]);
+    expect(lines("*it*")).toEqual([{ text: "it", italic: true }]);
+  });
+  it("a list marker rides as a plain leading segment when the item has inline styling", () => {
+    expect(lines("- use `foo`")).toEqual([
+      { text: "- use foo", segments: [{ text: "- " }, { text: "use " }, { text: "foo", color: tok("permission") }] },
     ]);
   });
-  it("column widths pad to the widest cell in each column", () => {
-    const out = renderMarkdown("| name | val |\n|---|---|\n| x | 100 |\n| yy | 2 |");
-    expect(out[0]).toEqual({ text: "name │ val", bold: true });   // "name"(4) / "val"(3) already widest
-    expect(out[2]).toEqual({ text: "x    │ 100" });               // "x" padded to 4, "100" fits in 3
-    expect(out[3]).toEqual({ text: "yy   │ 2  " });                // "yy" padded to 4, "2" padded to 3
+  it("a nested list keeps its parent item line and indents children", () => {
+    expect(texts("- outer\n  - inner")).toEqual(["- outer", "  - inner"]);
   });
-  it("a lone `|`-containing prose line is NOT a table (needs the |---| separator as line 2)", () => {
-    expect(renderMarkdown("just a | pipe")).toEqual([{ text: "just a | pipe" }]);
+  it("a blockquote is its own chunk: one blank line either side of surrounding prose", () => {
+    expect(texts("before\n\n> quoted\n\nafter")).toEqual(["before", "", "▎ quoted", "", "after"]);
   });
-  it("two consecutive `|` lines where line 2 isn't a separator are left as ordinary prose, not a table", () => {
-    expect(renderMarkdown("a | b\nc | d")).toEqual([{ text: "a | b" }, { text: "c | d" }]);
-  });
-  it("a fenced ts block gets segment-styled lines (indentation + highlight)", () => {
-    const out = renderMarkdown("```ts\nconst x = 1;\n```");
-    expect(out).toEqual([
+  it("fenced code: known language highlights, unknown stays dim `inactive` (Task 3 moves it flush-left)", () => {
+    expect(lines("```ts\nconst x = 1;\n```")).toEqual([
       { text: "  const x = 1;", segments: [{ text: "  " }, { text: "const", color: tok("suggestion") }, { text: " x = " }, { text: "1", color: tok("warning") }, { text: ";" }] },
     ]);
+    expect(lines("```\nplain text\n```")).toEqual([{ text: "  plain text", color: tok("inactive"), dim: true }]);
+    expect(lines("```rust\nfn main() {}\n```")).toEqual([{ text: "  fn main() {}", color: tok("inactive"), dim: true }]);
   });
-  it("a fence with no language stays a plain dim `inactive` line (not segment-styled)", () => {
-    expect(renderMarkdown("```\nplain text\n```")).toEqual([{ text: "  plain text", color: tok("inactive"), dim: true }]);
+  it("a table falls through to raw pipe lines until Task 4's renderTable", () => {
+    expect(texts("| a | b |\n|---|---|\n| 1 | 2 |")).toEqual(["| a | b |", "|---|---|", "| 1 | 2 |"]);
   });
-  it("a fence with an unrecognized language falls back to the plain dim `inactive` line", () => {
-    expect(renderMarkdown("```rust\nfn main() {}\n```")).toEqual([{ text: "  fn main() {}", color: tok("inactive"), dim: true }]);
+  it("a lone `|`-containing prose line is NOT a table", () => {
+    expect(texts("just a | pipe")).toEqual(["just a | pipe"]);
+  });
+});
+
+describe("F4 markdown — inline walker", () => {
+  it("strikethroughSupported is exported (Task 3 fills the dHn allowlist)", () => {
+    expect(typeof strikethroughSupported()).toBe("boolean");
+  });
+  it("del applies strikethrough to its children", () => {
+    const l = lines("~~gone~~")[0];
+    expect(l).toMatchObject({ text: "gone", strikethrough: true });
+  });
+  it("inlineSegments accumulates the incoming style down the tree", () => {
+    const segs = inlineSegments([{ type: "strong", raw: "**a**", text: "a", tokens: [{ type: "text", raw: "a", text: "a" }] } as never], { dim: true });
+    expect(segs).toEqual([{ dim: true, bold: true, text: "a" }]);
   });
 });

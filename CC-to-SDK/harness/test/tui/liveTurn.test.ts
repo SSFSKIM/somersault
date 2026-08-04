@@ -121,7 +121,9 @@ describe("LiveTurn", () => {
     lt.ingest(se({ type: "message_start" }));
     lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
     lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "# Heading" } }));
-    expect(lt.snapshot()).toContainEqual({ text: "Heading", bold: true, gutter: { text: "● ", color: ACCENT } });
+    // F4 Task 2: an h1 is bold+italic+underline (`vt.bold.italic.underline`, constants pack §1.2 /
+    // bundle L420613–420616); depth ≥2 is bold only.
+    expect(lt.snapshot()).toContainEqual({ text: "Heading", bold: true, italic: true, underline: true, gutter: { text: "● ", color: ACCENT } });
   });
 
   it("captures the running output-token count from message_delta usage", () => {
