@@ -177,7 +177,7 @@ Row by row, so the +7.9 points in §2 are checkable rather than asserted:
 | Markdown: block grammar | 🟡 | ✅ | Every one of the eight gaps the F0 correction listed is built and pinned |
 | Markdown: tables | 🟡 | ✅ | Box grid, per-column alignment, three-way fitting, a rule between every data-row pair, the 200-row cap and the vertical fallback — the whole F0 list |
 | Edit/Write diff (header, bands, word diff, wrap) | 🟡 | ✅ | All five named gaps closed, and the 24-row cap upstream does not have is gone |
-| Compact boundary marker | 🟡 | ✅ | The bulleted `Compact summary` with its expand affordance replaced our invented rule |
+| Compact boundary marker | 🟡 | ✅ | The bulleted `Compact summary` with its expand affordance replaced our invented rule — `test/tui/species-system.test.ts:61` |
 | Markdown: code-block syntax highlight | ✅ | 🟡 | **A downgrade, and the honest kind.** The old ✅ predates anyone counting: we highlight 10 languages, upstream ~383. See the divergence table |
 | Diff line numbering ladder | — | ✅ | New row: sidecar-absolute → disk-anchored absolute → visibly approximate |
 | Markdown: links, images, strikethrough + terminal gates | — | 🟡 | New row: OSC-8, the three image forms and the `dHn` gate ship; the link title suffix is coloured where upstream's is not |
@@ -702,6 +702,7 @@ F4 recount.
 | `PlanDialog` width | Reads the terminal | Fixed at 80 columns. Untouched by F4's width plumbing; recorded so the next dialog wave owns it |
 | Link title suffix | Uncoloured | Ours is coloured |
 | `dHn`'s second term | `dHn() && vt.level > 0` — chalk's colour level | Only `dHn` is ported. Colour level does not exist at our style-as-data layer; Ink decides colour at paint time |
+| `/compact` completion notice | `✻` + upstream's own wording | Ours reads `✦ compacted N → M` (`commands.ts:78`) — the last surviving `✦` in the tree (t9 review Minor 4). A local invention predating F4; owed a fix, recorded here so it cannot hide |
 
 ### Open evidence gaps (honest closure candidates, not claims)
 
@@ -717,6 +718,12 @@ F4 recount.
   a measurement.
 - **Interrupted / rejected teammate lifecycle arms are reasoned, not observed.** A live probe would settle
   them the way P80 settled the interrupt sentinel.
+- **Router exits 7, 10, 12 and 15 (`<bash-stdout>`, `<bash-input>`, `<user-memory-input>`,
+  `<fork-boilerplate>`) are reasoned, not observed** (t10a review): the real CLI's writers exist and our
+  reader passes its rows through unmodified, but no such row appeared in the 60-file sample.
+- **The diff band × `⎿`-gutter geometry has been computed, never seen** (t7 handoff): every constant traces
+  to a bundle line, but no rendered frame of a real Edit has been inspected. The wave-close keyed e2e owes
+  exactly that frame — and the pyte golden set predates F4 entirely, so a re-baseline is owed with it.
 - **`toolRenderer.tsx` is 799 lines** and the `agentUnit.tsx` extraction seam noted in F3 is still owed.
 
 ---

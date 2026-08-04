@@ -151,8 +151,8 @@
 >   the corrected prompt and assistant identity glyphs with a 10 000-char prompt fold, thinking hidden by
 >   default with upstream's `∴` detail form, and the **user-frame sentinel router** that decides whether a
 >   `user` frame is a prompt at all (12 of `ERe`'s 15 exits, plus error sentinels, system notices, the
->   compact boundary and teammate attribution). TUI/UX parity now **~66%**: §2 rises 62.5% → 70.4% on eight
->   promoted rows while seven new rows grow its denominator from 20 to 27 and one previously-✅ row is marked
+>   compact boundary and teammate attribution). TUI/UX parity now **~66%**: §2 rises 62.5% → 70.4% on seven
+>   promoted rows (plus one new row born ✅) while seven new rows grow its denominator from 20 to 27 and one previously-✅ row is marked
 >   down on a gap nobody had measured. **Named remaining gaps, honestly:** fenced-code and diff-body syntax
 >   highlighting covers 10 languages where upstream covers ~383 (the largest single gap); F5 has not started
 >   on the input surfaces (§1's composer tail, `statusLine`, the notification queue, terminal title); F6 has

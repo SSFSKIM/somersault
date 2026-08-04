@@ -1207,6 +1207,15 @@ behind those rows — all forty `K1`–`K40` research rows, re-scored — sits a
 
 ## Revision Notes
 
+- 2026-08-04 — **F4 acceptance #4's wording split across two surfaces, ratified against the bundle
+  during Task 11 review.** The criterion reads as if the detail view carries `∴` + markdown +
+  `Thought for 12s` together; upstream carries no duration in its transcript/ctrl+o view. At
+  L429333 `collapsed_read_search` passes `verbose || transcriptMode` down, and that branch
+  (L427922–427942) ungroups and renders each thinking block through `zAr` — gutter and markdown
+  body only; the `Thought for …` clause is assembled solely in the compact fold-run branch
+  (L427983). The shipped pins therefore split the criterion: gutter+body in detail, duration as the
+  compact fold clause — which is what both products actually do. The criterion's sentence, not the
+  code, was imprecise.
 - 2026-08-04 — **Census 01#153 corrected during Task 7 review: the Agent `Done (…)` row is a `⎿`
   gutter row, not a bulleted line.** Direct bundle read of `Vha` (L429640–429654): all three Agent
   result rows — `Cloud agent launched`, `Backgrounded agent`, and the completed `Done (…)` — render
