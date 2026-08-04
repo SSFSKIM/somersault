@@ -605,13 +605,21 @@ describe("ChatComposer", () => {
     expect(lastFrame()).toContain("/review");
     expect(lastFrame()).not.toContain("/brainstorming");
   });
-  it("ChatComposer renders a command's argumentHint in the palette row", async () => {
+  // MIGRATED in F5 t10 from "renders a command's argumentHint in the palette row". Upstream's suggestion row
+  // (`VJa`, bundle L432406) carries only `displayText` and `description` — the argument evidence it shows
+  // there is `(arguments: …)` from `argNames`, a field `CommandEntry` does not have. `argumentHint` reaches
+  // the user through CM37 instead: the inline dim hint after a completed `/name ` (L490757 model, L396283
+  // render), which is where upstream puts it and the moment it is actually useful.
+  it("ChatComposer renders a command's argumentHint inline once the command is completed (CM37), not in the palette row", async () => {
     const CAT = [{ name: "review", description: "review code", argumentHint: "<pr>", source: "catalog" }] as any;
     const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} />);
     await new Promise((r) => setTimeout(r, 10));        // let useInput subscribe
     stdin.write("/");
     await new Promise((r) => setTimeout(r, 10));        // open + catalog injection
     expect(lastFrame()).toContain("/review");
+    expect(lastFrame()).not.toContain("<pr>");
+    stdin.write("\t");                                   // accept → the buffer becomes `/review `
+    await new Promise((r) => setTimeout(r, 10));
     expect(lastFrame()).toContain("<pr>");
     await new Promise((r) => setTimeout(r, 0));
   });

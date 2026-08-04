@@ -6,11 +6,12 @@
 // exactly one of them — a `startsWith("!")` test — and importing it dragged that whole filesystem graph into
 // the runtime closure of a reducer whose header promises "no React/Ink/fs" (t7 review, I2).
 //
-// TRACED after the move, and the claim is checkable by eye: `editor.ts` imports `fileComplete`,
-// `commandComplete`, `completionTriggers`, `pasteChips`, `editorHistory` and this file; `editorHistory`
-// imports `pasteChips` and this file; `pasteChips` imports `editor`; `fileComplete`/`commandComplete` are
-// pure ranking and `completionTriggers` (F5 t9) imports nothing at all. Not one of them reaches a `node:`
-// builtin. The filesystem enters only at `ChatComposer`, which is where the side effects belong.
+// TRACED after the move, and the claim is checkable by eye: `editor.ts` imports `completions`, `pasteChips`,
+// `editorHistory` and this file; `completions` (F5 t10) imports `editor`, `fileComplete`, `commandComplete`,
+// `completionTriggers`, `editorHistory` and this file; `editorHistory` imports `pasteChips` and this file;
+// `pasteChips` imports `editor`; `fileComplete`/`commandComplete` are pure ranking and `completionTriggers`
+// (F5 t9) imports nothing at all. Not one of them reaches a `node:` builtin. The filesystem enters only at
+// `ChatComposer`, which is where the side effects belong.
 //
 // Bundle provenance (2.1.220): `hon` L236123 · `mP` L236131 · `LV` L236136 — the mode ⇄ prefix trio the
 // submit site (L548774) and every reader (L489529/L489691) go through.

@@ -148,10 +148,13 @@ describe("acceptance — Tab vs Enter (CM28: XJa L490110, Tab L490855, Enter L49
     const r = applyKey(at(withCatalog("/heav"), "heavy"), "", { return: true });
     expect(r.submit).toBe("/heavy");
   });
-  it("Enter on a MID-TEXT command only inserts — upstream's mid-text path never executes", () => {
-    const r = applyKey(at(withCatalog("see /mod"), "model"), "", { return: true });
-    expect(r.submit).toBeUndefined();
-    expect(text(r.state)).toBe("see /model ");
+  // MIGRATED in F5 t10. The mid-text arm draws GHOST TEXT upstream, not a popup, so there is no list for
+  // Enter to accept from — its handler sits behind `if (c.length === 0) return` (bundle L491101) and the key
+  // falls through to the composer's submit. What never executes is still true and now stronger: the mid-text
+  // path cannot RUN a command, and Tab (the next test) is the only key that completes one.
+  it("Enter on a MID-TEXT command submits the buffer as typed — no list to accept from (L491101)", () => {
+    const r = applyKey(withCatalog("see /mod"), "", { return: true });
+    expect(r.submit).toBe("see /mod");
   });
   it("Tab on a mid-text command replaces only the token, keeping the tail", () => {
     let s = initialEditorState();

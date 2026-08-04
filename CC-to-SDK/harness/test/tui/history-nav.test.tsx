@@ -160,6 +160,9 @@ describe("the reducer's import graph stays filesystem-free (t7 review, I2)", () 
     // F5 t9's trigger-scan split. Named explicitly (t9 review, M6): the walk below would have covered it
     // silently, and a silent cover is exactly how a module drops out of the closure and nobody notices.
     expect(files).toContain("completionTriggers.ts");
+    // F5 t10's autocomplete-model split, named for the same reason. It sits on a deliberate cycle with
+    // editor.ts, so it is reachable from BOTH directions and the walk must still find it fs-free.
+    expect(files).toContain("completions.ts");
     expect(files).not.toContain("promptHistory.ts");
     const offenders = files.filter((f) => {
       let src: string;

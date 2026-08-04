@@ -3,7 +3,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { readdirSync } from "node:fs";
-import { applyKey, bufferText, commandEmptyMessage, completionActive, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
+import { applyKey, bufferText, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
+import { catalogColumnWidth, SuggestPopup, type SuggestItem } from "./suggestPopup.js";
 import { applyQueueDrain } from "./queue.js";
 import { cachedExampleFiles, examplePool, pickPlaceholder, QUEUED_UP_HINT } from "./placeholder.js";
 import { loadPrefs, savePrefs } from "./prefs.js";
@@ -28,6 +29,9 @@ import type { KeyEvent, TextEvent } from "./keys/types.js";
 const role = (name: "bashBorder" | "remember") => resolveThemeColor(themeTokens()[name]);
 
 const DEFAULT_COLUMNS = 80;
+/** The popup's height is a function of the terminal's, so an unthreaded `rows` needs a stand-in for the same
+ *  reason `columns` does. 24 is the VT100 default every terminal still reports when it has nothing better. */
+const DEFAULT_ROWS = 24;
 /** CM25, bundle L493764: `Pasting…` — one ellipsis CHARACTER, not three dots, dim, below the frame. */
 const PASTING_TEXT = "Pasting…";
 /** CM24, bundle L493772: the dim row that advertises paste-again-to-expand. Exported because the pin in
@@ -48,18 +52,40 @@ const realReaddir = (dir: string): DirEnt[] => {
   catch { return []; }
 };
 
-function renderBuffer(state: EditorState): React.ReactNode {
+/** `ghost` is CM36's inline completion and `argHint` is CM37's inline argument hint — both are text drawn
+ *  INSIDE the input line rather than below it, which is the whole reason they are threaded here instead of
+ *  living in a component of their own. Each is mutually exclusive with the other by construction (the ghost
+ *  needs a partial `/name`, the hint needs a completed `/name `). */
+function renderBuffer(state: EditorState, ghost: string | null, argHint: string | null): React.ReactNode {
   const { lines, cursor } = state;
+  const last = lines.length - 1;
   return lines.map((line, r) => {
-    if (r !== cursor.row) return <Text key={r}>{line.length ? line : " "}</Text>;
-    const before = line.slice(0, cursor.col), at = line[cursor.col] ?? " ", after = line.slice(cursor.col + 1);
+    // CM37, bundle L396283: `x && <Text dimColor wrap="truncate-end">{value.endsWith(" ") ? "" : " "}{hint}</Text>`
+    // rendered after the value inside the same run. The space prefix is dead code for us — `commandArgumentHint`
+    // only answers for a buffer whose last character IS the space — but it is upstream's, so it is transcribed.
+    const hint = argHint && r === last ? <Text dimColor wrap="truncate-end">{(line.endsWith(" ") ? "" : " ") + argHint}</Text> : null;
+    // Only wrap a non-cursor row in a Box when there is something to put beside it; a bare <Text> is what
+    // every other row has always been and the frame's wrapping behaviour is pinned against that shape.
+    if (r !== cursor.row) return hint ? <Box key={r} flexDirection="row"><Text>{line.length ? line : " "}</Text>{hint}</Box> : <Text key={r}>{line.length ? line : " "}</Text>;
+    const before = line.slice(0, cursor.col);
+    // CM36's cursor rule (bundle L394779): with ghost text present the cursor sits ON THE GHOST'S FIRST
+    // CHARACTER (`x = e ? r(D) : D`, where `D` is the first grapheme of the ghost) and the remainder is dimmed
+    // (`R = n.dim(P)`), instead of inverting the blank past the end of the buffer.
+    const g = ghost ? [...ghost] : null;
+    const at = g ? g[0] : (line[cursor.col] ?? " ");
+    const tail = g ? g.slice(1).join("") : "";
+    const after = line.slice(cursor.col + 1);
     // Box flexDirection="row" keeps before/cursor/after on one line; nested <Text inverse> inside <Text> breaks layout
     // in Ink 5.x on re-render, causing chars after the first to bleed onto the border.
-    return <Box key={r} flexDirection="row"><Text>{before}</Text><Text inverse>{at}</Text><Text>{after}</Text></Box>;
+    return (
+      <Box key={r} flexDirection="row">
+        <Text>{before}</Text><Text inverse>{at}</Text>
+        {tail ? <Text dimColor>{tail}</Text> : null}
+        <Text>{after}</Text>{hint}
+      </Box>
+    );
   });
 }
-
-const COMMAND_ROWS = 8;                            // visible rows; the selection scrolls through the full list
 
 /** CM52's seed. `readHistory` answers NEWEST-first (`UUd`'s backward walk) and the editor's list is
  *  OLDEST-first, so the reversal is here, at the one seam that crosses between the two conventions.
@@ -95,49 +121,41 @@ export type InputOwner = "composer" | "shortcuts" | "transcript" | "overlay" | "
  *  use. Both have to outlive a composer remount or the suggestion re-rolls behind every dialog. */
 export interface PlaceholderMemo { files?: string[]; draws: number[] }
 
-// The popup's own two keys are `Autocomplete` context bindings (`tab` → accept, `escape` → dismiss), so this
-// footer derives them like every other table-owned hint rather than restating the defaults. The strings are
-// handed down as props: this is a leaf render helper, and one lookup in the composer serves both popups.
-function CommandPopup({ state, acceptKey, dismissKey }: { state: EditorState; acceptKey: string; dismissKey: string }) {
-  const c = state.command!;
-  // CM38's message and its two upstream guards live in `commandEmptyMessage` (editor.ts), not here: the key
-  // router has to know whether this message is on screen too, and one derivation is the only way the two
-  // cannot disagree (t9 review, I2).
-  if (c.items.length === 0) {
-    const empty = commandEmptyMessage(state);
-    return empty ? <Box paddingX={1}><Text dimColor>{empty}</Text></Box> : null;
-  }
-  const start = Math.max(0, Math.min(c.index - 3, Math.max(0, c.items.length - COMMAND_ROWS)));
-  const visible = c.items.slice(start, start + COMMAND_ROWS);
-  return (
-    <Box flexDirection="column" paddingX={1}>
-      {visible.map((e, i) => (
-        <Box key={e.name} flexDirection="row">
-          <Text inverse={start + i === c.index}>/{e.name}</Text>
-          {e.argumentHint ? <Text dimColor>{" " + e.argumentHint}</Text> : null}
-          {e.description ? <Text dimColor>{"  " + e.description.split("\n")[0].slice(0, 48)}</Text> : null}
-        </Box>
-      ))}
-      {/* Without this the window is indistinguishable from a complete list — the catalog runs to ~105 entries. */}
-      {c.items.length > COMMAND_ROWS
-        ? <Text dimColor>{`↑/↓ ${c.index + 1}/${c.items.length} · ${acceptKey} completes · ${dismissKey} closes`}</Text>
-        : null}
-    </Box>
-  );
-}
-
-function MentionPopup({ state }: { state: EditorState }) {
-  const m = state.mention!;
-  // No mention counterpart to CM38: `suggestionsEmptyMessage` is written at exactly one site (L490779, the
-  // command branch) and read at one (L491083), so the file popup with nothing to show simply is not drawn.
-  if (m.items.length === 0) return null;
-  const start = Math.max(0, Math.min(m.index - 3, Math.max(0, m.items.length - 8)));
-  const visible = m.items.slice(start, start + 8);
-  return (
-    <Box flexDirection="column" paddingX={1}>
-      {visible.map((c, i) => <Text key={c.path} inverse={start + i === m.index}>{c.path}</Text>)}
-    </Box>
-  );
+/** CM30: the composer's ONE popup, in `DXe`'s own `{ suggestions, selectedSuggestion, maxColumnWidth,
+ *  emptyMessage }` shape (bundle L494612). Upstream has a single suggestion component and a single suggestion
+ *  list; the branch here is only over which producer filled it.
+ *
+ *  Only the HEAD command arm feeds it. A mid-text `/` produces ghost text upstream and no popup at all — see
+ *  `commandActive` in completions.ts for the two bundle branches that make that so — so its `CommandState`
+ *  exists purely to carry the ranked catalog the ghost reads.
+ *
+ *  Three things that used to be in the old `CommandPopup` and are gone on purpose:
+ *   · `.split("\n")[0].slice(0, 48)` on the description — `q7p` collapses whitespace (`YSn`) and truncates to
+ *     a WIDTH-derived budget, so a fixed 48 was both too long on a narrow terminal and too short on a wide one.
+ *   · the `argumentHint` lane next to the name — upstream's row has none. Its argument evidence is
+ *     `(arguments: …)` appended to the DESCRIPTION for prompt commands with `argNames`, a field we do not
+ *     carry; `argumentHint` reaches the user through CM37's inline hint instead, which is this task's other half.
+ *   · the `↑/↓ n/N · tab completes · esc closes` footer — our invention, with no counterpart in `DXe`, and a
+ *     conditional extra line is exactly the kind of thing the blank padding exists to prevent. */
+function suggestProps(state: EditorState): { items: SuggestItem[]; selected: number; maxColumnWidth?: number; emptyMessage?: string | null } | null {
+  const c = state.command;
+  if (c?.head) return {
+    items: c.items.map((e) => ({ id: `cmd-${e.name}`, displayText: `/${e.name}`, description: e.description })),
+    selected: c.index,
+    // `k` (L490510) is computed over the WHOLE catalog, not the matches, so the name lane does not jitter as
+    // the user narrows the list. `catalogColumnWidth` is that sum.
+    maxColumnWidth: catalogColumnWidth(c.catalog.map((e) => e.name)),
+    // CM38's message and its guards live in `commandEmptyMessage` (completions.ts), not here: the key router
+    // has to know whether this message is on screen too, and one derivation is the only way the two cannot
+    // disagree (t9 review, I2).
+    emptyMessage: commandEmptyMessage(state),
+  };
+  const m = state.mention;
+  // `UMo` (bundle L314104): `{ id: "file-"+path, displayText: path }` — no description, which is why an
+  // `@`-mention row renders as `+ path` and never reaches `q7p`'s en-dash arm. `file-` is the id prefix `E_a`
+  // keys the whole file-ish rendering branch off, so it is data, not decoration.
+  if (m) return { items: m.items.map((c2) => ({ id: `file-${c2.path}`, displayText: c2.path })), selected: m.index };
+  return null;
 }
 
 /** An injected editor may be sync (the pre-F5 DI shape, still used by several tests) or async (what the
@@ -642,19 +660,23 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const mode = inputMode(state);
   const borderToken = borderTokenFor(mode);
   const cols = Math.max(1, Math.floor(columns?.() ?? DEFAULT_COLUMNS));
+  // CM30's height is `f(rows)` (see `popupHeight`), read the same per-render way `columns` is so a resize
+  // reaches the popup on the very next frame.
+  const termRows = Math.max(1, Math.floor(rows?.() ?? DEFAULT_ROWS));
+  const suggest = suggestProps(state);
+  const ghost = ghostText(state);
+  const argHint = commandArgumentHint(bufferText(state), commandCatalog);
   // The editor owns these affordances: derive them from this render's state so the first draft/popup
   // frame cannot inherit an out-of-date parent status-bar hint through a passive effect.
   const showFooter = mode === "normal" && !state.mention && !state.command;
   // F2 task 10: every chord this component prints comes from the LIVE table, not from literals typed here —
   // rebind chat:cycleMode and the rung follows it; unbind it and the rung says `(unbound)` instead of promising
-  // a key that no longer works. That covers the footer ladder, the Esc hint, both double-press arms and the
-  // autocomplete popup's footer (t10 review, Minor: the last three were still literals, and the derivation
-  // guard in keys-acceptance.test.tsx now greps for every one of these strings). The rest of the ladder is
-  // editor-owned (`⏎`, `\⏎`, the `@`/`/`/`!` prefixes, `?`), which no context binds, so it stays literal.
+  // a key that no longer works. That covers the footer ladder, the Esc hint and both double-press arms (the
+  // autocomplete popup's own footer was a fourth until F5 t10 removed it — `DXe` has none). The rest of the
+  // ladder is editor-owned (`⏎`, `\⏎`, the `@`/`/`/`!` prefixes, `?`), which no context binds, so it stays literal.
   const cycleKey = formatBindings(bindings("chat:cycleMode"));
   const escKey = formatBindings(bindings("chat:cancel"));
   const exitKey = formatBindings(bindings("app:exit"));                 // the KB3 double-press arm below
-  const acceptKey = formatBindings(bindings("autocomplete:accept")), dismissKey = formatBindings(bindings("autocomplete:dismiss"));
   // CM56's chord, DERIVED — `(ctrl+r to search history)` under the defaults, `` when `history:search` is
   // unbound (`expandHintText`'s own three-state contract), never a literal.
   const searchHintRow = expandHintText(bindings("history:search"), process.platform, HISTORY_SEARCH_HINT);
@@ -682,7 +704,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
             same component degrades to the one inverted space upstream's `i(" ")` branch paints. */}
         {isEmptyNow
           ? <PlaceholderCursor text={placeholder ?? ""} />
-          : <Box flexDirection="column">{renderBuffer(state)}</Box>}
+          : <Box flexDirection="column">{renderBuffer(state, ghost?.visible ? ghost.suffix : null, argHint)}</Box>}
       </ComposerFrame>
       {mode === "bash" ? <Box paddingX={1}><Text color={role("bashBorder")} dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
       {mode === "memory" ? <Box paddingX={1}><Text color={role("remember")} dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
@@ -698,8 +720,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       {dArmed && isEmptyNow ? <Box paddingX={1}><Text dimColor>{`Press ${exitKey} again to exit`}</Text></Box> : null}
       {showFooter ? <Box paddingX={1}><Text dimColor>{`⏎ send · ${newlineRung} · @ files · / commands · ! bash · ${cycleKey} mode${isEmptyNow ? " · ? help" : ""}`}</Text></Box> : null}
       {showFooter ? <Box paddingX={1}><Text dimColor>{keyboardHint}</Text></Box> : null}
-      {state.mention ? <MentionPopup state={state} /> : null}
-      {state.command ? <CommandPopup state={state} acceptKey={acceptKey} dismissKey={dismissKey} /> : null}
+      {suggest ? <SuggestPopup {...suggest} columns={cols} rows={termRows} /> : null}
     </Box>
   );
 }
