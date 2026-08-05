@@ -689,9 +689,12 @@ A12, A13.
 - **W-T21 [RETRACTION, mid-execution 2026-08-06]** EP-T3 W4's "empty Enter on the plan No row should be a
   no-op" was wrong; ccx already matches canon (see the item for the L500994 evidence). Surfaced by Task 3's
   implementer, who noticed the behavior was a *deliberate* F6 acceptance pin and flagged the collision
-  rather than letting Task 11 "finish the job" and silently regress it. Consequence: `Select.tsx` is
-  untouched by this wave — the primitive change spec review I7 moved into EP-T3 turns out to be needed
-  nowhere. **The lesson is the program's recurring one**: the grounding report mentioned a guard, and the
+  rather than letting Task 11 "finish the job" and silently regress it. Consequence: the empty-submit
+  outlet spec review I7 moved into EP-T3 turns out to be needed nowhere, so `Select`'s **submit semantics**
+  are untouched by this wave. (`Select.tsx` itself does gain exactly one thing: EP-T2's optional
+  `onInputChange` callback, which reports input text so a dialog can tell an empty row from a filled one.
+  An earlier wording of this entry said "`Select.tsx` is untouched", which the tasks-3–5 reviewer correctly
+  flagged as false.) **The lesson is the program's recurring one**: the grounding report mentioned a guard, and the
   first draft inferred a behavior from it without reading what the cancel path actually did. Verifying that
   an anchor exists is not verifying that the defect fires.
 
