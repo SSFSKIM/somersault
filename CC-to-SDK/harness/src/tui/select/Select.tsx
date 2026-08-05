@@ -97,11 +97,11 @@ export interface SelectProps {
    *  `↑ N more above` / `↓ N more below` counters (L487190/193) OUTSIDE the list, and those counts are
    *  `start` and `count - end`. Reported after a paint, so a handler may setState freely. */
   onViewChange?: (view: SelectView) => void;
-  /** Terminal rows ONE option occupies — upstream's `perOptionHeight` (L397053), which it has always had a
-   *  third value for (`"expanded"`, 3) that no F6 surface shipped until the rewind row (prompt line + summary
-   *  line, `height: p ? 3 : 2` at L487192). It fixes the row box's height (so a row can never push the list
-   *  taller than the window it was sized for) and is what the visible-count clamp divides by. Absent: the
-   *  layout decides, exactly as before. */
+  /** Terminal rows ONE option occupies — the height of a `node` row's box, so a two-line body can never push
+   *  the list taller than the window it was sized for (upstream's own rewind row is `height: p ? 3 : 2`,
+   *  L487192). It deliberately does NOT feed `clampVisible`: a caller tall enough to need this also computes
+   *  its own `visibleOptionCount` from its own chrome budget (`rewindVisibleRows`), and threading the height
+   *  into the clamp as well produced an arithmetic no caller could reach and no test could pin (t10 review). */
   rowHeight?: 1 | 2 | 3;
   rows?: number; columns?: number;
   focusColor?: ThemeTokenName;
@@ -139,7 +139,7 @@ export function Select({
 }: SelectProps) {
   const count = options.length;
   const twoColumn = isTwoColumn(options, inlineDescriptions);
-  const visible = clampVisible(visibleOptionCount, rows, rowHeight ?? perOptionRows(twoColumn));
+  const visible = clampVisible(visibleOptionCount, rows, perOptionRows(twoColumn));
   const textOf = (o: SelectOption, map: Record<string, string>) => map[o.value] ?? o.initialValue ?? "";
 
   const [inputs, setInputs] = useState<Record<string, string>>({});

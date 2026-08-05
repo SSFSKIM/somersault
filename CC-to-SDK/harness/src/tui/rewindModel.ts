@@ -20,7 +20,7 @@
 //     `diffStatsOf` below is that one line, written once so the picker cannot spell it two ways.
 import { basename } from "node:path";
 import stringWidth from "string-width";
-import type { RewindAnchor, RewindDryRun, RewindScope } from "../session/chatSession.js";
+import type { RewindDryRun, RewindScope } from "../session/chatSession.js";
 import { NO_CONTENT, TAG_BASH_INPUT, TAG_COMMAND_ARGS, TAG_COMMAND_NAME, tagInner } from "./species.js";
 import { truncateLabel } from "./select/selectModel.js";
 
@@ -68,6 +68,12 @@ export const REWIND_EMPTY = "Nothing to rewind to yet.";
  *  by ` · `. The enter half is dropped with the list itself when there is nothing to rewind to (`!u && R`). */
 export const REWIND_FOOTER = "enter to continue · esc to cancel";
 export const REWIND_FOOTER_EMPTY = "esc to cancel";
+/** A RECORDED ADDITION, not a transcription. Upstream's `oe` awaits `Ycr` — an in-memory `fileHistory`
+ *  lookup — before it opens the confirmation panel, and an await that cheap needs no visible state, so the
+ *  bundle has no literal for it. Ours awaits a UDS round trip and an engine call (see
+ *  `REWIND_SUMMARY_WINDOW`), which is long enough that a list sitting silently after Enter reads as a dead
+ *  key. The wording is the pre-F6 picker's own, kept rather than invented twice over. */
+export const REWIND_CHECKING = "checking file changes…";
 export const moreAbove = (n: number): string => `↑ ${n} more above`;
 export const moreBelow = (n: number): string => `↓ ${n} more below`;
 
@@ -251,7 +257,3 @@ export function rewindFailureHeading(scope: RewindScope): string {
       : "Failed to restore the conversation:";
 }
 
-/** The anchors a summary window covers, newest-first — `anchors` arrives newest-first from
- *  `rewindAnchorsFrom`, and the picker DISPLAYS it reversed (see `RewindPicker`), so "newest first" is a
- *  statement about the dry-run order, not about the screen. */
-export const summaryOrder = (anchors: readonly RewindAnchor[], limit: number): RewindAnchor[] => anchors.slice(0, Math.max(0, limit));

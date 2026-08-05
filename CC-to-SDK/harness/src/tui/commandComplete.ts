@@ -36,7 +36,11 @@ export function rankCommands(entries: CommandEntry[], query: string, cap = entri
   const add = (key: string, e: CommandEntry) => { const at = owners.get(key); if (at) at.push(e); else owners.set(key, [e]); };
   for (const e of entries) { add(e.name, e); for (const a of e.aliases ?? []) add(a, e); }
   const out: CommandEntry[] = [];
-  for (const c of rankCandidates([...owners.keys()], query)) {
+  // `candidates.length`, EXPLICITLY: `rankCandidates`' own default cap is 50, and inheriting it would make
+  // the tail of a >50-command catalog unreachable — the exact failure this function's doc comment above is
+  // about. Caught by test, after the t10 review asked for a sharper cap fixture.
+  const candidates = [...owners.keys()];
+  for (const c of rankCandidates(candidates, query, candidates.length)) {
     for (const e of owners.get(c.path) ?? []) if (!out.includes(e)) out.push(e);
     if (out.length >= cap) break;
   }

@@ -43,7 +43,7 @@ import {
   anchorLabel, canRestoreCode, clipRowText, codeExplanation, confirmPrompt, conversationExplanation,
   CURRENT_LABEL, CURRENT_ROW, defaultRestoreOption, EMPTY_MESSAGE, moreAbove, moreBelow, NO_CODE_CHANGES,
   NO_CODE_RESTORE, RESTORE_LABELS, restoreOptions, REWIND_EMPTY, REWIND_FOOTER, REWIND_FOOTER_EMPTY,
-  REWIND_MANUAL_WARNING, REWIND_PROMPT, REWIND_ROW_HEIGHT, REWIND_ROW_PADDING_RIGHT, REWIND_SUMMARY_WINDOW,
+  REWIND_CHECKING, REWIND_MANUAL_WARNING, REWIND_PROMPT, REWIND_ROW_HEIGHT, REWIND_ROW_PADDING_RIGHT, REWIND_SUMMARY_WINDOW,
   REWIND_TITLE, rewindVisibleRows, rowSummary, type RestoreOption,
 } from "./rewindModel.js";
 
@@ -138,10 +138,24 @@ function useRewindSummaries(anchors: readonly RewindAnchor[], onDryRun: (uuid: s
     })();
   }, [limit]);
 
+  const summariesRef = useRef(summaries); summariesRef.current = summaries;
   return {
     summaries,
     /** `index` is newest-first. Extends the window when the cursor lands on (or past) its last computed row. */
     ensure: (index: number) => { if (index >= limitRef.current - 1) setLimit((l) => (index >= l - 1 ? index + 1 + REWIND_SUMMARY_WINDOW : l)); },
+    /** ONE anchor, OUT OF BAND, awaited by the caller — upstream's `oe` (L487099-100:
+     *  `let Oe = await Ycr(c, we.uuid); P(we), M(Oe)`), which resolves the stats for the chosen message
+     *  BEFORE it opens the confirmation panel. It jumps the sequential walk deliberately: this is a direct
+     *  user action on one row, not the background sweep the walk exists to pace. Already-computed rows
+     *  answer from the map without a second call. */
+    request: async (uuid: string): Promise<RewindDryRun | null> => {
+      const have = summariesRef.current.get(uuid);
+      if (have !== undefined) return have;
+      const dry = await dryRunRef.current(uuid).catch((): RewindDryRun => ({ canRewind: false }));
+      const value = dry.canRewind ? dry : null;
+      if (alive.current) setSummaries((m) => new Map(m).set(uuid, value));
+      return value;
+    },
   };
 }
 
@@ -152,7 +166,19 @@ export function RewindPicker({ anchors, onDryRun, onConfirm, onClose, rows = pro
   onClose: () => void;
   rows?: number; columns?: number;
 }) {
-  const [selected, setSelected] = useState<RewindAnchor | null>(null);
+  // THE PANEL CARRIES ITS OWN SNAPSHOT OF THE DRY RUN, and that is the whole fix for the option list moving
+  // under the cursor (t10 review, Important 1). Reading `summaries` live meant a dry run landing while the
+  // panel was open could INSERT `Restore code and conversation` at index 0 — `Select` keeps focus by index,
+  // so the pointer that was on `Restore conversation` was suddenly on a code restore, and Enter confirmed a
+  // destructive operation the user never chose. Upstream never has the race because it awaits the stats
+  // before opening (`oe`, L487099-100). We do both halves: `open` HOLDS on a pending anchor until its dry
+  // run lands, and what it lands is FROZEN here — every option, default focus, explanation line and warning
+  // downstream reads this snapshot, so a later arrival for the same uuid cannot reach the open panel at all.
+  const [selected, setSelected] = useState<{ anchor: RewindAnchor; dry: RewindDryRun | null } | null>(null);
+  const [pending, setPending] = useState<RewindAnchor | null>(null);
+  const pendingToken = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
   const [focusedOption, setFocusedOption] = useState<RestoreOption>("both");
   // The list's cursor OUTLIVES the list. Upstream's `w` is parent state (L487056) and the confirmation panel
   // renders beside it rather than instead of it, so Escape lands the cursor back where it was; ours swaps the
@@ -160,19 +186,34 @@ export function RewindPicker({ anchors, onDryRun, onConfirm, onClose, rows = pro
   // cancelled confirmation that silently throws away which message you were on.
   const [listFocus, setListFocus] = useState<string>(CURRENT_ROW);
   const [view, setView] = useState<SelectView>({ focus: 0, start: 0, end: 0 });
-  const { summaries, ensure } = useRewindSummaries(anchors, onDryRun);
+  const { summaries, ensure, request } = useRewindSummaries(anchors, onDryRun);
 
   // Display order: oldest-first, `(current)` last (L487056's `T`).
   const ordered = useMemo(() => [...anchors].reverse(), [anchors]);
   const newestIndexOf = (displayIndex: number) => anchors.length - 1 - displayIndex;
 
+  /** Abandon whatever the list was waiting for: a hold that outlives its Escape would pop a panel open on
+   *  top of a list the user had already gone back to. The token is what makes the late `.then` a no-op. */
+  const cancelPending = () => { pendingToken.current++; if (pending) setPending(null); };
+  /** Selecting an anchor: open on a LANDED summary, or hold the list until one lands (upstream's `oe`). */
+  const open = (anchor: RewindAnchor) => {
+    const have = summaries.get(anchor.uuid);
+    if (have !== undefined) { setSelected({ anchor, dry: have }); setFocusedOption(defaultRestoreOption({ code: canRestoreCode(have), conversation: anchor.prevUuid != null })); return; }
+    const token = ++pendingToken.current;
+    setPending(anchor);
+    void request(anchor.uuid).then((dry) => {
+      if (!mounted.current || pendingToken.current !== token) return;
+      setPending(null);
+      setSelected({ anchor, dry });
+      setFocusedOption(defaultRestoreOption({ code: canRestoreCode(dry), conversation: anchor.prevUuid != null }));
+    });
+  };
+
   // The scope stage's escape goes BACK to the list, never straight out — losing a selection silently is the
   // one thing this two-stage dialog must not do. The empty state has no `Select` at all, so this is the
   // handler that answers escape there (bindings.ts keeps `escape` on this context for exactly that case).
   useKeyScope("MessageSelector");
-  useKeyActions({ "messageSelector:dismiss": () => { if (selected) setSelected(null); else onClose(); } });
-
-  const dryOf = (a: RewindAnchor | null): RewindDryRun | null | undefined => (a ? summaries.get(a.uuid) : undefined);
+  useKeyActions({ "messageSelector:dismiss": () => { if (selected) setSelected(null); else if (pending) cancelPending(); else onClose(); } });
 
   if (!selected) {
     const options: SelectOption[] = ordered.map((a) => ({
@@ -202,28 +243,29 @@ export function RewindPicker({ anchors, onDryRun, onConfirm, onClose, rows = pro
                 // The synthetic row selects nothing — upstream reaches `!e.includes(we)` and closes (L487091).
                 const anchor = ordered.find((a) => a.uuid === value);
                 if (!anchor) { onClose(); return; }
-                setSelected(anchor);
-                setFocusedOption(defaultRestoreOption({ code: canRestoreCode(summaries.get(anchor.uuid)), conversation: anchor.prevUuid != null }));
+                open(anchor);
               }}
-              onCancel={onClose}
+              onCancel={() => { if (pending) cancelPending(); else onClose(); }}
             />
             {view.end < total ? <Box paddingLeft={1}><Text dimColor>{moreBelow(total - view.end)}</Text></Box> : null}
+            {pending ? <Text dimColor>{REWIND_CHECKING}</Text> : null}
           </>
         )}
       </RewindFrame>
     );
   }
 
-  const dry = dryOf(selected);
-  const code = canRestoreCode(dry), conversation = selected.prevUuid != null;
+  // Every line below reads the FROZEN snapshot (`selected.dry`), never the live map — see the state doc.
+  const { anchor, dry } = selected;
+  const code = canRestoreCode(dry), conversation = anchor.prevUuid != null;
   const options = restoreOptions({ code, conversation });
   const explainCode = codeExplanation(focusedOption, dry);
-  const when = selected.timestamp ? formatRelativeTime(new Date(selected.timestamp)) : undefined;
+  const when = anchor.timestamp ? formatRelativeTime(new Date(anchor.timestamp)) : undefined;
   return (
     <RewindFrame>
       <Text>{confirmPrompt(dry)}</Text>
       <Box flexDirection="column" paddingLeft={1} borderStyle="single" borderRight={false} borderTop={false} borderBottom={false} borderLeft borderLeftDimColor>
-        <AnchorLine anchor={selected} focused={false} columns={columns} />
+        <AnchorLine anchor={anchor} focused={false} columns={columns} />
         {when ? <Text dimColor>({when})</Text> : null}
       </Box>
       <Box flexDirection="column">
@@ -237,7 +279,7 @@ export function RewindPicker({ anchors, onDryRun, onConfirm, onClose, rows = pro
         defaultFocusValue={defaultRestoreOption({ code, conversation })}
         rows={rows} columns={columns}
         onFocus={(value) => setFocusedOption(value as RestoreOption)}
-        onChange={(value) => { if (value === "nevermind") setSelected(null); else onConfirm(selected, value as RewindScope); }}
+        onChange={(value) => { if (value === "nevermind") setSelected(null); else onConfirm(anchor, value as RewindScope); }}
         onCancel={() => setSelected(null)}
       />
       {code ? <Box marginBottom={1}><Text dimColor>{REWIND_MANUAL_WARNING}</Text></Box> : null}

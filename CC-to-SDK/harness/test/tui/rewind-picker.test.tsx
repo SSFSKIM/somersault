@@ -163,6 +163,96 @@ describe("<RewindPicker> — row summaries are computed before selection", () =>
   });
 });
 
+// t10 review, Important 1. The destructive option list must not move under the cursor. Reproduced exactly as
+// the reviewer did: select an anchor whose dry run is still in flight, then land it and watch what happens to
+// the row the pointer is on. Both halves of the fix get their own pin.
+describe("<RewindPicker> — a panel never opens on, or shifts to, an unlanded summary", () => {
+  /** One anchor, one dry run the test controls. `k` steps off `(current)` onto it, Enter selects it. */
+  const selectSole = async (d: ReturnType<typeof deferred<RewindDryRun>>) => {
+    const anchors: RewindAnchor[] = [{ uuid: "uB", prevUuid: "aA", text: "second prompt", index: 2 }];
+    const r = render(<RewindPicker {...props} anchors={anchors} onDryRun={() => d.promise} />);
+    await waitFor(() => frame(r.lastFrame).includes("(current)"));
+    await tick();
+    r.stdin.write("k");
+    await waitFor(() => (plain(frame(r.lastFrame)).split("\n").find((l) => l.includes("❯")) ?? "").includes("second prompt"));
+    r.stdin.write("\r");
+    return r;
+  };
+
+  it("(a) Enter HOLDS the list until the summary lands, then opens with the settled option list", async () => {
+    const d = deferred<RewindDryRun>();
+    const { lastFrame } = await selectSole(d);
+    await waitFor(() => plain(frame(lastFrame)).includes("checking file changes…"));
+    expect(plain(frame(lastFrame))).not.toContain("Confirm you want to restore");   // the panel is NOT open yet
+    expect(plain(frame(lastFrame))).toContain("Restore the code and/or conversation"); // still the list
+    d.resolve(clean);
+    await waitFor(() => plain(frame(lastFrame)).includes("Confirm you want to restore"));
+    // It opens on the SETTLED list — `both` present and focused, not inserted later under the pointer.
+    expect(plain(frame(lastFrame)).split("\n").find((l) => l.includes("❯"))).toContain("Restore code and conversation");
+  });
+
+  it("(b) a summary landing for the OPEN panel's own anchor cannot change its options — the frozen snapshot", async () => {
+    // The belt, driven down the one path that still reaches it with the hold in place: TWO dry runs for the
+    // SAME uuid can be outstanding at once — the background walk's, and the out-of-band one `open` issues
+    // when the walk has not landed yet (upstream's `oe` does the same second lookup). The out-of-band call
+    // settles first with `canRewind:false`, so the panel opens conversation-only with the pointer on index 0.
+    // Then the WALK's own call lands `clean` and writes it into the summaries map. A panel reading that map
+    // live would INSERT `Restore code and conversation` at index 0 — under a pointer `Select` keeps by INDEX —
+    // and the next Enter would confirm a code restore the user never chose. The snapshot is what stops it.
+    const calls: ReturnType<typeof deferred<RewindDryRun>>[] = [];
+    const anchors: RewindAnchor[] = [{ uuid: "uB", prevUuid: "aA", text: "second prompt", index: 2 }];
+    const confirms: unknown[] = [];
+    const r = render(
+      <RewindPicker {...props} anchors={anchors} onConfirm={(a, s) => confirms.push([a.uuid, s])}
+        onDryRun={() => { const d = deferred<RewindDryRun>(); calls.push(d); return d.promise; }} />,
+    );
+    await waitFor(() => calls.length === 1);                           // the walk's call, still in flight
+    await tick();
+    r.stdin.write("k");
+    await waitFor(() => (plain(frame(r.lastFrame)).split("\n").find((l) => l.includes("❯")) ?? "").includes("second prompt"));
+    r.stdin.write("\r");
+    await waitFor(() => calls.length === 2);                           // …and `open`'s out-of-band one
+    calls[1]!.resolve({ canRewind: false, error: "not enabled" });      // it settles first → panel opens
+    await waitFor(() => plain(frame(r.lastFrame)).includes("Confirm you want to restore"));
+    expect(plain(frame(r.lastFrame))).not.toContain("Restore code and conversation");
+    expect(plain(frame(r.lastFrame)).split("\n").find((l) => l.includes("❯"))).toContain("Restore conversation");
+
+    calls[0]!.resolve(clean);                                          // the walk lands, for the SAME uuid
+    await new Promise((rs) => setTimeout(rs, 40));
+    expect(plain(frame(r.lastFrame))).not.toContain("Restore code and conversation");   // options did not move
+    expect(plain(frame(r.lastFrame)).split("\n").find((l) => l.includes("❯"))).toContain("Restore conversation");
+    r.stdin.write("\r");                                               // …and Enter still means what it read
+    await waitFor(() => confirms.length === 1);
+    expect(confirms[0]).toEqual(["uB", "conversation"]);
+  });
+
+  it("Escape during the hold abandons it — a late summary cannot pop the panel open afterwards", async () => {
+    const d = deferred<RewindDryRun>();
+    const { stdin, lastFrame } = await selectSole(d);
+    await waitFor(() => plain(frame(lastFrame)).includes("checking file changes…"));
+    stdin.write("\x1b");
+    await waitFor(() => !plain(frame(lastFrame)).includes("checking file changes…"));
+    d.resolve(clean);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(plain(frame(lastFrame))).not.toContain("Confirm you want to restore");
+    expect(plain(frame(lastFrame))).toContain("Restore the code and/or conversation");
+  });
+
+  it("an anchor whose summary ALREADY landed opens the panel with no second dry run and no hold", async () => {
+    const asked: string[] = [];
+    const anchors: RewindAnchor[] = [{ uuid: "uB", prevUuid: "aA", text: "second prompt", index: 2 }];
+    const r = render(<RewindPicker {...props} anchors={anchors} onDryRun={async (uuid) => { asked.push(uuid); return clean; }} />);
+    await waitFor(() => frame(r.lastFrame).includes("2 files changed"));
+    await tick();
+    r.stdin.write("k");
+    await waitFor(() => (plain(frame(r.lastFrame)).split("\n").find((l) => l.includes("❯")) ?? "").includes("second prompt"));
+    r.stdin.write("\r");
+    await waitFor(() => plain(frame(r.lastFrame)).includes("Confirm you want to restore"));
+    expect(plain(frame(r.lastFrame))).not.toContain("checking file changes…");
+    expect(asked).toEqual(["uB"]);                                     // the walk's one call, not a second
+  });
+});
+
 describe("<RewindPicker> — the confirmation panel", () => {
   const openConfirm = async (anchors: RewindAnchor[], dry: (uuid: string) => Promise<RewindDryRun>) => {
     const r = render(<RewindPicker {...props} anchors={anchors} onDryRun={dry} />);

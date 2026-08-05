@@ -55,9 +55,23 @@ describe("command aliases", () => {
   });
 
   it("completion: the cap counts ROWS, not scored candidates", () => {
-    // Without the fold-then-cap order the alias hit and its own canonical row eat two of the three slots.
-    const entries = [entry("rewind", ["undo", "checkpoint"]), entry("undoubtedly"), entry("undock")];
-    expect(rankCommands(entries, "und", 3)).toHaveLength(3);
+    // The fixture has to make ONE entry win TWO candidate slots, or cap-before-fold and cap-after-fold agree
+    // and the test proves nothing: `undo-thing` is hit by its NAME and by its alias `undo`, so a cap applied
+    // to the scored candidates would spend two of the three slots on one row and return two rows for a cap
+    // of three (t10 review, minor 3).
+    const entries = [entry("undo-thing", ["undo"]), entry("undoubtedly"), entry("undock")];
+    const ranked = rankCommands(entries, "und", 3);
+    expect(ranked).toHaveLength(3);
+    expect(ranked.map((e) => e.name).sort()).toEqual(["undo-thing", "undock", "undoubtedly"]);
+  });
+
+  it("completion: nothing is capped away before the fold — every command stays REACHABLE past 50 candidates", () => {
+    // `rankCandidates`' own default cap is 50 (fileComplete.ts:123). Passing the candidate count explicitly is
+    // what keeps a >50-command catalog whole; commandComplete's existing doc comment is about exactly this
+    // failure ("a cap here does not merely shorten the view — it makes the tail of the catalog UNREACHABLE").
+    const entries = Array.from({ length: 80 }, (_, i) => entry(`cmd${String(i).padStart(2, "0")}`));
+    expect(rankCommands(entries, "cmd")).toHaveLength(80);
+    expect(rankCommands(entries, "cmd79").map((e) => e.name)).toContain("cmd79");
   });
 
   it("an empty query is untouched by the alias machinery (catalog order, capped)", () => {
