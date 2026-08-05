@@ -32,7 +32,7 @@ describe("<QuestionDialog>", () => {
     expect(f).toContain("blue");
     expect(f).toContain("cool");
     // F6 T2b: the Other row is a `Select` input row now, and an unfocused empty one renders its PLACEHOLDER,
-    // not its label (`RLe`, L396612 — `tU || placeholder || label`). Upstream's own question dialog shows the
+    // not its label (`RLe`, L396618 — `tU || placeholder || label`). Upstream's own question dialog shows the
     // same thing, trailing period and all (L504097). The pin moves to the string actually on screen.
     expect(f).toContain("Type something.");
   });
@@ -105,7 +105,10 @@ describe("<QuestionDialog>", () => {
     const answers: [Record<string, string>, string | undefined][] = [];
     const { stdin, lastFrame } = render(<QuestionDialog req={{ input: single }} onAnswer={(a, r) => answers.push([a, r])} onDeny={() => {}} />);
     await waitFor(() => frame(lastFrame).includes("Which meals?"));
-    expect(frame(lastFrame)).toContain("Type something");   // no trailing period on the multiSelect placeholder (L504097)
+    // No trailing period on the multiSelect placeholder (L504097) — the negative arm is the real pin:
+    // "Type something." CONTAINS "Type something", so the positive alone cannot catch a period regression.
+    expect(frame(lastFrame)).toContain("Type something");
+    expect(frame(lastFrame)).not.toContain("Type something.");
     stdin.write("3");                                       // the digit toggles the Other row without moving onto it
     await waitFor(() => frame(lastFrame).includes("[✔]"));
     stdin.write("\x1b[B"); await new Promise((r) => setTimeout(r, 20));

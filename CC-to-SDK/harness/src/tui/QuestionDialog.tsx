@@ -123,7 +123,7 @@ export function QuestionDialog({ req, onAnswer, onDeny }: {
           submitButtonText={qi + 1 === questions.length ? "Submit" : "Next"} />
       ) : (
         <Select key={qi} options={rowsFor("Type something.")} onChange={pickSingle} onCancel={onDeny}
-          onInputModeToggle={undefined} context="SelectDecision" />
+          context="SelectDecision" />
       )}
       <Text dimColor>{multi ? MULTI_FOOTER : SINGLE_FOOTER}</Text>
     </Box>
