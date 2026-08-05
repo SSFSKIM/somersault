@@ -35,6 +35,11 @@ const frame = (f: () => string | undefined) => f() ?? "";
 // and the text in separate <Text> spans (they carry different colors), so ANSI sits between them and Ink may
 // break the row. Strip and collapse before pinning the gutter. `⋯ queued: …` is gone: a queued prompt is the
 // ordinary band inside `wqo`'s paddingX-2 box (bundle L426002–426022), which is what `isQueued` looks for.
+/** TaskPanel's pending row (F6 T13). Ink lays the row out by MEASURED width and `◻` measures two columns
+ *  while printing as one, so the gutter is one space or two — this is a regex rather than a literal for that
+ *  reason. "todo-item-one" ALONE would not do: the transcript also prints the TaskCreate tool_use and its
+ *  result text permanently, so a bare substring check never goes false. */
+const TODO_ROW = /◻\s+todo-item-one/;
 const stripAnsiAll = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 // The collapse deliberately spares U+00A0. F5 Task 2 gave the COMPOSER the same `❯` the band uses, followed
 // by a NBSP (`Ge.pointer` + `\xA0`, bundle L494723) where the band uses a normal space — that one character
@@ -322,13 +327,37 @@ describe("<ChatApp>", () => {
     fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "Task #1 created successfully: todo-item-one" }] } } });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     // "todo-item-one" alone is ambiguous: the transcript ALSO prints the TaskCreate tool_use + its result
-    // text permanently, so a bare substring check never goes false. "☐ todo-item-one" (TaskPanel's pending
+    // text permanently, so a bare substring check never goes false. TODO_ROW (TaskPanel's pending
     // glyph + subject) is unique to the panel row and is what actually toggles.
-    await waitFor(() => (lastFrame() ?? "").includes("☐ todo-item-one"));
+    await waitFor(() => TODO_ROW.test(lastFrame() ?? ""));
     stdin.write("\x14");                                       // Ctrl-T
-    await waitFor(() => !(lastFrame() ?? "").includes("☐ todo-item-one"));
+    await waitFor(() => !TODO_ROW.test(lastFrame() ?? ""));
     stdin.write("\x14");
-    await waitFor(() => (lastFrame() ?? "").includes("☐ todo-item-one"));
+    await waitFor(() => TODO_ROW.test(lastFrame() ?? ""));
+  });
+
+  // F6 T13 (DG59). The Ctrl-T state is a PREFERENCE now: `initialTodosOpen` is what chatMain restores from
+  // `prefs.showExpandedTodos` before the first render, and every toggle writes the new value back through the
+  // injected savePrefs seam (upstream keeps the same flag in step with `expandedView`, bundle L401025-401031).
+  it("the Ctrl-T panel state is restored from prefs and written back on every toggle", async () => {
+    const saved: Record<string, unknown>[] = [];
+    const fake = fakeRemote();
+    const { lastFrame, stdin } = render(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/" initialTodosOpen={false}
+        deps={{ savePrefs: (patch) => { saved.push(patch as Record<string, unknown>); } }} />);
+    await new Promise((r) => setTimeout(r, 30));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "Task #1 created successfully: todo-item-one" }] } } });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await new Promise((r) => setTimeout(r, 60));                         // let the seeded task settle
+    expect(TODO_ROW.test(lastFrame() ?? "")).toBe(false);                // the saved pref kept the panel shut…
+    stdin.write("\x14");
+    await waitFor(() => TODO_ROW.test(lastFrame() ?? ""));               // …over a task that was there all along
+    expect(saved).toEqual([{ showExpandedTodos: true }]);
+    stdin.write("\x14");
+    await waitFor(() => !TODO_ROW.test(lastFrame() ?? ""));
+    expect(saved).toEqual([{ showExpandedTodos: true }, { showExpandedTodos: false }]);
   });
 
   it("initialPrompt submits once on mount", async () => {
@@ -468,7 +497,7 @@ describe("<ChatApp>", () => {
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("ok"));   // turn started, hanging
     stdin.write("\x02");                                                       // Ctrl-B busy → background the turn
     await waitFor(() => backgroundCalls === 1);
-    expect(frame(lastFrame)).not.toContain("Background tasks");                // panel did NOT open
+    expect(frame(lastFrame)).not.toContain("No tasks currently running");      // panel did NOT open
     release();
   });
 
@@ -477,8 +506,8 @@ describe("<ChatApp>", () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x02");                                                       // Ctrl-B idle → open panel
-    await waitFor(() => frame(lastFrame).includes("Background tasks"));
-    expect(frame(lastFrame)).toContain("none running");
+    await waitFor(() => frame(lastFrame).includes("Background"));
+    expect(frame(lastFrame)).toContain("No tasks currently running");
   });
 
   it("the status bar shows a live bg-task count and updates on tasks_changed", async () => {
@@ -969,21 +998,21 @@ describe("<ChatApp>", () => {
     fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
     fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "Task #1 created successfully: todo-item-one" }] } } });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
-    await waitFor(() => frame(lastFrame).includes("☐ todo-item-one"));
+    await waitFor(() => TODO_ROW.test(frame(lastFrame)));
     stdin.write("\x0f");                                              // Ctrl-O opens
     await waitFor(() => frame(lastFrame).includes("Transcript"));
-    expect(frame(lastFrame)).toContain("☐ todo-item-one");            // task panel still visible under the pager
+    expect(frame(lastFrame)).toMatch(TODO_ROW);            // task panel still visible under the pager
     stdin.write("\x14");                                              // Ctrl-T must NOT toggle todos while pager open
     await new Promise((r) => setTimeout(r, 30));
     expect(frame(lastFrame)).toContain("Transcript");                 // still the pager, no crash
-    expect(frame(lastFrame)).toContain("☐ todo-item-one");            // proves Ctrl-T did NOT reach setTodosOpen
+    expect(frame(lastFrame)).toMatch(TODO_ROW);            // proves Ctrl-T did NOT reach setTodosOpen
     stdin.write("\x0f");                                              // Ctrl-O closes
     // Only the pager header prints the word "Transcript" — its absence proves the pager actually
     // unmounted (an "of 0" assertion would be vacuous: an empty pager renders "(empty)").
     await waitFor(() => !frame(lastFrame).includes("Transcript"));
-    expect(frame(lastFrame)).toContain("☐ todo-item-one");            // task panel unaffected throughout
+    expect(frame(lastFrame)).toMatch(TODO_ROW);            // task panel unaffected throughout
     stdin.write("\x14");                                              // now (pager closed) Ctrl-T DOES toggle — proves the gate isn't a permanent lock
-    await waitFor(() => !frame(lastFrame).includes("☐ todo-item-one"));
+    await waitFor(() => !TODO_ROW.test(frame(lastFrame)));
   });
 
   // F2 task 7: the owner gate used to kill every key inside the pager except ChatApp's own Ctrl-O close arm.

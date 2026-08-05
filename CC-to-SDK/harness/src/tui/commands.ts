@@ -40,7 +40,13 @@ export const COMMANDS: CommandRow[] = [
   { name: "yolo", summary: "enable bypassPermissions (ungated tool access)" },
   { name: "think", summary: "<off|low|medium|high|xhigh|max|N> — set thinking budget (no arg shows current)" },
   { name: "mcp", summary: "[reconnect <name> | toggle <name> on|off] — MCP server status / controls" },
-  { name: "bg", summary: "list background tasks (k/x stops one)" },
+  // F6 T13 (DG61). Upstream's row is `{name:"tasks", aliases:["bashes"], description:"View and manage
+  // everything running in the background"}` (bundle L350769) — it has no `/bg` at all. Ours keeps `/bg` as the
+  // CANONICAL name (four waves of muscle memory, and `useChat`'s dispatch arm is spelled `bg`) and takes
+  // upstream's two names as aliases, so all three open the same dialog. Recorded keep-decision, not an
+  // oversight. The summary is upstream's own description, and the old parenthetical died with the panel it
+  // described: `k` is navigation now, and stopping is `x` (F2 task 8).
+  { name: "bg", summary: "view and manage everything running in the background (aliases /tasks /bashes)", aliases: ["tasks", "bashes"] },
   { name: "history", summary: "search prompt history in the full-screen picker (Ctrl-R searches inline)" },
   { name: "rewind", summary: "rewind to a previous message (Esc Esc · aliases /checkpoint /undo)", aliases: ["checkpoint", "undo"] },
   { name: "add-dir", summary: "<path> — add a new working directory" },

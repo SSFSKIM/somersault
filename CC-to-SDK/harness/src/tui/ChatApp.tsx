@@ -67,6 +67,7 @@ import { AddDirDialog } from "./AddDirDialog.js";
 import { ThemeDialog } from "./ThemeDialog.js";
 import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
+import { savePrefs as realSavePrefs } from "./prefs.js";
 
 /** The rewind hold — the one surface in the tree with no keys of its own. A confirmed rewind is a multi-second
  *  file restore + engine swap, and anything that acted during it (Ctrl-R opening history search, Ctrl-O the
@@ -89,11 +90,18 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, suspend, resumeOutput }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
   initialPrompt?: string;
+  /** F6 T13 (DG59): the Ctrl-T panel's open state, restored from `prefs.showExpandedTodos` by the caller —
+   *  the same boot shape `theme` and `outputStyle` already use (chatMain reads prefs BEFORE the first render,
+   *  so no component re-reads the file). A RECORDED DIVERGENCE rides on the default: upstream ships
+   *  `showExpandedTodos: !1` (bundle L377294) and therefore boots with the panel CLOSED; ccx has shipped it
+   *  open since the panel existed, so an absent pref keeps our default rather than silently hiding a panel
+   *  users already rely on. */
+  initialTodosOpen?: boolean;
   hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialOutputStyle?: string };
   cwd: string;
   initialResume?: InitialResume;
@@ -126,7 +134,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const terminalRows = () => stdout?.rows ?? 24;
   const queueWidth = Math.max(8, terminalColumns() - QUEUE_PAD * 2);
   const [exitArmed, setExitArmed] = useState(false);
-  const [todosOpen, setTodosOpen] = useState(true);
+  const [todosOpen, setTodosOpen] = useState(initialTodosOpen);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   // Durable per-app editor state survives a temporary composer unmount; autocomplete is normalized by the
   // remounting composer, while text, cursor, history, undo, stash, and kill ring remain exact.
@@ -210,6 +218,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // state/callback value these handlers consume current synchronously.
   const rootStateRef = useRef(state); rootStateRef.current = state;
   const exitArmedRef = useRef(exitArmed); exitArmedRef.current = exitArmed;
+  const todosOpenRef = useRef(todosOpen); todosOpenRef.current = todosOpen;
   const suspendRef = useRef(suspend); suspendRef.current = suspend;
   const resumeOutputRef = useRef(resumeOutput); resumeOutputRef.current = resumeOutput;
   const interruptRef = useRef(interrupt); interruptRef.current = interrupt;
@@ -275,7 +284,16 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // Our REPL is permanently classic layout (03-composer.md §6.4), so ctrl+r is the inline search. The
     // picker is not lost: `/history` opens it, through `openHistorySearch` below — a recorded ccx addition,
     // since upstream needs no such command (fullscreen hands it the picker for free).
-    "app:toggleTodos": () => { setTodosOpen((v) => !v); disarm(); },
+    // F6 T13 (DG59): the toggle PERSISTS. Upstream writes the same flag from the same gesture (`showExpandedTodos`
+    // follows `expandedView`, bundle L401025-401031). The write is best-effort for the reason ChatComposer's
+    // queued-up-hint write is (savePrefs is mkdir+write and throws on an unwritable root): losing the preference
+    // must never take the keystroke down with it.
+    "app:toggleTodos": () => {
+      const next = !todosOpenRef.current;
+      setTodosOpen(next);
+      try { (deps?.savePrefs ?? realSavePrefs)({ showExpandedTodos: next }, deps?.env); } catch { /* prefs are best-effort */ }
+      disarm();
+    },
     "app:interrupt": () => {                                    // interrupt a turn, else arm/confirm exit (CC)
       if (rootStateRef.current.busy) { interruptRef.current(); disarm(); return; }
       if (exitArmedRef.current) { exitRef.current(); return; }
@@ -299,7 +317,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   return (
     <Box flexDirection="column">
       <Transcript key={state.staticEpoch} staticItems={state.staticItems} pendingItems={state.pendingItems} streaming={state.streaming} />
-      {todosOpen ? <TaskPanel tasks={state.tasks} /> : null}
+      {todosOpen ? <TaskPanel tasks={state.tasks} columns={terminalColumns()} rows={terminalRows()} /> : null}
       {state.busy ? <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} /> : null}
       {/* F4 Task 8 — upstream `wqo` (pack §7.7, bundle L426002–426022): a queued prompt is the ORDINARY
           prompt echo wrapped in `<Box paddingX={$jp}>` with `$jp = 2`, and nothing else. It carries no
@@ -365,7 +383,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         : state.rewindPicker.open
           ? <RewindPicker anchors={state.rewindPicker.anchors} onDryRun={rewindDryRun} onConfirm={confirmRewind} onClose={closeRewindPicker} />
           : state.bgPanelOpen
-            ? <BgTasksPanel tasks={state.bgRows} onStop={stopBgTask} onClose={closeBgPanel} />
+            ? <BgTasksPanel tasks={state.bgRows} onStop={stopBgTask} onClose={closeBgPanel} columns={terminalColumns()} />
             : state.modelPicker.open
               // F6 T11: `savePrefs` reaches the picker for the same reason it reaches SettingsDialog and
               // ThemeDialog — Enter here writes the default model, and the write seam is injectable so a

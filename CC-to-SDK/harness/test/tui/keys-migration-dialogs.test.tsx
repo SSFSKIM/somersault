@@ -36,6 +36,7 @@ const frame = (f: () => string | undefined) => f() ?? "";
 /** Ink word-wraps, and a tmpdir() path is long enough to be split across two lines — match against the frame
  *  with newlines flattened when the needle is a path (chat.test.tsx uses the same trick). */
 const flat = (f: () => string | undefined) => frame(f).replace(/\n/g, "");
+const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await tick(); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
@@ -140,11 +141,14 @@ describe("F2 task 8 — KB14: j/k and ctrl+n/ctrl+p navigate in EVERY Select-fam
     ];
     const stopped: string[] = [];
     const { stdin, lastFrame } = render(<BgTasksPanel tasks={tasks} onStop={(id) => stopped.push(id)} onClose={() => {}} />);
-    await waitFor(() => frame(lastFrame).includes("Background tasks"));
-    stdin.write("j");    await waitFor(() => frame(lastFrame).includes("❯ ⟳ bbb22222"));
-    stdin.write(CTRL_N); await waitFor(() => frame(lastFrame).includes("❯ ⟳ ccc33333"));
-    stdin.write("k");    await waitFor(() => frame(lastFrame).includes("❯ ⟳ bbb22222"));
-    stdin.write(CTRL_P); await waitFor(() => frame(lastFrame).includes("❯ ⟳ aaa11111"));
+    // F6 T13 rebuilt this surface into the Background dialog: the row is `❯ <command> (running)` now, not
+    // `❯ <glyph> <short id>`. The key facts this test exists for are unchanged and re-pinned as they were.
+    const cursorOnRow = (label: string) => stripAnsi(frame(lastFrame)).split("\n").some((l) => l.includes("❯") && l.includes(label));
+    await waitFor(() => stripAnsi(frame(lastFrame)).includes("Shells (3)"));   // the bold label and its dim count are separate SGR runs
+    stdin.write("j");    await waitFor(() => cursorOnRow("two"));
+    stdin.write(CTRL_N); await waitFor(() => cursorOnRow("three"));
+    stdin.write("k");    await waitFor(() => cursorOnRow("two"));
+    stdin.write(CTRL_P); await waitFor(() => cursorOnRow("one"));
     expect(stopped).toEqual([]);                                  // `k` never stopped anything on the way
     stdin.write("x"); await waitFor(() => stopped.length === 1);   // stop is `x` alone now
     expect(stopped).toEqual(["aaa11111"]);
@@ -152,8 +156,8 @@ describe("F2 task 8 — KB14: j/k and ctrl+n/ctrl+p navigate in EVERY Select-fam
 
   it("BgTasksPanel advertises the reassigned key: `x stop`, never `k/x stop`", async () => {
     const { lastFrame } = render(<BgTasksPanel tasks={[]} onStop={() => {}} onClose={() => {}} />);
-    await waitFor(() => frame(lastFrame).includes("Background tasks"));
-    expect(frame(lastFrame)).toContain("⏎ output · x stop · esc close");
+    await waitFor(() => frame(lastFrame).includes("No tasks currently running"));
+    expect(frame(lastFrame)).toContain("x stop · escape close");
     expect(frame(lastFrame)).not.toContain("k/x stop");
   });
 });
@@ -300,7 +304,11 @@ describe("F6 task 2b — QuestionDialog's Other row keeps every decision key lit
 // no keys at all, a swallow). These drive the REAL ChatApp so that the replacement is tested where the
 // deletion happened, not just in the table.
 const ROOT_GLOBALS = ["\x12", "\x0f", "\x14", "\x02", "\x03", "\x1bp", "\x1bt"];   // ctrl+r/o/t/b/c, alt+p, alt+t
-const TODO_ROW = "☐ a seeded todo";
+/** The panel's pending row. Ink lays the row out by MEASURED width and `◻` measures two columns while
+ *  printing as one, so the gutter between glyph and subject is one space or two — every assertion below goes
+ *  through this regex rather than a literal (F6 T13). */
+const TODO_ROW = /◻\s+a seeded todo/;
+const todoRowVisible = (f: () => string | undefined) => TODO_ROW.test(frame(f));
 /** ChatApp's TaskPanel renders NULL on an empty list, so with no task seeded a resurrected Ctrl-T toggles a
  *  panel nobody can see and the loop below stays blind to it (t8 review, Minor A). Two host frames, exactly the
  *  shape the engine sends: TaskCreate names the subject, its tool_result carries the id (taskList.ts). */
@@ -323,8 +331,8 @@ function seedTodo(fake: { pushEvent: (ev: HostEvent) => void }) {
  *  teeth (Ctrl-T demonstrably renders that row the moment anything lets it through). */
 async function armTodoRow(fake: { pushEvent: (ev: HostEvent) => void }, stdin: { write: (s: string) => void }, lastFrame: () => string | undefined) {
   seedTodo(fake);
-  await waitFor(() => frame(lastFrame).includes(TODO_ROW));                        // the seeded task renders…
-  stdin.write("\x14"); await waitFor(() => !frame(lastFrame).includes(TODO_ROW));   // …and ctrl+t closes the panel
+  await waitFor(() => todoRowVisible(lastFrame));                                   // the seeded task renders…
+  stdin.write("\x14"); await waitFor(() => !todoRowVisible(lastFrame));              // …and ctrl+t closes the panel
 }
 /** Assert after EVERY key, never once at the end: pressed as a batch these keys cancel each other's damage
  *  (a leaked Ctrl-R opens history search, and the Ctrl-C two keys later closes it again), so a single
@@ -348,7 +356,7 @@ async function eachRootGlobalIsInert(stdin: { write: (s: string) => void }, last
     expect(f, at).not.toContain("Transcript");                        // ctrl+o → the pager
     expect(f, at).not.toContain("Select model");                      // alt+p → the model picker
     expect(f, at).not.toContain("Press Ctrl-C again to exit");        // ctrl+c → the exit arm
-    expect(f, at).not.toContain(TODO_ROW);                            // ctrl+t → the todo panel
+    expect(f, at).not.toMatch(TODO_ROW);                              // ctrl+t → the todo panel
     expect(f, at).toBe(before);                                       // …and nothing else moved either
   }
 }
@@ -394,8 +402,8 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await armTodoRow(fake, stdin, lastFrame);
     stdin.write("\x02");                                            // ctrl+b while idle opens the panel
-    await waitFor(() => frame(lastFrame).includes("Background tasks"));
-    await eachRootGlobalIsInert(stdin, lastFrame, "Background tasks");
+    await waitFor(() => frame(lastFrame).includes("No tasks currently running"));
+    await eachRootGlobalIsInert(stdin, lastFrame, "No tasks currently running");
     stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     // F5 t12: ctrl+r opens the composer's inline search now, so "the composer got its keys back" is the
     // inline row appearing — the picker's title would be the wrong thing to wait for.
@@ -512,7 +520,7 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
     // …and the keys the hold must eat that are nobody's global: escape, enter, and the Task chord.
     for (const k of ["\x1b", "\r", "\x18\x02"]) { stdin.write(k); await new Promise((r) => setTimeout(r, 20)); }
     expect(frame(lastFrame)).toContain("restoring");
-    expect(frame(lastFrame)).not.toContain("Background tasks");     // ctrl+x ctrl+b did not survive it either
+    expect(frame(lastFrame)).not.toContain("No tasks currently running");   // ctrl+x ctrl+b did not survive it either
     release();
     await waitFor(() => !frame(lastFrame).includes("restoring"));
   });

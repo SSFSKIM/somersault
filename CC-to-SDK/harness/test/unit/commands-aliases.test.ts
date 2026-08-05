@@ -16,6 +16,19 @@ describe("command aliases", () => {
     expect(rewind?.aliases).toEqual(["checkpoint", "undo"]);
   });
 
+  // F6 T13 (DG61): upstream's `/tasks` + `/bashes` reach OUR canonical `/bg`, which stays the name the
+  // dispatch switch is written against (bundle L350769 is the upstream row; the keep-decision is in commands.ts).
+  it("/bg takes upstream's /tasks and /bashes as aliases, and all three dispatch to the bg arm", () => {
+    expect(COMMANDS.find((c) => c.name === "bg")?.aliases).toEqual(["tasks", "bashes"]);
+    expect(canonicalCommand("tasks")).toBe("bg");
+    expect(canonicalCommand("bashes")).toBe("bg");
+    expect(canonicalCommand("bg")).toBe("bg");
+    expect(LOCAL_NAMES.has("tasks")).toBe(true);
+    expect(LOCAL_NAMES.has("bashes")).toBe(true);
+    expect(LOCAL_COMMAND_ENTRIES.filter((e) => e.name === "tasks" || e.name === "bashes")).toEqual([]);
+    expect(rankCommands(LOCAL_COMMAND_ENTRIES, "bashes")[0]?.name).toBe("bg");
+  });
+
   it("canonicalCommand maps an alias to its command and leaves everything else alone", () => {
     expect(canonicalCommand("checkpoint")).toBe("rewind");
     expect(canonicalCommand("undo")).toBe("rewind");

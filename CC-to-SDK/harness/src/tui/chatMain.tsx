@@ -129,7 +129,8 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
       <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}
         initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
         clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
-        hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} />
+        hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output}
+        initialTodosOpen={prefs.showExpandedTodos ?? true} />
     </UserKeymap>,
     { exitOnCtrlC: false, stdout: output.stdout },
   );

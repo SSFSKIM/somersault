@@ -18,7 +18,10 @@ import { THEMES, type ThemeId } from "./theme.js";
  *  RECORDED DIVERGENCE — upstream writes it to `~/.claude/settings.json` (`Dcn`, bundle L315170:
  *  `yi("userSettings", {model})`), which its own engine reads at next launch. Ours goes to the ccx prefs
  *  file, the client-side seam this module already owns; nothing reads it back at boot yet. */
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number } }
+/** `showExpandedTodos` is F6 T13's Ctrl-T write and upstream's own flag name (bundle L377294 default,
+ *  L401025-401031 writer): the todo panel's open state, saved as it is toggled and restored at boot by
+ *  chatMain. Upstream's default is FALSE; ours is true when the key is absent — see ChatApp's prop. */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number } }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 

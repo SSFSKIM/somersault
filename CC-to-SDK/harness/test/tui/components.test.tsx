@@ -13,7 +13,6 @@ import { Transcript } from "../../src/tui/Transcript.js";
 import { TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
 import { ChatStatusBar, modeColor, ctxColor } from "../../src/tui/ChatStatusBar.js";
-import { TaskPanel } from "../../src/tui/TaskPanel.js";
 import { TurnSpinner } from "../../src/tui/TurnSpinner.js";
 import type { PermissionDecision } from "../../src/index.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
@@ -189,24 +188,10 @@ describe("<ChatStatusBar>", () => {
 // rename; the default-vs-session split, the ten-row window and its overflow counter). They are covered in
 // full by `session-picker.test.tsx` and `model-picker.test.tsx` — moved deliberately, not dropped.
 
-describe("TaskPanel", () => {
-  it("renders a glyph per status and the subject", () => {
-    const { lastFrame } = render(<TaskPanel tasks={[
-      { id: "1", subject: "build the parser", status: "in_progress" },
-      { id: "2", subject: "write tests", status: "pending" },
-      { id: "3", subject: "ship it", status: "completed" },
-    ]} />);
-    const f = lastFrame() ?? "";
-    expect(f).toContain("▶ build the parser");
-    expect(f).toContain("☐ write tests");
-    expect(f).toContain("☑ ship it");
-    expect(f).toContain("Tasks");
-  });
-  it("renders nothing when empty", () => {
-    const { lastFrame } = render(<TaskPanel tasks={[]} />);
-    expect((lastFrame() ?? "").trim()).toBe("");
-  });
-});
+// The TaskPanel block that stood here retired with F6 T13, for the same reason the SessionPicker and
+// ModelPicker ones did above: the panel was rebuilt to upstream's anatomy (a counts header, ✔/◼/◻ with
+// strikethrough/bold/dim attributes, owner + blocker + activity decorations, a height-derived window) and a
+// three-glyph smoke test cannot describe it. `task-panel.test.tsx` covers it in full — moved, not dropped.
 
 describe("modeColor", () => {
   it("maps each permission mode to its §2.2 semantic token, resolved for Ink", () => {

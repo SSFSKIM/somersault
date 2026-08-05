@@ -26,6 +26,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+/** TaskPanel's pending row (F6 T13). Ink lays the row out by MEASURED width and `◻` measures two columns
+ *  while printing as one, so the gutter is one space or two — this is a regex rather than a literal for that
+ *  reason. "todo-item-one" ALONE would not do: the transcript also prints the TaskCreate tool_use and its
+ *  result text permanently, so a bare substring check never goes false. */
+const TODO_ROW = /◻\s+todo-item-one/;
+
 // F5 t12: the Ctrl-R proof drives the real prompt log, so it needs a fleet root of its own — never the
 // user's. Collected and removed at the end, the same discipline chat.test.tsx uses for its fake homes.
 const honestyRoots: string[] = [];
@@ -210,11 +216,11 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
     fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "Task #1 created successfully: todo-item-one" }] } } });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
-    await waitFor(() => (lastFrame() ?? "").includes("☐ todo-item-one"));
+    await waitFor(() => TODO_ROW.test(lastFrame() ?? ""));
     stdin.write("\x14");                             // Ctrl-T
-    await waitFor(() => !(lastFrame() ?? "").includes("☐ todo-item-one"));
+    await waitFor(() => !TODO_ROW.test(lastFrame() ?? ""));
     stdin.write("\x14");
-    await waitFor(() => (lastFrame() ?? "").includes("☐ todo-item-one"));   // proves the toggle really flips both ways
+    await waitFor(() => TODO_ROW.test(lastFrame() ?? ""));   // proves the toggle really flips both ways
   },
 
   "Ctrl-O": async () => {
@@ -246,8 +252,8 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x02");                             // Ctrl-B idle → opens the bg-tasks panel
-    await waitFor(() => frame(lastFrame).includes("Background tasks"));
-    expect(frame(lastFrame)).toContain("none running");
+    await waitFor(() => frame(lastFrame).includes("Background"));
+    expect(frame(lastFrame)).toContain("No tasks currently running");
   },
 
   "Ctrl-X Ctrl-K": async () => {
