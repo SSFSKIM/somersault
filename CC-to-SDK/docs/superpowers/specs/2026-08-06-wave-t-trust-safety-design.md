@@ -54,7 +54,9 @@ QA finding's own repro. `[BEHAVIOR]` markers are what a reviewer observes, not w
 7. **A7 (qa3-17)** With auto mode available, the plan modal's first approval row reads `Yes, and use auto
    mode`, and approving it leaves the session in `auto` (observable in the mode chip and the host status).
 8. **A8 (qa3-16)** The plan body renders inside dashed rules, and when an editor is configured the footer
-   shows `ctrl+g edit in <editor> · <plan file path>` with the path the SDK supplied.
+   shows the ctrl+g hint followed by ` · <plan file path>` with the path the SDK supplied. **ccx keeps its
+   existing `ctrl+g to edit in <editor>` wording** — upstream's is `edit in <editor>` (L501126), and
+   re-spelling every hint is Wave C's chrome work, not this wave's (plan review I11).
 9. **A9 (plan feedback)** An empty `Enter` on `No, keep planning` does nothing; typed feedback reaches the
    model and the plan modal closes.
 10. **A10 (qa6-05, P2)** With the API endpoint unreachable, the spinner row is replaced within ~2 s of the
@@ -258,9 +260,13 @@ A1 (including `ccx --detachable`), A2, A3.
    turns an empty prefix into `allow_once`, matching L505212-17).
 3. **(modify)** Focus auto-collapse per L505162-69.
 4. **(new, GATED)** `ctrl+e` explain — **blocked on probe 98** (see W-T13). The bundle proves *upstream*
-   can do it; nothing proves *this harness* can. If the probe finds a subscription-billed path, build the
-   module, the lazy one-shot toggle, and the three-row render; if not, the footer ships without the
-   explain hint and the item defers with the probe's verdict recorded.
+   can do it; nothing proves *this harness* can. Independently confirmed twice: the harness has **no**
+   one-off Messages transport at all — zero hits in `src/` for `@anthropic-ai/sdk`, `new Anthropic`,
+   `messages.create`, or even a bare `fetch(`. Ship the surface with the transport **injected and
+   undefaulted**: the constants, the prompt builder, the risk helpers, the toggle and the three-row render
+   are all deliverable and testable today; only the production wiring waits on the probe. While visible,
+   the command line dims **and the plain description row hides** (L505286), and the whole affordance is
+   gated on a setting defaulting to on (`permissionExplainerEnabled !== false`, L504907-09).
 5. **(modify)** WebFetch's No-row copy: drop the `and tell Claude what to do differently` clause it cannot
    deliver, keep `(esc)`.
 6. **(modify)** The empty-input separator so an empty amended row reads `No,<cursor><placeholder>` without
