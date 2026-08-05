@@ -74,6 +74,13 @@ const sgr = (name: "warning") => {
   const m = /(\d+),\s*(\d+),\s*(\d+)/.exec(themeTokens()[name]);
   return `\x1b[38;2;${m![1]};${m![2]};${m![3]}m`;
 };
+/** Ink's `dimColor` is SGR 2. The criterion says the description is **dim**, so the text assertion alone
+ *  would pass against a plain description — the raw line is what carries the claim. */
+const DIM = "\x1b[2m";
+/** The raw (escape-bearing) line `text` renders on — one row per line, so this is that row's whole SGR
+ *  state (the idiom bg-dialog.test.tsx and task-panel.test.tsx share). */
+const rawLine = (f: () => string | undefined, text: string): string =>
+  frame(f).split("\n").find((l) => plain(l).includes(text)) ?? "";
 /** The composer's own prompt row (`❯` + NBSP, F5 t2); the transcript echo uses a NORMAL space, so this is a
  *  deterministic "the composer is mounted" probe and safe to assert negatively. The NBSP is what makes it
  *  discriminating, so it is built from the exported constants rather than typed as a literal. */
@@ -114,7 +121,9 @@ describe("F6 acceptance #1 — the Bash consult renders as `dZf` end to end, war
     const f = plain(frame(lastFrame));
     expect(f).toContain("Bash command");                                   // `Ed` title, L505286
     expect(f).toContain("rm -rf build");                                   // the rendered command, plain
-    expect(f).toContain("Clear the build output");                         // the dim description under it
+    expect(f).toContain("Clear the build output");                         // …and its description under it
+    expect(rawLine(lastFrame, "Clear the build output")).toContain(DIM);   // which the criterion says is DIM
+    expect(rawLine(lastFrame, "rm -rf build")).not.toContain(DIM);         // …unlike the command above it
     expect(f).toContain("Do you want to proceed?");                        // `zTe`'s default question, L505939
     expect(f).toContain("Note: may recursively force-remove files");       // the destructive table's row
     expect(frame(lastFrame)).toContain(`${sgr("warning")}Note: may recursively force-remove files`);
@@ -309,14 +318,22 @@ describe("F6 acceptance #5 — every rewind row carries its file-change summary 
 // ── ACCEPTANCE #6 ───────────────────────────────────────────────────────────────────────────────────────
 // "`j`/`k`, `ctrl+n`/`ctrl+p`, PageUp/PageDown and Home/End move the selection in every list in the app."
 //
-// Uniform because every list is T1's `Select`, so this is one helper run over each Select-driven surface the
-// wave shipped. Each key group gets a FRESH MOUNT rather than a walk from one state to the next, because a
-// surface whose last row is a `type:"input"` row (the plan dialog) deregisters every movement action while
-// that row has the cursor (`useSelectKeys`, upstream's `if (!m)` at L396672) — End must be assertable without
-// stranding the walk on it.
+// **NARROWED, and the narrowing is the honest part.** What is true is "every list THIS WAVE SHIPPED" — the
+// seven surfaces below, uniform because each of them mounts T1's `Select`. Two older overlays are NOT
+// covered and would fail two of the five groups: `SettingsDialog` and `PermissionsDialog` push the `Settings`
+// context, which binds `up`/`down`/`j`/`k`/`ctrl+p`/`ctrl+n` but **no `pageup`/`pagedown`/`home`/`end` at
+// all** (bindings.ts), and their key fallback swallows the unresolved keys rather than passing them on — so
+// those four are dead there. That is a real shortfall against the criterion's literal wording, it is recorded
+// in the parity doc's F6 divergence table, and it is stated here rather than hidden behind a helper that
+// simply never visits those two surfaces.
 //
-// THREE RECORDED EXCEPTIONS, each pinned in its own shape below rather than silently skipped, and each
-// carried into the parity doc's F6 divergence table:
+// Each key group gets a FRESH MOUNT rather than a walk from one state to the next, because a surface whose
+// last row is a `type:"input"` row (the plan dialog) deregisters every movement action while that row has the
+// cursor (`useSelectKeys`, upstream's `if (!m)` at L396672) — End must be assertable without stranding the
+// walk on it.
+//
+// THREE RECORDED EXCEPTIONS among the seven, each pinned in its own shape below rather than silently skipped,
+// and each carried into the parity doc's F6 divergence table:
 //   · `MultiSelect` binds no Home/End at all (`tQs`, T2) — bundle-faithful, and narrower than the criterion's
 //     literal wording. The single-select surfaces below are what "every list" means here.
 //   · The session picker is modeless-search, so an UNBOUND printable types into the query; `j`/`k` are bound
@@ -385,9 +402,12 @@ const opened = async (ui: React.ReactElement, ready: string): Promise<View> => {
 };
 
 pinsListNavigation(
+  // The rows are matched on their RENDERED INDEX PREFIX, not their bare label: a bare `Yes` is a prefix of
+  // row 2's `Yes, and don’t ask again for: …`, so `toContain("Yes")` would pass with the cursor on either
+  // row and the j/k assertions would prove nothing. Every row here carries a `Select` index column.
   "the permission dialog's option list",
   () => opened(<BashPermission req={{ input: { command: "npm run build" }, suggestions: [npmRule] }} cwd="/repo" onDecision={() => {}} />, "Bash command"),
-  ["Yes", "Yes, and don’t ask again for: npm run *", "No"],
+  ["1. Yes", "2. Yes, and don’t ask again for: npm run *", "3. No"],
 );
 
 pinsListNavigation(

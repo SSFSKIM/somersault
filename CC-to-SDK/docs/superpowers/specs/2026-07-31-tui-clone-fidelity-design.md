@@ -1243,6 +1243,23 @@ behind those rows — all forty `K1`–`K40` research rows, re-scored — sits a
   additionally recorded unreachable: `tag` is set only for `type:"prompt"` + `kind:"workflow"`, and
   `source` maps command *provenance* (`projectSettings` → `project`, `plugin` → `org`) where our
   `CommandEntry.source` answers local-vs-catalog — a different question. Both remain named zeros in the sums.
+- 2026-08-06 — **F6's DG30 is delivered at HALF its census width: three of upstream's six plan options are
+  unreachable (Task 9, bundle-traced).** The Delivers line names `DG30` unqualified, and the census describes
+  the option list as up to six conditional rows. Three ship — `Yes, auto-accept edits`, `Yes, manually
+  approve edits` and the keep-planning input. The other three cannot: the **clear-context** family
+  (`Yes, and clear context` / its re-seed sibling `DG32`) is gated on a live context-usage percentage *and* a
+  host-state flag no client sees, and its arm ends in a **deny plus an app-state hand-off**, not a tool
+  answer, so even a fabricated row could not complete; **Ultraplan** is a remote-session entitlement; and the
+  **bypass / auto-mode** rows sit behind a `gI()` entitlement probe. What ships is the reachable subset plus
+  one addition upstream lacks — `DZe`'s `Exit plan mode?` branch for an empty plan. Recorded beside DG22/DG23.
+- 2026-08-06 — **F6's DG44 does not ship at all: the skipped-files sentence has no data behind it on our wire
+  (Task 10).** The Delivers line names `DG44` unqualified. Upstream's `Restored the code, but skipped N
+  files: …` (L487142) reports symlinks and unwritable paths a restore stepped over; our `rewind()` returns
+  `Promise<void>` and `RewindDryRun` carries no `skippedLinks` (or any per-file outcome), so the count that
+  sentence is about does not exist. Inventing a zero would be worse than silence. The three *reachable*
+  failure arms — conversation-only, code-only, and both — do ship, in `rewindFailureHeading`. Unlike DG28
+  this is not an SDK-level unreachability: it is our own host contract, and widening `rewind()`'s return type
+  would make it buildable. Recorded beside DG28.
 - 2026-08-06 — **F6's DG24 is delivered at HALF its census width: the allow-side feedback channel does not
   exist in the SDK (Task 3, `sdk.d.ts`-verified).** The census describes `DG24` as *both* rows becoming text
   inputs — `and tell Claude what to do next` on accept, `and tell Claude what to do differently` on deny —
