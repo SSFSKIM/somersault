@@ -1207,6 +1207,40 @@ behind those rows — all forty `K1`–`K40` research rows, re-scored — sits a
 
 ## Revision Notes
 
+- 2026-08-05 — **F5 acceptance #1's "40 lines" is 40 NEWLINES (Task 3).** `kmt` (L317378) counts newline
+  matches, not visual rows, so the paste that mints `[Pasted text #1 +40 lines]` is one containing 40
+  newlines — 41 lines of text. The threshold itself is also rows-dependent (`max(0, min(rows-10, 2))`), so
+  the plan's flat "> 2 newlines" holds only on a terminal at least 12 rows tall.
+- 2026-08-05 — **F5 acceptance #3's ghost text is the MID-TEXT surface (Tasks 9/10).** `Pli` (L489935)
+  demands whitespace or CJK punctuation before the slash, so a buffer-leading `/mod` cannot produce a ghost;
+  it opens the popup (`YRr`'s head branch, L490747). The criterion's three clauses are pinned on the two
+  surfaces upstream splits them across: ghost + Tab mid-text, Enter-accepts-and-executes at the head.
+- 2026-08-05 — **The 100 000-character cap gates the paste EXPAND, not only its hint (Task 5).** `bDo`
+  (L317410) carries the `> lgr` refusal inside the locator `kne` calls, so a paste over the cap can never be
+  expanded back inline; the plan described it as a hint-only gate.
+- 2026-08-05 — **The paste cache is written at SUBMIT, inside the history append (Tasks 5/7).** The bundle's
+  only `DUd` call is in `uu_` (L317608), behind `CLAUDE_CODE_SKIP_PROMPT_HISTORY` and behind the 1024-char
+  inline split. The Task-5 write-at-chip-creation seam was a privacy edge (it wrote before submit and
+  ignored the skip variable) and was deleted in Task 7.
+- 2026-08-05 — **There is no `mode` column in the prompt history (Task 6).** Upstream writes `hon(text, mode)`
+  (L548774) and every reader derives the mode back off the `!` prefix (`mP`, L489529). The plan sketched a
+  `mode` field; a second source of truth for the same bit is exactly how a recalled `!git status` ends up in
+  prompt mode, so the prefix stays canonical.
+- 2026-08-05 — **There is no live garbage collection of text paste entries (Task 4).** Upstream's sweep
+  (L495715–L495728) collects image/audio entries only and the text map survives to submit (L536788–L536792).
+  An earlier draft GC'd text chips and lost payloads silently at every park site (history recall, kill ring,
+  stash). Motions also step OVER a chip rather than treating it as impassable (L394793/L394803).
+- 2026-08-05 — **`CM48`'s real guard is the first-line rule, not a popup rule (Task 8).** `Uge`
+  (L495509–L495533) declines the drain when the buffer has more than one line *and the cursor has crossed the
+  first newline*; the plan's guard was written as "any open popup". Our port keeps upstream's rule and adds
+  only a declining-not-blocking arm for the popup, because in this port the popup's own ↑/↓ selection lives
+  in the editor reducer rather than in a component above it.
+- 2026-08-05 — **The inline reverse-i-search has NO scope cycling (Task 12).** `r9f`'s action memo (L489750)
+  registers exactly four `historySearch:*` actions and `cycleScope` is registered only by the picker
+  (L492190); upstream's inline corpus `kBs` (L317456) is unfiltered, i.e. permanently `everywhere`. A first
+  implementation built cycling on a controller instruction and was strictly reverted on the bundle read; the
+  bound `ctrl+s` is inert there, and a test pins the inertness.
+
 - 2026-08-04 — **F4 acceptance #4's wording split across two surfaces, ratified against the bundle
   during Task 11 review.** The criterion reads as if the detail view carries `∴` + markdown +
   `Thought for 12s` together; upstream carries no duration in its transcript/ctrl+o view. At

@@ -126,7 +126,7 @@
 >   numbered permission dialog, `/cost`+`/status`, and a context-threshold warning. Overall TUI/UX parity
 >   **~46% → ~82%**; **entirely `tui/`-side** (one tiny harness-agnostic addition: none — no `harness/src`
 >   change). Domain 10 below.
-> - **TUI clone fidelity waves F0–F4 (2026-08-02 → 2026-08-04)** — the ~82% above was measured against a
+> - **TUI clone fidelity waves F0–F5 (2026-08-02 → 2026-08-05)** — the ~82% above was measured against a
 >   stale February reference; re-derived against the real 2.1.220 bundle it is **~63%**, and the fidelity
 >   waves are the work of closing that honestly. F0 removed the user-harm cases, F1 unified the renderer on
 >   one retained transcript document, **F2 replaced every `useInput` callback with a declarative keymap**
@@ -151,14 +151,28 @@
 >   the corrected prompt and assistant identity glyphs with a 10 000-char prompt fold, thinking hidden by
 >   default with upstream's `∴` detail form, and the **user-frame sentinel router** that decides whether a
 >   `user` frame is a prompt at all (12 of `ERe`'s 15 exits, plus error sentinels, system notices, the
->   compact boundary and teammate attribution). TUI/UX parity now **~66%**: §2 rises 62.5% → 70.4% on seven
->   promoted rows (plus one new row born ✅) while seven new rows grow its denominator from 20 to 27 and one previously-✅ row is marked
->   down on a gap nobody had measured. **Named remaining gaps, honestly:** fenced-code and diff-body syntax
->   highlighting covers 10 languages where upstream covers ~383 (the largest single gap); F5 has not started
->   on the input surfaces (§1's composer tail, `statusLine`, the notification queue, terminal title); F6 has
->   not started on the dialog surfaces (§4's `Select`/`Tabs` primitives, `DiffDialog`, `EnterPlanMode`,
->   the 13-kind permission matrix). The keybinding detail is `tui-ux.md` §1a; the live-turn detail is its F3
->   section and the static-transcript detail its F4 section. Still `tui/`-side only — no `harness/src`
+>   compact boundary and teammate attribution), taking §2 from 62.5% to 70.4% and the headline to ~66%.
+>   **F5 then closed the composer** — everything that happens before Enter: `[Pasted text #N +M lines]`
+>   chips with atomic deletion, paste-again-to-expand and a persisted content-hash cache; a prompt history
+>   that survives a relaunch (`history.jsonl` in upstream's own line shape, whole-scan newest-wins dedup, a
+>   per-index edit cache, the bash-mode filter); the queue drained back into the buffer by Up; the
+>   placeholder's four-rule ladder over a git-seeded `Try "…"` pool; upstream's trigger and accept contracts
+>   (Tab accepts, Enter accepts *and* executes) with mid-text ghost text and the inline `argumentHint`; one
+>   popup at `DXe`'s real geometry; a debounced async `@`-walk whose directories complete iteratively; and
+>   both history-search surfaces. TUI/UX parity now **~67%**: §1 rises 85.7% → 87.9% on three promoted rows
+>   and three new ✅ rows, while one previously-✅ row (`@`-mention) is marked down on the
+>   longest-common-prefix Tab that closing three census gaps made visible, and two new 🟡 rows grow its
+>   denominator from 28 to 33. **Named remaining gaps, honestly:** fenced-code and diff-body syntax
+>   highlighting covers 10 languages where upstream covers ~383 (the largest single gap); the composer's
+>   own residue is small and named (lane-A common-prefix Tab, the popup's query highlighting, `ctrl+b`
+>   shadowed by our background binding, no paste-cache eviction) but **three real-TTY checks are owed** —
+>   the external-editor stdin handoff, the bracketed-paste mode round trips, and the frame at real widths,
+>   all of which were only ever exercised through `ink-testing-library`; F7 has not started on the chrome
+>   surfaces (`statusLine`, the notification queue, terminal title, the exclusive below-composer hint slot);
+>   F6 has not started on the dialog surfaces (§4's `Select`/`Tabs` primitives, `DiffDialog`,
+>   `EnterPlanMode`, the 13-kind permission matrix). The keybinding detail is `tui-ux.md` §1a; the live-turn
+>   detail is its F3 section, the static-transcript detail its F4 section and the composer detail its F5
+>   section. Still `tui/`-side only — no `harness/src`
 >   capability change, so no domain score below moves. Spec
 >   `docs/superpowers/specs/2026-07-31-tui-clone-fidelity-design.md`.
 

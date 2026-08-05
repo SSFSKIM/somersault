@@ -5,7 +5,7 @@
 > **source of truth for visual/interaction parity** — distinct from `coverage.md` (which scores SDK
 > *capability* realization). Tracked feature-by-feature against the real Claude Code bundle at
 > **`~/claude-code-bundle/2.1.220/`** (`cli.pretty.js` plus its `MAP.md`). The current headline is dated
-> **2026-08-04 (post-F4)**; each recount block below carries its own date, and older ones are left as
+> **2026-08-05 (post-F5)**; each recount block below carries its own date, and older ones are left as
 > written rather than back-edited.
 >
 > **This file is a coarse summary, not the primary record.** The detailed per-feature ledger is the
@@ -48,16 +48,16 @@ polish* that makes CC instantly recognizable: **no welcome banner, a non-CC spin
 glyph / no "esc to interrupt"), no `●` message identity, no `!`/`#` input modes, no queued input, no
 `/cost`, and thin terminal-native editor ergonomics** (Ctrl-A/E/K/U/W, Ctrl-L, Ctrl-C-twice).
 
-| Category | Parity (start) | Parity (pre-C5) | Parity (pre-F0, post–sprint-W3) | Parity (post-F2) | Parity (post-F3) | Parity (now, post-F4) |
-|---|---|---|---|---|---|---|
-| 1. Input / composer ergonomics | ~45% | ~88% | ~95% | ~86% (was ~78% post-F0; F2 landed the keymap — see §1a) | ~86% | **~86%** (untouched by F4) |
-| 2. Transcript / message rendering | ~50% | ~74% | ~83% | ~57% | ~63% (F1 substrate rows scored at last, +5 new F3 rows) | **~70%** (F4's static transcript: 8 rows rise, 1 falls, 7 new rows — see the F4 recount) |
-| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% | ~36% | ~36% | **~36%** (untouched by F4) |
-| 4. Modals / overlays | ~60% | ~88% | ~88% (4 new W3 rows — see W3 recount note) | ~50% | ~50% | **~50%** (untouched by F4) |
-| 5. Slash commands | ~55% | ~70% | ~86% (6 new W3 rows — see W3 recount note) | ~88% (F2: `/keybindings` 🟡→✅ — it opens the real file now) | ~88% | **~88%** (untouched by F4) |
-| 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% | ~61% | ~61% | **~61%** (untouched by F4) |
-| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~80% (untouched in W3) | ~75% | ~72% (F3 deleted an over-shipped row) | **~72%** (untouched by F4) |
-| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* | ~65%<br>*(plain row count)* | ~65%<br>*(plain row count)* | **~66%**<br>*(plain row count)* |
+| Category | Parity (start) | Parity (pre-C5) | Parity (pre-F0, post–sprint-W3) | Parity (post-F2) | Parity (post-F3) | Parity (post-F4) | Parity (now, post-F5) |
+|---|---|---|---|---|---|---|---|
+| 1. Input / composer ergonomics | ~45% | ~88% | ~95% | ~86% (was ~78% post-F0; F2 landed the keymap — see §1a) | ~86% | ~86% | **~88%** (F5's composer: 3 rows rise, 1 falls, 5 new rows — see the F5 recount) |
+| 2. Transcript / message rendering | ~50% | ~74% | ~83% | ~57% | ~63% (F1 substrate rows scored at last, +5 new F3 rows) | **~70%** (F4's static transcript: 8 rows rise, 1 falls, 7 new rows — see the F4 recount) | ~70% (untouched by F5) |
+| 3. Status / chrome (banner, spinner, status bar) | ~35% | ~72% | ~92% | ~36% | ~36% | ~36% (untouched by F4) | **~36%** (untouched by F5) |
+| 4. Modals / overlays | ~60% | ~88% | ~88% (4 new W3 rows — see W3 recount note) | ~50% | ~50% | ~50% (untouched by F4) | **~50%** (untouched by F5) |
+| 5. Slash commands | ~55% | ~70% | ~86% (6 new W3 rows — see W3 recount note) | ~88% (F2: `/keybindings` 🟡→✅ — it opens the real file now) | ~88% | ~88% (untouched by F4) | **~88%** (untouched by F5) |
+| 6. Polish (glyphs, colors, affordances) | ~40% | ~74% | ~94% | ~61% | ~61% | ~61% (untouched by F4) | **~61%** (untouched by F5) |
+| 7. Control plane (dialogs, ladder, background tasks) — §8 | ~0% | ~81% | ~80% (untouched in W3) | ~75% | ~72% (F3 deleted an over-shipped row) | ~72% (untouched by F4) | **~72%** (untouched by F5) |
+| **Overall** | **~46%**<br>*(impact-weighted)* | **~83%**<br>*(impact-weighted)* | **~88%**<br>*(plain row count)* | ~65%<br>*(plain row count)* | ~65%<br>*(plain row count)* | ~66%<br>*(plain row count)* | **~67%**<br>*(plain row count)* |
 
 **F0 correction note (2026-07-31) — the headline fell from ~88% to ~63%, and this is the point of the
 exercise, not a regression to explain away.** Nothing that worked on 2026-07-30 stopped working; the
@@ -194,6 +194,38 @@ down on a gap nobody had measured. Averaged across seven categories, six of whic
 lands at ~66%. The wave's real output is not the headline: it is that the markdown engine, the diff ladder,
 the identity glyphs, thinking and the sentinel router all have rows with evidence pointers behind them for
 the first time, and that the residual gaps are named and sized rather than invisible.
+
+**F5 recount (2026-08-05, the composer wave).** One category moves, and it is §1 for the first time since F2.
+The same scoring rule the F4 recount stated applies unchanged: ✅ means every upstream behaviour the row names
+is built and pinned and any remaining difference is a **recorded deliberate delta**; 🟡 means something
+upstream does is genuinely not built. Effort does not promote a row and a recorded delta does not demote one.
+
+| Category | ✅ | 🟡 | ❌ | non-🚫 rows | Score |
+|---|---|---|---|---|---|
+| 1. Input / composer | 27 | 4 | 2 | 33 | 29/33 = 87.9% |
+| **Overall (unweighted avg of the 7 categories)** | | | | | **≈ 66.5% → ~67%** — (87.9 + 70.4 + 36.1 + 50.0 + 88.1 + 61.1 + 72.2) ÷ 7 |
+
+Row by row, so the +2.2 points in §1 are checkable rather than asserted:
+
+| Row | Was | Now | Why |
+|---|---|---|---|
+| Multiline editor (paste chips, `\`-continuation) | 🟡 | ✅ | The F0 correction named the chip; the whole `CM21`–`CM27` chain ships, including the two thresholds, atomic deletion, expand-on-repaste and the persisted cache |
+| History up/down (draft stash/restore) | 🟡 | ✅ | `history.jsonl` survives a relaunch, dedups newest-wins across the whole scan, and caches per-index edits — the three things the F0 correction said we lacked |
+| Placeholder / ghost text | 🟡 | ✅ | The one fixed string became `CM3`'s four-rule ladder over the git-seeded `Try "…"` pool, denylist and selector included |
+| `@`-file mention fuzzy autocomplete | ✅ | 🟡 | **A downgrade, and the honest kind.** `CM35`, `CM39` and `CM40` all closed this wave — and closing them exposed lane-A's longest-common-prefix Tab, which is genuinely not built. The old ✅ predates anyone counting the census rows behind it |
+| Composer visual form (`CM1`/`CM2`/`CM4`/`CM5`) | — | ✅ | New row: rules not a box, `❯`+NBSP dimming while a turn runs, the inverted placeholder cursor, and the `History n/total` label in the top rule |
+| Readline tail (`CM12`) | — | 🟡 | New row: five of upstream's six composer keys ship; `ctrl+b` is dead behind our own `task:background` binding |
+| Suggestion popup geometry (`CM30`) | — | 🟡 | New row: `DXe`'s clamp, padding, mid-anchored scroll, two-line rows and middle-elide all ship; `X4t`'s query-substring highlighting does not |
+| Inline reverse-i-search (`CM58`) | — | ✅ | New row: upstream's own `ctrl+r` surface for a classic layout, Esc-accepts included |
+| History picker preview pane (`CM59`) | — | ✅ | New row: the six-line `round` preview, the `… +N lines` tail and the ≥100-column side-by-side layout |
+
+**Read the headline the way the last three were written: +0.9 points overall is the honest number for a wave
+that closed most of the composer.** §1 rises 2.2 points on three promotions and three new ✅ rows, while one
+✅ is marked down and two new 🟡 rows enlarge the denominator from 28 to 33 — a denominator that now has rows
+for the popup's geometry, the readline tail, the composer's own frame and both search surfaces, none of which
+this file could see a week ago. Six of the seven categories were never touched, so the average barely moves.
+The wave's real output is not the headline: it is that every keystroke before Enter now has either a pin, a
+recorded divergence with a bundle citation, or a named gap with an owner.
 
 The spec that ordered this correction estimated the fall would land "into the low 70s"; the computed
 number lands lower, at ~63%. That is not a contradiction to paper over: the spec's figure was a
@@ -728,38 +760,149 @@ F4 recount.
 
 ---
 
+## F5 (2026-08-05) — the composer
+
+F4 finished what the transcript says. **F5 is everything that happens before Enter** — the bordered row a
+reader looks at for the whole session, and the twelve tasks behind it: the paste-chip chain, the persisted
+prompt log, the queue drain, the placeholder generator, the trigger and accept contracts, one popup, the
+async `@`-walk, and both history-search surfaces. It closes most of census §D (`CM1`–`CM65`).
+
+Three disciplines carried over from F4 and each earned its keep again. **The bundle outranks the plan**, and
+this wave it overruled the plan or the brief *eight* times: paste chipping is rows-dependent (`kmt` counts
+newlines, and the threshold reads the live terminal height); the `100 000`-character cap gates the paste
+EXPAND and not just its hint; the paste cache is written at SUBMIT inside the history append, never at chip
+creation; there is **no `mode` column** in the history file (the `!` prefix is the mode); there is **no live
+garbage collection** of text paste entries; motions step OVER a chip rather than treating it as a wall; the
+`Dee` debounce is trailing-only so even the first walk waits; and the inline search has **no scope cycling**
+at all. **A shipped route is not a proven one** — the `?2004` bracketed-paste handoff and the external-editor
+stdin handoff are both still owed a real-TTY look, and they are listed as gaps rather than counted. And
+**where a spec sentence and the bundle disagree, the sentence is corrected** — acceptance #1's "40 lines" and
+acceptance #3's "typing `/mod` shows ghost text" are both recorded splits, argued in
+`test/tui/f5-acceptance.test.tsx`'s header and in the spec's Revision Notes.
+
+### Now faithful
+
+| Row | What shipped | Evidence |
+|---|---|---|
+| The composer's visual form | `CM1`'s two full-width `─` rules with no verticals or corners (`borderLeft/Right:!1`, L496235), `CM2`'s `❯`+NBSP / `!`+NBSP glyph dimmed while a turn runs, `CM5`'s inverted-first-character placeholder cursor, `CM4`'s `History n/total` spliced into the top rule through `$Bu`'s three-lead-dash arithmetic (clamp included), and `CM8`'s italic dim `Save and close editor to continue...` in place of the input row while `$EDITOR` holds the terminal | `test/tui/composer-frame.test.tsx`, `test/tui/f5-acceptance.test.tsx` § #5 |
+| Paste chips, end to end | `CM21`'s two thresholds (`>800` chars **or** `> max(0, min(rows-10, 2))` newlines — the row count is live), `CM27`'s ANSI/CRLF/tab normalisation in `k0`'s own order, `CM22`'s atomic `deleteTokenBefore` and the cursor snap-out, chip-transparent motions, `CM24`'s paste-again-to-expand behind `bDo`'s 100 k cap, `CM25`'s `Pasting…`, `CM26`'s 0600 content-hash cache, and `fSe`'s submit-time expansion | `test/tui/paste-chips.test.ts`, `test/tui/paste-expand.test.tsx`, `test/tui/f5-acceptance.test.tsx` § #1 |
+| Persisted prompt history | `CM52`'s `history.jsonl` in upstream's own line shape (`{display, timestamp, project, sessionId, pastedContents}`, the `nu_` 1024-char inline/hash split, the `CLAUDE_CODE_SKIP_PROMPT_HISTORY` gate over the whole append), `CM53`'s whole-scan newest-wins dedup, `CM54`'s per-index edit cache carrying the full `{display, pastedContents, mode}` triple, `CM55`'s bash latch and display filter, `CM56`'s once-per-process `ctrl+r` hint after the second Up, and `CM57`'s chip restore with `ou_`'s literal for a body that is gone | `test/tui/history-nav.test.tsx`, `test/tui/f5-acceptance.test.tsx` § #2 |
+| The editing tail | `CM12`'s `ctrl+f`/`ctrl+h`/`ctrl+n`/`ctrl+p` and `alt+d`; `CM17`'s undo ring at upstream's cap 50 with a 1000 ms coalesce window and `pastedContents` inside every entry; `CM18`'s cursor-relative backslash-Enter setting `hasUsedBackslashReturn`; `CM20`'s `Z_a` newline-hint ladder; `CM14` pinned (our buffer's lines *are* logical lines) | `test/tui/editor-readline.test.ts`, `test/tui/editor.test.ts` |
+| Queue semantics | `CM51`'s typed entry (`{value, mode, priority, pastedContents, origin}`) with `P5`'s editable predicate, `CM48`'s Up/`ctrl+p` drain — queued entries first, the draft last, non-editable entries left in place, ids re-minted twice so no two chips collide — and `CM47`'s `Press up to edit queued messages` rung | `test/tui/queue-composer.test.tsx` |
+| The placeholder generator | `CM3`'s four-rule precedence ladder over `MVf`'s eight `Try "…"` templates, `wNb`'s nine-regex denylist verbatim, `INb`'s ramp-and-cap file selector with per-directory caps and all-or-nothing return, and `xNb`'s git harvest with its unscoped re-run | `test/tui/queue-composer.test.tsx` |
+| Trigger and accept contracts | `CM34`'s whitespace-or-CJK-preceded slash trigger plus the six-name denylist and the separate head case, `CM35`'s `@` character class and quoted paths, `CM28`'s Tab-accepts / Enter-accepts-and-executes split with upstream's argument-hint exception, `CM29`'s wrapping selection, and `CM38`'s `No commands match "…"` | `test/tui/autocomplete-triggers.test.ts`, `test/tui/f5-acceptance.test.tsx` § #3 |
+| One popup, upstream's geometry | `DXe`'s clamped height `max(1, min(max(6, ⌊rows/2⌋), rows-3))` with blank padding to a fixed height, the mid-anchored scroll window, `a0H`'s two-line rows, the 40 %-capped name column, `suggestion`-coloured selection over dim rows, `bLt`'s middle-elide keeping the basename, and `Ptl` as the exclusive below-composer slot predicate | `test/tui/suggest-popup.test.tsx` |
+| Ghost text and the inline hint | `CM36`'s mid-text ghost — `zJa`'s shortest-prefix pick, the inverted first grapheme, Tab accepting through `Pe`'s ghost arm, and the render gate that draws it only with the caret at the end of the buffer — and `CM37`'s `argumentHint` after a completed `/command ` | `test/tui/suggest-popup.test.tsx`, `test/tui/f5-acceptance.test.tsx` § #3 |
+| The async `@`-walk | `CM39`'s trailing-only 50 ms debounce with a generation guard that discards a slow walk a newer one has overtaken, and `CM40`'s iterative descent — a directory splices with a trailing slash and NO space, which leaves the trigger live and re-roots the walk one level deeper | `test/tui/file-complete-async.test.tsx`, `test/tui/f5-acceptance.test.tsx` § #4 |
+| Both search surfaces | `CM58`'s inline reverse-i-search — `search prompts:` / `no matching prompt:`, the last-occurrence substring walk, the per-walk display dedup, the parked draft restored on an emptied query or a cancel, Esc-accepts — and `CM59`'s preview pane (`round`, dim border, six content lines, `… +N lines`, side-by-side at ≥100 columns) | `test/tui/inline-history-search.test.tsx`, `test/tui/historySearchOverlay.test.tsx` |
+| Acceptance composites | The wave's five spec criteria as executable pins, each driven through the real `<ChatComposer>` and each mutation-proven | `test/tui/f5-acceptance.test.tsx` (5) |
+
+### Unreachable / not built — recorded, not counted
+
+🚫 where excluded from the denominator (same rule as §1a's unreachable keys and the F3/F4 tables); the
+unbuilt-but-reachable entries are named here **and** carried as the 🟡 on their §1 row.
+
+| Upstream behaviour | Why | Status |
+|---|---|---|
+| `CM6` — the cursor stops being drawn inverted when the terminal loses focus | Focus reporting (DECSET 1004) is not read anywhere in this harness and the spec records it unreachable | 🚫 |
+| `CM7` — the fullscreen `maxVisibleLines` viewport with cursor-centred scroll | Belongs to the fullscreen (`ds()`) mode this clone does not model; recorded unreachable in the spec | 🚫 |
+| `CM19` — `shift+enter` as a distinct newline | Our editor **does** insert a newline on the `ESC CR` form, so a terminal already configured by upstream's `/terminal-setup` (or one speaking CSI-u) works. We ship no installer, and plain `shift+enter` is byte-identical to Enter — see §1a's unreachable-keys table | 🟡 on K40 |
+| `CM33` — mouse hover/click on popup rows | Explicit F5 non-goal; needs terminal mouse-mode ownership (the same gap as K22) | 🚫 |
+| `CM41` — the other completion sources (emoji, Slack `#channel`, `@teammate`, MCP resources/templates, bash path completion, `/resume <title>`, per-command `getArgumentCompletions`) | Explicit F5 non-goal; most have no ccx surface behind them | 🚫 |
+| `CM42`–`CM45` — image chips, `ctrl+v` clipboard reads, drag-and-drop, the OSC-8 chip link | Explicit F5 non-goal, gated on P87 (the SDK image-block surface). The `ctrl+v` row stays ❌-pending-P87 in §1, as F0 reclassified it | 🚫 / ❌ |
+| `CM50` — the per-item queue-edit cursor (`queueEditIndex`, `popEditableAt(i)`) | Behind upstream's own `CLAUDE_CODE_KB_COHESION_FIXES` flag, i.e. not default behaviour there either. Not built | not built |
+| `CM60` — vim mode | Owner-deferred since C5; unchanged | 🚫 |
+| `CM61` — live highlight spans in the buffer | Explicit F5 non-goal. Its popup-side cousin `X4t` (highlighting the query substring inside a suggestion row) **is** in scope and is not built — it is the 🟡 on the popup row and has a ticket | 🚫 / 🟡 |
+| Lane-A's longest-common-prefix Tab (L490925–L490934) | Upstream's mention lane completes to the longest shared prefix when Tab cannot disambiguate. Genuinely not built — a real affordance gap, and the reason the `@`-mention row is marked down | not built |
+| The paste-cache eviction sweep (`OUd`, L317354 / L439899) | Upstream retires cached paste bodies on a retention schedule. We write them and never sweep, so a long-lived fleet root grows without bound | not built |
+
+### Deliberate divergences from upstream
+
+Every place F5 knows what 2.1.220 does and shipped something else, with the reason.
+
+| Divergence | Upstream | Ours, and why |
+|---|---|---|
+| Where the prompt log lives | `~/.claude/history.jsonl` | `history.jsonl` and `paste-cache/` at the **ccx fleet root** (`CCX_FLEET_ROOT`), by the `prefs.ts` precedent. Same format, our root — so a test run isolates cleanly and we never write into a real Claude Code user's prompt log |
+| The append is a bare `appendFileSync`, not a lock | Batches pending entries and takes a `proper-lockfile` lock around a coalesced async flush (`lu_`) | One `O_APPEND` write of a few hundred bytes per prompt, which is atomic on every filesystem we target. Upstream's batching exists to amortise an async lock we do not take. The residual: two ccx processes interleaving at >4 KiB lines could in principle tear one, and a prompt line is nowhere near that |
+| History is read whole | `DBn` pages BACKWARDS in 4 KiB chunks so a huge log is never resident | Read the file, reverse, cap. At 100 entries of recall the file is tens of KiB; the paging machinery would be larger than the file |
+| No `cu_` write suppressor | Skips the append when the previous entry matches display + project + session and neither carries pastes | We write the duplicate line; `readHistory`'s dedup hides it from every reader, so the only cost is file growth |
+| Undo coalescing shape | A **deferred debounce** — a sub-window change reschedules a `setTimeout`, and undo cancels the pending timer | A **coalescing snapshot-on-change**: a push inside the 1000 ms window is skipped instead of deferred. Both directions are recorded at the reducer, because they differ at one edge — after a burst, upstream's pending timer can still land one entry we never take |
+| No live GC of text paste entries | — | Bundle-verified as ours to keep: upstream's `useEffect` sweep (L495715–L495728) collects **image/audio** entries only, and the text map survives to submit (L536788–L536792). An earlier draft GC'd text chips and caused silent payload loss at every park site (history recall, kill ring, stash) |
+| Smart spacing after a chip | — | **Dropped with bundle evidence.** The census read `CM22` as including a smart-space rule; the bundle applies it to image chips only. Not shipped, recorded rather than silently omitted |
+| `id 0` asymmetry | — | `chipSpans` filters id 0 out (`KF`'s own `.filter(n => n.id > 0)`) while the delete-token regex accepts it, so a hand-typed `[Pasted text #0]` is deletable as a token but is never a chip. Upstream's own shape; recorded because the two regexes look like they should agree |
+| Dead map entries ride to submit | Same | An entry whose label was deleted out of the buffer stays in the map until the buffer is replaced. Upstream-literal, cited at the site |
+| The `?2004` handoff | — | We **disable** bracketed-paste mode before handing the terminal to a child (external editor, suspend) and re-enable it after: a mode-unaware child that receives `\x1b[200~` prints it. Upstream leaves it on. A deliberate, and still TTY-unverified, difference |
+| The `Z_a` newline hint sits in the composer footer | Rendered as a row inside the `?` help overlay | Kept in the footer, where our own hint ladder already lives and where the editor's literal used to be. Cost: the verbose rung is 37 characters, so the footer wraps to a second line below ~100 columns |
+| Hint rows STACK below the composer | `Ptl` (L494604) makes the slot **exclusive** — one of the suggestion popup, the footer ladder, the bash/memory hint rows or the help ladder, never two | Our `!popupDrawn` transcribes `Ptl` for the two footer rows only; the bash/memory hint rows still stack alongside. Owned by the chrome wave (CH2/F7), recorded here |
+| `ctrl+b` is ours | `ctrl+b` moves the cursor left in the composer (`CM12`) | `ctrl+b` is `task:background` in the `Global` context, so the editor's `moveLeft` branch exists and is unreachable. A standing pre-F5 divergence (K10), now with a shipped-but-shadowed handler behind it |
+| `ctrl+r` routes to the INLINE search | Ships both surfaces and picks by layout: inline when `yie()` is false, the full-screen picker when true (L489752 / L496209) | Our REPL is permanently classic layout, so `ctrl+r` is upstream's own inline choice. The picker keeps a door of its own: **`/history`**, a recorded ccx addition (upstream needs no such command because fullscreen hands it the picker) |
+| `CM56`'s hint is rendered in the composer | Routed through upstream's **notification queue**, which owns placement and lifetime | Ours draws it as a composer row. Closing it belongs to F7, which owns the queue; the once-only guard is also **process-lifetime** here (a durable ref survives a dialog remount) rather than notification-scoped |
+| Prompts submitted before F5 are invisible to search | — | Both search surfaces read `history.jsonl`, which only started being written by F5 task 6. Older prompts exist in the session transcripts and in neither surface. In exchange both now carry the `!` bash prefix and the `pastedContents` a transcript row never had — and `scope:"session"` matches only entries written after the session's first state event, since earlier ones carry no session id |
+| The inline corpus is deduped and capped | `kBs` streams the raw log, unfiltered and unbounded | Both surfaces read one reader (`readHistory` = `UUd`), which dedups by display and caps at 100 distinct entries — so `ctrl+r` cannot reach past the 100th distinct prompt |
+| `ctrl+s` is inert in the inline search | Registers exactly four `historySearch:*` actions; `cycleScope` belongs to the picker alone | Same: no scope cycling inline. A first draft built it and was **strictly reverted** on the bundle read; a test now pins the inertness, so the key resolves and drops rather than being accidentally revived |
+| Forward `Delete` inside the inline search | — | Treated as a backspace on the query. Our one key fallback feeds the query field, and a forward-delete has no meaning in a single-line reverse-i-search |
+| `Escape` dismisses the `CM38` empty message | `Lt` is false while the message is on screen, so Escape falls through | Ours widens `completionActive` to cover it, so one Escape dismisses every completion surface alike. Deliberate, argued at the declaration |
+| `queuedCommandUpHintCount` is incremented | **Never** — `grep` over the whole bundle finds the default and the read, no writer, so its own `< 3` gate can never close | We increment it, which makes the `Press up to edit queued messages` rung retire after three sessions as the code plainly intends. A recorded invention, not a port |
+| The `Try "…"` pick is process-scoped | Same (`Vr` is a lodash memo-once-per-process) | Same scope, different mechanism: a frozen random *sequence* on the app ref, so the ladder still re-evaluates every render while the sentence stays stable across keystrokes |
+| `submitCount` counts queued-while-busy prompts | Gates its equivalent on `!busy` | Cosmetic; affects only how quickly the first-three-sessions rung retires |
+| Queue `origin` is a bare string | An object (`{kind: …}`) | Nothing on our side reads more than the discriminant |
+
+### Open evidence gaps (honest closure candidates, not claims)
+
+- **Three real-TTY checks are owed and none has been made.** The external-editor handoff (does the child
+  actually get fd 0, and does raw mode come back?), the `?2004` enable/disable round trips, and the frame at
+  real terminal widths — every composer pin in this wave was taken through `ink-testing-library` at a fixed
+  width. The wave-close e2e is the natural home for all three.
+- **The real-filesystem 50 ms `@`-walk path is unexercised.** Every `CM39`/`CM40` test injects `readdir`; the
+  debounce constant is pinned as the composer's default, but no test has watched a real directory tree land.
+- **Upstream's `Wci` exclusive-slot chooser has never been compared visually.** We transcribe `Ptl` for two
+  rows and stack the rest; whether a real 2.1.220 frame ever shows two hint rows at once is unverified, and
+  a pyte capture would settle it.
+- **`ChatComposer.tsx` is 861 lines.** The named next split is `renderBuffer` / `suggestProps` / `seedHistory`
+  (~90 pure lines). `editor.ts` came down to 533 after the `completions.ts` extraction and is fine.
+- **Nothing enforces the negative-assertion / random-`Try`-pool collision rule.** A frame assertion of the
+  form "does not contain X" can collide with a randomly drawn placeholder sentence; one such collision was
+  found and fixed in t8 by choosing a token no template can produce. Future tests are on their honour.
+
+---
+
 ## 1 — Input / composer ergonomics
 
 | Feature | Status | Priority | Notes / CC reference |
 |---|---|---|---|
-| Multiline editor (paste split, `\`-continuation) | 🟡 | — | `editor.ts` — paste = one `useInput`, insert-and-split. **F0 correction:** upstream turns a >800-char or >2-newline paste into a `[Pasted text #N +M lines]` chip stored out of band and substituted at submit; ours inserts the pasted text verbatim, no chip |
-| History up/down (draft stash/restore) | 🟡 | — | `editor.ts` historyPrev/Next. **F0 correction:** ours is in-memory per composer mount; upstream persists `~/.claude/history.jsonl` across sessions with newest-wins dedup and a per-index edit cache |
-| `@`-file mention fuzzy autocomplete | ✅ | — | `editor.ts` + `fileComplete.ts` |
-| `/`-slash command autocomplete | ✅ | — | `editor.ts` command state + `commandComplete.ts` |
+| Multiline editor (paste chips, `\`-continuation) | ✅ | — | **F5 (t1/t3/t4/t5).** The F0 correction is closed: `CM21`'s chip fires above 800 characters **or** above the live `max(0, min(rows-10, 2))` newline threshold, the body is parked out of band and `fSe` substitutes it back at submit, one backspace eats the whole placeholder (`deleteTokenBefore`), motions step over it, `CM24`'s paste-again expands it inline under `bDo`'s 100 k cap, `CM25`'s `Pasting…` shows while a paste assembles, `CM26`'s cache survives sessions, and `CM27`'s ANSI/CRLF/tab normalisation runs in `k0`'s order. `CM18`'s backslash-Enter is now cursor-relative and sets `hasUsedBackslashReturn`. Recorded deltas: the cache lives under the fleet root, is never swept, and `CM22`'s smart-spacing clause turned out to be image-only upstream — see the F5 divergence table |
+| History up/down (draft stash/restore) | ✅ | — | **F5 (t6/t7).** The F0 correction is closed: `history.jsonl` in upstream's own line shape persists across launches, `CM53`'s dedup is whole-scan newest-wins, `CM54`'s edit cache carries the full `{display, pastedContents, mode}` triple so an edited recall survives arrowing away and back, `CM55`'s bash latch filters the walk by the display's `!`, `CM56` raises the derived `ctrl+r` hint after the second Up, and `CM57` restores a recalled prompt's chips (rewriting a lost body to `ou_`'s literal). Recorded deltas: our file is at the fleet root, the append is a plain `appendFileSync` rather than a lock, the read is whole-file, and there is no `cu_` write suppressor |
+| `@`-file mention fuzzy autocomplete | 🟡 | — | **F5 (t9/t11), and an honest downgrade.** Three census gaps closed at once — `CM35`'s full path character class and quoted `@"my file.ts"` paths, `CM39`'s trailing-only 50 ms debounce with a generation guard that discards an overtaken walk, and `CM40`'s iterative descent (accepting a directory splices `@src/` with no trailing space and re-roots the walk one level deeper). Closing them revealed the one thing genuinely **not built**: upstream's lane-A Tab completes to the longest common prefix when it cannot disambiguate (L490925–L490934). The old ✅ predates anyone counting; there is also no prebuilt fuzzy index, so a very large repository re-walks |
+| `/`-slash command autocomplete | ✅ | — | **F5 (t9/t10) re-verified against the bundle.** `CM34`'s trigger (whitespace or CJK punctuation before the slash, cursor at token end, the six-name denylist, the separate head case), `CM28`'s Tab-accepts-without-executing / Enter-accepts-and-executes split including upstream's argument-hint exception, `CM29`'s wrapping selection, `CM36`'s mid-text ghost text, `CM37`'s inline `argumentHint`, and `CM38`'s `No commands match "…"`. One recorded delta: Escape also dismisses the empty-message state, where upstream's `Lt` is false |
 | `!` bash mode (run shell directly, no model) | ✅ | — | **U5** `bash.ts` local exec in cwd, echoed `! cmd` + `⎿`-style output (local-only by design; no model context injection) |
 | Input mode indicator (bash/memory/command) | ✅ | — | **U5** `inputMode()` → magenta bash / blue memory border + hint |
-| Ctrl-A / Ctrl-E (line start/end) | ✅ | — | **U7** `editor.ts` readline keys |
+| Ctrl-A / Ctrl-E (line start/end) | ✅ | — | **U7** `editor.ts` readline keys. **F5 (t1):** `CM14` pinned rather than assumed — upstream's are `startOfLogicalLine`/`endOfLogicalLine` and our buffer's array entries ARE logical lines, so the census's "diverges once wrapping lands" does not apply to this model |
 | Ctrl-K / Ctrl-U (kill to end/start) | ✅ | — | **U7** `editor.ts`. **fixed 2026-07-31 (F0, t1, CM10/CM11):** killed text used to be discarded — the correction had this at 🟡. It now feeds a real kill ring (cap 10, coalescing runs), with `Ctrl+Y` yank / `Alt+Y` yank-pop and a `Ctrl+Y to paste deleted text` hint after a ≥3-char Ctrl-U kill, matching upstream |
 | Ctrl-W (kill word back) | ✅ | — | **U7** `editor.ts`. **fixed 2026-07-31 (F0, t1):** same kill-ring fix as Ctrl-K/Ctrl-U above |
 | Word movement (Alt/Ctrl ←→) | ✅ | — | **C5** `editor.ts` `wordLeft`/`wordRight` (Alt-←→ and Alt-b/f), checked ahead of the ctrl-combo branch so no meta chord falls through to insertion |
 | Ctrl-L (clear **input**) | ✅ | — | **W1** converged on 2.1.220's `chat:clearInput` (the old app-level screen-clear was a divergence); screen clear stays `/clear` — real CC's `cmd+k` never reaches a terminal app (intentional divergence, recorded) |
 | Ctrl-J (newline) | ✅ | — | **W1** `editor.ts` — 2.1.220 `chat:newline`, alongside `\`-continuation. **F0 note (t4, KB4/KB23):** the `key.ctrl==="j"` branch this used to dispatch through was dead code — real terminals send a bare `\n`, never a ctrl-flagged `"j"` — and was deleted; the newline still works via the generic bare-`"\n"` insert path, so behavior is unchanged, only the dead branch is gone |
-| Ctrl-_ / Ctrl-- (undo edit) | ✅ | — | **W1** `editor.ts` snapshot-on-change stack (cap 100) — 2.1.220 `chat:undo`. **fixed 2026-07-31 (F0, t4, KB4):** this row was scored ✅ but was actually **unreachable** — terminals send the bare `0x1f` byte with `key.ctrl===false`, so the old `ctrl+"_"`/`ctrl+"-"` branch never fired and a literal `\x1f` was inserted instead (only reducer-level tests existed, which is why nothing caught it, and `ShortcutsOverlay.tsx` was advertising a dead chord). Fixed by matching the raw `\x1f` byte directly; the dead `ctrl+"_"/"-"` branch was removed |
+| Ctrl-_ / Ctrl-- (undo edit) | ✅ | — | **W1** `editor.ts` snapshot-on-change stack (cap 100) — 2.1.220 `chat:undo`. **fixed 2026-07-31 (F0, t4, KB4):** this row was scored ✅ but was actually **unreachable** — terminals send the bare `0x1f` byte with `key.ctrl===false`, so the old `ctrl+"_"`/`ctrl+"-"` branch never fired and a literal `\x1f` was inserted instead (only reducer-level tests existed, which is why nothing caught it, and `ShortcutsOverlay.tsx` was advertising a dead chord). Fixed by matching the raw `\x1f` byte directly; the dead `ctrl+"_"/"-"` branch was removed. **F5 (t1):** `CM17` closed — the ring is upstream's cap **50** (not 100), every entry carries `pastedContents` alongside the text and cursor so an undone paste takes its payload with it, and a change inside 1000 ms coalesces. Recorded delta: upstream defers through a rescheduled timer where we skip the push, which differs only at the trailing edge of a burst |
 | Ctrl-S (stash / restore input) | ✅ | — | **W1** `editor.ts` — 2.1.220 `chat:stash`: parks a non-empty buffer, restores on the next Ctrl-S from empty |
 | Shift+Tab cycles permission mode (bare Tab popup-only) | ✅ | — | **W1** converged on 2.1.220's `chat:cycleMode` = `shift+tab`; bare Tab now belongs to autocomplete alone (our old bare-Tab cycle was a divergence) |
 | Ctrl-C twice / Ctrl-D to exit | ✅ | — | **U8** Ctrl-C interrupts a turn, else "Press Ctrl-C again to exit". **F0 update (t6, KB3):** Ctrl-D used to exit on a single empty-buffer press; it now needs two presses within the arm window, matching upstream's `Pee` helper — including its exact **800ms** window (`cli.pretty.js:183445`, the same constant as the Esc-Esc clear timer), corrected down from this plan's originally-assumed 2000ms after reading upstream's own patched-Ink suspend code |
-| Queued messages while busy | ✅ | — | **U6** turns queue while busy + drain FIFO on turn end; `⋯ queued:` indicator. **fixed 2026-07-31 (F0, t3, CM49), hardened in the sixth final-review pass:** Esc/Ctrl-C during a busy turn now pops the queue back into the composer (prepended ahead of any in-progress draft) before clearing it. Its current editor state is app-scoped, so the rescued/edited draft and kill ring survive the tested temporary pager, history, settings-shaped, and decision overlay remounts; submit reset stays empty and stale autocomplete is intentionally normalized. This is an evidence-backed temporary-remount guarantee, not a claim about unimplemented persistent/global editor storage |
-| Placeholder / ghost text ("Ask Claude…") | 🟡 | — | **U7** dim placeholder on empty buffer. **F0 correction:** upstream's placeholder is a 4-rule precedence chain over a git-seeded random pool (one rule is the queue hint); ours is one fixed string |
+| Queued messages while busy | ✅ | — | **U6** turns queue while busy + drain FIFO on turn end; `⋯ queued:` indicator. **fixed 2026-07-31 (F0, t3, CM49), hardened in the sixth final-review pass:** Esc/Ctrl-C during a busy turn now pops the queue back into the composer (prepended ahead of any in-progress draft) before clearing it. Its current editor state is app-scoped, so the rescued/edited draft and kill ring survive the tested temporary pager, history, settings-shaped, and decision overlay remounts; submit reset stays empty and stale autocomplete is intentionally normalized. This is an evidence-backed temporary-remount guarantee, not a claim about unimplemented persistent/global editor storage. **F5 (t8):** entries are now `CM51`'s typed record (`{value, mode, priority, pastedContents, origin}`) behind `P5`'s editable predicate, and `CM48`'s Up/`ctrl+p` drain pulls every editable entry back into the buffer — queued first, the draft last, non-editable entries left in the queue, chip ids re-minted twice so a queued chip cannot collide with one already in the draft. `CM50`'s per-item queue-edit cursor is not built; it is behind upstream's own `CLAUDE_CODE_KB_COHESION_FIXES` flag, so it is not default behaviour there either |
+| Placeholder / ghost text ("Ask Claude…") | ✅ | — | **F5 (t8).** The fixed string is gone. `CM3`'s four-rule precedence ladder ships over `MVf`'s eight `Try "…"` templates, seeded from a git harvest of recently modified files (`xNb`, including its unscoped re-run) filtered by `wNb`'s nine-regex denylist and selected by `INb`'s ramp-and-cap rule; rule 3 is the queue hint. Recorded deltas: the `Try` pick is process-scoped through an app ref rather than a lodash memo, and we increment `queuedCommandUpHintCount` — upstream never does, so its own `< 3` gate is dead |
 | `?` shortcuts / help menu | ✅ | — | **C5** `ShortcutsOverlay.tsx` — a real bordered overlay listing the keymap, opened by `?` on a genuinely empty composer; the U7 footer hint line stays alongside it. **fixed 2026-07-31 (F0, t5, KB6):** this row was scored ✅ but the overlay closed on **any** key, and that same key also fired `ChatApp`'s global chords underneath it (e.g. `Ctrl-O` would both close the overlay and open the transcript pager in one keystroke) — the correction had this at 🟡. It now closes on Escape only and swallows every other key, matching upstream's `Help` context (which binds only `escape`); a sabotage-verified honesty-audit test pins this |
 | Vim mode (`/vim`) | ❌ | LOW | owner-deferred (the sprint's only deferral) |
-| External editor (Ctrl-X Ctrl-E / Ctrl-G → `$EDITOR`) | ✅ | — | **W1** `externalEditor.ts` — spawnSync terminal handoff (raw mode released/restored), null-safe (editor failure keeps the buffer), popups cleared on applied edit |
+| External editor (Ctrl-X Ctrl-E / Ctrl-G → `$EDITOR`) | ✅ | — | **W1** `externalEditor.ts` — spawnSync terminal handoff (raw mode released/restored), null-safe (editor failure keeps the buffer), popups cleared on applied edit. **F5 (t2):** `CM8` shipped — while the editor holds the terminal the input row is replaced by upstream's italic dim `Save and close editor to continue...` (the two rules survive, as `...t_` does upstream), an async editor is awaited, and the keymap provider stops reading fd 0 for the flight so the harness does not race the child for keystrokes. The real-TTY check of that handoff is an open gap |
 | Ctrl-Z (suspend to shell) | ✅ | — | **fixed 2026-07-31 (F0, t6, KB3/KB5):** new row — previously `Ctrl-Z` detached this client (a divergence with no upstream equivalent, undocumented as a row). It now suspends the whole process group to the shell on `SIGTSTP` and resumes on `SIGCONT`/`fg`, matching upstream's own reserved `Ctrl-Z` exactly, including targeting the process group (not just our own pid) and restoring raw mode past Ink's ref-counted `setRawMode` (`suspend.ts`, read from upstream's own `handleSuspend` at `cli.pretty.js:177985`). Detach moved to `/detach` — see Recorded additions |
 | Image paste (Ctrl-V) | ❌ | pending P87 | **F0 correction:** was scored `🚫` "non-terminal / out of scope" — **the rationale was wrong**. Upstream's `ctrl+v` reads the system clipboard, which is terminal-native; whether the SDK surface lets us reach it is an open probe (P87: image content blocks), not an out-of-scope call. Reclassified `🚫` → `❌`-pending-P87, which brings it into the denominator |
 | Keybinding table (`ST5`) | ✅ | — | **shipped 2026-08-04 (F2).** `src/tui/keys/bindings.ts` is the single declarative source of truth: upstream's 20 context names, a closed 55-action vocabulary, 136 default entries across the 12 contexts that carry any (97 bindings + 39 explicit unbinds), and a reserved-key registry — with `null` entries stating declaratively which globals a surface kills, which is what the old imperative owner gate did by hand. Every `useInput` callback in `src/tui/` is gone (the F0 row's "17 ad-hoc callbacks" count is now zero) |
 | Keybinding precedence model (`ST6`) | ✅ | — | **shipped 2026-08-04 (F2).** `keys/resolver.ts` + `keys/KeymapProvider.tsx`: one raw-stdin root consumer with our own keypress parser (P86 measured that Ink's `useInput` cannot express the table — it projects every key onto 14 booleans and throws `keypress.name` away), an ordered context stack each mounted surface pushes onto, first-match-wins with `null` consuming the key as explicitly unbound, plus `swallowAll` and preemptive scopes above the chain. The double-fire bug class it exists to remove is now structurally impossible rather than hand-gated |
 | User keybindings (`~/.claude/keybindings.json`) | ✅ | — | **shipped 2026-08-04 (F2, `06 K5`).** Upstream's own path and file shape, so an existing Claude Code keymap applies to `ccx` unchanged: additive merge over the defaults, later-wins within a context, `null` unbinds, live reload on save (no restart), and typed validation (`parse_error`/`invalid_context`/`invalid_action`/`duplicate`/`reserved`, plus our own binding-keeping `suspicious_key` warning) reported into the transcript. `command:<name>` bindings run a slash command, Chat-context only (`06 K6`) |
 | Generic chords, 1 s inter-key window (`KB22`) | ✅ | — | **shipped 2026-08-04 (F2, `06 K4`).** Any binding may be a space-separated sequence; the pending prefix is armed by the table rather than hardcoded, `escape` cancels, and the key that breaks a pending chord is swallowed (upstream `Q4u`). Replaces the two bespoke `useRef` timestamp chords with their 2 s window |
-| Hint strings generated from the live binding | 🟡 | — | **F2, partial and disclosed.** The composer footer ladder, the status-bar mode chip and the whole `?` shortcuts grid derive their chords from the live table, so a rebinding moves them and an unbind prints `(unbound)`. **F4 (t10b) update:** the `(ctrl+o to expand)` fold marker is no longer a literal — nine transcript sites now read the live lookup through `ProjectionContext`, so a rebind moves every fold marker, group row and search sentence, and an unbound `app:toggleTranscript` removes the clause entirely. **Two** surfaces still print literals: the transcript-pager footer (a multi-alias ladder a generated string would render worse than the hand-written one) and the history-search footer (excluded on cost). ChatApp's two double-press notices are literal too and are outside the derivation guard's grep set. Still 🟡 for those. See §1a |
+| Hint strings generated from the live binding | 🟡 | — | **F2, partial and disclosed.** The composer footer ladder, the status-bar mode chip and the whole `?` shortcuts grid derive their chords from the live table, so a rebinding moves them and an unbind prints `(unbound)`. **F4 (t10b) update:** the `(ctrl+o to expand)` fold marker is no longer a literal — nine transcript sites now read the live lookup through `ProjectionContext`, so a rebind moves every fold marker, group row and search sentence, and an unbound `app:toggleTranscript` removes the clause entirely. **Two** surfaces still print literals: the transcript-pager footer (a multi-alias ladder a generated string would render worse than the hand-written one) and the history-search footer (excluded on cost). ChatApp's two double-press notices are literal too and are outside the derivation guard's grep set. Still 🟡 for those. **F5 (t7/t10b):** `CM56`'s `search history` hint is derived too — a rebind moves it and it never prints a literal `ctrl+r`. See §1a |
+| Composer visual form (`CM1`/`CM2`/`CM4`/`CM5`) | ✅ | — | **new row, shipped 2026-08-05 (F5 t2/t7).** `composerFrame.tsx`: two hand-painted full-width `─` rules and no verticals or corners (upstream's border object turns `borderLeft`/`borderRight` off, L496235); `❯`+NBSP — U+276F, not the U+203A we used to draw — swapping to `!`+NBSP in `bashBorder` for bash mode and dimming in every mode while a turn runs; the placeholder's first character drawn **inverted**, which IS the cursor; and `CM4`'s `History n/total` spliced into the top rule through `$Bu`'s three-lead-dash arithmetic and its clamp, disappearing the moment the recalled entry is edited. `CM6` (focus-loss cursor) and `CM7` (fullscreen viewport) are recorded unreachable, 🚫 |
+| Readline tail: `ctrl+f`/`ctrl+h`/`ctrl+n`/`ctrl+p`, `alt+d` (`CM12`) | 🟡 | — | **new row, F5 t1.** Five of upstream's six ship, transcribed from its own ctrl/meta maps (L395676): `ctrl+f` right, `ctrl+h` delete-token-or-backspace (so it deletes a whole chip, like backspace), `ctrl+n`/`ctrl+p` as history next/prev — which also drive popup selection, because they call the same bodies the arrows do — and `alt+d` delete-word-after, which deliberately does NOT feed the kill ring. 🟡 for the sixth: **`ctrl+b` is dead in the composer**, claimed by our `task:background` binding in the `Global` context. The handler exists behind it, and a user cannot rebind their way to it |
+| Suggestion popup geometry (`CM30`) | 🟡 | — | **new row, F5 t10.** `DXe` transcribed: height `max(1, min(max(6, ⌊rows/2⌋), rows-3))` blank-padded to a fixed size so the composer above it cannot jump, a mid-anchored scroll window, `a0H`'s two-line rows when a description overflows, the name column capped at 40 % of width, `suggestion`-coloured selection over dim rows (no inverse), and `bLt`'s middle-elide that keeps a path's basename. 🟡 for `X4t`: upstream highlights the matched query substring inside a row and we do not — ticketed |
+| Inline reverse-i-search (`CM58`) | ✅ | — | **new row, F5 t12.** `ctrl+r` opens upstream's own inline surface inside the composer (it picks inline vs. picker by layout, and ours is permanently classic): `search prompts:` / `no matching prompt:`, a last-occurrence substring walk with a per-walk display dedup, the draft parked on open and restored on an emptied query or a cancel, Esc **accepts**, Enter executes. Recorded deltas: the corpus is deduped and capped at 100 by the shared reader, `ctrl+s` is inert (upstream registers no `cycleScope` here), forward-Delete acts as backspace, and prompts submitted before F5 are not in the log at all |
+| History picker preview pane (`CM59`) | ✅ | — | **new row, F5 t12.** The picker gains upstream's preview: a `round`, dim-bordered box of six content lines with blank lines dropped after wrapping, the `… +N lines` tail (pluralised — the plan's `+N more` was wrong), and the responsive switch to a side-by-side layout at ≥100 columns with `qGf`'s own width arithmetic. Reachable through **`/history`**, a recorded ccx addition — upstream needs no such command because fullscreen hands it the picker |
 
 
 ## 1a — Keybindings: the F2 keymap as data
@@ -809,9 +952,9 @@ these are the auditable detail behind them.
 | K7 | Key normalisation + alias table, `alt ≡ meta` | `keys/normalize.ts`: one canonical spec string; `meta`/`opt`/`option` fold into `alt`, `cmd`/`win` into `super`, `ctrl+-` ≡ `ctrl+_` | ✅ |
 | K8 | Platform branching (`alt+v` vs `ctrl+v` paste, `shift+tab` vs `meta+m`, iTerm2 coercion, tmux hint) | None — `shift+tab` is the default for `chat:cycleMode` (rebindable), and there is no paste key at all (see K35) | ❌ |
 | K9 | Kill ring with `ctrl+y` / `alt+y` | `editor.ts` kill ring (cap 10, coalescing runs) + the yank hint | ✅ (F0) |
-| K10 | `ctrl+b`/`ctrl+f`/`ctrl+h` in the composer | Not bound in the composer: `ctrl+b` is ours for background (a recorded standing divergence), `ctrl+f`/`ctrl+h` are unbound | ❌ |
-| K11 | `ctrl+n`/`ctrl+p` as composer history | Not bound in Chat (they are list-nav keys in `Select`/`MessageSelector`/`Transcript`) | ❌ |
-| K12 | `alt+d` delete-word-after | Not bound | ❌ |
+| K10 | `ctrl+b`/`ctrl+f`/`ctrl+h` in the composer | **F5 t1:** `ctrl+f` (right) and `ctrl+h` (delete-token-or-backspace, so it eats a whole paste chip) now ship in the editor's ctrl map. `ctrl+b` is still ours for background — the `moveLeft` branch exists behind a `Global` binding that always wins, and a user cannot rebind their way to it | 🟡 |
+| K11 | `ctrl+n`/`ctrl+p` as composer history | **F5 t1:** both bound in the composer fallback, calling the same bodies the arrows do — so popup selection and the queue drain come along with them, exactly as upstream's `["n", () => Re()]` / `["p", () => he()]` do | ✅ |
+| K12 | `alt+d` delete-word-after | **F5 t1:** bound, and deliberately does NOT feed the kill ring (upstream's `deleteWordAfter` is a plain `modifyText`, unlike `ctrl+k`/`u`/`w`). Recorded edge: at end-of-line it eats only the newline, inherited from `wordRight` | ✅ |
 | K13 | `escape escape`: text ⇒ clear, empty ⇒ rewind | Exactly that (F0 CM15); the arms live in the composer and `ChatApp`, the key in the table | ✅ |
 | K14 | `←←` on an empty composer ⇒ agents view | No agents view exists in `ccx` | 🚫 |
 | K15 | Confirmation `y` / `n` | Bound, alongside the digits and the legacy `a`/`A`/`d` aliases | ✅ (F0) |
@@ -839,10 +982,12 @@ these are the auditable detail behind them.
 | K37 | `ctrl+z` is a reserved-key **warning**, not a binding | Same: the registry warns, and `ctrl+z` is handled pre-table (SIGTSTP), above context dispatch, so it fires under a swallow and mid-chord | ✅ |
 | K38 | `ctrl+d` on an empty composer needs two presses | Two presses, upstream's own 800 ms window | ✅ (F0) |
 | K39 | Four working `chat:undo` aliases | `ctrl+_`/`ctrl+-` reachable (matched as the raw `0x1f` byte, and canonicalised to one spec) | ✅ (F0) |
-| K40 | `shift+enter` newline via `/terminal-setup` | Not built; the key itself is unreachable without it (see the table above) | ❌ |
+| K40 | `shift+enter` newline via `/terminal-setup` | **F5 t2:** the receiving half ships — the parser already singles out the `ESC CR` form and the editor now inserts a newline on it, so a terminal configured by upstream's own `/terminal-setup` (or one speaking CSI-u) works, and rung 1 of the `Z_a` hint is honest where it fires. We still ship no installer, and plain `shift+enter` remains byte-identical to Enter | 🟡 |
 
-**Ledger score: 18✅ + 1🟡 of 31 non-🚫 rows ≈ 60%.** The nine 🚫 rows are surfaces `ccx` does not have
-or bindings upstream itself never wired.
+**Ledger score, post-F5 (2026-08-05): 20✅ + 3🟡 of 31 non-🚫 rows ≈ 69%** (was 18✅ + 1🟡 ≈ 60% at F2).
+Four rows moved, all in F5 task 1–2: `K11` and `K12` ❌→✅, `K10` ❌→🟡 (two of its three keys), `K40` ❌→🟡
+(the receiving half without the installer). The nine 🚫 rows are surfaces `ccx` does not have or bindings
+upstream itself never wired.
 
 ### Accepted behaviour deltas from F2
 
