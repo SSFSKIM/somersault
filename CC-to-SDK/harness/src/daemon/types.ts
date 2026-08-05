@@ -71,10 +71,15 @@ const applyFlagSettingsOp = z.object({ op: z.literal("apply_flag_settings"), id:
 const renameSessionOp = z.object({ op: z.literal("rename"), id: z.string(), title: z.string(), cwd: z.string().optional() });
 const tagSessionOp = z.object({ op: z.literal("tag"), id: z.string(), tag: z.string().nullable(), cwd: z.string().optional() });
 const deleteSessionOp = z.object({ op: z.literal("delete"), id: z.string(), cwd: z.string().optional() });
+// Mirrors PermissionDecision (permissions/types.ts). `allow_always` stays for back-compat (older clients
+// still send it; it maps to the gate's in-memory Set) — the F6 dialogs emit `allow_with_updates` instead,
+// whose `updatedPermissions` is the engine's own suggestion echoed back UNRESHAPED, hence the opaque
+// record schema.
 const permissionDecision = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("allow_once") }),
+  z.object({ kind: z.literal("allow_once"), updatedInput: z.record(z.string(), z.unknown()).optional() }),
+  z.object({ kind: z.literal("allow_with_updates"), updatedPermissions: z.array(z.record(z.string(), z.unknown())) }),
   z.object({ kind: z.literal("allow_always") }),
-  z.object({ kind: z.literal("deny") }),
+  z.object({ kind: z.literal("deny"), feedback: z.string().optional() }),
 ]);
 const pendingPermissionsOp = z.object({ op: z.literal("pending_permissions") });
 const permissionResponseOp = z.object({ op: z.literal("permission_response"), toolUseID: z.string(), decision: permissionDecision });

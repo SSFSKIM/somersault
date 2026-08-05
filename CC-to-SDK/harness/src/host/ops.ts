@@ -3,12 +3,22 @@ import type { FleetState } from "../fleet/roster.js";
 
 export interface HostStatus { state: FleetState; status: "busy" | "idle"; waitingFor?: string; sessionId?: string; permissionMode?: string }
 const decisionKind = z.enum(["allow_once", "allow_always", "deny"]);
-// The structured answer kinds question/plan decisions settle with — the flat `decision` field above stays
-// the legacy 3-way permission shape (spec: an old client's permission answer must still parse on a new
-// host, see server.ts's dispatch arm).
+// One SDK PermissionUpdate, carried verbatim (permissions/types.ts PermissionUpdateLike): an opaque
+// record ON PURPOSE — the engine authors these and we echo them back, so the wire must not reshape or
+// strip-by-schema anything inside one, including keys a future SDK adds.
+const permissionUpdate = z.record(z.string(), z.unknown());
+// Every answer that carries a PAYLOAD travels structured; the flat `decision` field above stays the
+// legacy payload-free 3-way permission shape (spec: an old client's permission answer must still parse
+// on a new host, see server.ts's dispatch arm). F6 T3 widened this from question/plan-only: the
+// permission family gained editable input, a real "don't ask again" (updatedPermissions) and deny
+// feedback, none of which fit in a bare string.
 const structuredAnswer = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("allow_once"), updatedInput: z.record(z.string(), z.unknown()).optional() }),
+  z.object({ kind: z.literal("allow_with_updates"), updatedPermissions: z.array(permissionUpdate) }),
+  z.object({ kind: z.literal("allow_always") }),
+  z.object({ kind: z.literal("deny"), feedback: z.string().optional() }),
   z.object({ kind: z.literal("question_answer"), answers: z.record(z.string(), z.string()), response: z.string().optional() }),
-  z.object({ kind: z.literal("plan_approve"), acceptEdits: z.boolean() }),
+  z.object({ kind: z.literal("plan_approve"), acceptEdits: z.boolean(), updatedPermissions: z.array(permissionUpdate).optional() }),
   z.object({ kind: z.literal("plan_reject"), feedback: z.string().optional() }),
 ]);
 const withId = { id: z.number().int().nonnegative().optional() };

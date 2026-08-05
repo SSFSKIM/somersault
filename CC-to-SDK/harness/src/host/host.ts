@@ -625,7 +625,7 @@ export class SessionHost {
    *  human declining any of the three, settle the same way); everything else is kind-specific — a
    *  question park cannot be answered with a bare permission decision, and vice versa. */
   private static readonly KIND_ANSWERS: Record<DecisionKind, ReadonlySet<string>> = {
-    permission: new Set(["allow_once", "allow_always", "deny"]),
+    permission: new Set(["allow_once", "allow_with_updates", "allow_always", "deny"]),
     question: new Set(["question_answer", "deny"]),
     plan: new Set(["plan_approve", "plan_reject", "deny"]),
   };

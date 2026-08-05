@@ -139,10 +139,15 @@ export class RemoteChatSession {
   answer(toolUseID: string, decision: PermissionDecision): Promise<{ ok: boolean; alreadyAnsweredBy?: string; error?: string }> {
     return this.answerDecision(toolUseID, decision);
   }
-  /** Structured kinds travel under `answer`; the 3-way kinds keep the FLAT legacy fields so an old host's
-   *  schema still parses a new client's permission answer (spec: upgrade compat, read-side only). */
+  /** Structured kinds travel under `answer`; the PAYLOAD-FREE 3-way kinds keep the FLAT legacy fields so
+   *  an old host's schema still parses a new client's permission answer (spec: upgrade compat, read-side
+   *  only). The flat field is a bare kind STRING and can carry nothing else, so the moment a permission
+   *  answer has a payload — F6 T3's `allow_with_updates.updatedPermissions`, `allow_once.updatedInput`,
+   *  `deny.feedback` — it must go structured or the payload is silently dropped on the wire. */
   answerDecision(toolUseID: string, outcome: DecisionOutcome): Promise<{ ok: boolean; alreadyAnsweredBy?: string; error?: string }> {
-    const flat = outcome.kind === "allow_once" || outcome.kind === "allow_always" || outcome.kind === "deny";
+    const flat = (outcome.kind === "allow_once" && outcome.updatedInput === undefined)
+      || outcome.kind === "allow_always"
+      || (outcome.kind === "deny" && outcome.feedback === undefined);
     return this.send(flat ? { op: "answer", toolUseID, decision: outcome.kind, by: this.label }
                           : { op: "answer", toolUseID, answer: outcome, by: this.label });
   }

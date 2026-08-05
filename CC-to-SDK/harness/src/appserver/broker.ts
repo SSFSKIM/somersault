@@ -10,7 +10,7 @@ import type { DecisionKind, DecisionOutcome, PermissionBroker } from "../permiss
  *  (host/ops.ts): a flat 3-way for `permission`, structured answers for `question`/`plan`, `deny` is
  *  always the universal escape hatch. */
 export const ANSWER_KINDS: Record<DecisionKind, ReadonlyArray<DecisionOutcome["kind"]>> = {
-  permission: ["allow_once", "allow_always", "deny"],
+  permission: ["allow_once", "allow_with_updates", "allow_always", "deny"],
   question: ["question_answer", "deny"],
   plan: ["plan_approve", "plan_reject", "deny"],
 };

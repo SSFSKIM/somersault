@@ -1,7 +1,9 @@
 // harness/src/permissions/pending.ts
-import type { DecisionKind, DecisionOutcome, PermissionBroker, PermissionRequest } from "./types.js";
+import type { DecisionKind, DecisionOutcome, PermissionBroker, PermissionRequest, PermissionUpdateLike } from "./types.js";
 
-/** A parked decision on the wire — the serializable view of a PermissionRequest (no AbortSignal). */
+/** A parked decision on the wire — the serializable view of a PermissionRequest (no AbortSignal). This is
+ *  the shape a dialog actually renders from (it is what `useChat.state.pending` carries), so the engine's
+ *  suggestion payload has to live here too, not only on the in-process request. */
 export interface PendingDecision {
   sessionId: string;
   toolUseID: string;
@@ -13,6 +15,11 @@ export interface PendingDecision {
   title?: string;
   displayName?: string;
   description?: string;
+  /** The engine's own permission-rule suggestions — a dialog's "don't ask again" echoes one back. */
+  suggestions?: PermissionUpdateLike[];
+  decisionReason?: string;
+  blockedPath?: string;
+  agentID?: string;
   createdAt: number;
 }
 
@@ -65,7 +72,9 @@ export class PendingDecisions {
       const entry: PendingDecision = {
         sessionId, toolUseID: req.toolUseID, toolName: req.toolName, kind: req.kind ?? "permission", input: req.input,
         parentToolUseID: req.parentToolUseID, subagentType: req.subagentType,
-        title: req.title, displayName: req.displayName, description: req.description, createdAt: this.now(),
+        title: req.title, displayName: req.displayName, description: req.description,
+        suggestions: req.suggestions, decisionReason: req.decisionReason, blockedPath: req.blockedPath, agentID: req.agentID,
+        createdAt: this.now(),
       };
       const cancelTimer = this.expireAfterMs === "never"
         ? () => {}

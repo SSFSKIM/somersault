@@ -28,12 +28,16 @@ const threadIdParams = z.object({ threadId: z.string().min(1) });
 
 // Mirrors DecisionOutcome (src/permissions/types.ts) and the real host wire (host/ops.ts's
 // decisionKind + structuredAnswer) — never trust a client-supplied `by` (spec §6, server-stamped only).
+// `updatedPermissions` entries are opaque records: they are the engine's own PermissionUpdate suggestions
+// travelling back verbatim (permissions/types.ts PermissionUpdateLike), so the schema must not narrow them.
+const permissionUpdateParams = z.record(z.string(), z.unknown());
 const decisionOutcomeParams = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("allow_once") }),
+  z.object({ kind: z.literal("allow_once"), updatedInput: z.record(z.string(), z.unknown()).optional() }),
+  z.object({ kind: z.literal("allow_with_updates"), updatedPermissions: z.array(permissionUpdateParams) }),
   z.object({ kind: z.literal("allow_always") }),
-  z.object({ kind: z.literal("deny") }),
+  z.object({ kind: z.literal("deny"), feedback: z.string().optional() }),
   z.object({ kind: z.literal("question_answer"), answers: z.record(z.string(), z.string()), response: z.string().optional() }),
-  z.object({ kind: z.literal("plan_approve"), acceptEdits: z.boolean() }),
+  z.object({ kind: z.literal("plan_approve"), acceptEdits: z.boolean(), updatedPermissions: z.array(permissionUpdateParams).optional() }),
   z.object({ kind: z.literal("plan_reject"), feedback: z.string().optional() }),
 ]);
 const decisionRespondParams = z.object({ threadId: z.string().min(1), toolUseId: z.string().min(1), answer: decisionOutcomeParams, abortTurn: z.boolean().optional() });
