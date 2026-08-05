@@ -188,6 +188,49 @@ describe("<BashPermission> — feedback mode (Tab on No)", () => {
     expect(v.got[0]).toEqual({ kind: "deny" });
   });
 
+  // Wave T t5 (L505162-169). The row is a text field only while it is worth being one: leaving it empty and
+  // moving on puts the plain `No` row back, but a row holding a half-typed sentence stays open — collapsing
+  // THAT would hide what was written behind a row that says nothing about it.
+  //
+  // An UNFOCUSED empty input row and a collapsed plain row are the same three characters on screen (`RLe`
+  // prints its placeholder only while focused), so "did it collapse" is asked by coming BACK to the row: the
+  // placeholder returns on a field, and does not on a plain row.
+  it("keeps a feedback row that holds text open when the cursor leaves it", async () => {
+    const v = await mount(req("ls"));
+    v.stdin.write("\x1b[B"); await tick();                        // focus No
+    v.stdin.write("\t"); await tick();
+    await type(v.stdin, "use pnpm");
+    v.stdin.write("\x1b[A"); await tick();                        // up, off the row
+    expect(plain(v.frame())).toContain("No, use pnpm");           // still a field, and the text is visible
+    expect(v.got).toEqual([]);
+  });
+
+  it("collapses an EMPTY feedback row once the cursor leaves it", async () => {
+    const v = await mount(req("ls"));
+    v.stdin.write("\x1b[B"); await tick();                        // focus No
+    v.stdin.write("\t"); await tick();
+    expect(plain(v.frame())).toContain("and tell Claude what to do differently");
+    v.stdin.write("\x1b[A"); await tick();                        // up, off an untouched field
+    v.stdin.write("\x1b[B"); await tick();                        // and back onto the row
+    expect(plain(v.frame())).not.toContain("and tell Claude what to do differently");
+    expect(plain(v.frame())).toContain("2. No");
+    expect(v.got).toEqual([]);                                    // collapsing decides NOTHING
+  });
+
+  it("collapses a feedback row the human typed into and then CLEARED", async () => {
+    const v = await mount(req("ls"));
+    v.stdin.write("\x1b[B"); await tick();
+    v.stdin.write("\t"); await tick();
+    await type(v.stdin, "no");
+    v.stdin.write("\x7f"); await tick();
+    v.stdin.write("\x7f"); await tick();
+    expect(plain(v.frame())).toContain("and tell Claude what to do differently");   // empty again
+    v.stdin.write("\x1b[A"); await tick();
+    v.stdin.write("\x1b[B"); await tick();
+    expect(plain(v.frame())).not.toContain("and tell Claude what to do differently");
+    expect(v.got).toEqual([]);
+  });
+
   it("holds the legacy letters back while a text row has the cursor", async () => {
     const v = await mount(req("npm run build", { suggestions: [bashRule("npm run:*")] }));
     v.stdin.write("\x1b[B"); await tick();                        // focus the prefix input row

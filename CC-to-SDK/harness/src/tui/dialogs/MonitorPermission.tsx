@@ -19,7 +19,7 @@
 // Recorded, not built: `Ral`'s `toolType` (L506071 — "tool" for the MCP/WS arms, "command" for a raw one).
 // It is handed to `yN`, whose only headlessly-reachable arm is `safetyCheck`/`other`, and that arm does not
 // interpolate it (`mDr` L500565-567); every arm that does is a typed decision reason the wire never forwards.
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { DialogFrame } from "./DialogFrame.js";
 import { ConsultFooter } from "./ConsultFooter.js";
@@ -27,7 +27,7 @@ import { Select } from "../select/Select.js";
 import { consentReasonLine } from "./consentReason.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
 import { monitorDecision, monitorOptions, monitorPayload, subprotocolList, type MonitorPayload } from "./smallDialogOptions.js";
-import { escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
+import { collapseOnFocusChange, escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
 
@@ -63,6 +63,9 @@ export function MonitorPermission({ req, onDecision }: {
   const payload = monitorPayload(req.input);
   const suggestions = req.suggestions ?? [];
   const [feedback, setFeedback] = useState<FeedbackMode>(NO_FEEDBACK);
+  // Mirrored off `Select`'s `onInputChange` (t5), and a REF for the same-chunk reason GenericPermission spells
+  // out: `x` then `up` in one chunk must not read the field as still empty.
+  const feedbackText = useRef("");
   const options = monitorOptions({ suggestions, feedback });
   const [focus, setFocus] = useState<string>(options[0]!.value);
   const inputFocused = options.find((o) => o.value === focus)?.type === "input";
@@ -87,7 +90,9 @@ export function MonitorPermission({ req, onDecision }: {
           options={options} inlineDescriptions context="SelectDecision"
           onChange={(value, text) => onDecision(monitorDecision(value, { text, suggestions }))}
           onCancel={() => { const next = escapeFeedbackMode(feedback); if (next) setFeedback(next); else onDecision({ kind: "deny" }); }}
-          onFocus={setFocus}
+          // Leaving an EMPTY feedback row puts the plain row back (L505162-169); one holding text stays open.
+          onFocus={(value) => { setFocus(value); setFeedback((m) => collapseOnFocusChange(m, value, feedbackText.current.trim() === "")); }}
+          onInputChange={(value, text) => { if (value === "no") feedbackText.current = text; }}
           onInputModeToggle={(value) => { if (value === "no") setFeedback(toggleFeedbackMode(feedback, value)); }}
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />

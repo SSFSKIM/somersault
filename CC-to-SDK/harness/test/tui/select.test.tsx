@@ -380,6 +380,27 @@ describe("<Select> input rows (RLe, L396465-396652)", () => {
     expect(got[0]).toEqual(["note", "1"]);
   });
 
+  // Wave T t5. The text an input row holds is otherwise PRIVATE to this component until a submit, so a caller
+  // that must answer "is this field empty" (the feedback-row collapse rule, L505162-169) has no way to know.
+  // `onInputChange` is that hook, and it fires from the same `write()` every mutation already goes through —
+  // typing, backspace and delete alike — so a mirror kept off it cannot drift from the row itself.
+  it("streams an input row's text upward on every mutation (wave T t5)", async () => {
+    const seen: [string, string][] = [];
+    const r = await mount(<Select options={withInput()} onChange={noop} onCancel={noop} onInputChange={(v, t) => seen.push([v, t])} rows={40} columns={100} />);
+    r.stdin.write("j");                                             // still a nav key on a non-input row
+    await waitFor(() => pointerRow(frame(r.lastFrame)) === 1);
+    expect(seen).toEqual([]);                                       // navigating is not a mutation
+    r.stdin.write("h"); await tick();
+    r.stdin.write("i"); await tick();
+    expect(seen).toEqual([["note", "h"], ["note", "hi"]]);
+    r.stdin.write("\x7f");                                          // backspace
+    await waitFor(() => seen.length === 3);
+    expect(seen[2]).toEqual(["note", "h"]);
+    r.stdin.write("\x1b[D\x7f");                                    // left then backspace on an empty prefix
+    await tick();
+    expect(seen.length).toBe(3);                                    // …deleted nothing, so reported nothing
+  });
+
   it("tab fires onInputModeToggle with the focused value (L396712-396715)", async () => {
     const toggled: string[] = [];
     const r = await mount(<Select options={withInput()} onChange={noop} onCancel={noop} onInputModeToggle={(v) => toggled.push(v)} rows={40} columns={100} />);

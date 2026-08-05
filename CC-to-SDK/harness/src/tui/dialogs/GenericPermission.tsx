@@ -17,7 +17,7 @@
 //
 // Recorded, not built: the auto-mode row (`UDr` L506124 + `KMn`/`YMn`, a claude.ai entitlement) and `TDn`'s
 // engine-internal terms, which is why the don't-ask-again row here is unconditional.
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { DialogFrame } from "./DialogFrame.js";
 import { ConsultFooter } from "./ConsultFooter.js";
@@ -25,7 +25,7 @@ import { Select } from "../select/Select.js";
 import { consentReasonLine } from "./consentReason.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
 import { clipLines, genericDecision, genericOptions, isMcpToolName, renderedToolUse } from "./smallDialogOptions.js";
-import { escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
+import { collapseOnFocusChange, escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
 
@@ -48,6 +48,10 @@ export function GenericPermission({ req, onDecision, cwd = process.cwd() }: {
   cwd?: string;
 }) {
   const [feedback, setFeedback] = useState<FeedbackMode>(NO_FEEDBACK);
+  // What the feedback row currently holds, mirrored off `Select`'s `onInputChange` (t5). A REF, not state:
+  // one stdin chunk parses into several events with no render between them, so a same-chunk `x` + `up` read
+  // off a render closure would still see the empty field and collapse a row that just got its first letter.
+  const feedbackText = useRef("");
   const options = genericOptions({ userFacingName: req.toolName, cwd, feedback });
   const [focus, setFocus] = useState<string>(options[0]!.value);
   const inputFocused = options.find((o) => o.value === focus)?.type === "input";
@@ -73,7 +77,9 @@ export function GenericPermission({ req, onDecision, cwd = process.cwd() }: {
           options={options} inlineDescriptions context="SelectDecision"
           onChange={(value, text) => onDecision(genericDecision(value, { toolName: req.toolName, text }))}
           onCancel={() => { const next = escapeFeedbackMode(feedback); if (next) setFeedback(next); else onDecision({ kind: "deny" }); }}
-          onFocus={setFocus}
+          // Leaving an EMPTY feedback row puts the plain row back (L505162-169); one holding text stays open.
+          onFocus={(value) => { setFocus(value); setFeedback((m) => collapseOnFocusChange(m, value, feedbackText.current.trim() === "")); }}
+          onInputChange={(value, text) => { if (value === "no") feedbackText.current = text; }}
           onInputModeToggle={(value) => { if (value === "no") setFeedback(toggleFeedbackMode(feedback, value)); }}
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />

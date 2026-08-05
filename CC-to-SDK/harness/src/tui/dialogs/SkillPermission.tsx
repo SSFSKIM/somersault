@@ -12,7 +12,7 @@
 // Recorded, not built: `_id`'s `metadata.command.name`/`.description` fallbacks (L228357 — engine-internal,
 // never on the wire), so the name comes off `input.skill` alone and the description off the SDK's own
 // `description` field; and the `feedbackConfig:{type:"accept"}` on the Yes row, unreachable per T3.
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { DialogFrame } from "./DialogFrame.js";
 import { ConsultFooter } from "./ConsultFooter.js";
@@ -20,7 +20,7 @@ import { Select } from "../select/Select.js";
 import { consentReasonLine } from "./consentReason.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
 import { skillDecision, skillOf, skillOptions } from "./smallDialogOptions.js";
-import { escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
+import { collapseOnFocusChange, escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
 
@@ -40,6 +40,9 @@ export function SkillPermission({ req, onDecision, cwd = process.cwd() }: {
 }) {
   const skill = skillOf(req.input);
   const [feedback, setFeedback] = useState<FeedbackMode>(NO_FEEDBACK);
+  // Mirrored off `Select`'s `onInputChange` (t5), and a REF for the same-chunk reason GenericPermission spells
+  // out: `x` then `up` in one chunk must not read the field as still empty.
+  const feedbackText = useRef("");
   const options = skillOptions({ skill, cwd, feedback });
   const [focus, setFocus] = useState<string>(options[0]!.value);
   const inputFocused = options.find((o) => o.value === focus)?.type === "input";
@@ -62,7 +65,9 @@ export function SkillPermission({ req, onDecision, cwd = process.cwd() }: {
           options={options} inlineDescriptions context="SelectDecision"
           onChange={(value, text) => onDecision(skillDecision(value, { skill, text }))}
           onCancel={() => { const next = escapeFeedbackMode(feedback); if (next) setFeedback(next); else onDecision({ kind: "deny" }); }}
-          onFocus={setFocus}
+          // Leaving an EMPTY feedback row puts the plain row back (L505162-169); one holding text stays open.
+          onFocus={(value) => { setFocus(value); setFeedback((m) => collapseOnFocusChange(m, value, feedbackText.current.trim() === "")); }}
+          onInputChange={(value, text) => { if (value === "no") feedbackText.current = text; }}
           onInputModeToggle={(value) => { if (value === "no") setFeedback(toggleFeedbackMode(feedback, value)); }}
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />

@@ -288,20 +288,39 @@ describe("<GenericPermission> (`Gal` L506118-260)", () => {
     expect(v.got[0]).toEqual({ kind: "deny", feedback: "use the other tool" });
   });
 
-  // `Select.tsx:216-222`'s digit path reads the same flag, so this is the SAME defect through a second door:
-  // a digit aimed at an empty text row used to submit it. With the flag gone it falls through to `moveTo`,
-  // which is upstream's own behaviour (L396768-785) and needed no production change — pinned so it stays.
-  it("a digit aimed at the EMPTY feedback row moves the cursor into it rather than deciding", async () => {
+  // `Select.tsx`'s digit path reads the same flag, so t3's defect had a second door: a digit aimed at an empty
+  // text row used to submit it. REACHING that door from a dialog is no longer possible — wave T t5 collapses
+  // an empty feedback row the moment the cursor steps off it (L505162-169), which is the only way a dialog's
+  // digits come back to life — so what a dialog can pin now is the collapse itself, and the primitive's own
+  // behaviour stays pinned in select.test.tsx ("a digit landing on an input row focuses it when empty").
+  it("collapses the untouched feedback row when the cursor leaves it, so its digit decides plainly (t5)", async () => {
     const v = await mountGeneric(mcpReq());
     v.stdin.write("\x1b[B"); await tick();
     v.stdin.write("\x1b[B"); await tick();
     v.stdin.write("\t"); await tick();                            // row 3 is now a text row…
-    v.stdin.write("\x1b[A"); await tick();                        // …and the cursor steps off it, so digits live again
-    v.stdin.write("3"); await tick();
-    expect(v.got).toEqual([]);                                    // NOT a bare deny
-    await type(v.stdin, "somewhere else");                        // the cursor landed INSIDE the field
+    v.stdin.write("\x1b[A"); await tick();                        // …and the cursor steps off it while EMPTY
+    v.stdin.write("\x1b[B"); await tick();                        // coming back proves which row it is now:
+    expect(v.frame()).not.toContain("and tell Claude what to do differently");   // …a plain one
+    expect(v.got).toEqual([]);                                    // collapsing decided nothing
+    v.stdin.write("\x1b[A"); await tick();
+    v.stdin.write("3"); await waitFor(() => v.got.length === 1);
+    expect(v.got[0]).toEqual({ kind: "deny" });
+  });
+
+  // The other half of the rule: a row the human typed into is NOT collapsed by walking away from it — the
+  // text would vanish behind a label that says nothing about it.
+  it("leaves a feedback row that holds text open when the cursor moves away (t5)", async () => {
+    const v = await mountGeneric(mcpReq());
+    v.stdin.write("\x1b[B"); await tick();
+    v.stdin.write("\x1b[B"); await tick();
+    v.stdin.write("\t"); await tick();
+    await type(v.stdin, "somewhere else");
+    v.stdin.write("\x1b[A"); await tick();
+    expect(v.frame()).toContain("No, somewhere else");             // still a field, text visible
+    v.stdin.write("\x1b[B"); await tick();                         // back onto it, and it is still typable
+    await type(v.stdin, "!");
     v.stdin.write("\r"); await waitFor(() => v.got.length === 1);
-    expect(v.got[0]).toEqual({ kind: "deny", feedback: "somewhere else" });
+    expect(v.got[0]).toEqual({ kind: "deny", feedback: "somewhere else!" });
   });
 
   it("never reads a modified y/n as a decision", async () => {

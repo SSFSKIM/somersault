@@ -71,3 +71,20 @@ export function toggleFeedbackMode(mode: FeedbackMode, value: string): FeedbackM
 export function escapeFeedbackMode(mode: FeedbackMode): FeedbackMode | undefined {
   return mode.yes || mode.no ? { yes: false, no: false } : undefined;
 }
+
+/** The cursor moved, and now sits on `focusedValue` (`Select`'s `onFocus`). L505162-169: a feedback row the
+ *  cursor LEAVES goes back to being a plain pick-one row when its field is empty — an empty text row and a
+ *  plain row say the same nothing, and the plain one keeps `y`/`n` and the digits live. A row holding typed
+ *  text stays open instead, because collapsing it would hide what was written behind a label that does not
+ *  mention it. The row the cursor is ON is never a departure, so it never collapses.
+ *
+ *  `isEmpty` is the caller's reading of the row that is losing the cursor, and one flag is enough because the
+ *  bodies only ever open one end (Tab on Yes is dropped — the SDK's allow arm has no message field, T3). It
+ *  reads the same `.trim()`-empty the empty-submit rule uses, so "empty enough to collapse" and "empty enough
+ *  to be a no-op Enter" cannot disagree. Identity-preserving when nothing changes: this runs inside a focus
+ *  report, and a fresh-but-equal object there is a render for nothing. */
+export function collapseOnFocusChange(mode: FeedbackMode, focusedValue: string, isEmpty: boolean): FeedbackMode {
+  if (!isEmpty) return mode;
+  const yes = mode.yes && focusedValue === "yes", no = mode.no && focusedValue === "no";
+  return yes === mode.yes && no === mode.no ? mode : { yes, no };
+}

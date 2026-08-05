@@ -7,7 +7,7 @@
 // module header for why.
 import { describe, it, expect } from "vitest";
 import {
-  yesRow, noRow, yesNoRows, NO_FEEDBACK, toggleFeedbackMode, escapeFeedbackMode,
+  yesRow, noRow, yesNoRows, NO_FEEDBACK, toggleFeedbackMode, escapeFeedbackMode, collapseOnFocusChange,
 } from "../../src/tui/dialogs/optionRows.js";
 
 describe("yesRow / noRow", () => {
@@ -78,5 +78,32 @@ describe("the feedback-mode rule (decided once, here)", () => {
     expect(escapeFeedbackMode({ yes: false, no: true })).toEqual(NO_FEEDBACK);
     expect(escapeFeedbackMode({ yes: true, no: true })).toEqual(NO_FEEDBACK);
     expect(escapeFeedbackMode(NO_FEEDBACK)).toBeUndefined();      // undefined = "now cancel the dialog"
+  });
+});
+
+// Wave T t5 (L505162-169). Moving the cursor OFF a feedback row collapses it back to a pick-one row when the
+// field is empty; a row holding typed text stays open, because collapsing it would hide what was written.
+describe("collapseOnFocusChange (L505162-169)", () => {
+  it("collapses an EMPTY feedback row once the cursor lands somewhere else", () => {
+    expect(collapseOnFocusChange({ yes: false, no: true }, "yes", true)).toEqual({ yes: false, no: false });
+    expect(collapseOnFocusChange({ yes: true, no: false }, "no", true)).toEqual({ yes: false, no: false });
+    expect(collapseOnFocusChange({ yes: false, no: true }, "yes-apply-suggestions", true)).toEqual(NO_FEEDBACK);
+  });
+
+  it("leaves a row holding text open — the whole point of the rule", () => {
+    const mode = { yes: false, no: true };
+    expect(collapseOnFocusChange(mode, "yes", false)).toBe(mode);
+  });
+
+  it("never collapses the row the cursor is ON", () => {
+    const mode = { yes: false, no: true };
+    expect(collapseOnFocusChange(mode, "no", true)).toBe(mode);
+    const both = { yes: true, no: true };
+    expect(collapseOnFocusChange(both, "no", true)).toEqual({ yes: false, no: true });
+  });
+
+  it("is identity when nothing is in feedback mode at all", () => {
+    expect(collapseOnFocusChange(NO_FEEDBACK, "yes", true)).toBe(NO_FEEDBACK);
+    expect(collapseOnFocusChange(NO_FEEDBACK, "no", false)).toBe(NO_FEEDBACK);
   });
 });

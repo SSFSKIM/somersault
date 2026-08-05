@@ -23,7 +23,7 @@
 // harness never sandboxes); the explain affordance (DG4, T7's job); the
 // auto-mode row (`UDr` L504815, its row L504872 — a claude.ai entitlement); and upstream's `onFocus`-driven
 // feedback hint node. The footer hints came in with T4 (`tab amend` now, `ctrl+e` when T7 passes `explain`).
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { DialogFrame } from "./DialogFrame.js";
 import { ConsultFooter } from "./ConsultFooter.js";
@@ -32,7 +32,7 @@ import { consentReasonLine } from "./consentReason.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
 import { destructiveWarning } from "./destructive.js";
 import { bashDecision, bashOptions } from "./bashOptions.js";
-import { escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
+import { collapseOnFocusChange, escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import { resolveThemeColor, themeTokens } from "../theme.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
@@ -59,6 +59,10 @@ export function BashPermission({ req, onDecision, cwd = process.cwd() }: {
   // allow arm has no message field — T3), so Tab on Yes is dropped rather than toggling a mode whose row
   // would never render as text and whose Esc would then eat a keypress doing nothing visible.
   const [feedback, setFeedback] = useState<FeedbackMode>(NO_FEEDBACK);
+  // What the feedback row currently holds, mirrored off `Select`'s `onInputChange` (t5). A REF, not state:
+  // one stdin chunk parses into several events with no render between them, so a same-chunk `x` + `up` read
+  // off a render closure would still see the empty field and collapse a row that just got its first letter.
+  const feedbackText = useRef("");
   const options = bashOptions({ command, suggestions, feedback, cwd });
   const [focus, setFocus] = useState<string>(options[0]!.value);
   const inputFocused = options.find((o) => o.value === focus)?.type === "input";
@@ -88,7 +92,9 @@ export function BashPermission({ req, onDecision, cwd = process.cwd() }: {
           // Esc has two jobs and they are ordered (optionRows.ts): leave a half-typed feedback row first,
           // cancel the whole dialog second.
           onCancel={() => { const next = escapeFeedbackMode(feedback); if (next) setFeedback(next); else onDecision({ kind: "deny" }); }}
-          onFocus={setFocus}
+          // Leaving an EMPTY feedback row puts the plain row back (L505162-169); one holding text stays open.
+          onFocus={(value) => { setFocus(value); setFeedback((m) => collapseOnFocusChange(m, value, feedbackText.current.trim() === "")); }}
+          onInputChange={(value, text) => { if (value === "no") feedbackText.current = text; }}
           onInputModeToggle={(value) => { if (value === "no") setFeedback(toggleFeedbackMode(feedback, value)); }}
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />

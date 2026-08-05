@@ -80,6 +80,14 @@ export interface SelectProps {
   defaultValue?: string;
   defaultFocusValue?: string;
   onInputModeToggle?: (value: string) => void;
+  /** An input row's text, reported on every mutation of it (wave T t5). Upstream needs no such prop — its
+   *  rows carry a per-option `onChange` (L396607) and the host owns the text — but ours keeps it privately in
+   *  `inputs` and publishes it only on submit, which leaves a caller unable to answer "is this field empty".
+   *  The permission dialogs must answer exactly that, once per focus move (`collapseOnFocusChange`), so this
+   *  is the hook that makes the text observable. Fired from `write()`, the single path every mutation takes,
+   *  so a mirror kept off it cannot drift; never fired for a row's `initialValue`, which the caller already
+   *  supplied. */
+  onInputChange?: (value: string, text: string) => void;
   /** The focused row, reported on MOUNT and on every change (`jr`'s own `onFocus`, L505286; the reporting is
    *  `m5o` L396843-845). Upstream drives a hint node off it; the F6 dialogs drive their key gating off it,
    *  because "is a text row focused" is the difference between `y` meaning yes and `y` being a letter, and
@@ -133,7 +141,7 @@ export function InputText({ text, cursor, placeholder }: { text: string; cursor:
 
 export function Select({
   options, onChange, onCancel, hideIndexes = false, visibleOptionCount = VISIBLE_OPTION_COUNT,
-  inlineDescriptions = false, highlightText, defaultValue, defaultFocusValue, onInputModeToggle, onFocus, onUnhandledKey,
+  inlineDescriptions = false, highlightText, defaultValue, defaultFocusValue, onInputModeToggle, onInputChange, onFocus, onUnhandledKey,
   onViewChange, rowHeight,
   rows = process.stdout.rows ?? 24, columns = process.stdout.columns ?? 80, focusColor = "suggestion",
   context = "Select",
@@ -232,7 +240,7 @@ export function Select({
     if (e.kind === "key" && e.name === "tab" && !e.ctrl && !e.alt) { if (row) onInputModeToggle?.(row.value); return; }
     if (row?.type === "input") {
       const text = textOf(row), pos = cursorRef.current;
-      const write = (next: string, to: number) => { setInputs({ ...inputsRef.current, [row.value]: next }); setCursor(Math.max(0, Math.min(next.length, to))); };
+      const write = (next: string, to: number) => { setInputs({ ...inputsRef.current, [row.value]: next }); setCursor(Math.max(0, Math.min(next.length, to))); onInputChange?.(row.value, next); };
       if (e.kind === "key") {
         if (e.name === "down" || (e.ctrl && e.name === "n")) { moveTo((at + 1) % count); return; }
         if (e.name === "up" || (e.ctrl && e.name === "p")) { moveTo((at - 1 + count) % count); return; }

@@ -21,7 +21,7 @@
 // surface); `showingDiffInIDE`'s `Save file to continue…` row; upstream's `hintNode` feedback hint; the
 // remote-workspace arms of `UMy` (three of Write's four titles); and `decisionReason` — the file dialog is
 // the ONE consent surface upstream does not print it on (`Cem` has no `yN` call), so neither do we.
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { homedir } from "node:os";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
@@ -34,7 +34,7 @@ import { Line } from "../Line.js";
 import { renderDiff } from "../diffRender.js";
 import { resolvePatch } from "../diffSource.js";
 import { KNOWN_LANGS, highlightCode } from "../highlight.js";
-import { escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
+import { collapseOnFocusChange, escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
 import { useBindingLookup, useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import { formatBindingLower } from "../keys/hints.js";
 import { resolveThemeColor, themeTokens } from "../theme.js";
@@ -198,6 +198,9 @@ export function FilePermission({ req, onDecision, filePath, sedEdit, cwd = proce
   const cycleModeChord = formatBindingLower(cycleKeys.find((k) => !k.includes(" ")) ?? cycleKeys[0]);
 
   const [feedback, setFeedback] = useState<FeedbackMode>(NO_FEEDBACK);
+  // Mirrored off `Select`'s `onInputChange` (t5), and a REF for the same-chunk reason GenericPermission spells
+  // out: `x` then `up` in one chunk must not read the field as still empty.
+  const feedbackText = useRef("");
   const options = fileOptions({ operationType: descriptor.operationType, inDirectory, directoryName, cycleModeChord, claudeScope, feedback });
   const [focus, setFocus] = useState<string>(options[0]!.value);
   const inputFocused = options.find((o) => o.value === focus)?.type === "input";
@@ -227,7 +230,9 @@ export function FilePermission({ req, onDecision, filePath, sedEdit, cwd = proce
           options={options} inlineDescriptions context="SelectDecision" columns={columns}
           onChange={(value, text) => decide(value, text)}
           onCancel={() => { const next = escapeFeedbackMode(feedback); if (next) setFeedback(next); else onDecision({ kind: "deny" }); }}
-          onFocus={setFocus}
+          // Leaving an EMPTY feedback row puts the plain row back (L505162-169); one holding text stays open.
+          onFocus={(value) => { setFocus(value); setFeedback((m) => collapseOnFocusChange(m, value, feedbackText.current.trim() === "")); }}
+          onInputChange={(value, text) => { if (value === "no") feedbackText.current = text; }}
           onInputModeToggle={(value) => { if (value === "no") setFeedback(toggleFeedbackMode(feedback, value)); }}
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
