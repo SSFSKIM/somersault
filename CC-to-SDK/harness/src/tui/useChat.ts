@@ -14,7 +14,8 @@ import { validateAddDir, formatAddDirVerdict, formatAddDirResult, type AddDirVer
 import { mergeSettingsFile, appendToArray, type SettingsFileDeps, type SettingsTarget } from "./settingsFile.js";
 import { appendDenial, removeFromArray, type DenialEntry } from "./permissionsModel.js";
 import type { CcxPrefs } from "./prefs.js";
-import { savePrefs as realSavePrefs } from "./prefs.js";
+import { loadPrefs, savePrefs as realSavePrefs } from "./prefs.js";
+import { AUTO_MODE_DESCRIPTION, AUTO_MODE_NOTICE_DELAY_MS, shouldShowAutoModeNotice } from "./autoModeNotice.js";
 import { currentTheme, resolveThemeColor, setTheme, themeTokens, type ThemeId } from "./theme.js";
 import { buildRows, summarizeChanges, PERMISSION_MODE_OPTIONS, type SettingsRowCtx } from "./settingsRows.js";
 import { OUTPUT_STYLE_REDIRECT } from "./OutputStylePicker.js";
@@ -621,6 +622,25 @@ export function useChat(
   // Bound once on mount — `notice` only reads refs and setState, so the mount-time closure stays correct for
   // the life of the component, and after unmount `appendNewLocal`'s `disposed` guard drops the call.
   useEffect(() => { opts.noticeBridge?.bind((text) => notice(text)); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Wave-T T2 — the auto-mode entry notice, upstream's shape exactly (bundle L547934-955): an effect keyed on
+  // the MODE, not on whichever frame changed it, so every route into `auto` earns it — the host's `state`
+  // frame, Shift+Tab's own applyMode, and an `attach` to a host already in auto (accepted: a background host
+  // stays in auto, so attaching prints this; upstream's per-process ref behaves the same way). 800 ms later,
+  // as a plain transcript `notice` row (upstream's `ml(text,"notice")`), at most once per process (the ref,
+  // set inside the timer exactly like upstream's `qU` — a mode flip that leaves auto before the delay elapses
+  // cancels it and stays eligible) and at most once per install (the prefs flag).
+  const autoNoticeShown = useRef(false);
+  useEffect(() => {
+    if (mode !== "auto" || autoNoticeShown.current) return;
+    const id = setTimeout(() => {
+      if (disposed.current) return;
+      autoNoticeShown.current = true;
+      if (!shouldShowAutoModeNotice(loadPrefs(historyEnv))) return;
+      notice(AUTO_MODE_DESCRIPTION);
+      savePrefsFn({ hasSeenAutoModeEntryWarning: true }, historyEnv);
+    }, AUTO_MODE_NOTICE_DELAY_MS);
+    return () => clearTimeout(id);
+  }, [mode]);   // eslint-disable-line react-hooks/exhaustive-deps
   /** /export, /files and /stats all read the PERSISTED transcript, which the SDK does not write mid-turn
    *  (probes 62-64). Local commands dispatch immediately even while busy, so running one during a turn
    *  answers from the last COMPLETED turn — an export that ends before the reply on screen, a token count

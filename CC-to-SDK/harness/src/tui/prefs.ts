@@ -21,7 +21,10 @@ import { THEMES, type ThemeId } from "./theme.js";
 /** `showExpandedTodos` is F6 T13's Ctrl-T write and upstream's own flag name (bundle L377294 default,
  *  L401025-401031 writer): the todo panel's open state, saved as it is toggled and restored at boot by
  *  chatMain. Upstream's default is FALSE; ours is true when the key is absent — see ChatApp's prop. */
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number } }
+/** `hasSeenAutoModeEntryWarning` is Wave-T T2's once-per-install gate for the auto-mode entry notice, and
+ *  upstream's own flag name (bundle L454516 gate, L547951 writer): set the first time this install lands in
+ *  `auto`, never cleared. Upstream keeps it in the app config; ours lives here, the client-side seam. */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 
