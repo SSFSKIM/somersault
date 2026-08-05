@@ -262,6 +262,43 @@ describe("<GenericPermission> (`Gal` L506118-260)", () => {
     expect(legacy.got).toEqual([{ kind: "allow_once" }, { kind: "allow_always" }, { kind: "deny" }, { kind: "deny" }]);
   });
 
+  // Wave T t3, from QA repro qa3-04: Tab reads as "open me a text box", so the Enter that follows an EMPTY
+  // box must not be an answer. It used to be — the row carried `allowEmptySubmitToCancel`, which carries the
+  // empty submit through to `onChange` and denied the tool with no message and no visible cause. Without the
+  // flag the empty Enter is `Select`'s cancel, and this body already spends its cancel on `escapeFeedbackMode`.
+  it("an EMPTY Enter on the No feedback row decides NOTHING — it just closes the field (qa3-04)", async () => {
+    const v = await mountGeneric(mcpReq());
+    v.stdin.write("\x1b[B"); await tick();
+    v.stdin.write("\x1b[B"); await tick();                        // focus No
+    v.stdin.write("\t"); await tick();                            // …and open its field
+    expect(v.frame()).toContain("and tell Claude what to do differently");
+    v.stdin.write("\r"); await tick();
+    expect(v.got).toEqual([]);                                    // NOT the bare deny it used to be
+    expect(v.frame()).toContain("Do you want to proceed?");       // and the dialog is still up
+    expect(v.frame()).toContain("3. No");                         // the row went back to a plain one
+    // The field still works — the no-op is about EMPTY, not about the row.
+    v.stdin.write("\t"); await tick();
+    await type(v.stdin, "use the other tool");
+    v.stdin.write("\r"); await waitFor(() => v.got.length === 1);
+    expect(v.got[0]).toEqual({ kind: "deny", feedback: "use the other tool" });
+  });
+
+  // `Select.tsx:216-222`'s digit path reads the same flag, so this is the SAME defect through a second door:
+  // a digit aimed at an empty text row used to submit it. With the flag gone it falls through to `moveTo`,
+  // which is upstream's own behaviour (L396768-785) and needed no production change — pinned so it stays.
+  it("a digit aimed at the EMPTY feedback row moves the cursor into it rather than deciding", async () => {
+    const v = await mountGeneric(mcpReq());
+    v.stdin.write("\x1b[B"); await tick();
+    v.stdin.write("\x1b[B"); await tick();
+    v.stdin.write("\t"); await tick();                            // row 3 is now a text row…
+    v.stdin.write("\x1b[A"); await tick();                        // …and the cursor steps off it, so digits live again
+    v.stdin.write("3"); await tick();
+    expect(v.got).toEqual([]);                                    // NOT a bare deny
+    await type(v.stdin, "somewhere else");                        // the cursor landed INSIDE the field
+    v.stdin.write("\r"); await waitFor(() => v.got.length === 1);
+    expect(v.got[0]).toEqual({ kind: "deny", feedback: "somewhere else" });
+  });
+
   it("never reads a modified y/n as a decision", async () => {
     const v = await mountGeneric(mcpReq());
     for (const key of ["\x19", "\x0e", "\x1by", "\x1bn"]) { v.stdin.write(key); await new Promise((r) => setTimeout(r, 20)); }

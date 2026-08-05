@@ -4,9 +4,21 @@
 // `$Qf` builds its list in a fixed order — Yes, then whatever "don't ask again" arms the suggestions
 // justify, then No — and both ends have two shapes. `yesInputMode`/`noInputMode` DEFAULT TO FALSE
 // (L504855), so a dialog opens with two plain pick-one rows; in feedback mode the row becomes an `RLe`
-// text row carrying its own placeholder and `allowEmptySubmitToCancel: true` (L504858 for Yes,
-// L504874-877 for No). The middle arms are the caller's business — they depend on the engine's
-// `suggestions` payload, which is per-dialog — so `yesNoRows` takes them as an argument.
+// text row carrying its own placeholder (L504858 for Yes, L504874-877 for No). The middle arms are the
+// caller's business — they depend on the engine's `suggestions` payload, which is per-dialog — so
+// `yesNoRows` takes them as an argument.
+//
+// A SECOND divergence, wave T t3 (spec W-T6/W-T17): upstream ALSO hangs `allowEmptySubmitToCancel: true`
+// on both feedback rows and we deliberately do not. The flag's name is inverted from its effect — it
+// carries an EMPTY submit through to `onChange` instead of to `onCancel` — so upstream's Tab-then-Enter on
+// an untouched field silently selects the row, which on the No end is a deny with no message. Upstream can
+// afford that because it pairs the field with a visible `tab / amend` hint; this harness shipped the
+// fall-through without the hint, and QA (qa3-04) read Tab as "open me a text box" and then lost the tool to
+// an Enter they never meant as an answer. Without the flag the empty Enter reaches `Select`'s `onCancel`,
+// and every consult body spends its cancel on `escapeFeedbackMode` first (`GenericPermission.tsx:74` and
+// its four twins) — so the row collapses, the dialog stays open, and NOTHING is decided. Note this is the
+// rows' divergence alone: `bashOptions.ts`'s editable-prefix row keeps the flag, where an empty prefix
+// genuinely means something (L505212-17).
 //
 // One divergence from `$Qf`'s shape, and it is our `Select`'s: upstream hangs a per-option `onChange` on
 // each input row, ours streams the text back through the single `Select` `onChange(value, inputText)`. The
@@ -21,13 +33,13 @@ export const NO_FEEDBACK_PLACEHOLDER = "and tell Claude what to do differently";
 
 export function yesRow(feedbackMode = false): SelectOption {
   return feedbackMode
-    ? { type: "input", label: "Yes", value: "yes", placeholder: YES_FEEDBACK_PLACEHOLDER, allowEmptySubmitToCancel: true }
+    ? { type: "input", label: "Yes", value: "yes", placeholder: YES_FEEDBACK_PLACEHOLDER }
     : { label: "Yes", value: "yes" };
 }
 
 export function noRow(feedbackMode = false): SelectOption {
   return feedbackMode
-    ? { type: "input", label: "No", value: "no", placeholder: NO_FEEDBACK_PLACEHOLDER, allowEmptySubmitToCancel: true }
+    ? { type: "input", label: "No", value: "no", placeholder: NO_FEEDBACK_PLACEHOLDER }
     : { label: "No", value: "no" };
 }
 

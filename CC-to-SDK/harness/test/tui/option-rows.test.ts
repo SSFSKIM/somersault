@@ -1,8 +1,10 @@
 // tui/test/option-rows.test.ts — the shared yes/no rows every permission dialog reuses (F6 T4).
 // Transcribed from 2.1.220's `$Qf` (L504855-878): both rows start life PLAIN (`yesInputMode`/`noInputMode`
 // default to `!1` at L504855) and become `type:"input"` rows only in feedback mode, each with its own
-// placeholder and `allowEmptySubmitToCancel:!0` (L504858 / L504874-877). The assembly order — yes, then the
-// middle arms, then no — is the order `$Qf` pushes them.
+// placeholder (L504858 / L504874-877). The assembly order — yes, then the middle arms, then no — is the
+// order `$Qf` pushes them. The ONE deliberate divergence, wave T t3 (spec W-T6/W-T17): upstream also hangs
+// `allowEmptySubmitToCancel:!0` on both rows and we do not, so an empty Enter is a no-op here — see the
+// module header for why.
 import { describe, it, expect } from "vitest";
 import {
   yesRow, noRow, yesNoRows, NO_FEEDBACK, toggleFeedbackMode, escapeFeedbackMode,
@@ -19,12 +21,22 @@ describe("yesRow / noRow", () => {
   it("become input rows in feedback mode, with the bundle's own placeholders", () => {
     expect(yesRow(true)).toEqual({
       type: "input", label: "Yes", value: "yes",
-      placeholder: "and tell Claude what to do next", allowEmptySubmitToCancel: true,
+      placeholder: "and tell Claude what to do next",
     });
     expect(noRow(true)).toEqual({
       type: "input", label: "No", value: "no",
-      placeholder: "and tell Claude what to do differently", allowEmptySubmitToCancel: true,
+      placeholder: "and tell Claude what to do differently",
     });
+  });
+
+  // Wave T t3 (qa3-04). The flag's name is inverted from its effect: `allowEmptySubmitToCancel: true` means
+  // "carry the empty submit to `onChange`", and carrying it is what turned Tab-then-Enter into a silent deny.
+  // Dropping it routes the empty Enter to `Select`'s `onCancel`, which every consult body already spends on
+  // `escapeFeedbackMode` — the row collapses, no decision is sent. Pinned as an ABSENCE, not a `false`: the
+  // property must not be on the object at all, since `Select` only tests it for truthiness.
+  it("carry NO empty-submit flag, so an empty Enter never reaches `onChange` (W-T6/W-T17)", () => {
+    expect(yesRow(true)).not.toHaveProperty("allowEmptySubmitToCancel");
+    expect(noRow(true)).not.toHaveProperty("allowEmptySubmitToCancel");
   });
 });
 
