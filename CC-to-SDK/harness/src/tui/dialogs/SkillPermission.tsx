@@ -1,7 +1,7 @@
 // tui/dialogs/SkillPermission.tsx — the Skill permission dialog (F6 T8). Transcribed from 2.1.220's `oll`
 // (L506582-710): the `Ed` frame titled `Use skill "<name>"?`, the standing caution line, the skill's own
 // description in a padded dim block, the consent reason (`yN`), then `zTe` — which is where the question
-// line, the option list and the `esc cancel` footer all come from (L505939-505952).
+// line, the option list and the shared `ConsultFooter` (T4) all come from (L505939-505952).
 //
 // The list is the one shape in the F6 family that is NOT mutually exclusive: `Ptm` (a non-empty name) and
 // `Otm` (a space inside it) are independent tests and `oll` pushes both rows, so `Skill(git commit)` offers

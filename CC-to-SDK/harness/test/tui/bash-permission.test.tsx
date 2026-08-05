@@ -170,6 +170,25 @@ describe("<BashPermission> — feedback mode (Tab on No)", () => {
     expect(v.got[0]).toEqual({ kind: "deny", feedback: "ask any human" });
   });
 
+  // Wave T t4 review (I1). The amend hint is gated on the LIVE `inputMode` the BODY passes down: once the
+  // focused row is already a text field, the hint that told you how to open one is noise (`aZf` L505186).
+  // `consult-footer.test.tsx` pins the component and the mount-state assertions above pin `inputMode={false}`,
+  // but nothing pinned the wiring — dropping `inputMode={inputFocused}` from all five bodies at once left the
+  // whole TUI suite green. Collecting EVERY footer-shaped line also pins that there is exactly one of them.
+  it("drops the `tab amend` hint from the footer once the No row IS the text field", async () => {
+    const v = await mount(req("ls"));
+    const footer = () => plain(v.frame()).split("\n").filter((l) => l.includes("esc cancel")).map((l) => l.trim());
+    expect(footer()).toEqual(["esc cancel · tab amend"]);
+    v.stdin.write("\x1b[B"); await tick();                        // focus No
+    v.stdin.write("\t"); await tick();                            // …and turn it into a field
+    expect(plain(v.frame())).toContain("and tell Claude what to do differently");
+    expect(footer()).toEqual(["esc cancel"]);
+    // and the hint comes back with the row: Esc leaves input mode, the plain row returns, so does the hint.
+    v.stdin.write("\x1b"); await tick();
+    expect(footer()).toEqual(["esc cancel · tab amend"]);
+    expect(v.got).toEqual([]);
+  });
+
   it("Tab does nothing on the Yes row — the allow side has no feedback channel (T3)", async () => {
     const v = await mount(req("ls"));
     v.stdin.write("\t"); await tick();

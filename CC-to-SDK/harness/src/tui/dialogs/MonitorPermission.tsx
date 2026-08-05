@@ -1,7 +1,7 @@
 // tui/dialogs/MonitorPermission.tsx — the Monitor permission dialog (F6 T8). Transcribed from 2.1.220's
 // `Ral` (L506006-093): the `Ed` frame titled `cA` = "Monitor" (L158976 — resolved from the constant, not
 // guessed), a body that is one of three arms depending on what the monitor actually watches, the dim
-// description under it, the consent reason (`yN`) and `zTe`'s question / list / `esc cancel` footer.
+// description under it, the consent reason (`yN`) and `zTe`'s question / list / shared `ConsultFooter` (T4).
 //
 // The three body arms are checked in `Ral`'s own order — MCP poll, then WebSocket, then the raw command — and
 // the payload reader that feeds them is `hid` (smallDialogOptions.ts). The arms are why this dialog exists at

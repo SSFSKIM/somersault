@@ -5,7 +5,7 @@
 // Transcribed from 2.1.220's `Gal` (L506118-260): the `Ed` frame titled "Tool use", a one-line body reading
 // `<userFacingName>(<rendered tool-use message>)` with a dim ` (MCP)` marker when the tool is an MCP one, the
 // description clipped to THREE LINES under it (`Ktt`), the consent reason (`yN`) and `zTe`'s question / list /
-// `esc cancel` footer. Everything pure lives in `smallDialogOptions.ts`.
+// shared `ConsultFooter` (T4). Everything pure lives in `smallDialogOptions.ts`.
 //
 // Two divergences, both recorded for T15:
 //   · upstream decides "is this MCP" by asking the tool for its display name and testing

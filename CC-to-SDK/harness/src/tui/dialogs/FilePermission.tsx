@@ -2,7 +2,7 @@
 // product: every Edit, Write, NotebookEdit, Read, Glob and Grep consult lands here, and so does a Bash
 // command that parses as an in-place `sed` (T4's router). Transcribed from 2.1.220's `Cem` (L505875-914):
 // the `Ed` frame with `innerPaddingX: 0`, the symlink warning in the `warning` role, the descriptor's own
-// body, the `Tem` question, the `tal` option list inside a `Select`, and an `esc cancel` footer.
+// body, the `Tem` question, the `tal` option list inside a `Select`, and the shared `ConsultFooter` (T4).
 //
 // Everything pure lives in `fileOptions.ts`; this file is the wiring, and it repeats `BashPermission.tsx`'s
 // key contract verbatim (digits to the Select · `y`/`n` deregistered while a text row has the cursor ·
