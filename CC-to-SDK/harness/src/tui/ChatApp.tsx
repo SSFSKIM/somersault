@@ -78,7 +78,7 @@ import { PermissionsDialog } from "./PermissionsDialog.js";
  *  scope and its ctrl+x ctrl+b chord would survive the hold. */
 /** `$jp = 2` (bundle L426022) — the `paddingX` `wqo` puts around a queued prompt in normal layout. */
 const QUEUE_PAD = 2;
-/** `fs = 1500` (bundle L547787, the local const beside `Qo = mMr()`): how long after the LAST keystroke the
+/** `fs = 1500` (bundle L547654, the local const beside `Qo = mMr()`): how long after the LAST keystroke the
  *  composer's typing-activity flag stays set, and therefore how long a decision that arrived mid-draft stays
  *  suppressed. Injectable (`typingIdleMs`) for the same reason `yankHintMs`/`escClearMs`/`pasteHintMs` are —
  *  so a test can watch the real window close instead of faking the clock under Ink. */

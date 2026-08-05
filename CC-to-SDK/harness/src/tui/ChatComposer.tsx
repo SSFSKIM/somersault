@@ -448,12 +448,15 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // already won the key. The difference matters whenever another surface is mounted alongside this one: an
   // early return consumes, so the other surface's keys never arrive.
   //
-  // Under the t5-fix model (upstream's, bundle L549494) this component is unmounted whenever a dialog is
-  // VISIBLE, so the case it covers is narrower than it looked: the SUPPRESSED state (`owner === "typing"` —
-  // composer on screen, dialog withheld, composer owning) and the one passive-flush sub-tick in which a
-  // retiring composer's registrations outlive its unmount. It stays because it is the truthful expression of
-  // ownership: an inactive scope is also absent from `activeContexts`, which is what keeps `useBindingLookup`'s
-  // live answers honest in that window instead of advertising a Chat chord nobody can deliver.
+  // BELT-AND-BRACES, AND UNPINNED (t5 re-review) — do not delete as dead code, and do not call it
+  // load-bearing either. Under the t5-fix model (upstream's, bundle L549494) `owns` is provably TRUE whenever
+  // this component renders in the settled tree: every owner that isn't "composer"/"typing" unmounts it, the
+  // SUPPRESSED state makes composerOwns("typing") true by construction, and in the passive-flush sub-tick the
+  // registry's mount-order ranking already favours the newer dialog regardless of this gate (reverting all
+  // four gates fails zero of 2258 tests). It stays because it is the truthful expression of a question a
+  // DIFFERENT arrangement could make false — the composer is the one component that can be mounted beside
+  // another claimant, and T6-T9 keep adding claimants. The {active} mechanism itself is pinned by three
+  // keys-provider unit tests; the pins live on the hook, not here.
   //
   // Read during RENDER, exactly like every other registration here: ChatApp writes the ref during its own
   // render, before this child renders, so the value is this frame's truth and not the previous frame's.

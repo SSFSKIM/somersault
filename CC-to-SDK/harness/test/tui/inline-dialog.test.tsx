@@ -10,7 +10,7 @@
 // A mid-typing draft is protected by the OPPOSITE mechanism — SUPPRESSION. `Xrl()` (L499196) renders no dialog
 // at all while the composer's activity flag is set; the flag is `value.trim().length > 0`, written on every
 // input change and cleared by a trailing 1500 ms debounce after the last keystroke (`TC`, L547796-802, with
-// `fs = 1500` at L547787); while it holds, the composer shows a dim `Waiting for permission…` row (L496241).
+// `fs = 1500` at L547654); while it holds, the composer shows a dim `Waiting for permission…` row (L496241).
 // So the three states this file pins are upstream's three: none / suppressed / visible.
 import { describe, it, expect } from "vitest";
 import React from "react";
