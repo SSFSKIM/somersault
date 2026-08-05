@@ -4,9 +4,9 @@
 // (generic), plus `Ktt` (the 3-line description clip) and `ma` (the code-unit clip `jrn` truncates with).
 import { describe, it, expect } from "vitest";
 import {
-  clipLines, fetchDecision, fetchHostname, fetchOptions, genericDecision, genericOptions, hasMcpSuffix,
-  monitorDecision, monitorOptions, monitorPayload, renderedToolUse, skillDecision, skillOf, skillOptions,
-  skillPrefix, subprotocolList, suggestionRowLabel,
+  clipLines, fetchDecision, fetchHostname, fetchOptions, fetchUrl, genericDecision, genericOptions,
+  isMcpToolName, monitorDecision, monitorOptions, monitorPayload, renderedToolUse, skillDecision, skillOf,
+  skillOptions, skillPrefix, subprotocolList, suggestionRowLabel,
 } from "../../src/tui/dialogs/smallDialogOptions.js";
 import type { PermissionUpdateLike } from "../../src/permissions/types.js";
 
@@ -43,6 +43,19 @@ describe("WebFetch (`ull` L506735-816 · `Wtm` L506721-730 · `fid` L228310-318)
     expect(fetchHostname({ url: "not a url" })).toBe("");
     expect(fetchHostname({ url: 7 })).toBe("");
     expect(fetchHostname({})).toBe("");
+  });
+
+  // T8 review: the body and the domain row must read the SAME field. `renderedToolUse` takes whatever key
+  // came first, so a `{prompt, url}` payload printed the prompt above a row naming the host.
+  it("the body reads input.url BY NAME, whatever order the keys arrive in", () => {
+    expect(fetchUrl({ prompt: "summarise this", url: "https://example.com/a" })).toBe("https://example.com/a");
+    expect(fetchUrl({ url: "https://example.com/a", prompt: "summarise this" })).toBe("https://example.com/a");
+    expect(renderedToolUse({ prompt: "summarise this", url: "https://example.com/a" })).toBe("summarise this");
+  });
+
+  it("falls back to the first argument only when there is no string url to read", () => {
+    expect(fetchUrl({ prompt: "summarise this" })).toBe("summarise this");
+    expect(fetchUrl({})).toBe("");
   });
 
   it("offers Yes · the domain row · a PLAIN-label No that names (esc)", () => {
@@ -176,8 +189,8 @@ describe("Monitor (`Ral` L506006-093 · `ntm`/`otm`/`itm` L505982-8005 · `hid` 
 
 describe("generic (`Gal` L506118-260 · `gtm` L506108-116)", () => {
   it("our reachable MCP test is the `mcp__` name prefix, not upstream's ` (MCP)` userFacingName suffix", () => {
-    expect(hasMcpSuffix("mcp__notes__append")).toBe(true);
-    expect(hasMcpSuffix("WebSearch")).toBe(false);
+    expect(isMcpToolName("mcp__notes__append")).toBe(true);
+    expect(isMcpToolName("WebSearch")).toBe(false);
   });
 
   it("names the tool and the cwd on its don't-ask-again row", () => {

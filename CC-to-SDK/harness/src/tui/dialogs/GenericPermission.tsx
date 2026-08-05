@@ -23,7 +23,7 @@ import { DialogFrame } from "./DialogFrame.js";
 import { Select } from "../select/Select.js";
 import { consentReasonLine } from "./consentReason.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
-import { clipLines, genericDecision, genericOptions, hasMcpSuffix, renderedToolUse } from "./smallDialogOptions.js";
+import { clipLines, genericDecision, genericOptions, isMcpToolName, renderedToolUse } from "./smallDialogOptions.js";
 import { escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
@@ -62,7 +62,7 @@ export function GenericPermission({ req, onDecision, cwd = process.cwd() }: {
   return (
     <DialogFrame title="Tool use" subagentType={req.subagentType}>
       <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Text>{req.toolName}{rendered ? `(${rendered})` : ""}{hasMcpSuffix(req.toolName) ? <Text dimColor> (MCP)</Text> : ""}</Text>
+        <Text>{req.toolName}{rendered ? `(${rendered})` : ""}{isMcpToolName(req.toolName) ? <Text dimColor> (MCP)</Text> : ""}</Text>
         {req.description ? <Text dimColor>{clipLines(req.description, DESCRIPTION_LINES)}</Text> : null}
       </Box>
       <Box flexDirection="column">

@@ -51,6 +51,16 @@ describe("<FetchPermission> (`ull` L506735-816)", () => {
     expect(f).not.toContain("Do you want to proceed?");
   });
 
+  // T8 review: the printed line and the domain row are two readings of ONE field, so they cannot disagree.
+  // A `{prompt, url}` payload used to print the prompt above a row naming the host.
+  it("prints the URL even when `prompt` is the first key in the input", async () => {
+    const got: PermissionDecision[] = [];
+    const v = await mount(<FetchPermission req={{ toolName: "WebFetch", input: { prompt: "summarise this page", url: "https://example.com/a" } }} onDecision={(d) => got.push(d)} />, got);
+    expect(v.frame()).toContain("https://example.com/a");
+    expect(v.frame()).not.toContain("summarise this page");
+    expect(v.frame()).toContain("2. Yes, and don't ask again for example.com");
+  });
+
   it("offers the domain row and, on digit 2, writes ONE `domain:` rule to localSettings", async () => {
     const v = await mountFetch(fetchReq("https://example.com/docs"));
     expect(v.frame()).toContain("2. Yes, and don't ask again for example.com");
@@ -147,6 +157,16 @@ describe("<MonitorPermission> (`Ral` L506006-093)", () => {
     const v = await mountMonitor(monitorReq({ ws: { url: "wss://example.com", protocols: ["v1", "v2"] } }));
     expect(v.frame()).toContain("Open WebSocket wss://example.com/");
     expect(v.frame()).toContain('subprotocols: "v1", "v2"');
+  });
+
+  // T8 review: `hid` derives `monitorDescription` from `input.description` alone (L228324), and `Ral` prints
+  // that and nothing else (L506064). The consult's own `description` field — which the other three bodies do
+  // print — is a different sentence and never appears here.
+  it("prints `input.description` and NOT the consult's own description field", async () => {
+    const shown = await mountMonitor(monitorReq({ command: "tail -f log", description: "watch the app log" }));
+    expect(shown.frame()).toContain("watch the app log");
+    const outer = await mountMonitor(monitorReq({ command: "tail -f log" }, { description: "Run a monitor" }));
+    expect(outer.frame()).not.toContain("Run a monitor");
   });
 
   it("falls back to the raw command when the input names neither", async () => {

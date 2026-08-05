@@ -11,6 +11,11 @@
 // only one whose don't-ask-again row echoes `suggestions` verbatim — the live surface of the suggestion-first
 // policy in this task (see smallDialogOptions.ts's header). No suggestions means Yes/No and nothing else.
 //
+// The dim line under the body is `monitorDescription` ALONE (L506064), which `hid` derives from
+// `input.description` and nothing else — deliberately NOT falling back to the consult's own `description`
+// field the other three bodies print. This dialog names the thing being watched; a generic tool description
+// is a different sentence, and upstream never shows it here (T8 review).
+//
 // Recorded, not built: `Ral`'s `toolType` (L506071 — "tool" for the MCP/WS arms, "command" for a raw one).
 // It is handed to `yN`, whose only headlessly-reachable arm is `safetyCheck`/`other`, and that arm does not
 // interpolate it (`mDr` L500565-567); every arm that does is a typed decision reason the wire never forwards.
@@ -25,9 +30,10 @@ import { escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode 
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
 
+/** The slice of a `PermissionRequest` this body reads — note the ABSENCE of `description`: the dim line here
+ *  is `hid`'s `monitorDescription`, off `input.description`. */
 export interface MonitorPermissionRequest {
   input: Record<string, unknown>;
-  description?: string;
   subagentType?: string;
   suggestions?: PermissionUpdateLike[];
   decisionReason?: string;
@@ -71,7 +77,7 @@ export function MonitorPermission({ req, onDecision }: {
     <DialogFrame title="Monitor" subagentType={req.subagentType}>
       <Box flexDirection="column" paddingX={2} paddingY={1}>
         <MonitorBody payload={payload} />
-        {payload.description ?? req.description ? <Text dimColor>{payload.description ?? req.description}</Text> : null}
+        {payload.description ? <Text dimColor>{payload.description}</Text> : null}
       </Box>
       <Box flexDirection="column">
         {reason ? <Text>{reason}</Text> : null}

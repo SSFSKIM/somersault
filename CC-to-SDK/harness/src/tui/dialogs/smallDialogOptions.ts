@@ -86,6 +86,15 @@ export function fetchHostname(input: Record<string, unknown>): string {
   try { return new URL(url).hostname; } catch { return ""; }
 }
 
+/** What the BODY prints. It has to be the same field `fetchHostname` reads, and `renderedToolUse`'s
+ *  first-argument guess is not: WebFetch's input is `{url, prompt}` and nothing pins the key order the engine
+ *  sends, so a `{prompt, url}` payload would print the prompt above a domain row naming the host — a dialog
+ *  disagreeing with itself about what is being approved. The generic fallback stays for an input that somehow
+ *  carries no string `url`, since the body must still render something. */
+export function fetchUrl(input: Record<string, unknown>): string {
+  return str(input.url) ?? renderedToolUse(input);
+}
+
 /** L506752-771. The No row is a PLAIN label that names `(esc)` in its own text — upstream hangs no
  *  `feedbackConfig` on it (unlike Skill/Monitor/generic), so it can never become a text row and this dialog
  *  has no Tab-to-feedback affordance at all. The `(esc)` in the label is the footer the others get. */
@@ -217,7 +226,7 @@ export function monitorDecision(value: string, ctx: { text?: string; suggestions
  *  tool could in principle carry the suffix without the prefix, and would render without the marker here.
  *  Upstream also STRIPS the suffix off the displayed name; we have no display name to strip, so the wire
  *  name is what the body prints. */
-export function hasMcpSuffix(toolName: string): boolean {
+export function isMcpToolName(toolName: string): boolean {
   return toolName.startsWith("mcp__");
 }
 

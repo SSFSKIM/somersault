@@ -3,6 +3,10 @@
 // a dim description under it, the consent reason (`yN`), the fetch-specific question, and the `jr` option
 // list. Everything pure lives in `smallDialogOptions.ts`.
 //
+// The body reads `input.url` BY NAME (`fetchUrl`), not the first argument: the domain row is derived from
+// that same field, and an input arriving as `{prompt, url}` would otherwise print the prompt above a row
+// naming the host — a dialog disagreeing with itself about what is being approved (T8 review).
+//
 // THIS IS THE ONE PERMISSION BODY WITH NO FEEDBACK ROW AND NO FOOTER, and the two facts are the same fact:
 // upstream builds its No from a PLAIN label carrying `(esc)` in its own text (L506767-770) and mounts the
 // bare `jr` rather than `zTe`, so there is no `feedbackConfig` to toggle into a text row and no `esc cancel`
@@ -18,7 +22,7 @@ import { DialogFrame } from "./DialogFrame.js";
 import { Select } from "../select/Select.js";
 import { consentReasonLine } from "./consentReason.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
-import { fetchDecision, fetchHostname, fetchOptions, renderedToolUse } from "./smallDialogOptions.js";
+import { fetchDecision, fetchHostname, fetchOptions, fetchUrl } from "./smallDialogOptions.js";
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
 
@@ -49,7 +53,7 @@ export function FetchPermission({ req, onDecision }: {
   return (
     <DialogFrame title="Fetch" subagentType={req.subagentType}>
       <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Text>{renderedToolUse(req.input)}</Text>
+        <Text>{fetchUrl(req.input)}</Text>
         {req.description ? <Text dimColor>{req.description}</Text> : null}
       </Box>
       <Box flexDirection="column">
