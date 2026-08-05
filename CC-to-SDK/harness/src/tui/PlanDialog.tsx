@@ -252,7 +252,11 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
   // `DZe` (L500763-500779 + L501048-501079): no plan to show, so there is nothing to approve EDITS about —
   // upstream swaps the whole dialog for a two-row yes/no over `Ed title="Exit plan mode?"`. Its Yes sends
   // `permissionUpdates: [{type:"setMode", mode:"default", …}]` (L501008), i.e. the manual-approve arm, which is
-  // `acceptEdits:false` on our one channel; its No and its cancel are both a bare `{behavior:"deny"}`.
+  // `acceptEdits:false` on our one channel; its No and its cancel are both a bare `{behavior:"deny"}` — which
+  // we emit as plan_reject, not deny (t9 re-review): the wire behavior is identical (both reach the gate's
+  // plan-family deny copy), but a bare deny would land this ExitPlanMode in the Recently-denied ledger
+  // (permissionsModel no-ops on plan_reject) and read "denied" instead of "sent back" in the cross-client
+  // notice — the plan family stays plan_reject throughout.
   if (emptyPlan) {
     return (
       <DialogFrame title={EMPTY_PLAN_TITLE} color="planMode" subagentType={req.subagentType}>
@@ -260,8 +264,8 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
           <Text>{EMPTY_PLAN_BODY}</Text>
           <Box marginTop={1}>
             <Select options={[...EMPTY_PLAN_OPTIONS]} context="SelectDecision"
-              onChange={(value) => { if (value === "yes") approve(false); else onDecision({ kind: "deny" }); }}
-              onCancel={() => onDecision({ kind: "deny" })} />
+              onChange={(value) => { if (value === "yes") approve(false); else onDecision({ kind: "plan_reject" }); }}
+              onCancel={() => onDecision({ kind: "plan_reject" })} />
           </Box>
         </Box>
       </DialogFrame>

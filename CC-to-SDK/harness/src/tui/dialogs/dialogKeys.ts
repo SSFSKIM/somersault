@@ -16,6 +16,9 @@ import type { PermissionDecision } from "../../permissions/types.js";
 
 export function legacyKeyDecision(e: KeyEvent | TextEvent): PermissionDecision | undefined {
   const { input, key } = toKeyFlags(e);
+  // The ctrl/meta guard predates t9 but is now load-bearing for a SECOND reason: since SelectDecision binds
+  // ctrl+u/ctrl+d (plan scroll), an unhandled ctrl+d TRAVERSES to onUnhandledKey in every decision dialog
+  // (it used to die at the old `ctrl+d: null` unbind) — without this guard it would read as a bare `d` deny.
   if (key.ctrl || key.meta) return undefined;
   if (input === "a") return { kind: "allow_once" };
   if (input === "A") return { kind: "allow_always" };

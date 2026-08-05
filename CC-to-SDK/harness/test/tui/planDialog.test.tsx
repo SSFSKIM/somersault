@@ -274,7 +274,10 @@ describe("<PlanDialog> — ctrl+g (DG34, `tYf` L501036-053 + `Anl` L500757)", ()
 // ── The T9 fix round ──────────────────────────────────────────────────────────────────────────────────
 
 describe("<PlanDialog> — the terminal handoff (T9-fix 1)", () => {
-  it("runs the editor INSIDE suspendInput: raw mode released and stdin paused before the spawn, restored after", async () => {
+  // The seam's OWN effects (raw-mode release, stdin pause, ?2004 toggles) are pinned where the seam lives —
+  // keys-provider.test.tsx drives the real suspendInput and asserts the escape-sequence ordering. This test
+  // pins only the COMPOSITION: seam entered → editor spawned same-tick → seam restored after.
+  it("runs the editor INSIDE suspendInput: seam entered before the spawn, restored after", async () => {
     const order: string[] = [];
     const suspendInput = async <T,>(fn: () => Promise<T>): Promise<T> => {
       order.push("suspend");
@@ -329,18 +332,22 @@ describe("<PlanDialog> — the empty-plan dialog (`DZe` L500763 / L501048-079, T
     expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: false });
   });
 
-  it("No and Esc both deny", async () => {
+  // plan_reject, not bare deny (t9 re-review follow-up): identical at the wire (upstream's yWt("no") IS
+  // {behavior:"deny"}, and the gate's plan-family copy is the same either way), but a bare deny would land
+  // this ExitPlanMode in the Recently-denied ledger (permissionsModel no-ops on plan_reject) and read
+  // "denied" instead of "sent back" in the cross-client notice.
+  it("No and Esc both reject as the plan family (plan_reject, never bare deny)", async () => {
     const a: unknown[] = [];
     const one = empty({ onDecision: (o: unknown) => a.push(o) });
     await waitFor(() => frame(one.lastFrame).includes(EMPTY_PLAN_TITLE));
     one.stdin.write("2"); await waitFor(() => a.length === 1);
-    expect(a[0]).toEqual({ kind: "deny" });
+    expect(a[0]).toEqual({ kind: "plan_reject" });
 
     const b: unknown[] = [];
     const two = empty({ onDecision: (o: unknown) => b.push(o) });
     await waitFor(() => frame(two.lastFrame).includes(EMPTY_PLAN_TITLE));
     two.stdin.write("\x1b"); await waitFor(() => b.length === 1);
-    expect(b[0]).toEqual({ kind: "deny" });
+    expect(b[0]).toEqual({ kind: "plan_reject" });
   });
 });
 
