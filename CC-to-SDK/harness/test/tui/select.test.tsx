@@ -105,6 +105,29 @@ describe("<Select> description layouts", () => {
   it("inlineDescriptions puts the description in the label's own Text, one space, dimmed (L397241)", async () => {
     const r = await mount(<Select options={described} onChange={noop} onCancel={noop} inlineDescriptions rows={40} columns={100} />);
     expect(plain(frame(r.lastFrame))).toContain("alpha the first one");
+    expect(frame(r.lastFrame)).toContain("\x1b[2m the first one");    // …and it really is DIM, space included
+  });
+
+  it("leaves a `dimDescription: false` description at full brightness (L397241 `dimDescription !== !1`)", async () => {
+    const bright: SelectOption[] = [{ value: "a", label: "alpha", description: "bright", dimDescription: false }];
+    const r = await mount(<Select options={bright} onChange={noop} onCancel={noop} inlineDescriptions rows={40} columns={100} />);
+    const f = frame(r.lastFrame);
+    expect(plain(f)).toContain("alpha bright");
+    expect(f).not.toContain("\x1b[2m bright");
+  });
+
+  // DIVERGENCE PIN (see the T1 report). The brief said a non-inline description goes "on its own line below";
+  // the bundle puts it in `Fae`'s gap-1 ROW as a sibling of the label (L397241 children array → L396376), so
+  // label and description share one rendered line. This branch is only reachable when the list holds an input
+  // row — anything else with descriptions takes the two-column branch — so the fixture needs one.
+  it("keeps a non-inline description on the SAME line as its label when the list holds an input row", async () => {
+    const mixed: SelectOption[] = [
+      { value: "a", label: "alpha", description: "desc-alpha" },
+      { value: "note", label: "Note", type: "input", placeholder: "ph" },
+    ];
+    const r = await mount(<Select options={mixed} onChange={noop} onCancel={noop} rows={40} columns={100} />);
+    const labelLine = plain(frame(r.lastFrame)).split("\n").find((l) => l.includes("alpha"))!;
+    expect(labelLine).toContain("desc-alpha");
   });
 
   it("aligns a two-column layout when descriptions are not inline and no row is an input (L397171-397214)", async () => {
@@ -269,6 +292,32 @@ describe("<Select> input rows (RLe, L396465-396652)", () => {
     r2.stdin.write("2");
     await waitFor(() => got.length === 1);
     expect(got[0]).toEqual(["note", "seed"]);
+  });
+
+  // DIVERGENCE PIN (see the T1 report). `RLe` builds its number unconditionally and only zeroes the WIDTH
+  // (L396593-396596 with `maxIndexWidth` = 0 from L397142), so `hideIndexes` leaves a bare `2.` on an input
+  // row while stripping the column everywhere else. Faithful to 2.1.220, and pinned so it is not "fixed".
+  it("still numbers an input row under hideIndexes — upstream only zeroes the column WIDTH", async () => {
+    const r = await mount(<Select options={withInput()} onChange={noop} onCancel={noop} hideIndexes rows={40} columns={100} />);
+    const lines = plain(frame(r.lastFrame)).split("\n");
+    expect(lines.find((l) => l.includes("Yes"))).not.toContain("1.");     // the plain row loses its index…
+    expect(lines.find((l) => l.includes("say something"))).toContain("2.");  // …the input row keeps its number
+  });
+
+  // DIVERGENCE PIN (see the T1 report). The digit branch (L396765) sits BELOW `if (H) { … return }`
+  // (L396717-396749), so with an input row focused a digit is text, never a selection.
+  it("types a digit into a focused input row instead of selecting — no onChange at all", async () => {
+    const got: [string, string | undefined][] = [];
+    const r = await mount(<Select options={withInput()} onChange={(v, t) => got.push([v, t])} onCancel={noop} rows={40} columns={100} />);
+    r.stdin.write("j");
+    await waitFor(() => pointerRow(frame(r.lastFrame)) === 1);
+    r.stdin.write("1");                                             // would have selected row 1 on any other row
+    await waitFor(() => plain(frame(r.lastFrame)).includes("1"));
+    expect(got).toEqual([]);
+    expect(pointerRow(frame(r.lastFrame))).toBe(1);                 // still on the input row
+    r.stdin.write("\r");                                            // and the digit really did land in the text
+    await waitFor(() => got.length === 1);
+    expect(got[0]).toEqual(["note", "1"]);
   });
 
   it("tab fires onInputModeToggle with the focused value (L396712-396715)", async () => {
