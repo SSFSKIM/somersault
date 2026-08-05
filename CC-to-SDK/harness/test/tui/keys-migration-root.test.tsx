@@ -79,7 +79,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x1bp");
-    await waitFor(() => frame(lastFrame).includes("switch model"));
+    await waitFor(() => frame(lastFrame).includes("Select model"));
   });
 
   it("(c2) alt+t toggles thinking through the same setThink flow /think uses", async () => {

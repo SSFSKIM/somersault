@@ -39,14 +39,18 @@ function duplicateKeys(table: readonly ContextBindings[]): string[] {
 }
 
 describe("the context registry", () => {
-  // 20 upstream + 1 of ours. `SelectDecision` is the only name in the registry that upstream does not have,
-  // and it is deliberate: upstream routes root globals by OWNER while we route by context name, so a `Select`
-  // list that is a DECISION surface needs a second name to stop inheriting the overlay suppression (F6 T2
-  // review, Important 1 — see the block in bindings.ts and the pins further down this file).
-  it("has exactly the 20 upstream contexts plus SelectDecision, with no duplicates", () => {
-    expect(VALID_CONTEXTS).toHaveLength(21);
-    expect(new Set(VALID_CONTEXTS).size).toBe(21);
+  // 20 upstream + 2 of ours, and both additions have the same root cause: upstream's key layer routes by
+  // OWNER (and, for the resume picker, by a raw container `onKeyDown`), ours by context name, so a surface
+  // upstream never had to name needs one here.
+  //   · `SelectDecision` — a `Select` list that is a DECISION surface must not inherit the overlay
+  //     suppression (F6 T2 review, Important 1; pinned further down this file).
+  //   · `SessionPicker` — the resume picker's `space`/`ctrl+r` cannot live in the SHARED `Select` context,
+  //     which every list pushes and which explicitly unbinds `ctrl+r` (F6 T11; pinned below).
+  it("has exactly the 20 upstream contexts plus SelectDecision and SessionPicker, with no duplicates", () => {
+    expect(VALID_CONTEXTS).toHaveLength(22);
+    expect(new Set(VALID_CONTEXTS).size).toBe(22);
     expect(VALID_CONTEXTS).toContain("SelectDecision");
+    expect(VALID_CONTEXTS).toContain("SessionPicker");
   });
   it("includes DiffPanel — a valid context with zero default bindings (06 §1.1)", () =>
     expect(VALID_CONTEXTS).toContain("DiffPanel"));
@@ -167,6 +171,27 @@ describe("overlay gating, expressed as null bindings", () => {
     expect(actions(dec).filter(([, v]) => String(v).startsWith("scroll:")))
       .toEqual([["ctrl+d", "scroll:halfPageDown"], ["ctrl+u", "scroll:halfPageUp"]]);
     expect(actions(sel).some(([, v]) => String(v).startsWith("scroll:")), "the USER-opened Select gets none of it").toBe(false);
+  });
+  // F6 T11. The resume picker is an overlay owner AND it renders a `Select` inside itself — so it needs its
+  // own copy of the suppression rather than leaning on the inner list's, because its preview and rename
+  // stages unmount that list. ctrl+r is REBOUND (HistorySearch's precedent) because the surface owns the key.
+  it("SessionPicker is an overlay owner that rebinds ctrl+r to its own rename", () => {
+    const b = block("SessionPicker").bindings;
+    for (const k of ["ctrl+c", "ctrl+d", "ctrl+o", "ctrl+t", "ctrl+b", "ctrl+x ctrl+b", "alt+p", "alt+t"])
+      expect(b[k], `SessionPicker ${k} must be null`).toBeNull();
+    expect(b["ctrl+r"]).toBe("sessionPicker:rename");
+    expect(b["space"]).toBe("sessionPicker:preview");
+    // Only ever consulted with NO Select mounted (the rename/preview stages) — the same trick
+    // MessageSelector plays for the rewind picker's empty state.
+    expect(b["escape"]).toBe("sessionPicker:dismiss");
+  });
+  // F6 T11. Upstream's ModelPicker block is `{left, right, s}` (L186118); the two EFFORT keys are held back
+  // with the effort axis itself (DG48), and this pins that the omission is deliberate rather than a
+  // half-finished transcription — VALID_ACTIONS is pinned to exactly the table's use, so declaring them
+  // without binding them would fail the actions test instead.
+  it("ModelPicker binds `s` and nothing else — the effort pair ships with the effort axis", () => {
+    expect(block("ModelPicker").bindings).toEqual({ "s": "modelPicker:thisSessionOnly" });
+    for (const a of ["modelPicker:decreaseEffort", "modelPicker:increaseEffort"]) expect(VALID_ACTIONS).not.toContain(a);
   });
   it("HistorySearch is an overlay owner too, but rebinds ctrl+r/ctrl+c instead of unbinding them", () => {
     const b = block("HistorySearch").bindings;

@@ -48,19 +48,24 @@ const CTRL_N = "\x0e", CTRL_P = "\x10";
 const SESSIONS = Array.from({ length: 25 }, (_, i) => ({
   sessionId: `S${String(i).padStart(7, "0")}`, summary: `row ${String(i).padStart(2, "0")}`, lastModified: i,
 }));
-/** SessionPicker marks the selected row with `inverse` — an SGR 7 run that must contain that row's summary. */
-const rowSelected = (f: string, n: number) => new RegExp(`\\x1b\\[7m[^\\x1b]*row ${String(n).padStart(2, "0")}`).test(f);
+/** F6 T11 rebuilt SessionPicker on the `Select` primitive, so the selected row is the one wearing the ❯
+ *  gutter, not an `inverse` run — and the gutter sits in its own <Text>, so the check runs on the
+ *  SGR-stripped frame. `rows`/`columns` are pinned by every render below because the picker windows its list
+ *  off the terminal height now (`resumeVisibleRows`), and a page is that window. */
+const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+const rowSelected = (f: string, n: number) => new RegExp(`❯\\s+row ${String(n).padStart(2, "0")}`).test(plain(f));
+/** rows={40} → resumeVisibleRows(40) = 15, which is both the window and the page. */
+const PICKER_SIZE = { rows: 40, columns: 100 };
 /** Every other picker marks it with a leading "❯ ". */
 const cursorOn = (f: string, label: string) => f.includes(`❯ ${label}`);
 
 describe("F2 task 8 — Select family: KB15 paging (SessionPicker is the representative)", () => {
   it("pageup/pagedown move a whole page and clamp; home/end jump to the first/last row", async () => {
-    const { stdin, lastFrame } = render(<SessionPicker sessions={SESSIONS} onPick={() => {}} onCancel={() => {}} />);
+    const { stdin, lastFrame } = render(<SessionPicker sessions={SESSIONS} onPick={() => {}} onCancel={() => {}} {...PICKER_SIZE} />);
     await waitFor(() => rowSelected(frame(lastFrame), 0));
-    stdin.write(PAGEDOWN); await waitFor(() => rowSelected(frame(lastFrame), 10));
-    stdin.write(PAGEDOWN); await waitFor(() => rowSelected(frame(lastFrame), 20));
+    stdin.write(PAGEDOWN); await waitFor(() => rowSelected(frame(lastFrame), 15));
     stdin.write(PAGEDOWN); await waitFor(() => rowSelected(frame(lastFrame), 24));   // clamps at the last row
-    stdin.write(PAGEUP);   await waitFor(() => rowSelected(frame(lastFrame), 14));
+    stdin.write(PAGEUP);   await waitFor(() => rowSelected(frame(lastFrame), 9));
     stdin.write(HOME);     await waitFor(() => rowSelected(frame(lastFrame), 0));
     stdin.write(PAGEUP);   await waitFor(() => rowSelected(frame(lastFrame), 0));    // clamps at the first row
     stdin.write(END);      await waitFor(() => rowSelected(frame(lastFrame), 24));
@@ -68,7 +73,7 @@ describe("F2 task 8 — Select family: KB15 paging (SessionPicker is the represe
 
   it("Enter after paging picks the row the page landed on, not the one it started from", async () => {
     let picked: { sessionId: string } | undefined;
-    const { stdin, lastFrame } = render(<SessionPicker sessions={SESSIONS} onPick={(s) => { picked = s; }} onCancel={() => {}} />);
+    const { stdin, lastFrame } = render(<SessionPicker sessions={SESSIONS} onPick={(s) => { picked = s; }} onCancel={() => {}} {...PICKER_SIZE} />);
     await waitFor(() => rowSelected(frame(lastFrame), 0));
     stdin.write(END); await waitFor(() => rowSelected(frame(lastFrame), 24));
     stdin.write("\r"); await waitFor(() => picked !== undefined);
@@ -76,17 +81,17 @@ describe("F2 task 8 — Select family: KB15 paging (SessionPicker is the represe
   });
 
   it("paging an EMPTY list is inert (no crash, no selection)", async () => {
-    const { stdin, lastFrame } = render(<SessionPicker sessions={[]} onPick={() => {}} onCancel={() => {}} />);
-    await waitFor(() => frame(lastFrame).includes("no sessions"));
+    const { stdin, lastFrame } = render(<SessionPicker sessions={[]} onPick={() => {}} onCancel={() => {}} {...PICKER_SIZE} />);
+    await waitFor(() => frame(lastFrame).includes("No conversations found."));
     for (const k of [PAGEDOWN, PAGEUP, HOME, END, "\r"]) stdin.write(k);
     await tick();
-    expect(frame(lastFrame)).toContain("no sessions");
+    expect(frame(lastFrame)).toContain("No conversations found.");
   });
 });
 
 describe("F2 task 8 — KB14: j/k and ctrl+n/ctrl+p navigate in EVERY Select-family surface", () => {
   it("SessionPicker", async () => {
-    const { stdin, lastFrame } = render(<SessionPicker sessions={SESSIONS} onPick={() => {}} onCancel={() => {}} />);
+    const { stdin, lastFrame } = render(<SessionPicker sessions={SESSIONS} onPick={() => {}} onCancel={() => {}} {...PICKER_SIZE} />);
     await waitFor(() => rowSelected(frame(lastFrame), 0));
     stdin.write("j");    await waitFor(() => rowSelected(frame(lastFrame), 1));
     stdin.write(CTRL_N); await waitFor(() => rowSelected(frame(lastFrame), 2));
@@ -97,12 +102,14 @@ describe("F2 task 8 — KB14: j/k and ctrl+n/ctrl+p navigate in EVERY Select-fam
   it("ModelPicker", async () => {
     const models = [{ value: "a", displayName: "Alpha" }, { value: "b", displayName: "Beta" }, { value: "c", displayName: "Gamma" }];
     const picked: string[] = [];
-    const { stdin, lastFrame } = render(<ModelPicker models={models} onPick={(m) => picked.push(m.value)} onCancel={() => {}} />);
-    await waitFor(() => frame(lastFrame).includes("switch model"));
-    stdin.write("j");    await waitFor(() => /\x1b\[7m[^\x1b]*Beta/.test(frame(lastFrame)));
-    stdin.write(CTRL_N); await waitFor(() => /\x1b\[7m[^\x1b]*Gamma/.test(frame(lastFrame)));
-    stdin.write("k");    await waitFor(() => /\x1b\[7m[^\x1b]*Beta/.test(frame(lastFrame)));
-    stdin.write(CTRL_P); await waitFor(() => /\x1b\[7m[^\x1b]*Alpha/.test(frame(lastFrame)));
+    const { stdin, lastFrame } = render(<ModelPicker models={models} onPick={(m) => picked.push(m.value)} onCancel={() => {}} savePrefs={() => {}} {...PICKER_SIZE} />);
+    await waitFor(() => frame(lastFrame).includes("Select model"));
+    // Same ❯-gutter rule as the session picker above — both pickers are `Select` lists as of F6 T11.
+    const onRow = (label: string) => new RegExp(`❯\\s+\\d+\\.\\s+${label}`).test(plain(frame(lastFrame)));
+    stdin.write("j");    await waitFor(() => onRow("Beta"));
+    stdin.write(CTRL_N); await waitFor(() => onRow("Gamma"));
+    stdin.write("k");    await waitFor(() => onRow("Beta"));
+    stdin.write(CTRL_P); await waitFor(() => onRow("Alpha"));
     stdin.write("\r");   await waitFor(() => picked.length === 1);
     expect(picked).toEqual(["a"]);
   });
@@ -339,7 +346,7 @@ async function eachRootGlobalIsInert(stdin: { write: (s: string) => void }, last
     expect(f, at).not.toContain("Search prompts");                    // ctrl+r → the /history picker
     expect(f, at).not.toContain("search prompts:");                   // …nor the composer's inline search (F5 t12)
     expect(f, at).not.toContain("Transcript");                        // ctrl+o → the pager
-    expect(f, at).not.toContain("switch model");                      // alt+p → the model picker
+    expect(f, at).not.toContain("Select model");                      // alt+p → the model picker
     expect(f, at).not.toContain("Press Ctrl-C again to exit");        // ctrl+c → the exit arm
     expect(f, at).not.toContain(TODO_ROW);                            // ctrl+t → the todo panel
     expect(f, at).toBe(before);                                       // …and nothing else moved either

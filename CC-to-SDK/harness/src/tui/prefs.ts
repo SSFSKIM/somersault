@@ -14,7 +14,11 @@ import { THEMES, type ThemeId } from "./theme.js";
  *  `exampleFiles` is the git-log harvest `placeholder.ts` draws the `Try "…"` filename from, cached with the
  *  stamp that decides its weekly expiry (upstream keeps the two as `exampleFiles` + `exampleFilesGeneratedAt`;
  *  one record here so a half-written pair can't outlive its stamp). */
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number } }
+/** `model` is F6 T11's default-model write: the /model picker's Enter path ("set as default") lands here.
+ *  RECORDED DIVERGENCE — upstream writes it to `~/.claude/settings.json` (`Dcn`, bundle L315170:
+ *  `yi("userSettings", {model})`), which its own engine reads at next launch. Ours goes to the ccx prefs
+ *  file, the client-side seam this module already owns; nothing reads it back at boot yet. */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number } }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 

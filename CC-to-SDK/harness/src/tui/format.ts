@@ -46,6 +46,14 @@ export const formatCompactNumber = (value: number): string => compactFormats[val
  *  instead — both of those stay written out at their call sites rather than hiding behind this. */
 export const plural = (count: number, word: string, pluralWord = `${word}s`): string => (count === 1 ? word : pluralWord);
 
+/** Upstream `Bst` (L107148), the string behind the `bM` counter component (L421393): the `… +7 models` line a
+ *  WINDOWED list prints below itself for the rows that did not fit. `<= 0` is the empty string, because `bM`
+ *  returns `null` there (L421395) — the caller renders no row at all rather than an announcement of zero. The
+ *  unit is pluralized through `Et`, which is `plural` above. It lives here and not in the model picker because
+ *  it is a general list counter (upstream's default unit is `"line"`, and its other callers are fold rows). */
+export const formatOverflowCount = (count: number, unit = "line"): string =>
+  (count <= 0 ? "" : `… +${count} ${plural(count, unit)}`);
+
 /** Upstream `pie` (L107103-107115) in its DEFAULT `narrow` style, which is the only style any surface of ours
  *  asks for — `RZ` (L107116) is a thin wrapper that only picks `numeric` for the `Intl.RelativeTimeFormat`
  *  branch the narrow style never reaches, so the two collapse into one function here. The unit table is

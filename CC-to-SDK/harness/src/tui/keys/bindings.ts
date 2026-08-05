@@ -10,16 +10,22 @@
 //     That is how today's owner gate in ChatApp.tsx:126-159 is expressed declaratively; see the block below.
 import type { KeyContextName } from "./types.js";
 
-/** The 21 valid contexts: upstream's 20 (06 §1.1/§1.2 — the 19 with default bindings plus `DiffPanel`, which
- *  validates but ships no binding upstream either) plus OUR `SelectDecision`. A context name outside this list
- *  is a config error, not a silent no-op.
+/** The 22 valid contexts: upstream's 20 (06 §1.1/§1.2 — the 19 with default bindings plus `DiffPanel`, which
+ *  validates but ships no binding upstream either) plus OUR `SelectDecision` and `SessionPicker`. A context
+ *  name outside this list is a config error, not a silent no-op.
  *
- *  `SelectDecision` is the one addition to upstream's registry, and it exists because upstream never had to
- *  make this distinction: its own key layer routes by OWNER, ours by context name, and a `Select` list can be
- *  either kind of owner. See the block below for the whole argument. */
+ *  BOTH additions exist for the same reason, and it is always the same reason: upstream's key layer routes by
+ *  OWNER (and, for the resume picker, by a raw `onKeyDown` on the container — `moi`, bundle L476609, which
+ *  reads `space`/`ctrl+r`/`/`/printables straight off the event), while ours routes by CONTEXT NAME. A
+ *  surface upstream never had to name therefore needs a name here.
+ *   · `SelectDecision` — a `Select` list can be an overlay OR a decision surface; see its block below.
+ *   · `SessionPicker` — the resume picker's own keys (`space` = preview, `ctrl+r` = rename) cannot live in
+ *     `Select`: that context is SHARED by every list in the app and it explicitly unbinds `ctrl+r`, and an
+ *     unbind resolves as CONSUMED, so no fallback could ever see the key. See its block below. */
 export const VALID_CONTEXTS: readonly KeyContextName[] = ["Global", "Chat", "Autocomplete", "Confirmation", "Help",
   "Transcript", "HistorySearch", "Task", "ThemePicker", "Settings", "Tabs", "Attachments", "Footer",
-  "MessageSelector", "DiffDialog", "DiffPanel", "ModelPicker", "Select", "SelectDecision", "Plugin", "Scroll"];
+  "MessageSelector", "DiffDialog", "DiffPanel", "ModelPicker", "Select", "SelectDecision", "SessionPicker",
+  "Plugin", "Scroll"];
 
 /** One context's bindings. `string` = an action name from `VALID_ACTIONS`; `null` = unbound in this context. */
 export interface ContextBindings { context: KeyContextName; bindings: Record<string, string | null> }
@@ -104,6 +110,43 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
     "ctrl+x ctrl+b": null,          // …and ctrl+b's chord alias with it (final review; see Select)
+  }},
+  // F6 T11. Upstream's own block, transcribed from the keymap table at L186118:
+  //   { context: "ModelPicker", bindings: { left: "modelPicker:decreaseEffort", right: "modelPicker:increaseEffort",
+  //                                         s: "modelPicker:thisSessionOnly" } }
+  // The two EFFORT keys are deliberately absent: the effort axis is DG48, a probe-gated non-goal for this
+  // wave, and `VALID_ACTIONS` is pinned to exactly the table's use — an action name that validates and
+  // resolves but reaches no handler is precisely the dishonest rebind F2 exists to remove. When effort
+  // ships, left/right come back here with it. Recorded for the T15 ledger.
+  //
+  // No suppression block, and that is upstream's shape too: the picker always has a `Select` mounted inside
+  // it, and `Select`'s own nulls (below) kill the six root globals for the whole time it is on screen.
+  { context: "ModelPicker", bindings: { "s": "modelPicker:thisSessionOnly" }},
+  // F6 T11 — the resume picker. Upstream has NO context for it: `moi` (L476609) hangs a raw `onKeyDown` on
+  // its container and reads `space`/`ctrl+r`/`/`/printables off the event, reaching for existing contexts
+  // only to cancel its rename (`Mn("confirm:no", …, {context:"Settings", isActive: te==="rename"})`,
+  // L476537). We route by context name, so the surface needs one — and it CANNOT be `Select`:
+  //   · `Select` is shared by every list in the app; `space`/`ctrl+r` there would move preview and rename
+  //     into the theme picker, the bg panel and every permission dialog;
+  //   · `Select` explicitly unbinds `ctrl+r` (below), and an unbind resolves `{type:"unbound"}`, which
+  //     `dispatch` treats as CONSUMED — a rename bound "by fallback" could never fire at all.
+  // This context sits directly OUTSIDE the picker's `Select` (parent mounts first, so the Select is inner
+  // and wins every key it binds — up/down/j/k/enter/escape included). What resolves HERE is therefore
+  // exactly what Select does not bind, plus the keys that must still work in the two sub-modes where NO
+  // Select is mounted: rename and preview. `escape` is that second kind — the same trick MessageSelector's
+  // block plays for the rewind picker's empty state.
+  //
+  // The handlers are registered PER MODE (SessionPicker.tsx), not per binding: with no handler a matched
+  // action falls through to the fallback (KeymapProvider's dispatch), which is how `space` types a space
+  // into the rename field instead of opening a preview.
+  { context: "SessionPicker", bindings: {
+    "space": "sessionPicker:preview", "ctrl+r": "sessionPicker:rename", "escape": "sessionPicker:dismiss",
+    // An overlay owner, like Select/Settings/MessageSelector — and it needs its OWN copy of the suppression
+    // rather than leaning on the inner Select's, because rename and preview unmount that Select. ctrl+r is
+    // REBOUND above rather than nulled (HistorySearch's precedent, same reasoning: the surface owns the key).
+    "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+b": null,
+    "alt+p": null, "alt+t": null,
+    "ctrl+x ctrl+b": null,
   }},
   { context: "Select", bindings: {
     "up": "select:previous", "down": "select:next", "j": "select:next", "k": "select:previous",
@@ -213,6 +256,10 @@ export const VALID_ACTIONS: readonly string[] = [
   // list IS a `Select` now, so moving/accepting there are Select's actions, and a name this table no longer
   // binds must not stay validatable — `keys-bindings.test.ts` pins VALID_ACTIONS to exactly the table's use.
   "messageSelector:dismiss",
+  // F6 T11. `modelPicker:decreaseEffort`/`increaseEffort` are upstream's other two ModelPicker actions and are
+  // deliberately NOT declared: the effort axis is a non-goal this wave, and this list is pinned to exactly what
+  // the table binds. The three `sessionPicker:*` names are OURS — upstream reads those keys raw (see the block).
+  "modelPicker:thisSessionOnly", "sessionPicker:preview", "sessionPicker:rename", "sessionPicker:dismiss",
   "select:previous", "select:next", "select:accept", "select:cancel", "select:pageUp", "select:pageDown", "select:first", "select:last",
   "confirm:yes", "confirm:no", "confirm:previous", "confirm:next", "confirm:cycleMode", "confirm:editExternal",
   "settings:search",

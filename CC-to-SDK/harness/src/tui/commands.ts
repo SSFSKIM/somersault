@@ -90,6 +90,19 @@ export function formatHelp(): RenderLine[] {
 export function formatModel(next?: string, current?: string): RenderLine[] {
   return next ? [{ text: `model → ${next}` }] : [{ text: `model: ${current ?? "(default)"}`, dim: true }];
 }
+/** F6 T11 — the /model PICKER's confirmation, upstream's `y`/`k` at L471427 (identical string at L315166):
+ *  `Set model to <bold name>` plus exactly one of the two tails. The name is the model's DISPLAY name, and it
+ *  is bold, which is why this is segments rather than one `text` (the dim/bold pair `formatModel` never
+ *  needed). `formatModel`'s `model → X` stays where it is: it is the /model COMMAND's line, and the command
+ *  has no default-vs-session distinction to report. */
+export const SET_MODEL_DEFAULT_TAIL = " and saved as your default for new sessions";
+export const SET_MODEL_SESSION_TAIL = " for this session only";
+export function formatModelSet(name: string, saveDefault: boolean): RenderLine[] {
+  return [{ text: "", segments: [
+    { text: "Set model to " }, { text: name, bold: true },
+    { text: saveDefault ? SET_MODEL_DEFAULT_TAIL : SET_MODEL_SESSION_TAIL },
+  ] }];
+}
 export function formatThink(next?: string, current?: string): RenderLine[] {
   return next ? [{ text: `thinking → ${next}` }] : [{ text: `thinking: ${current ?? "default"}`, dim: true }];
 }

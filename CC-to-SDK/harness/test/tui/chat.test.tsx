@@ -54,6 +54,9 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await new Promise((r) => setTimeout(r, 0)); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 }
+/** A frame as ONE line: Ink wraps the picker's long sentences, so a literal that spans a wrap has to be
+ *  matched against the joined text (F6 T11). */
+const oneLine = (f: string) => f.replace(/\x1b\[[0-9;]*m/g, "").replace(/\s*\n\s*/g, " ");
 async function pressUntil(stdin: { write: (s: string) => void }, key: string, cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { stdin.write(key); if (cond()) return; if (Date.now() - start > timeout) throw new Error(`pressUntil(${JSON.stringify(key)}) timeout`); await new Promise((r) => setTimeout(r, 5)); }
@@ -727,12 +730,12 @@ describe("<ChatApp>", () => {
         open: async (stdin, lastFrame) => { stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Settings")); },
       },
       {
-        name: "switch model", session: () => fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) }),
-        open: async (stdin, lastFrame) => { stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("switch model")); },
+        name: "Select model", session: () => fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) }),
+        open: async (stdin, lastFrame) => { stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Select model")); },
       },
       {
-        name: "resume a session", session: () => fakeRemote(), deps: { listSessions: async () => [{ sessionId: "prior", summary: "saved", lastModified: 1 }] },
-        open: async (stdin, lastFrame) => { stdin.write("/resume"); await waitFor(() => frame(lastFrame).includes("/resume")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("resume a session")); },
+        name: "Resume session", session: () => fakeRemote(), deps: { listSessions: async () => [{ sessionId: "prior", summary: "saved", lastModified: 1 }] },
+        open: async (stdin, lastFrame) => { stdin.write("/resume"); await waitFor(() => frame(lastFrame).includes("/resume")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Resume session")); },
       },
     ];
     for (const testCase of cases) {
@@ -753,8 +756,8 @@ describe("<ChatApp>", () => {
     const cases: { name: string; session: () => ReturnType<typeof fakeRemote>; deps?: any; open: (stdin: any, lastFrame: () => string | undefined) => Promise<void>; closesOnCtrlC?: boolean }[] = [
       { name: "Search prompts", session: () => fakeRemote(), deps: historyDeps, closesOnCtrlC: true, open: openHistoryPicker },
       { name: "Settings", session: () => fakeRemote(), open: async (stdin, lastFrame) => { stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Settings")); } },
-      { name: "switch model", session: () => fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) }), open: async (stdin, lastFrame) => { stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("switch model")); } },
-      { name: "resume a session", session: () => fakeRemote(), deps: { listSessions: async () => [{ sessionId: "prior", summary: "saved", lastModified: 1 }] }, open: async (stdin, lastFrame) => { stdin.write("/resume"); await waitFor(() => frame(lastFrame).includes("/resume")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("resume a session")); } },
+      { name: "Select model", session: () => fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) }), open: async (stdin, lastFrame) => { stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Select model")); } },
+      { name: "Resume session", session: () => fakeRemote(), deps: { listSessions: async () => [{ sessionId: "prior", summary: "saved", lastModified: 1 }] }, open: async (stdin, lastFrame) => { stdin.write("/resume"); await waitFor(() => frame(lastFrame).includes("/resume")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Resume session")); } },
     ];
     for (const testCase of cases) {
       const fake = testCase.session();
@@ -1282,6 +1285,49 @@ describe("<ChatApp>", () => {
     expect(f).toContain("Tab/←/→ to switch tabs · Esc to close");
   });
 
+  // F6 T11 (DG46), end to end through the app rather than the component: the two ways out of the picker
+  // print DIFFERENT sentences (bundle L471427), only one of them writes a default, and the session-only one
+  // leaves a mark the picker shows the NEXT time it opens (`sessionModel`, L441107).
+  it("/model: `s` applies for this session only — no prefs write, and the picker says so when it reopens", async () => {
+    const saved: unknown[] = [];
+    const fake = fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) });
+    const { stdin, lastFrame } = render(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()}
+        deps={{ savePrefs: (patch: unknown) => { saved.push(patch); } }} />,   // never the real ~/.claude/ccx/prefs.json
+    );
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Select model"));
+    stdin.write("s");
+    await waitFor(() => oneLine(frame(lastFrame)).includes("Set model to Opus for this session only"));
+    expect(saved).toEqual([]);                                       // `s` writes NO default
+    stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Select model"));
+    expect(oneLine(frame(lastFrame))).toContain("Currently using Opus for this session only. Selecting a model will undo this.");
+  });
+
+  it("/model: Enter applies AND saves the default, says the other sentence, and clears the session-only mark", async () => {
+    const saved: unknown[] = [];
+    const fake = fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) });
+    const { stdin, lastFrame } = render(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()}
+        deps={{ savePrefs: (patch: unknown) => { saved.push(patch); } }} />,
+    );
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Select model"));
+    stdin.write("s");                                                // a session-only pick FIRST…
+    await waitFor(() => oneLine(frame(lastFrame)).includes("for this session only"));
+    stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Select model"));
+    stdin.write("\r");                                               // …then the default one over it
+    await waitFor(() => oneLine(frame(lastFrame)).includes("Set model to Opus and saved as your default for new sessions"));
+    expect(saved).toEqual([{ model: "opus" }]);                      // the catalog value, through the injected seam
+    stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Select model"));
+    expect(oneLine(frame(lastFrame))).not.toContain("for this session only. Selecting");
+  });
+
   // W3.5 fix pass — finding 1 regression guard: the Model row reuses the SAME top-level ModelPicker the
   // standalone /model command does (ChatApp's overlay-chain comment), so pickModel's own immediate
   // "model → X" notice used to fire whichever way the picker was reached — reported once live in the
@@ -1297,7 +1343,7 @@ describe("<ChatApp>", () => {
     stdin.write("\x1b[B");                                          // Theme(0) → Model(1)
     await waitFor(() => frame(lastFrame).includes("❯ Model"));
     stdin.write("\r");                                              // Enter on the Model row → onOpenModelPicker → the SHARED top-level ModelPicker
-    await waitFor(() => frame(lastFrame).includes("switch model"));
+    await waitFor(() => frame(lastFrame).includes("Select model"));
     stdin.write("\r");                                              // pick the only model — resolveModelAlias("opus") → "claude-opus-5"
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));   // Settings dialog reliably reappears (remounted fresh on Config)
     stdin.write("\x1b");                                            // close Settings — the diff-based close summary is the ONE place this should report
@@ -1306,7 +1352,7 @@ describe("<ChatApp>", () => {
     // Match on the SENTENCE forms, not a raw "claude-opus-5" substring count: the status bar ALSO shows the
     // live model id ("model claude-opus-5") permanently — that's an unrelated, always-on UI element, not a
     // notice, and would otherwise make this assertion count a legitimate second occurrence.
-    expect(flat).not.toMatch(/model → claude-opus-5/);              // no immediate notice from pickModel while reached via Settings
+    expect(flat).not.toMatch(/Set model to/);                        // no immediate notice from pickModel while reached via Settings (lowercase "model" — the summary below says "Model")
     expect((flat.match(/Set Model to/g) ?? []).length).toBe(1);     // the close-time summary reported the change exactly once
   });
 
@@ -1328,14 +1374,14 @@ describe("<ChatApp>", () => {
     stdin.write("\x1b[B");                                          // Theme(0) → Model(1)
     await waitFor(() => frame(lastFrame).includes("❯ Model"));
     stdin.write("\r");                                              // Enter on Model → onOpenModelPicker
-    await waitFor(() => frame(lastFrame).includes("switch model"));
+    await waitFor(() => frame(lastFrame).includes("Select model"));
     stdin.write("\r");                                              // pick the only model — session.setModel(...) is now blocked on `gate`
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));   // back on the Config row list
     expect(frame(lastFrame).replace(/\n/g, " ")).toContain("Model  claude-opus-5");   // the row already reflects the pick — committed before the await, not after
     stdin.write("\x1b");                                            // close Settings WHILE session.setModel(...) is still unresolved
     await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes("Set Model to"));
     const flat = frame(lastFrame).replace(/\n/g, " ");
-    expect(flat).not.toMatch(/model → claude-opus-5/);              // still no duplicate immediate notice on the Settings path
+    expect(flat).not.toMatch(/Set model to/);                        // still no duplicate immediate notice on the Settings path
     expect((flat.match(/Set Model to/g) ?? []).length).toBe(1);     // reported exactly once, even though the engine call hadn't settled yet
     release();                                                       // let the held call resolve so it doesn't leak into a later test
     await new Promise((r) => setTimeout(r, 0));

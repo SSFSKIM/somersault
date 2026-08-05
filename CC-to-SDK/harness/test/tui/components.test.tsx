@@ -13,8 +13,6 @@ import { Transcript } from "../../src/tui/Transcript.js";
 import { TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
 import { ChatStatusBar, modeColor, ctxColor } from "../../src/tui/ChatStatusBar.js";
-import { SessionPicker } from "../../src/tui/SessionPicker.js";
-import { ModelPicker } from "../../src/tui/ModelPicker.js";
 import { TaskPanel } from "../../src/tui/TaskPanel.js";
 import { TurnSpinner } from "../../src/tui/TurnSpinner.js";
 import type { PermissionDecision } from "../../src/index.js";
@@ -186,76 +184,10 @@ describe("<ChatStatusBar>", () => {
     expect(f).not.toContain("? help");
   });
 });
-describe("SessionPicker", () => {
-  const sessions = [
-    { sessionId: "aaaaaaaa1111", summary: "first session", lastModified: 1 },
-    { sessionId: "bbbbbbbb2222", summary: "second session", lastModified: 2 },
-  ];
-  it("↓ then Enter picks the second session", async () => {
-    let picked: any;
-    const { stdin, lastFrame } = render(<SessionPicker sessions={sessions} onPick={(s) => { picked = s; }} onCancel={() => {}} />);
-    await waitFor(() => (lastFrame() ?? "").includes("resume a session"));
-    await new Promise((r) => setTimeout(r, 20)); // let useInput subscribe (passive effect)
-    stdin.write("\x1b[B");                                                    // down arrow
-    // wait until bbbbbbbb is highlighted (inverse) — proves selection moved to index 1
-    await waitFor(() => (lastFrame() ?? "").match(/\x1b\[7m[^\x1b]*bbbbbbbb/) !== null);
-    await new Promise((r) => setTimeout(r, 20)); // let useInput re-register with updated idx closure
-    stdin.write("\r");                                                        // enter
-    await waitFor(() => picked !== undefined);
-    expect(picked.sessionId).toBe("bbbbbbbb2222");
-  });
-  it("Esc cancels", async () => {
-    let cancelled = false;
-    const { stdin, lastFrame } = render(<SessionPicker sessions={sessions} onPick={() => {}} onCancel={() => { cancelled = true; }} />);
-    await waitFor(() => (lastFrame() ?? "").includes("resume a session"));
-    await new Promise((r) => setTimeout(r, 20)); // let useInput subscribe (passive effect)
-    stdin.write("\x1b");                                                      // escape
-    await waitFor(() => cancelled);
-    expect(cancelled).toBe(true);
-  });
-  it("shows 'no sessions' when empty", () => {
-    const { lastFrame } = render(<SessionPicker sessions={[]} onPick={() => {}} onCancel={() => {}} />);
-    expect(lastFrame() ?? "").toContain("no sessions");
-  });
-});
-
-describe("ModelPicker", () => {
-  it("renders models and shows the header", () => {
-    const models = [{ value: "claude-opus-4-8", displayName: "Opus 4.8", description: "best" }, { value: "sonnet", displayName: "Sonnet" }];
-    const { lastFrame } = render(<ModelPicker models={models} onPick={() => {}} onCancel={() => {}} />);
-    expect(lastFrame()).toContain("Opus 4.8");
-    expect(lastFrame()).toContain("Sonnet");
-    expect(lastFrame()).toContain("switch model");
-  });
-  it("ModelPicker renders models and selects on Enter", async () => {
-    const picked: string[] = [];
-    const models = [{ value: "claude-opus-4-8", displayName: "Opus 4.8", description: "best" }, { value: "sonnet", displayName: "Sonnet" }];
-    const { lastFrame, stdin } = render(<ModelPicker models={models} onPick={(m) => picked.push(m.value)} onCancel={() => {}} />);
-    expect(lastFrame()).toContain("Opus 4.8");
-    expect(lastFrame()).toContain("Sonnet");
-    await new Promise((r) => setTimeout(r, 20));  // let useInput subscribe before keys
-    stdin.write("\x1b[B");                        // ↓ to the 2nd model
-    await waitFor(() => (lastFrame() ?? "").match(/\x1b\[7m[^\x1b]*Sonnet/) !== null);
-    await new Promise((r) => setTimeout(r, 20)); // let useInput re-register with updated idx closure
-    stdin.write("\r");                              // Enter
-    await waitFor(() => picked.length > 0);
-    expect(picked).toEqual(["sonnet"]);
-  });
-  it("Esc cancels the model picker", async () => {
-    let cancelled = false;
-    const models = [{ value: "claude-opus-4-8", displayName: "Opus 4.8" }];
-    const { stdin, lastFrame } = render(<ModelPicker models={models} onPick={() => {}} onCancel={() => { cancelled = true; }} />);
-    await waitFor(() => (lastFrame() ?? "").includes("switch model"));
-    await new Promise((r) => setTimeout(r, 0));
-    stdin.write("\x1b");
-    await waitFor(() => cancelled);
-    expect(cancelled).toBe(true);
-  });
-  it("shows 'no models' when empty", () => {
-    const { lastFrame } = render(<ModelPicker models={[]} onPick={() => {}} onCancel={() => {}} />);
-    expect(lastFrame() ?? "").toContain("no models");
-  });
-});
+// The SessionPicker and ModelPicker blocks that stood here retired with F6 T11: both pickers were rebuilt on
+// the `Select` primitive and grew surfaces these four-line smoke tests could not describe (search, preview,
+// rename; the default-vs-session split, the ten-row window and its overflow counter). They are covered in
+// full by `session-picker.test.tsx` and `model-picker.test.tsx` — moved deliberately, not dropped.
 
 describe("TaskPanel", () => {
   it("renders a glyph per status and the subject", () => {

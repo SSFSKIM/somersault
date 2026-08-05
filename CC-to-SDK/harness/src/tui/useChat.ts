@@ -30,7 +30,7 @@ import { FoldPendingState } from "./foldPendingState.js";
 import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgress.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
-import { parseCommand, canonicalCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { parseCommand, canonicalCommand, formatHelp, formatModel, formatModelSet, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
@@ -69,7 +69,7 @@ export interface SessionInfo { sessionId: string; summary: string; firstPrompt?:
  *  the returned state, so this closure is how a source-backed detail projection reaches the pager without
  *  anyone reaching into the document itself. */
 export type DetailItems = (projection: "detail-all" | "detail-collapsed") => readonly RenderItem[];
-export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[] }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
+export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
   /** The composer's placeholder ladder reads both (`placeholder.ts` rule 4 — upstream's `submitCount` /
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
@@ -215,7 +215,11 @@ export function useChat(
   const [model, setModel] = useState<string | undefined>(opts.initialModel);
   const [thinkLevel, setThinkLevel] = useState(opts.initialThink ?? "default");
   const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[] }>({ open: false, sessions: [] });
-  const [modelPicker, setModelPicker] = useState<{ open: boolean; models: ModelInfo[] }>({ open: false, models: [] });
+  // F6 T11: `current` is the row the picker opens on and marks as the value in force (the catalog VALUE, not
+  // the resolved id — `openModelPicker` maps between them); `sessionModel` is set only by the `s` path and is
+  // the sole thing that renders the picker's third header line.
+  const [modelPicker, setModelPicker] = useState<{ open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string }>({ open: false, models: [] });
+  const sessionModelRef = useRef<string | undefined>(undefined);
   const [rewindPicker, setRewindPicker] = useState<{ open: boolean; anchors: RewindAnchor[] }>({ open: false, anchors: [] });
   const [composerPrefill, setComposerPrefill] = useState<{ text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null>(null);
   const [rewinding, setRewinding] = useState(false);
@@ -900,6 +904,12 @@ export function useChat(
     setPicker({ open: false, sessions: [] });
     void resumeInto(info.sessionId);
   }
+  // F6 T11: the resume picker's two extra verbs. They are the SAME two session calls `/resume` and `/rename`
+  // already use — routed out to the picker rather than duplicated in it, so the reader stays the one in
+  // `deps` (a test swaps it once and both surfaces follow). A preview that cannot be read is an EMPTY
+  // transcript, never a throw: the pane's job is to show what is there.
+  const previewSession = (id: string) => getSessionMessages(id).catch(() => [] as any[]);
+  const renamePickedSession = (id: string, title: string) => renameSessionFn(id, title);
 
   async function openModelPicker() {
     try {
@@ -907,12 +917,21 @@ export function useChat(
       if (disposed.current) return;
       const models: ModelInfo[] = (caps.models as any[]).map((m) => ({ value: String(m?.value ?? m), displayName: m?.displayName, description: m?.description }));
       if (!models.length) { append([{ text: "no models available", dim: true }]); return; }
-      setModelPicker({ open: true, models });
+      // Which ROW is the model in force. `model` is a resolved id ("claude-opus-5") and the rows are tier
+      // aliases ("opus"), so the match runs through the same resolver `pickModel` writes with — a bare
+      // `model` would tick no row at all on every alias-driven session, which is most of them.
+      const current = models.find((m) => m.value === model || resolveModelAlias(m.value) === model)?.value;
+      setModelPicker({ open: true, models, ...(current ? { current } : {}), ...(sessionModelRef.current ? { sessionModel: sessionModelRef.current } : {}) });
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   function closeModelPicker() { if (!disposed.current) setModelPicker({ open: false, models: [] }); }
-  function pickModel(m: ModelInfo) {
+  /** `saveDefault` is the picker's Enter-vs-`s` split (DG46). The prefs write itself already happened inside
+   *  the picker (it owns the `s` key, so it is the only place that knows); what reaches here is which of the
+   *  two confirmation sentences is true, and whether a session-only override is now in force. */
+  function pickModel(m: ModelInfo, opts: { saveDefault?: boolean } = {}) {
     if (disposed.current) return;
+    const saveDefault = opts.saveDefault !== false;
+    sessionModelRef.current = saveDefault ? undefined : m.value;
     setModelPicker({ open: false, models: [] });
     // The picker's rows come straight from supportedModels(), whose values are TIER ALIASES ("opus"), so the
     // same translation the /model command does applies here — otherwise picking "Opus" selects Opus 4.8.
@@ -933,7 +952,10 @@ export function useChat(
     // dialog dismissed" even though the model WAS about to change. Committing first closes that window:
     // by the time any later keypress (Esc included) is processed, this state update has already rendered.
     setModel(v);
-    if (!fromSettings) append(formatModel(v));
+    // L471427's confirmation, which REPLACED `model → X` on this path: the picker's whole point is the
+    // default-vs-session split, and the old line could not say which had happened. `/model <name>` (no
+    // picker, no split) still prints `formatModel`.
+    if (!fromSettings) append(formatModelSet(m.displayName ?? m.value, saveDefault));
     void session.setModel(v).catch(() => {});
   }
 
@@ -1385,5 +1407,5 @@ export function useChat(
   }
   function clear() { if (!disposed.current) { clearScreen(); replaceDocument(new TranscriptDocument()); } }   // /clear: wipe screen + model (session context kept)
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials, workDirs } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials, workDirs } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
 }
