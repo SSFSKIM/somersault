@@ -415,11 +415,24 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // Chat's `escape → chat:cancel` would steal the popup's own dismissal. It is belt-and-braces rather than
   // load-bearing: `handleKey` re-checks the live popup state from the ref, which is what keeps two keys
   // arriving in ONE chunk (no render in between, so the scope flag is one render stale) correct.
-  useKeyScope("Chat");
+  // ── F6 TASK 5, THE OWNERSHIP GATE. A permission or question dialog now renders INLINE, above a composer
+  // that stays MOUNTED and visible (ChatApp's render chain). Mount order alone cannot be trusted to give that
+  // dialog the keyboard — the registry ranks by mount order and this component is a live claimant for as long
+  // as it is on screen — so ownership is declared instead: every registration below is gated on the SAME
+  // question `handleKey`/`cancel`/`interceptChord` have always asked of `inputOwnerRef`, only now it is asked
+  // once, at render time, and answered by not registering at all rather than by an early return inside a
+  // handler that already won the key. The difference is the whole task: an early return CONSUMES, and the
+  // dialog's own digits, letters and Escape never arrive (plan-review finding 1).
+  //
+  // Read during RENDER, exactly like every other registration here: ChatApp writes the ref during its own
+  // render, before this child renders, so the value is this frame's truth and not the previous frame's.
+  // Undefined ref = a bare mount (tests, a future embed) with nobody else claiming anything: it owns.
+  const owns = !inputOwnerRef || inputOwnerRef.current === "composer";
+  useKeyScope("Chat", { active: owns });
   // Upstream's own predicate is `c.length > 0 || !!Y` (bundle L491072) — a popup with an EMPTY list holds
   // no keys, because it draws nothing (t9 review, I2). Keying this on the state instead meant an `@zz` that
   // matched no file silently ate Up, Down, Tab and Escape.
-  useKeyScope("Autocomplete", { active: completionActive(state) });
+  useKeyScope("Autocomplete", { active: owns && completionActive(state) });
   // …and CM58's context AFTER both, for the identical reason (mount order = rank): while a search is live it
   // must outrank Chat's `escape → chat:cancel` and Autocomplete's `escape → autocomplete:dismiss`, because
   // upstream's Escape here is `historySearch:accept` — it KEEPS the match and closes the search, and must
@@ -433,7 +446,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // upstream would still let ctrl+o open the pager mid-search and we do not. The table is upstream's on the
   // six keys that matter and the unbinds are a deliberate ccx addition, so they stay: a live search field
   // being interrupted by the todo panel is the worse of the two behaviours. Task 13 carries the note.
-  useKeyScope("HistorySearch", { active: search.searching });
+  // …and gated on ownership with the other two: a search left live when a decision parks must not outrank the
+  // dialog's own Escape/Enter, which `SelectDecision`/`Confirmation` bind to the answer.
+  useKeyScope("HistorySearch", { active: owns && search.searching });
   const bindings = useBindingLookup();                 // the footer ladder below reads its chords from here
   const pasting = usePasting();                        // CM25: a bracketed paste still arriving (provider-owned)
   // Read stateRef.current (NOT the closure `state`): the provider dispatches from a listener attached in a
@@ -606,7 +621,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     if (r.submit != null) onSubmitRef.current(r.submit); commitState(r.state);
   };
   submitBufferRef.current = () => handleKey(ENTER);
-  useKeyFallback(handleKey);
+  // The gate that matters most (F6 t5): the fallback is where every printable character, digit and unbound key
+  // lands, and an inline dialog reads its numbered rows and legacy letters through ITS fallback. Inactive here
+  // means "not registered", so the dialog's is the innermost live one — `handleKey`'s own owner guard stays as
+  // the belt-and-braces half, for a key that arrives in the same stdin chunk as the render that parked.
+  useKeyFallback(handleKey, { active: owns });
   // Ctrl-X Ctrl-K (CC chat:killAgents) and Ctrl-G / Ctrl-X Ctrl-E (chat:externalEditor) are the two keys
   // whose GATE moved into the resolver: the chord machine decides whether ctrl+k is the editor's
   // kill-to-end or the agent kill, so these handlers only fire when the chord already completed. Each still
@@ -829,7 +848,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // The editor owns these affordances: derive them from this render's state so the first draft/popup
   // frame cannot inherit an out-of-date parent status-bar hint through a passive effect. The footer and the
   // suggestion region are ALTERNATIVES sharing one slot — upstream's `Ptl` branch; see `popupDrawn`.
-  const showFooter = mode === "normal" && !popupDrawn(suggest);
+  // `owns` joins the two upstream conditions for the same reason ChatStatusBar takes `composerOwnsKeys`: both
+  // rows advertise Chat-context chords (`⏎ send`, `esc rewind`, `? help`), and F0's honesty rule is that a hint
+  // is only true relative to its focused owner. Before F6 t5 this came for free — the composer was unmounted
+  // behind every dialog — and the pin that proves it ("hides the global composer hint under permission,
+  // question, and plan input owners", chat.test.tsx) now rides on this clause instead.
+  const showFooter = owns && mode === "normal" && !popupDrawn(suggest);
   // F2 task 10: every chord this component prints comes from the LIVE table, not from literals typed here —
   // rebind chat:cycleMode and the rung follows it; unbind it and the rung says `(unbound)` instead of promising
   // a key that no longer works. That covers the footer ladder, the Esc hint and both double-press arms (the

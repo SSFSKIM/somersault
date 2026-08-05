@@ -129,8 +129,10 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "ctrl+n": "select:next", "ctrl+p": "select:previous",
     "enter": "select:accept", "escape": "select:cancel",
     "pageup": "select:pageUp", "pagedown": "select:pageDown", "home": "select:first", "end": "select:last",
-    // Only the two `Confirmation` kills, for exactly its reasons: the composer that owns ctrl+d is unmounted
-    // while a dialog is up, and alt+p/alt+t are CHAT keys whose scope is already off the stack (the nulls only
+    // Only the two `Confirmation` kills, for exactly its reasons: the composer that owns ctrl+d is not the
+    // keyboard's owner while a dialog is up (F6 t5: it is still MOUNTED and visible below an inline dialog, but
+    // its scopes and fallback are deactivated), and alt+p/alt+t are CHAT keys whose scope is off the stack for
+    // the same reason — so all three already resolve to nothing, and the nulls only
     // close the passive-flush sub-tick). ctrl+c/ctrl+o/ctrl+t/ctrl+r/ctrl+b are deliberately ABSENT — a
     // decision dialog keeps every root global, and adding a null here would be the defect this context fixes.
     "ctrl+d": null, "alt+p": null, "alt+t": null,
@@ -140,9 +142,11 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "y": "confirm:yes", "n": "confirm:no",          // F0 fix, re-homed
     // owner === "decision" fell THROUGH the old gate (only "overlay" returned early), so ctrl+c/o/r/t/b stay
     // live over a visible dialog — deliberately, per the ChatApp comment — and must not be unbound here.
-    // Only ctrl+d is dead: the composer that owns it is unmounted while the dialog is up.
+    // Only ctrl+d is dead: the composer that owns it is not the keyboard's owner while the dialog is up (it
+    // used to be unmounted; since F6 t5 an inline dialog leaves it MOUNTED and visible with its registrations
+    // deactivated — same resolution, different reason).
     "ctrl+d": null,
-    // alt+p/alt+t are CHAT keys, not root globals: with the composer unmounted behind any Confirmation surface
+    // alt+p/alt+t are CHAT keys, not root globals: with the composer not owning behind any Confirmation surface
     // the Chat scope is off the stack and they already resolve to nothing. The nulls make the passive-flush
     // sub-tick (where the Chat scope is still registered for one flush) behave the same as the steady state
     // instead of newly opening the model picker over a dialog — same hole as Transcript's (t7 review).

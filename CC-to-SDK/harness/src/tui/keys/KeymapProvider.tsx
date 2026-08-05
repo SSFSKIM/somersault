@@ -380,10 +380,18 @@ export function useKeyActions(handlers: Record<string, ActionHandler>): void {
   useRegistration<ActionEntry>(ctx?.reg.actions, () => ({ seq: nextSeq(), handlers }), (e) => { e.handlers = handlers; });
 }
 
-/** Everything the table did not consume — unmatched keys and all insertable text. Innermost only. */
-export function useKeyFallback(handler: (e: KeyEvent | TextEvent) => void): void {
+/** Everything the table did not consume — unmatched keys and all insertable text. Innermost LIVE one only.
+ *
+ *  `active:false` mirrors `useKeyScope`'s own option and means exactly what it means there: the entry is not
+ *  in resolution at all, so the next fallback out is the innermost one. F6 t5 added it for the composer, the
+ *  one component that stays MOUNTED while another surface owns the keyboard: a permission/question dialog now
+ *  renders inline ABOVE a still-visible composer, and without this the composer's fallback would swallow every
+ *  digit, letter and unbound key the dialog reads (plan-review finding 1). Deactivating beats unmounting here
+ *  because the draft, the popup state and the history walk all have to survive the dialog. */
+export function useKeyFallback(handler: (e: KeyEvent | TextEvent) => void, opts?: { active?: boolean }): void {
   const ctx = useContext(KeymapCtx);
-  useRegistration<FallbackEntry>(ctx?.reg.fallbacks, () => ({ seq: nextSeq(), handler }), (e) => { e.handler = handler; });
+  useRegistration<FallbackEntry>(ctx?.reg.fallbacks, () => ({ seq: nextSeq(), handler, active: true }),
+    (e) => { e.handler = handler; e.active = opts?.active ?? true; });
 }
 
 /** The ctrl+z (SIGTSTP) handler, registered where Ink's `useStdin`/`useStdout` and the app's own suspend

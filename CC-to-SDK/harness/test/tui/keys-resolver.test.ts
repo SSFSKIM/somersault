@@ -197,7 +197,7 @@ describe("against the REAL default table", () => {
   it("escape under an open list overlay is select:cancel, not chat:cancel", () =>
     expect(resolveKey(ev("escape"), ["Select", "Chat", "Global"], t, []))
       .toMatchObject({ type: "match", action: "select:cancel", context: "Select" }));
-  it("ctrl+d over a confirmation dialog is unbound — the composer that owns it is unmounted", () =>
+  it("ctrl+d over a confirmation dialog is unbound — the composer that owns it is not the keyboard owner", () =>
     expect(resolveKey(ctrl("d"), ["Confirmation", "Global"], t, [])).toEqual({ type: "unbound" }));
   it("ctrl+c over a confirmation dialog still reaches Global (the decision owner falls through)", () =>
     expect(resolveKey(ctrl("c"), ["Confirmation", "Global"], t, []))

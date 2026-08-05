@@ -1,5 +1,6 @@
-// tui/src/ChatApp.tsx — composes the transcript, the composer (or the permission dialog when one is
-// pending), and the status bar. Esc interrupt / Shift+Tab cycle mode are owned by the composer and
+// tui/src/ChatApp.tsx — composes the transcript, any inline decision dialog, the composer (which the
+// exit-plan-mode dialog and every overlay still replace), and the status bar. Esc interrupt / Shift+Tab
+// cycle mode are owned by the composer and
 // inactive while a dialog is up; Ctrl-C / Ctrl-Z / Ctrl-B / Ctrl-T / Ctrl-O stay active even during a
 // dialog (Ctrl-Z can still suspend — F0 KB5: detach moved off this key onto /detach, a normal command
 // that goes through the composer like any other). Ctrl-L moved into the editor (Task 2) — it used to
@@ -29,7 +30,9 @@
 // themselves at all, because there is nothing left for them to guard against — every surface that hides the
 // composer now states in the table which of Global's keys reach it, and the ONE surface with no keys of its
 // own (the “⏪ restoring…” hold) says so too, by swallowing (`RestoringModal`). `inputOwnerRef` stays: it is a
-// different question (which surface is VISIBLE), read only by the composer's own handler.
+// different question (which surface is VISIBLE), and F6 TASK 5 made it load-bearing rather than a guard of last
+// resort — the composer reads it to DEACTIVATE its own scopes and fallback while an inline dialog is drawn
+// above it, and this file reads it to decide whether that dialog is drawn at all (`inlineDecision`).
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
@@ -143,7 +146,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // Input subscriptions are passive. This ref changes during render, before the visible owner swaps, so a
   // retiring composer can reject the next key even before its own registration has been torn down — the Chat
   // scope outlives the unmount by one passive flush, and shift+tab/escape would otherwise still reach it from
-  // under a dialog. It names the VISIBLE surface; the composer's guard is its only reader.
+  // under a dialog. It names the VISIBLE surface. Since F6 task 5 it has two readers: the composer, which turns
+  // its own registrations off with it (a composer under an inline dialog is visible but not the owner), and
+  // `inlineDecision` below, whose whole overlay-precedence rule is one comparison against it.
   const inputOwnerRef = useRef<InputOwner>("composer");
   inputOwnerRef.current = state.shortcutsOpen
     ? "shortcuts"
@@ -154,6 +159,17 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         : state.pending
           ? "decision"
           : "composer";
+  // F6 TASK 5 (DG27) — WHICH pending decision renders INLINE, and when. Upstream gives every dialog but
+  // exit-plan-mode `layout:"inline"` (bundle L507338, L507345-351): it is drawn in the transcript flow with the
+  // composer still below it, not in the composer's slot. Two conditions, both read off the owner ref computed
+  // immediately above rather than re-derived:
+  //   · `=== "decision"` IS the overlay-precedence gate. That arm is reached only when none of the eleven
+  //     overlay arms is open, so a parked decision stays completely hidden behind the pager / history search /
+  //     shortcuts / RestoringModal exactly as it does today — the accepted oddity documented in the chain
+  //     below, and the reason the dialog carries `key={toolUseID}`: closing the overlay re-renders it fresh,
+  //     so the answer channel is never lost, only its rendering deferred.
+  //   · `kind !== "plan"` leaves upstream's one modal dialog in the composer-replacing chain below.
+  const inlineDecision = inputOwnerRef.current === "decision" && state.pending && state.pending.kind !== "plan" ? state.pending : null;
   // The keymap dispatches from a stdin listener the provider attached in a passive effect, so — exactly as
   // with the old `useInput` — a key can arrive after a newer render has already painted. Keep every
   // state/callback value these handlers consume current synchronously.
@@ -262,6 +278,21 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           {state.queue.flatMap((q, i) => userEchoLines(q.value, { width: queueWidth }).map((l, j) => <Line key={`${i}:${j}`} l={l} />))}
         </Box>
       ) : null}
+      {/* The inline slot: below everything the transcript owns, directly above the composer. It is rendered
+          BEFORE the composer in this tree, so it also mounts first — the registry ranks by mount order, and
+          the composer's own registrations are `active`-gated off while it does not own the keyboard, so the
+          dialog wins the keys by both mechanisms rather than by either one alone (ChatComposer's `owns`). */}
+      {inlineDecision
+        ? inlineDecision.kind === "question"
+          // key = toolUseID: dropPending promotes the NEXT queued decision straight into `pending` with no
+          // intermediate null render, so without a key the same QuestionDialog instance would carry stale
+          // internal progress (qi/idx/checked) into an unrelated toolUseID's question set — a fresh key
+          // forces the clean remount a new decision needs.
+          ? <QuestionDialog key={inlineDecision.toolUseID} req={inlineDecision}
+              onAnswer={(answers, response) => resolveDecision({ kind: "question_answer", answers, ...(response ? { response } : {}) })}
+              onDeny={() => resolveDecision({ kind: "deny" })} />
+          : <PermissionDialog key={inlineDecision.toolUseID} req={inlineDecision} onDecision={(d) => resolveDecision(d)} />
+        : null}
       {state.shortcutsOpen
         ? <ShortcutsOverlay onClose={closeShortcuts} />
         : transcriptOpen
@@ -324,18 +355,14 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                   ? <AddDirDialog prefill={state.addDir.prefill} onValidate={addDirValidate} onConfirm={confirmAddDir} onCancel={cancelAddDir} />
                   : state.picker.open
                   ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
-                  : state.pending
-                  ? state.pending.kind === "question"
-                    // key = toolUseID: dropPending promotes the NEXT queued decision straight into `pending`
-                    // with no intermediate null render, so without a key the same QuestionDialog instance
-                    // would carry stale internal progress (qi/idx/checked) into an unrelated toolUseID's
-                    // question set — a fresh key forces the clean remount a new decision needs.
-                    ? <QuestionDialog key={state.pending.toolUseID} req={state.pending}
-                        onAnswer={(answers, response) => resolveDecision({ kind: "question_answer", answers, ...(response ? { response } : {}) })}
-                        onDeny={() => resolveDecision({ kind: "deny" })} />
-                    : state.pending.kind === "plan"
-                      ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
-                      : <PermissionDialog key={state.pending.toolUseID} req={state.pending} onDecision={(d) => resolveDecision(d)} />
+                  // F6 TASK 5 — the permission and question arms are GONE from this chain; they render inline
+                  // above it (see `inlineDecision` further up) over a composer that stays mounted. Exit-plan
+                  // mode is the ONE dialog upstream gives `layout:"modal"` (bundle L507338), so it alone is
+                  // still composer-replacing. `key = toolUseID` for the same reason the other two carry it:
+                  // dropPending promotes the NEXT queued decision straight into `pending` with no intermediate
+                  // null render, and a reused instance would carry stale scroll/feedback state into it.
+                  : state.pending?.kind === "plan"
+                  ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
                   : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} searchHintFiredRef={searchHintFiredRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} sessionId={state.sessionId} project={cwd}
                       // F5 t12: the composer's disk seed, its history append and now its inline search all
                       // read this. Threaded from `deps.env` — the same source useChat's own `historyEnv`

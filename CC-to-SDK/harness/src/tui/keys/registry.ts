@@ -12,7 +12,10 @@ export interface ScopeEntry { seq: number; name: KeyContextName; active: boolean
 /** Handlers take the matched ACTION as a second argument, which only a family handler (below) reads. */
 export type ActionHandler = (e: KeyEvent, action: string) => void;
 export interface ActionEntry { seq: number; handlers: Record<string, ActionHandler> }
-export interface FallbackEntry { seq: number; handler: (e: KeyEvent | TextEvent) => void }
+/** `active:false` is the fallback's half of the scope option above, and it means the same thing: the entry
+ *  stays registered but is INVISIBLE to resolution. It exists for the one component that stays mounted while
+ *  something else owns the keyboard — the composer, still drawn below an inline decision dialog (F6 t5). */
+export interface FallbackEntry { seq: number; handler: (e: KeyEvent | TextEvent) => void; active: boolean }
 export interface SwallowEntry { seq: number; active: boolean }
 export interface SuspendEntry { seq: number; handler: () => void }
 
@@ -75,9 +78,11 @@ export function handlerFor(reg: Registry, action: string): ((e: KeyEvent) => voi
   return undefined;
 }
 
-/** The innermost fallback — the composer's editor in the real tree, "component code below the table" upstream. */
+/** The innermost LIVE fallback — the composer's editor in the real tree, "component code below the table"
+ *  upstream. Inactive entries are skipped rather than shadowing, which is what makes a still-mounted composer
+ *  yield the keyboard to a dialog drawn above it. */
 export function fallbackHandler(reg: Registry): ((e: KeyEvent | TextEvent) => void) | undefined {
-  return newestFirst(reg.fallbacks)[0]?.handler;
+  return newestFirst(reg.fallbacks).find((f) => f.active)?.handler;
 }
 
 /** The innermost registered ctrl+z handler (task 6: ChatApp, which is where Ink's `useStdin`/`useStdout` and

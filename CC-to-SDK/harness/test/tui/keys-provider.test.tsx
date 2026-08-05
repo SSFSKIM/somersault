@@ -21,10 +21,10 @@ const noop = () => {};
 
 /** One component instance = one registration of each kind. Mount order (sibling order / rerender order) is what
  *  makes a probe "innermost", so tests express precedence by WHERE they put a probe in the tree. */
-function Probe(props: { scope: KeyContextName; actions?: Handlers; fallback?: (e: KeyEvent | TextEvent) => void; swallow?: boolean; active?: boolean; preemptive?: boolean }) {
+function Probe(props: { scope: KeyContextName; actions?: Handlers; fallback?: (e: KeyEvent | TextEvent) => void; swallow?: boolean; active?: boolean; preemptive?: boolean; fallbackActive?: boolean }) {
   useKeyScope(props.scope, { active: props.active ?? true, preemptive: props.preemptive ?? false });
   useKeyActions(props.actions ?? NONE);
-  useKeyFallback(props.fallback ?? noop);
+  useKeyFallback(props.fallback ?? noop, { active: props.fallbackActive ?? true });
   useSwallowKeys(!!props.swallow);
   return <Text>{props.scope}</Text>;
 }
@@ -157,6 +157,52 @@ describe("KeymapProvider — fallback", () => {
     h.stdin.write("h");
     expect(inner).toHaveBeenCalledTimes(1);
     expect(outer).not.toHaveBeenCalled();
+    h.unmount();
+  });
+
+  // ── F6 task 5: `{active}` on the fallback, the mirror of the scope option the registry already had.
+  // An INACTIVE fallback is not registered at all — which is what lets a component that is still MOUNTED and
+  // visible (the composer, sitting below an inline decision dialog) stop owning the keyboard without
+  // unmounting. Without it the composer's fallback is the innermost one on every remount ordering and it eats
+  // the digits, letters and Escape the dialog reads (plan-review finding 1).
+  it("an INACTIVE fallback does not fire at all", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} fallbackActive={false} />);
+    await tick();
+    h.stdin.write("h");
+    h.stdin.write("hi");
+    expect(fallback).not.toHaveBeenCalled();
+    h.unmount();
+  });
+
+  it("an EARLIER-mounted dialog's fallback wins once the later composer's is inactive — and takes it back when it re-activates", async () => {
+    const dialog = vi.fn(), composer = vi.fn();
+    const dialogProbe = <Probe scope="Confirmation" fallback={dialog} />;
+    // The dialog mounts FIRST (it renders above the composer in ChatApp's tree), so by mount order the
+    // composer's fallback is the innermost one and would otherwise shadow it.
+    const h = renderWithKeymap(<>{dialogProbe}<Probe scope="Chat" fallback={composer} active={false} fallbackActive={false} /></>);
+    await tick();
+    h.stdin.write("2");                                  // a digit: the numbered rows are the dialog's fallback
+    expect(dialog).toHaveBeenCalledTimes(1);
+    expect(composer).not.toHaveBeenCalled();
+    h.rerender(<>{dialogProbe}<Probe scope="Chat" fallback={composer} /></>);
+    await tick();
+    h.stdin.write("2");
+    expect(composer).toHaveBeenCalledTimes(1);           // ownership handed back: innermost by mount order again
+    expect(dialog).toHaveBeenCalledTimes(1);
+    h.unmount();
+  });
+
+  it("an inactive Chat scope hands Escape to the earlier dialog's `Confirmation` action", async () => {
+    const confirmNo = vi.fn(), chatCancel = vi.fn(), composerFallback = vi.fn();
+    const h = renderWithKeymap(
+      <><Probe scope="Confirmation" actions={{ "confirm:no": confirmNo }} />
+        <Probe scope="Chat" actions={{ "chat:cancel": chatCancel }} fallback={composerFallback} active={false} fallbackActive={false} /></>);
+    await tick();
+    h.stdin.write(ESC);
+    expect(confirmNo).toHaveBeenCalledTimes(1);
+    expect(chatCancel).not.toHaveBeenCalled();           // `escape → chat:cancel`'s early-return would have eaten it
+    expect(composerFallback).not.toHaveBeenCalled();
     h.unmount();
   });
 
