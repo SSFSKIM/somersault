@@ -668,16 +668,15 @@ plumbing. Append ` · <shortened path>` to the ctrl+g footer segment. **Keep the
 `ctrl+g to edit in {name}` wording** (`:302`) — upstream's is `edit in {name}`, and re-spelling hints is
 Wave C's work (spec A8 was amended to match).
 
-**(c) Empty submit on `No, keep planning` is a no-op.** Today an empty Enter routes to `onCancel` → `:212`
-→ a feedback-less `plan_reject`. Upstream guards it (L500733, L500976). **This is the one place a `Select`
-primitive change is genuinely required**: `cancel` serves two keys that must now diverge — Esc must still
-reject (upstream's `xnl`, L500995, answers `{behavior:"deny"}`) while empty Enter must do nothing — and
-`Select` gives the caller no way to tell them apart. Add a distinct empty-submit outlet (e.g. an optional
-`onEmptySubmit?: (value: string) => void` that, when provided, replaces the `onCancel` fall-through for
-that case). Rewrite the comment at `:208-211`, which describes today's behavior.
-
-**Blast-radius guard:** add a test that the Bash editable-prefix row's empty submit still yields
-`allow_once` (`bashOptions.ts:188-192` → `bashDecision:213-216`).
+**(c) DROPPED — do not touch this, and do not touch `Select.tsx`.** An earlier draft asked for "empty
+submit on `No, keep planning` becomes a no-op". That was wrong. `xnl`, the plan modal's `onCancel`, is
+`() => { track("tengu_plan_exit", …); answer({ behavior: "deny" }); }` at bundle **L500994** — and since
+the row omits `allowEmptySubmitToCancel`, an empty submit routes there. **Upstream's empty Enter denies**,
+which is exactly what ccx does today and what F6 pinned deliberately at
+`test/tui/f6-acceptance.test.tsx:18-27`. The guard at L500976 protects a different route (the value being
+selected with empty text), not this one. Leave `:208-212` alone; the `Select` empty-submit outlet this
+item was going to justify is dropped from the wave. If a test in this area fails, you have changed
+something you should not have.
 
 **(d) Approve with feedback.** The No row's description says `shift+tab to approve with this feedback`
 (L500713), so `shift+tab` (`:226`) and a typed approval must carry the typed text into the approval.

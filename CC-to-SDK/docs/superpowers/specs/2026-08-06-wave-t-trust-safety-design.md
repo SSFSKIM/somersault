@@ -373,12 +373,16 @@ A4, A5, A6 (gated on W-T13), A14, A15, A16, A17.
    `default` — re-creating in a new place the exact lying-chip failure EP-T5 W3 exists to remove.
 3. **(modify)** Approve-with-feedback: `shift+tab` and a typed yes-row submit carry the feedback into the
    allow, per the row's own description.
-4. **(modify)** Empty `Enter` on the No row is a no-op (upstream's guard), not a feedback-less reject.
-   **This is where the `Select` primitive change belongs** (moved here from EP-T2 by spec review I7):
-   `PlanDialog.tsx:213`'s `cancel` serves two keys that must now diverge — Esc must still reject
-   (upstream's `xnl`, L500995, answers `{behavior:"deny"}`) while an empty Enter must do nothing, and
-   `Select` currently gives the caller no way to tell them apart. Add a distinct empty-submit outlet.
-   Guard the blast radius with a test that the Bash prefix row's empty submit still yields `allow_once`.
+4. **RETRACTED — ccx already matches canon here (W-T21).** The first draft asked for "empty `Enter` on the
+   No row is a no-op". That was a misreading of the grounding report, caught by Task 3's implementer and
+   confirmed by the controller directly against the bundle: `xnl` — the plan modal's `onCancel` — is
+   `() => { track("tengu_plan_exit", …); answer({ behavior: "deny" }); }` at **L500994**. Since the row
+   omits `allowEmptySubmitToCancel`, an empty submit routes to that `onCancel`, so **upstream's empty
+   Enter denies**, which is precisely what ccx does today and what F6 pinned as an acceptance criterion
+   (`test/tui/f6-acceptance.test.tsx:18-27`). The guard at L500976 (`if (I4 === "no") { if (!feedback &&
+   !images) return; }`) protects a *different* route — the value being selected with empty text — not the
+   empty-Enter path. **No change, and the `Select` empty-submit outlet this item was going to justify is
+   dropped from the wave entirely**, so `Select.tsx` is now untouched by Wave T.
 5. **(new)** Dashed-rule framing around the plan body.
 6. **(new)** Render `input.planFilePath` in the ctrl+g footer segment (` · <shortened path>`). The
    existing literal is `ctrl+g to edit in {name}` (`PlanDialog.tsx:302`); keep it and append the path —
@@ -681,6 +685,15 @@ A12, A13.
 - **W-T20 [DECIDED]** `/yolo` is gated by the same consent as launch. Rejected: matching upstream's
   launch-only gate, because upstream's ladder cannot reach bypass at all — inheriting the *shape* of its
   gate without its *fence* leaves a hole upstream does not have.
+
+- **W-T21 [RETRACTION, mid-execution 2026-08-06]** EP-T3 W4's "empty Enter on the plan No row should be a
+  no-op" was wrong; ccx already matches canon (see the item for the L500994 evidence). Surfaced by Task 3's
+  implementer, who noticed the behavior was a *deliberate* F6 acceptance pin and flagged the collision
+  rather than letting Task 11 "finish the job" and silently regress it. Consequence: `Select.tsx` is
+  untouched by this wave — the primitive change spec review I7 moved into EP-T3 turns out to be needed
+  nowhere. **The lesson is the program's recurring one**: the grounding report mentioned a guard, and the
+  first draft inferred a behavior from it without reading what the cancel path actually did. Verifying that
+  an anchor exists is not verifying that the defect fires.
 
 ## Open questions
 
