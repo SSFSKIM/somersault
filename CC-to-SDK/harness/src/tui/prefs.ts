@@ -29,9 +29,13 @@ function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env)
  *  file must not crash boot. Values are validated too, not just JSON-shape: a `theme` that isn't one of
  *  THEMES's keys (hand-edited, or a future release renaming/dropping an id) is dropped rather than handed
  *  to chatMain's `setTheme()`, which indexes `THEMES[id]` unchecked and throws on a miss — this is the
- *  one field that feeds a lookup table, so it's the one that needs the check. `outputStyle` isn't indexed
- *  anywhere (config/outputStyle.ts falls back to treating an unrecognized string as a literal persona), so
- *  it has no equivalent crash to guard against and is left as-is. */
+ *  one field that feeds a lookup table, so it's the one that needs the check. `model` gets the same
+ *  treatment for the same reason, one level down: cli/main.ts forwards it into the host config unvalidated
+ *  and `resolveModelAlias` calls `.trim()` on it, so a hand-edited `"model": 5` would crash a foreground
+ *  launch (codex review, F6 close). Only the TYPE is checked — which model ids exist is the engine's
+ *  question, not this file's, and an unknown string is already handled downstream. `outputStyle` isn't
+ *  indexed anywhere (config/outputStyle.ts falls back to treating an unrecognized string as a literal
+ *  persona), so it has no equivalent crash to guard against and is left as-is. */
 export function loadPrefs(env?: NodeJS.ProcessEnv): CcxPrefs {
   try {
     const parsed = JSON.parse(readFileSync(prefsPath(env), "utf8"));
@@ -41,6 +45,7 @@ export function loadPrefs(env?: NodeJS.ProcessEnv): CcxPrefs {
     // "toString") passes the guard and setTheme then reads `.claude` off Object.prototype's member —
     // no throw, but ACCENT and every token silently become undefined and the UI loses its colors.
     if (prefs.theme !== undefined && !Object.prototype.hasOwnProperty.call(THEMES, prefs.theme)) delete prefs.theme;
+    if (prefs.model !== undefined && (typeof prefs.model !== "string" || prefs.model.trim() === "")) delete prefs.model;
     return prefs;
   } catch { return {}; }
 }

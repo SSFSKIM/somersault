@@ -172,6 +172,41 @@ describe("<Select> keys", () => {
     await waitFor(() => cancelled === 1);
   });
 
+  // REGRESSION (codex review, F6 close). One stdin chunk parses into SEVERAL events and the provider
+  // dispatches them with NO render between, so a handler reading its render closure saw the PRE-chunk focus:
+  // `j\r` accepted the row the cursor had just left. In a permission dialog that is an approval of the wrong
+  // row, which is why `Select` is ref-backed (keys/refState.ts) like `MultiSelect`.
+  it("accepts the row the SAME CHUNK moved to, not the one it left (j + enter in one write)", async () => {
+    const picked: string[] = [];
+    const r = await mount(<Select options={ten} onChange={(v) => picked.push(v)} onCancel={noop} visibleOptionCount={5} rows={40} columns={100} />);
+    r.stdin.write("j\r");
+    await waitFor(() => picked.length === 1);
+    expect(picked[0]).toBe("v2");
+  });
+
+  // Two movement keys in one chunk have to be ESCAPE sequences, not `jj`: parse.ts folds a printable RUN into
+  // a single `text` event (a paste), so only the arrows can actually arrive twice per chunk.
+  it("steps ONCE PER KEY when two movement keys share a chunk (down+down lands on row 3)", async () => {
+    const picked: string[] = [];
+    const r = await mount(<Select options={ten} onChange={(v) => picked.push(v)} onCancel={noop} visibleOptionCount={5} rows={40} columns={100} />);
+    r.stdin.write("\x1b[B\x1b[B");
+    await waitFor(() => pointerRow(frame(r.lastFrame)) === 2);
+    r.stdin.write("\r");
+    await waitFor(() => picked.length === 1);
+    expect(picked[0]).toBe("v3");
+  });
+
+  it("submits an input row's SAME-CHUNK text, not the buffer as it was before the chunk", async () => {
+    const got: [string, string | undefined][] = [];
+    const opts: SelectOption[] = [{ value: "yes", label: "Yes" }, { value: "note", label: "Note", type: "input", placeholder: "ph" }];
+    const r = await mount(<Select options={opts} onChange={(v, t) => got.push([v, t])} onCancel={noop} rows={40} columns={100} />);
+    r.stdin.write("j");
+    await waitFor(() => pointerRow(frame(r.lastFrame)) === 1);
+    r.stdin.write("hello\r");                                       // text AND the submit together
+    await waitFor(() => got.length === 1);
+    expect(got[0]).toEqual(["note", "hello"]);
+  });
+
   it("never accepts a disabled row (L396698)", async () => {
     const picked: string[] = [];
     const opts: SelectOption[] = [{ value: "a", label: "alpha", disabled: true }, { value: "b", label: "bravo" }];

@@ -20,6 +20,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
+import { useRefState } from "./keys/refState.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
 import { InputText, Select } from "./select/Select.js";
@@ -64,15 +65,20 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
   refreshing?: boolean;
   rows?: number; columns?: number;
 }) {
-  const [query, setQuery] = useState("");
+  // Ref-backed (keys/refState.ts), the same law `MultiSelect` states: one stdin chunk dispatches several
+  // events with no render guaranteed in between, so a handler that read the query — or the rename buffer —
+  // from its render closure would act on the state as it was BEFORE the earlier keys of that chunk. A pasted
+  // `"flaky\r"` must resume the post-filter row, and a pasted `"parser v2\r"` must save that title rather
+  // than the empty buffer it started from.
+  const [query, setQuery, queryRef] = useRefState("");
   const [stage, setStage] = useState<Stage>("list");
   const [focusId, setFocusId] = useState<string | undefined>(undefined);
   // A rename is written to disk immediately; the LIST is a snapshot the caller loaded before that happened,
   // so the new title is overlaid here. Upstream instead re-reads every log (`onLogsChanged`, L476517) — a
   // second full directory scan for one string we already know.
   const [renames, setRenames] = useState<Record<string, string>>({});
-  const [renameText, setRenameText] = useState("");
-  const [renameCursor, setRenameCursor] = useState(0);
+  const [renameText, setRenameText, renameTextRef] = useRefState("");
+  const [renameCursor, setRenameCursor, renameCursorRef] = useRefState(0);
   // `lines: null` is "still loading". No session id is kept beside it: which session the pane is about is
   // `focused`, and the token below is what makes a late arrival for another row a no-op.
   const [preview, setPreview] = useState<{ lines: ReturnType<typeof previewLines> | null; count: number }>({ lines: null, count: 0 });
@@ -82,17 +88,22 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
 
   const titleOf = (s: SessionInfo) => renames[s.sessionId] ?? sessionTitle(s);
   const filtered = filterSessions(sessions, query, titleOf);
+  /** The list as of the LATEST dispatched key — what an accept in the same chunk as a query keystroke must
+   *  resolve its row against. Identical to `filtered` at render time; only handlers need the getter. */
+  const liveFiltered = () => filterSessions(sessions, queryRef.current, titleOf);
   const focused = filtered.find((s) => s.sessionId === focusId) ?? filtered[0];
+  const liveFocused = () => { const f = liveFiltered(); return f.find((s) => s.sessionId === focusId) ?? f[0]; };
   const visible = resumeVisibleRows(rows ?? process.stdout.rows ?? 24);
 
   /** Escape in the list: clear a live filter first, close only when there is nothing to clear. Upstream
    *  splits these across its two modes — Esc is `clear` in search mode (L476627) and `cancel` in list mode —
    *  and a modeless search has to fold them onto one key. */
-  const escapeList = () => { if (query) setQuery(""); else onCancel(); };
+  const escapeList = () => { if (queryRef.current) setQuery(""); else onCancel(); };
   const backToList = () => { previewToken.current++; setStage("list"); };
   const openPreview = () => {
-    if (!focused || !loadMessages) return;
-    const id = focused.sessionId, token = ++previewToken.current;
+    const target = liveFocused();
+    if (!target || !loadMessages) return;
+    const id = target.sessionId, token = ++previewToken.current;
     setPreview({ lines: null, count: 0 });
     setStage("preview");
     void loadMessages(id).then((msgs) => {
@@ -101,11 +112,11 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
     }, () => { if (mounted.current && previewToken.current === token) setPreview({ lines: [], count: 0 }); });
   };
   const startRename = () => {
-    if (!focused || !renameSession) return;
+    if (!liveFocused() || !renameSession) return;
     setRenameText(""); setRenameCursor(0); setStage("rename");
   };
   const commitRename = () => {
-    const target = focused, title = renameText.trim();
+    const target = liveFocused(), title = renameTextRef.current.trim();
     if (!target || !renameSession || !title) { backToList(); return; }
     setRenames((m) => ({ ...m, [target.sessionId]: title }));
     void renameSession(target.sessionId, title).catch(() => {});
@@ -142,26 +153,28 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
   const handleKey = (e: KeyEvent | TextEvent) => {
     const { input, key } = toKeyFlags(e);
     if (stage === "preview") {
-      if (e.kind === "key" && e.name === "enter" && focused) onPick(focused);
+      const target = liveFocused();
+      if (e.kind === "key" && e.name === "enter" && target) onPick(target);
       return;
     }
     if (stage === "rename") {
-      const write = (next: string, at: number) => { setRenameText(next); setRenameCursor(Math.max(0, Math.min(next.length, at))); };
+      const text = renameTextRef.current, at = renameCursorRef.current;
+      const write = (next: string, to: number) => { setRenameText(next); setRenameCursor(Math.max(0, Math.min(next.length, to))); };
       if (e.kind === "key") {
         if (e.name === "enter") { commitRename(); return; }
-        if (e.name === "left") { setRenameCursor(Math.max(0, renameCursor - 1)); return; }
-        if (e.name === "right") { setRenameCursor(Math.min(renameText.length, renameCursor + 1)); return; }
+        if (e.name === "left") { setRenameCursor(Math.max(0, at - 1)); return; }
+        if (e.name === "right") { setRenameCursor(Math.min(text.length, at + 1)); return; }
         if (e.name === "home") { setRenameCursor(0); return; }
-        if (e.name === "end") { setRenameCursor(renameText.length); return; }
-        if (e.name === "backspace") { if (renameCursor > 0) write(renameText.slice(0, renameCursor - 1) + renameText.slice(renameCursor), renameCursor - 1); return; }
-        if (e.name === "delete") { if (renameCursor < renameText.length) write(renameText.slice(0, renameCursor) + renameText.slice(renameCursor + 1), renameCursor); return; }
+        if (e.name === "end") { setRenameCursor(text.length); return; }
+        if (e.name === "backspace") { if (at > 0) write(text.slice(0, at - 1) + text.slice(at), at - 1); return; }
+        if (e.name === "delete") { if (at < text.length) write(text.slice(0, at) + text.slice(at + 1), at); return; }
       }
-      if (input && !key.ctrl && !key.meta && !/[\x00-\x1f]/.test(input)) write(renameText.slice(0, renameCursor) + input + renameText.slice(renameCursor), renameCursor + input.length);
+      if (input && !key.ctrl && !key.meta && !/[\x00-\x1f]/.test(input)) write(text.slice(0, at) + input + text.slice(at), at + input.length);
       return;
     }
     // list: type to search (L476572-573 — a printable the list did not consume seeds the query).
-    if (e.kind === "key" && e.name === "backspace") { setQuery((q) => q.slice(0, -1)); return; }
-    if (input && !key.ctrl && !key.meta && !/[\x00-\x1f]/.test(input)) setQuery((q) => q + input);
+    if (e.kind === "key" && e.name === "backspace") { setQuery(queryRef.current.slice(0, -1)); return; }
+    if (input && !key.ctrl && !key.meta && !/[\x00-\x1f]/.test(input)) setQuery(queryRef.current + input);
   };
   useKeyFallback(handleKey);
 
@@ -223,7 +236,7 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
         {...(rows !== undefined ? { rows } : {})} {...(columns !== undefined ? { columns } : {})}
         {...(focused ? { defaultFocusValue: focused.sessionId } : {})}
         onFocus={setFocusId}
-        onChange={(value) => { const s = filtered.find((x) => x.sessionId === value); if (s) onPick(s); }}
+        onChange={(value) => { const s = liveFiltered().find((x) => x.sessionId === value); if (s) onPick(s); }}
         // Required by SelectProps, and unreachable: the preemptive scope above answers escape first. It is
         // wired to the SAME function that handler routes to, so if the scope ever stops being preemptive
         // the behaviour is unchanged.

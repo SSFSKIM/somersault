@@ -211,6 +211,17 @@ describe("SessionPicker — Space opens the preview pane (L476570/L476095)", () 
     expect(flat(frame(r.lastFrame))).not.toContain("fix the flaky test");
   });
 
+  // REGRESSION (codex review, F6 close). A query and its Return can land in ONE stdin chunk, and the accept
+  // path read `filtered` from a render closure — so Return resumed whatever the PRE-query list had under the
+  // cursor. Both the query and the row the accept resolves against are ref-backed now.
+  it("resumes against the POST-keystroke filter when query and Return share a chunk", async () => {
+    const r = mount();
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write("flaky\r");                                               // query AND the accept together
+    await waitFor(() => r.picked.length > 0);
+    expect(r.picked).toEqual(["3333cccc-0003"]);                            // NOT the first row of the old list
+  });
+
   it("Esc leaves the pane for the list without resuming anything", async () => {
     const r = mount({ loadMessages: async () => [{ type: "user", message: { content: "hi" } }] });
     await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
@@ -247,6 +258,19 @@ describe("SessionPicker — Ctrl-R renames (L476568/L476609)", () => {
     await waitFor(() => flat(frame(r.lastFrame)).includes("space to preview"));
     expect(flat(frame(r.lastFrame))).toContain("parser v2");                // the row shows the new title
     expect(flat(frame(r.lastFrame))).not.toContain("refactor the parser");
+  });
+
+  // REGRESSION (codex review, F6 close). The rename text and its Return can land in ONE stdin chunk — a
+  // paste, or fast typing over ssh — and `commitRename` read the buffer from its render closure, which would
+  // commit the EMPTY pre-chunk buffer and silently drop the title. Ref-backed now (keys/refState.ts).
+  it("commits the SAME-CHUNK rename text, not the buffer as it was before the chunk", async () => {
+    const r = mount();
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write("\x12");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("Rename session:"));
+    r.stdin.write("parser v2\r");                                           // text AND the save together
+    await waitFor(() => r.renamed.length > 0);
+    expect(r.renamed).toEqual([["1111aaaa-0001", "parser v2"]]);
   });
 
   it("Esc abandons the rename and writes nothing", async () => {

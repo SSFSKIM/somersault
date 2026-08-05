@@ -17,6 +17,7 @@ import { Box, Text } from "ink";
 import stringWidth from "string-width";
 import { useKeyFallback } from "../keys/KeymapProvider.js";
 import { useSelectKeys } from "../keys/selectKeys.js";
+import { useRefState } from "../keys/refState.js";
 import { toKeyFlags } from "../keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "../keys/types.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "../theme.js";
@@ -140,24 +141,33 @@ export function Select({
   const count = options.length;
   const twoColumn = isTwoColumn(options, inlineDescriptions);
   const visible = clampVisible(visibleOptionCount, rows, perOptionRows(twoColumn));
-  const textOf = (o: SelectOption, map: Record<string, string>) => map[o.value] ?? o.initialValue ?? "";
 
-  const [inputs, setInputs] = useState<Record<string, string>>({});
+  // Ref-backed throughout (keys/refState.ts), for the reason MultiSelect spells out: ONE stdin chunk parses
+  // into several events and the provider dispatches them with NO render in between, so a handler that read
+  // its render closure would act on pre-chunk state — a same-chunk `j`+Enter would accept the row the cursor
+  // just LEFT, which in a permission dialog is an approval of the wrong thing (codex review, F6 close).
+  // Renders still come off the state half; only the read paths inside handlers changed.
+  const [, setInputs, inputsRef] = useRefState<Record<string, string>>({});
   const [value, setValue] = useState<string | undefined>(defaultValue);
-  const [view, setView] = useState<SelectView>(() => {
+  const [view, setView, viewRef] = useRefState<SelectView>((() => {
     const at = Math.max(0, options.findIndex((o) => o.value === defaultFocusValue));
     return { focus: at, ...windowBounds(count, at, visible) };
-  });
-  const [cursor, setCursor] = useState(() => {
+  })());
+  const [cursor, setCursor, cursorRef] = useRefState((() => {
     const at = Math.max(0, options.findIndex((o) => o.value === defaultFocusValue));
     return options[at]?.type === "input" ? (options[at]!.initialValue ?? "").length : 0;
-  });
+  })());
 
+  const textOf = (o: SelectOption) => inputsRef.current[o.value] ?? o.initialValue ?? "";
   // The window is derived defensively rather than through an effect: `options`/`rows` can change under a live
   // Select (a filtered picker is exactly that), and a stale window would render rows that no longer exist.
-  const focus = Math.max(0, Math.min(view.focus, count - 1));
-  const win: SelectView = (view.focus === focus && view.end - view.start === Math.min(visible, count))
-    ? view : { focus, ...windowBounds(count, focus, visible, view) };
+  const normalize = (v: SelectView): SelectView => {
+    const f = Math.max(0, Math.min(v.focus, count - 1));
+    return v.focus === f && v.end - v.start === Math.min(visible, count) ? v : { focus: f, ...windowBounds(count, f, visible, v) };
+  };
+  const win = normalize(view);
+  /** The window as of the LATEST dispatched key, not the latest render — every handler below reads it. */
+  const liveWin = () => normalize(viewRef.current);
   const current = options[win.focus];
   const inputFocused = current?.type === "input";
 
@@ -176,28 +186,29 @@ export function Select({
   // Same idempotence trick as the focus report, on the pair that identifies a window. Not folded into the
   // effect above: focus and window move independently (a page jump can leave the focused VALUE alone when the
   // list is shorter than a page, and `options` changing can move the window with no focus change at all).
-  const viewRef = useRef<string>();
+  const viewKeyRef = useRef<string>();
   useEffect(() => {
     const key = `${win.start}:${win.end}:${win.focus}`;
-    if (viewRef.current === key) return;
-    viewRef.current = key;
+    if (viewKeyRef.current === key) return;
+    viewKeyRef.current = key;
     onViewChange?.(win);
   });
 
   const moveTo = (target: number) => {
-    const next = viewAfterFocus(win, count, visible, target);
+    const next = viewAfterFocus(liveWin(), count, visible, target);
     setView(next);
     const landed = options[next.focus];
-    setCursor(landed?.type === "input" ? textOf(landed, inputs).length : 0);
+    setCursor(landed?.type === "input" ? textOf(landed).length : 0);
     reportFocus(landed?.value);
   };
   const accept = () => {                                   // L396693-396700: never a disabled row
-    if (!current || current.disabled === true) return;
-    setValue(current.value); onChange(current.value);
+    const row = options[liveWin().focus];
+    if (!row || row.disabled === true) return;
+    setValue(row.value); onChange(row.value);
   };
   /** L397113-397118 / L397229-397232: empty submits cancel unless the option opts out. */
   const submitInput = (o: SelectOption) => {
-    const text = textOf(o, inputs);
+    const text = textOf(o);
     if (text.trim() || o.allowEmptySubmitToCancel) onChange(o.value, text); else onCancel();
   };
   /** L396768-396785: a digit on a normal row picks it; on an input row it submits when the row already holds
@@ -205,32 +216,35 @@ export function Select({
   const chooseByDigit = (index: number) => {
     const o = options[index]!;
     if (o.type !== "input") { onChange(o.value); return; }
-    const text = textOf(o, inputs);
+    const text = textOf(o);
     if (text.trim() || o.allowEmptySubmitToCancel) { onChange(o.value, text); return; }
     moveTo(index);
   };
 
-  useSelectKeys({ count, index: win.focus, page: visible, wrap: true, inputFocused, context, onMove: moveTo, onAccept: accept, onCancel });
+  // `index` is a GETTER, not `win.focus`: two movement keys in one chunk would otherwise both step off the
+  // same pre-chunk row (`jj` landing on row 2, not row 3).
+  useSelectKeys({ count, index: () => liveWin().focus, page: visible, wrap: true, inputFocused, context, onMove: moveTo, onAccept: accept, onCancel });
 
   useKeyFallback((e: KeyEvent | TextEvent) => {
     const { input, key } = toKeyFlags(e);
+    const at = liveWin().focus, row = options[at];
     // Tab is checked ahead of everything, on ANY row, not just an input one (L396712-396715).
-    if (e.kind === "key" && e.name === "tab" && !e.ctrl && !e.alt) { if (current) onInputModeToggle?.(current.value); return; }
-    if (inputFocused && current) {
-      const text = textOf(current, inputs);
-      const write = (next: string, at: number) => { setInputs((m) => ({ ...m, [current.value]: next })); setCursor(Math.max(0, Math.min(next.length, at))); };
+    if (e.kind === "key" && e.name === "tab" && !e.ctrl && !e.alt) { if (row) onInputModeToggle?.(row.value); return; }
+    if (row?.type === "input") {
+      const text = textOf(row), pos = cursorRef.current;
+      const write = (next: string, to: number) => { setInputs({ ...inputsRef.current, [row.value]: next }); setCursor(Math.max(0, Math.min(next.length, to))); };
       if (e.kind === "key") {
-        if (e.name === "down" || (e.ctrl && e.name === "n")) { moveTo((win.focus + 1) % count); return; }
-        if (e.name === "up" || (e.ctrl && e.name === "p")) { moveTo((win.focus - 1 + count) % count); return; }
-        if (e.name === "enter") { submitInput(current); return; }
-        if (e.name === "left") { setCursor(Math.max(0, cursor - 1)); return; }
-        if (e.name === "right") { setCursor(Math.min(text.length, cursor + 1)); return; }
+        if (e.name === "down" || (e.ctrl && e.name === "n")) { moveTo((at + 1) % count); return; }
+        if (e.name === "up" || (e.ctrl && e.name === "p")) { moveTo((at - 1 + count) % count); return; }
+        if (e.name === "enter") { submitInput(row); return; }
+        if (e.name === "left") { setCursor(Math.max(0, pos - 1)); return; }
+        if (e.name === "right") { setCursor(Math.min(text.length, pos + 1)); return; }
         if (e.name === "home") { setCursor(0); return; }
         if (e.name === "end") { setCursor(text.length); return; }
-        if (e.name === "backspace") { if (cursor > 0) write(text.slice(0, cursor - 1) + text.slice(cursor), cursor - 1); return; }
-        if (e.name === "delete") { if (cursor < text.length) write(text.slice(0, cursor) + text.slice(cursor + 1), cursor); return; }
+        if (e.name === "backspace") { if (pos > 0) write(text.slice(0, pos - 1) + text.slice(pos), pos - 1); return; }
+        if (e.name === "delete") { if (pos < text.length) write(text.slice(0, pos) + text.slice(pos + 1), pos); return; }
       }
-      if (input && !key.ctrl && !key.meta && !/[\x00-\x1f]/.test(input)) write(text.slice(0, cursor) + input + text.slice(cursor), cursor + input.length);
+      if (input && !key.ctrl && !key.meta && !/[\x00-\x1f]/.test(input)) write(text.slice(0, pos) + input + text.slice(pos), pos + input.length);
       return;
     }
     // Digits reach us because they are bound in no context; `hideIndexes` is the one switch that kills them.
@@ -263,7 +277,7 @@ export function Select({
         const index = <Text dimColor>{`${at + 1}.`.padEnd(indexPad)}</Text>;
 
         if (o.type === "input") {
-          const text = textOf(o, inputs);
+          const text = textOf(o);
           const withLabel = inlineDescriptions || o.showLabelWithValue === true;   // `yJs` (L396471)
           const separator = o.labelValueSeparator ?? ", ";
           return (

@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ACCENT, ANSI_COLOR_NAMES, THEMES, THEME_LABELS, THEME_TOKEN_NAMES, currentTheme, isLightTheme, isThemeColor, resolveThemeColor, setTheme, themeGeneration, themeTokens } from "../../src/tui/theme.js";
 import { loadPrefs, savePrefs } from "../../src/tui/prefs.js";
+import { resolveModelAlias } from "../../src/config/models.js";
 import { renderDiff } from "../../src/tui/diffRender.js";
 import type { ResolvedPatch } from "../../src/tui/diffSource.js";
 
@@ -179,6 +180,32 @@ describe("prefs.ts", () => {
     expect(prefs.theme).toBeUndefined();
     expect(() => { if (prefs.theme) setTheme(prefs.theme); }).not.toThrow();
     expect(themeTokens().claude).toBe(THEMES.auto.claude);  // still a REAL token, not undefined
+  });
+
+  // Same finding one field over (codex review, F6 close): cli/main.ts hands `prefs.model` straight into the
+  // host config, and resolveModelAlias calls `.trim()` on it — so a hand-edited non-string `model` crashed a
+  // foreground launch, which is exactly the tolerant-file contract this loader exists to keep.
+  it("loadPrefs drops a non-string model, so a hand-edited prefs file cannot crash foreground startup", () => {
+    const root = tmpRoot();
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ theme: "dark", model: 5 }));
+    const prefs = loadPrefs({ CCX_FLEET_ROOT: root });
+    expect(prefs.model).toBeUndefined();
+    expect(prefs.theme).toBe("dark");                       // …and the rest of the file survives
+    // Mirrors cli/main.ts verbatim: `inv.config.model ?? deps.loadPrefs().model` → resolveModelAlias.
+    expect(() => resolveModelAlias(prefs.model)).not.toThrow();
+
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ model: { name: "opus" } }));
+    expect(loadPrefs({ CCX_FLEET_ROOT: root }).model).toBeUndefined();
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ model: "   " }));
+    expect(loadPrefs({ CCX_FLEET_ROOT: root }).model).toBeUndefined();      // blank is no preference at all
+  });
+
+  it("loadPrefs round-trips a real model id untouched", () => {
+    const root = tmpRoot();
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ model: "opus" }));
+    expect(loadPrefs({ CCX_FLEET_ROOT: root })).toEqual({ model: "opus" });
   });
 
   it("loadPrefs still round-trips a valid theme id untouched", () => {

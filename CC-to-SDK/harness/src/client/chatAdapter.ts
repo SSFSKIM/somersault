@@ -116,7 +116,12 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
     async setMaxThinkingTokens(t) { orFail(await (await ready).setThinkingOp(t)); },
     async capabilities() { const rep = orFail(await (await ready).capabilitiesOp()); return { models: rep.models ?? [], commands: rep.commands ?? [], mcpServers: rep.mcpServers ?? [] }; },
     async compact() { return orFail(await (await ready).compactOp()).outcome as CompactOutcome; },
-    async clearSession() { orFail(await (await ready).clearOp()); },
+    // FORGET the cached id (codex review, F6 close). /clear replaces the host's engine with a fresh one that
+    // has no session id until its first turn, so the host's own state emit carries none — and `route` only
+    // ever OVERWRITES on a truthy id. Left alone, `session.sessionId` would keep pointing at the CLEARED
+    // conversation and /export, /rename and /tag would act on the old transcript. A later state (or rewound)
+    // event with a real id repopulates it.
+    async clearSession() { orFail(await (await ready).clearOp()); sessionId = undefined; },
     async interrupt() { return orFail(await (await ready).interrupt()); },
     async getContextUsage() { return orFail(await (await ready).contextUsageOp()).usage; },
     async usage() { return orFail(await (await ready).usageOp()).usage; },

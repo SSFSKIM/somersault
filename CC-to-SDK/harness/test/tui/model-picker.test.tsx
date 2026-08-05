@@ -126,6 +126,38 @@ describe("ModelPicker — Enter vs `s`, the whole point of the surface (DG46)", 
     expect(r.saved).toEqual([]);
   });
 
+  // REGRESSION (codex review, F6 close). ↓ and `s` in ONE stdin chunk dispatch back to back with no render
+  // guaranteed in between, and `s` read its focus from the render closure — so it could apply the model the
+  // cursor had just left. The focus is ref-backed now (keys/refState.ts, the house law MultiSelect follows).
+  it("`s` in the SAME CHUNK as a move applies the row the move landed on", async () => {
+    const r = mount();
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    r.stdin.write("\x1b[Bs");                                             // ↓ and `s` together
+    await waitFor(() => r.picked.length > 0);
+    expect(r.picked).toEqual([{ model: "sonnet", saveDefault: false }]);
+    expect(r.saved).toEqual([]);
+  });
+
+  // The prefs write is best-effort, exactly like every other `savePrefs` caller (ChatApp's app:toggleTodos):
+  // KeymapProvider does not catch action-handler exceptions, so an unwritable prefs dir would otherwise take
+  // the whole REPL down on Enter (codex review, F6 close).
+  it("still picks when the prefs write throws — the exception never escapes the key handler", async () => {
+    const picked: { model: string; saveDefault: boolean }[] = [];
+    const r = render(
+      <ModelPicker
+        models={MODELS} current="opus"
+        onPick={(m, o) => picked.push({ model: m.value, saveDefault: o.saveDefault })}
+        onCancel={() => {}}
+        savePrefs={() => { throw new Error("EACCES: prefs dir is read-only"); }}
+        rows={40} columns={100}
+      />,
+    );
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    r.stdin.write("\r");
+    await waitFor(() => picked.length > 0);
+    expect(picked).toEqual([{ model: "opus", saveDefault: true }]);
+  });
+
   it("`s` is the ModelPicker context's key, so it never reaches the Select as a letter", async () => {
     const r = mount();
     await waitFor(() => frame(r.lastFrame).includes("Opus 5"));

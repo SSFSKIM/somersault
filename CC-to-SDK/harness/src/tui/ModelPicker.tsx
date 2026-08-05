@@ -12,10 +12,11 @@
 //
 // OUR ONE RECORDED DIVERGENCE (T15): the default lands in the ccx prefs file (`prefs.ts`), not in
 // `~/.claude/settings.json`. Same promise to the user, different file — and the one the harness owns.
-import React, { useState } from "react";
+import React from "react";
 import { Box, Text } from "ink";
 import { DialogFrame } from "./dialogs/DialogFrame.js";
 import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
+import { useRefState } from "./keys/refState.js";
 import { Select } from "./select/Select.js";
 import { formatOverflowCount } from "./format.js";
 import { savePrefs as realSavePrefs, type CcxPrefs } from "./prefs.js";
@@ -41,7 +42,10 @@ export function ModelPicker({ models, current, sessionModel, onPick, onCancel, s
   savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void;
   rows?: number; columns?: number;
 }) {
-  const [focus, setFocus] = useState<string>(current ?? models[0]?.value ?? "");
+  // Ref-backed (keys/refState.ts): `s` and the ↓ that moved onto its row can arrive in ONE stdin chunk and
+  // dispatch with no render guaranteed in between, so the `s` handler must read the focus the Select last
+  // REPORTED, not the one its own render closed over.
+  const [, setFocus, focusRef] = useRefState<string>(current ?? models[0]?.value ?? "");
   const visible = modelVisibleCount(models.length);
   const overflow = modelOverflowCount(models.length);
 
@@ -51,14 +55,16 @@ export function ModelPicker({ models, current, sessionModel, onPick, onCancel, s
     // The write goes FIRST, so a caller that unmounts the picker inside `onPick` (every caller does) cannot
     // race it. It is the picker's own job and not useChat's for one reason: `s` never reaches useChat as a
     // key at all, so "which of the two sentences is true" has to be decided here anyway.
-    if (saveDefault) savePrefs({ model: m.value });
+    // BEST-EFFORT, like every other prefs writer (ChatApp's `app:toggleTodos`): KeymapProvider does not catch
+    // what an action handler throws, so an unwritable prefs dir would take the whole REPL down on Enter.
+    if (saveDefault) { try { savePrefs({ model: m.value }); } catch { /* prefs are best-effort */ } }
     onPick(m, { saveDefault });
   };
 
   // Pushed OUTSIDE the Select (this component mounts first, the Select is inner and keeps every key it
   // binds). `s` is bound in no other context, so it resolves here — and `Select` never sees it.
   useKeyScope("ModelPicker");
-  useKeyActions({ "modelPicker:thisSessionOnly": () => choose(focus, false) });
+  useKeyActions({ "modelPicker:thisSessionOnly": () => choose(focusRef.current, false) });
 
   return (
     <DialogFrame

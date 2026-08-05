@@ -207,6 +207,35 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
     }
   });
 
+  // REGRESSION (codex review, F6 close). /clear swaps the host's engine for a FRESH one that has no session
+  // id until its first turn, so the state frame the swap emits carries none — and `route` only ever
+  // overwrites the cache on a TRUTHY id. Without the reset the getter kept pointing at the conversation the
+  // user just cleared, and /export, /rename and /tag would have acted on that old transcript.
+  it("6b. clearSession forgets the cached session id; a later state frame with a real id repopulates it", async () => {
+    const env = { CCX_FLEET_ROOT: tmpFleet() } as NodeJS.ProcessEnv;
+    // The engine the swap opens: no id yet, and a `setPermissionMode` so the test can make the host emit a
+    // second state frame once the fresh conversation has earned an id.
+    const fresh = { ...drivable(""), sessionId: undefined as string | undefined, setPermissionMode: async () => {} };
+    const engines: unknown[] = [drivable("sid-before"), fresh];
+    const host = new SessionHost(
+      { short: "ffffffff", name: "adapter", cwd: process.cwd(), kind: "bg", detached: true, config: {} as never, env },
+      { openSession: () => engines.shift() as HostSession, procStartOf: async () => "start" });
+    await host.start();
+    const adapter = remoteChatSession(hostSocketPath(process.pid, env));
+    try {
+      await adapter.whenReady();
+      expect(adapter.sessionId).toBe("sid-before");
+      await adapter.clearSession!();
+      expect(adapter.sessionId).toBeUndefined();          // NOT still "sid-before"
+      fresh.sessionId = "sid-after";                       // the fresh engine earns its id on its first turn
+      await adapter.setPermissionMode("default");          // …and the next state frame carries it
+      await vi.waitFor(() => expect(adapter.sessionId).toBe("sid-after"));
+    } finally {
+      adapter.detach();
+      await stopQuietly(host);
+    }
+  });
+
   it("7. dispose() detaches without stopping the host: it keeps running and a parked permission stays parked", async () => {
     const { host, path } = await startHost();
     const adapter = remoteChatSession(path);

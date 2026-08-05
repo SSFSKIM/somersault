@@ -15,7 +15,11 @@ export const PAGE_ROWS = 10;
 
 export function useSelectKeys({ count, index, page = PAGE_ROWS, wrap = false, inputFocused = false, context = "Select", onMove, onAccept, onCancel }: {
   count: number;
-  index: number;
+  /** The focused row. A GETTER when the caller keeps its focus ref-backed (`Select` does): one stdin chunk
+   *  dispatches several events with no render between them, so a plain number would make both movement keys
+   *  of a `jj` chunk step off the SAME pre-chunk row. Callers whose focus cannot move twice per chunk pass
+   *  the number. */
+  index: number | (() => number);
   page?: number;
   /** Which context to push. `"Select"` (the default) is the OVERLAY flavour — it unbinds the six root globals;
    *  `"SelectDecision"` is the same eight actions without that suppression, for a list that is answering the
@@ -35,12 +39,13 @@ export function useSelectKeys({ count, index, page = PAGE_ROWS, wrap = false, in
   onCancel: () => void;
 }): void {
   const last = Math.max(0, count - 1);
+  const at = () => (typeof index === "function" ? index() : index);
   const to = (i: number) => { if (count > 0) onMove(Math.max(0, Math.min(last, i))); };
   const step = (i: number) => { if (count > 0) onMove(wrap ? (i + count) % count : Math.max(0, Math.min(last, i))); };
   useKeyScope(context);
   useKeyActions(inputFocused ? { "select:cancel": () => onCancel() } : {
-    "select:previous": () => step(index - 1), "select:next": () => step(index + 1),
-    "select:pageUp": () => to(index - page), "select:pageDown": () => to(index + page),
+    "select:previous": () => step(at() - 1), "select:next": () => step(at() + 1),
+    "select:pageUp": () => to(at() - page), "select:pageDown": () => to(at() + page),
     "select:first": () => to(0), "select:last": () => to(last),
     // accept/cancel still fire on an empty list: cancel must always close, and every caller guards its own
     // "is there a row here" question (an empty picker's Enter has always been a no-op, not an error).
