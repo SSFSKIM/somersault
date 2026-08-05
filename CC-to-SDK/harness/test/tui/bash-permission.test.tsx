@@ -50,7 +50,7 @@ describe("<BashPermission> — the body (`dZf` L505286)", () => {
     expect(f).toContain("npm run build");
     expect(f).toContain("Build the bundle");
     expect(f).toContain("Do you want to proceed?");
-    expect(f).toContain("esc cancel");
+    expect(f).toContain("esc cancel · tab amend");   // the footer advertises the amend row (T4)
     // The old body's reconstruction dies here: no "Allow Claude to use", no `$ ` prefix.
     expect(f).not.toContain("Allow Claude to use");
     expect(f).not.toContain("$ npm run build");

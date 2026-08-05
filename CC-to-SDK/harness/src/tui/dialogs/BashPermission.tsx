@@ -2,7 +2,7 @@
 // substrate. Transcribed from 2.1.220's `dZf` (L505224-287): the `Ed` frame titled "Bash command", the
 // command in its own padded block with a dim description under it, the consent reason (`yN`), the
 // destructive-table warning in the `warning` role, the question line, the `$Qf` option list inside a
-// `Select`, and a footer that is one hint wide.
+// `Select`, and the shared `ConsultFooter` (T4).
 //
 // Everything pure lives in `bashOptions.ts`; this file is the wiring, and the wiring is the key contract:
 //
@@ -20,11 +20,13 @@
 //     by all six bodies (T8).
 //
 // Recorded, not built: the title's `(unsandboxed)` variant (`Oo.isSandboxingEnabled()`, L505259 — this
-// harness never sandboxes); the explain/amend affordances and their footer hints (DG4, a non-goal here); the
-// auto-mode row (`UDr` L504815, its row L504872 — a claude.ai entitlement); and upstream's `onFocus`-driven feedback hint node.
+// harness never sandboxes); the explain affordance (DG4, T7's job); the
+// auto-mode row (`UDr` L504815, its row L504872 — a claude.ai entitlement); and upstream's `onFocus`-driven
+// feedback hint node. The footer hints came in with T4 (`tab amend` now, `ctrl+e` when T7 passes `explain`).
 import React, { useState } from "react";
 import { Box, Text } from "ink";
 import { DialogFrame } from "./DialogFrame.js";
+import { ConsultFooter } from "./ConsultFooter.js";
 import { Select } from "../select/Select.js";
 import { consentReasonLine } from "./consentReason.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
@@ -91,7 +93,7 @@ export function BashPermission({ req, onDecision, cwd = process.cwd() }: {
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
       </Box>
-      <Box marginTop={1}><Text dimColor>esc cancel</Text></Box>
+      <ConsultFooter inputMode={inputFocused} />
     </DialogFrame>
   );
 }

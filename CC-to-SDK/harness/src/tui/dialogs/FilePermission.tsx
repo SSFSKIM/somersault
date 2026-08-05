@@ -27,6 +27,7 @@ import { homedir } from "node:os";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { DialogFrame } from "./DialogFrame.js";
+import { ConsultFooter } from "./ConsultFooter.js";
 import { Select } from "../select/Select.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
 import { Line } from "../Line.js";
@@ -231,7 +232,7 @@ export function FilePermission({ req, onDecision, filePath, sedEdit, cwd = proce
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
       </Box>
-      <Box paddingX={1} marginTop={1}><Text dimColor>esc cancel</Text></Box>
+      <Box paddingX={1}><ConsultFooter inputMode={inputFocused} /></Box>
     </DialogFrame>
   );
 }

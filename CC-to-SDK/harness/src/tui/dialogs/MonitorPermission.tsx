@@ -22,6 +22,7 @@
 import React, { useState } from "react";
 import { Box, Text } from "ink";
 import { DialogFrame } from "./DialogFrame.js";
+import { ConsultFooter } from "./ConsultFooter.js";
 import { Select } from "../select/Select.js";
 import { consentReasonLine } from "./consentReason.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
@@ -91,7 +92,7 @@ export function MonitorPermission({ req, onDecision }: {
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
       </Box>
-      <Box marginTop={1}><Text dimColor>esc cancel</Text></Box>
+      <ConsultFooter inputMode={inputFocused} />
     </DialogFrame>
   );
 }

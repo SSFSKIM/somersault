@@ -49,6 +49,9 @@ describe("<FetchPermission> (`ull` L506735-816)", () => {
     expect(f).toContain("Read the docs page");
     expect(f).toContain("Do you want to allow Claude to fetch this content?");
     expect(f).not.toContain("Do you want to proceed?");
+    // Five bodies get a footer, not six (T4): upstream builds `ull` on a bare `jr` with no feedbackConfig,
+    // so there is no amend to advertise and the escape hint lives in the No row instead.
+    expect(f).not.toContain("esc cancel");
   });
 
   // T8 review: the printed line and the domain row are two readings of ONE field, so they cannot disagree.
@@ -107,7 +110,7 @@ describe("<SkillPermission> (`oll` L506582-710)", () => {
     expect(f).toContain("Claude may use instructions, code, or files from this Skill.");
     expect(f).toContain("Start creative work");
     expect(f).toContain("Do you want to proceed?");
-    expect(f).toContain("esc cancel");
+    expect(f).toContain("esc cancel · tab amend");   // the footer advertises the amend row (T4)
   });
 
   it("a two-word skill gets BOTH don't-ask-again rows — they are independent gates, not alternatives", async () => {
@@ -151,6 +154,7 @@ describe("<MonitorPermission> (`Ral` L506006-093)", () => {
     expect(f).toContain("Monitor");
     expect(f).toContain("Poll github/notifications every 15s");
     expect(f).toContain("Watch for review requests");
+    expect(f).toContain("esc cancel · tab amend");   // the footer advertises the amend row (T4)
   });
 
   it("renders the WebSocket arm with its normalised URL and the subprotocol list", async () => {
@@ -197,6 +201,7 @@ describe("<GenericPermission> (`Gal` L506118-260)", () => {
     expect(f).toContain("Tool use");
     expect(f).toContain("mcp__notes__append(f.ts) (MCP)");
     expect(f).toContain("Do you want to proceed?");
+    expect(f).toContain("esc cancel · tab amend");   // the footer advertises the amend row (T4)
     // the pre-F6 reconstruction is gone with the old body
     expect(f).not.toContain("Allow Claude to use");
   });
