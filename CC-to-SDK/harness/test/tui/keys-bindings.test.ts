@@ -96,7 +96,11 @@ describe("reserved keys", () => {
     expect(RESERVED_KEYS[canon("cmd+c")!]).toBeTruthy());
   // The only error-reserved keys the DEFAULT table is allowed to bind: keys ccx hardcodes anyway, kept in the
   // table so hints and the resolver can see them, still blocked from USER rebinding by RESERVED_KEYS.
-  const GRANDFATHERED = ["Global ctrl+c", "Global ctrl+d", "Chat ctrl+d", "Transcript ctrl+c", "Transcript ctrl+d", "HistorySearch ctrl+c"];
+  // `SelectDecision ctrl+d` joins the list on exactly the `Transcript ctrl+d` precedent (F6 T9-fix): it is the
+  // pager half-page-down on a surface that scrolls, it REPLACED an explicit unbind rather than a live exit
+  // binding, and shadowing Global's app:exit was that unbind's only job — so the reserved key's reason
+  // ("used for exit") is still honoured, not overridden.
+  const GRANDFATHERED = ["Global ctrl+c", "Global ctrl+d", "Chat ctrl+d", "Transcript ctrl+c", "Transcript ctrl+d", "HistorySearch ctrl+c", "SelectDecision ctrl+d"];
   it("no default binding collides with an error-reserved key beyond the grandfathered pairs", () =>
     expect(reservedCollisions(DEFAULT_BINDINGS).sort()).toEqual([...GRANDFATHERED].sort()));
   it("the collision check bites — a new reserved binding is caught", () =>
@@ -146,13 +150,23 @@ describe("overlay gating, expressed as null bindings", () => {
     for (const k of ["ctrl+c", "ctrl+o", "ctrl+t", "ctrl+r", "ctrl+b", "ctrl+x ctrl+b"]) {
       expect(k in b, `SelectDecision must not bind ${k} at all`).toBe(false);
     }
-    expect(b["ctrl+d"], "…except ctrl+d, whose owner (the composer) is unmounted").toBeNull();
+    // …except ctrl+d, whose owner (the composer) is unmounted. F6 T9-fix turned that `null` into the pager's
+    // half-page-down, because a decision dialog can be taller than the screen and an unbind is CONSUMED
+    // (`resolveKey` → `{type:"unbound"}`) rather than passed to a fallback. What must not change is the
+    // property the null existed for: ctrl+d here must never reach Global's `app:exit`, and a binding shadows
+    // it exactly as an unbind did. So: bound, and bound to something that is not an exit.
+    expect(b["ctrl+d"], "SelectDecision must still shadow Global's ctrl+d").toBe("scroll:halfPageDown");
+    expect(b["ctrl+u"], "…and its half-page partner comes with it").toBe("scroll:halfPageUp");
     for (const k of ["alt+p", "alt+t"]) expect(b[k], `SelectDecision ${k} must be null (Confirmation's rule)`).toBeNull();
   });
-  it("SelectDecision offers the same eight actions as Select — only the suppression differs", () => {
+  it("SelectDecision offers the same eight LIST actions as Select, plus the two scroll halves and nothing else", () => {
     const sel = block("Select").bindings, dec = block("SelectDecision").bindings;
     const actions = (b: Record<string, string | null>) => Object.entries(b).filter(([, v]) => v !== null).sort();
-    expect(actions(dec)).toEqual(actions(sel));
+    const listOnly = (e: [string, string | null][]) => e.filter(([, v]) => !String(v).startsWith("scroll:"));
+    expect(listOnly(actions(dec))).toEqual(listOnly(actions(sel)));
+    expect(actions(dec).filter(([, v]) => String(v).startsWith("scroll:")))
+      .toEqual([["ctrl+d", "scroll:halfPageDown"], ["ctrl+u", "scroll:halfPageUp"]]);
+    expect(actions(sel).some(([, v]) => String(v).startsWith("scroll:")), "the USER-opened Select gets none of it").toBe(false);
   });
   it("HistorySearch is an overlay owner too, but rebinds ctrl+r/ctrl+c instead of unbinding them", () => {
     const b = block("HistorySearch").bindings;

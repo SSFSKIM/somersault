@@ -14,7 +14,11 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
-import { PlanDialog } from "../../src/tui/PlanDialog.js";
+import {
+  PlanDialog, PLAN_OPTIONS, SHIFT_TAB_HINT, SAVED_FLASH_MS, SCROLL_HINT,
+  EMPTY_PLAN_TITLE, EMPTY_PLAN_BODY, optionBoxRows, planWindow, planRegionRows,
+} from "../../src/tui/PlanDialog.js";
+import { editorDisplayName } from "../../src/tui/externalEditor.js";
 
 /** SGR-stripped, the same helper the sibling dialog tests use: the Select wraps the index and the label in
  *  separate colour runs, so `1. Yes, auto-accept edits` is only contiguous once the escapes are gone. */
@@ -264,5 +268,217 @@ describe("<PlanDialog> — ctrl+g (DG34, `tYf` L501036-053 + `Anl` L500757)", ()
     const { lastFrame } = mount({ editorName: null });
     await waitFor(() => frame(lastFrame).includes("Build it"));
     expect(frame(lastFrame)).not.toContain("ctrl+g");
+  });
+});
+
+// ── The T9 fix round ──────────────────────────────────────────────────────────────────────────────────
+
+describe("<PlanDialog> — the terminal handoff (T9-fix 1)", () => {
+  it("runs the editor INSIDE suspendInput: raw mode released and stdin paused before the spawn, restored after", async () => {
+    const order: string[] = [];
+    const suspendInput = async <T,>(fn: () => Promise<T>): Promise<T> => {
+      order.push("suspend");
+      try { return await fn(); } finally { order.push("restore"); }
+    };
+    const { stdin, lastFrame } = mount({ suspendInput, editor: (t: string) => { order.push("edit"); return `${t}!`; } });
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    stdin.write(CTRL_G);
+    expect(order.slice(0, 2)).toEqual(["suspend", "edit"]);        // the release happens BEFORE the child owns fd 0
+    await waitFor(() => order.length === 3);
+    expect(order).toEqual(["suspend", "edit", "restore"]);
+  });
+
+  it("a rejected flight leaves the plan untouched rather than stranding the dialog", async () => {
+    const suspendInput = <T,>(): Promise<T> => Promise.reject(new Error("no tty"));
+    const { stdin, lastFrame } = mount({ suspendInput });
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    stdin.write(CTRL_G);
+    await tick(); await tick();
+    expect(frame(lastFrame)).toContain("step two");
+    expect(frame(lastFrame)).not.toContain("Plan saved!");
+  });
+});
+
+describe("<PlanDialog> — the empty-plan dialog (`DZe` L500763 / L501048-079, T9-fix 2)", () => {
+  const EMPTY = { input: {} };
+  const empty = (props: Record<string, unknown> = {}) => mount({ req: EMPTY, ...props });
+
+  it("swaps the WHOLE dialog for `Exit plan mode?` — not an empty `Ready to code?` body", async () => {
+    const { lastFrame } = empty();
+    await waitFor(() => frame(lastFrame).includes(EMPTY_PLAN_TITLE));
+    const f = frame(lastFrame);
+    expect(f).toContain(EMPTY_PLAN_BODY);
+    expect(f).toContain("1. Yes");
+    expect(f).toContain("2. No");
+    expect(f).not.toContain("Ready to code?");
+    expect(f).not.toContain("Here is Claude's plan:");
+    expect(f).not.toContain("ctrl+g");                             // no plan to edit, so no editor row
+  });
+
+  it("a whitespace-only plan is the same empty branch (`!xce || xce.trim() === \"\"`)", async () => {
+    const { lastFrame } = mount({ req: { input: { plan: "   \n\t " } } });
+    await waitFor(() => frame(lastFrame).includes(EMPTY_PLAN_TITLE));
+  });
+
+  it("Yes approves with acceptEdits FALSE (upstream's setMode `default`, L501008)", async () => {
+    const decisions: unknown[] = [];
+    const { stdin, lastFrame } = empty({ onDecision: (o: unknown) => decisions.push(o) });
+    await waitFor(() => frame(lastFrame).includes(EMPTY_PLAN_TITLE));
+    stdin.write("1");
+    await waitFor(() => decisions.length === 1);
+    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: false });
+  });
+
+  it("No and Esc both deny", async () => {
+    const a: unknown[] = [];
+    const one = empty({ onDecision: (o: unknown) => a.push(o) });
+    await waitFor(() => frame(one.lastFrame).includes(EMPTY_PLAN_TITLE));
+    one.stdin.write("2"); await waitFor(() => a.length === 1);
+    expect(a[0]).toEqual({ kind: "deny" });
+
+    const b: unknown[] = [];
+    const two = empty({ onDecision: (o: unknown) => b.push(o) });
+    await waitFor(() => frame(two.lastFrame).includes(EMPTY_PLAN_TITLE));
+    two.stdin.write("\x1b"); await waitFor(() => b.length === 1);
+    expect(b[0]).toEqual({ kind: "deny" });
+  });
+});
+
+describe("<PlanDialog> — the plan-region reading path (T9-fix 3, an INVENTED binding)", () => {
+  const LONG = { input: { plan: Array.from({ length: 60 }, (_, i) => `- line ${i}`).join("\n") } };
+  const CTRL_D = "\x04", CTRL_U = "\x15";
+  const long = (props: Record<string, unknown> = {}) => mount({ req: LONG, rows: 24, ...props });
+
+  it("ctrl+d reveals later plan lines and ctrl+u comes back, with the options still on screen throughout", async () => {
+    const { stdin, lastFrame } = long();
+    await waitFor(() => frame(lastFrame).includes("line 0"));
+    expect(frame(lastFrame)).toContain(SCROLL_HINT);                       // the key is advertised, never secret
+    stdin.write(CTRL_D);
+    await waitFor(() => !frame(lastFrame).includes("- line 0"));
+    const scrolled = frame(lastFrame);
+    expect(scrolled).toMatch(/- line [1-9]/);
+    expect(scrolled).toContain("1. Yes, auto-accept edits");               // the option box never scrolls away
+    expect(scrolled).toContain("Tell Claude what to change");
+    stdin.write(CTRL_U);
+    await waitFor(() => frame(lastFrame).includes("- line 0"));
+  });
+
+  it("ctrl+d clamps at the end and the marker says where the reader is", async () => {
+    const { stdin, lastFrame } = long();
+    await waitFor(() => frame(lastFrame).includes("line 0"));
+    for (let i = 0; i < 80; i++) { stdin.write(CTRL_D); await tick(); }
+    const f = frame(lastFrame);
+    expect(f).toContain("- line 59");                                      // the last line IS reachable
+    expect(f).toMatch(/… \d+ lines above/);
+  });
+
+  it("Enter still approves the focused row after scrolling", async () => {
+    const decisions: unknown[] = [];
+    const { stdin, lastFrame } = long({ onDecision: (o: unknown) => decisions.push(o) });
+    await waitFor(() => frame(lastFrame).includes("line 0"));
+    stdin.write(CTRL_D); await tick();
+    stdin.write("\r");
+    await waitFor(() => decisions.length === 1);
+    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: true });
+  });
+
+  it("PageDown stays the SELECT's — it moves the row cursor and does not scroll the plan", async () => {
+    const decisions: unknown[] = [];
+    const { stdin, lastFrame } = long({ onDecision: (o: unknown) => decisions.push(o) });
+    await waitFor(() => frame(lastFrame).includes("line 0"));
+    stdin.write("\x1b[6~"); await tick();                                  // PageDown
+    expect(frame(lastFrame)).toContain("- line 0");                        // plan did NOT move
+    stdin.write("\r"); await waitFor(() => decisions.length === 1);
+    expect(decisions[0]).not.toEqual({ kind: "plan_approve", acceptEdits: true });   // …the cursor did
+  });
+
+  it("a ctrl+g edit re-anchors the view at the top of the new text", async () => {
+    const { stdin, lastFrame } = long({ editor: () => "- fresh first line\n- fresh second line" });
+    await waitFor(() => frame(lastFrame).includes("line 0"));
+    stdin.write("\x04"); await tick();                                     // scroll away first
+    stdin.write(CTRL_G);
+    await waitFor(() => frame(lastFrame).includes("fresh first line"));
+  });
+});
+
+describe("<PlanDialog> — pure geometry and literal pins (T9-fix 4/5/6)", () => {
+  it("optionBoxRows is DERIVED from the option list, not a hardcoded count", () => {
+    const rows = PLAN_OPTIONS.length + PLAN_OPTIONS.filter((o) => o.description).length;
+    expect(optionBoxRows(false)).toBe(3 + rows);
+    expect(optionBoxRows(true)).toBe(3 + rows + 2);
+  });
+
+  it("planWindow gives a row back to the marker ONLY when something is hidden", () => {
+    expect(planWindow(10, 9)).toBe(10);          // fits
+    expect(planWindow(10, 10)).toBe(10);         // fits exactly — no marker, no clip
+    expect(planWindow(10, 11)).toBe(9);          // one over: the marker earns its row
+    expect(planWindow(1, 5)).toBe(1);            // never collapses to zero
+  });
+
+  // The off-by-one, pinned against the REAL geometry rather than a guessed constant: one list item renders as
+  // exactly one line, so `region` items must all print and `region + 1` must clip by TWO (the line that did
+  // not fit, plus the one the marker takes).
+  it("a plan of exactly the region height is NOT clipped, and one line more clips by two", async () => {
+    const region = planRegionRows(40, true, false);
+    const items = (n: number) => Array.from({ length: n }, (_, i) => `- l${i}`).join("\n");
+
+    const fits = mount({ req: { input: { plan: items(region) } } });
+    await waitFor(() => frame(fits.lastFrame).includes("- l0"));
+    expect(frame(fits.lastFrame)).toContain(`- l${region - 1}`);
+    expect(frame(fits.lastFrame)).not.toContain("more lines");
+
+    const over = mount({ req: { input: { plan: items(region + 1) } } });
+    await waitFor(() => frame(over.lastFrame).includes("- l0"));
+    expect(frame(over.lastFrame)).toContain("+2 more lines");
+    expect(frame(over.lastFrame)).not.toContain(`- l${region - 1}`);
+  });
+
+  it("SHIFT_TAB_HINT is the trimmed literal, and it is what the row renders", async () => {
+    expect(SHIFT_TAB_HINT).toBe("shift+tab to approve");
+    expect(SHIFT_TAB_HINT).not.toContain("feedback");                      // the divergence, pinned
+    const { lastFrame } = mount();
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    expect(frame(lastFrame)).toContain(SHIFT_TAB_HINT);
+  });
+
+  it("the `Plan saved!` flash clears itself after SAVED_FLASH_MS", async () => {
+    vi.useFakeTimers();
+    try {
+      const { stdin, lastFrame } = mount();
+      await vi.advanceTimersByTimeAsync(5);
+      stdin.write(CTRL_G);
+      await vi.advanceTimersByTimeAsync(5);
+      expect(frame(lastFrame)).toContain("Plan saved!");
+      await vi.advanceTimersByTimeAsync(SAVED_FLASH_MS + 10);
+      expect(frame(lastFrame)).not.toContain("Plan saved!");
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("editorDisplayName (`Ox(qV())`, T9-fix 6)", () => {
+  it("is the BASENAME of the command, and of the first word of a multi-word one", () => {
+    expect(editorDisplayName({ editorCmd: "vim" })).toBe("vim");
+    expect(editorDisplayName({ editorCmd: "/usr/local/bin/nvim" })).toBe("nvim");
+    expect(editorDisplayName({ editorCmd: "code --wait" })).toBe("code");
+    expect(editorDisplayName({ editorCmd: "/Applications/x/bin/subl -w -n" })).toBe("subl");
+  });
+
+  it("treats an exported-but-EMPTY editor as unset (`||`, not `??`) and answers null when nothing is set", () => {
+    const { VISUAL, EDITOR } = process.env;
+    try {
+      delete process.env.VISUAL; delete process.env.EDITOR;
+      expect(editorDisplayName()).toBeNull();
+      expect(editorDisplayName({ editorCmd: "" })).toBeNull();
+      expect(editorDisplayName({ editorCmd: "   " })).toBeNull();          // whitespace splits to nothing
+      process.env.EDITOR = "";
+      expect(editorDisplayName()).toBeNull();                              // exported empty === unset
+      process.env.EDITOR = "nano";
+      expect(editorDisplayName()).toBe("nano");
+      process.env.VISUAL = "emacs";
+      expect(editorDisplayName()).toBe("emacs");                           // VISUAL wins
+    } finally {
+      if (VISUAL === undefined) delete process.env.VISUAL; else process.env.VISUAL = VISUAL;
+      if (EDITOR === undefined) delete process.env.EDITOR; else process.env.EDITOR = EDITOR;
+    }
   });
 });

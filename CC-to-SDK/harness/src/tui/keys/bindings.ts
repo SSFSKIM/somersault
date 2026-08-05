@@ -129,11 +129,19 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "ctrl+n": "select:next", "ctrl+p": "select:previous",
     "enter": "select:accept", "escape": "select:cancel",
     "pageup": "select:pageUp", "pagedown": "select:pageDown", "home": "select:first", "end": "select:last",
-    // Only the two `Confirmation` kills, for exactly its reasons: the composer that owns ctrl+d is unmounted
-    // while a dialog is up, and alt+p/alt+t are CHAT keys whose scope is already off the stack (the nulls only
-    // close the passive-flush sub-tick). ctrl+c/ctrl+o/ctrl+t/ctrl+r/ctrl+b are deliberately ABSENT — a
-    // decision dialog keeps every root global, and adding a null here would be the defect this context fixes.
-    "ctrl+d": null, "alt+p": null, "alt+t": null,
+    // F6 T9-fix: a decision dialog can be TALLER THAN THE SCREEN (the plan dialog is), so it needs a reading
+    // path — and these are the pager's own two keys for it (`Transcript` above, same actions, same halves).
+    // ctrl+d TOOK THE PLACE OF A `null` here and still does that null's whole job: its only purpose was to
+    // stop Global's `app:exit` firing under a dialog whose composer is unmounted, and a context that BINDS
+    // the key shadows Global just as an unbind does. It has to be a binding rather than the Select's
+    // `onUnhandledKey`, because an explicit unbind resolves to `{type:"unbound"}`, which `dispatch` treats as
+    // CONSUMED — an unbound key never reaches a fallback at all. A dialog that registers no handler for these
+    // (every permission body) falls through exactly where it did before: nowhere.
+    "ctrl+u": "scroll:halfPageUp", "ctrl+d": "scroll:halfPageDown",
+    // alt+p/alt+t are CHAT keys whose scope is already off the stack (the nulls only close the passive-flush
+    // sub-tick). ctrl+c/ctrl+o/ctrl+t/ctrl+r/ctrl+b are deliberately ABSENT — a decision dialog keeps every
+    // root global, and adding a null here would be the defect this context fixes.
+    "alt+p": null, "alt+t": null,
   }},
   { context: "Confirmation", bindings: {
     "enter": "confirm:yes", "escape": "confirm:no", "up": "confirm:previous", "down": "confirm:next",
