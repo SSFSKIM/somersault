@@ -9,7 +9,7 @@
 //  · L495115  the queued-up hint literal (L495114 is the gate above it), and L495120's `LNb = 3` cap
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderWithKeymap } from "./keysTestUtil.js";
@@ -292,6 +292,19 @@ describe("<ChatComposer> — the placeholder ladder (NVf, L495107)", () => {
       unmount();
     }
     expect(loadPrefs(env).queuedUpHintSessions).toBe(1);
+  });
+
+  // F5 final whole-branch review, P2. `savePrefs` is mkdir + write and it THROWS on a root it cannot write
+  // (a read-only home, an `~/.claude` that is a file, a full disk). Thrown from a passive effect that lands
+  // on the very first frame, it propagated out of Ink and took the whole REPL down — for a hint counter.
+  // Every other prefs writer on a non-essential path is already best-effort (placeholder.ts's example cache,
+  // and `appendHistory` swallows its own); this one now matches them.
+  it("survives a prefs root it cannot write — the hint still draws, nothing throws", async () => {
+    const blocked = { ...process.env, CCX_FLEET_ROOT: join(root, "not-a-dir", "prefs") };
+    writeFileSync(join(root, "not-a-dir"), "");                     // mkdir -p through a FILE → ENOTDIR
+    const { lastFrame } = mount({ queueHasEditable: true, historyEnv: blocked });
+    await settle();
+    expect(strip(frame(lastFrame))).toContain(QUEUED_UP_HINT);      // the frame the user came for is unharmed
   });
 
   it("an existing count at the cap suppresses the hint from the first frame", async () => {

@@ -16,7 +16,7 @@ import type { PendingEntry } from "../../src/permissions/pending.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
 import { currentTheme, setTheme } from "../../src/tui/theme.js";
 import { createNoticeBridge } from "../../src/tui/chatMain.js";
-import { appendHistory } from "../../src/tui/promptHistory.js";
+import { appendHistory, readHistory } from "../../src/tui/promptHistory.js";
 
 // W3 T4: theme.ts's ACCENT/current live binding is module-scoped and vitest isolates per FILE, not per
 // test, so a /theme test that previews or persists a theme must not leak it into a later test in this
@@ -43,6 +43,13 @@ const stripAnsiAll = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 // queue-rescue tests could never observe the queue emptying.
 const banded = (f: () => string | undefined) => stripAnsiAll(frame(f)).replace(/[^\S\u00a0]+/g, " ");
 const isQueued = (f: () => string | undefined, text: string) => banded(f).includes(`❯ ${text}`);
+/** The COMPOSER's own prompt row — the last `❯` line in the frame. The transcript above it echoes every
+ *  prompt that was ever sent, so a whole-frame match cannot tell "the composer holds this" from "this was
+ *  submitted earlier"; the history-walk pins below need the former. */
+const composerLine = (f: () => string | undefined) => {
+  const lines = stripAnsiAll(frame(f)).split("\n").filter((l) => l.includes("❯"));
+  return lines[lines.length - 1] ?? "";
+};
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await new Promise((r) => setTimeout(r, 0)); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
@@ -817,6 +824,52 @@ describe("<ChatApp>", () => {
     stdin.write("\x1b");                                   // Esc = accept
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     expect(frame(lastFrame)).toContain("redo the build");   // prefilled into the composer buffer
+  });
+
+  // F5 final whole-branch review, P2. Enter in the picker submits the expanded text straight through
+  // `submit()`, skipping the append every OTHER submit route makes — so re-running a year-old prompt left it
+  // a year old in the log, and the next `/history` still ranked it last. The composer's own submit path
+  // (`persistHistory`) is the behaviour this has to match.
+  it("/history Enter EXECUTES the entry and records it in the prompt log, newest, with a fresh timestamp", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ccx-chat-hist-"));
+    historyRoots.push(root);
+    const env = { ...process.env, CCX_FLEET_ROOT: root };
+    const long_ago = Date.now() - 3_600_000;
+    appendHistory({ display: "redo the build", project: process.cwd(), timestamp: long_ago }, env);
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ env }} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    await openHistoryPicker(stdin, lastFrame);
+    stdin.write("redo"); await waitFor(() => frame(lastFrame).includes("redo the build"));
+    stdin.write("\r");                                     // historySearch:execute
+    await waitFor(() => !frame(lastFrame).includes("Search prompts"));
+    await waitFor(() => readHistory({ scope: "everywhere" }, env)[0]?.display === "redo the build");
+    const rows = readHistory({ scope: "everywhere" }, env);
+    const [newest] = rows;
+    expect(newest.timestamp).toBeGreaterThan(long_ago);    // a NEW record, not the one the picker read
+    // …attributed exactly like the typed submit that opened the picker: same project, same session.
+    const typed = rows.find((r) => r.display === "/history")!;
+    expect(newest.project).toBe(typed.project);
+    expect(newest.sessionId).toBe(typed.sessionId);
+  });
+
+  it("…and promotes it to the top of the composer's own Up-arrow walk", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ccx-chat-hist-"));
+    historyRoots.push(root);
+    const env = { ...process.env, CCX_FLEET_ROOT: root };
+    appendHistory({ display: "redo the build", project: process.cwd(), timestamp: Date.now() - 3_600_000 }, env);
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ env }} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    await openHistoryPicker(stdin, lastFrame);
+    stdin.write("redo"); await waitFor(() => frame(lastFrame).includes("redo the build"));
+    stdin.write("\r");
+    await waitFor(() => !frame(lastFrame).includes("Search prompts"));
+    // One Up must answer with the prompt that just RAN, not with the `/history` command that opened the
+    // picker. Read the COMPOSER's own row (the last `❯` line in the frame) — the transcript above it echoes
+    // both prompts, so a whole-frame `includes` would pass without the promotion.
+    stdin.write("\x1b[A");
+    await waitFor(() => stripAnsiAll(frame(lastFrame)).includes("History 2/2"));   // a walk is live
+    expect(composerLine(lastFrame)).toContain("redo the build");
+    expect(composerLine(lastFrame)).not.toContain("/history");
   });
 
   it("a recalled prompt synchronously disarms rewind before its first composer frame", async () => {

@@ -42,6 +42,9 @@ import { Line } from "./Line.js";
 import { userEchoLines } from "./render.js";
 import { ChatComposer, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
 import { initialEditorState, type EditorState } from "./editor.js";
+import { pushHistory } from "./editorHistory.js";
+import { composerMode } from "./promptMode.js";
+import type { HistEntry } from "./historySearch.js";
 import { isEditableQueueEntry } from "./queue.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { QuestionDialog } from "./QuestionDialog.js";
@@ -117,6 +120,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // Durable per-app editor state survives a temporary composer unmount; autocomplete is normalized by the
   // remounting composer, while text, cursor, history, undo, stash, and kill ring remain exact.
   const editorStateRef = useRef<EditorState>(initialEditorState());
+  /** Push a prompt the `/history` picker just EXECUTED onto that durable list, so the composer's next Up
+   *  answers with it exactly as it would had the user typed and sent it (`submitTurn`'s own `pushHistory`).
+   *  `mode` is derived from the display, the one derivation the whole port shares with the disk seed. */
+  const promoteExecuted = (e: HistEntry) => {
+    const s = editorStateRef.current;
+    editorStateRef.current = { ...s, history: pushHistory(s.history, { display: e.text, mode: composerMode(e.text), pastedContents: e.pastedContents }) };
+  };
   const consumedPrefillTokenRef = useRef(0);
   // CM56's search-history hint fires ONCE — and the composer unmounts behind every dialog, so the flag has to
   // live out here with the durable editor state rather than in the component it gates (F5 t7 review). This
@@ -262,7 +272,14 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         : state.historyOpen
         // CM59: the preview pane's side-by-side/stacked switch is a function of the live terminal width, read
         // the same per-render way the composer's is so a resize reaches it on the next frame.
-        ? <HistorySearchOverlay load={loadHistory} onAccept={acceptHistory} onExecute={executeHistory} onCancel={closeHistorySearch} columns={terminalColumns} />
+        // `onExecute` is WRAPPED, and the wrapper is the in-session half of one gesture whose other half is
+        // useChat's (see `executeHistory`'s comment there). Running a prompt from the picker has to promote
+        // it in BOTH history lists the typed submit path promotes it in: the persisted log, which useChat
+        // re-appends to, and the composer's Up-arrow list, which is this app-scoped ref — a composer instance
+        // seeds it once and `submitTurn` pushes onto it thereafter. The composer is unmounted while this
+        // overlay is up, so the push lands on the ref and the remount right behind `setHistoryOpen(false)`
+        // reads it, which is the same machinery that already carries a draft across every dialog.
+        ? <HistorySearchOverlay load={loadHistory} onAccept={acceptHistory} onExecute={(e) => { promoteExecuted(e); executeHistory(e); }} onCancel={closeHistorySearch} columns={terminalColumns} />
         // A confirmed rewind takes seconds (file restore + engine swap). Hold a modal until it settles:
         // if the composer came back first, a prompt typed in that window would be cleared from the editor,
         // sent, and refused by the host as busy — the user's text lost rather than queued.

@@ -49,7 +49,7 @@ import { shortCwd } from "./banner.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
 import type { RawContextUsage } from "../index.js";
 import { type HistEntry, type HistoryScope } from "./historySearch.js";
-import { hydrateEntry, readHistory } from "./promptHistory.js";
+import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
 import { substituteChips } from "./pasteChips.js";
 import { isEditableQueueEntry, joinQueuedForComposer, type QueueEntry } from "./queue.js";
 import { composerMode } from "./promptMode.js";
@@ -1257,7 +1257,24 @@ export function useChat(
   function acceptHistory(e: HistEntry) { if (disposed.current) return; setHistoryOpen(false); setComposerPrefill({ text: e.text, token: Date.now(), pastedContents: e.pastedContents }); }
   // …and the same payloads on the way OUT: `substituteChips` is what `submitTurn` (editor.ts) runs before
   // handing text to the model, so running it here keeps the picker's Enter and a typed Enter identical.
-  function executeHistory(e: HistEntry) { if (disposed.current) return; setHistoryOpen(false); submit(substituteChips(e.text, e.pastedContents ?? {})); }
+  // …and it RE-RECORDS the entry on the way out, which the composer's own submit path (`persistHistory`,
+  // ChatComposer.tsx) does for every other route into `submit` — a typed prompt, an Esc-Esc'd draft, an
+  // executed `/command`, the inline ctrl+r search (which re-enters `applyKey`, so it gets it for free).
+  // Without it, re-running a year-old prompt left it a year old in the log and the next `/history` still
+  // ranked it last (final review, P2). What is written is the DISPLAY plus its pastes — the chip labels the
+  // user saw, not the substituted bodies that go to the model — because that is what a recall must bring
+  // back, and it is exactly the entry shape the picker already handed us, only with a fresh timestamp.
+  // `appendHistory` owns its own `CLAUDE_CODE_SKIP_PROMPT_HISTORY` gate and swallows every write failure.
+  //
+  // The IN-SESSION half of the same promotion — the composer's Up-arrow list — is ChatApp's, not this
+  // hook's: that list lives in the app-scoped `editorStateRef` a composer instance reads at mount, and
+  // useChat has no reach into it. See ChatApp's `onExecute` wrapper.
+  function executeHistory(e: HistEntry) {
+    if (disposed.current) return;
+    setHistoryOpen(false);
+    appendHistory({ display: e.text, pastedContents: e.pastedContents, project: cwd, sessionId: session.sessionId }, historyEnv);
+    submit(substituteChips(e.text, e.pastedContents ?? {}));
+  }
   /** F5 task 12: BOTH search surfaces read `history.jsonl` (`readHistory` = upstream's `UUd`, the very file
    *  upstream's own picker scans) instead of the persisted transcripts this used to reconstruct prompts from.
    *  The transcript source disagreed with the log on two things a prompt search must get right — a transcript

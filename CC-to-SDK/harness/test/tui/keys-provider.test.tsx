@@ -640,6 +640,94 @@ describe("KeymapProvider — a bracketed paste that overruns the 1 MiB cap", () 
   });
 });
 
+// F5 final whole-branch review, P1. The cross-chunk carry held a torn CHARACTER but not a torn OPEN MARKER:
+// `…\x1b[20` | `0~payload…` left the front half parsing as an unknown CSI (discarded) and the payload parsing
+// as ordinary input, so an embedded `\r` became `enter` and submitted half a paste — the accident bracketed
+// paste exists to prevent. Measured before the fix: all five split points leaked; four are closed here and the
+// fifth (a lone trailing `\x1b`) is deliberately not, because holding it would break the Escape key.
+describe("KeymapProvider — the paste OPEN marker torn across two stdin reads", () => {
+  const seenOf = () => { const seen: string[] = []; return { seen, on: (e: KeyEvent | TextEvent) => { seen.push(e.kind === "text" ? `${e.paste ? "paste" : "typed"}:${e.text}` : `key:${e.name}`); } }; };
+
+  it("re-joins the marker at every split point from 2 bytes in — one tagged paste, no stray enter", async () => {
+    for (const n of [2, 3, 4, 5]) {
+      const { seen, on } = seenOf();
+      const h = renderWithKeymap(<Probe scope="Chat" fallback={on} />);
+      await tick();
+      h.stdin.write("\x1b[200~".slice(0, n));
+      expect(seen, `held ${n}`).toEqual([]);                       // the front half is held, never parsed
+      h.stdin.write("\x1b[200~".slice(n) + "line one\rline two\x1b[201~");
+      expect(seen, `split after ${n}`).toEqual(["paste:line one\rline two"]);
+      h.unmount();
+    }
+  });
+
+  // The one split point left open, and the reason is a key that must never wait: a chunk that is just `\x1b`
+  // is overwhelmingly the Escape KEY, and this file has no escape timeout to tell the two apart (parse.ts
+  // §1.10). Escape answering on the read that carries it outranks a 1-in-6 marker tear.
+  it("does NOT hold a lone trailing ESC — the Escape key still fires on its own read", async () => {
+    const cancel = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" actions={{ "chat:cancel": cancel }} />);
+    await tick();
+    h.stdin.write(ESC);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    h.unmount();
+  });
+
+  it("re-feeds a held prefix that turns out NOT to be a paste marker", async () => {
+    const { seen, on } = seenOf();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={on} />);
+    await tick();
+    h.stdin.write("\x1b[2");                                       // a prefix of `\x1b[200~` — and of `\x1b[2~`
+    expect(seen).toEqual([]);
+    h.stdin.write("~");                                            // …which it turns out to be: insert
+    expect(seen).toEqual(["key:insert"]);
+    h.stdin.write("ab\x1b[20");                                    // held again, with text ahead of it flushed
+    expect(seen).toEqual(["key:insert", "typed:ab"]);
+    h.stdin.write("x");                                            // `\x1b[20x`: an unknown CSI, consumed silently
+    expect(seen).toEqual(["key:insert", "typed:ab"]);
+    h.unmount();
+  });
+
+  it("reports nothing `pasting` while only the marker's front half is held", async () => {
+    const h = renderWithKeymap(<><Probe scope="Chat" /><PastingProbe /></>);
+    await tick();
+    h.stdin.write("\x1b[20");
+    await tick();
+    expect(h.lastFrame()).toContain("idle");                       // no paste has OPENED yet — a prefix is a guess
+    h.stdin.write("0~body");
+    await tick();
+    expect(h.lastFrame()).toContain("PASTING");
+    h.stdin.write("\x1b[201~");
+    await tick();
+    expect(h.lastFrame()).toContain("idle");
+    h.unmount();
+  });
+
+  // The END marker needs no carry of its own on this path: the chunk that would tear it is one whose paste is
+  // still open, so `pasteOpen` is already holding the whole buffer and the halves meet there. Unpinned until
+  // now — pinned so a future refactor of the carry cannot quietly take it away.
+  it("re-joins a torn END marker through the ordinary paste hold", async () => {
+    const { seen, on } = seenOf();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={on} />);
+    await tick();
+    h.stdin.write("\x1b[200~body\x1b[20");
+    expect(seen).toEqual([]);
+    h.stdin.write("1~ok");
+    expect(seen).toEqual(["paste:body", "typed:ok"]);
+    h.unmount();
+  });
+
+  it("drops a held marker prefix at teardown, like the character carry and the paste buffer", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+    await tick();
+    h.stdin.write("\x1b[20");
+    h.unmount(); await tick();
+    h.stdin.write("0~late\x1b[201~");
+    expect(fallback).not.toHaveBeenCalled();
+  });
+});
+
 describe("KeymapProvider — stdin ownership", () => {
   it("attaches exactly one data listener and detaches it on unmount", async () => {
     const h = renderWithKeymap(<Probe scope="Chat" />);

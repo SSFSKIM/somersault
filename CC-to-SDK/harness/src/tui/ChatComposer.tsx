@@ -811,7 +811,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     if (!hintShown || hintCounted.current) return;
     hintCounted.current = true;
     const env = historyEnvRef.current;
-    savePrefs({ queuedUpHintSessions: (loadPrefs(env).queuedUpHintSessions ?? 0) + 1 }, env);
+    // BEST-EFFORT, and it has to be: `savePrefs` is mkdir + write and it THROWS on a root it cannot write
+    // (read-only home, a `~/.claude` that is a file, a full disk). This is an EFFECT — an uncaught throw here
+    // leaves React's commit and takes the whole REPL down, for a hint counter. Same swallow, same reason, as
+    // placeholder.ts's example-file cache and `appendHistory`'s own (final review, P2).
+    try { savePrefs({ queuedUpHintSessions: (loadPrefs(env).queuedUpHintSessions ?? 0) + 1 }, env); } catch { /* prefs are best-effort */ }
   }, [hintShown]);
   const mode = inputMode(state);
   const borderToken = borderTokenFor(mode);

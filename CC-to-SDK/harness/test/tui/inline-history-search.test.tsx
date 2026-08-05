@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { renderWithKeymap } from "./keysTestUtil.js";
 import { ChatComposer, PASTE_EXPAND_HINT } from "../../src/tui/ChatComposer.js";
 import { appendHistory } from "../../src/tui/promptHistory.js";
-import { initialEditorState, type EditorState } from "../../src/tui/editor.js";
+import { bufferText, initialEditorState, type EditorState, type PastedMap } from "../../src/tui/editor.js";
 import { findInlineMatch, offsetToCursor, cursorToOffset, installMatch, restoreDraft, NO_MATCH_PROMPT, SEARCH_PROMPT } from "../../src/tui/historySearchInline.js";
 
 // ————————————————————————— pure: the walk and the two buffer transforms —————————————————————————
@@ -88,9 +88,39 @@ describe("installMatch / restoreDraft", () => {
     expect(s.lines[0]).toBe("[Pasted text #1 +1 lines] tail");
     expect(s.lines[0].slice(s.cursor.col)).toBe("tail");
   });
-  it("restoreDraft is a NO-OP when the buffer already holds the parked text (it must not eat a live walk)", () => {
-    const s: EditorState = { ...initialEditorState(), lines: ["draft"], histIndex: 2 };
-    expect(restoreDraft(s, { display: "draft", cursor: { row: 0, col: 5 }, pastedContents: {} })).toBe(s);
+  // The no-op exists for the UNDISTURBED buffer — open the search, close it again without typing — where
+  // re-running `replaceBufferFromOutside` would drop a live Up-arrow walk (`histIndex`), the undo stack and
+  // the popups for nothing. So the fixture is what `open()` actually parks: the state's OWN cursor and its
+  // OWN pastes map, not a hand-written pair that the buffer never had (which is what let a text-only guard
+  // look correct here while silently covering the case below too).
+  it("restoreDraft is a NO-OP when the buffer is still the parked one (it must not eat a live walk)", () => {
+    const s: EditorState = { ...initialEditorState(), lines: ["draft"], cursor: { row: 0, col: 5 }, histIndex: 2 };
+    expect(restoreDraft(s, { display: "draft", cursor: s.cursor, pastedContents: s.pastedContents })).toBe(s);
+  });
+
+  // F5 final whole-branch review, P2. A match can have the SAME display as the parked draft — recall the
+  // prompt you are halfway through retyping — and `installMatch` has by then moved the caret onto the match
+  // and swapped the pastes map for the recalled entry's. A text-only no-op called that "already restored"
+  // and cancel left the caret parked mid-word.
+  it("restores the caret when the MATCH's text equals the parked draft's", () => {
+    const parked: EditorState = { ...initialEditorState(), lines: ["deploy the app"], cursor: { row: 0, col: 14 } };
+    const draft = { display: bufferText(parked), cursor: parked.cursor, pastedContents: parked.pastedContents };
+    const installed = installMatch(parked, { display: "deploy the app" }, 7, "the");
+    expect(installed.cursor).toEqual({ row: 0, col: 7 });          // the walk parked the caret on the match
+    expect(restoreDraft(installed, draft).cursor).toEqual({ row: 0, col: 14 });
+  });
+
+  it("restores the parked pastes map even when text and caret both already match", () => {
+    const map: PastedMap = { 1: { id: 1, type: "text", content: "MINE", lineCount: 0 } };
+    const parked: EditorState = { ...initialEditorState(), lines: ["x"], pastedContents: map };
+    const recalled: EditorState = { ...parked, pastedContents: { 1: { id: 1, type: "text", content: "RECALLED", lineCount: 0 } } };
+    expect(restoreDraft(recalled, { display: "x", cursor: parked.cursor, pastedContents: map }).pastedContents[1].content).toBe("MINE");
+  });
+
+  it("a restore is itself idempotent — restoring twice does not re-clobber the buffer a second time", () => {
+    const draft = { display: "my draft", cursor: { row: 0, col: 2 }, pastedContents: {} };
+    const once = restoreDraft({ ...initialEditorState(), lines: ["a match"] }, draft);
+    expect(restoreDraft(once, draft)).toBe(once);                  // value-equal caret, same map object
   });
   it("…and puts text, caret and pastes back when it is not", () => {
     const s: EditorState = { ...initialEditorState(), lines: ["a match"] };

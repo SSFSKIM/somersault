@@ -124,12 +124,22 @@ export function installMatch(s: EditorState, entry: SearchEntry, offset: number,
 
 /** `j` (L489704) and `M`'s empty-query arm (L489648): put the parked draft back, text, caret and pastes.
  *
- *  A no-op when the buffer already holds that text. Upstream's setters are idempotent; ours goes through
+ *  A no-op when the buffer is STILL THE PARKED ONE. Upstream's setters are idempotent; ours goes through
  *  `replaceBufferFromOutside`, which also drops the history walk, the undo stack and the popups — so
  *  restoring a draft that was never disturbed (opening the search and closing it again without typing) would
- *  silently cost the user their in-progress Up-arrow walk. */
+ *  silently cost the user their in-progress Up-arrow walk.
+ *
+ *  "Still the parked one" is the WHOLE parked triple, not just the text (final review, P2). `open()` parks
+ *  `{ bufferText(s), s.cursor, s.pastedContents }` straight off the state, so an undisturbed buffer is
+ *  identity-equal on both objects and the no-op holds exactly as before — while a text-only test called it a
+ *  no-op in the one case where the two genuinely disagree: a match whose display EQUALS the draft's text.
+ *  `installMatch` had already moved the caret onto the match and swapped in the recalled entry's re-minted
+ *  pastes, and cancelling then left both in place — the user's caret parked mid-word, and (were a re-mint
+ *  ever to reproduce a label the draft already used) an identical chip expanding to the recalled body.
+ *  Cursor by VALUE, not identity: a restore mints a fresh `{row,col}`, so a second `restoreDraft` on an
+ *  already-restored buffer must still recognise itself and stay a no-op. */
 export function restoreDraft(s: EditorState, draft: SearchDraft): EditorState {
-  if (bufferText(s) === draft.display) return s;
+  if (bufferText(s) === draft.display && s.cursor.row === draft.cursor.row && s.cursor.col === draft.cursor.col && s.pastedContents === draft.pastedContents) return s;
   const base = replaceBufferFromOutside(s, draft.display);
   return { ...base, pastedContents: draft.pastedContents, cursor: offsetToCursor(draft.display, cursorToOffset(draft.display, draft.cursor)) };
 }

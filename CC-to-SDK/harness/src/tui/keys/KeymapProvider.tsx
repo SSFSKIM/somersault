@@ -85,6 +85,28 @@ function incompleteTail(s: string): number {
   return -1;
 }
 
+/** Index at which a chunk-trailing PROPER PREFIX of the OPEN marker begins, or -1. The sibling of
+ *  `incompleteTail` for the other thing a read boundary can cut in half, and the same reasoning puts it here:
+ *  the parser is handed one chunk and one chunk is all it may reason about, so only the STREAM can re-join
+ *  `\x1b[20` | `0~payload`. Left torn, the front half parsed as an unknown CSI (discarded) and the payload
+ *  then parsed as ORDINARY input — an embedded `\r` became `enter` and submitted half a paste, which is the
+ *  exact accident paste protection exists to prevent (F5 final review, P1). `pasteOpen` cannot see it either:
+ *  there is no `\x1b[200~` in the chunk to find.
+ *
+ *  The END marker needs no equivalent: a chunk that CLOSES a paste is one whose paste is still open, so the
+ *  whole buffer is already held by `pasteOpen` and the two halves meet there (the overflow latch, which is
+ *  the one path that does NOT hold, carries `overflowTailRef` for precisely this).
+ *
+ *  LENGTH 2 IS THE FLOOR, deliberately: a lone trailing `\x1b` is also a proper prefix, but it is far more
+ *  often the Escape KEY, and holding it would make Escape do nothing until the user pressed something else.
+ *  This file has no escape timeout by design (parse.ts §1.10) and is not growing one for a 1-in-6 split
+ *  point; a marker torn after exactly one byte therefore still misparses, and the Escape key still answers
+ *  on the read that carries it. */
+function pasteStartTail(s: string): number {
+  for (let n = Math.min(PASTE_START.length - 1, s.length); n >= 2; n--) if (s.endsWith(PASTE_START.slice(0, n))) return s.length - n;
+  return -1;
+}
+
 export function KeymapProvider({ children, deps }: { children: React.ReactNode; deps?: KeymapDeps }): React.ReactElement {
   const { stdin, setRawMode, isRawModeSupported } = useStdin();
   const { stdout } = useStdout();
@@ -99,9 +121,9 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   const pendingRef = useRef<KeySpec[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pasteRef = useRef("");
-  /** The tail bytes of a character torn across two reads (≤3, see `incompleteTail`), and the "this paste ran
-   *  past the cap, discard until its end marker" latch. Both are stream state, both are dropped at teardown
-   *  exactly like the paste buffer. */
+  /** The tail bytes a read boundary cut in half — a character (≤3, `incompleteTail`) or the front of a paste
+   *  OPEN marker (≤5, `pasteStartTail`) — and the "this paste ran past the cap, discard until its end marker"
+   *  latch. Both are stream state, both are dropped at teardown exactly like the paste buffer. */
   const carryRef = useRef("");
   const overflowRef = useRef(false);
   // While the latch is set: the last PASTE_END.length-1 bytes of every discarded chunk (and of the chunk that
@@ -202,9 +224,14 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
       // half. A full PASTE_END cannot be in this tail (pasteOpen would have been false), so no false release.
       overflowTailRef.current = data.slice(-(PASTE_END.length - 1));
     }
-    // Hold back a torn trailing character for the next chunk — but never while overflowing, where the tail is
-    // about to be discarded anyway and prepending it to the post-marker remainder would corrupt it.
-    const cut = overflowRef.current ? -1 : incompleteTail(data);
+    // Hold back a torn trailing character — or a torn OPEN marker — for the next chunk, but never while
+    // overflowing, where the tail is about to be discarded anyway and prepending it to the post-marker
+    // remainder would corrupt it. The two are mutually exclusive in practice (every prefix of `\x1b[200~`
+    // ends in an ASCII byte, on which `incompleteTail` answers -1), so asking the second only when the first
+    // declines costs nothing. Either way the hold is bounded — 3 bytes there, 5 here — and a held prefix that
+    // the next chunk does NOT complete is simply re-fed as ordinary bytes, parsing as whatever it is.
+    const torn = overflowRef.current ? -1 : incompleteTail(data);
+    const cut = torn === -1 && !overflowRef.current ? pasteStartTail(data) : torn;
     if (cut === -1) { emit(data); return; }
     carryRef.current = data.slice(cut);
     emit(data.slice(0, cut));
