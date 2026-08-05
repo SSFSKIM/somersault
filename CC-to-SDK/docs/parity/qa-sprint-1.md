@@ -6,6 +6,33 @@ sprint: the checklist-porting loop catches what the spec knows about; only human
 rest (the ctrl+o frame flood, the dead `/clear`, the mouse axis). This sprint replaces the
 owner-observes → controller-fixes loop with agents that actually work through both TUIs.
 
+## Pathfinder outcomes (2026-08-06 — amend before dispatch; recipe: `qa-driver.md`)
+
+- **Version drift is real:** the installed CLI auto-updated to **2.1.222**; the parity canon and the
+  grounding corpus stay **2.1.220** (`cli.pretty.js` is not reliably runnable standalone — verified).
+  Fleet compares live behavior against 2.1.222 and grounds against the 2.1.220 bundle; a finding whose
+  behavior might postdate 220 gets `"version-drift?": true` and the controller adjudicates on the bundle.
+- **The mouse axis is a terminal non-axis:** claude's terminal build requests NO mouse-reporting modes
+  (conclusive via tmux's mouse-mode introspection, every state tested; injected SGR/X10 bytes are
+  cleanly ignored by BOTH TUIs). The forked-Ink onClick/hover/wheel system in the bundle (L175130,
+  L177466) evidently serves other hosts (IDE/desktop surfaces). QA-2's mouse block shrinks to a
+  five-minute re-confirmation; the freed budget goes to the resize/repaint matrix below. OPEN QUESTION
+  for the owner: where was click-to-expand observed (IDE terminal? desktop app?) — that surface may be
+  a separate parity target, not the terminal build.
+- **Resize/repaint is where the clone actually diverges** (the pathfinder's unplanned finding, now
+  sprint finding **QA2-SEED-1**): at 80×24 after launching at 120×40, claude reflows cleanly; ccx leaves
+  120-wide separator rules hard-wrapped into 80+40 fragments and paints the composer block twice; no
+  self-heal on a timer, a keystroke collapses the duplicate but leaves a stale rule. Reproduced with no
+  turn history. QA-2 runs a widths×heights×content-states matrix — cheap, deterministic, no tokens once
+  content is staged.
+- **Assert on frame TRANSITIONS, not single frames:** the prompt echo makes "reply text visible" pass
+  before the model ever answers, and a "ready" needle valid in one permission mode is silently wrong in
+  another. Every scenario is a state machine — each edge (ready → busy → reply → idle) has its own
+  needle, and a missing busy edge is itself a failure.
+- **Isolation is structural:** every agent uses the recipe's session-open preamble (fresh HOME, seeded
+  onboarding, scratch project) and MUST end its report with the session-close assertion — the real
+  `~/.claude/ccx/prefs.json` mtime, before vs after, unchanged.
+
 ## Ground rules (every agent, no exceptions)
 
 - **Driver recipe:** follow `docs/parity/qa-driver.md` (the pathfinder's proven recipe) verbatim — tmux

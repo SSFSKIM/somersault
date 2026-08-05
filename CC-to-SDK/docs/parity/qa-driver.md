@@ -1,0 +1,534 @@
+# QA driver recipe — driving `ccx` and `claude` from an agent
+
+**Status:** proven end-to-end on 2026-08-06. Every command below was executed live; the
+findings section records what actually happened, including the parts that failed.
+
+**Purpose.** Let a QA agent drive the two terminal UIs — our clone `ccx` and the installed
+Claude Code CLI — the way a human does: launch, type, press keys, read frames, resize, exit.
+This file is the verbatim recipe. Follow it literally.
+
+**Environment at time of proving**
+
+| Thing | Value |
+|---|---|
+| `claude --version` | `2.1.222 (Claude Code)` at `/Users/new/.local/bin/claude` |
+| `tmux -V` | `tmux 3.7b` |
+| ccx binary | `harness/dist/cli/bin.js` (package.json `bin.ccx`) |
+| platform | darwin 25.5.0 |
+
+> The parity corpus is pinned to Claude Code 2.1.220; the installed CLI is **2.1.222**. The
+> recipe was proven against 2.1.222. Nothing was installed or upgraded. If a future run finds a
+> different version, re-check the onboarding seed keys (`lastOnboardingVersion` in particular).
+
+---
+
+## 0. Non-negotiable isolation rule
+
+**Every TUI you launch runs under an isolated `HOME` and in a scratch project directory.**
+A real incident happened here: an unisolated run wrote to the operator's live `~/.claude/ccx`.
+
+- Isolated home: `HOME=$(mktemp -d /tmp/qa-home-XXXXXX)`
+- For `ccx` additionally: `CCX_FLEET_ROOT="$HOME/.claude/ccx"` — pointing at the **isolated**
+  home. (`src/fleet/paths.ts` honours `CCX_FLEET_ROOT` above everything else.)
+- Scratch project: `cd`-target is its own `mktemp -d`, never the real repo.
+- Never `echo`, `printf`, `cat` or log `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`.
+  Pass them through `env` only.
+
+**Prove isolation held.** Record the mtime of the real prefs file before and after the whole run:
+
+```bash
+stat -f '%m %Sm %N' ~/.claude/ccx/prefs.json
+```
+
+In the proving run both readings were identical (`1785951625  Aug 6 02:40:25 2026`), and the real
+`~/.claude/ccx/roster` entry count was unchanged at 114.
+
+---
+
+## 1. Setup
+
+### 1.1 Build ccx
+
+```bash
+cd /Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness
+npm run build          # tsc -p tsconfig.build.json
+```
+
+### 1.2 Load auth into the launching shell
+
+```bash
+set -a; . /Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/.env; set +a
+```
+
+`.env` carries `CLAUDE_CODE_OAUTH_TOKEN` (subscription billing). Keep any `ANTHROPIC_API_KEY`
+line commented — it shadows the OAuth token.
+
+### 1.3 Create the scratch world
+
+```bash
+QA_ROOT=$(mktemp -d /tmp/qa-driver-XXXXXX)
+CCX_HOME=$(mktemp -d "$QA_ROOT/qa-home-ccx-XXXXXX")
+CCX_PROJ=$(mktemp -d "$QA_ROOT/qa-proj-ccx-XXXXXX")
+CC_HOME=$(mktemp -d "$QA_ROOT/qa-home-cc-XXXXXX")
+CC_PROJ=$(mktemp -d "$QA_ROOT/qa-proj-cc-XXXXXX")
+CC_PROJ_REAL=$(cd "$CC_PROJ" && pwd -P)     # see §3.1 — the resolved path matters
+mkdir -p "$CCX_HOME/.claude/ccx"
+```
+
+### 1.4 Driver helpers (source these)
+
+```bash
+cat > /tmp/qa-driver-helpers.sh <<'HELP'
+# wait_until <session> <needle> <timeout_secs>  — poll, never a bare sleep
+wait_until() {
+  local s="$1" needle="$2" to="${3:-60}" i=0
+  while [ $i -lt $((to*2)) ]; do
+    tmux capture-pane -t "$s" -p 2>/dev/null | grep -qF -- "$needle" && return 0
+    sleep 0.5; i=$((i+1))
+  done
+  return 1
+}
+# wait_idle <session> <timeout_secs> — turn is over when the interrupt hint is gone
+wait_idle() {
+  local s="$1" to="${2:-120}" i=0
+  sleep 1                                  # let the spinner appear first
+  while [ $i -lt $((to*2)) ]; do
+    tmux capture-pane -t "$s" -p | grep -q "esc to interrupt" || return 0
+    sleep 0.5; i=$((i+1))
+  done
+  return 1
+}
+# type_line <session> <text> — literal text, THEN a SEPARATE Enter
+type_line() { tmux send-keys -t "$1" -l "$2"; sleep 0.3; tmux send-keys -t "$1" Enter; }
+frame()     { tmux capture-pane -t "$1" -p; }      # plain text
+frame_sgr() { tmux capture-pane -t "$1" -e -p; }   # with SGR colour escapes
+HELP
+source /tmp/qa-driver-helpers.sh
+```
+
+---
+
+## 2. Driving `ccx`
+
+### 2.1 Launch line (proven verbatim)
+
+```bash
+tmux new-session -d -s qaccx -x 120 -y 40 -c "$CCX_PROJ" \
+  "env HOME=$CCX_HOME \
+       CCX_FLEET_ROOT=$CCX_HOME/.claude/ccx \
+       CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN \
+       TERM=xterm-256color \
+   node /Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness/dist/cli/bin.js"
+
+tmux set-option -t qaccx remain-on-exit on    # keeps the final frame + exit code readable
+wait_until qaccx '⇧Tab to cycle' 30           # ready-needle for ccx
+```
+
+`ccx` needs no onboarding seed at all — a bare isolated `HOME` lands straight in the REPL.
+Note `ccx --help` is not a flag it knows (`ccx: unknown flag --help`); bare invocation on a TTY
+is the interactive REPL.
+
+### 2.2 One turn
+
+```bash
+type_line qaccx 'Reply with exactly: QA-PING-OK'
+wait_idle qaccx 120
+frame qaccx
+```
+
+Observed frames:
+
+- **before** — banner, `cwd`, `model (default) · mode default`, tips, composer
+  `❯ Try "create a util logging.py that..."`, footer `model claude-opus-5  mode auto (⇧Tab to cycle)  think default`
+- **during** — `· Crafting… (1s · esc to interrupt)`, footer gains `⟳ streaming`, hint becomes `Esc interrupt`
+- **after** — `⏺ QA-PING-OK` in the transcript, footer gains `ctx 2%`, hint back to `Esc rewind · ? help`
+
+### 2.3 Exit
+
+Both work and both were verified:
+
+```bash
+type_line qaccx '/quit'                       # session ends, exit status 0
+# or
+tmux send-keys -t qaccx C-c; sleep 0.2; tmux send-keys -t qaccx C-c
+```
+
+After the first `C-c`, ccx shows `Press Ctrl-C again to exit`. With `remain-on-exit on`:
+
+```bash
+tmux display -p -t qaccx '#{pane_dead} #{pane_dead_status}'   # -> "1 0"
+```
+
+---
+
+## 3. Driving the installed `claude`
+
+An isolated `HOME` means a first-run gauntlet. There are **four** gates, and all four are
+seedable. Discovered empirically by walking them once and diffing the files.
+
+### 3.1 The onboarding seed
+
+Two files. Write them **before** launching.
+
+```bash
+mkdir -p "$CC_HOME/.claude"
+
+# gate 1: theme picker   gate 4: bypass-permissions consent
+cat > "$CC_HOME/.claude/settings.json" <<'EOF'
+{"theme":"dark","skipDangerousModePermissionPrompt":true}
+EOF
+
+# gate 2: login-method picker   gate 3: per-project trust dialog
+python3 -c '
+import json,sys
+home,proj=sys.argv[1],sys.argv[2]
+json.dump({
+ "hasCompletedOnboarding":True,
+ "lastOnboardingVersion":"2.1.222",
+ "installMethod":"native","autoUpdates":False,
+ "projects":{proj:{
+   "hasTrustDialogAccepted":True,
+   "projectOnboardingSeenCount":1,
+   "allowedTools":[],"mcpServers":{},"mcpContextUris":[],
+   "enabledMcpjsonServers":[],"disabledMcpjsonServers":[],
+   "hasClaudeMdExternalIncludesApproved":False,
+   "hasClaudeMdExternalIncludesWarningShown":False}}},
+ open(home+"/.claude.json","w"))' "$CC_HOME" "$CC_PROJ_REAL"
+```
+
+**The `projects` key must use the fully resolved path.** On macOS `mktemp -d /tmp/...` returns
+`/tmp/...` but `claude` keys the entry under `/private/tmp/...`. Use `$(cd "$dir" && pwd -P)`.
+Get this wrong and the trust dialog still appears.
+
+What each gate looks like if you miss it:
+
+| Gate | Screen | Seed |
+|---|---|---|
+| 1 | "Choose the text style that looks best with your terminal" | `~/.claude/settings.json` → `theme` |
+| 2 | "Select login method: Claude account / Console / 3rd-party" | `~/.claude.json` → `hasCompletedOnboarding: true` |
+| 3 | "Quick safety check: Is this a project you created or one you trust?" | `~/.claude.json` → `projects[<realpath>].hasTrustDialogAccepted: true` |
+| 4 | "WARNING: Claude Code running in Bypass Permissions mode" | `~/.claude/settings.json` → `skipDangerousModePermissionPrompt: true` |
+
+Gate 4 only appears with `--dangerously-skip-permissions`. Its default highlighted option is
+**"1. No, exit"** — a blind `Enter` kills the session. Seed it rather than answering it.
+
+The OAuth token still reaches the process through `env` on the launch line; seeding
+`hasCompletedOnboarding` skips the *picker*, it does not skip *authentication*.
+
+### 3.2 Launch line (proven verbatim)
+
+```bash
+tmux new-session -d -s qacc -x 120 -y 40 -c "$CC_PROJ_REAL" \
+  "env HOME=$CC_HOME \
+       CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN \
+       TERM=xterm-256color \
+   /Users/new/.local/bin/claude --dangerously-skip-permissions"
+
+tmux set-option -t qacc remain-on-exit on
+wait_until qacc 'for agents' 60        # mode-agnostic ready-needle, see fragile spots
+```
+
+Drop `--dangerously-skip-permissions` for a permission-realistic session; the CLI then starts in
+`⏸ manual mode on`, where read-only tools (Read/Glob/Grep) are auto-allowed but writes and Bash
+raise a dialog you must answer with arrow keys + `Enter`.
+
+### 3.3 One turn
+
+```bash
+type_line qacc 'Reply with exactly: QA-PING-OK'
+wait_idle qacc 120
+frame qacc
+```
+
+Observed frames:
+
+- **before** — welcome box `╭─── Claude Code v2.1.222 ───╮`, "Welcome back!", model/cwd, "What's new",
+  composer, footer `⏸ manual mode on · ? for shortcuts · ← for agents`
+- **during** — `✢ Wrangling…`, footer becomes `⏸ manual mode on · esc to interrupt · ← for agents`
+- **after** — `⏺ QA-PING-OK` then `✻ Worked for 4s`
+
+A tool-using turn under `--dangerously-skip-permissions` was also driven end-to-end
+(`Create a file named ok.txt containing exactly QA-WRITE-OK`), producing
+`⏺ Write(ok.txt)` / `⎿  Wrote 1 line to ok.txt` and a real file on disk. No dialog appeared.
+
+### 3.4 Exit
+
+`/exit` works. `C-c C-c` works **only if the two presses are close together**:
+
+```bash
+tmux send-keys -t qacc C-c; sleep 0.2; tmux send-keys -t qacc C-c    # exits
+```
+
+With `sleep 1.2` between the presses the second `C-c` was treated as a fresh first press and the
+session stayed alive. `C-d` on an empty composer did **not** exit. See fragile spots.
+
+---
+
+## 4. Mouse probe
+
+### 4.1 Question
+
+Can a QA agent click a folded row — e.g. `Read 1 file (ctrl+o to expand)` — and have it expand?
+
+### 4.2 Is the app even in mouse-reporting mode?
+
+`capture-pane` cannot show this, but tmux tracks the DECSET modes the application requested and
+exposes them as format variables. **This is the cheapest and most decisive check:**
+
+```bash
+tmux display -p -t qacc \
+  'any=#{mouse_any_flag} btn=#{mouse_button_flag} std=#{mouse_standard_flag} sgr=#{mouse_sgr_flag} all=#{mouse_all_flag}'
+```
+
+Result for `claude` 2.1.222 — `any=0 btn=0 std=0 sgr=0 all=0`, in **every** state tested: fresh
+REPL, mid-turn, after a folded tool row, after `ctrl+o` expansion, and with the `/model` picker
+open. `ccx` reports the same all-zero set. **Neither TUI ever enables mouse reporting.**
+
+### 4.3 Injecting mouse bytes — which method actually delivers
+
+Two methods were tested against the live pane.
+
+**Method A — write escape bytes to the pane's slave tty. Does not work; do not use.**
+
+```bash
+TTY=$(tmux display -p -t qacc '#{pane_tty}')     # e.g. /dev/ttys029
+printf '\033[<0;10;22M\033[<0;10;22m' > "$TTY"   # write succeeds, app never sees it
+```
+
+The write returns success and produces no effect. This is expected once you think about the pty
+direction: `/dev/ttysNNN` is the **slave** side, which is the application's stdout. Writing to it
+pushes bytes toward the terminal *as if the app had printed them* — it does not enqueue them on
+the application's stdin. tmux parsed the CSI, found nothing renderable, and dropped it. There is
+no input path here. (macOS also restricts `TIOCSTI`, so the classic stuff-the-input-queue trick
+is unavailable.)
+
+**Method B — `tmux send-keys -H`. This is the one that works.**
+
+```bash
+# SGR press:   ESC [ < 0 ; 10 ; 22 M
+tmux send-keys -t qacc -H 1b 5b 3c 30 3b 31 30 3b 32 32 4d
+# SGR release: ESC [ < 0 ; 10 ; 22 m
+tmux send-keys -t qacc -H 1b 5b 3c 30 3b 31 30 3b 32 32 6d
+```
+
+`-H` takes raw hex bytes and enqueues them on the pane's **input**. Delivery was proven with a
+control byte rather than assumed:
+
+```bash
+tmux send-keys -t qacc -H 5a      # 0x5a = 'Z'  ->  composer shows "❯ Z"
+```
+
+`Z` appeared in the composer in both TUIs, so the channel is real and the mouse bytes genuinely
+reached both applications.
+
+**Coordinates.** SGR mouse coordinates are 1-based from the top-left of the screen, and
+`tmux capture-pane -p` emits one output line per pane row, so *capture line N == mouse row N*.
+Find the row with `capture-pane -p | cat -n`, then encode `ESC [ < 0 ; COL ; ROW M`.
+
+### 4.4 Verdict
+
+- **claude: click-to-expand did NOT work.** The folded row `Read 1 file (ctrl+o to expand)` was
+  unchanged after a press+release delivered at its exact coordinates. That is not an injection
+  failure — `claude` never requested mouse reporting (§4.2), so there is no click to receive. The
+  row is keyboard-only, exactly as its own label says.
+- **`ctrl+o` does work**, and is the supported way to expand:
+  ```bash
+  tmux send-keys -t qacc C-o
+  ```
+  It replaced the folded row with the full
+  `⏺ Read(/private/tmp/.../bigfile.txt)` + `⎿  Read 201 lines` view (plus timestamps and the model
+  name). `ctrl+o` again re-folds it.
+- **ccx handled the identical bytes cleanly — no leak, no break.** Sent to the ccx pane, the SGR
+  press+release left the composer showing its untouched placeholder
+  (`❯ Try "create a util logging.py that..."`), the process stayed alive, and the frame was
+  unchanged. Nothing appeared as text.
+- **Legacy X10 encoding is also swallowed cleanly by both.** `ESC [ M <sp> * 6`
+  (`tmux send-keys -H 1b 5b 4d 20 2a 36`, button 0 at col 10 row 22) — the encoding most likely to
+  leak because its payload bytes are printable — produced no composer text and no corruption in
+  either TUI.
+
+So the escape-sequence parsers on both sides are well-behaved. There is simply nothing to click.
+
+---
+
+## 5. Resize probe
+
+```bash
+tmux resize-window -t <session> -x 80 -y 24
+sleep 2
+tmux capture-pane -t <session> -p
+tmux display -p -t <session> '#{pane_width}x#{pane_height}'   # confirm the app got SIGWINCH
+```
+
+- **claude: clean pass.** At 80×24 the assistant paragraph re-wrapped to 80 columns, the rules
+  redrew at 80, and no stale content remained.
+- **ccx: reflows but leaves artifacts.** Reproduced twice, including on a freshly launched session
+  with no turn history. The 120-wide separator rules stay 120 wide and hard-wrap into an
+  80-column line plus a 40-column remainder, and the composer block is painted **twice**:
+
+  ```
+  ────────────────────────────────────────────────────────────────────────────────
+  ────────────────────────────────────────
+  ❯ Try "create a util logging.py that..."
+  ────────────────────────────────────────────────────────────────────────────────
+  ────────────────────────────────────────
+  ❯ Try "create a util logging.py that..."
+  ```
+
+  It does not self-heal on a timer. A keystroke forces a partial repaint that collapses the
+  duplicate composer, but one stale wrapped rule survives above it. Resizing back to 120×40
+  restores a correct frame.
+
+  This is recorded as an observation, not a fix — it is exactly the class of defect this harness
+  exists to catch.
+
+---
+
+## 6. Cleanup
+
+```bash
+tmux kill-session -t qaccx 2>/dev/null
+tmux kill-session -t qacc  2>/dev/null
+rm -rf "$QA_ROOT"
+stat -f '%m %Sm %N' ~/.claude/ccx/prefs.json     # compare against the pre-run reading
+```
+
+Proving run: identical before and after (`1785951625  Aug 6 02:40:25 2026`); real
+`~/.claude/ccx` (mtime 01:43) and `history.jsonl` (02:35) both predate the run's 03:53 start;
+roster count unchanged at 114. All writes landed inside `$QA_ROOT` — including
+`$CCX_HOME/.claude.json`, which is the SDK's bundled `claude` subprocess correctly inheriting the
+isolated `HOME` from ccx.
+
+---
+
+## 7. Fragile spots
+
+Things that needed retries or timing care. Read this before debugging a flaky QA run.
+
+1. **Text and Enter must be separate `send-keys` calls.** `send-keys -l 'text\r'` is read as a
+   paste, not a submit. Always `send-keys -l '<text>'`, then `send-keys Enter`. A ~0.3 s gap
+   between them was used throughout and never failed.
+
+2. **The completion needle must not match the echoed prompt.** Waiting for `QA-PING-OK` returned
+   *immediately* — the composer echoes the user's line into the transcript, so the needle was
+   already on screen before the model replied. Use `wait_idle` (absence of `esc to interrupt`)
+   as the completion signal and only then assert on content.
+
+3. **`wait_idle` must sleep before it polls.** Between submitting and the spinner appearing there
+   is a window where `esc to interrupt` is absent and the turn looks finished. The helper sleeps
+   1 s first.
+
+4. **The ready-needle differs by permission mode.** `? for shortcuts` is the manual-mode footer;
+   under `--dangerously-skip-permissions` the footer reads `⏵⏵ bypass permissions on (shift+tab to
+   cycle)` instead, and a wait on `for shortcuts` burned its full 30 s timeout on a REPL that was
+   ready in 1 s. Use `for agents`, which is in both footers. For ccx use `⇧Tab to cycle`.
+
+5. **claude's double-`C-c` window is short.** 0.2 s apart exits; 1.2 s apart does not (the second
+   press is treated as a new first press). `C-d` on an empty composer did not exit at all.
+   Prefer `/exit` for determinism.
+
+6. **`tmux display -p -t <session>` silently returns empty for a dead session** rather than
+   erroring — it printed `tty:  size: x` for a session that had gone away, which reads like a
+   parse bug. Check liveness with `tmux has-session -t <s>` or
+   `tmux list-panes -a -F '#{session_name} #{pane_tty}'` first.
+
+7. **Set `remain-on-exit on` right after creating the session.** Without it the tmux session
+   vanishes the instant the program exits, taking the final frame and the exit code with it. With
+   it you get `#{pane_dead}` and `#{pane_dead_status}`.
+
+8. **`claude` keys `projects` by the resolved path.** `/tmp/...` vs `/private/tmp/...` on macOS —
+   use `pwd -P`. See §3.1.
+
+9. **Shell-quoting the grep for escape bytes.** `grep -c $'\033['` fails under the `ugrep`-backed
+   `grep` on this machine (`error at position 5 … mismatched [`). Use
+   `LC_ALL=C grep -c $'\x1b'` and inspect with `cat -v`.
+
+10. **One unexplained ccx session death.** The first `qaccx` session disappeared at some point
+    after a resize to 80×24 and a `x`/`BSpace` keystroke pair. It was **not reproduced** — a second
+    session survived the same resize, resized back, and exited cleanly via `/quit`. Recorded
+    honestly as unexplained; if a QA run sees a session vanish mid-suite, this precedent exists.
+    Always assert `tmux has-session` between steps rather than assuming liveness.
+
+11. **Cold start is slow.** `claude` took several seconds to first paint on a fresh isolated HOME
+    (it fetches the changelog and writes cache files). Give the ready-wait a 60 s timeout.
+
+---
+
+## 8. Capabilities matrix
+
+What a QA agent **can** and **cannot** do with this harness.
+
+### Observation
+
+| Capability | Status | How |
+|---|---|---|
+| Plain text of the current frame | **YES** | `tmux capture-pane -t <s> -p` |
+| Colours / styling (truecolor SGR) | **YES** | `capture-pane -e -p`; verified `\033[38;2;80;80;80m` etc. present with `-e`, and zero escapes without it |
+| Bold / underline / reverse attributes | **YES** | same `-e` capture; they are SGR params in the same stream |
+| Scrollback above the viewport | **YES** | `capture-pane -p -S -1000` (viewport-only by default) |
+| Pane dimensions | **YES** | `tmux display -p '#{pane_width}x#{pane_height}'` |
+| Whether the app enabled mouse reporting | **YES** | `#{mouse_any_flag}` / `#{mouse_sgr_flag}` / `#{mouse_all_flag}` — the single most useful non-obvious probe here |
+| Alternate-screen state | **YES** | `#{alternate_on}` |
+| Terminal title the app set | **YES** | `#{pane_title}` (claude sets it to the turn summary, e.g. `_ QA ping verification`) |
+| Process exit code | **YES** | `remain-on-exit on` + `#{pane_dead_status}` |
+| Cursor position | **YES** | `#{cursor_x}` / `#{cursor_y}` |
+| True pixel-level hover / rendered glyphs | **NO** | tmux is a character grid. No pixel raster, no font rendering, no images. |
+| Sixel / iTerm2 inline images | **NO** | not representable in `capture-pane` output |
+| Frame-by-frame animation timing | **PARTIAL** | you can poll `capture-pane` in a loop, but you get samples, not a guaranteed-complete frame sequence; a spinner tick can be missed between polls |
+
+### Injection
+
+| Capability | Status | How |
+|---|---|---|
+| Literal text | **YES** | `send-keys -t <s> -l '<text>'` |
+| Enter / Escape / Backspace / Tab | **YES** | `send-keys -t <s> Enter` \| `Escape` \| `BSpace` \| `Tab` |
+| Control keys | **YES** | `send-keys -t <s> C-o` / `C-c` / `C-d` |
+| Arrow keys (dialog navigation) | **YES** | `send-keys -t <s> Down` then `Enter` — used to answer the trust and bypass dialogs |
+| Shift+Tab (mode cycling) | **YES** | `send-keys -t <s> BTab` |
+| Arbitrary raw bytes | **YES** | `send-keys -t <s> -H <hex> <hex> …` — the general escape hatch |
+| SGR mouse events | **YES (delivered)** | `send-keys -H` with `ESC [ < b ; col ; row M/m`; delivery proven, but **no effect** because neither TUI enables mouse reporting |
+| X10 mouse events | **YES (delivered)** | `send-keys -H 1b 5b 4d …`; same — delivered, swallowed cleanly |
+| Mouse events via pane tty write | **NO** | wrong pty direction; see §4.3 Method A |
+| Mouse events via `send-keys -M` | **NO** | only valid inside a tmux key binding with a live mouse event in context; not scriptable |
+| Bracketed paste | **YES** | wrap with `-H 1b 5b 32 30 30 7e` … `1b 5b 32 30 31 7e` (not exercised in this run) |
+| Window resize / SIGWINCH | **YES** | `tmux resize-window -t <s> -x W -y H` |
+| Real clicks | **NO** | nothing to click — both TUIs are keyboard-only (§4.2) |
+
+### Net
+
+The harness gives a QA agent **everything a keyboard user has, plus colour and exit-code
+introspection a human does not**. The one axis genuinely out of reach is pixel-level rendering —
+and the mouse axis turns out to be moot rather than blocked: both TUIs are keyboard-only by
+design, and both parse and discard injected mouse bytes without leaking them into the composer.
+
+---
+
+## 9. Recommendations for the QA fleet design
+
+1. **Make isolation structural, not procedural.** Every finding here depended on a five-line
+   preamble (isolated `HOME`, `CCX_FLEET_ROOT`, scratch project, resolved-path seed) that is easy
+   to forget once — and forgetting it once already caused a real incident. Ship a
+   `qa-session-open <ccx|claude> [flags]` helper that mints the sandbox, writes the onboarding
+   seed, launches under tmux with `remain-on-exit on`, waits for the correct per-target ready
+   needle, and returns a session handle. Agents should never hand-assemble a launch line. Pair it
+   with a `qa-session-close` that kills the session, removes `$QA_ROOT`, and **asserts** the real
+   `~/.claude/ccx/prefs.json` mtime is unchanged — turning the isolation guarantee into a test
+   that fails loudly rather than a rule someone remembers.
+
+2. **Assert on frame *transitions*, not on single frames.** The two sharpest traps in this run
+   were both single-frame illusions: the completion needle that was already satisfied by the
+   echoed prompt, and the ready-needle that was correct for one permission mode and silently
+   wrong for the other. Both vanish if the harness's primitive is a state machine —
+   `wait_ready → send → wait_busy → wait_idle → assert` — where each edge has its own needle and a
+   missing *busy* edge is itself a failure. A QA case that asserts only on the final frame will
+   pass against a TUI that never ran the turn at all.
+
+3. **Spend the fleet's budget on resize, reflow, and repaint — that is where the parity gap
+   actually is.** The single real defect this session surfaced was ccx's resize artifacting
+   (stale 120-wide rules, a doubled composer block, no self-heal), reproduced on a clean session
+   while claude passed the identical probe. Meanwhile the mouse axis — the one the sprint was
+   framed around — turned out to be a non-axis: neither TUI enables mouse reporting, so there is
+   no interaction to compare. Redirect that effort into a matrix of widths (80/100/120/160) ×
+   heights (24/40) × content states (empty, mid-turn, folded tool row, expanded), driven purely
+   by `resize-window` + `capture-pane`. It is cheap, fully deterministic, needs no model tokens
+   after the content is staged, and it is demonstrably where the clone diverges.
