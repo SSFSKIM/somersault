@@ -1,0 +1,24 @@
+  │ Equal     │ Tests whether two    │ three equal      │
+  │ equal     │ values are the same  │ equal three is   │
+  │           │                      │ true             │
+  └───────────┴──────────────────────┴──────────────────┘
+
+  def describe_operators():
+      total = 5 + 3
+      difference = 10 - 4
+      product = 6 * 7
+      power = 2 ** 5
+      quotient = 7 / 2
+      floor_quotient = 7 // 2
+      remainder = 7 % 2
+      is_equal = (3 == 3)
+      return total, difference, product, power, quotient,
+  floor_quotient, remainder, is_equal
+
+✻ Cooked for 9s
+
+────────────────────────────────────────────────────────────
+❯ add a table of contents section too
+────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for a…
+

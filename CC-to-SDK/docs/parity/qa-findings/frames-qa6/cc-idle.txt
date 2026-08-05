@@ -1,0 +1,40 @@
+╭─── Claude Code v2.1.222 ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                 │ Tips for getting started                                           │
+│                  Welcome back!                  │ Ask Claude to create a new app or clone a repository               │
+│                                                 │ ────────────────────────────────────────────────────────────────── │
+│                     ▐▛███▜▌                     │ What's new                                                         │
+│                    ▝▜█████▛▘                    │ Fixed worktree-isolated sessions and their subagents being able t… │
+│                      ▘▘ ▝▝                      │ Fixed PreToolUse auto-allow hooks bypassing tool restrictions in … │
+│                                                 │ Fixed `/usage-credits` on Team and Enterprise showing "you've alr… │
+│              Sonnet 5 · Claude API              │ /release-notes for more                                            │
+│   /private/tmp/qa6-root-vgtQni/proj-cc-hKEtBt   │                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "how does <filepath> work?"
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

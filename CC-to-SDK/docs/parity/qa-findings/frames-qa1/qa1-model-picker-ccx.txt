@@ -1,0 +1,40 @@
+⏺ Acknowledged — QUEUED-ONE. The sleep 35 task (buiv2iy66) is still running; nothing else queued on my end.
+❯ QUEUED-TWO
+⏺ QUEUED-TWO received. Still waiting on sleep 35 (buiv2iy66) to finish — no other work in progress.
+❯ /model
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ⏎ send · \⏎ for newline · @ files · / commands · ! bash · ⇧Tab mode · ? help
+ Esc rewind · ? help
+model claude-opus-5  mode auto (⇧Tab to cycle)  think default  ctx 2%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

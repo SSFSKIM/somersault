@@ -1,0 +1,15 @@
+❯ /model
+  ⎿  Kept model as Sonnet 5 (default)
+
+❯ Without using tools, slowly write a 120-line numbered list of Python standard library modules,
+  one per line, formatted as "N. modulename - one short sentence".
+
+✻ Quantumizing… (7s · thinking)
+  ⎿  Tip: Use Plan Mode to prepare for a complex request before making changes. Press shift+tab
+     twice to enable.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents
+

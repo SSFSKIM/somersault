@@ -1,0 +1,40 @@
+  │             │ from the left                 │ six                      │
+  ├─────────────┼───────────────────────────────┼──────────────────────────┤
+  │ Asterisk    │ Multiplies two values         │ six times seven equals   │
+  │             │                               │ forty two                │
+  ├─────────────┼───────────────────────────────┼──────────────────────────┤
+  │ Double      │ Raises the left value to the  │ two raised to five       │
+  │ asterisk    │ power of the right            │ equals thirty two        │
+  ├─────────────┼───────────────────────────────┼──────────────────────────┤
+  │ Slash       │ Divides and returns a         │ seven divided by two     │
+  │             │ floating point result         │ equals three point five  │
+  ├─────────────┼───────────────────────────────┼──────────────────────────┤
+  │ Double      │ Divides and rounds down to    │ seven floor divided by   │
+  │ slash       │ the nearest whole number      │ two equals three         │
+  ├─────────────┼───────────────────────────────┼──────────────────────────┤
+  │ Percent     │ Returns the remainder of      │ seven modulo two equals  │
+  │             │ division                      │ one                      │
+  ├─────────────┼───────────────────────────────┼──────────────────────────┤
+  │ Equal equal │ Tests whether two values are  │ three equal equal three  │
+  │             │ the same                      │ is true                  │
+  └─────────────┴───────────────────────────────┴──────────────────────────┘
+
+  def describe_operators():
+      total = 5 + 3
+      difference = 10 - 4
+      product = 6 * 7
+      power = 2 ** 5
+      quotient = 7 / 2
+      floor_quotient = 7 // 2
+      remainder = 7 % 2
+      is_equal = (3 == 3)
+      return total, difference, product, power, quotient, floor_quotient,
+  remainder, is_equal
+
+✻ Cooked for 9s
+
+────────────────────────────────────────────────────────────────────────────────
+❯ add a table of contents section too
+────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+

@@ -1,0 +1,40 @@
+      print("xor:", a ^ b)
+
+
+  describe(7, 2)
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Transcript lines 95–124 of 124                                                                                       │
+│   │ plus          │ Adds two numbers or joins two sequences  │ 3 plus 4 gives 7                  │                   │
+│   ├───────────────┼──────────────────────────────────────────┼───────────────────────────────────┤                   │
+│   │ double star   │ Raises the left value to the right power │ 2 to the 5th gives 32             │                   │
+│   ├───────────────┼──────────────────────────────────────────┼───────────────────────────────────┤                   │
+│   │ double slash  │ Divides and rounds down to an integer    │ 7 floor 2 gives 3                 │                   │
+│   ├───────────────┼──────────────────────────────────────────┼───────────────────────────────────┤                   │
+│   │ percent       │ Returns the remainder after division     │ 7 mod 2 gives 1                   │                   │
+│   ├───────────────┼──────────────────────────────────────────┼───────────────────────────────────┤                   │
+│   │ double equals │ Tests whether two values are equal       │ 3 equals 3 gives True             │                   │
+│   ├───────────────┼──────────────────────────────────────────┼───────────────────────────────────┤                   │
+│   │ is            │ Tests whether two names share one object │ None is None gives True           │                   │
+│   ├───────────────┼──────────────────────────────────────────┼───────────────────────────────────┤                   │
+│   │ in            │ Tests membership inside a container      │ 2 in a list of 1, 2, 3 gives True │                   │
+│   ├───────────────┼──────────────────────────────────────────┼───────────────────────────────────┤                   │
+│   │ caret         │ Sets bits present in exactly one operand │ 5 xor 3 gives 6                   │                   │
+│   └───────────────┴──────────────────────────────────────────┴───────────────────────────────────┘                   │
+│                                                                                                                      │
+│   def describe(a, b):                                                                                                │
+│       """Show a handful of operators applied to two integers."""                                                     │
+│       print("sum:", a + b)                                                                                           │
+│       print("power:", a ** b)                                                                                        │
+│       print("floor:", a // b)                                                                                        │
+│       print("remainder:", a % b)                                                                                     │
+│       print("equal:", a == b)                                                                                        │
+│       print("both truthy:", bool(a and b))                                                                           │
+│       print("member:", a in (1, 2, 3))                                                                               │
+│       print("xor:", a ^ b)                                                                                           │
+│                                                                                                                      │
+│                                                                                                                      │
+│   describe(7, 2)                                                                                                     │
+│ j/k ↑↓ line · Ctrl-U/D ½page · Ctrl-B/F b/space page · g/G top/bottom · Ctrl-E collapse · q/Esc close                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+model claude-opus-5  mode acceptEdits  think default  ctx 3%
+

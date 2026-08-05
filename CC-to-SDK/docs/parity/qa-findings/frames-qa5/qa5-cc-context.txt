@@ -1,0 +1,40 @@
+[38;5;246m✻[39m [38;5;246mBaked[39m [38;5;246mfor[39m [38;5;246m2s[39m
+
+[38;5;239m[48;5;237m❯ [38;5;231mReply with exactly: TWO. No tools./cost[39m
+
+[38;5;231m[49m⏺[39m TWO
+
+[38;5;246m✻[39m [38;5;246mChurned[39m [38;5;246mfor[39m [38;5;246m1s[39m
+
+[38;5;239m[48;5;237m❯ [38;5;231m/cost[39m
+
+[38;5;153m[49m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m  [1m[38;5;153mSettings[0m  Status   Config  [1m[38;5;16m[48;5;153m Usage [0m  Stats
+
+  [1mSession[0m
+
+  [38;5;246mTotal cost:  [39m          [38;5;246m$0.2253[39m
+  [38;5;246mTotal[39m [38;5;246mduration[39m [38;5;246m(API):[39m  [38;5;246m36s[39m
+  [38;5;246mTotal duration (wall):[39m [38;5;246m6m[39m [38;5;246m14s[39m
+  [38;5;246mTotal code changes:    0 lines added, 0 lines[39m [38;5;246mremoved[39m
+  [38;5;246mUsage by model:[39m
+  [38;5;246m     claude-sonnet-5:  3.6k input, 914 output, 439.7k cache read, 11.4k cache write ($0.2246)[39m
+  [38;5;246m    claude-haiku-4-5:[39m  [38;5;246m548[39m [38;5;246minput, 14 output,[39m [38;5;246m0 cache[39m [38;5;246mread, 0 cache write ($0.0006)[39m
+
+  [38;5;246mEsc to cancel[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

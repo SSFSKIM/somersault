@@ -1,0 +1,24 @@
+
+
+  describe(7, 2)
+❯ /model
+
+
+────────────────────────────────────────────────────────────
+ Select model
+ Switch between Claude models. Your pick becomes the
+ default for new sessions. For other/previous model names,
+
+────────────────────────────────────────────────────────────────────────────────
+ Select model
+ Switch between Claude models. Your pick becomes the default for new sessions.
+ For other/previous model names, specify with --model.
+
+ ❯ 1. Default (recommended) ✔   Sonnet 5 · Efficient for routine tasks
+   2. Sonnet                   Sonnet 5 · Efficient for routine tasks
+   3. Opus                     Opus 5 · Best for everyday, complex tasks
+   4. Haiku                    Haiku 4.5 · Fastest for quick answers
+
+ enter to set as default · s to use this session only · esc to cancel
+model claude-opus-5  mode acceptEdits  think default  ctx 3%
+

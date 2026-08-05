@@ -1,0 +1,40 @@
+  │ Asterisk        │ Multiplies two values                               │ six times seven equals forty two             │
+  ├─────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────┤
+  │ Double asterisk │ Raises the left value to the power of the right     │ two raised to five equals thirty two         │
+  ├─────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────┤
+  │ Slash           │ Divides and returns a floating point result         │ seven divided by two equals three point five │
+  ├─────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────┤
+  │ Double slash    │ Divides and rounds down to the nearest whole number │ seven floor divided by two equals three      │
+  ├─────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────┤
+  │ Percent         │ Returns the remainder of division                   │ seven modulo two equals one                  │
+  ├─────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────┤
+  │ Equal equal     │ Tests whether two values are the same               │ three equal equal three is true              │
+  └─────────────────┴─────────────────────────────────────────────────────┴──────────────────────────────────────────────┘
+
+  def describe_operators():
+      total = 5 + 3
+      difference = 10 - 4
+      product = 6 * 7
+      power = 2 ** 5
+      quotient = 7 / 2
+      floor_quotient = 7 // 2
+      remainder = 7 % 2
+      is_equal = (3 == 3)
+      return total, difference, product, power, quotient, floor_quotient, remainder, is_equal
+
+✻ Baked for 9s
+
+❯ /model
+  ⎿  Kept model as Sonnet 5 (default)
+
+❯ Without using tools, slowly write a 120-line numbered list of Python standard library modules, one per line, formatted as "N. modulename - one short
+  sentence".
+
+✳ Quantumizing… (4s · thinking)
+  ⎿  Tip: Use Plan Mode to prepare for a complex request before making changes. Press shift+tab twice to enable.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents                                                             ● high · /effort
+

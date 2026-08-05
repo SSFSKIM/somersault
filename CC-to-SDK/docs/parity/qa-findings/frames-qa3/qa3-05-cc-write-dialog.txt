@@ -1,0 +1,40 @@
+[38;5;174m│[39m                                          [2m[38;5;174m│[0m [38;5;174m─────────────────────────────────────────────────────────────────────────[39m [38;5;174m│
+│[39m                  [38;5;174m▐[48;5;16m▛███▜[49m▌[39m                 [2m[38;5;174m│[0m [1m[38;5;174mWhat's[0m [1m[38;5;174mnew[0m                                                                [38;5;174m│
+│[39m                 [38;5;174m▝▜[48;5;16m█████[49m▛▘[39m                [2m[38;5;174m│[0m Fixed worktree-isolated sessions and their subagents being able to run d… [38;5;174m│
+│[39m                   [38;5;174m▘▘[39m [38;5;174m▝▝[39m                  [2m[38;5;174m│[0m Fixed PreToolUse auto-allow hooks bypassing tool restrictions in backgro… [38;5;174m│
+│[39m                                          [2m[38;5;174m│[0m Fixed `/usage-credits` on Team and Enterprise showing "you've already se… [38;5;174m│
+│[39m          [38;5;246mSonnet[39m [38;5;246m5[39m [38;5;246m·[39m [38;5;246mClaude[39m [38;5;246mAPI[39m           [2m[38;5;174m│[0m [3m[38;5;246m/release-notes[0m [3m[38;5;246mfor[0m [3m[38;5;246mmore[0m                                                   [38;5;174m│
+│[39m   [38;5;246m/private/tmp/qa3-root/proj-cc-qc2niL[39m   [2m[38;5;174m│[0m                                                                           [38;5;174m│
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+[38;5;239m[48;5;237m❯ [38;5;231mRun the shell command: git init[39m
+
+[38;5;211m[49m⏺[39m [1mBash[0m(git init)
+[38;5;246m  ⎿  Interrupted · What should Claude do instead?[39m
+
+[38;5;246m✻[39m [38;5;246mBaked for 2m 37s[39m
+
+[38;5;239m[48;5;237m❯ [38;5;231mDo not run it. Just reply exactly: DENY-OK[39m
+
+[38;5;231m[49m⏺[39m DENY-OK
+
+[38;5;246m✻[39m [38;5;246mSautéed for 1s[39m
+
+[38;5;239m[48;5;237m❯ [38;5;231mCreate a file named x.txt containing exactly HELLO using the Write tool[39m
+
+[38;5;246m[49m⏺[39m [1mWrite[0m(]8;id=thzk07;file:///private/tmp/qa3-root/proj-cc-qc2niL/x.txt\x.txt]8;;\)
+
+[38;5;153m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [1m[38;5;153mCreate file[0m
+ [38;5;246mx.txt[39m
+[38;5;239m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+[39m [2m[38;5;231m 1 [0m[38;5;231mHELLO[39m
+[38;5;239m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+[39m Do you want to create [1mx.txt[0m?
+ [38;5;153m❯[39m [38;5;246m1.[39m [38;5;153mYes[39m
+   [38;5;246m2.[39m Yes, allow all edits during this session [1m(shift+tab)[0m
+   [38;5;246m3.[39m No
+
+ [38;5;246mEsc[39m [38;5;246mto[39m [38;5;246mcancel[39m [38;5;246m·[39m [38;5;246mTab[39m [38;5;246mto[39m [38;5;246mamend[39m
+

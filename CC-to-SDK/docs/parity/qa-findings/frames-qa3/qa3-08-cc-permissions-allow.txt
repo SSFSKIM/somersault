@@ -1,0 +1,40 @@
+[38;5;246m  ⎿[39m [38;5;246m [38;5;211mError: Exit code 128[39m
+     [38;5;211mfatal: (현재 폴더 또는 상위 폴더 중 일부가) 깃 저장소가 아닙니다: .git[39m
+
+[38;5;231m⏺[39m Not a git repository (this directory hasn't been initialized with [38;5;153mgit init[39m).
+
+[38;5;246m✻[39m [38;5;246mCogitated for 4s[39m
+
+[38;5;239m[48;5;237m❯ [38;5;231mRun the shell command: touch qa3-marker.txt[39m
+
+[38;5;114m[49m⏺[39m [1mBash[0m(touch qa3-marker.txt)
+[38;5;246m  ⎿  Done[39m
+
+[38;5;231m⏺[39m Created qa3-marker.txt.
+
+[38;5;246m✻[39m [38;5;246mCooked for 3s[39m
+
+[38;5;239m[48;5;237m❯ [38;5;231m/permissions[39m
+
+[38;5;153m[49m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m  [1m[38;5;153mPermissions[0m  Recently denied  [1m[38;5;16m[48;5;153m Allow [0m  Ask   Deny   Workspace
+
+  Claude Code won't ask before using allowed tools.
+  [2m╭───────────────────────────────────────────────╮[0m
+  [2m│[0m [38;5;246m⌕ Search…[39m                                     [2m│[0m
+  [2m╰───────────────────────────────────────────────╯[0m
+
+    [38;5;246m1. [39mAdd a new rule…
+
+  [38;5;246m←/→ to switch · ↓ to select · Esc to cancel[39m
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,40 @@
+  computing.
+  16. Vint Cerf — Co-designed the TCP/IP protocols that form the backbone of the Internet.
+  17. Bob Kahn — Co-designed TCP/IP alongside Vint Cerf, enabling internetworking between disparate networks.
+  18. Tim Berners-Lee — Invented the World Wide Web, HTTP, and HTML.
+  19. Linus Torvalds — Created the Linux kernel and the Git version control system.
+  20. Bjarne Stroustrup — Designed and implemented the C++ programming language.
+  21. Guido van Rossum — Created the Python programming language.
+  22. James Gosling — Led the design and creation of the original Java programming language.
+  23. Niklaus Wirth — Designed the Pascal, Modula, and Oberon programming languages.
+  24. John von Neumann (duplicate placeholder removed)
+  25. Butler Lampson — Contributed foundational work in distributed systems, personal computing, and computer security.
+  26. Leslie Lamport — Developed foundational concepts in distributed systems, including the Paxos consensus algorithm.
+  27. Judea Pearl — Pioneered probabilistic reasoning and causal inference in artificial intelligence.
+  28. Geoffrey Hinton — Advanced backpropagation and deep learning techniques that revived modern neural networks.
+  29. Yann LeCun — Developed convolutional neural networks, foundational to modern computer vision.
+  30. Yoshua Bengio — Contributed key advances in deep learning, including sequence modeling techniques.
+  31. Shafi Goldwasser — Co-developed probabilistic encryption and zero-knowledge proofs in cryptography.
+  32. Whitfield Diffie — Co-invented public-key cryptography with the Diffie–Hellman key exchange.
+  33. Martin Hellman — Co-created the Diffie–Hellman key exchange, enabling secure communication without shared secrets.
+  34. Ron Rivest — Co-invented the RSA public-key cryptosystem.
+  35. Adi Shamir — Co-invented RSA encryption and contributed to differential cryptanalysis.
+  36. Leonard Adleman — Co-invented RSA encryption and pioneered DNA computing.
+  37. Frances Allen — Pioneered compiler optimization techniques and was the first woman to win the Turing Award.
+  38. Radia Perlman — Invented the spanning tree protocol, critical to the stability of network bridges.
+  39. Alan Kay — Pioneered object-oriented programming and the graphical user interface concepts used in modern
+  computing.
+  40. Douglas Engelbart — Invented the computer mouse and demonstrated hypertext and video conferencing in his 1968
+  "Mother of All Demos."
+
+  Note: entry 24 was a stray duplicate marker from Von Neumann's earlier listing — treat the list as 39 unique names
+  plus that placeholder; let me know if you'd like a clean swap-in for #24 (e.g., Fernando Corbató, pioneer of
+  time-sharing systems).
+
+✻ Brewed for 23s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Swap #24 for Fernando Corbató
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  QA6SL#15 | keys=context_window,cost,cwd,effort,exceeds_200k_tokens,fast_mode,model,output_style,prompt_id,rate_limit…
+  ⏸ manual mode on · ← for agents

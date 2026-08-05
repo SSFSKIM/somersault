@@ -1,0 +1,58 @@
+{
+ "session_id": "<redacted>",
+ "transcript_path": "<redacted>",
+ "cwd": "/private/tmp/qa6-root-vgtQni/proj-cc-hKEtBt",
+ "prompt_id": "461dab9c-1577-415a-8156-219805be5e43",
+ "effort": {
+  "level": "high"
+ },
+ "session_name": "Write essay on terminal emulator history",
+ "model": {
+  "id": "claude-sonnet-5",
+  "display_name": "Sonnet 5"
+ },
+ "workspace": {
+  "current_dir": "/private/tmp/qa6-root-vgtQni/proj-cc-hKEtBt",
+  "project_dir": "/private/tmp/qa6-root-vgtQni/proj-cc-hKEtBt",
+  "added_dirs": []
+ },
+ "version": "2.1.222",
+ "output_style": {
+  "name": "default"
+ },
+ "cost": {
+  "total_cost_usd": 0.1822163,
+  "total_duration_ms": 546143,
+  "total_api_duration_ms": 49011,
+  "total_lines_added": 0,
+  "total_lines_removed": 0
+ },
+ "context_window": {
+  "total_input_tokens": 39105,
+  "total_output_tokens": 1709,
+  "context_window_size": 1000000,
+  "current_usage": {
+   "input_tokens": 2,
+   "output_tokens": 1709,
+   "cache_creation_input_tokens": 82,
+   "cache_read_input_tokens": 39021
+  },
+  "used_percentage": 4,
+  "remaining_percentage": 96
+ },
+ "exceeds_200k_tokens": false,
+ "fast_mode": false,
+ "thinking": {
+  "enabled": true
+ },
+ "rate_limits": {
+  "five_hour": {
+   "used_percentage": 56.00000000000001,
+   "resets_at": 1785961800
+  },
+  "seven_day": {
+   "used_percentage": 56.99999999999999,
+   "resets_at": 1786201200
+  }
+ }
+}

@@ -1,0 +1,40 @@
+╭─────────────────────────────────────────────────╮
+│ ✻ Welcome to Claude Code                        │
+╰─────────────────────────────────────────────────╯
+
+  cwd    /private/tmp/qa1-driver-JVLMIS/qa-proj-ccx-ie99sE
+  model  (default)   ·   mode  default
+
+  Tips for getting started
+  • Ask Claude to edit files, run commands, or explain code
+  • /help for commands · @ to reference files · ⇧Tab to change mode
+  • Esc to interrupt a response
+
+! echo QA1-BASH-OK
+  QA1-BASH-OK
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  /model                        <name> — switch model (no arg shows current)
+  /compact                      compact the conversation context
+  /context                      show context-window usage
+  /cost                         show session cost + token usage
+  /status                       show model · mode · context · session
+  /clear                        clear the screen (session context kept)
+  /resume                       resume a prior session
+  /continue                     resume the most-recent session
+  /yolo                         enable bypassPermissions (ungated tool access)
+  /think                        <off|low|medium|high|xhigh|max|N> — set thinking budget (no arg shows current)
+  /mcp                          [reconnect <name> | toggle <name> on|off] — MCP server status / controls
+  /bg                           view and manage everything running in the background (aliases /tasks /bashes)
+  /history                      search prompt history in the full-screen picker (Ctrl-R searches inline)
+  /rewind                       rewind to a previous message (Esc Esc · aliases /checkpoint /undo)
+  /add-dir                      <path> — add a new working directory
+  /theme                        change the theme
+  /config                       open the Settings dialog (Status · Config · Usage · Stats)
+  /settings                     alias of /config
+  /permissions                  manage allow and deny tool permission rules
+  /allowed-tools                alias of /permissions
+model claude-opus-5  mode auto (⇧Tab to cycle)  think default
+
+
