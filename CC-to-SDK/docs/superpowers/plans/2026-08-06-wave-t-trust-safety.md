@@ -390,16 +390,22 @@ git commit -am "f5(waveT-t5): empty feedback rows collapse when focus leaves (L5
 `riskColorRole(level)`, an `ExplainTransport` interface, and
 `explainCommand(args, transport): Promise<Explanation>`. **Task 7 consumes all of it.**
 
-**SCOPE, and it is deliberate: ship no default transport.** Verified twice, independently: the harness has
-**no** one-off Messages path. `harness/package.json` declares one Anthropic package
-(`@anthropic-ai/claude-agent-sdk`); `grep -rn "@anthropic-ai/sdk\|new Anthropic\|messages.create\|api.anthropic.com\|fetch(" src/`
-returns **zero hits**; and the SDK's `sdk.d.ts` has **zero** occurrences of `tool_choice`, so a forced-tool
-call is not expressible through `query()`. `@anthropic-ai/sdk` exists in `node_modules` only as a
-transitive peer of the agent SDK. Wiring a real transport therefore needs both a new declared dependency
-and an auth decision the repo has never made (the project uses `CLAUDE_CODE_OAUTH_TOKEN`, not an API key)
-— that is spec W-T13's probe 98, not this task. **Do not add a dependency. Do not report BLOCKED** — the
-task is complete when the constants, helpers, prompt builder, interface and DI'd `explainCommand` are
-green.
+**Transport: use the harness's existing structured-output path. Do NOT add a dependency.** Probe 98
+(`probes/probes/98-explain-command-feasibility.ts`, run live 2026-08-06) measured three routes. The one
+this task builds on is **native structured output** (`outputFormat: json_schema`), already wrapped at
+`src/structured/run.ts`: it returned a valid four-field object 3/3 times in ~6 s with **zero new
+dependencies**. Read `src/structured/run.ts` and drive it with `EXPLAIN_TOOL_SCHEMA`'s `input_schema` as
+the JSON schema.
+
+Two routes were rejected for this wave and are recorded in spec W-T13 so nobody re-opens them:
+a raw `@anthropic-ai/sdk` Messages call with a true `tool_choice` (fastest at 2.8 s, but costs promoting a
+transitive peer to a declared dependency **and** making the harness source an OAuth bearer credential
+itself), and a nested `query()` fenced to an in-process MCP tool (works 3/3 but 14–16 s, dominated by CLI
+subprocess spawn). Keep `explainCommand`'s transport injected so the faster path is a one-file swap later.
+
+Note the shape difference: the structured path returns the object directly rather than a tool-use block,
+so `explainCommand` validates the four fields and rejects on a malformed result — the same contract Task 7
+renders against.
 
 **Context (canon L504910-42, L504943, L504955, L505005-14, L504995-5004).**
 

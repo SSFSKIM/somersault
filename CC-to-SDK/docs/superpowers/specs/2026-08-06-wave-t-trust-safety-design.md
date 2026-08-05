@@ -635,17 +635,33 @@ A12, A13.
   REPL today unrecognised. Rejected: a new typed `HostEvent` variant — it would duplicate an existing
   channel and force a host/client version dance for data already on the wire.
 
-- **W-T13 [OPEN → probe 98 decides]** `ctrl+e` explain's feasibility **in this harness** is unproven and
-  the first draft's "LANDED" was wrong: it read a statement about *upstream's* reproducibility as a
-  statement about ccx. Verified by the spec review and re-verified by the controller: `harness/package.json`
-  declares exactly one Anthropic package (`@anthropic-ai/claude-agent-sdk`), `src/` has never made a raw
-  Messages call, the SDK's `sdk.d.ts` contains **zero** occurrences of `tool_choice`, and the only
-  credential the project uses is the OAuth token (an API key is deliberately absent). Probe 98 must try
-  two paths and report which, if either, is subscription-billed and workable: (i) `@anthropic-ai/sdk`
-  driven by `CLAUDE_CODE_OAUTH_TOKEN`, (ii) a nested `query()` fenced to a single in-process MCP tool
-  (`createSdkMcpServer` + `allowedTools`) — near-forced rather than forced, but on the path the harness
-  already owns. **This is the "declared ≠ reachable" trap the project's own doctrine names**, caught one
-  step before it cost a task.
+- **W-T13 [RESOLVED by probe 98, 2026-08-06]** `ctrl+e` explain is **buildable**, and the cheapest viable
+  path needs no new dependency. The first draft's "LANDED" had been wrong for the right reason to catch:
+  it read a statement about *upstream's* reproducibility as a statement about ccx. Probe 98 measured three
+  paths live, all subscription-billed:
+  - **Path A — raw Messages with a true forced tool.** `@anthropic-ai/sdk` constructed with the OAuth
+    token as `authToken` (and `apiKey: null` so it cannot fall back to a metered key) plus the header
+    `anthropic-beta: oauth-2025-04-20` — a literal read out of the bundled CLI, not guessed — accepted a
+    real `tool_choice` request and returned all four fields in **2.8 s**, `stop_reason: tool_use`, no
+    prose to strip. Billing verified rather than assumed: the response carries unified subscription
+    rate-limit headers and no metered per-token headers.
+  - **Path B — nested `query()` fenced to one in-process MCP tool.** Called the tool 3/3 times but took
+    **14–16 s**, dominated by CLI subprocess spawn.
+  - **Path C — native structured output** (`outputFormat: json_schema`), which the harness **already
+    wraps** at `src/structured/run.ts`. Valid 3/3, ~**6 s**, **zero new dependencies**.
+
+  **Decision: build on Path C for this wave.** It reaches the same validated four-field object through
+  code the harness already owns, with no dependency promotion and no credential handling. Path A is
+  faster and is the truer transcription of upstream's mechanism, but it costs promoting
+  `@anthropic-ai/sdk` from transitive peer to declared dependency *and* making the harness source a
+  bearer credential itself — which is free with `CLAUDE_CODE_OAUTH_TOKEN` set, but for a CLI-only login
+  means reading and refreshing a token out of `~/.claude/.credentials.json`. That is a dependency-and-auth
+  decision worth its own ticket, not a step inside this wave. Recorded as a future optimisation; the
+  `ExplainTransport` seam makes the swap a one-file change.
+
+  The episode is the "declared ≠ reachable" trap the project's doctrine names, caught one step before it
+  cost a task — and then resolved *better* than the original plan, because the probe found a path nobody
+  had proposed.
 - **W-T14 [DECIDED]** The launch-default change is scoped to the **interactive host kind**, not to
   `runForegroundImpl`. Rejected: the call-site-scoped fix, which leaves `ccx --detachable` in `auto`.
 - **W-T15 [OPEN → measurement decides]** Whether a dead connection today produces zero, one or two error
