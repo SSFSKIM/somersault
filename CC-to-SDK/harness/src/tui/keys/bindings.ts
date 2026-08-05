@@ -130,11 +130,12 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   //     into the theme picker, the bg panel and every permission dialog;
   //   · `Select` explicitly unbinds `ctrl+r` (below), and an unbind resolves `{type:"unbound"}`, which
   //     `dispatch` treats as CONSUMED — a rename bound "by fallback" could never fire at all.
-  // This context sits directly OUTSIDE the picker's `Select` (parent mounts first, so the Select is inner
-  // and wins every key it binds — up/down/j/k/enter/escape included). What resolves HERE is therefore
-  // exactly what Select does not bind, plus the keys that must still work in the two sub-modes where NO
-  // Select is mounted: rename and preview. `escape` is that second kind — the same trick MessageSelector's
-  // block plays for the rewind picker's empty state.
+  // The picker pushes this context PREEMPTIVELY (SessionPicker.tsx says why: an ordinary scope would sit
+  // BELOW its own `Select`, whose `ctrl+r: null` would then eat the rename key). So these three keys win
+  // everywhere, at every stage — including `escape` in the list stage, where the inner Select's
+  // `select:cancel` consequently never resolves. `sessionPicker:dismiss` routes the list stage to the same
+  // function the Select's `onCancel` names, which is what keeps that behaviour-neutral; it also answers
+  // escape in the rename and preview stages, where no Select is mounted at all.
   //
   // The handlers are registered PER MODE (SessionPicker.tsx), not per binding: with no handler a matched
   // action falls through to the fallback (KeymapProvider's dispatch), which is how `space` types a space

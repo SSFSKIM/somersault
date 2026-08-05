@@ -669,7 +669,12 @@ export function useChat(
       switch (name) {
         case "model":
           // `/model opus` must reach the engine as an id: the SDK's own `opus` alias still means Opus 4.8 (probe 72).
-          if (cmd.args) { const m = resolveModelAlias(cmd.args)!; await session.setModel(m); if (!disposed.current) setModel(m); append(formatModel(m)); }
+          // F6 T11-fix: `/model <name>` REPLACES whatever the picker's `s` last put in force, so the
+          // session-only mark has to die with it — otherwise the picker's third line still claims
+          // "Currently using Opus for this session only" over a session now running Sonnet. Cleared here
+          // and not inside `setModel` because that setter also runs from stream events, where the model
+          // reported IS the session-only one.
+          if (cmd.args) { const m = resolveModelAlias(cmd.args)!; sessionModelRef.current = undefined; await session.setModel(m); if (!disposed.current) setModel(m); append(formatModel(m)); }
           else { await openModelPicker(); }
           break;
         case "compact": append(formatCompact(await session.compact())); break;

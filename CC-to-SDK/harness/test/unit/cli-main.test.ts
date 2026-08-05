@@ -35,6 +35,9 @@ function deps(over: Partial<MainDeps> = {}): MainDeps {
     prepareAttach: async () => { throw new Error("prepareAttach must not run"); },
     probeSocket: async () => { throw new Error("probeSocket must not run"); },
     runServe: async () => { throw new Error("runServe must not run"); },
+    // Empty by default: no test may read the real ~/.claude/ccx/prefs.json, and a launch with no saved
+    // default is the ordinary case anyway (F6 T11-fix).
+    loadPrefs: () => ({}),
     ...over,
   };
 }
@@ -315,6 +318,45 @@ describe("main — run: foreground (Task 7)", () => {
     expect(clientCalls[0]).toMatchObject({ client: { kind: "loopback" } });
     expect(clientCalls[0].initialPrompt).toBe("task");
   });
+  // F6 T11-fix. The /model picker's "set as default" writes `prefs.model`; a foreground launch is where
+  // that default is READ, and it flows into the host config exactly as --model does.
+  it("a saved prefs model becomes the launch model when no --model was typed", async () => {
+    const hostCalls: any[] = [];
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true,
+      loadPrefs: () => ({ model: "opus" }),
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(hostCalls[0].config.model).toBe("opus");                    // → resolveOptions, same as --model
+    expect(clientCalls[0].hookOpts.initialModel).toBe("claude-opus-5"); // …and the REPL's display seed resolves it
+  });
+  it("--model WINS over the saved default — a flag typed for this run outranks a stored preference", async () => {
+    const hostCalls: any[] = [];
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["--model", "sonnet", "task"], deps({
+      isTTY: () => true,
+      loadPrefs: () => ({ model: "opus" }),
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(hostCalls[0].config.model).toBe("sonnet");
+    expect(clientCalls[0].hookOpts.initialModel).not.toContain("opus");
+  });
+  it("with no saved default and no --model, the config carries no model at all (resolveOptions decides)", async () => {
+    const hostCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true,
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async () => {},
+    })));
+    expect(hostCalls[0].config.model).toBeUndefined();
+  });
+
   it("refuses --resume together with a prompt (foreground only), touching neither makeHost nor runChatClient", async () => {
     // A launch --resume + a prompt would set BOTH initialResume and initialPrompt on the client opts;
     // the submitted prompt then starts a turn, and useChat's busy-guard (Task 6) blocks the resume with

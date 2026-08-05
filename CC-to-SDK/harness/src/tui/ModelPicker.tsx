@@ -19,13 +19,11 @@ import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
 import { Select } from "./select/Select.js";
 import { formatOverflowCount } from "./format.js";
 import { savePrefs as realSavePrefs, type CcxPrefs } from "./prefs.js";
-import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
 import {
   MODEL_FOOTER, MODEL_SUBTITLE, MODEL_TITLE, MODEL_UNIT, modelLabel, modelName, modelOverflowCount,
   modelVisibleCount, sessionOnlyLine,
 } from "./modelPickerModel.js";
 
-const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
 
 export interface ModelInfo { value: string; displayName?: string; description?: string }
 

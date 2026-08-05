@@ -970,6 +970,35 @@ describe("model picker", () => {
 
     expect(api.state.modelPicker.open).toBe(false);
   });
+  // F6 T11-fix. Two guards the picker itself cannot answer, both in useChat.
+  it("an EMPTY catalog opens no picker at all — it says so instead", async () => {
+    const fake = fakeRemote({ capabilities: () => ({ models: [], commands: [], mcpServers: [] }) });
+    const api: { run?: (p: string) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.state = c.state; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/model");
+    await waitFor(() => flat(lastFrame).includes("no models available"));
+    expect(api.state.modelPicker.open).toBe(false);
+  });
+  it("`/model <name>` CLEARS the picker's session-only mark — it replaces whatever `s` put in force", async () => {
+    const fake = fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) });
+    const api: { run?: (p: string) => void; pick?: (m: any, o?: any) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.pick = c.pickModel; api.state = c.state; return <Text>x</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 0));
+    api.pick!({ value: "opus", displayName: "Opus" }, { saveDefault: false });   // the `s` path
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/model");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(api.state.modelPicker.sessionModel).toBe("opus");                     // the mark is in force…
+    api.run!("/model sonnet");                                                   // …and a direct switch retires it
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("/model");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(api.state.modelPicker.open).toBe(true);
+    expect(api.state.modelPicker.sessionModel).toBeUndefined();
+  });
 });
 
 describe("useChat: compact divider + /copy (Task 9)", () => {

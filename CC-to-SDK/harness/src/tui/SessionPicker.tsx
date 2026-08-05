@@ -73,7 +73,9 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
   const [renames, setRenames] = useState<Record<string, string>>({});
   const [renameText, setRenameText] = useState("");
   const [renameCursor, setRenameCursor] = useState(0);
-  const [preview, setPreview] = useState<{ id: string; lines: ReturnType<typeof previewLines> | null; count: number }>({ id: "", lines: null, count: 0 });
+  // `lines: null` is "still loading". No session id is kept beside it: which session the pane is about is
+  // `focused`, and the token below is what makes a late arrival for another row a no-op.
+  const [preview, setPreview] = useState<{ lines: ReturnType<typeof previewLines> | null; count: number }>({ lines: null, count: 0 });
   const mounted = useRef(true);
   const previewToken = useRef(0);
   useEffect(() => () => { mounted.current = false; }, []);
@@ -91,12 +93,12 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
   const openPreview = () => {
     if (!focused || !loadMessages) return;
     const id = focused.sessionId, token = ++previewToken.current;
-    setPreview({ id, lines: null, count: 0 });
+    setPreview({ lines: null, count: 0 });
     setStage("preview");
     void loadMessages(id).then((msgs) => {
       if (!mounted.current || previewToken.current !== token) return;
-      setPreview({ id, lines: previewLines(msgs), count: msgs.length });
-    }, () => { if (mounted.current && previewToken.current === token) setPreview({ id, lines: [], count: 0 }); });
+      setPreview({ lines: previewLines(msgs), count: msgs.length });
+    }, () => { if (mounted.current && previewToken.current === token) setPreview({ lines: [], count: 0 }); });
   };
   const startRename = () => {
     if (!focused || !renameSession) return;
@@ -114,17 +116,23 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
   // renders is the INNER scope — and `Select` explicitly unbinds `ctrl+r`, which resolves as CONSUMED. An
   // ordinary scope here would therefore have its rename key eaten by its own child. `preemptive` is the
   // mechanism the registry already has for exactly this: the surface that OWNS the overlay outranks the
-  // widget it embeds. Only the three keys this context binds change hands — every other key still resolves
-  // at `Select`, because this context does not bind it (`escape` is bound and routed to the same place the
-  // Select's own `onCancel` goes, so the two paths cannot diverge).
+  // widget it embeds.
+  //
+  // What that costs, stated plainly: `activeContexts` puts preemptive scopes AHEAD of everything, so the
+  // three keys bound here win at EVERY stage — `escape` included, in the list stage too, where the inner
+  // Select's `select:cancel` therefore never resolves. That is behaviour-neutral only because
+  // `sessionPicker:dismiss` routes the list stage into `escapeList`, which is the same function the
+  // Select's own `onCancel` calls. Keep the two pointing at one function or they will drift.
   useKeyScope("SessionPicker", { preemptive: true });
   useKeyActions({
-    // Registered PER STAGE. With no handler a matched action falls through to the fallback below, which is
-    // how `space` types a space into the rename field instead of opening a preview (bindings.ts says the
-    // same from the table's side).
-    ...(stage === "list" ? { "sessionPicker:preview": openPreview, "sessionPicker:rename": startRename } : {}),
-    // Only ever reached with NO `Select` mounted (preview/rename): in list mode the inner `Select` binds
-    // escape to its own cancel, and `escapeList` below is where that lands.
+    // Registered PER STAGE. With no handler a matched action falls through to the fallback below (the
+    // resolver treats a matched-but-unhandled action as unconsumed) — which is how `space` types a space
+    // instead of opening a preview: in the rename field, and in the list once a query is being typed.
+    // Upstream needs no such gate because its search is a MODE that disables the list; ours is modeless,
+    // so a multi-word query would otherwise be unreachable. Space still previews from an empty query,
+    // which is the state the footer advertises it in. Recorded divergence (T15).
+    ...(stage === "list" && query === "" ? { "sessionPicker:preview": openPreview } : {}),
+    ...(stage === "list" ? { "sessionPicker:rename": startRename } : {}),
     "sessionPicker:dismiss": () => { if (stage !== "list") backToList(); else escapeList(); },
   });
 
@@ -216,6 +224,9 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
         {...(focused ? { defaultFocusValue: focused.sessionId } : {})}
         onFocus={setFocusId}
         onChange={(value) => { const s = filtered.find((x) => x.sessionId === value); if (s) onPick(s); }}
+        // Required by SelectProps, and unreachable: the preemptive scope above answers escape first. It is
+        // wired to the SAME function that handler routes to, so if the scope ever stops being preemptive
+        // the behaviour is unchanged.
         onCancel={escapeList}
         onUnhandledKey={handleKey}
       />

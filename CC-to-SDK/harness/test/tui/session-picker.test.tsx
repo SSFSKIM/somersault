@@ -195,6 +195,22 @@ describe("SessionPicker — Space opens the preview pane (L476570/L476095)", () 
     expect(r.picked).toEqual(["1111aaaa-0001"]);
   });
 
+  // The cost of a MODELESS search (upstream's is a mode that disables the list): space cannot be both the
+  // preview key and a word separator, so it is the preview key only from an EMPTY query — the state the
+  // footer advertises it in — and types once a query exists. Both arms pinned; recorded divergence (T15).
+  it("space TYPES into a live query instead of previewing, so a multi-word search is reachable", async () => {
+    let loads = 0;
+    const r = mount({ loadMessages: async () => { loads++; return []; } });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    for (const c of "the") r.stdin.write(c);
+    await waitFor(() => flat(frame(r.lastFrame)).includes("⌕ the"));
+    r.stdin.write(" "); r.stdin.write("p");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("⌕ the p"));
+    expect(loads).toBe(0);                                                  // no preview was opened
+    expect(flat(frame(r.lastFrame))).toContain("refactor the parser");      // "the p" still matches it
+    expect(flat(frame(r.lastFrame))).not.toContain("fix the flaky test");
+  });
+
   it("Esc leaves the pane for the list without resuming anything", async () => {
     const r = mount({ loadMessages: async () => [{ type: "user", message: { content: "hi" } }] });
     await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));

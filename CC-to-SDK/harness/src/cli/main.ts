@@ -14,6 +14,9 @@ import { welcomeBanner } from "../tui/banner.js";
 import { resolveModelAlias } from "../config/models.js";
 import { DEFAULTS } from "../config/types.js";
 import { parseThinkArg, thinkingConfigFrom } from "../tui/thinkLevels.js";
+// Value import, and safe: prefs.ts is plain fs + the theme table, no React (main.ts stays React-free).
+import { loadPrefs as realLoadPrefs } from "../tui/prefs.js";
+import type { CcxPrefs } from "../tui/prefs.js";
 import { prepareAttach as realPrepareAttach } from "./attach.js";
 import { socketAnswers as realSocketAnswers } from "../fleet/liveness.js";
 // type-only: main.ts stays React-free. The ink import happens only inside the DEFAULT runChatClient,
@@ -38,6 +41,9 @@ export interface MainDeps {
   prepareAttach: typeof realPrepareAttach;
   probeSocket: (path: string) => Promise<void>;
   runServe: (inv: CcxInvocation) => Promise<void>;
+  /** The ccx client prefs (F6 T11). Injected for the same reason every other seam here is: a test must be
+   *  able to say what is on disk without writing to the user's real prefs file. */
+  loadPrefs: () => CcxPrefs;
 }
 const defaults: MainDeps = {
   runHostMain: realRunHostMain, collectFleet: realCollectFleet, spawnDetached: realSpawnDetached,
@@ -46,6 +52,7 @@ const defaults: MainDeps = {
   // The React-free guarantee: the import happens only when an interactive path actually calls it.
   runChatClient: async (o) => (await import("../tui/chatMain.js")).runChatClient(o),
   prepareAttach: realPrepareAttach,
+  loadPrefs: () => realLoadPrefs(),
   // Wraps the fleet's existing boolean prober (socketAnswers, which already swallows error codes) into
   // the throw-shaped seam attachToImpl expects — no second prober, no expectation of an error code.
   probeSocket: async (p) => {
@@ -204,10 +211,17 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   // Launch resume goes to the CLIENT (initialResume → resumeInto → the adapter's resume op), NOT into
   // the host's config: one resume code path, and the incr-9 replay behavior survives the cutover.
   const { resume, ...hostConfig } = inv.config;
+  // F6 T11-fix — THE READER for the /model picker's "set as default" write. The picker persists
+  // `prefs.model`; this is the one place a foreground launch decides what model the session starts on, so
+  // this is where the default belongs. `--model` still wins: a flag the user typed for THIS run outranks a
+  // preference they set once. From here it flows into `resolveOptions` exactly as `--model` does — no
+  // engine round-trip, no new code path. `ccx attach` cannot honour it (the host it joins already owns its
+  // model), and `-p`/`--bg` deliberately do not: a headless run takes its model from its invocation.
+  const model = inv.config.model ?? deps.loadPrefs().model;
   const host = deps.makeHost({
     short, name, cwd, kind: "interactive", detached: false,
     ...(inv.worktreePath ? { worktree: inv.worktreePath } : {}),
-    config: { ...hostConfig, ...(thinking ? { thinking } : {}) },
+    config: { ...hostConfig, ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) },
   });
   await host.start();
   // Terminal gone or OS says stop: finalize `done` — the deliberate asymmetry (acceptance 10): a default
@@ -222,12 +236,12 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
       // notice uses — so it can never masquerade as a persisted SDK row (F1 Task 4).
       ...(resume
         ? { initialResume: { kind: "id" as const, id: resume } }
-        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model: inv.config.model, mode: inv.config.permissionMode ?? "default" }) } }] }),
+        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model, mode: inv.config.permissionMode ?? "default" }) } }] }),
       // initialModel mirrors resolveOptions.ts's rule (alias first, then default) so the REPL knows what the
       // engine is actually running BEFORE the first turn ends. Without it the Tab ladder's `auto` rung reads
       // an undefined model and silently downgrades the session the user asked for. `ccx attach` (above) has
       // no launch config to pass, and useChat handles that unknown by declining to switch at all.
-      hookOpts: { initialMode: inv.config.permissionMode ?? "default", initialModel: resolveModelAlias(inv.config.model) ?? DEFAULTS.model, ...(parsedThink ? { initialThink: parsedThink.level } : {}) },
+      hookOpts: { initialMode: inv.config.permissionMode ?? "default", initialModel: resolveModelAlias(model) ?? DEFAULTS.model, ...(parsedThink ? { initialThink: parsedThink.level } : {}) },
     });
   } finally {
     process.off("SIGHUP", onSignal); process.off("SIGTERM", onSignal);
