@@ -1,6 +1,7 @@
-// tui/src/ChatApp.tsx — composes the transcript, any inline decision dialog, the composer (which the
-// exit-plan-mode dialog and every overlay still replace), and the status bar. Esc interrupt / Shift+Tab
-// cycle mode are owned by the composer and
+// tui/src/ChatApp.tsx — composes the transcript, any decision dialog (drawn in the transcript FLOW, upstream's
+// `layout:"inline"`, except exit-plan-mode's modal slot), the composer (which every visible dialog and every
+// overlay replaces — but which a dialog SUPPRESSED behind a live draft does not; see `typingActive`), and the
+// status bar. Esc interrupt / Shift+Tab cycle mode are owned by the composer and
 // inactive while a dialog is up; Ctrl-C / Ctrl-Z / Ctrl-B / Ctrl-T / Ctrl-O stay active even during a
 // dialog (Ctrl-Z can still suspend — F0 KB5: detach moved off this key onto /detach, a normal command
 // that goes through the composer like any other). Ctrl-L moved into the editor (Task 2) — it used to
@@ -30,9 +31,9 @@
 // themselves at all, because there is nothing left for them to guard against — every surface that hides the
 // composer now states in the table which of Global's keys reach it, and the ONE surface with no keys of its
 // own (the “⏪ restoring…” hold) says so too, by swallowing (`RestoringModal`). `inputOwnerRef` stays: it is a
-// different question (which surface is VISIBLE), and F6 TASK 5 made it load-bearing rather than a guard of last
-// resort — the composer reads it to DEACTIVATE its own scopes and fallback while an inline dialog is drawn
-// above it, and this file reads it to decide whether that dialog is drawn at all (`inlineDecision`).
+// different question (which surface is VISIBLE), and F6 TASK 5 gave it a second job: it is now the ONE
+// derivation this file reads back to decide what to draw — which dialog slot (`inlineDecision`), whether the
+// composer's slot is empty, and whether the composer is being suppressed rather than replaced (`"typing"`).
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
@@ -43,7 +44,7 @@ import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
 import { Line } from "./Line.js";
 import { userEchoLines } from "./render.js";
-import { ChatComposer, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
+import { ChatComposer, composerOwns, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
 import { initialEditorState, type EditorState } from "./editor.js";
 import { pushHistory } from "./editorHistory.js";
 import { composerMode } from "./promptMode.js";
@@ -77,13 +78,18 @@ import { PermissionsDialog } from "./PermissionsDialog.js";
  *  scope and its ctrl+x ctrl+b chord would survive the hold. */
 /** `$jp = 2` (bundle L426022) — the `paddingX` `wqo` puts around a queued prompt in normal layout. */
 const QUEUE_PAD = 2;
+/** `fs = 1500` (bundle L547787, the local const beside `Qo = mMr()`): how long after the LAST keystroke the
+ *  composer's typing-activity flag stays set, and therefore how long a decision that arrived mid-draft stays
+ *  suppressed. Injectable (`typingIdleMs`) for the same reason `yankHintMs`/`escClearMs`/`pasteHintMs` are —
+ *  so a test can watch the real window close instead of faking the clock under Ink. */
+export const TYPING_IDLE_MS = 1500;
 
 function RestoringModal(): React.ReactElement {
   useSwallowKeys(true);
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, suspend, resumeOutput }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, suspend, resumeOutput }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -101,6 +107,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   deps?: Parameters<typeof useChat>[2];
   yankHintMs?: number;
   escClearMs?: number;
+  /** `fs` (see TYPING_IDLE_MS). */
+  typingIdleMs?: number;
   suspend?: typeof suspendProcess;
   resumeOutput?: { repaint: (runInkWrite: () => void) => void };
 }) {
@@ -143,12 +151,30 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // …and the `Try "…"` suggestion's frozen inputs, for the third instance of that same lifetime rule:
   // upstream memoizes the pick once per PROCESS (`Vr`), so a composer remount must not re-roll the sentence.
   const placeholderMemoRef = useRef<PlaceholderMemo>({ draws: [] });
+  // ── UPSTREAM'S DIALOG SUPPRESSION (t5-fix; `mMr`/`Z1t` L492731+L236156, the `TC` writer L547796-802, and
+  // `Fui()`'s three states L499192). The flag is "the user is mid-draft": set the moment the buffer is
+  // non-blank, cleared 1500 ms after the LAST keystroke — a trailing debounce with no leading edge, restarted
+  // by every change and CANCELLED outright when the buffer empties (upstream's `b9.cancel()`), which is why
+  // emptying a draft reveals a waiting dialog at once instead of a second and a half later.
+  //
+  // It lives HERE, not in the composer, for a lifetime reason this file has hit three times before: the
+  // composer is unmounted by every overlay, and a timer it owned would die with it — leaving the flag stuck
+  // true and the decision suppressed forever. ChatApp outlives all of them.
+  const [typingActive, setTypingActive] = useState(false);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingIdleMsRef = useRef(typingIdleMs); typingIdleMsRef.current = typingIdleMs;
+  const noteInputActivity = (nonEmpty: boolean) => {
+    if (typingTimer.current) { clearTimeout(typingTimer.current); typingTimer.current = null; }
+    setTypingActive(nonEmpty);
+    if (nonEmpty) typingTimer.current = setTimeout(() => { typingTimer.current = null; setTypingActive(false); }, typingIdleMsRef.current);
+  };
+  useEffect(() => () => { if (typingTimer.current) clearTimeout(typingTimer.current); }, []);
   // Input subscriptions are passive. This ref changes during render, before the visible owner swaps, so a
   // retiring composer can reject the next key even before its own registration has been torn down — the Chat
   // scope outlives the unmount by one passive flush, and shift+tab/escape would otherwise still reach it from
-  // under a dialog. It names the VISIBLE surface. Since F6 task 5 it has two readers: the composer, which turns
-  // its own registrations off with it (a composer under an inline dialog is visible but not the owner), and
-  // `inlineDecision` below, whose whole overlay-precedence rule is one comparison against it.
+  // under a dialog. It names the VISIBLE surface, and since F6 task 5 this file reads it BACK: it is the one
+  // derivation behind which dialog slot draws, whether the composer's slot is empty, and whether a parked
+  // decision is being suppressed rather than shown.
   const inputOwnerRef = useRef<InputOwner>("composer");
   inputOwnerRef.current = state.shortcutsOpen
     ? "shortcuts"
@@ -156,18 +182,27 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       ? "transcript"
       : state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open
         ? "overlay"
+        // `Fui()`'s three states (bundle L499192), as two arms of this ladder. A parked decision while the
+        // draft is live is SUPPRESSED — the dialog renders nothing (`Xrl()` L499196) and the composer keeps
+        // the screen and the keyboard — so it is an owner value of its own rather than a flavour of
+        // "decision"; every other reading of "typing" (does the composer own keys? does the mode chip tell
+        // the truth?) is the same as "composer", which is what `composerOwns` says once.
         : state.pending
-          ? "decision"
+          ? typingActive ? "typing" : "decision"
           : "composer";
-  // F6 TASK 5 (DG27) — WHICH pending decision renders INLINE, and when. Upstream gives every dialog but
-  // exit-plan-mode `layout:"inline"` (bundle L507338, L507345-351): it is drawn in the transcript flow with the
-  // composer still below it, not in the composer's slot. Two conditions, both read off the owner ref computed
-  // immediately above rather than re-derived:
-  //   · `=== "decision"` IS the overlay-precedence gate. That arm is reached only when none of the eleven
-  //     overlay arms is open, so a parked decision stays completely hidden behind the pager / history search /
-  //     shortcuts / RestoringModal exactly as it does today — the accepted oddity documented in the chain
-  //     below, and the reason the dialog carries `key={toolUseID}`: closing the overlay re-renders it fresh,
-  //     so the answer channel is never lost, only its rendering deferred.
+  // F6 TASK 5 (DG27), as corrected by the t5 review against the bundle. Upstream HIDES the prompt input
+  // whenever a dialog is VISIBLE (`KVf`'s gate `… && on !== "visible" && …`, L549494); `layout:"inline"` vs
+  // `"modal"` (`ypi`, L507338 — exit-plan-mode is the only `"modal"` entry) decides only WHERE the dialog is
+  // drawn, in the scrollable transcript flow or in the overlaid modal slot, NOT whether the composer coexists
+  // with it. So the inline slot below draws in the flow, above where the composer would be, and the composer
+  // itself is absent for as long as the dialog is visible. Two conditions, both read off the owner ref
+  // computed immediately above rather than re-derived:
+  //   · `=== "decision"` IS the overlay-precedence gate AND the suppression gate at once. That arm is reached
+  //     only when none of the eleven overlay arms is open and the draft is idle, so a parked decision stays
+  //     completely hidden behind the pager / history search / shortcuts / RestoringModal exactly as before —
+  //     the accepted oddity documented in the chain below, and the reason the dialog carries
+  //     `key={toolUseID}`: whatever hid it, closing that thing re-renders the dialog FRESH, so the answer
+  //     channel is never lost, only its rendering deferred. Suppression reveals through the same door.
   //   · `kind !== "plan"` leaves upstream's one modal dialog in the composer-replacing chain below.
   const inlineDecision = inputOwnerRef.current === "decision" && state.pending && state.pending.kind !== "plan" ? state.pending : null;
   // The keymap dispatches from a stdin listener the provider attached in a passive effect, so — exactly as
@@ -355,15 +390,20 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                   ? <AddDirDialog prefill={state.addDir.prefill} onValidate={addDirValidate} onConfirm={confirmAddDir} onCancel={cancelAddDir} />
                   : state.picker.open
                   ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker} />
-                  // F6 TASK 5 — the permission and question arms are GONE from this chain; they render inline
-                  // above it (see `inlineDecision` further up) over a composer that stays mounted. Exit-plan
-                  // mode is the ONE dialog upstream gives `layout:"modal"` (bundle L507338), so it alone is
-                  // still composer-replacing. `key = toolUseID` for the same reason the other two carry it:
-                  // dropPending promotes the NEXT queued decision straight into `pending` with no intermediate
-                  // null render, and a reused instance would carry stale scroll/feedback state into it.
-                  : state.pending?.kind === "plan"
-                  ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
-                  : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} searchHintFiredRef={searchHintFiredRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} sessionId={state.sessionId} project={cwd}
+                  // F6 TASK 5 (t5-fix) — THE COMPOSER'S SLOT IS EMPTY WHILE A DIALOG IS VISIBLE. `owner ===
+                  // "decision"` is exactly upstream's `on === "visible"` (a decision is parked, no overlay is
+                  // over it, and the draft is idle), and `KVf`'s gate at L549494 renders no prompt input in
+                  // that state. The inline kinds have already drawn above this slot; exit-plan-mode — the one
+                  // `layout:"modal"` entry in `ypi` (L507338) — draws HERE, in the modal slot, which in this
+                  // single-column tree is the same place the composer would have been. `key = toolUseID` for
+                  // the reason the inline pair carries it: dropPending promotes the NEXT queued decision
+                  // straight into `pending` with no intermediate null render, and a reused instance would
+                  // carry stale scroll/feedback state into an unrelated decision.
+                  : inputOwnerRef.current === "decision"
+                  ? state.pending?.kind === "plan"
+                    ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
+                    : null
+                  : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} onInputActivity={noteInputActivity} waitingForPermission={inputOwnerRef.current === "typing"} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} searchHintFiredRef={searchHintFiredRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} sessionId={state.sessionId} project={cwd}
                       // F5 t12: the composer's disk seed, its history append and now its inline search all
                       // read this. Threaded from `deps.env` — the same source useChat's own `historyEnv`
                       // takes — so a test that points ChatApp at a temp fleet root points BOTH surfaces
@@ -377,7 +417,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           bar as a prop: its mode-chip parenthetical advertises a Chat-context key, so it must vanish the frame
           a dialog or overlay takes the keyboard. A prop and not a registry read, because this value is derived
           from state during render and therefore repaints with it — see ChatStatusBar's own header. */}
-      <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} thinkLevel={state.thinkLevel} bgCount={state.bgTasks.length} usageWarn={state.usageWarn} composerOwnsKeys={inputOwnerRef.current === "composer"} />
+      <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} thinkLevel={state.thinkLevel} bgCount={state.bgTasks.length} usageWarn={state.usageWarn} composerOwnsKeys={composerOwns(inputOwnerRef.current)} />
     </Box>
   );
 }

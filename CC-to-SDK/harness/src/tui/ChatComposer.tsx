@@ -131,7 +131,16 @@ const CTRL_L: KeyEvent = { kind: "key", name: "l", ctrl: true, alt: false, shift
  *  and a second copy of it in the search hook is the definition guaranteed to drift. */
 const ENTER: KeyEvent = { kind: "key", name: "enter", ctrl: false, alt: false, shift: false, super: false, raw: "\r" };
 
-export type InputOwner = "composer" | "shortcuts" | "transcript" | "overlay" | "decision";
+/** `"typing"` is upstream's SUPPRESSED state (`Fui()` L499192): a dialog is parked but the user is mid-draft,
+ *  so the dialog renders nothing and the composer keeps both the screen and the keyboard. It is a distinct
+ *  owner value rather than a second boolean because it is a distinct visible surface — composer plus the dim
+ *  `Waiting for permission…` row — and one derivation cannot disagree with itself. */
+export type InputOwner = "composer" | "typing" | "shortcuts" | "transcript" | "overlay" | "decision";
+/** The two owner values under which the composer is on screen AND holds the keyboard. */
+export const composerOwns = (owner: InputOwner): boolean => owner === "composer" || owner === "typing";
+/** CM-, bundle L496241: `<Text dimColor>Waiting for permission…</Text>` — one ellipsis CHARACTER, dim, in a
+ *  `marginTop:1 marginLeft:2` box ABOVE the composer frame. Exported so the pin reads the literal. */
+export const WAITING_FOR_PERMISSION = "Waiting for permission…";
 
 /** What `Vr` memoizes for `MVf` (bundle L495093), as a record ChatApp can own: the example-file list the
  *  `Try "…"` pool is built from, resolved once, and the random draws that index into it, frozen at first
@@ -190,7 +199,15 @@ const popupDrawn = (s: ReturnType<typeof suggestProps>): boolean => s !== null &
  *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
 export type ComposerEditExternal = (text: string) => string | null | Promise<string | null>;
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+  /** Upstream's `onInputChange` → `Z1t(value.trim().length > 0)` (bundle L547796-802): the composer reports
+   *  whether its buffer is non-empty EVERY time the text changes, and the app turns that into the typing
+   *  activity flag that suppresses a parked dialog. Reported from `commitState`, the one writer, and only on a
+   *  real text change — an arrow key calls no `onChange` upstream either, so it must not refresh the window. */
+  onInputActivity?: (nonEmpty: boolean) => void;
+  /** Upstream's `hasSuppressedDialogs` prop (L549494), which gates the dim `Waiting for permission…` row
+   *  (L496241): true while a decision is parked behind this draft. */
+  waitingForPermission?: boolean; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>;
   /** CM56's once-only guard, owned by ChatApp so it outlives this component's remounts (see below). */
   searchHintFiredRef?: React.MutableRefObject<boolean>; prefill?: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
   /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
@@ -264,9 +281,15 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const stateRef = useRef(state);
   stateRef.current = state;
   const commitState = (next: EditorState | ((current: EditorState) => EditorState)) => {
+    const previousText = bufferText(stateRef.current);
     const resolved = typeof next === "function" ? next(stateRef.current) : next;
     stateRef.current = resolved;
     if (editorStateRef) editorStateRef.current = resolved;
+    // Upstream's `onInputChange` seam (see the prop's comment): the ONE place the buffer text changes, so the
+    // one place the activity flag can be reported from. `trim()` is upstream's own predicate — a draft of
+    // spaces is not typing, and must not hold a permission prompt off the screen.
+    const text = bufferText(resolved);
+    if (text !== previousText) onInputActivityRef.current?.(text.trim().length > 0);
     setState(resolved);
     return resolved;
   };
@@ -325,6 +348,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const onInterruptRef = useRef(onInterrupt); onInterruptRef.current = onInterrupt;
   const onHelpRef = useRef(onHelp); onHelpRef.current = onHelp;
   const onDraftStartRef = useRef(onDraftStart); onDraftStartRef.current = onDraftStart;
+  // Read through a ref like every other callback here — `commitState` above runs from the keymap's passive
+  // listener, so a closure read would lag a render. (Declared below its one caller for the same reason
+  // `onDraftStartRef` is: nothing calls it during render.)
+  const onInputActivityRef = useRef(onInputActivity); onInputActivityRef.current = onInputActivity;
   const onKillAgentsRef = useRef(onKillAgents); onKillAgentsRef.current = onKillAgents;
   const editExternalRef = useRef(editExternal); editExternalRef.current = editExternal;
   const providerSuspend = useSuspendInput();
@@ -415,19 +442,23 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // Chat's `escape → chat:cancel` would steal the popup's own dismissal. It is belt-and-braces rather than
   // load-bearing: `handleKey` re-checks the live popup state from the ref, which is what keeps two keys
   // arriving in ONE chunk (no render in between, so the scope flag is one render stale) correct.
-  // ── F6 TASK 5, THE OWNERSHIP GATE. A permission or question dialog now renders INLINE, above a composer
-  // that stays MOUNTED and visible (ChatApp's render chain). Mount order alone cannot be trusted to give that
-  // dialog the keyboard — the registry ranks by mount order and this component is a live claimant for as long
-  // as it is on screen — so ownership is declared instead: every registration below is gated on the SAME
-  // question `handleKey`/`cancel`/`interceptChord` have always asked of `inputOwnerRef`, only now it is asked
-  // once, at render time, and answered by not registering at all rather than by an early return inside a
-  // handler that already won the key. The difference is the whole task: an early return CONSUMES, and the
-  // dialog's own digits, letters and Escape never arrive (plan-review finding 1).
+  // ── F6 TASK 5, THE OWNERSHIP GATE. Every registration below is gated on the SAME question
+  // `handleKey`/`cancel`/`interceptChord` have always asked of `inputOwnerRef` — only now it is asked once, at
+  // render time, and answered by NOT REGISTERING rather than by an early return inside a handler that has
+  // already won the key. The difference matters whenever another surface is mounted alongside this one: an
+  // early return consumes, so the other surface's keys never arrive.
+  //
+  // Under the t5-fix model (upstream's, bundle L549494) this component is unmounted whenever a dialog is
+  // VISIBLE, so the case it covers is narrower than it looked: the SUPPRESSED state (`owner === "typing"` —
+  // composer on screen, dialog withheld, composer owning) and the one passive-flush sub-tick in which a
+  // retiring composer's registrations outlive its unmount. It stays because it is the truthful expression of
+  // ownership: an inactive scope is also absent from `activeContexts`, which is what keeps `useBindingLookup`'s
+  // live answers honest in that window instead of advertising a Chat chord nobody can deliver.
   //
   // Read during RENDER, exactly like every other registration here: ChatApp writes the ref during its own
   // render, before this child renders, so the value is this frame's truth and not the previous frame's.
   // Undefined ref = a bare mount (tests, a future embed) with nobody else claiming anything: it owns.
-  const owns = !inputOwnerRef || inputOwnerRef.current === "composer";
+  const owns = !inputOwnerRef || composerOwns(inputOwnerRef.current);
   useKeyScope("Chat", { active: owns });
   // Upstream's own predicate is `c.length > 0 || !!Y` (bundle L491072) — a popup with an EMPTY list holds
   // no keys, because it draws nothing (t9 review, I2). Keying this on the state instead meant an `@zz` that
@@ -461,7 +492,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // upstream wins on fidelity questions, this stays un-disarmed on other input even though it reads as
   // inconsistent with the Esc arm below.
   const exitArm = () => {
-    if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
+    if (inputOwnerRef && !composerOwns(inputOwnerRef.current)) return;
     const s = stateRef.current;
     endInterceptedEditorAction(s);
     if (dArm.current && Date.now() - dArm.current < exitArmMsRef.current) { onExitRef.current?.(); return; }
@@ -480,7 +511,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     appendHistory({ display: entry.display, pastedContents: entry.pastedContents, project: historyProjectRef.current, sessionId: sessionIdRef.current }, historyEnvRef.current);
   };
   const cancel = () => {
-    if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
+    if (inputOwnerRef && !composerOwns(inputOwnerRef.current)) return;
     // CM58 FIRST, and off the ref rather than the render's `search.searching`: an Escape that arrived in the
     // same stdin chunk as the ctrl+r that opened the search resolves against a scope stack one render stale,
     // so it can still land here as `chat:cancel`. It is the ACCEPT (keep the match, close the search) — never
@@ -543,7 +574,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     return true;
   };
   const handleKey = (e: KeyEvent | TextEvent) => {
-    if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
+    if (inputOwnerRef && !composerOwns(inputOwnerRef.current)) return;
     // CM58's search field owns the fallback outright while it is live (divergence 3): the query takes every
     // printable, backspace shortens it — and empties into the cancel — and nothing else reaches the editor.
     // The ref, not the render value, for the one-chunk reason `cancel` above states.
@@ -631,7 +662,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // kill-to-end or the agent kill, so these handlers only fire when the chord already completed. Each still
   // ends a kill/yank run and drops an armed Esc-clear, which the swallowed ctrl+x prefix used to do.
   const interceptChord = (): EditorState | null => {
-    if (inputOwnerRef && inputOwnerRef.current !== "composer") return null;
+    if (inputOwnerRef && !composerOwns(inputOwnerRef.current)) return null;
     const s = stateRef.current;
     if (clearArm.current) disarmClear();
     return endInterceptedEditorAction(s);
@@ -655,7 +686,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       if (!isEmptyBuffer(stateRef.current)) { handleKey(e); return; }
       // Ownership FIRST (final-fix re-review): a non-owning composer must not disarm its Esc-clear or
       // setState at all — reachable only via a user rebind of app:exit to a key no overlay context nulls.
-      if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
+      if (inputOwnerRef && !composerOwns(inputOwnerRef.current)) return;
       if (clearArm.current) disarmClear();
       exitArm();
     },
@@ -850,9 +881,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // suggestion region are ALTERNATIVES sharing one slot — upstream's `Ptl` branch; see `popupDrawn`.
   // `owns` joins the two upstream conditions for the same reason ChatStatusBar takes `composerOwnsKeys`: both
   // rows advertise Chat-context chords (`⏎ send`, `esc rewind`, `? help`), and F0's honesty rule is that a hint
-  // is only true relative to its focused owner. Before F6 t5 this came for free — the composer was unmounted
-  // behind every dialog — and the pin that proves it ("hides the global composer hint under permission,
-  // question, and plan input owners", chat.test.tsx) now rides on this clause instead.
+  // is only true relative to its focused owner. In the settled tree this component never renders while it does
+  // NOT own (a visible dialog unmounts it — see the ownership gate above), so the clause is defensive rather
+  // than load-bearing today: the pin that proves the rows are gone under a dialog ("hides the global composer
+  // hint under permission, question, and plan input owners", chat.test.tsx) passes on the unmount alone.
   const showFooter = owns && mode === "normal" && !popupDrawn(suggest);
   // F2 task 10: every chord this component prints comes from the LIVE table, not from literals typed here —
   // rebind chat:cycleMode and the rung follows it; unbind it and the rung says `(unbound)` instead of promising
@@ -882,6 +914,13 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   if (editorInFlight) return <ComposerEditorInFlight columns={cols} borderToken={borderToken} />;
   return (
     <Box flexDirection="column">
+      {/* Upstream L496241, byte-exact and in upstream's own slot: `oe && <Box marginTop={1} marginLeft={2}>
+          <Text dimColor>Waiting for permission…</Text></Box>`, ABOVE the input frame (`zge`) — the visible face
+          of a decision this draft is suppressing. `oe` is the `hasSuppressedDialogs` prop; ours is the same
+          fact under the same name, and it is a PROP rather than a read of `inputOwnerRef` so a bare composer
+          mount can be driven into this state without an owner ref. marginLeft 2, not the paddingX 1 the hint
+          rows below use: those are ours, this one is transcribed. */}
+      {waitingForPermission ? <Box marginTop={1} marginLeft={2}><Text dimColor>{WAITING_FOR_PERMISSION}</Text></Box> : null}
       <ComposerFrame columns={cols} borderToken={borderToken} label={ruleLabel}>
         <PromptGlyph mode={mode} busy={busy} />
         {/* CM5 (`t_p`, L395963): an empty buffer paints the PLACEHOLDER with its first character inverted —

@@ -146,7 +146,7 @@ describe("overlay gating, expressed as null bindings", () => {
     for (const k of ["ctrl+c", "ctrl+o", "ctrl+t", "ctrl+r", "ctrl+b", "ctrl+x ctrl+b"]) {
       expect(k in b, `SelectDecision must not bind ${k} at all`).toBe(false);
     }
-    expect(b["ctrl+d"], "…except ctrl+d, whose owner (the composer) does not own the keyboard here").toBeNull();
+    expect(b["ctrl+d"], "…except ctrl+d, whose owner (the composer) is unmounted").toBeNull();
     for (const k of ["alt+p", "alt+t"]) expect(b[k], `SelectDecision ${k} must be null (Confirmation's rule)`).toBeNull();
   });
   it("SelectDecision offers the same eight actions as Select — only the suppression differs", () => {
