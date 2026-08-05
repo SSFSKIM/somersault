@@ -42,8 +42,9 @@ belongs to before starting. Canon citations (`L…`) refer to
 ## Task 1: REPL launches in manual permission mode
 
 **Files:**
-- Modify: `harness/src/cli/main.ts` (host construction — find where the foreground REPL builds its
-  `HarnessConfig`/host options)
+- Modify: `harness/src/cli/main.ts:213` + `:224` — `const { resume, ...hostConfig } = inv.config;` feeds
+  `deps.makeHost({ …, config: { ...hostConfig, … } })`. **This is the verified seam** (controller checked
+  it against the tree at plan time).
 - Test: `harness/test/unit/cli-main-mode.test.ts` (create) — or extend an existing `cli/main` test file
   if one already covers host construction; check `test/unit/` first.
 
@@ -73,14 +74,17 @@ Expected: FAIL — the config carries `auto` (or is absent, resolving to `auto`)
 
 - [ ] **Step 3: Implement**
 
-In the foreground path only, set an explicit `permissionMode` when the invocation did not specify one:
+In the foreground path only, set an explicit `permissionMode` when the invocation did not specify one.
+At `main.ts:224`, add it to the config spread (order matters — it must come after `...hostConfig` so an
+explicit `--permission-mode` still wins, which the `??` already guarantees, but keep it explicit):
 
 ```ts
-// Wave T EP-T1: the REPL launches MANUAL like upstream (2.1.220 gGl L41536 `default` → "Manual"). QA
-// sprint 1 found `rm` running unconsulted because DEFAULTS.permissionMode is "auto" (config/types.ts:161)
-// and every surface resolves through it. Headless (-p/--bg) and the daemon KEEP auto deliberately, so the
-// override lives here, at the foreground host construction, and not in DEFAULTS.
-permissionMode: inv.config.permissionMode ?? "default",
+    // Wave T EP-T1: the REPL launches MANUAL like upstream (2.1.220 `gGl` L41536: `default` → "Manual").
+    // QA sprint 1 found `rm` and `git init` running unconsulted because DEFAULTS.permissionMode is "auto"
+    // (config/types.ts:161) and every surface resolves through it. Headless (-p/--bg) and the daemon KEEP
+    // auto deliberately — a background run has nobody to ask — so the override lives HERE, at the
+    // foreground host construction, and not in DEFAULTS.
+    config: { ...hostConfig, permissionMode: inv.config.permissionMode ?? "default", ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) },
 ```
 
 - [ ] **Step 4: Run the test — expect PASS**
