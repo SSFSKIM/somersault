@@ -217,6 +217,31 @@ describe("<Select> digit selection (DJs, L396765-396786)", () => {
   });
 });
 
+describe("<Select> onFocus (m5o, L396843-845)", () => {
+  const inputFirst: SelectOption[] = [
+    { value: "note", label: "Note", type: "input", placeholder: "say something" },
+    { value: "b", label: "bravo" },
+  ];
+
+  it("reports the INITIAL row on mount, then each change, never the same row twice running", async () => {
+    const seen: string[] = [];
+    const r = await mount(<Select options={ten} onChange={noop} onCancel={noop} onFocus={(v) => seen.push(v)} rows={40} columns={100} />);
+    expect(seen).toEqual(["v1"]);                     // the mount fire — upstream's effect seeds on `t[0].value`
+    r.stdin.write("j"); await tick();
+    expect(seen).toEqual(["v1", "v2"]);               // and no duplicate from the synchronous `moveTo` report
+  });
+
+  // The reason the mount fire is required rather than nice: an embedding dialog gates its letter shortcuts on
+  // "is a text row focused" (BashPermission), and a list whose FIRST row is a text row would otherwise leave
+  // them live over the field until the user happened to move.
+  it("reports a first row that is a TEXT row before any key is pressed", async () => {
+    const seen: string[] = [];
+    await mount(<Select options={inputFirst} onChange={noop} onCancel={noop} onFocus={(v) => seen.push(v)} rows={40} columns={100} />);
+    expect(seen).toEqual(["note"]);
+    expect(inputFirst.find((o) => o.value === seen[0])?.type).toBe("input");
+  });
+});
+
 describe("<Select> input rows (RLe, L396465-396652)", () => {
   const withInput = (over: Partial<SelectOption> = {}): SelectOption[] => [
     { value: "yes", label: "Yes" },

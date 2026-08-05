@@ -12,7 +12,7 @@
 //     `j`/`k`/`enter` resolve to an action with no handler and fall through to us — which is how the same key
 //     is navigation on one row and a letter on the next. Only `up`/`down`/`ctrl+p`/`ctrl+n` still move
 //     (L396727-396748); PageUp/PageDown/Home/End deliberately do nothing there (upstream returns first).
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import stringWidth from "string-width";
 import { useKeyFallback } from "../keys/KeymapProvider.js";
@@ -70,10 +70,11 @@ export interface SelectProps {
   defaultValue?: string;
   defaultFocusValue?: string;
   onInputModeToggle?: (value: string) => void;
-  /** The row the cursor MOVED to (`jr`'s own `onFocus`, L505286). Upstream drives a hint node off it; the F6
-   *  dialogs drive their key gating off it, because "is a text row focused" is the difference between `y`
-   *  meaning yes and `y` being a letter, and only this component knows the answer. Not fired for the initial
-   *  row — a caller that needs it knows its own first option (or passed `defaultFocusValue`). */
+  /** The focused row, reported on MOUNT and on every change (`jr`'s own `onFocus`, L505286; the reporting is
+   *  `m5o` L396843-845). Upstream drives a hint node off it; the F6 dialogs drive their key gating off it,
+   *  because "is a text row focused" is the difference between `y` meaning yes and `y` being a letter, and
+   *  only this component knows the answer. The mount fire is required, not a nicety: a list whose FIRST row
+   *  is a text row would otherwise leave a caller's letter shortcuts live over a text field. */
   onFocus?: (value: string) => void;
   /** Keys the list itself did not consume: everything except a digit shortcut, and NOTHING at all while a
    *  text row has the cursor (there, every key is typing). It is how an embedding dialog keeps letter
@@ -138,12 +139,25 @@ export function Select({
   const current = options[win.focus];
   const inputFocused = current?.type === "input";
 
+  // `m5o` L396843-845 reports the focused VALUE from an effect keyed on it (`focusedValue ?? options[0].value`),
+  // so upstream announces the INITIAL row on mount and not only on a move. We do both, and the ref is what
+  // makes the pair idempotent — whoever gets there first reports, the other is a no-op. The synchronous call
+  // in `moveTo` is not redundant: a caller that GATES KEYS on focus (the F6 dialogs, where `y` is a decision
+  // on a pick-one row and a letter on a text row) must not be one flush behind the cursor.
+  const reportedRef = useRef<string>();
+  const reportFocus = (value: string | undefined) => {
+    if (value === undefined || reportedRef.current === value) return;
+    reportedRef.current = value;
+    onFocus?.(value);
+  };
+  useEffect(() => { reportFocus(current?.value); });
+
   const moveTo = (target: number) => {
     const next = viewAfterFocus(win, count, visible, target);
     setView(next);
     const landed = options[next.focus];
     setCursor(landed?.type === "input" ? textOf(landed, inputs).length : 0);
-    if (landed) onFocus?.(landed.value);
+    reportFocus(landed?.value);
   };
   const accept = () => {                                   // L396693-396700: never a disabled row
     if (!current || current.disabled === true) return;

@@ -85,7 +85,7 @@ describe("<BashPermission> — the body (`dZf` L505286)", () => {
   it("renders the prefix row with the curly apostrophe and its seed already typed in", async () => {
     const v = await mount(req("npm run build", { suggestions: [bashRule("npm run:*")] }));
     const f = plain(v.frame());
-    expect(f).toContain("2. Yes, and don’t ask again for: npm run:*");
+    expect(f).toContain("2. Yes, and don’t ask again for: npm run *");
     expect(f).toContain("3. No");
   });
 });
@@ -104,7 +104,7 @@ describe("<BashPermission> — the key contract", () => {
     await waitFor(() => v.got.length === 1);
     expect(v.got[0]).toEqual({
       kind: "allow_with_updates",
-      updatedPermissions: [{ type: "addRules", rules: [{ toolName: "Bash", ruleContent: "npm run:*" }], behavior: "allow", destination: "localSettings" }],
+      updatedPermissions: [{ type: "addRules", rules: [{ toolName: "Bash", ruleContent: "npm run *" }], behavior: "allow", destination: "localSettings" }],
     });
   });
 
@@ -193,7 +193,7 @@ describe("<BashPermission> — feedback mode (Tab on No)", () => {
     v.stdin.write("\x1b[B"); await tick();                        // focus the prefix input row
     await type(v.stdin, "ad");
     expect(v.got).toEqual([]);
-    expect(plain(v.frame())).toContain("npm run:*ad");
+    expect(plain(v.frame())).toContain("npm run *ad");
   });
 });
 

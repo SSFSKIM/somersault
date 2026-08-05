@@ -28,7 +28,7 @@ import { basename, sep } from "node:path";
 
 /** `ri`, the tool every rule here is keyed to. */
 const BASH = "Bash";
-/** L504866 — the ONE label upstream curls the apostrophe in (U+2019). */
+/** L504864 — the ONE label upstream curls the apostrophe in (U+2019). */
 export const PREFIX_LABEL = "Yes, and don’t ask again for";
 export const PREFIX_PLACEHOLDER = "command prefix (e.g., npm run *)";
 
@@ -100,14 +100,14 @@ export function oneWordPrefix(command: string): string | null {
   return head;
 }
 
-/** L505225-236. Upstream reaches the rule-content arm only under a `subcommandResults` decision reason, which
- *  is a TYPED reason the headless wire never forwards (probe 78 A1, see consentReason.ts) — so the arms are
- *  re-keyed on what we can actually see: the engine's own single Bash rule outranks anything we could guess
- *  from the command, and the command-derived arms (`TIo`, then `SSd`, then the raw command) are the fallback.
+/** L505225-236, REACHABLE PATHS ONLY. Upstream's initializer has two halves and the first one is dead here:
+ *  it consults a suggested rule's `ruleContent` solely inside the `subcommandResults` branch, and that is a
+ *  TYPED decision reason the headless wire never forwards (probe 78 A1, see consentReason.ts). Every path we
+ *  can actually be on is the else-half — `TIo`, then `SSd`, then the raw command — so the seed is a pure
+ *  function of the COMMAND and the suggestions do not enter it. That is what makes `npm run test` seed
+ *  `npm run *` rather than echoing a rule's own `npm run:*` back at the human.
  *  The async refinement upstream layers on top (L505240-257) is recorded, not built. */
-export function prefixSeed(command: string, suggestions: readonly PermissionUpdateLike[] = []): string {
-  const rules = contentsFor(suggestions, BASH).filter(Boolean);
-  if (rules.length === 1) return rules[0]!;
+export function prefixSeed(command: string): string {
   const two = twoWordPrefix(command);
   if (two) return `${two} *`;
   const one = oneWordPrefix(command);
@@ -177,14 +177,17 @@ export interface BashOptionsArgs {
 }
 
 /** `$Qf` L504855-878, narrowed to the arms a Bash consult can reach (the auto-mode row is a claude.ai
- *  entitlement — `UDr` L505268 — and is recorded out of reach). */
+ *  entitlement — `UDr` L504815, its row L504872 — and is recorded out of reach). */
 export function bashOptions({ command, suggestions = [], feedback, cwd }: BashOptionsArgs): SelectOption[] {
   const options: SelectOption[] = [yesRow(false)];
+  // Upstream additionally wraps BOTH middle rows in `Kur()` (L504863) = `!Afe()` (L228129-134), which is off
+  // only when managed policy settings set `allowManagedPermissionRulesOnly` — a surface this harness has no
+  // equivalent of, so it is not modeled and the gate is the suggestion payload alone.
   if (suggestions.length > 0) {
     if (!beyondPrefix(suggestions)) {
       options.push({
         type: "input", label: PREFIX_LABEL, value: "yes-prefix-edited", placeholder: PREFIX_PLACEHOLDER,
-        initialValue: prefixSeed(command, suggestions), allowEmptySubmitToCancel: true,
+        initialValue: prefixSeed(command), allowEmptySubmitToCancel: true,
         showLabelWithValue: true, labelValueSeparator: ": ",
       });
     } else {

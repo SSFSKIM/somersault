@@ -21,16 +21,16 @@ describe("bashOptions — `$Qf` order and shapes (L504855-878)", () => {
     expect(bashOptions({ command: "ls -la", cwd: "/w" })).toEqual([{ label: "Yes", value: "yes" }, { label: "No", value: "no" }]);
   });
 
-  it("puts the editable-prefix row between them when the suggestions are Bash rules only (L504866)", () => {
+  it("puts the editable-prefix row between them when the suggestions are Bash rules only (L504864)", () => {
     const o = bashOptions({ command: "npm run build", suggestions: [bashRule("npm run:*")], cwd: "/w" });
     expect(values(o)).toEqual(["yes", "yes-prefix-edited", "no"]);
     expect(o[1]).toEqual({
       type: "input", label: PREFIX_LABEL, value: "yes-prefix-edited", placeholder: PREFIX_PLACEHOLDER,
-      initialValue: "npm run:*", allowEmptySubmitToCancel: true, showLabelWithValue: true, labelValueSeparator: ": ",
+      initialValue: "npm run *", allowEmptySubmitToCancel: true, showLabelWithValue: true, labelValueSeparator: ": ",
     });
   });
 
-  it("types the prefix label's apostrophe as U+2019 — the one row upstream curls (L504866)", () => {
+  it("types the prefix label's apostrophe as U+2019 — the one row upstream curls (L504864)", () => {
     expect(PREFIX_LABEL).toBe("Yes, and don’t ask again for");
     expect(PREFIX_LABEL).not.toContain("'");
     expect(PREFIX_PLACEHOLDER).toBe("command prefix (e.g., npm run *)");
@@ -56,11 +56,8 @@ describe("bashOptions — `$Qf` order and shapes (L504855-878)", () => {
 });
 
 describe("prefixSeed — `dZf`'s initializer (L505225-236) over `TIo`/`SSd`", () => {
-  it("takes a single suggested Bash rule's ruleContent verbatim", () => {
-    expect(prefixSeed("git status --short", [bashRule("git status:*")])).toBe("git status:*");
-  });
-
-  it("falls back to the two-word prefix `TIo` finds (L277676) — the placeholder's own example", () => {
+  it("is the two-word prefix `TIo` finds (L277676) — the placeholder's own example", () => {
+    expect(prefixSeed("npm run test")).toBe("npm run *");
     expect(prefixSeed("npm run build --watch")).toBe("npm run *");
     expect(prefixSeed("git status --short")).toBe("git status *");
   });
@@ -84,8 +81,13 @@ describe("prefixSeed — `dZf`'s initializer (L505225-236) over `TIo`/`SSd`", ()
     expect(prefixSeed("make Build")).toBe("make *");
   });
 
-  it("prefers the command-derived seed when there is more than one suggested Bash rule", () => {
-    expect(prefixSeed("npm test && git status", [bashRule("npm test:*"), bashRule("git status:*")])).toBe("npm test *");
+  // The reviewer's issue 1, adjudicated: upstream consults a suggested rule's `ruleContent` ONLY inside the
+  // `subcommandResults` branch, and that typed reason never crosses the headless wire — so every reachable
+  // path seeds from the command, and the seed is a pure function of it.
+  it("is a function of the COMMAND alone — a suggested rule never becomes the seed", () => {
+    const o = bashOptions({ command: "npm run test", suggestions: [bashRule("npm run:*")], cwd: "/w" });
+    expect(o[1]!.initialValue).toBe("npm run *");
+    expect(prefixSeed("npm test && git status")).toBe("npm test *");
   });
 });
 

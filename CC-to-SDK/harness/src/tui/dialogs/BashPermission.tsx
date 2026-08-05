@@ -18,9 +18,9 @@
 //     is focused. They cannot use a fallback of our own: `fallbackHandler` hands the keyboard to exactly one
 //     handler and that handler has to be the Select's.
 //
-// Recorded, not built: the title's `(unsandboxed)` variant (`Oo.isSandboxingEnabled()`, L505261 — this
+// Recorded, not built: the title's `(unsandboxed)` variant (`Oo.isSandboxingEnabled()`, L505259 — this
 // harness never sandboxes); the explain/amend affordances and their footer hints (DG4, a non-goal here); the
-// auto-mode row (`UDr` L505268 — a claude.ai entitlement); and upstream's `onFocus`-driven feedback hint node.
+// auto-mode row (`UDr` L504815, its row L504872 — a claude.ai entitlement); and upstream's `onFocus`-driven feedback hint node.
 import React, { useState } from "react";
 import { Box, Text } from "ink";
 import { DialogFrame } from "./DialogFrame.js";
