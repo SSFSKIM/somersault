@@ -5,7 +5,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { tmpdir } from "node:os";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 // F2 task 6: ChatApp/ChatComposer read stdin through <KeymapProvider> now, not `useInput` — rendered bare
 // they have no input path at all, so every render here goes through the provider wrapper.
 import { renderWithKeymap as render } from "./keysTestUtil.js";
@@ -770,6 +770,37 @@ describe("<ChatApp>", () => {
       await waitFor(() => fake.answeredCalls.length === 1);
       view.unmount();
     }
+  });
+
+  // F6 T7 fix. The file dialog's in-directory test (`z7`) runs over the session's WHOLE working set, which
+  // only `listDirs()` knows — so the list has to travel useChat → ChatApp → PermissionDialog → FilePermission.
+  // The two halves of this test are the same park under two different directory lists, and the wording is
+  // what tells them apart: an added directory turns "in <name>/" into the bare in-directory row.
+  it("an /add-dir'd directory reaches the file dialog: a park under it reads as IN-directory", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "ccx-workdirs-"));
+    const park = (fake: ReturnType<typeof fakeSettingsRemote>) =>
+      fake.parkPermission({ sessionId: "s", toolUseID: "wd", toolName: "Edit", kind: "permission",
+        input: { file_path: join(outside, "a.ts"), old_string: "a", new_string: "b" }, createdAt: Date.now() });
+    try {
+      // Without the grant: the cwd is the only working directory, so the row names the outside one.
+      const plain0 = fakeSettingsRemote();
+      const a = render(<ChatApp makeSession={() => plain0} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+      await waitFor(() => frame(a.lastFrame).includes("❯\u00a0"));
+      park(plain0);
+      await waitFor(() => frame(a.lastFrame).includes("Edit file"));
+      expect(frame(a.lastFrame)).toContain(`allow all edits in ${basename(outside)}/ during this session`);
+      a.unmount();
+
+      // With it: listDirs reports the extra directory and the same park is in-directory.
+      const granted = fakeSettingsRemote({ listDirs: async () => [{ path: process.cwd(), source: "cwd" as const }, { path: outside, source: "session" as const }] });
+      const b = render(<ChatApp makeSession={() => granted} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+      await waitFor(() => frame(b.lastFrame).includes("❯\u00a0"));
+      park(granted);
+      await waitFor(() => frame(b.lastFrame).includes("Edit file"));
+      await waitFor(() => frame(b.lastFrame).includes("Yes, allow all edits during this session"));
+      expect(frame(b.lastFrame)).not.toContain(`edits in ${basename(outside)}/`);
+      b.unmount();
+    } finally { rmSync(outside, { recursive: true, force: true }); }
   });
 
   it("a pending dialog synchronously blocks the retiring composer listener", async () => {

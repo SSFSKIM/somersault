@@ -49,11 +49,14 @@ export interface PermissionDialogRequest {
 }
 
 /** The switchboard. `cwd` is the SESSION's working directory, which the routing needs (a Glob/Grep/Read
- *  consult titles itself with it) and the Bash body's suggestion summary names — see permissionKind.ts. */
-export function PermissionDialog({ req, onDecision, cwd }: { req: PermissionDialogRequest; onDecision: (d: PermissionDecision) => void; cwd?: string }) {
+ *  consult titles itself with it) and the Bash body's suggestion summary names — see permissionKind.ts.
+ *  `directories` is the session's WHOLE working set (cwd + every `/add-dir` grant, off `listDirs()`); only
+ *  the file body reads it, for upstream's in-working-directory test (`z7`). Absent means "cwd alone", which
+ *  is right for a caller that has no directory list to give. */
+export function PermissionDialog({ req, onDecision, cwd, directories }: { req: PermissionDialogRequest; onDecision: (d: PermissionDecision) => void; cwd?: string; directories?: readonly string[] }) {
   const { kind, filePath, sedEdit } = permissionKind(req.toolName, req.input, cwd);
   if (kind === "bash") return <BashPermission req={req} onDecision={onDecision} cwd={cwd} />;
-  if (kind === "file") return <FilePermission req={req} onDecision={onDecision} cwd={cwd} filePath={filePath} sedEdit={sedEdit} />;
+  if (kind === "file") return <FilePermission req={req} onDecision={onDecision} cwd={cwd} directories={directories} filePath={filePath} sedEdit={sedEdit} />;
   return <GenericPermission req={req} onDecision={onDecision} />;
 }
 

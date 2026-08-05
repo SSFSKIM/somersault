@@ -15,6 +15,7 @@ import { FilePermission } from "../../src/tui/dialogs/FilePermission.js";
 import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
 import { themeTokens } from "../../src/tui/theme.js";
 import { parseSedEdit } from "../../src/tui/dialogs/sedEdit.js";
+import { formatBindingLower } from "../../src/tui/keys/hints.js";
 import type { FileFs } from "../../src/tui/dialogs/fileOptions.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../src/permissions/types.js";
 
@@ -182,7 +183,9 @@ describe("<FilePermission> — the option list (`tal` L505624)", () => {
     );
     await waitFor(() => (view.lastFrame() ?? "").length > 0);
     const f = plain(view.lastFrame() ?? "");
-    expect(f).toContain("Yes, allow all edits during this session (opt+m)");
+    // `alt+m` prints `opt+m` on darwin and `alt+m` everywhere else, so the expectation is DERIVED rather
+    // than typed — the house convention (keys-hints.test.ts:95) for anything the platform renames.
+    expect(f).toContain(`Yes, allow all edits during this session (${formatBindingLower("alt+m", process.platform)})`);
     expect(f).not.toContain("(shift+tab)");
   });
 

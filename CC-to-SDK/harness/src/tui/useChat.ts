@@ -73,7 +73,10 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
   submitCount: number; hasMessages: boolean;
-  staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[]; }
+  staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[];
+  /** The session's working directories — the cwd plus every `/add-dir` grant (`listDirs()`). The FILE
+   *  permission dialog's in-directory test runs over this set; nothing else reads it. */
+  workDirs: readonly string[]; }
 
 // Tab cycles these; bypassPermissions stays off-cycle (/yolo). Single source with settingsRows.ts's own
 // permissionMode row (review finding 3) — importing it here instead of a second literal array means the
@@ -181,6 +184,23 @@ export function useChat(
   const [pendingQueue, setPendingQueue] = useState<PendingDecision[]>([]);
   const pendingQueueRef = useRef<PendingDecision[]>([]); pendingQueueRef.current = pendingQueue;
   const answeredIds = useRef<Set<string>>(new Set());     // toolUseIDs THIS client answered — dropPending consults it, not the wire's `by` label
+  // F6 T7 fix: the session's WORKING DIRECTORIES — the cwd plus every `/add-dir` grant. The file permission
+  // dialog's in-directory test (upstream `z7`, L371374) runs over this set, not over the cwd alone, and the
+  // difference is user-visible: after `/add-dir /other`, an Edit under `/other` must read "Yes, allow all
+  // edits during this session", not "…in other/ during this session", and its constructed grant must not
+  // re-add a directory the session already holds. `listDirs()` is the one place that knows, and it already
+  // reports the cwd row itself (`source:"cwd"`), so the cwd needs no separate seeding beyond the initial
+  // value here — which is also the answer for a session with no `SettingsOps` at all.
+  const [workDirs, setWorkDirs] = useState<readonly string[]>([cwd]);
+  function refreshWorkDirs() {
+    if (!hasSettingsOps(session)) return;
+    void session.listDirs()
+      .then((rows) => { if (!disposed.current) setWorkDirs(rows.map((r) => r.path)); })
+      .catch(() => {});                                   // a session that cannot answer keeps the last good list
+  }
+  // Once per session (a `/resume` swaps the object), plus the three call sites below: an `/add-dir` grant, a
+  // workspace remove, and every decision park.
+  useEffect(() => { refreshWorkDirs(); }, [session]);      // eslint-disable-line react-hooks/exhaustive-deps
   const [mode, setMode] = useState(opts.initialMode ?? "default");
   const modeRef = useRef(mode); modeRef.current = mode;    // read inside the event effect without re-subscribing on every mode change
   const [busy, setBusy] = useState(false);
@@ -604,6 +624,10 @@ export function useChat(
   // Decision FIFO: the dialog shows the head; extras queue behind it. `pushPending`/`dropPending` are
   // driven by the DecisionFeed subscription above — never optimistically from resolveDecision.
   function pushPending(entry: PendingDecision) {
+    // Re-ask for the directory list on every park. The local `/add-dir` and workspace-remove paths refresh it
+    // themselves, so this covers the one case they cannot: a directory granted by ANOTHER client on the same
+    // session. It is one call per parked decision, and a late answer simply re-renders the open dialog.
+    refreshWorkDirs();
     if (pendingRef.current === null) setPending(entry);
     else setPendingQueue((q) => [...q, entry]);
   }
@@ -928,6 +952,7 @@ export function useChat(
     try {
       await session.addDir(abs);
       if (disposed.current) return;
+      refreshWorkDirs();                                  // the file dialog's in-directory test reads this
       if (!remember) { append(formatAddDirResult({ kind: "addedSession", abs })); return; }
       try {
         mergeSettingsFile("localSettings", cwd, appendToArray(["permissions", "additionalDirectories"], abs), deps.settingsFileDeps);
@@ -1060,6 +1085,7 @@ export function useChat(
   async function removeWorkspaceDir(path: string): Promise<void> {
     if (disposed.current || !hasSettingsOps(session)) return;
     await session.removeDir(path).catch(() => {});
+    refreshWorkDirs();
   }
 
   // Esc-Esc rewind (Stage C5 flagship). Anchors are ALWAYS re-fetched, never patched locally — the persisted
@@ -1349,5 +1375,5 @@ export function useChat(
   }
   function clear() { if (!disposed.current) { clearScreen(); replaceDocument(new TranscriptDocument()); } }   // /clear: wipe screen + model (session context kept)
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials, workDirs } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
 }

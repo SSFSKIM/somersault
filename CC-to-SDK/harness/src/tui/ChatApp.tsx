@@ -327,8 +327,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
               onAnswer={(answers, response) => resolveDecision({ kind: "question_answer", answers, ...(response ? { response } : {}) })}
               onDeny={() => resolveDecision({ kind: "deny" })} />
           // `cwd` is the SESSION's working directory, not this process's — the kind routing and the Bash
-          // body's rule summary both name it (permissionKind.ts).
-          : <PermissionDialog key={inlineDecision.toolUseID} req={inlineDecision} cwd={cwd} onDecision={(d) => resolveDecision(d)} />
+          // body's rule summary both name it (permissionKind.ts). `directories` is the WHOLE working set —
+          // the cwd plus every `/add-dir` grant — which is what the file body's in-directory test runs over
+          // (F6 T7 fix; without it an Edit under an added directory reads as out-of-directory and its grant
+          // re-adds a directory the session already holds).
+          : <PermissionDialog key={inlineDecision.toolUseID} req={inlineDecision} cwd={cwd} directories={state.workDirs} onDecision={(d) => resolveDecision(d)} />
         : null}
       {state.shortcutsOpen
         ? <ShortcutsOverlay onClose={closeShortcuts} />

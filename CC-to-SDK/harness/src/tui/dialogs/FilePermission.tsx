@@ -24,7 +24,7 @@ import React, { useMemo, useState } from "react";
 import { Box, Text } from "ink";
 import { homedir } from "node:os";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { DialogFrame } from "./DialogFrame.js";
 import { Select } from "../select/Select.js";
 import { Line } from "../Line.js";
@@ -91,24 +91,29 @@ const DiffRows = ({ rows }: { rows: readonly RenderLine[] }) => (
  *  carries surrounding context lines; ours diffs `old_string` against `new_string`, which is rung 2 of the
  *  ladder and shows the changed span alone. The line NUMBERS are still real whenever the snippet anchors on
  *  disk exactly once, and visibly approximate (`~`) when it does not — that ladder is the whole point. */
-function FileBody({ content, columns, fs }: { content: FileContent; columns: number; fs: FileFs }) {
+function FileBody({ content, columns, fs, cwd }: { content: FileContent; columns: number; fs: FileFs; cwd: string }) {
   // Synthetic inputs are memoized because `resolvePatch` caches on the input OBJECT's identity (a WeakMap):
   // a fresh literal every render would re-run jsdiff and a synchronous `readFileSync` on every keystroke.
+  //
+  // The path is RESOLVED against the session cwd before it goes in. `resolvePatch`'s rung 2 uses `file_path`
+  // as the anchor to read, and the tool's own input may be relative — while the session's cwd is not
+  // necessarily this process's (a daemon session runs in its own worktree). Handing the raw field over would
+  // read the wrong file, or none, and silently degrade a perfectly anchorable diff to `~`-numbering.
   const patch = useMemo(() => {
     if (content.kind === "file-edit-diff") {
       const edit = content.edits[0];
       if (edit === undefined) return undefined;
-      return resolvePatch({ input: { file_path: content.filePath, old_string: edit.old_string, new_string: edit.new_string }, readFile: fs.readFile });
+      return resolvePatch({ input: { file_path: resolve(cwd, content.filePath), old_string: edit.old_string, new_string: edit.new_string }, readFile: fs.readFile });
     }
     if (content.kind === "file-write-diff" && content.fileExists) {
-      return resolvePatch({ input: { file_path: content.filePath, old_string: content.oldContent, new_string: content.content }, readFile: fs.readFile });
+      return resolvePatch({ input: { file_path: resolve(cwd, content.filePath), old_string: content.oldContent, new_string: content.content }, readFile: fs.readFile });
     }
     if (content.kind === "notebook-edit-diff" && content.notebookRead && content.editMode === "replace") {
-      return resolvePatch({ input: { file_path: content.notebookPath, old_string: content.oldSource, new_string: content.newSource }, readFile: fs.readFile });
+      return resolvePatch({ input: { file_path: resolve(cwd, content.notebookPath), old_string: content.oldSource, new_string: content.newSource }, readFile: fs.readFile });
     }
     return undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, fs]);
+  }, [content, fs, cwd]);
 
   switch (content.kind) {
     case "file-edit-diff":
@@ -223,7 +228,7 @@ export function FilePermission({ req, onDecision, filePath, sedEdit, cwd = proce
   return (
     <DialogFrame title={descriptor.title} subtitle={descriptor.subtitle} subagentType={req.subagentType} innerPaddingX={0}>
       {warning ? <Box paddingX={1} marginBottom={1}><Text color={role("warning")}>{warning}</Text></Box> : null}
-      <FileBody content={descriptor.content} columns={columns} fs={fs} />
+      <FileBody content={descriptor.content} columns={columns} fs={fs} cwd={cwd} />
       <Box flexDirection="column" paddingX={1}>
         <Question q={descriptor.question} />
         <Select
