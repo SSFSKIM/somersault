@@ -2165,8 +2165,11 @@ describe("<ChatApp> — retained source", () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" clearStaticTranscript={() => clears.push(1)} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
-    stdin.write("/help"); await waitFor(() => frame(lastFrame).includes("/help"));
-    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("/model"));
+    // F6 T14: `/help` opens a DIALOG now (it printed a command list before), which would take the composer
+    // away before `/clear` could be typed. `/think` is the stand-in this test wanted all along: a local
+    // command that appends a line and touches no session.
+    stdin.write("/think"); await waitFor(() => frame(lastFrame).includes("/think"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("thinking:"));
     stdin.write("/clear"); await waitFor(() => frame(lastFrame).includes("/clear"));
     stdin.write("\r"); await waitFor(() => clears.length === 1);
     fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "post-clear", content: [{ type: "text", text: "POST-CLEAR-ROW" }] } } });

@@ -152,42 +152,88 @@ export function formatBindings(keys: readonly string[], max = 1): string {
   return keys.slice(0, max).map(formatBinding).join(" / ");
 }
 
-/** One row of the `?` shortcut grid. Either a LITERAL key column (editor keys the table does not own — the
- *  readline set, the `!`/`#`/`@`/`/` prefixes) or an `action` resolved against the live table. `show` widens a
- *  row to an alias pair; `suffix` carries the press-count decorations (`Ctrl-C ×2`); `repeat` prints the key
- *  twice for the double-press rows (`Esc Esc`) so a rebinding moves both halves. */
-export interface ShortcutRow { key?: string; action?: string; show?: number; suffix?: string; repeat?: number; label: string }
+/** One row of the shortcut grid, in BOTH of its renderings.
+ *
+ *  The KEY-COLUMN half (`key`/`action`/`show`/`suffix`/`repeat` + `label`) is what `shortcutRows` produces and
+ *  what `test/tui/honesty.test.tsx` audits: either a LITERAL key column (editor keys the table does not own —
+ *  the readline set, the `!`/`#`/`@`/`/` prefixes) or an `action` resolved against the live table. `show`
+ *  widens a row to an alias pair; `suffix` carries the press-count decorations (`Ctrl-C ×2`); `repeat` prints
+ *  the key twice for the double-press rows (`Esc Esc`) so a rebinding moves both halves.
+ *
+ *  The GRID half (`col` + `cell`/`phrase`/`connector`/`prefix`/`chordSuffix`/`ladder`) is F6 T14: what the
+ *  three-column grid PRINTS, in upstream's own sentence grammar (`ctrl + t to toggle tasks`). Two renderings,
+ *  ONE entry — which is the whole reason they live on the same object. hints.ts already carries upstream's two
+ *  display grammars (`formatBinding` title-case, `formatBindingLower` + `AW`'s ` + ` modSep for the sentences);
+ *  this is the same split one level up, at the row. A row can therefore never advertise a chord in the grid
+ *  that the audit corpus does not carry: both are `SHORTCUT_ROWS.map(…)`, one-to-one, pinned by
+ *  `test/tui/shortcuts-grid.test.tsx`. */
+export interface ShortcutRow {
+  key?: string; action?: string; show?: number; suffix?: string; repeat?: number; label: string;
+  /** Which of the three columns this cell sits in (`Y6t`'s three `flexDirection:"column"` boxes, L459475-634). */
+  col: 0 | 1 | 2;
+  /** A cell upstream writes as a LITERAL (`! for shell mode`), or one of ours whose key `editor.ts` owns and
+   *  the table therefore cannot resolve (`ctrl + _ to undo`). Wins over `phrase`. */
+  cell?: string;
+  /** The derived form: `<prefix><chord><chordSuffix> <connector> <phrase>` — `$e`'s bare composition
+   *  (L183883) with `AW = {keyCase:"lower", modSep:" + "}` (L459648). `connector` defaults to `to`
+   *  (`ctrl + t to toggle tasks`); `for` is upstream's other one (`ctrl + o for verbose output`). */
+  phrase?: string; connector?: "to" | "for"; prefix?: string; chordSuffix?: string;
+  /** The newline ladder cell (`Z_a`, L433223). Its text is terminal-state-dependent and lives in
+   *  `composerFrame.tsx` (`newlineHint`), which imports Ink — so the caller supplies the string and this pure
+   *  module never reaches for it. */
+  ladder?: true;
+}
 
-/** The grid, in upstream's own rough order: editing, then the chat verbs, then the app globals, then the
- *  prefixes. Every row whose key lives in the binding table names its ACTION; only keys owned by `editor.ts`
- *  (which has no table entry, by design — it is the fallback) stay literal. */
+/** THE MERGED ENTRY SET (F6 T14, DG62/DG63). Upstream's `Y6t` entries FIRST, in upstream's own three-column
+ *  order, for the subset whose bindings or features exist in ccx; then our extra honest rows, appended to the
+ *  column whose subject they share (prefixes · composer/turn keys · app+session chords). Deleting an
+ *  implemented row to match upstream exactly would regress the F2 honesty contract, so nothing is dropped.
+ *
+ *  What upstream has and this does NOT, each because the feature does not exist here:
+ *   · `/btw for side question`  — no such feature (command-coverage.md lists `btw` out of scope);
+ *   · `ctrl + v to paste images` — images are a non-goal for this wave;
+ *   · `alt + o to toggle fast mode` — no fast mode (upstream gates it on `Sl() && QN()` anyway, L459592).
+ *  What upstream gates and we resolve statically: `ctrl+z` is `Tho()` (false only for `CLAUDE_CODE_SESSION_KIND
+ *  === "bg"`, L177619) — ours is the platform gate `shortcutRows`/`shortcutGrid` already apply, since
+ *  `suspendProcess` is the no-op on Windows. `/keybindings to customize` is `cEe()`, a release flag upstream;
+ *  ours is unconditional because the command IS implemented (commands.ts + useChat's `keybindings` arm).
+ *
+ *  Every row whose key lives in the binding table names its ACTION; only keys owned by `editor.ts` (which has
+ *  no table entry, by design — it is the fallback) stay literal. */
 export const SHORTCUT_ROWS: readonly ShortcutRow[] = [
-  { key: "⏎", label: "send" },
-  { key: "\\⏎ / Ctrl-J", label: "newline" },
-  { key: "↑↓", label: "history" },
-  { key: "Ctrl-A/E/K/U/W", label: "line start/end · kill to end/start · kill word" },
-  { key: "Ctrl-Y / Alt-Y", label: "yank / yank-pop killed text" },
-  { key: "Alt-←→ / Alt-b/f", label: "move by word" },
-  { action: "chat:clearInput", label: "clear input" },
-  { key: "Ctrl-_", label: "undo edit" },
-  { key: "Ctrl-S", label: "stash / restore input" },
-  { action: "chat:externalEditor", show: 2, label: "edit in $EDITOR" },
-  { action: "chat:cycleMode", label: "mode ladder" },
-  { action: "chat:cancel", label: "interrupt (while running)" },
-  { action: "chat:cancel", repeat: 2, label: "clear input · rewind when empty" },
-  { action: "app:toggleTodos", label: "todo panel" },
-  { action: "app:toggleTranscript", label: "transcript pager" },
-  { action: "history:search", label: "search prompt history" },
-  { action: "task:background", label: "background" },
-  { action: "chat:killAgents", label: "stop background agents (×2)" },
-  { action: "app:interrupt", suffix: " ×2", label: "exit" },
-  { action: "app:exit", suffix: " ×2", label: "exit" },
-  { key: "Ctrl-Z", label: "suspend to shell (fg resumes)" },
-  { key: "!", label: "bash" },
-  { key: "#", label: "memory" },
-  { key: "@", label: "files" },
-  { key: "/", label: "commands" },
-  { key: "?", label: "this help" },
+  // ── column 0: the prefixes (`Y6t`'s first column, `width: 24` under `fixedWidth`) ──────────────────────
+  { key: "!", label: "bash", col: 0, cell: "! for shell mode" },
+  { key: "/", label: "commands", col: 0, cell: "/ for commands" },
+  { key: "@", label: "files", col: 0, cell: "@ for file paths" },
+  { key: "#", label: "memory", col: 0, cell: "# for memory" },
+  { key: "?", label: "this help", col: 0, cell: "? for this help" },
+  // ── column 1: the composer and the running turn (`width: 35`) ──────────────────────────────────────────
+  // Upstream's cell is the LITERAL `double tap esc to clear input`; ours resolves the chord, so an `escape`
+  // rebind moves it. The audit label stays the fuller truth (ours also rewinds on an empty buffer).
+  { action: "chat:cancel", repeat: 2, label: "clear input · rewind when empty", col: 1, prefix: "double tap ", phrase: "clear input" },
+  { action: "chat:cycleMode", label: "mode ladder", col: 1, phrase: "auto-accept edits" },
+  { action: "app:toggleTranscript", label: "transcript pager", col: 1, connector: "for", phrase: "verbose output" },
+  { action: "app:toggleTodos", label: "todo panel", col: 1, phrase: "toggle tasks" },
+  { key: "\\⏎ / Ctrl-J", label: "newline", col: 1, ladder: true },
+  { key: "⏎", label: "send", col: 1, cell: "⏎ to send" },
+  { key: "↑↓", label: "history", col: 1, cell: "↑↓ for prompt history" },
+  { key: "Ctrl-A/E/K/U/W", label: "line start/end · kill to end/start · kill word", col: 1, cell: "ctrl + a/e/k/u/w for line edits" },
+  { key: "Ctrl-Y / Alt-Y", label: "yank / yank-pop killed text", col: 1, cell: "ctrl + y / alt + y to yank text" },
+  { key: "Alt-←→ / Alt-b/f", label: "move by word", col: 1, cell: "alt + ←/→ to move by word" },
+  { action: "chat:clearInput", label: "clear input", col: 1, phrase: "clear input" },
+  { action: "chat:cancel", label: "interrupt (while running)", col: 1, phrase: "interrupt" },
+  { action: "history:search", label: "search prompt history", col: 1, phrase: "search history" },
+  // ── column 2: the app and the session (no fixed width — upstream's third column has none) ──────────────
+  { key: "Ctrl-_", label: "undo edit", col: 2, cell: "ctrl + _ to undo" },
+  { key: "Ctrl-Z", label: "suspend to shell (fg resumes)", col: 2, cell: "ctrl + z to suspend" },
+  { action: "chat:modelPicker", label: "switch model", col: 2, phrase: "switch model" },
+  { key: "Ctrl-S", label: "stash / restore input", col: 2, cell: "ctrl + s to stash prompt" },
+  { action: "chat:externalEditor", show: 2, label: "edit in $EDITOR", col: 2, phrase: "edit in $EDITOR" },
+  { key: "/keybindings", label: "customize keybindings", col: 2, cell: "/keybindings to customize" },
+  { action: "task:background", label: "background", col: 2, phrase: BACKGROUND_HINT_ACTION },
+  { action: "chat:killAgents", label: "stop background agents (×2)", col: 2, phrase: "stop agents" },
+  { action: "app:interrupt", suffix: " ×2", label: "exit", col: 2, chordSuffix: " twice", phrase: "exit" },
+  { action: "app:exit", suffix: " ×2", label: "exit", col: 2, chordSuffix: " twice", phrase: "exit" },
 ];
 
 /** The table with no user layer on top. Two readers: a component rendered with no `<KeymapProvider>` above it
@@ -212,4 +258,51 @@ export function shortcutRows(lookup: (action: string) => readonly string[], plat
     rows.push([key + (row.suffix ?? ""), row.label]);
   }
   return rows;
+}
+
+// ── F6 T14: the same rows, in upstream's THREE-COLUMN sentence grammar (`Y6t`, L459475-634) ──────────────
+/** `uei` (L459472) verbatim: `e.replaceAll("+", " + ")` — which is all `AW`'s `modSep: " + "` (L459648)
+ *  amounts to once `formatBindingLower` has produced the lower-case chord. Blind, like upstream's: a rebind
+ *  onto the literal `+` key would print `ctrl +  + `, and reproducing that is cheaper than a second grammar. */
+export const withModSep = (chord: string): string => chord.replaceAll("+", " + ");
+
+/** Upstream's `fixedWidth` column widths: `AYH ? 24 : void 0` (L459487) and `AYH ? 35 : void 0` (L459515).
+ *  The third column has none — it takes whatever its longest cell needs (L459623). */
+export const GRID_COLUMN_WIDTHS: readonly (number | undefined)[] = [24, 35, undefined];
+
+export interface ShortcutGridOptions {
+  platform?: NodeJS.Platform;
+  /** `Z_a()`'s answer (composerFrame.tsx's `newlineHint`) — supplied rather than imported, so this module
+   *  stays free of React/Ink. The caller has no `hasUsedBackslashReturn` to give it: that lives on the live
+   *  EditorState, and the grid renders with no composer mounted, so the ladder shows its LONG rung here even
+   *  after the short one has taken over below the composer. Recorded divergence (T15). */
+  newline: string;
+}
+
+/** One cell, or `null` for a row that must not print. The null arm is `$e`'s own three-state contract
+ *  (hints.ts's `expandHintText` header): an action with no live binding contributes NO CLAUSE — upstream
+ *  returns `null` there and renders nothing. `shortcutRows`' `(unbound)` is the KEY COLUMN's answer, and it
+ *  stays what it is: a key column reading `(unbound)` tells the user their unbind took effect, whereas a
+ *  sentence reading `(unbound) to switch model` would just be broken English. */
+function gridCell(row: ShortcutRow, lookup: (action: string) => readonly string[], platform: NodeJS.Platform, newline: string): string | null {
+  if (row.ladder) return newline;
+  if (row.cell !== undefined) return row.cell;
+  const keys = lookup(row.action!);
+  const key = keys.find((k) => !k.includes(" ")) ?? keys[0];             // plain beats chord, the resolver's own rule
+  if (key === undefined) return null;
+  const chord = withModSep(formatBindingLower(key, platform));
+  if (chord === "") return null;
+  return `${row.prefix ?? ""}${chord}${row.chordSuffix ?? ""} ${row.connector ?? "to"} ${row.phrase}`;
+}
+
+/** The grid as THREE columns of composed sentences, resolved against a live lookup. Same Windows rule as
+ *  `shortcutRows`: no Ctrl-Z row where `suspendProcess` is a no-op. */
+export function shortcutGrid(lookup: (action: string) => readonly string[], { platform = process.platform, newline }: ShortcutGridOptions): string[][] {
+  const cols: string[][] = [[], [], []];
+  for (const row of SHORTCUT_ROWS) {
+    if (platform === "win32" && row.key === "Ctrl-Z") continue;
+    const cell = gridCell(row, lookup, platform, newline);
+    if (cell !== null) cols[row.col]!.push(cell);
+  }
+  return cols;
 }

@@ -58,7 +58,17 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   { context: "Task", bindings: {        // pushed while a turn is running in the foreground
     "ctrl+x ctrl+b": "task:background", // NEW (KB18) — upstream's chord alias
   }},
-  { context: "Help", bindings: { "escape": "help:dismiss" }},   // + swallowAll while mounted (F0 escape-only)
+  // F6 T14: the `?` overlay pushes this and ALSO swallows (F0 escape-only), so for it the nulls below are
+  // redundant. `/help`'s dialog cannot swallow — `swallowContexts` (registry.ts) resolves the swallower as the
+  // INNERMOST live scope, and that dialog mounts `Tabs` and `Select` inside itself, so a swallow there would
+  // leave only the tab strip's four keys live and eat its own Escape. It is an "overlay" owner like Settings
+  // and Select, so it takes their suppression set instead: six root globals plus the two Chat keys whose scope
+  // survives one passive flush, plus ctrl+b's chord alias.
+  { context: "Help", bindings: {
+    "escape": "help:dismiss",
+    "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
+    "alt+p": null, "alt+t": null, "ctrl+x ctrl+b": null,
+  }},
   { context: "Transcript", bindings: {
     "escape": "transcript:exit", "q": "transcript:exit", "ctrl+c": "transcript:exit",
     "ctrl+u": "scroll:halfPageUp", "ctrl+d": "scroll:halfPageDown",

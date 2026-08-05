@@ -22,29 +22,39 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 }
 const tick = () => new Promise((r) => setTimeout(r, 20));   // let useInput subscribe
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
-/** Find the exact keymap row for `key` (border char + key + whitespace boundary, so "Esc" doesn't match
- *  the "Esc Esc" row and vice versa) and return its full text — so a check against the row's label fails
- *  if that row is ever dropped, unlike a bare `toContain(key)` which any incidental match elsewhere satisfies. */
-function rowFor(frameText: string, key: string): string {
-  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`^│ ${esc}(?:\\s|$)`);
-  const line = stripAnsi(frameText).split("\n").find((l) => re.test(l));
-  if (line === undefined) throw new Error(`ShortcutsOverlay: no row found for key ${JSON.stringify(key)}`);
-  return line;
-}
+/** F6 T14: the overlay is upstream's three-COLUMN grid now, so a cell is a sentence and a cell too wide for
+ *  its column is wrapped across two physical lines (`backslash (\) + return (⏎) for` / `newline`). Unwrap the
+ *  whole frame before looking for one — matching per line would silently lose whichever cell straddles the
+ *  break, which reads as "the grid stopped advertising it". honesty.test.tsx's own idiom. */
+const unwrapped = (frameText: string): string => stripAnsi(frameText).replace(/\s*\n\s*/g, " ").replace(/\s+/g, " ");
 
 describe("<ShortcutsOverlay>", () => {
-  it("renders the heading and the keymap rows for real bindings", async () => {
+  it("renders the heading and upstream's three-column grid, for real bindings only", async () => {
     const { lastFrame } = render(<ShortcutsOverlay onClose={() => {}} />);
     await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts"));
-    const f = frame(lastFrame);
-    expect(rowFor(f, "Esc Esc")).toContain("rewind");
-    expect(rowFor(f, "⇧Tab")).toContain("mode ladder");
-    expect(rowFor(f, "Ctrl-T")).toContain("todo panel");
-    expect(rowFor(f, "Ctrl-B")).toContain("background");
-    expect(rowFor(f, "!")).toContain("bash");
-    expect(rowFor(f, "#")).toContain("memory");
-    expect(rowFor(f, "?")).toContain("this help");
+    const f = unwrapped(frame(lastFrame));
+    // Upstream's own entries, in upstream's own words (`Y6t`, L459475-634).
+    expect(f).toContain("! for shell mode");
+    expect(f).toContain("/ for commands");
+    expect(f).toContain("@ for file paths");
+    expect(f).toContain("double tap esc to clear input");
+    expect(f).toContain("shift + tab to auto-accept edits");
+    expect(f).toContain("ctrl + o for verbose output");
+    expect(f).toContain("ctrl + t to toggle tasks");
+    expect(f).toContain("ctrl + _ to undo");
+    expect(f).toContain("ctrl + s to stash prompt");
+    expect(f).toContain("ctrl + g to edit in $EDITOR");
+    expect(f).toContain("/keybindings to customize");
+    // …and OURS, retained after them (the F2 honesty contract: an implemented row is not dropped to match
+    // upstream's list exactly).
+    expect(f).toContain("# for memory");
+    expect(f).toContain("? for this help");
+    expect(f).toContain("ctrl + r to search history");
+    expect(f).toContain("ctrl + b to run in background");
+    // Upstream entries whose FEATURE does not exist here must not be advertised.
+    expect(f).not.toContain("paste images");
+    expect(f).not.toContain("/btw");
+    expect(f).not.toContain("fast mode");
   });
 
   it("only Escape closes the overlay; other keys neither close nor leak", async () => {

@@ -17,35 +17,57 @@
 // rebinding moves the row with it, and an unbind prints `(unbound)` instead of a chord that no longer works.
 // The editor's own keys (the readline set, the `!`/`#`/`@`/`/` prefixes) stay literal because they are the
 // keymap's FALLBACK by design: `editor.ts` owns them and no context binds them.
+// F6 Task 14 (DG62/DG63): the two-column key/label list this file drew is upstream's `Y6t` now — THREE
+// columns of composed sentences (`ctrl + t to toggle tasks`), merged with upstream's own entry set. The
+// component lives here, and `/help`'s General tab renders THE SAME ONE (HelpDialog.tsx), because upstream
+// does exactly that: `pei` (L459650, the Help dialog's General panel) and the composer's `?` surface
+// (L494617) both mount `Y6t`. One grid, one source of truth, one place a row can be added.
 import React from "react";
 import { Box, Text } from "ink";
 import { useBindingLookup, useKeyActions, useKeyScope, useSwallowKeys } from "./keys/KeymapProvider.js";
-import { defaultLookup, shortcutRows } from "./keys/hints.js";
+import { defaultLookup, shortcutGrid, shortcutRows, GRID_COLUMN_WIDTHS } from "./keys/hints.js";
+import { newlineHint } from "./composerFrame.js";
 import { ACCENT } from "./theme.js";
 
 /** The grid under the SHIPPED keymap — what `test/tui/honesty.test.tsx` audits (every advertised chord needs a
- *  live proof). The component below renders the user's own table instead; this is the no-user-layer answer. */
+ *  live proof). The component below renders the user's own table instead; this is the no-user-layer answer.
+ *  It is the KEY-COLUMN rendering of the very rows the grid prints as sentences (keys/hints.ts's `ShortcutRow`
+ *  header): one entry, two grammars, so auditing this corpus audits what the grid advertises. */
 export const ROWS: [string, string][] = shortcutRows(defaultLookup);
+
+/** `Y6t` (L459475-634). `dimColor`/`fixedWidth`/`gap`/`paddingX` are its four props, and the two call sites
+ *  pass exactly what upstream's do: the `?` overlay `{dimColor, fixedWidth, paddingX:2}` (L494617), the Help
+ *  dialog's General panel `{gap:2, fixedWidth}` (L459654). */
+export function ShortcutsGrid({ dimColor = false, fixedWidth = false, gap, paddingX }: {
+  dimColor?: boolean; fixedWidth?: boolean; gap?: number; paddingX?: number;
+}) {
+  // `hasUsedBackslashReturn` is EditorState the grid cannot see (no composer is mounted while it shows), so
+  // the ladder stands on its long rung here — see `ShortcutGridOptions.newline`.
+  const columns = shortcutGrid(useBindingLookup(), { newline: newlineHint(false) });
+  return (
+    <Box flexDirection="row" gap={gap} paddingX={paddingX}>
+      {/* Keyed by POSITION in both directions: a cell is derived text, so two of them can read the same
+          string, and duplicate React keys make React drop one. Both lists are statically ordered. */}
+      {columns.map((cells, col) => (
+        <Box key={col} flexDirection="column" width={fixedWidth ? GRID_COLUMN_WIDTHS[col] : undefined}>
+          {cells.map((cell, i) => <Box key={i}><Text dimColor={dimColor}>{cell}</Text></Box>)}
+        </Box>
+      ))}
+    </Box>
+  );
+}
 
 export function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   useKeyScope("Help");
   useSwallowKeys(true);
   useKeyActions({ "help:dismiss": () => onClose() });    // KB6: Escape, and only Escape, closes the overlay
-  // Not `{ live: true }`: while this overlay is up, Help is the only live scope — the whole grid describes keys
-  // that fire once it CLOSES, so it must read the whole table, not just what resolves under the swallow.
-  const rows = shortcutRows(useBindingLookup());
+  // The heading and the border are OURS, not upstream's — upstream's `?` surface is the bare grid inside the
+  // composer frame. Kept because this is a dismissable overlay in ccx and the "how do I get out" affordance
+  // has to be on screen; recorded divergence, unchanged by this task.
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>Keyboard shortcuts  <Text dimColor>(esc closes)</Text></Text>
-      {/* Keyed by POSITION, not by the rendered key column: the column is derived, so two rows can print the
-          same string — unbind `chat:cancel` and both of its rows say `(unbound)` — and duplicate React keys
-          make React drop one of them. The grid is a fixed, statically-ordered list, so the index is stable. */}
-      {rows.map(([k, label], i) => (
-        <Box key={i} flexDirection="row">
-          <Box width={18}><Text color={ACCENT}>{k}</Text></Box>
-          <Text dimColor>{label}</Text>
-        </Box>
-      ))}
+      <ShortcutsGrid dimColor fixedWidth paddingX={2} />
     </Box>
   );
 }

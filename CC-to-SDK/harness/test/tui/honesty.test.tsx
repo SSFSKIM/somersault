@@ -304,6 +304,33 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     expect(frame(lastFrame)).toContain("❯\u00a0");         // never exited/detached — just suspended
   },
 
+  // F6 T14 — the two rows the upstream merge ADDED to the grid. Both are advertised now, so both need a
+  // proof; PROOFS is only ever extended, never trimmed to whatever the newest grid happens to print.
+  "Alt-P": async () => {
+    const fake = fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("\x1bp");                            // Alt-P → the model picker, and the picker really lists the live catalog
+    await waitFor(() => frame(lastFrame).includes("Select model"));
+    expect(frame(lastFrame)).toContain("Opus");
+  },
+
+  // Not a chord — the one COMMAND the grid advertises (upstream's `/keybindings to customize`, gated on a
+  // release flag there and unconditional here because the command is implemented). The proof drives it end to
+  // end through the injected editor seam, never the machine's real $EDITOR (chat.test.tsx's own idiom).
+  "/keybindings": async () => {
+    const home = mkdtempSync(join(tmpdir(), "ccx-honesty-home-"));
+    honestyRoots.push(home);
+    const opened: string[] = [];
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()}
+      deps={{ home, openEditor: (file: string, prepare: () => void) => { prepare(); opened.push(file); return "opened" as const; }, readFile: () => null, writeFile: () => {} }} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("/keybindings"); await waitFor(() => frame(lastFrame).includes("/keybindings"));
+    stdin.write("\r");
+    await waitFor(() => opened.length === 1);
+    expect(opened[0]).toBe(join(home, ".claude", "keybindings.json"));
+  },
+
   "!": () => { expect(inputMode(typed("!ls"))).toBe("bash"); },
   "#": () => { expect(inputMode(typed("#note"))).toBe("memory"); },
   "@": () => { expect(typed("@").mention).not.toBeNull(); },

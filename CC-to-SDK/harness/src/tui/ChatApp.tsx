@@ -61,6 +61,7 @@ import { TurnSpinner } from "./TurnSpinner.js";
 import { BgTasksPanel } from "./BgTasksPanel.js";
 import { RewindPicker } from "./RewindPicker.js";
 import { ShortcutsOverlay } from "./ShortcutsOverlay.js";
+import { HelpDialog } from "./HelpDialog.js";
 import { TranscriptPager } from "./TranscriptPager.js";
 import { HistorySearchOverlay } from "./HistorySearchOverlay.js";
 import { AddDirDialog } from "./AddDirDialog.js";
@@ -125,7 +126,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
-  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
+  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
   // The queued band's own column budget: what is left inside the `paddingX: 2` box. `deps.columns` first for
   // the same reason useChat prefers it — the frame-capture fixture and the tests pin a width.
   const terminalColumns = () => deps?.columns?.() ?? stdout?.columns ?? 80;
@@ -188,7 +189,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ? "shortcuts"
     : transcriptOpen
       ? "transcript"
-      : state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open
+      : state.helpOpen || state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open
         ? "overlay"
         // `Fui()`'s three states (bundle L499192), as two arms of this ladder. A parked decision while the
         // draft is live is SUPPRESSED — the dialog renders nothing (`Xrl()` L499196) and the composer keeps
@@ -353,6 +354,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         : null}
       {state.shortcutsOpen
         ? <ShortcutsOverlay onClose={closeShortcuts} />
+        // F6 T14: `/help`'s dialog sits directly behind the `?` overlay — they render the SAME grid, and the
+        // one that was opened last is the one on screen. Both are USER surfaces (no parked decision under
+        // them), so this pair keeps the head of the chain.
+        : state.helpOpen
+        ? <HelpDialog commands={state.commandCatalog} onClose={closeHelp} rows={terminalRows()} columns={terminalColumns()} />
         : transcriptOpen
         // The ONLY route from the retained document to the pager: useChat's detailItems closure re-projects
         // it at whichever detail projection the pager currently wants. ChatApp never projects detail itself

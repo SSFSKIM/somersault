@@ -1617,17 +1617,19 @@ describe("useChat: one retained document behind every surface", () => {
     expect(frame(lastFrame).match(/Earlier live output unavailable/g)).toHaveLength(1);
   });
 
-  it("gives the SAME local visual action a fresh monotonic identity each time it is invoked, so two /help runs both render", async () => {
+  // F6 T14: this pair used `/help` for its line-appending local command; `/help` opens a DIALOG now and
+  // appends nothing but its echo. `/think` (no args) is the same shape — local, session-free, one line.
+  it("gives the SAME local visual action a fresh monotonic identity each time it is invoked, so two /think runs both render", async () => {
     const fake = fakeRemote();
     const api: { run?: (s: string) => void } = {};
     function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
-    api.run!("/help");
-    await waitFor(() => frame(lastFrame).includes("/model"));
-    const before = (flat(lastFrame).match(/❯ \/help/g) ?? []).length;
-    api.run!("/help");
-    await waitFor(() => (flat(lastFrame).match(/❯ \/help/g) ?? []).length === before + 1);
+    api.run!("/think");
+    await waitFor(() => frame(lastFrame).includes("thinking:"));
+    const before = (flat(lastFrame).match(/❯ \/think/g) ?? []).length;
+    api.run!("/think");
+    await waitFor(() => (flat(lastFrame).match(/❯ \/think/g) ?? []).length === before + 1);
   });
 
   it("same-session /resume APPENDS only unseen persisted rows and keeps the pre-resume local event in detail-all", async () => {
@@ -1665,12 +1667,12 @@ describe("useChat: one retained document behind every surface", () => {
     }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
-    api.run!("/help");
-    await waitFor(() => frame(lastFrame).includes("/model"));
+    api.run!("/think");
+    await waitFor(() => frame(lastFrame).includes("thinking:"));
     api.clear!();
     await waitFor(() => frame(lastFrame).includes("epoch:1"));
     expect(order).toEqual(["clear@0"]);                            // ran while the OLD epoch was still mounted
-    expect(frame(lastFrame)).not.toContain("/model");             // the fresh <Static> did not replay history
+    expect(frame(lastFrame)).not.toContain("thinking:");           // the fresh <Static> did not replay history
   });
 
   it("stops the 600 ms pending repaint when the call settles, when the session is replaced, and on unmount", async () => {

@@ -74,7 +74,7 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
   submitCount: number; hasMessages: boolean;
-  staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[];
+  staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[];
   /** The session's working directories — the cwd plus every `/add-dir` grant (`listDirs()`). The FILE
    *  permission dialog's in-directory test runs over this set; nothing else reads it. */
   workDirs: readonly string[]; }
@@ -224,6 +224,7 @@ export function useChat(
   const [composerPrefill, setComposerPrefill] = useState<{ text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null>(null);
   const [rewinding, setRewinding] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);   // the `?` help overlay (pure display)
+  const [helpOpen, setHelpOpen] = useState(false);             // F6 T14: /help's tabbed dialog (the same grid, plus the catalog)
   const [historyOpen, setHistoryOpen] = useState(false);       // the Ctrl-R history-search overlay
   const [addDir, setAddDir] = useState<{ open: boolean; prefill?: string }>({ open: false });   // W3 T3: /add-dir overlay
   const [themeDialog, setThemeDialog] = useState<{ open: boolean }>({ open: false });   // W3 T4: /theme overlay
@@ -687,7 +688,10 @@ export function useChat(
         }
         case "usage": append(formatUsage(await session.usage())); break;
         case "clear": clear(); break;
-        case "help": append(formatHelp()); break;
+        // F6 T14: `/help` is a DIALOG upstream (`RNa`, L459684), not a printed list — the General tab carries
+        // the shortcuts grid and the Commands tab browses the live catalog. `formatHelp` stays exported (and
+        // tested) as the plain listing; nothing routes to it any more.
+        case "help": openHelp(); break;
         case "resume": void openPicker(); break;
         case "continue": void doContinue(); break;
         case "yolo": void applyMode("bypassPermissions"); break;
@@ -1311,6 +1315,11 @@ export function useChat(
   function closeBgPanel() { if (!disposed.current) setBgPanelOpen(false); }
   function openShortcuts() { if (!disposed.current) setShortcutsOpen(true); }
   function closeShortcuts() { if (!disposed.current) setShortcutsOpen(false); }
+  function openHelp() { if (!disposed.current) setHelpOpen(true); }
+  // `EHf("Help dialog dismissed", { display: "system" })` (L459687) — checked, and unlike T13's Background
+  // dismissal this one does NOT pass `display:"skip"`, so the line really is printed. Same `notice` shape the
+  // Settings/Permissions dismissals use.
+  function closeHelp() { if (!disposed.current) { setHelpOpen(false); notice("Help dialog dismissed"); } }
   function openHistorySearch() { if (!disposed.current) setHistoryOpen(true); }
   function closeHistorySearch() { if (!disposed.current) setHistoryOpen(false); }
   // Esc/Tab (historySearch:accept): the chosen prompt lands in the composer via the same prefill seam the
@@ -1412,5 +1421,5 @@ export function useChat(
   }
   function clear() { if (!disposed.current) { clearScreen(); replaceDocument(new TranscriptDocument()); } }   // /clear: wipe screen + model (session context kept)
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials, workDirs } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials, workDirs } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
 }

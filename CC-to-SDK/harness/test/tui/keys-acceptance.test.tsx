@@ -24,7 +24,7 @@ import { UserKeymap } from "../../src/tui/keys/UserKeymap.js";
 import { useKeyActions, useKeyScope } from "../../src/tui/keys/KeymapProvider.js";
 import { loadUserBindings, userBindingsPath, type UserBindingsResult } from "../../src/tui/keys/userBindings.js";
 import { parseKeySpec } from "../../src/tui/keys/normalize.js";
-import { SHORTCUT_ROWS, defaultLookup, formatBinding } from "../../src/tui/keys/hints.js";
+import { SHORTCUT_ROWS, UNBOUND, defaultLookup, formatBinding, formatBindingLower, shortcutRows, withModSep } from "../../src/tui/keys/hints.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { ChatStatusBar } from "../../src/tui/ChatStatusBar.js";
 import type { KeyEvent } from "../../src/tui/keys/types.js";
@@ -35,6 +35,10 @@ const ALT_E = "\x1be", ALT_M = "\x1bm", SHIFT_TAB = "\x1b[Z";
 
 const frame = (f: () => string | undefined) => f() ?? "";
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
+/** F6 T14: the shortcuts overlay is a three-COLUMN grid, so a cell too wide for its column wraps across two
+ *  physical lines. Unwrap before matching — per-line matching silently loses whichever cell straddles the
+ *  break, which reads as "the grid stopped advertising it" (honesty.test.tsx's own idiom). */
+const unwrapped = (s: string): string => stripAnsi(s).replace(/\s*\n\s*/g, " ").replace(/\s+/g, " ");
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await new Promise((r) => setTimeout(r, 0)); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
@@ -276,13 +280,16 @@ describe("F2 acceptance 4 — rebinding an action rewrites its hints, with no co
     expect(bar).not.toContain("⇧Tab");
     h.stdin.write("?");
     await waitFor(() => frame(h.lastFrame).includes("Keyboard shortcuts"));
-    const overlay = stripAnsi(frame(h.lastFrame));
-    expect(overlay).toContain("Alt-M");                                        // the overlay row moved too
-    expect(overlay).not.toContain("⇧Tab");
+    // F6 T14: the overlay is upstream's three-column SENTENCE grid now, so the rebinding shows in the grid's
+    // own lower-case grammar. The expectation is DERIVED (`opt + m` on darwin, `alt + m` elsewhere) rather
+    // than typed — hardcoding one platform's spelling is the drift this whole describe block is about.
+    const overlay = unwrapped(frame(h.lastFrame));
+    expect(overlay).toContain(`${withModSep(formatBindingLower("alt+m"))} to auto-accept edits`);
+    expect(overlay).not.toContain("shift + tab");
     h.unmount();
   });
 
-  it("an action the user unbinds outright shows as unbound instead of keeping a stale literal", async () => {
+  it("an action the user unbinds outright is dropped from the grid instead of keeping a stale literal", async () => {
     const h = renderWithKeymap(
       <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
       { userLayers: [{ context: "Global", bindings: { "ctrl+t": null } }] },
@@ -290,19 +297,23 @@ describe("F2 acceptance 4 — rebinding an action rewrites its hints, with no co
     await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     h.stdin.write("?");
     await waitFor(() => frame(h.lastFrame).includes("Keyboard shortcuts"));
-    const overlay = stripAnsi(frame(h.lastFrame));
-    const todoRow = overlay.split("\n").find((l) => l.includes("todo panel")) ?? "";
-    expect(todoRow).toContain("(unbound)");
-    expect(todoRow).not.toContain("Ctrl-T");
+    // T14 moved the OVERLAY onto `$e`'s three-state contract (hints.ts): an action with no live binding
+    // contributes NO CLAUSE, because `(unbound) to toggle tasks` is not a sentence. Nothing stale survives.
+    const overlay = unwrapped(frame(h.lastFrame));
+    expect(overlay).not.toContain("toggle tasks");
+    expect(overlay).not.toContain("ctrl + t");
+    // The KEY-COLUMN grammar still answers `(unbound)` — that corpus is what honesty.test.tsx audits, and it
+    // is where "your unbind took effect" is the readable answer.
+    const unbound = (action: string) => (action === "app:toggleTodos" ? [] : defaultLookup(action));
+    expect(new Map(shortcutRows(unbound, "darwin").map(([k, v]) => [v, k])).get("todo panel")).toBe(UNBOUND);
     h.unmount();
   });
 
-  it("two rows that unbind to the SAME key column render as two rows, with no duplicate React key", async () => {
-    // `chat:cancel` owns two grid rows (the busy interrupt and the Esc-Esc clear/rewind). Unbind it and both
-    // print `(unbound)` — identical strings. The overlay used to key its rows BY that rendered string, so the
-    // list handed React two children under one key (t10 review, Minor). Both rows still PAINT that way on a
-    // fresh mount, which is why the row count alone cannot catch it; React's own duplicate-key diagnostic is
-    // the assertion that does, and it is the thing that makes a later re-render reconcile onto the wrong row.
+  it("two rows sharing one unbound action drop together, with no duplicate React key", async () => {
+    // `chat:cancel` owns two grid cells (the busy interrupt and the Esc-Esc clear/rewind). The overlay used to
+    // key its rows BY the rendered string, so unbinding the action handed React two `(unbound)` children under
+    // one key (t10 review, Minor). T14's grid keys by POSITION in both directions and both cells vanish
+    // instead — React's own duplicate-key diagnostic is still the assertion that would catch a regression.
     const errors: string[] = [];
     const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => { errors.push(String(args[0])); });
     try {
@@ -313,10 +324,10 @@ describe("F2 acceptance 4 — rebinding an action rewrites its hints, with no co
       await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
       h.stdin.write("?");
       await waitFor(() => frame(h.lastFrame).includes("Keyboard shortcuts"));
-      const overlay = stripAnsi(frame(h.lastFrame));
-      expect(overlay).toContain("interrupt (while running)");
-      expect(overlay).toContain("clear input · rewind when empty");
-      expect(overlay.split("\n").filter((l) => l.includes("(unbound)")).length).toBe(2);
+      const overlay = unwrapped(frame(h.lastFrame));
+      expect(overlay).not.toContain("double tap");
+      expect(overlay).not.toContain("to interrupt");
+      expect(overlay).toContain("ctrl + l to clear input");            // the OTHER clear-input row is untouched
       expect(errors.filter((e) => e.includes("same key"))).toEqual([]);
       h.unmount();
     } finally { spy.mockRestore(); }
@@ -466,7 +477,9 @@ describe("F2 — hint derivation coverage", () => {
     expect(BANNED).toContain("Ctrl-T");
     expect(BANNED).toContain("Esc");
     const src = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
-    for (const file of ["../../src/tui/ChatComposer.tsx", "../../src/tui/ChatStatusBar.tsx", "../../src/tui/ShortcutsOverlay.tsx"]) {
+    // F6 T14 adds `HelpDialog.tsx` to the swept set: it prints the dismiss chord in its footer, and that chord
+    // must come from the table like every other one on screen.
+    for (const file of ["../../src/tui/ChatComposer.tsx", "../../src/tui/ChatStatusBar.tsx", "../../src/tui/ShortcutsOverlay.tsx", "../../src/tui/HelpDialog.tsx"]) {
       // Comments are not rendered, so they are not lies — whole `//` / `/*` / jsdoc-`*` lines drop out, and so
       // does the tail of a line-end `//` comment, which is what lets these files keep explaining what they
       // derive and why. Cutting at `//` can over-strip (a `://` inside a string), which would only ever HIDE a
