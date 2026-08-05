@@ -1220,6 +1220,14 @@ behind those rows — all forty `K1`–`K40` research rows, re-scored — sits a
   renders in the transcript flow (not a screen-covering modal, transcript stays); the composer is
   hidden while the dialog is visible; a prompt arriving mid-draft is suppressed behind
   `Waiting for permission…`. DG27 is delivered in that corrected form.
+- 2026-08-05 — **F6 acceptance #4 was wrong — an empty keep-planning submit DENIES, it does not keep
+  the dialog open (T9 review, bundle-traced).** The census read `lYf`'s `return null` (L500732-736) as
+  "stays open", but that null sits on the `"no"` arm, which an empty submit can never reach: the row
+  carries no `allowEmptySubmitToCancel` (`sYf` L500713), so `RLe` routes empty text to the Select's
+  `onCancel` (L397113-118, identical in all three layout branches), and `Gnl` wires that to `xnl` →
+  `{behavior:"deny"}` (L500995) — exactly what Esc does. The null-return is reachable only with pasted
+  images, which have no surface here. DG31 is delivered in the corrected form; acceptance #4 becomes:
+  choosing `No, keep planning` and submitting empty feedback rejects with no feedback, as Esc does.
 - 2026-08-05 — **F6's DG28 ("Enter plan mode?" dialog) is unreachable headlessly (probe 81).**
   `EnterPlanMode` executes without ever consulting `canUseTool` — there is no hook to hang the
   dialog on. Recorded beside CM6/CM7; the spec's Delivers line is superseded.
