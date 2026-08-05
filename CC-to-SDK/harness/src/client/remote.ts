@@ -25,6 +25,14 @@ const REWIND_TIMEOUT_MS = 60_000;
 // late reply dropped and no transcript rebuild. Waiting is the honest behaviour; a genuinely dead host is
 // still caught, because the socket closing rejects every in-flight request (see the close handler).
 const NO_TIMEOUT = Number.POSITIVE_INFINITY;
+// Live-feedback fix (2026-08-06): compact is the rewind lesson again, worse. The host replies only after
+// the ENGINE's summarization turn completes — a full LLM pass over the whole context, routinely 30–120s on
+// a real session — so the 10s default fired mid-work every time and reported a healthy host as wedged
+// ("host did not answer compact within 10000ms" in live use). Like the mutating rewind, a fired timer here
+// is a lie, not a safety net: the engine keeps compacting and succeeds after the client has already printed
+// failure. Capped rather than NO_TIMEOUT only because compact is non-destructive — an abandoned wait costs
+// a notice line, not a torn restore.
+const COMPACT_TIMEOUT_MS = 300_000;
 
 /** THIS direction's own cap — NOT the server's `MAX_FRAME`. The two directions carry different traffic:
  *  the server bounds small fixed-shape client→host ops (`status`/`answer`/`prompt`), while this buffers
@@ -164,13 +172,15 @@ export class RemoteChatSession {
   setPermissionModeOp(mode: string) { return this.send<{ ok: boolean; error?: string }>({ op: "set_permission_mode", mode }); }
   setThinkingOp(maxTokens: number | null) { return this.send<{ ok: boolean; error?: string }>({ op: "set_thinking", maxTokens }); }
   capabilitiesOp() { return this.send<{ ok: boolean; error?: string; models?: unknown[]; commands?: unknown[]; mcpServers?: unknown[] }>({ op: "capabilities" }); }
-  compactOp() { return this.send<{ ok: boolean; error?: string; outcome?: unknown }>({ op: "compact" }); }
+  compactOp() { return this.send<{ ok: boolean; error?: string; outcome?: unknown }>({ op: "compact" }, COMPACT_TIMEOUT_MS); }
   usageOp() { return this.send<{ ok: boolean; error?: string; usage?: unknown }>({ op: "usage" }); }
   contextUsageOp() { return this.send<{ ok: boolean; error?: string; usage?: unknown }>({ op: "context_usage" }); }
   mcpStatusOp() { return this.send<{ ok: boolean; error?: string; servers?: unknown[] }>({ op: "mcp_status" }); }
   mcpReconnectOp(name: string) { return this.send<{ ok: boolean; error?: string }>({ op: "mcp_reconnect", name }); }
   mcpToggleOp(name: string, enabled: boolean) { return this.send<{ ok: boolean; error?: string }>({ op: "mcp_toggle", name, enabled }); }
   resumeOp(sessionId: string) { return this.send<{ ok: boolean; error?: string }>({ op: "resume", sessionId }); }
+  /** The engine half of /clear — a fresh-conversation engine swap, busy-gated server-side like resume. */
+  clearOp() { return this.send<{ ok: boolean; error?: string }>({ op: "clear" }); }
 
   // C5 T3: Esc-Esc rewind wire ops. anchors/dryRun are read-only; rewind is busy-gated server-side (see
   // server.ts's dispatch arm), same as resumeOp.

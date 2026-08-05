@@ -362,6 +362,15 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags, rows?: numb
     if (input === "d") return { state: syncCompletions(deleteWordAfter(s)) };   // CM12; NOT a kill (see deleteWordAfter)
     return { state: s };                                 // an unrecognized meta combo never inserts text
   }
+  // Live-feedback fix (2026-08-06), bundle L395786-395796: `backspace` with meta OR ctrl is `se()` —
+  // deleteWordBefore AS A KILL (ring, prepend), the same op ctrl+w runs. Option+backspace over ssh arrives
+  // as ESC 0x7f → `{name:"backspace", alt:true}` (parse.ts) and used to fall through to the single-char
+  // arm below — word delete read as "does not work" in live use. `delete` with meta is upstream's `oe()`
+  // = deleteToLineEnd (ring, append). Both sit ABOVE the ctrl switch — a ctrl+backspace entering that
+  // switch dies in its default arm before any backspace handling. The superKey arms beside them upstream
+  // are cmd-key combos no terminal wire delivers (KeyFlags has no such flag) and stay unported.
+  if (key.backspace && (key.meta || key.ctrl)) { const r = killWordBack(s); return { state: syncCompletions(r.state), killed: { text: r.text, dir: "prepend" as const } }; }
+  if (key.delete && key.meta) { const r = killToEnd(s); return { state: syncCompletions(r.state), killed: { text: r.text, dir: "append" as const } }; }
   if (key.ctrl) {                                        // readline keys; other ctrl combos (l/c/d) act at app level → ignore here (never insert)
     switch (input) {
       // CM12, bundle L395676 — the ctrl map verbatim: a=startOfLogicalLine, b=left, e=endOfLogicalLine, f=right,

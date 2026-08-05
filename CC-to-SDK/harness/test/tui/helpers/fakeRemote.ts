@@ -38,6 +38,9 @@ export interface FakeRemoteOpts {
   mcpServerStatus?: () => unknown;
   reconnectMcpServer?: (name: string) => unknown;
   toggleMcpServer?: (name: string, enabled: boolean) => unknown;
+  /** /clear's engine half (live-feedback fix 2026-08-06). Optional on ChatSession too — omitted here,
+   *  the fake behaves like a pre-upgrade host and the REPL's optional-chain path is what runs. */
+  clearSession?: () => unknown;
   dispose?: () => unknown;
   listBgTasks?: () => unknown;
   background?: () => unknown;
@@ -87,6 +90,9 @@ export function fakeRemote(opts: FakeRemoteOpts = {}): FakeRemote {
     async setMaxThinkingTokens(maxTokens) { await opts.setMaxThinkingTokens?.(maxTokens); },
     async capabilities() { return ((await opts.capabilities?.()) as any) ?? { models: [], commands: [], mcpServers: [] }; },
     async compact() { return ((await opts.compact?.()) as any) ?? { ok: true, preTokens: 0, postTokens: 0 }; },
+    // Present only when the test provides it — an absent member exercises the pre-upgrade-host path
+    // exactly like the real remote adapter would (ChatSession.clearSession is optional).
+    ...(opts.clearSession ? { clearSession: async () => { await opts.clearSession!(); } } : {}),
     async interrupt() { return await opts.interrupt?.(); },
     async getContextUsage() { return ((await opts.getContextUsage?.()) as any) ?? { totalTokens: 5, maxTokens: 100 }; },
     async usage() { return ((await opts.usage?.()) as any) ?? {}; },

@@ -32,6 +32,9 @@ export interface HostHandlers {
   /** Swap the underlying session for a resume of `sessionId`. Gated exactly like `prompt` (see the
    *  `resume` dispatch arm) — a turn in flight must refuse it, not race it. */
   resume(sessionId: string): Promise<void>;
+  /** Swap the underlying session for a FRESH conversation — the engine half of /clear. Gated exactly
+   *  like `resume` and for the same reason. */
+  clear(): Promise<void>;
   /** The seq of the last started turn — read by the `prompt` reply so a client can correlate its
    *  submit() to this turn's `end` event (adapter, Task 5). */
   turnSeq(): number;
@@ -183,6 +186,12 @@ export class HostServer {
       case "resume": {
         if (this.handlers.busy()) return { ok: false, error: "busy" };
         await this.handlers.resume(op.data.sessionId);
+        return { ok: true };
+      }
+      // clear swaps the engine for a FRESH conversation (the real /clear); gated exactly like resume.
+      case "clear": {
+        if (this.handlers.busy()) return { ok: false, error: "busy" };
+        await this.handlers.clear();
         return { ok: true };
       }
       case "tasks": return { ok: true, tasks: this.handlers.tasks() };

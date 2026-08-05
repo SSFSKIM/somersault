@@ -54,6 +54,7 @@ const handlers = (over: Partial<HostHandlers> = {}): HostHandlers => ({
   follow: (_deliver: (ev: HostEvent) => void) => () => {},
   control: async () => ({ ok: true }),
   resume: async () => {},
+  clear: async () => {},
   turnSeq: () => 0,
   tasks: () => [],
   background: async () => true,

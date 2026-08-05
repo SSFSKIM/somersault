@@ -572,7 +572,8 @@ describe("<ChatApp>", () => {
     // exercises ChatApp itself, so dropping the onPrefillApplied prop in ChatApp is caught too.
     const ANCHOR: RewindAnchor = { uuid: "u1", prevUuid: "u0", text: "fix the parser", index: 2 };
     const fake = fakeRewindRemote({ rewindAnchors: async () => [ANCHOR], rewind: async () => {} });
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    // No persisted transcript behind this fake — skip the post-rewind flush-race poll (live-feedback fix).
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ rewindReplayRetry: { attempts: 1, delayMs: 0 } }} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
 
     stdin.write("\x1b");                                            // arm
@@ -631,7 +632,7 @@ describe("<ChatApp>", () => {
     const held = new Promise<void>((r) => { release = r; });
     const ANCHOR: RewindAnchor = { uuid: "u1", prevUuid: "u0", text: "fix the parser", index: 2 };
     const fake = fakeRewindRemote({ rewindAnchors: async () => [ANCHOR], rewind: async () => { await held; } });
-    const fakeDeps = { getSessionMessages: async () => [] as any[] };
+    const fakeDeps = { getSessionMessages: async () => [] as any[], rewindReplayRetry: { attempts: 1, delayMs: 0 } };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={fakeDeps} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
 
@@ -1159,7 +1160,7 @@ describe("<ChatApp>", () => {
       rewindDryRun: async () => ({ canRewind: true }) as RewindDryRun,
       rewind: async () => { await heldRewind; },
     };
-    const fakeDeps = { getSessionMessages: async () => [] as any[] };
+    const fakeDeps = { getSessionMessages: async () => [] as any[], rewindReplayRetry: { attempts: 1, delayMs: 0 } };
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={fakeDeps} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
 

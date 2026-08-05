@@ -125,6 +125,42 @@ describe("CM12 alt+d = deleteWordAfter, and it is NOT a kill", () => {
   });
 });
 
+// Live-feedback fix (2026-08-06), bundle L395786-395796: the `backspace` dispatch arm reads
+// `if (Pe.meta || Pe.ctrl) return se()` — deleteWordBefore AS A KILL (ring, prepend; the ctrl+w op) —
+// before falling to `deleteTokenBefore() ?? backspace()`. Option+backspace over ssh (ESC 0x7f →
+// alt+backspace) previously fell through to the single-char arm and read as broken in live use.
+// `delete` reads `if (Pe.meta) return oe()` — deleteToLineEnd (ring, append).
+describe("meta+backspace = deleteWordBefore as a kill (bundle L395789 `se()`), meta+delete = deleteToLineEnd (`oe()`)", () => {
+  it("alt+backspace deletes the word before the cursor into the ring, prepend direction", () => {
+    let s = type(initialEditorState(), "one two");
+    const r = applyKey(s, "", { backspace: true, meta: true });
+    expect(text(r.state)).toBe("one ");
+    expect(r.killed).toEqual({ text: "two", dir: "prepend" });
+    expect(r.state.killRing).toEqual(["two"]);
+    const restored = applyKey(r.state, "y", CTRL).state;          // the kill is yankable, exactly like ctrl+w's
+    expect(text(restored)).toBe("one two");
+  });
+  it("ctrl+backspace runs the same word kill (the arm is `meta || ctrl`)", () => {
+    const s = type(initialEditorState(), "alpha beta");
+    const r = applyKey(s, "", { backspace: true, ctrl: true });
+    expect(text(r.state)).toBe("alpha ");
+    expect(r.state.killRing).toEqual(["beta"]);
+  });
+  it("plain backspace still deletes one character — the fall-through arm is untouched", () => {
+    const s = type(initialEditorState(), "ab");
+    const r = applyKey(s, "", { backspace: true });
+    expect(text(r.state)).toBe("a");
+    expect(r.killed).toBeUndefined();
+  });
+  it("meta+delete kills to the end of the line, append direction", () => {
+    let s = type(initialEditorState(), "one two three");
+    s = applyKey(s, "b", META).state; s = applyKey(s, "b", META).state;   // cursor before "two"
+    const r = applyKey(s, "", { delete: true, meta: true });
+    expect(text(r.state)).toBe("one ");
+    expect(r.killed).toEqual({ text: "two three", dir: "append" });
+  });
+});
+
 describe("CM14 ctrl+a/ctrl+e are start/end of the LOGICAL line", () => {
   // Our buffer is already unwrapped logical lines, so today's behavior IS upstream's — pin it so a future
   // visual-line refactor cannot silently redefine these two keys.

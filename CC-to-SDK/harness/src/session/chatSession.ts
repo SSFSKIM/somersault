@@ -21,6 +21,10 @@ export interface ChatSession {
   reconnectMcpServer(name: string): Promise<void>;
   toggleMcpServer(name: string, enabled: boolean): Promise<void>;
   dispose(): Promise<void>;
+  /** The engine half of /clear (live-feedback fix, 2026-08-06): swap to a FRESH conversation so the
+   *  context is actually freed — the UI wipe alone was a lie. Optional: a pre-upgrade host has no
+   *  `clear` op, and the REPL degrades to the old screen-only clear with a notice. */
+  clearSession?(): Promise<void>;
   readonly sessionId?: string;
 }
 

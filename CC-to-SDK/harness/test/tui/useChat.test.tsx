@@ -408,6 +408,27 @@ describe("useChat", () => {
     expect(submitted).toBe(0);     // no slash command ever reached session.submit
   });
 
+  // Live-feedback fix (2026-08-06): /clear's engine half. The UI-only clear kept the engine context —
+  // the model still remembered everything, which is what "doesn't actually work" looked like in live use.
+  it("/clear calls the session's clearSession (engine swap) and only then wipes the document", async () => {
+    let cleared = 0;
+    const fake = fakeRemote({ clearSession: async () => { cleared++; } });
+    const api: { run?: (s: string) => void } = {};
+    render(<CmdHost makeSession={() => fake} api={api} />);
+    await waitFor(() => cleared === 0);
+    api.run!("/clear");
+    await waitFor(() => cleared === 1);
+  });
+  it("/clear on a refusing host (busy / pre-upgrade) prints the refusal and does NOT wipe the document", async () => {
+    const fake = fakeRemote({ clearSession: async () => { throw new Error("busy"); } });
+    const api: { run?: (s: string) => void } = {};
+    const { lastFrame } = render(<CmdHost makeSession={() => fake} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    api.run!("/clear");
+    await waitFor(() => frame(lastFrame).includes("clear: busy"));
+    expect(frame(lastFrame)).toContain("engine context unchanged");
+  });
+
   it("clear() empties the transcript and fires the terminal clear-screen", async () => {
     let cleared = 0;
     const api: { run?: (s: string) => void; clear?: () => void } = {};

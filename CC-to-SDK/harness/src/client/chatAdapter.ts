@@ -46,6 +46,11 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
         if (i >= 0) pendingList.splice(i, 1);
         for (const cb of [...settledCbs]) { try { cb({ toolUseID: s.toolUseID, by: s.by, decision: s.decision }); } catch {} }
       } else if (ev.kind === "state") { if (ev.status.sessionId) sessionId = ev.status.sessionId; }
+      // Live-feedback fix (2026-08-06): the rewind engine swap can mint a NEW session id, and the host's
+      // rewound broadcast is the one frame guaranteed to carry it — the state emit inside swapEngine often
+      // fires before the fresh engine's init frame has delivered an id at all. Without this, a client's
+      // post-rewind transcript rebuild reads disk under the OLD id.
+      else if (ev.kind === "rewound") { if (ev.sessionId) sessionId = ev.sessionId; }
       else if (ev.kind === "turn" && ev.phase === "end" && ev.seq !== undefined) {
         if (turnWaiter && ev.seq === turnWaiter.seq) { const w = turnWaiter; turnWaiter = undefined; ev.error ? w.reject(new Error(ev.error)) : w.resolve(); }
         else endedTurns.set(ev.seq, ev.error);      // ended before its waiter existed — submit() consults this
@@ -111,6 +116,7 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
     async setMaxThinkingTokens(t) { orFail(await (await ready).setThinkingOp(t)); },
     async capabilities() { const rep = orFail(await (await ready).capabilitiesOp()); return { models: rep.models ?? [], commands: rep.commands ?? [], mcpServers: rep.mcpServers ?? [] }; },
     async compact() { return orFail(await (await ready).compactOp()).outcome as CompactOutcome; },
+    async clearSession() { orFail(await (await ready).clearOp()); },
     async interrupt() { return orFail(await (await ready).interrupt()); },
     async getContextUsage() { return orFail(await (await ready).contextUsageOp()).usage; },
     async usage() { return orFail(await (await ready).usageOp()).usage; },

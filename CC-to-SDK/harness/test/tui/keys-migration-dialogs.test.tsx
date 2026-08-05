@@ -507,7 +507,7 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
       rewind: async () => { await held; },
     };
     const { stdin, lastFrame } = render(
-      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ getSessionMessages: async () => [] as never[] }} />,
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ getSessionMessages: async () => [] as never[], rewindReplayRetry: { attempts: 1, delayMs: 0 } }} />,
     );
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await armTodoRow(fake, stdin, lastFrame);

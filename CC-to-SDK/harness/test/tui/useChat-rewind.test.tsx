@@ -248,7 +248,9 @@ describe("useChat: rewind flow", () => {
     let release!: () => void;
     const held = new Promise<void>((r) => { release = r; });
     const session = fakeRewindSession({ rewind: async () => { await held; } });
-    const deps = { getSessionMessages: async () => [] as any[] };
+    // The retry override keeps this test fast: an empty fetch otherwise polls the full ~3s window the
+    // live-feedback fix added for the post-rewind disk-flush race.
+    const deps = { getSessionMessages: async () => [] as any[], rewindReplayRetry: { attempts: 1, delayMs: 0 } };
     const api: Parameters<typeof RewindHost>[0]["api"] = {};
     function H() {
       const c = useChat(() => session, {}, deps);
@@ -262,5 +264,41 @@ describe("useChat: rewind flow", () => {
     await waitFor(() => frame(lastFrame).includes("rewinding:true"));
     release();
     await waitFor(() => frame(lastFrame).includes("rewinding:false"));
+  });
+
+  // Live-feedback fix (2026-08-06): the post-rewind replay RACES the engine swap — the new session file's
+  // first flush lags the rewind reply, and a single immediate read landed in the bare-divider arm ("rewind
+  // just printed ⏪ rewound"). The rebuild now polls, re-reading session.sessionId each attempt.
+  it("11. an empty first read is retried — the replay lands once the persisted file appears", async () => {
+    const msgs = [
+      { type: "user", uuid: "u-fix3", message: { content: [{ type: "text", text: "fix the parser" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
+      { type: "assistant", message: { content: [{ type: "text", text: "replayed after the flush" }] } },
+    ];
+    let reads = 0;
+    const session = fakeRewindSession();
+    const deps = { getSessionMessages: async () => (++reads < 3 ? [] : msgs), rewindReplayRetry: { attempts: 5, delayMs: 5 } };
+    const api: Parameters<typeof RewindHost>[0]["api"] = {};
+    function H() { const c = useChat(() => session, {}, deps); api.confirmRewind = (c as any).confirmRewind; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.confirmRewind!(ANCHOR, "both");
+    await waitFor(() => frame(lastFrame).includes("replayed after the flush"));
+    expect(reads).toBeGreaterThanOrEqual(3);                      // the first empty reads did not take the divider arm
+  });
+  it("12. the rebuild wipes the real screen+scrollback (clearScreen), not only Ink's Static", async () => {
+    const msgs = [
+      { type: "user", uuid: "u-w", message: { content: [{ type: "text", text: "wipe check" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
+      { type: "assistant", message: { content: [{ type: "text", text: "fresh view" }] } },
+    ];
+    let wipes = 0;
+    const session = fakeRewindSession();
+    const deps = { getSessionMessages: async () => msgs, clearScreen: () => { wipes++; } };
+    const api: Parameters<typeof RewindHost>[0]["api"] = {};
+    function H() { const c = useChat(() => session, {}, deps); api.confirmRewind = (c as any).confirmRewind; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.confirmRewind!(ANCHOR, "both");
+    await waitFor(() => frame(lastFrame).includes("fresh view"));
+    expect(wipes).toBe(1);                                        // the same 2J/3J/H wipe /clear performs
   });
 });

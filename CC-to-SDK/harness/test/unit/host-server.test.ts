@@ -13,7 +13,7 @@ afterEach(async () => { await srv?.close(); srv = undefined; });
 // This file predates the op union Task 6 adds; it only exercises status/stop framing, so the rest of
 // HostHandlers is stubbed once here rather than repeated at every one of its ~dozen call sites.
 const stub = { busy: () => false, pending: () => [], answer: () => ({ ok: true }), prompt: async () => {}, interrupt: async () => {}, follow: () => () => {},
-  control: async () => ({ ok: true }), resume: async () => {}, turnSeq: () => 0,
+  control: async () => ({ ok: true }), resume: async () => {}, clear: async () => {}, turnSeq: () => 0,
   tasks: () => [], background: async () => true, stopTask: async () => {},
   rewindAnchors: async () => [], rewindDryRun: async () => ({ canRewind: false }), rewind: async () => {},
   getSettings: async () => ({}), listDirs: () => [], addDir: async () => {}, removeDir: async () => {},
@@ -212,6 +212,23 @@ describe("HostServer", () => {
     await srv.listen();
     expect(await ask(sock, { op: "resume", sessionId: "sid-1" })).toMatchObject({ ok: false, error: "busy" });
     expect(resumed).toEqual([]);
+  });
+  // Live-feedback fix (2026-08-06): the /clear engine half — dispatched to handlers.clear when idle,
+  // refused outright when busy, exactly the resume gate.
+  it("clear dispatches to the handler when idle, and is refused when busy without reaching it", async () => {
+    const sock = sockPath();
+    let cleared = 0;
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {},
+      clear: async () => { cleared++; } }, sock);
+    await srv.listen();
+    expect(await ask(sock, { op: "clear" })).toMatchObject({ ok: true });
+    expect(cleared).toBe(1);
+    await srv.close();
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {},
+      busy: () => true, clear: async () => { cleared++; } }, sock);
+    await srv.listen();
+    expect(await ask(sock, { op: "clear" })).toMatchObject({ ok: false, error: "busy" });
+    expect(cleared).toBe(1);
   });
   it("refuses rewind when busy() is true, gated exactly like resume — and never reaches the handler", async () => {
     const sock = sockPath();

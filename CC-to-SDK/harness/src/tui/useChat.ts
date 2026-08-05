@@ -93,7 +93,7 @@ export function useChat(
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
   // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
-  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed" } = {},
+  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number } } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
@@ -678,7 +678,9 @@ export function useChat(
           if (cmd.args) { const m = resolveModelAlias(cmd.args)!; sessionModelRef.current = undefined; await session.setModel(m); if (!disposed.current) setModel(m); append(formatModel(m)); }
           else { await openModelPicker(); }
           break;
-        case "compact": append(formatCompact(await session.compact())); break;
+        // The pre-notice is not decoration: compact is a full engine summarization pass (30–120s live), and
+        // the await below is silent for all of it — without a line landing first, /compact reads as a hang.
+        case "compact": append([{ text: "✻ compacting… (a summarization pass over the whole context — this can take a minute or two)", dim: true }]); append(formatCompact(await session.compact())); break;
         case "context": append(formatContext(summarizeUsage((await session.getContextUsage()) as RawContextUsage))); break;
         case "cost": append(formatCost((await session.usage()) as SessionUsage)); break;
         case "status": {
@@ -687,7 +689,19 @@ export function useChat(
           break;
         }
         case "usage": append(formatUsage(await session.usage())); break;
-        case "clear": clear(); break;
+        // Live-feedback fix (2026-08-06): /clear was UI-only — screen wiped, document replaced, ENGINE
+        // CONTEXT KEPT — so the model still remembered everything, which read as "/clear doesn't work".
+        // The engine half is a fresh-conversation swap (host `clear` op, busy-gated like resume). It runs
+        // FIRST: if the host refuses (mid-turn) or predates the op, the screen is left alone and the
+        // refusal is printed — a wiped screen over a kept context is exactly the lie this fixes.
+        case "clear": {
+          try { await session.clearSession?.(); } catch (e) {
+            append([{ text: `clear: ${e instanceof Error ? e.message : String(e)} — screen left as is (engine context unchanged)`, dim: true }]);
+            break;
+          }
+          clear();
+          break;
+        }
         // F6 T14: `/help` is a DIALOG upstream (`RNa`, L459684), not a printed list — the General tab carries
         // the shortcuts grid and the Commands tab browses the live catalog. The old `formatHelp()` listing it
         // replaced was deleted in T15 once this became its only ex-caller (see commands.ts).
@@ -1145,10 +1159,28 @@ export function useChat(
    *  broadcast — a follower passes no prefill, because someone else's rewound prompt does not belong in
    *  this user's composer. Idempotent: re-reading disk and re-rendering is harmless if it runs twice. */
   async function rebuildAfterRewind(prefill?: string) {
-    const id = session.sessionId;
+    // Live-feedback fix (2026-08-06), two halves of "rewind just printed the divider":
+    //  · The read RACES the swap. The engine swap mints a session id asynchronously (the fresh engine's
+    //    init frame delivers it; the rewound broadcast carries it when known), and the new file's first
+    //    flush lags the swap settling — a single immediate read landed on a stale id or an unflushed
+    //    file and took the empty-divider arm. So: poll briefly, re-reading `session.sessionId` each
+    //    attempt (the adapter may learn the new id mid-poll), and accept the first non-empty replay.
+    //  · Ink's app.clear() (replaceDocument's bridge) cannot erase rows already scrolled OUT of the
+    //    viewport, so the pre-rewind conversation survived above and the rebuild below read as "nothing
+    //    re-rendered". /clear always did the real wipe (2J/3J/H — screen AND scrollback); rewind now
+    //    does the same, immediately before the fresh document mounts.
+    const retry = deps.rewindReplayRetry ?? { attempts: 8, delayMs: 375 };   // ≈3s worst case; injectable so tests never sit it out
+    let id = session.sessionId;
     let msgs: any[] = [];
-    if (id) { try { msgs = await getSessionMessages(id); } catch { msgs = []; } }
+    for (let attempt = 0; attempt < retry.attempts; attempt++) {
+      if (attempt > 0) { await new Promise((r) => setTimeout(r, retry.delayMs)); if (disposed.current) return; }
+      id = session.sessionId ?? id;
+      if (!id) continue;
+      try { msgs = await getSessionMessages(id); } catch { msgs = []; }
+      if (msgs.length) break;
+    }
     if (disposed.current) return;
+    clearScreen();
     // A rewind is a deliberate session transition: the fresh document derives ONLY the restored persisted
     // messages. (Ctrl-O never uses this path.)
     if (msgs.length) replaceDocument(replayDocument(msgs, { id, label: "⏪ rewound", width: columnsFn() }));

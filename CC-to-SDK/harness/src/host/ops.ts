@@ -44,6 +44,10 @@ export const hostOp = z.discriminatedUnion("op", [
   z.object({ op: z.literal("mcp_reconnect"), name: z.string().min(1), ...withId }),
   z.object({ op: z.literal("mcp_toggle"), name: z.string().min(1), enabled: z.boolean(), ...withId }),
   z.object({ op: z.literal("resume"), sessionId: z.string().min(1), ...withId }),
+  // Live-feedback fix (2026-08-06): /clear was UI-only (wipe screen + fresh document, engine context
+  // kept), which is not what upstream's /clear does — it frees the context. This op is the engine half:
+  // the same swapEngine seam resume/rewind ride, opened FRESH (no resume key), busy-gated like both.
+  z.object({ op: z.literal("clear"), ...withId }),
   // Schema-only for now — Task 4 wires their dispatch handlers; server.ts's placeholder arms return
   // {ok:false, error:"unsupported"} so the schema is never ahead of a crashing dispatch.
   z.object({ op: z.literal("tasks"), ...withId }),

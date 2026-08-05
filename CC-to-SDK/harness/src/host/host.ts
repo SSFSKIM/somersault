@@ -208,6 +208,7 @@ export class SessionHost {
         follow: (deliver) => this.follow(deliver),
         control: (op) => this.control(op),
         resume: (sid) => this.resumeSession(sid),
+        clear: () => this.clearSession(),
         turnSeq: () => this.turnSeq(),
         tasks: () => this.bgTasks,
         background: (toolUseId) => this.background(toolUseId),
@@ -429,6 +430,17 @@ export class SessionHost {
     if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
     this.swapInFlight = true;
     try { await this.swapEngine({ resume: sessionId }); }
+    finally { this.swapInFlight = false; }
+  }
+
+  /** The engine half of /clear (live-feedback fix, 2026-08-06): a fresh conversation through the same
+   *  swap seam resume/rewind use. The explicit `resume: undefined` matters — engineConfig spreads the
+   *  LAUNCH config first, so a host born from `ccx --resume <sid>` still carries that key, and without
+   *  the override a /clear would silently reopen the very conversation it was asked to drop. */
+  async clearSession(): Promise<void> {
+    if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
+    this.swapInFlight = true;
+    try { await this.swapEngine({ resume: undefined, resumeAt: undefined }); }
     finally { this.swapInFlight = false; }
   }
 

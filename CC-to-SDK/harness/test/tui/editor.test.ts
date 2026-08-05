@@ -362,10 +362,15 @@ describe("meta co-occurring with escape/backspace (Ink's real key shape)", () =>
     const r = applyKey(s, "", { meta: true, escape: true });
     expect(r.state.mention).toBeNull();
   });
-  it("Backspace delivered as {meta:true, backspace:true} (Alt-Backspace/ESC-backspace) still deletes a character", () => {
-    const s = type(initialEditorState(), "ab");
+  // Live-feedback fix (2026-08-06): this pin originally guarded against alt+backspace being SWALLOWED by
+  // the meta arm (deleting nothing), and pinned single-char delete because that is all the port did then.
+  // The bundle's backspace dispatch reads `if (Pe.meta || Pe.ctrl) return se()` (L395789) — deleteWordBefore
+  // as a kill — so the guard's real content ("not swallowed, still edits") now lands on the word arm.
+  it("Backspace delivered as {meta:true, backspace:true} (Alt-Backspace/ESC-backspace) word-kills, never swallowed", () => {
+    const s = type(initialEditorState(), "one two");
     const r = applyKey(s, "", { meta: true, backspace: true });
-    expect(text(r.state)).toBe("a");
+    expect(text(r.state)).toBe("one ");
+    expect(r.state.killRing).toEqual(["two"]);
   });
 });
 

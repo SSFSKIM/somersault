@@ -75,7 +75,7 @@ function DurableHarness({ editorStateRef, consumedPrefillTokenRef, prefill, api,
 describe("composer prefill: consumed at most once across a popup remount (Important 1)", () => {
   it("a rewind prefill, once applied, does not resurrect after the shortcuts overlay opens and closes", async () => {
     const session = fakeRewindSession({ rewind: async () => {} });
-    const deps = { getSessionMessages: async () => [] as any[] };
+    const deps = { getSessionMessages: async () => [] as any[], rewindReplayRetry: { attempts: 1, delayMs: 0 } };
     const api: Api = {};
     const { lastFrame } = render(<Harness makeSession={() => session} deps={deps} api={api} />);
     await new Promise((r) => setTimeout(r, 20));   // let the composer's useInput subscribe
