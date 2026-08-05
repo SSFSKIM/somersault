@@ -6,6 +6,13 @@
 // same convention as every other dialog in this package) — this component owns only the keys, the tab/row
 // cursor, and which sub-view (if any) is showing.
 //
+// F6 Task 2: the tab strip is the shared `Tabs` primitive (select/Tabs.tsx), which OWNS `tabs:next`/
+// `tabs:previous` now (an action handler is innermost-wins, so keeping them here would only shadow it). The
+// `route()` gating they used to go through is preserved by construction: every `sub !== "none"` state
+// early-returns ABOVE the strip, so `Tabs` is not mounted — including the `addDir` state whose whole point is
+// that this component registers nothing. The `Tabs` SCOPE stays pushed below regardless, so tab/←/→ keep
+// resolving to an action (and being swallowed by `route`) there instead of reaching the child as raw keys.
+//
 // F2 Task 8 (+ final review): no `useInput`. Like SettingsDialog it pushes `Settings` + `Tabs`, so the
 // rule-entry sub-view keeps receiving `j`, `k`, space and `/` as literal text while the contexts' null
 // bindings keep the six root globals unbound. Also like SettingsDialog, the split follows the SURFACE: the
@@ -35,9 +42,11 @@ import type { SettingsTarget } from "./settingsFile.js";
 import type { AddDirVerdict } from "./addDir.js";
 import { AddDirDialog } from "./AddDirDialog.js";
 import { ACCENT } from "./theme.js";
+import { Tabs } from "./select/Tabs.js";
 
 const TABS = ["Recently denied", "Allow", "Ask", "Deny", "Workspace"] as const;
 type Tab = typeof TABS[number];
+const TAB_SPECS = TABS.map((t) => ({ id: t, title: t }));
 type Behavior = "allow" | "ask" | "deny";
 const BEHAVIOR_OF: Partial<Record<Tab, Behavior>> = { Allow: "allow", Ask: "ask", Deny: "deny" };
 
@@ -129,11 +138,6 @@ export function PermissionsDialog({
   async function refreshDirs() { try { setDirs(await fetchDirs()); } catch { setDirs([]); } }
   useEffect(() => { void refreshSettings(); void refreshDirs(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setIdx(0); }, [activeTab]);                          // a row cursor from one tab must not carry into another tab's (differently-sized) list
-
-  function cycleTab(delta: number) {
-    const i = TABS.indexOf(activeTab);
-    onTabChange(TABS[(i + delta + TABS.length) % TABS.length]);
-  }
 
   const behavior = BEHAVIOR_OF[activeTab];
   const dirList = dirs ?? [];
@@ -228,8 +232,7 @@ export function PermissionsDialog({
     "select:accept": route(activate),
     "confirm:no": route(() => onDone()),
     "settings:search": route(() => {}),                // `/` opens no query here — this dialog has no search
-    "tabs:next": route(() => cycleTab(1)),
-    "tabs:previous": route(() => cycleTab(-1)),
+    // `tabs:next`/`tabs:previous` belong to the embedded <Tabs> now (see the header).
   });
   // The top level has no key the table does not name, so the fallback exists purely to feed the sub-views'
   // text entry (and to be swallowed while the embedded AddDirDialog owns the keyboard).
@@ -304,11 +307,7 @@ export function PermissionsDialog({
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>Permissions</Text>
-      <Text>
-        {TABS.map((t, i) => (
-          <Text key={t}>{i > 0 ? "  ·  " : ""}<Text bold={t === activeTab} color={t === activeTab ? ACCENT : undefined}>{t}</Text></Text>
-        ))}
-      </Text>
+      <Tabs tabs={TAB_SPECS} active={activeTab} onChange={onTabChange} />
       <Text> </Text>
       <Text dimColor>{INTRO[activeTab]}</Text>
       {activeTab === "Recently denied" && denials.length === 0 ? <Text dimColor>{RECENT_EMPTY}</Text> : null}

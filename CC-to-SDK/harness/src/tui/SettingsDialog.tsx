@@ -11,6 +11,13 @@
 // query as literal text, but the six root globals must stay unbound — and the nulls live in the context, so
 // dropping it would revive them.
 //
+// F6 Task 2: the tab strip is the shared `Tabs` primitive (select/Tabs.tsx), which also OWNS `tabs:next`/
+// `tabs:previous` now — an action handler is innermost-wins, so registering them here as well would just
+// shadow it. Two behaviours are preserved by construction rather than by the `route()` wrapper they used to
+// go through: a sub-view (Theme/Output-style) early-returns above the strip, so `Tabs` is not even mounted
+// there; and while the `/` query is open the strip is handed `disableNavigation`, which registers no handlers
+// at all — the actions fall through to `route` → `onSearchKey` and are ignored, exactly as before.
+//
 // F2 final review: task 8 routed every one of those actions into ONE `onKey` that then re-read the physical
 // key, which quietly made the actions physical again — `"x": "select:next"` in a user's keybindings.json
 // resolved, matched, reached this component and moved nothing. The split follows the SURFACE now, not the key:
@@ -46,9 +53,11 @@ import { ACCENT, currentTheme } from "./theme.js";
 import { ThemeDialog } from "./ThemeDialog.js";
 import { OutputStylePicker } from "./OutputStylePicker.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
+import { Tabs } from "./select/Tabs.js";
 
 const TABS = ["Status", "Config", "Usage", "Stats"] as const;
 type Tab = typeof TABS[number];
+const TAB_SPECS = TABS.map((t) => ({ id: t, title: t }));
 const NORMAL_FOOTER = "Enter/Space to change · / to search · Esc to close";
 // DELIBERATE DIVERGENCE, same class as PermissionsDialog's RECENT_FOOTER (W3 final review Finding 5):
 // upstream's search footer promises "↑ to tabs" — a header-focus mode this wave doesn't ship (line 86's
@@ -97,11 +106,6 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   const ctx: SettingsRowCtx = { theme: currentTheme(), model, outputStyle, mode, thinkLevel };
   const rows = buildRows(ctx);
   const filtered = search !== null ? filterRows(rows, search) : rows;
-
-  function cycleTab(delta: number) {
-    const i = TABS.indexOf(activeTab);
-    onTabChange(TABS[(i + delta + TABS.length) % TABS.length]);
-  }
 
   // The `/` search query is a TEXT-ENTRY surface: while it is open EVERY route — action handler or keymap
   // fallback — lands here and is read as characters, which is the whole reason the scopes stay pushed while
@@ -154,8 +158,8 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
     "select:accept": route(onConfig(acceptRow)),
     "settings:search": route(onConfig(() => setSearch(""))),
     "confirm:no": route(() => onDone()),
-    "tabs:next": route(() => cycleTab(1)),                             // left/right always switch tabs — enum rows
-    "tabs:previous": route(() => cycleTab(-1)),                        // cycle via enter/space only (recorded simplification)
+    // `tabs:next`/`tabs:previous` belong to the embedded <Tabs> now (see the header). Enum rows still cycle
+    // via enter/space only — the recorded simplification is unchanged.
   });
   // Nothing else is this dialog's: browsing has no key the table does not name, so the fallback exists purely
   // to feed the search query (and to be swallowed while a sub-view is up).
@@ -167,14 +171,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>Settings</Text>
-      <Text>
-        {TABS.map((t, i) => (
-          <Text key={t}>
-            {i > 0 ? "  ·  " : ""}
-            <Text bold={t === activeTab} color={t === activeTab ? ACCENT : undefined}>{t}</Text>
-          </Text>
-        ))}
-      </Text>
+      <Tabs tabs={TAB_SPECS} active={activeTab} onChange={onTabChange} disableNavigation={search !== null} />
       <Text> </Text>
       {activeTab === "Config" ? (
         <>

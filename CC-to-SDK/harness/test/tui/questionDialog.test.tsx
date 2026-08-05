@@ -43,21 +43,65 @@ describe("<QuestionDialog>", () => {
     expect(answers).toEqual([]);                             // not the last question yet — no onAnswer
   });
 
-  it("multiSelect: space toggles, enter commits the checked labels joined with ', ' and fires onAnswer with BOTH answers", async () => {
+  // F6 T2: multiSelect questions render the `MultiSelect` primitive, so the commit moved off Enter-on-a-row
+  // (which now TOGGLES, L397399-397409) and onto the Submit row upstream puts at the end of the list (L504149).
+  it("multiSelect: space toggles rows and the Submit row commits the checked labels joined with ', '", async () => {
     const answers: [Record<string, string>, string | undefined][] = [];
     const { stdin, lastFrame } = render(<QuestionDialog req={{ input: INPUT }} onAnswer={(a, r) => answers.push([a, r])} onDeny={() => {}} />);
     await waitFor(() => frame(lastFrame).includes("Red or blue?"));
     stdin.write("2");                                       // Q1: blue
     await waitFor(() => frame(lastFrame).includes("Which meals?"));
-    stdin.write(" ");                                       // toggle breakfast (idx 0)
-    await new Promise((r) => setTimeout(r, 20));
+    expect(frame(lastFrame)).toContain("Submit");           // the last question of two → "Submit", not "Next"
+    stdin.write(" ");                                       // toggle breakfast (row 0)
+    await waitFor(() => frame(lastFrame).includes("[✔]"));
     stdin.write("\x1b[B");                                  // ↓ to dinner
     await new Promise((r) => setTimeout(r, 20));
-    stdin.write(" ");                                       // toggle dinner (idx 1)
+    stdin.write(" ");                                       // toggle dinner (row 1)
     await new Promise((r) => setTimeout(r, 20));
-    stdin.write("\r");                                      // commit
+    stdin.write("\x1b[B"); await new Promise((r) => setTimeout(r, 20));   // ↓ onto the Other row…
+    stdin.write("\x1b[B"); await new Promise((r) => setTimeout(r, 20));   // …and ↓ again onto Submit
+    stdin.write("\r");
     await waitFor(() => answers.length === 1);
     expect(answers[0]).toEqual([{ "Red or blue?": "blue", "Which meals?": "breakfast, dinner" }, undefined]);
+  });
+
+  it("multiSelect: the submit label is 'Next' before the last question (L504149)", async () => {
+    const two = { questions: [INPUT.questions[1], INPUT.questions[0]] };   // multi first, single second
+    const { lastFrame } = render(<QuestionDialog req={{ input: two }} onAnswer={() => {}} onDeny={() => {}} />);
+    await waitFor(() => frame(lastFrame).includes("Which meals?"));
+    const rows = frame(lastFrame).replace(/\x1b\[[0-9;]*m/g, "").split("\n");
+    expect(rows.some((l) => /^\W*\s{5}Next\s/.test(l))).toBe(true);        // the submit ROW reads "Next"…
+    expect(rows.some((l) => /^\W*\s{5}Submit\s/.test(l))).toBe(false);     // …and never "Submit"
+  });
+
+  it("multiSelect: the Other row is a permanent input row — typing selects it and its text lands in `response`", async () => {
+    const single = { questions: [INPUT.questions[1]] };
+    const answers: [Record<string, string>, string | undefined][] = [];
+    const { stdin, lastFrame } = render(<QuestionDialog req={{ input: single }} onAnswer={(a, r) => answers.push([a, r])} onDeny={() => {}} />);
+    await waitFor(() => frame(lastFrame).includes("Which meals?"));
+    expect(frame(lastFrame)).toContain("Type something");   // no trailing period on the multiSelect placeholder (L504097)
+    stdin.write("3");                                       // the digit toggles the Other row without moving onto it
+    await waitFor(() => frame(lastFrame).includes("[✔]"));
+    stdin.write("\x1b[B"); await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\x1b[B"); await new Promise((r) => setTimeout(r, 20));   // now ON the Other row
+    stdin.write("brunch");
+    await waitFor(() => frame(lastFrame).includes("brunch"));
+    stdin.write("\x1b[B"); await new Promise((r) => setTimeout(r, 20));   // ↓ onto Submit
+    stdin.write("\r");
+    await waitFor(() => answers.length === 1);
+    expect(answers[0]).toEqual([{}, "brunch"]);             // no answers entry for an Other-only reply
+  });
+
+  it("multiSelect: the bare y/n of the Confirmation table cannot decide the question (the scope is off)", async () => {
+    const single = { questions: [INPUT.questions[1]] };
+    let denies = 0;
+    const answers: unknown[] = [];
+    const { stdin, lastFrame } = render(<QuestionDialog req={{ input: single }} onAnswer={(a, r) => answers.push([a, r])} onDeny={() => { denies++; }} />);
+    await waitFor(() => frame(lastFrame).includes("Which meals?"));
+    stdin.write("y"); await new Promise((r) => setTimeout(r, 20));
+    stdin.write("n"); await new Promise((r) => setTimeout(r, 20));
+    expect([answers.length, denies]).toEqual([0, 0]);
+    stdin.write("\x1b"); await waitFor(() => denies === 1);   // …escape still declines
   });
 
   it("Other: selecting it opens a text line; typed text lands in `response`, the question gets NO answers entry", async () => {

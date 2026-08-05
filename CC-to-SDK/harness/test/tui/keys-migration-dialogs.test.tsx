@@ -521,3 +521,65 @@ describe("F2 final review — a custom rebind drives the dialogs' semantic ops, 
     expect(validated[0], "the entry phase types the rebound key instead of navigating").toBe("/x");
   });
 });
+
+// F6 Task 2: both tabbed dialogs render their strip through the shared `Tabs` primitive, which also OWNS
+// `tabs:next`/`tabs:previous` now. Two claims per dialog: the chip really is the inverse-video one `awr`
+// paints (L435104 — the SGR frame is the only place that shows), and the gating the parent's `route()` used
+// to provide still holds now that the registration moved into the child.
+describe("F6 task 2 — Settings/Permissions adopt <Tabs> with no behavioural change", () => {
+  const chip = (title: string) => `\x1b[7m\x1b[1m ${title} \x1b[22m\x1b[27m`;
+  function SettingsHost({ initial = "Config" }: { initial?: string }) {
+    const [tab, setTab] = React.useState(initial);
+    return <SettingsDialog tab={tab} onTabChange={setTab} mode="default" thinkLevel="default" outputStyle="default"
+      onDone={() => {}} applyMode={async () => {}} setThink={async () => {}} applyOutputStyle={async () => {}}
+      fetchStatus={async () => [{ text: "status-row" }]} fetchUsage={async () => []} fetchStats={async () => []}
+      onOpenModelPicker={() => {}} savePrefs={() => {}} />;
+  }
+  function PermissionsHost() {
+    const [tab, setTab] = React.useState("Allow");
+    return <PermissionsDialog tab={tab} onTabChange={setTab} denials={[]} cwd="/tmp"
+      fetchSettings={async () => ({ sources: [{ source: "userSettings", settings: { permissions: { allow: ["Bash(ls)"] } } }] })}
+      fetchDirs={async () => []} addRule={async () => {}} removeRule={async () => {}} removeDir={async () => {}}
+      addDirValidate={async () => ({ kind: "missing", abs: "" }) as AddDirVerdict}
+      confirmAddDir={async () => {}} cancelAddDir={() => {}} onDone={() => {}} />;
+  }
+
+  it("SettingsDialog: the active tab is an inverse+bold chip, and tab/← still cycle the strip", async () => {
+    const { stdin, lastFrame } = render(<SettingsHost />);
+    await waitFor(() => frame(lastFrame).includes("❯ Theme"));
+    expect(frame(lastFrame)).toContain(chip("Config"));
+    expect(frame(lastFrame)).toContain(" Status ");
+    stdin.write("\t"); await waitFor(() => frame(lastFrame).includes(chip("Usage")));
+    stdin.write("\x1b[D"); await waitFor(() => frame(lastFrame).includes(chip("Config")));
+    stdin.write("\x1b[Z"); await waitFor(() => frame(lastFrame).includes(chip("Status")));
+  });
+
+  it("SettingsDialog: the `/` query still swallows tab/←/→ — the strip is handed disableNavigation", async () => {
+    const { stdin, lastFrame } = render(<SettingsHost />);
+    await waitFor(() => frame(lastFrame).includes("❯ Theme"));
+    stdin.write("/"); await waitFor(() => frame(lastFrame).includes("Search settings…"));
+    // ASSERT AFTER EVERY KEY, never once at the end: tab/→/←/shift+tab pressed as a batch walk the strip in a
+    // circle and land back on Config, so a single end-state check passes against a strip with no gating at all
+    // (sabotage-verified — dropping `disableNavigation` leaves this loop green if it only looks once).
+    for (const k of ["\t", "\x1b[C", "\x1b[D", "\x1b[Z"]) {
+      stdin.write(k); await tick();
+      expect(frame(lastFrame), `${JSON.stringify(k)} must not move the strip`).toContain(chip("Config"));
+      expect(frame(lastFrame)).toContain("Type to filter");
+    }
+  });
+
+  it("PermissionsDialog: inverse chip, cycling, and a sub-view that still keeps the strip off the keyboard", async () => {
+    const { stdin, lastFrame } = render(<PermissionsHost />);
+    await waitFor(() => frame(lastFrame).includes("❯ Add a new rule…"));
+    expect(frame(lastFrame)).toContain(chip("Allow"));
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes(chip("Ask")));
+    stdin.write("\x1b[D"); await waitFor(() => frame(lastFrame).includes(chip("Allow")));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Enter permission rule…"));
+    for (const k of ["\t", "\x1b[C", "\x1b[Z"]) {
+      stdin.write(k); await tick();
+      expect(frame(lastFrame), "the add-rule prompt still owns the keyboard").toContain("Enter permission rule…");
+    }
+    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("❯ Add a new rule…"));
+    expect(frame(lastFrame), "and the tab never moved behind it").toContain(chip("Allow"));
+  });
+});

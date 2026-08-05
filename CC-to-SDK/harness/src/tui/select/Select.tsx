@@ -82,8 +82,9 @@ function labelNode(label: string, highlight?: string): React.ReactNode {
 }
 
 /** The minimal text state an input row needs: characters plus a block cursor. Deliberately NOT the composer's
- *  editor — no paste chips and no image paste inside a Select (upstream's `RLe` has both; recorded divergence). */
-function InputText({ text, cursor, placeholder }: { text: string; cursor: number; placeholder?: string }) {
+ *  editor — no paste chips and no image paste inside a Select (upstream's `RLe` has both; recorded divergence).
+ *  Exported for `MultiSelect`, whose input row is the same `RLe` with a check-box in front of it (F6 T2). */
+export function InputText({ text, cursor, placeholder }: { text: string; cursor: number; placeholder?: string }) {
   if (text.length === 0) return <Text><Text inverse> </Text>{placeholder ? <Text color={role("inactive")}>{placeholder}</Text> : null}</Text>;
   const at = cursor >= text.length ? " " : text[cursor]!;
   return <Text>{text.slice(0, cursor)}<Text inverse>{at}</Text>{text.slice(cursor + 1)}</Text>;
