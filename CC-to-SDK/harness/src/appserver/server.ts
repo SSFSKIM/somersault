@@ -37,7 +37,7 @@ const decisionOutcomeParams = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("allow_always") }),
   z.object({ kind: z.literal("deny"), feedback: z.string().optional() }),
   z.object({ kind: z.literal("question_answer"), answers: z.record(z.string(), z.string()), response: z.string().optional() }),
-  z.object({ kind: z.literal("plan_approve"), acceptEdits: z.boolean(), updatedPermissions: z.array(permissionUpdateParams).optional() }),
+  z.object({ kind: z.literal("plan_approve"), acceptEdits: z.boolean(), updatedPermissions: z.array(permissionUpdateParams).optional(), plan: z.string().optional() }),
   z.object({ kind: z.literal("plan_reject"), feedback: z.string().optional() }),
 ]);
 const decisionRespondParams = z.object({ threadId: z.string().min(1), toolUseId: z.string().min(1), answer: decisionOutcomeParams, abortTurn: z.boolean().optional() });

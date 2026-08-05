@@ -150,7 +150,7 @@ describe("<ChatApp>", () => {
     fake.settlePermission("q", "me", "question_answer");
     await waitFor(() => !frame(lastFrame).includes("Continue?"));
     fake.parkPermission({ sessionId: "s", toolUseID: "r", toolName: "ExitPlanMode", kind: "plan", input: { plan: "ship it" }, createdAt: Date.now() });
-    await waitFor(() => frame(lastFrame).includes("Approve this plan?"));
+    await waitFor(() => frame(lastFrame).includes("Ready to code?"));
     expect(frame(lastFrame)).not.toContain("? help");
   });
 

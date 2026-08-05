@@ -39,8 +39,12 @@ export type DecisionOutcome =
   | PermissionDecision
   | { kind: "question_answer"; answers: Record<string, string>; response?: string }  // response = free-text "Other" (probe 65E)
   /** `updatedPermissions`: approving a plan may also grant the rules the plan needs (Task 9) — same
-   *  verbatim echo as allow_with_updates, on the same SDK allow arm. */
-  | { kind: "plan_approve"; acceptEdits: boolean; updatedPermissions?: PermissionUpdateLike[] }
+   *  verbatim echo as allow_with_updates, on the same SDK allow arm.
+   *  `plan`: the plan text AS THE HUMAN LEFT IT. Present only when they edited it in `$EDITOR` from the
+   *  dialog (F6 T9 / DG34) — upstream's `u = planEditedLocally ? { plan: currentPlan } : {}` (`lYf`
+   *  L500722/500737), which rides `updatedInput` on the same allow arm. Absent means "unchanged", and the
+   *  gate then forwards the engine's own input untouched. */
+  | { kind: "plan_approve"; acceptEdits: boolean; updatedPermissions?: PermissionUpdateLike[]; plan?: string }
   | { kind: "plan_reject"; feedback?: string };
 
 /** What the broker is asked to decide. UI hints (title/displayName/description) are often ABSENT headlessly

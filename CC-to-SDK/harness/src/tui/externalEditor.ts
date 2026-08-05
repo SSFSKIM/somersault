@@ -5,7 +5,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 export interface EditorIO { spawn?: typeof spawnSync; setRaw?: (on: boolean) => void; editorCmd?: string;
   /** Run once an editor is known to exist, before it is spawned — `/keybindings` writes its starter file here.
@@ -48,6 +48,17 @@ const editorArgv = (io: { editorCmd?: string }): string[] | null => {
   const argv = (io.editorCmd || process.env.VISUAL || process.env.EDITOR || "").split(/\s+/).filter(Boolean);
   return argv.length > 0 ? argv : null;
 };
+
+/** The name to PRINT for the configured editor, or null when there is none — upstream's `Ox(qV())` pair
+ *  (L212975 / L317720), which the plan dialog's ctrl+g row is gated on (`q$b &&`, L501126). Two deliberate
+ *  shortfalls, both recorded: `qV` falls back to probing PATH for `code`/`vi`/`nano` when neither VISUAL nor
+ *  EDITOR is set (we answer null, and the caller hides the row, which is upstream's own no-editor rendering);
+ *  and `Ox` maps the command through an IDE display-name table (`Cursor`, `VS Code`…) that has no client-side
+ *  equivalent, so the BASENAME of the command is what we print. `vi -c foo` therefore reads `vi`. */
+export function editorDisplayName(io: { editorCmd?: string } = {}): string | null {
+  const argv = editorArgv(io);
+  return argv ? basename(argv[0]!) : null;
+}
 
 /** Open an EXISTING file in the user's editor, in place — no temp round-trip, nothing read back (`/keybindings`,
  *  which hands the user their own `~/.claude/keybindings.json`; the watcher picks the edit up on save). Unlike

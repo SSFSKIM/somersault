@@ -114,6 +114,19 @@ describe("gate outcome mapping", () => {
     expect("updatedPermissions" in plain).toBe(false);
   });
 
+  // F6 T9 / DG34: the human edited the plan in $EDITOR from the dialog, so the text THEY left is what the
+  // tool runs on. Upstream is `updatedInput: planEditedLocally ? {plan: currentPlan} : {}` (`lYf` L500722);
+  // ours merges so an unrelated argument survives the edit.
+  it("plan_approve carrying an edited plan overrides only that key, and an absent one changes nothing", async () => {
+    const input = { plan: "# The plan", extra: 1 };
+    expect(await gateWith({ kind: "plan_approve", acceptEdits: false, plan: "# Edited" })("ExitPlanMode", input, opts))
+      .toEqual({ behavior: "allow", updatedInput: { plan: "# Edited", extra: 1 } });
+    expect(await gateWith({ kind: "plan_approve", acceptEdits: false })("ExitPlanMode", input, opts))
+      .toEqual({ behavior: "allow", updatedInput: input });
+    // an EMPTY edited plan is still an edit — the human deleted it on purpose, and "" is not "absent"
+    expect((await gateWith({ kind: "plan_approve", acceptEdits: false, plan: "" })("ExitPlanMode", input, opts) as any).updatedInput.plan).toBe("");
+  });
+
   it("a pre-aborted signal still denies with the kind-specific copy, ahead of any widened arm", async () => {
     const seen: PermissionRequest[] = [];
     const ac = new AbortController(); ac.abort();

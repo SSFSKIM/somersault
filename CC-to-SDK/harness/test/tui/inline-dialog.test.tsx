@@ -136,7 +136,7 @@ describe("decision dialog — VISIBLE (upstream's `on === \"visible\"`)", () => 
     const { lastFrame } = app(fake, IDLE_SHORT);
     await waitFor(() => frame(lastFrame).includes(GLYPH));
     fake.parkPermission(planEntry());
-    await waitFor(() => frame(lastFrame).includes("Approve this plan?"));
+    await waitFor(() => frame(lastFrame).includes("Ready to code?"));
     expect(frame(lastFrame)).not.toContain(DIALOG);                   // the exclusion, pinned
     expect(frame(lastFrame)).not.toContain(GLYPH);                    // modal: composer replaced, as before
     cleanupRoots();
@@ -240,8 +240,8 @@ describe("decision dialog — SUPPRESSED (upstream's `Xrl()` null while typing)"
     stdin.write("mid draft"); await waitFor(() => frame(lastFrame).includes("mid draft"));
     fake.parkPermission(planEntry());
     await waitFor(() => frame(lastFrame).includes(WAITING_FOR_PERMISSION));
-    expect(frame(lastFrame)).not.toContain("Approve this plan?");
-    await waitFor(() => frame(lastFrame).includes("Approve this plan?"));   // …until the window closes
+    expect(frame(lastFrame)).not.toContain("Ready to code?");
+    await waitFor(() => frame(lastFrame).includes("Ready to code?"));   // …until the window closes
     cleanupRoots();
   });
 });

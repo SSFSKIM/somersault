@@ -153,46 +153,47 @@ describe("F2 task 8 — KB14: j/k and ctrl+n/ctrl+p navigate in EVERY Select-fam
 
 describe("F2 task 8 — Confirmation family: what the table adds, and what free text must keep", () => {
   const PLAN = { input: { plan: "# Build it\n\n- step one" } };
+  const plan = (onDecision: (o: unknown) => void = () => {}) =>
+    render(<PlanDialog req={PLAN} onDecision={onDecision} editorName="vim" editor={(t) => t} rows={40} />);
 
-  it("PlanDialog: y approves with acceptEdits FALSE (auto-accept stays the explicit `1`); n opens the feedback line", async () => {
+  // ── THE F2-TASK-8 PIN, DELIBERATELY REVERSED (F6 T9, plan rev2) ──────────────────────────────────────
+  // What stood here: "Enter at the choosing state approves NOTHING (only `y` does)". That pin guarded a real
+  // hazard — a user mid-sentence when the plan arrives presses Enter to send, and under a live Enter that
+  // would have approved the plan and dropped them out of plan mode — and it was defensible while this dialog
+  // had no row cursor at all (↑/↓ scrolled the plan text, so Enter had no visible target to take).
+  //
+  // Three things retired it, and fidelity then governs. The dialog is a `Select` list now (`Gnl` L501122
+  // mounts `jr` over `sYf`'s options), so Enter HAS a visible target — the ❯ row — and upstream's Enter
+  // accepts it. T5 made the dialog modal and composer-replacing, so there is no composer underneath to send
+  // to. Typing-suppression holds a decision back while a draft is live, and the draft is preserved across the
+  // dialog, so the mid-sentence Enter never reaches this component in the first place. Reversing the pin
+  // rather than deleting it keeps the argument on the record where the next reader will find it.
+  it("PlanDialog: Enter ACCEPTS THE FOCUSED ROW (was: approves nothing — reversed, see the note above)", async () => {
     const decisions: unknown[] = [];
-    const { stdin, lastFrame } = render(<PlanDialog req={PLAN} onDecision={(o) => decisions.push(o)} />);
+    const { stdin, lastFrame } = plan((o) => decisions.push(o));
     await waitFor(() => frame(lastFrame).includes("Build it"));
-    expect(frame(lastFrame)).toContain("y approve");                // the new affordance is advertised, not hidden
-    stdin.write("y"); await waitFor(() => decisions.length === 1);
-    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: false });
-
-    const b = render(<PlanDialog req={PLAN} onDecision={() => {}} />);
-    await waitFor(() => frame(b.lastFrame).includes("Build it"));
-    b.stdin.write("n"); await waitFor(() => frame(b.lastFrame).includes("What should Claude do differently?"));
+    stdin.write("\r"); await waitFor(() => decisions.length === 1);
+    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: true });   // row 1 is focused on mount
   });
 
-  // t8 review, Important 2. Enter STAYS DEAD at the choosing state, unlike everywhere else in the Confirmation
-  // family: a dialog replaces the composer, so a user mid-sentence when the plan arrives presses Enter to send
-  // and would otherwise approve the plan and leave plan mode. There is no row cursor here (↑/↓ scroll the plan
-  // text), so Enter has no visible target to "take" the way PermissionDialog's highlighted row does — and the
-  // footer advertises `y approve`, not Enter. Gating it keeps the screen and the behavior saying the same thing.
-  it("PlanDialog: Enter at the choosing state approves NOTHING (only `y` does)", async () => {
+  // The other half of the reversal: `y` and `n` were `Confirmation` shortcuts this dialog re-homed in F0, and
+  // upstream has no such shortcut on a plan — the list owns every key. They are inert on a pick row now.
+  it("PlanDialog: y and n decide nothing on a pick row (the F0 re-homed shortcuts are gone)", async () => {
     const decisions: unknown[] = [];
-    const { stdin, lastFrame } = render(<PlanDialog req={PLAN} onDecision={(o) => decisions.push(o)} />);
+    const { stdin, lastFrame } = plan((o) => decisions.push(o));
     await waitFor(() => frame(lastFrame).includes("Build it"));
-    expect(frame(lastFrame)).not.toContain("enter approve");            // the footer never promised it
-    stdin.write("\r"); await new Promise((r) => setTimeout(r, 30));
-    expect(decisions, "Enter must not decide anything").toEqual([]);
-    // …and it did not leak sideways either: still choosing, not typing feedback.
-    expect(frame(lastFrame)).not.toContain("What should Claude do differently?");
-    expect(frame(lastFrame)).toContain("1. Yes, and auto-accept edits");
-    stdin.write("y"); await waitFor(() => decisions.length === 1);      // the advertised key still works
-    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: false });
+    stdin.write("y"); await tick();
+    stdin.write("n"); await new Promise((r) => setTimeout(r, 30));
+    expect(decisions).toEqual([]);
   });
 
-  it("PlanDialog: y/n typed into the feedback line are TEXT (the scope is gated off while typing)", async () => {
+  it("PlanDialog: y/n typed into the keep-planning row are TEXT (the Select owns the keyboard there)", async () => {
     const decisions: unknown[] = [];
-    const { stdin, lastFrame } = render(<PlanDialog req={PLAN} onDecision={(o) => decisions.push(o)} />);
+    const { stdin, lastFrame } = plan((o) => decisions.push(o));
     await waitFor(() => frame(lastFrame).includes("Build it"));
-    stdin.write("3"); await waitFor(() => frame(lastFrame).includes("What should Claude do differently?"));
-    stdin.write("y"); await waitFor(() => frame(lastFrame).includes("differently? y"));
-    stdin.write("n"); await waitFor(() => frame(lastFrame).includes("differently? yn"));
+    stdin.write("3"); await tick();                                    // a digit on an empty input row only moves the cursor
+    stdin.write("y"); await tick();
+    stdin.write("n"); await waitFor(() => frame(lastFrame).includes("yn"));
     expect(decisions).toEqual([]);
     stdin.write("\r"); await waitFor(() => decisions.length === 1);
     expect(decisions[0]).toEqual({ kind: "plan_reject", feedback: "yn" });

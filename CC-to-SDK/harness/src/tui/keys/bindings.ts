@@ -146,6 +146,15 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // A dialog that registers no handler for it (Bash, the generic body) falls through to the fallback, which
     // is where shift+tab already went before this line existed — adding it changes nothing for them.
     "shift+tab": "confirm:cycleMode",
+    // F6 T9, upstream `tYf` L501036 (`iMn.ctrl && iMn.key === "g"` inside the plan dialog's own `Zl`
+    // onKeyDown): the `Ready to code?` dialog opens its plan in $EDITOR. Upstream reads the chord as a raw
+    // key event and PRINTS it as a hardcoded literal (`$e({chord:"ctrl+g"})`, L501126) rather than resolving
+    // it from a keymap; ours goes through the table so a rebind moves the key, which is the whole point of
+    // F2. It is the same physical chord Chat binds to `chat:externalEditor` and, exactly like shift+tab
+    // above, the two never resolve together: the composer's `Chat` scope is off the stack while a dialog
+    // owns the keyboard. A dialog that registers no handler falls through to the Select's fallback, where a
+    // ctrl-modified key is already inert.
+    "ctrl+g": "confirm:editExternal",
     // owner === "decision" fell THROUGH the old gate (only "overlay" returned early), so ctrl+c/o/r/t/b stay
     // live over a visible dialog — deliberately, per the ChatApp comment — and must not be unbound here.
     // Only ctrl+d is dead: the composer that owns it is unmounted while the dialog is up. (F6 t5 tested that
@@ -187,7 +196,7 @@ export const VALID_ACTIONS: readonly string[] = [
   "historySearch:next", "historySearch:accept", "historySearch:cancel", "historySearch:execute", "historySearch:cycleScope",
   "messageSelector:up", "messageSelector:down", "messageSelector:select", "messageSelector:dismiss", "messageSelector:top", "messageSelector:bottom",
   "select:previous", "select:next", "select:accept", "select:cancel", "select:pageUp", "select:pageDown", "select:first", "select:last",
-  "confirm:yes", "confirm:no", "confirm:previous", "confirm:next", "confirm:cycleMode",
+  "confirm:yes", "confirm:no", "confirm:previous", "confirm:next", "confirm:cycleMode", "confirm:editExternal",
   "settings:search",
   "tabs:next", "tabs:previous",
 ];

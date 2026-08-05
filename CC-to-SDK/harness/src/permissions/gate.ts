@@ -62,7 +62,11 @@ export function createPermissionGate(broker: PermissionBroker): CanUseTool {
     if (d.kind === "deny") return { behavior: "deny", message: d.feedback?.trim() || denyMessage(kind, toolName), interrupt: options.signal?.aborted || undefined };
     if (d.kind === "question_answer") return { behavior: "allow", updatedInput: { ...input, answers: d.answers, ...(d.response ? { response: d.response } : {}) } };
     if (d.kind === "plan_reject") return { behavior: "deny", message: d.feedback?.trim() || "User rejected the plan. Continue planning.", interrupt: options.signal?.aborted || undefined };
-    if (d.kind === "plan_approve") return { behavior: "allow", updatedInput: input, ...(d.updatedPermissions ? { updatedPermissions: d.updatedPermissions } : {}) };
+    // `plan` is the DG34 edit: the human opened the plan in $EDITOR from the dialog and the text they saved
+    // is what the approve consumes. Upstream REPLACES the whole input with `{plan}` there and sends `{}` when
+    // untouched (`lYf` L500722); we merge instead, so a future ExitPlanMode argument we do not know about
+    // survives an edit rather than being silently dropped.
+    if (d.kind === "plan_approve") return { behavior: "allow", updatedInput: d.plan !== undefined ? { ...input, plan: d.plan } : input, ...(d.updatedPermissions ? { updatedPermissions: d.updatedPermissions } : {}) };
     // The real "don't ask again": hand the engine's own suggestion back untouched. Deliberately does NOT
     // also add to `allowed` — the rule replaces that in-memory Set rather than shadowing it.
     if (d.kind === "allow_with_updates") return { behavior: "allow", updatedInput: input, updatedPermissions: d.updatedPermissions };
