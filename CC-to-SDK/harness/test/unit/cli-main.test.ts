@@ -126,6 +126,21 @@ describe("hostOptsFrom — what the detached child derives from its own argv", (
     const { opts } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "bg", "task"]);
     expect(opts.config.thinking).toBeUndefined();
   });
+  // Wave T EP-T1. `--detachable` re-enters the binary as `--__kind interactive` and never passes through
+  // main.ts's foreground construction, while spawn.ts's configFlags forwards --permission-mode only when it
+  // was explicitly typed — so without the fix here the identical REPL launches in `auto` while plain `ccx`
+  // consults. Asserted on hostOptsFrom because runHostMain hands its result to deps.makeHost verbatim, and
+  // an interactive runHostMain does not resolve until `finished` does.
+  it("an interactive child launches MANUAL like the foreground REPL — and bg is untouched", () => {
+    const it_ = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "interactive"]);
+    expect(it_.opts.config.permissionMode).toBe("default");
+    const bg = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "bg", "task"]);
+    expect(bg.opts.config.permissionMode).toBeUndefined();   // left to DEFAULTS (`auto`): nobody to ask
+  });
+  it("an explicitly forwarded --permission-mode still wins for an interactive child", () => {
+    const { opts } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "interactive", "--permission-mode", "acceptEdits"]);
+    expect(opts.config.permissionMode).toBe("acceptEdits");
+  });
 });
 
 describe("runHostMain — interactive hosts stay alive; bg is unchanged", () => {
@@ -355,6 +370,38 @@ describe("main — run: foreground (Task 7)", () => {
       runChatClient: async () => {},
     })));
     expect(hostCalls[0].config.model).toBeUndefined();
+  });
+  // Wave T EP-T1 (qa3-03/qa3-02). The REPL must launch MANUAL like upstream, and the three readers of the
+  // launch mode — the host's engine config, the welcome banner, and the client's hookOpts seed — must all
+  // report the SAME value. Splitting those apart is how the banner came to print one mode while the engine
+  // ran another, so they are asserted together in one test.
+  it("a bare foreground run launches in `default`, and host, banner and hookOpts all agree", async () => {
+    const hostCalls: any[] = [];
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true,
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(hostCalls[0].config.permissionMode).toBe("default");     // the ENGINE consults before rm/git init
+    expect(clientCalls[0].hookOpts.initialMode).toBe("default");    // …the status bar says so from turn 0…
+    const lines = (clientCalls[0].initialEntries[0].event.lines as { text: string }[]).map((l) => l.text).join("\n");
+    expect(lines).toContain("mode  default");                       // …and so does the welcome banner
+  });
+  it("--permission-mode auto still reaches all three — an explicitly typed mode outranks the manual launch default", async () => {
+    const hostCalls: any[] = [];
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["--permission-mode", "auto", "task"], deps({
+      isTTY: () => true,
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(hostCalls[0].config.permissionMode).toBe("auto");
+    expect(clientCalls[0].hookOpts.initialMode).toBe("auto");
+    const lines = (clientCalls[0].initialEntries[0].event.lines as { text: string }[]).map((l) => l.text).join("\n");
+    expect(lines).toContain("mode  auto");
   });
 
   it("refuses --resume together with a prompt (foreground only), touching neither makeHost nor runChatClient", async () => {

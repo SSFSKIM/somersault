@@ -13,6 +13,7 @@ import { mintShortId, hostSocketPath } from "../fleet/paths.js";
 import { welcomeBanner } from "../tui/banner.js";
 import { resolveModelAlias } from "../config/models.js";
 import { DEFAULTS } from "../config/types.js";
+import { resolvedPermissionMode } from "../config/resolveOptions.js";
 import { parseThinkArg, thinkingConfigFrom } from "../tui/thinkLevels.js";
 // Value import, and safe: prefs.ts is plain fs + the theme table, no React (main.ts stays React-free).
 import { loadPrefs as realLoadPrefs } from "../tui/prefs.js";
@@ -218,10 +219,18 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   // engine round-trip, no new code path. `ccx attach` cannot honour it (the host it joins already owns its
   // model), and `-p`/`--bg` deliberately do not: a headless run takes its model from its invocation.
   const model = inv.config.model ?? deps.loadPrefs().model;
+  // Wave T EP-T1: the REPL launches MANUAL like upstream (2.1.220 `gGl` L41536: `default` → "Manual").
+  // QA sprint 1 found `rm` and `git init` running unconsulted because DEFAULTS.permissionMode is "auto"
+  // (config/types.ts:161) and every surface resolves through it. Headless (-p/--bg) and the daemon KEEP
+  // auto deliberately — a background run has nobody to ask.
+  // ONE object, three readers: the host, the banner and hookOpts. Reading `inv.config` for the banner
+  // instead would print "auto" (DEFAULTS) while the engine ran "default" — qa3-02 inverted.
+  const foregroundConfig = { ...hostConfig, ...(model ? { model } : {}), ...(thinking ? { thinking } : {}),
+    permissionMode: inv.config.permissionMode ?? "default" };
   const host = deps.makeHost({
     short, name, cwd, kind: "interactive", detached: false,
     ...(inv.worktreePath ? { worktree: inv.worktreePath } : {}),
-    config: { ...hostConfig, ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) },
+    config: foregroundConfig,
   });
   await host.start();
   // Terminal gone or OS says stop: finalize `done` — the deliberate asymmetry (acceptance 10): a default
@@ -236,12 +245,12 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
       // notice uses — so it can never masquerade as a persisted SDK row (F1 Task 4).
       ...(resume
         ? { initialResume: { kind: "id" as const, id: resume } }
-        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model, mode: inv.config.permissionMode ?? "default" }) } }] }),
+        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model, mode: resolvedPermissionMode(foregroundConfig) }) } }] }),
       // initialModel mirrors resolveOptions.ts's rule (alias first, then default) so the REPL knows what the
       // engine is actually running BEFORE the first turn ends. Without it the Tab ladder's `auto` rung reads
       // an undefined model and silently downgrades the session the user asked for. `ccx attach` (above) has
       // no launch config to pass, and useChat handles that unknown by declining to switch at all.
-      hookOpts: { initialMode: inv.config.permissionMode ?? "default", initialModel: resolveModelAlias(model) ?? DEFAULTS.model, ...(parsedThink ? { initialThink: parsedThink.level } : {}) },
+      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, ...(parsedThink ? { initialThink: parsedThink.level } : {}) },
     });
   } finally {
     process.off("SIGHUP", onSignal); process.off("SIGTERM", onSignal);
