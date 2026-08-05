@@ -1,6 +1,6 @@
 // tui/test/commands.test.ts — pure parser + formatters.
 import { describe, it, expect } from "vitest";
-import { parseCommand, COMMANDS, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, parseResumeIntent, parseLaunchMode, parseLaunchThink, LOCAL_NAMES, LOCAL_COMMAND_ENTRIES } from "../../src/tui/commands.js";
+import { parseCommand, COMMANDS, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, parseResumeIntent, parseLaunchMode, parseLaunchThink, LOCAL_NAMES, LOCAL_COMMAND_ENTRIES } from "../../src/tui/commands.js";
 import { CLIENT_SIDE_NOTES, formatClientSide } from "../../src/tui/commands.js";
 import { parseConfigArg } from "../../src/tui/commands.js";
 import { buildRows, type SettingsRowCtx } from "../../src/tui/settingsRows.js";
@@ -19,10 +19,6 @@ describe("parseCommand", () => {
 });
 
 describe("formatters", () => {
-  it("help lists every command", () => {
-    const lines = formatHelp().map((l) => l.text).join("\n");
-    for (const c of COMMANDS) expect(lines).toContain(`/${c.name}`);
-  });
   it("model: set vs show-current", () => {
     expect(formatModel("opus")).toEqual([{ text: "model → opus" }]);
     expect(formatModel(undefined, "sonnet")).toEqual([{ text: "model: sonnet", dim: true }]);

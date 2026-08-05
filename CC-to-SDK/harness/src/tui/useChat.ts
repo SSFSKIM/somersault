@@ -30,7 +30,7 @@ import { FoldPendingState } from "./foldPendingState.js";
 import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgress.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
-import { parseCommand, canonicalCommand, formatHelp, formatModel, formatModelSet, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
@@ -689,8 +689,8 @@ export function useChat(
         case "usage": append(formatUsage(await session.usage())); break;
         case "clear": clear(); break;
         // F6 T14: `/help` is a DIALOG upstream (`RNa`, L459684), not a printed list — the General tab carries
-        // the shortcuts grid and the Commands tab browses the live catalog. `formatHelp` stays exported (and
-        // tested) as the plain listing; nothing routes to it any more.
+        // the shortcuts grid and the Commands tab browses the live catalog. The old `formatHelp()` listing it
+        // replaced was deleted in T15 once this became its only ex-caller (see commands.ts).
         case "help": openHelp(); break;
         case "resume": void openPicker(); break;
         case "continue": void doContinue(); break;

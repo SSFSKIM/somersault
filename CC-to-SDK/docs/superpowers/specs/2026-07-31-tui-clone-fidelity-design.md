@@ -1231,6 +1231,29 @@ behind those rows — all forty `K1`–`K40` research rows, re-scored — sits a
 - 2026-08-05 — **F6's DG28 ("Enter plan mode?" dialog) is unreachable headlessly (probe 81).**
   `EnterPlanMode` executes without ever consulting `canUseTool` — there is no hook to hang the
   dialog on. Recorded beside CM6/CM7; the spec's Delivers line is superseded.
+- 2026-08-06 — **F6's DG55 kind lane is FLAG-GATED and ships default-OFF, which is what parity with the
+  installed build means (Task 12 review, bundle- and config-traced).** The Delivers line names `DG55` beside
+  the other picker rows, which reads as "render the lane"; upstream does not render it by default. `VJa`
+  (L490007) spreads the lane onto the row only under `CLAUDE_CODE_ENABLE_MENU_KIND_LANES ||
+  tengu_mint_lanes` (L490015), and the installed 2.1.220's `~/.claude.json` caches `tengu_mint_lanes:
+  false` — so the build this clone is measured against shows **no lane at all**. Ours is therefore gated on
+  the same env var with the same bare truthiness (so `=0` turns it on, as upstream's does), with the whole
+  machinery — `kindLane`, `roteColor`, `ZLb`'s 123-name table, `commandKind`, the three row-level width
+  sums — built and tested behind it. `DG55` is delivered in that form. Two of its five lanes are
+  additionally recorded unreachable: `tag` is set only for `type:"prompt"` + `kind:"workflow"`, and
+  `source` maps command *provenance* (`projectSettings` → `project`, `plugin` → `org`) where our
+  `CommandEntry.source` answers local-vs-catalog — a different question. Both remain named zeros in the sums.
+- 2026-08-06 — **F6's DG24 is delivered at HALF its census width: the allow-side feedback channel does not
+  exist in the SDK (Task 3, `sdk.d.ts`-verified).** The census describes `DG24` as *both* rows becoming text
+  inputs — `and tell Claude what to do next` on accept, `and tell Claude what to do differently` on deny —
+  and the Delivers line names `DG24` without qualification. The deny half is real and ships: the SDK's deny
+  arm carries `message: string`, and a human's feedback becomes it. The accept half is **unreachable**: the
+  allow arm is `{updatedInput?, updatedPermissions?, toolUseID?, decisionClassification?}` with no message,
+  feedback or reason field anywhere on it (sdk.d.ts L2114-2126). No side channel was invented — smuggling
+  the sentence into `updatedInput` would corrupt the tool call — so the Yes row stays plain and Tab on it is
+  dropped rather than toggling into a mode whose row could never send anything. The same fact is why the
+  plan dialog's shift+tab hint is trimmed to `shift+tab to approve`: upstream's `…with this feedback` would
+  advertise the channel that does not exist. Recorded beside DG22/DG23.
 - 2026-08-05 — **F5 acceptance #1's "40 lines" is 40 NEWLINES (Task 3).** `kmt` (L317378) counts newline
   matches, not visual rows, so the paste that mints `[Pasted text #1 +40 lines]` is one containing 40
   newlines — 41 lines of text. The threshold itself is also rows-dependent (`max(0, min(rows-10, 2))`), so

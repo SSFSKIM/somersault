@@ -90,9 +90,11 @@ export const canonicalCommand = (name: string): string => ALIAS_TO_NAME.get(name
  *  copies would let /cost and /stats disagree about the same number the first time the rule changes. */
 export const tokenCount = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : `${n}`);
 
-export function formatHelp(): RenderLine[] {
-  return [{ text: "commands:", dim: true }, ...COMMANDS.map((c) => ({ text: `  /${c.name}  ${c.summary}`, dim: true }))];
-}
+// `formatHelp()` — the plain `commands:` listing — was deleted in F6 T15. F6 T14 made `/help` a tabbed
+// DIALOG (`RNa`, L459684) whose Commands tab browses the LIVE catalog, which left the listing with no caller
+// anywhere in the tree: not the REPL, not the daemon, not the attach path, not the public barrel. A second
+// command listing that nothing renders is a second source of truth for what commands exist, and `COMMANDS`
+// (still exported, still the dialog's local half) is the first.
 export function formatModel(next?: string, current?: string): RenderLine[] {
   return next ? [{ text: `model → ${next}` }] : [{ text: `model: ${current ?? "(default)"}`, dim: true }];
 }
