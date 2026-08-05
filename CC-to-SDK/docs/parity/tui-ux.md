@@ -1052,28 +1052,33 @@ Every place F6 knows what 2.1.220 does and shipped something else, with the reas
 
 ### Open evidence gaps (honest closure candidates, not claims)
 
-- **Seven real-TTY checks are owed and none has been made.** Each task that queued one named a specific
-  thing to look at: **T5** — the suppressed→visible transition, where the composer vanishes mid-thought 1.5 s
-  after typing stops (our redraw path differs from upstream's); **T7** — a wide diff in a narrow window, since
-  this is the first dialog whose body width rides `process.stdout.columns` and every test pins
-  `columns={80}`; **T8** — the WebFetch body, the one dialog with no `esc cancel` footer; **T9** — the plan
-  region on a 24-row terminal (~4 markdown lines, against upstream's ~5 *plus* a real scroll; if that reads
-  too tight the honest lever is the `chrome` constant, not a fake scroll); **T10** — the rewind picker's
-  two-line rows and its `checking file changes…` hold line, neither of which any test has seen at a real
-  height while summaries land underneath a moving cursor; **T12** — a `/` popup with the lane flag on,
-  especially the `agent` lane's `background` teal, a colour never yet used on a composer surface; and
-  **T13** — the todo/background glyph gutter side by side with the installed CLI, **which is not cosmetic**:
-  `✔`/`◼`/`◻` are East-Asian *ambiguous* width, so Ink measures them at 2 columns while a terminal configured
-  ambiguous-narrow draws them at 1, and a gutter that disagrees with its own measurement misaligns every row
-  beside it. Our needles are regexes precisely because the column count could not be trusted in a test.
-- **The relaunch half of acceptance #2 is probe-proven, not product-proven.** Probe 81 Q1 settled the
-  mechanism against a raw `query()`; nobody has quit `ccx`, relaunched it and watched the second `npm run`
-  go through unprompted. That is the wave-close live pass's, and it is the one criterion whose keyless pin
-  stops at a boundary.
-- **`REWIND_SUMMARY_WINDOW = 10` overrides the plan's 20 on a hop no keyless run can measure.** Hops 1 and 3
-  were measured (UDS 0.05 ms, `git diff` 17–27 ms); hop 2 is the SDK control request, and `remote.ts` sets a
-  60 s rewind timeout precisely because that round trip can exceed 10 s on a loaded machine. A keyed re-check
-  would settle whether 20 is safe; it is a one-line change either way.
+- ~~Seven real-TTY checks owed~~ **ALL SEVEN MADE at wave close (2026-08-06, tmux against the built binary,
+  keyed, isolated `HOME` so consults fire like a fresh install). No functional defect found** — the first
+  wave-close TTY pass of the program to come back clean. Results: **T5** — a mid-draft Edit consult showed
+  the dim `Waiting for permission…` row while typing continued, the reveal fired inside the window with a
+  clean redraw, and the draft returned intact after the decision; **T7** — the Edit dialog rendered
+  title/rel-path/real-diff/basename-question exactly, and **shift+tab picked the accept-session row live: the
+  engine's `setMode acceptEdits` suggestion round-tripped and the status-bar mode chip flipped to
+  acceptEdits on the spot**; **T8** — the footerless Fetch body laid out cleanly (one cosmetic note: when the
+  model's `prompt` echoes the URL, the body prints the URL twice — data-faithful, looks odd); **T9** — the
+  plan modal at 24 rows clips with the `… +N more lines (ctrl+u/ctrl+d scroll)` marker and both scroll
+  directions work, counters updating; **T10** — two-line rewind rows with pre-computed summaries, the cursor
+  opening on `(current)`, and the confirmation panel's explanation pair — all clean (the hold line did not
+  appear because summaries land in milliseconds in-process; see the window bullet below); **T12** — the
+  flag-on `/` popup draws `config` lanes and aligned blank `action` lanes; **T13** — the glyph gutter
+  rendered cleanly at default ambiguous-width (the side-by-side against a narrow-configured terminal remains
+  untested — the one residual sliver). Bonus: a live AskUserQuestion rendered the two-column layout, the
+  `[1/2]` tab marker, and the unfocused-input placeholder-over-label rule, all as pinned.
+- ~~The relaunch half of acceptance #2~~ **PRODUCT-PROVEN at wave close (2026-08-06):** a Bash consult's
+  suggestion row was applied in the ccx dialog, `.claude/settings.local.json` gained
+  `Bash(touch /private/tmp/…/marker-a.txt)`, ccx was quit and relaunched, and the same command ran with
+  **zero prompt**. Acceptance #4 was product-proven in the same session: an empty keep-planning submit
+  produced `Error: User rejected the plan. Continue planning.` — the deny, exactly as Esc.
+- **`REWIND_SUMMARY_WINDOW = 10` — probe 82 settled the cheap half.** The engine hop for
+  `rewindFiles(dryRun)` measured 0–3 ms per anchor in-process **without checkpoints** (`canRewind:false`
+  everywhere — a raw `query()` has no file checkpointing), so the hop is not intrinsically multi-second; the
+  60 s timeout precedent is an attach/loaded-machine artifact. The checkpointed diff path remains unmeasured;
+  the picker felt instant in the TTY pass. 10 stands; raising to 20 stays a one-line change.
 - **`titleColor` on `nr` is unproven.** The frame trace transcribed for the Background dialog belongs to
   `Ed`, which takes a *separate* `titleColor`; `nr` paints its title with the same colour it borders with.
   Ours matches by coincidence of value, so the assumption must be re-derived before any dialog wants a title
