@@ -1001,16 +1001,23 @@ describe("<ChatApp>", () => {
     await waitFor(() => TODO_ROW.test(frame(lastFrame)));
     stdin.write("\x0f");                                              // Ctrl-O opens
     await waitFor(() => frame(lastFrame).includes("Transcript"));
-    expect(frame(lastFrame)).toMatch(TODO_ROW);            // task panel still visible under the pager
+    // Live-feedback fix (2026-08-06): the task panel HIDES while the pager is up. The original pin here
+    // ("still visible under the pager") predated the height physics — pager (rows-6) + any sibling chrome
+    // overflows the terminal and Ink floods scrollback with frame copies on every tick. Upstream never
+    // co-renders them either: ctrl+o swaps the whole screen ("prompt" ⇄ "transcript", rUb L499000) and the
+    // todo panel is prompt-screen chrome.
+    expect(frame(lastFrame)).not.toMatch(TODO_ROW);
     stdin.write("\x14");                                              // Ctrl-T must NOT toggle todos while pager open
     await new Promise((r) => setTimeout(r, 30));
     expect(frame(lastFrame)).toContain("Transcript");                 // still the pager, no crash
-    expect(frame(lastFrame)).toMatch(TODO_ROW);            // proves Ctrl-T did NOT reach setTodosOpen
     stdin.write("\x0f");                                              // Ctrl-O closes
     // Only the pager header prints the word "Transcript" — its absence proves the pager actually
     // unmounted (an "of 0" assertion would be vacuous: an empty pager renders "(empty)").
     await waitFor(() => !frame(lastFrame).includes("Transcript"));
-    expect(frame(lastFrame)).toMatch(TODO_ROW);            // task panel unaffected throughout
+    // The panel RETURNS after close, still open — which is also the proof the gated Ctrl-T above never
+    // reached setTodosOpen (a leaked toggle would have flipped todosOpen off behind the pager and the
+    // panel would be gone right here).
+    expect(frame(lastFrame)).toMatch(TODO_ROW);
     stdin.write("\x14");                                              // now (pager closed) Ctrl-T DOES toggle — proves the gate isn't a permanent lock
     await waitFor(() => !TODO_ROW.test(frame(lastFrame)));
   });
@@ -1038,6 +1045,36 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).toContain("❯\u00a0");                          // the composer, not a history overlay
     stdin.write("\x12");                                              // …and Ctrl-R works again once the pager is gone
     await waitFor(() => frame(lastFrame).includes("search prompts:"));   // F5 t12: the INLINE search is what it opens now
+  });
+
+  // Live-feedback fix (2026-08-06): while the pager is up, every OTHER transient region hides — spinner,
+  // task panel, queue echo, pending/streaming rows. The pager box alone is `rows - 6` lines; any sibling
+  // chrome pushes the dynamic frame past the terminal height, and Ink cannot erase lines that scrolled off
+  // the top — every spinner animation tick then deposits another frame copy into scrollback (the reported
+  // real-TTY break). Upstream never co-renders them: ctrl+o swaps the whole screen ("prompt" ⇄ "transcript",
+  // rUb bundle L499000), and spinner/todos/prompt are all prompt-screen chrome. The turn itself is not
+  // hidden from the user: the pager's detail projection draws the same retained document, open calls
+  // included, anchored to the bottom.
+  it("the pager hides the spinner and queue echo while open, and restores them on close (frame-height law)", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });                    // live turn → spinner
+    await waitFor(() => plain(frame(lastFrame)).includes("esc to interrupt"));
+    stdin.write("queued while busy");                                            // typed mid-turn…
+    await waitFor(() => plain(frame(lastFrame)).includes("queued while busy"));
+    stdin.write("\r");                                                            // …and submitted busy → the queue echo row
+    await waitFor(() => plain(frame(lastFrame)).includes("Esc clear") === false && plain(frame(lastFrame)).includes("queued while busy"));
+    stdin.write("\x0f");                                                          // Ctrl-O opens the pager
+    await waitFor(() => frame(lastFrame).includes("Transcript"));
+    // The two load-bearing absences. "queued while busy" covers the queue echo AND any composer remnant at
+    // once — whichever surface held the text, neither may add rows beside the pager.
+    expect(plain(frame(lastFrame))).not.toContain("esc to interrupt");            // spinner hidden (turn still live)
+    expect(plain(frame(lastFrame))).not.toContain("queued while busy");           // queue echo hidden
+    stdin.write("\x0f");                                                          // Ctrl-O closes
+    await waitFor(() => !frame(lastFrame).includes("Transcript"));
+    await waitFor(() => plain(frame(lastFrame)).includes("esc to interrupt"));    // spinner restored — turn never stopped
+    expect(plain(frame(lastFrame))).toContain("queued while busy");               // queue echo restored
   });
 
   // W3 T3: /add-dir

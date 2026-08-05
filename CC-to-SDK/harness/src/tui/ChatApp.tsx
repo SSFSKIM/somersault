@@ -69,6 +69,8 @@ import { ThemeDialog } from "./ThemeDialog.js";
 import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
+import type { RenderItem } from "./toolRenderer.js";
+import type { RenderLine } from "./render.js";
 
 /** The rewind hold — the one surface in the tree with no keys of its own. A confirmed rewind is a multi-second
  *  file restore + engine swap, and anything that acted during it (Ctrl-R opening history search, Ctrl-O the
@@ -85,6 +87,10 @@ const QUEUE_PAD = 2;
  *  suppressed. Injectable (`typingIdleMs`) for the same reason `yankHintMs`/`escClearMs`/`pasteHintMs` are —
  *  so a test can watch the real window close instead of faking the clock under Ink. */
 export const TYPING_IDLE_MS = 1500;
+/** Stable empties for the transient region while the pager owns the screen — fresh `[]` literals per render
+ *  would remount the (empty) region every frame for nothing. */
+const EMPTY_ITEMS: readonly RenderItem[] = [];
+const EMPTY_LINES: readonly RenderLine[] = [];
 
 function RestoringModal(): React.ReactElement {
   useSwallowKeys(true);
@@ -315,11 +321,25 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // (session.setMaxThinkingTokens) with the off/default pair the row toggles between.
     "chat:thinkingToggle": () => { void setThinkRef.current(rootStateRef.current.thinkLevel === "off" ? "default" : "off"); },
   });
+  // Live-feedback fix (2026-08-06, ctrl+o flood): the pager box alone is `rows - 6` lines (rows-10 content
+  // + border 2 + header + footer), so ANY other transient chrome mounted beside it — spinner, task panel,
+  // queue echo, the transcript's pending/streaming region, an inline dialog — pushes the dynamic frame past
+  // the terminal height, and Ink physically cannot erase what scrolled off the top: every spinner tick then
+  // deposits another frame copy into scrollback (the observed flood). Upstream has no such coexistence to
+  // manage because ctrl+o SWAPS THE WHOLE SCREEN: `rUb` (L499000) flips "prompt" ⇄ "transcript" and the
+  // spinner/prompt/todos are all prompt-screen chrome. Our recorded divergence keeps the pager an overlay
+  // (unmounting <Static> would replay the scrollback — the Wave-1 lesson), so the equivalent move is to
+  // hide every OTHER transient region while it is up. Nothing is lost: the pager's detail projection draws
+  // the same retained document, open calls included, and anchors bottom (offset ∞) so it follows the turn
+  // live; only the sub-second partial-text preview waits for its block to finalize. The parked decision
+  // stays parked host-side — the same accepted oddity as the overlay chain below, revealed fresh through
+  // `key={toolUseID}` when the pager closes.
+  const pagerUp = transcriptOpen;
   return (
     <Box flexDirection="column">
-      <Transcript key={state.staticEpoch} staticItems={state.staticItems} pendingItems={state.pendingItems} streaming={state.streaming} />
-      {todosOpen ? <TaskPanel tasks={state.tasks} columns={terminalColumns()} rows={terminalRows()} /> : null}
-      {state.busy ? <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} /> : null}
+      <Transcript key={state.staticEpoch} staticItems={state.staticItems} pendingItems={pagerUp ? EMPTY_ITEMS : state.pendingItems} streaming={pagerUp ? EMPTY_LINES : state.streaming} />
+      {todosOpen && !pagerUp ? <TaskPanel tasks={state.tasks} columns={terminalColumns()} rows={terminalRows()} /> : null}
+      {state.busy && !pagerUp ? <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} /> : null}
       {/* F4 Task 8 — upstream `wqo` (pack §7.7, bundle L426002–426022): a queued prompt is the ORDINARY
           prompt echo wrapped in `<Box paddingX={$jp}>` with `$jp = 2`, and nothing else. It carries no
           prefix, no clip and no dimming (the `subtle` flip at L426034 lives inside the brief-layout branch,
@@ -327,7 +347,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           counts and dies here. The band is minted at `columns - 2*QUEUE_PAD`, which reproduces upstream's
           queued rule inset exactly: it hands `Sg` a padding of `3 + paddingWidth` = 7 where a normal
           message hands 3, and `paddingWidth` is `paddingX * 2` = 4. */}
-      {state.queue.length > 0 ? (
+      {state.queue.length > 0 && !pagerUp ? (
         <Box flexDirection="column" paddingX={QUEUE_PAD}>
           {state.queue.flatMap((q, i) => userEchoLines(q.value, { width: queueWidth }).map((l, j) => <Line key={`${i}:${j}`} l={l} />))}
         </Box>
