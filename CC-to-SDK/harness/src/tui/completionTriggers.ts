@@ -91,7 +91,15 @@ export function scanMention(text: string, cursor: number): MentionTrigger | null
  *  `o` is `needsQuotes` (`kt.displayText.includes(" ")`, the only way a path with a space survives the round
  *  trip back through `ARb`) and `i` is `isQuoted`, the flag the SCANNER set because the user opened a quote.
  *  Both accept sites pass both. Honouring only `needsQuotes` meant `@"src` + Tab on `src/app.ts` inserted a
- *  bare `@src/app.ts ` and silently dropped the quote the user had typed (t9 review, M3). */
-export function mentionInsertion(path: string, quoted = false): string {
-  return quoted || path.includes(" ") ? `@"${path}" ` : `@${path} `;
+ *  bare `@src/app.ts ` and silently dropped the quote the user had typed (t9 review, M3).
+ *
+ *  F5 t11 wires up `isComplete` (upstream's `a = s ? " " : ""`), which had no false caller here until
+ *  directories became candidates. A DIRECTORY accept passes `complete: false`, and the missing space is the
+ *  whole descent mechanism — see `acceptMention`. Upstream spells the same insertion out separately rather
+ *  than through `oQa`: `O9f` (L490462) is `"@" + id + (isDirectory ? "/" : " ")`, where the id carries no
+ *  trailing slash and the caller supplies it. Ours carries the slash on the candidate path already (the walk
+ *  emits it, exactly as `p_a` does in its `displayText`), so the two spellings produce the same string. */
+export function mentionInsertion(path: string, quoted = false, complete = true): string {
+  const tail = complete ? " " : "";
+  return quoted || path.includes(" ") ? `@"${path}"${tail}` : `@${path}${tail}`;
 }

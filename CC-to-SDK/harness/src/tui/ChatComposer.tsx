@@ -2,7 +2,7 @@
 // Owns the one side effect (the @-mention filesystem walk). The shared console <Composer> is left untouched.
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
-import { readdirSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { applyKey, bufferText, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
 import { catalogColumnWidth, SuggestPopup, type SuggestItem } from "./suggestPopup.js";
 import { applyQueueDrain } from "./queue.js";
@@ -11,7 +11,7 @@ import { loadPrefs, savePrefs } from "./prefs.js";
 import { PASTE_LIMIT } from "./pasteChips.js";
 import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
 import { composerMode } from "./promptMode.js";
-import { collectFiles, type DirEnt } from "./fileComplete.js";
+import { collectEntries, mentionWalkRoot, type AsyncReaddirFn, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
 import { editExternalAsync as realEditExternal } from "./externalEditor.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, newlineHint } from "./composerFrame.js";
@@ -47,10 +47,16 @@ export const HISTORY_SEARCH_HINT = "search history";
 /** `Lli` (L489464) — the `timeoutMs` upstream puts on that notification. */
 const HISTORY_HINT_MS = 5000;
 
-const realReaddir = (dir: string): DirEnt[] => {
-  try { return readdirSync(dir, { withFileTypes: true }).map((d) => ({ name: d.name, isDir: d.isDirectory() })); }
-  catch { return []; }
-};
+/** CM39, bundle L490598: `let Ae = Dee(Re, 50)` — the @-walk's debounce window. `Dee` (L182690) is
+ *  TRAILING-ONLY: every call clears the pending timer and reschedules, and there is no leading edge, so even
+ *  the first scheduled walk waits the full window. The React effect below is that shape exactly — a re-render
+ *  with a new root runs the cleanup (`clearTimeout`) before the next schedule.
+ *
+ *  Exported so the pin in test/tui/file-complete-async.test.tsx reads the constant instead of re-typing 50. */
+export const MENTION_WALK_DEBOUNCE_MS = 50;
+
+const realReaddir: AsyncReaddirFn = async (dir: string): Promise<DirEnt[]> =>
+  (await readdir(dir, { withFileTypes: true })).map((d) => ({ name: d.name, isDir: d.isDirectory() }));
 
 /** `ghost` is CM36's inline completion and `argHint` is CM37's inline argument hint — both are text drawn
  *  INSIDE the input line rather than below it, which is the whole reason they are threaded here instead of
@@ -173,7 +179,7 @@ const popupDrawn = (s: ReturnType<typeof suggestProps>): boolean => s !== null &
  *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
 export type ComposerEditExternal = (text: string) => string | null | Promise<string | null>;
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>;
   /** CM56's once-only guard, owned by ChatApp so it outlives this component's remounts (see below). */
   searchHintFiredRef?: React.MutableRefObject<boolean>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
   /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
@@ -185,6 +191,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   pasteHintMs?: number;
   /** CM56's window (`Lli`). Injectable for the same reason `pasteHintMs` is. */
   searchHintMs?: number;
+  /** CM39's 50 ms (`Dee(Re, 50)`), and the readdir the @-walk runs on. Both injectable for the same reason
+   *  every other timing knob here is: so a test can watch the debounce close, and park a walk mid-flight to
+   *  prove a stale resolution never repaints the list, without faking the clock under Ink. */
+  mentionWalkMs?: number; mentionReaddir?: AsyncReaddirFn;
   /** CM52's two persisted columns. `project` is the SESSION's cwd and defaults to the `cwd` prop rather than
    *  to `process.cwd()` — see `seedHistory`. `sessionId` is written but never read by this task's walk; it is
    *  what makes `scope:"session"` answerable at all, and a line written without it can never be recovered
@@ -606,13 +616,50 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     },
   });
 
-  // A just-opened mention has empty files → walk cwd once and feed the results in.
-  const needWalk = state.mention != null && state.mention.files.length === 0;
+  // ── CM39/CM40: the @-mention walk (F5 task 11). The composer's one filesystem side effect, and since this
+  // task an ASYNC, debounced, generation-guarded one that re-roots as the user descends.
+  //
+  // WHAT SCHEDULES A WALK, and why it is the root rather than the query. Upstream calls `Ae(query)` on every
+  // recompute and its debounce restarts each time, because upstream's search IS the filter — `Tcn` re-queries
+  // the whole file index per keystroke. Here the two halves are already separate: the WALK depends only on the
+  // directory the query names (`mentionWalkRoot`), and the RANKING is pure and lives in the reducer
+  // (`withMention` re-ranks the carried `files` on every scan, for free). So the debounce guards the only
+  // thing that touches the disk, and a keystroke that narrows the query inside one directory re-ranks with no
+  // walk at all — which is also why `@src` → Tab → `@src/` reads `src` instead of re-reading the whole tree.
+  //
+  // WHY IT IS AN EFFECT WITH A CLEARTIMEOUT CLEANUP. That is `Dee` (bundle L182690) verbatim: a new root
+  // cancels the pending timer and reschedules; there is no leading edge, so the first walk waits the window
+  // too. While it waits, `mention.files` is empty, the popup has no items and NOTHING is drawn — upstream has
+  // no loading state at this site either (its file rows simply appear when the results land).
+  //
+  // THE GENERATION GUARD. `walkGen` is bumped at the top of EVERY run, including the two early returns, so any
+  // walk still in flight is invalidated the moment its premise changes — a resolution that loses the race is
+  // dropped instead of repainting the list under a query it does not belong to. Upstream's version is a
+  // last-query token re-checked after each await (`if (oe.current !== mt) return`, L490566/L490574); a counter
+  // subsumes it, since it also invalidates a walk whose root came back around to the same string.
+  //
+  // `walkedRoot` is the last root whose results actually LANDED. Skipping a re-walk on a match is what makes
+  // backspacing across a level free, and resetting it to null when the popup closes is what makes the next `@`
+  // walk again (a closed mention drops its `files`, so they must be refetched).
+  const walkRoot = state.mention ? mentionWalkRoot(state.mention.query) : null;
+  const walkedRoot = useRef<string | null>(null);
+  const walkGen = useRef(0);
+  const mentionWalkMsRef = useRef(mentionWalkMs); mentionWalkMsRef.current = mentionWalkMs;
+  const mentionReaddirRef = useRef(mentionReaddir); mentionReaddirRef.current = mentionReaddir;
   useEffect(() => {
-    if (!needWalk) return;
-    const files = collectFiles(cwd, realReaddir);
-    if (!disposed.current) commitState((s) => setMentionFiles(s, files));
-  }, [needWalk, cwd]);
+    const gen = ++walkGen.current;
+    if (walkRoot === null) { walkedRoot.current = null; return; }
+    if (walkedRoot.current === walkRoot) return;
+    const timer = setTimeout(() => {
+      void (async () => {
+        const entries = await collectEntries(cwd, mentionReaddirRef.current ?? realReaddir, { root: walkRoot });
+        if (disposed.current || gen !== walkGen.current) return;
+        walkedRoot.current = walkRoot;
+        commitState((s) => setMentionFiles(s, entries.map((e) => e.path)));
+      })();
+    }, mentionWalkMsRef.current);
+    return () => clearTimeout(timer);
+  }, [walkRoot, cwd]);
 
   // First time a command popup opens with an empty catalog, feed in the live catalog (mirrors the mention walk).
   const needCatalog = state.command != null && state.command.catalog.length === 0 && commandCatalog.length > 0;

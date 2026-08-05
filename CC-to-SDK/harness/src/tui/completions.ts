@@ -167,12 +167,38 @@ function spliceSpan(s: EditorState, span: TokenSpan, repl: string): { lines: str
   return { lines, cursor: { row: span.row, col: span.start + repl.length } };
 }
 /** The `H === "file"` accept (bundle L491017–L491027). Note what is NOT in that branch: `onSubmit`. Accepting
- *  a file mention inserts and stops, on Tab and on Enter alike — the only accept arm that never executes. */
+ *  a file mention inserts and stops, on Tab and on Enter alike — the only accept arm that never executes.
+ *
+ *  CM40, F5 t11: a DIRECTORY accepts differently — it descends. Upstream's directory arm is `Pe`'s
+ *  L490887–L490893:
+ *
+ *      let Tr = bZe(o, i, !0) ?? bZe(o, i, !1);
+ *      if (Tr) { let _r = …metadata.type === "directory", Wr = O9f(o, kt.id, Tr.startPos, Tr.token.length, _r);
+ *                t(Wr.newInput), n(Wr.cursorPos);
+ *                if (_r) l(…), Be(Wr.newInput, Wr.cursorPos);      // RE-SUGGEST: reopen one level deeper
+ *                else he(); }                                      // a file just closes
+ *
+ *  and `Be` is upstream's whole (text, caret) recompute — the thing `syncCompletions` is this port's version
+ *  of. So the descent is literally "splice, then re-run the trigger scan", which is what the two arms below
+ *  are. What MAKES it work is the missing trailing space: `O9f` gives a directory `@dir/` and nothing else, so
+ *  the `@` trigger is still live over the new text and the scan re-opens the mention with `dir/` as its query.
+ *
+ *  Enter and Tab both land here, so both descend and neither submits — `applyKeyInner`'s Return arm checks
+ *  `mentionActive` before `submitTurn`. Upstream's Enter site (`ze`, L491052–L491057) omits the `Be` call and
+ *  falls through to `he()`, but its text-change effect (L490831) re-runs `Be` on the new buffer regardless, so
+ *  upstream's two keys converge on the same descent by a longer road.
+ *
+ *  `mention` is deliberately NOT nulled before the rescan: `withMention` carries `prev.files` forward, so the
+ *  parent level's list stays on screen, re-ranked against the deeper query, until the composer's re-rooted
+ *  walk lands. Upstream has the same property for the same reason — `Be` schedules the new search and returns,
+ *  and `Re` only replaces `suggestions` once it resolves. */
 export function acceptMention(s: EditorState): EditorState {
   const m = s.mention!;                                          // only reached via `mentionActive`, so non-empty
   const chosen = m.items[Math.min(m.index, m.items.length - 1)];
-  const { lines, cursor } = spliceSpan(s, m.span, mentionInsertion(chosen.path, m.quoted));
-  return { ...s, lines, cursor, mention: null };
+  const isDir = chosen.path.endsWith("/");                       // the walk's invariant (fileComplete.ts `Entry`)
+  const { lines, cursor } = spliceSpan(s, m.span, mentionInsertion(chosen.path, m.quoted, !isDir));
+  const next = { ...s, lines, cursor };
+  return isDir ? syncCompletions(next) : { ...next, mention: null };
 }
 /** CM28. `execute` is upstream's `shouldExecute`: the Tab site passes `!1` (L490855) and the Enter site passes
  *  `mt === void 0` — true for a real Return (L490989). What `execute` buys is decided by `executesOnEnter`
