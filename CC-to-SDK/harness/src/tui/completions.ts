@@ -2,14 +2,21 @@
 // inline ghost text says, what the argument hint says, and what accepting any of the three does to the buffer.
 //
 // The F5 plan's third pre-allocated editor.ts split, taken in Task 10 exactly where the two Task-9 reviews said
-// it would have to be taken: editor.ts had reached 636 lines and the whole `autocomplete:` section was already
+// it would have to be taken: editor.ts had reached 662 lines and the whole `autocomplete:` section was already
 // banner-delimited. Nothing here changed shape in the move except where a bundle line said it had to (see the
 // ghost/argument-hint sections at the bottom, which are new).
 //
 // `completionTriggers.ts` (a zero-import leaf) answers "is the caret in a `/command` or an `@mention`, and over
-// what span". THIS file answers everything after that. The deliberate module cycle with editor.ts is the same
-// one `editorHistory.ts` and `pasteChips.ts` already document: every export on both sides is a hoisted
-// `function` declaration and nothing is called at module-evaluation time, so the cycle resolves either way.
+// what span". THIS file answers everything after that.
+//
+// The deliberate module cycle with editor.ts is the same one `editorHistory.ts` and `pasteChips.ts` already
+// document, and the property that makes it safe is precisely this: **nothing on either side is invoked at
+// module-evaluation time.** Both bodies only define things, so by the time any of these functions actually
+// runs, both modules have finished evaluating and every binding is initialized whichever order the loader
+// picked. Hoisting is a nice-to-have on top of that, not the guarantee — `bufferText` is a `const` arrow this
+// file imports and calls, so it is in its TDZ while editor.ts is still evaluating. Calling it *then* would
+// throw; nothing does. (`durable` was made a hoisted `function` anyway, belt and braces, since it is the one
+// import here that editor.ts declares below its own use site.)
 import { bufferText, durable, initialEditorState, type EditorResult, type EditorState, type TokenSpan } from "./editor.js";
 import { rankCandidates } from "./fileComplete.js";
 import { executesOnEnter, rankCommands, type CommandEntry } from "./commandComplete.js";
@@ -89,7 +96,7 @@ export function syncCompletions(s: EditorState): EditorState {
  *  Down, Tab and Escape.
  *
  *  (2) `head`, new in t10: the mid-text `/` arm draws GHOST TEXT upstream, never a popup. `Be`'s very first
- *  branch (bundle L490616–L490624) runs `Pli` and, when `zJa` finds a completion, sets `suggestions: []` and
+ *  branch (bundle L490617–L490625) runs `Pli` and, when `zJa` finds a completion, sets `suggestions: []` and
  *  RETURNS — and the leading-slash list is reached through a different branch entirely (`YRr(mt) && kt > 0`,
  *  L490747) that a mid-text buffer can never satisfy. So a non-head command trigger has no list at all; what
  *  it has is `ghostText`, and Tab reaches that through its own arm. */
@@ -108,10 +115,16 @@ export function commandEmptyMessage(s: EditorState): string | null {
 /** What the `Autocomplete` SCOPE and the Escape arm key off: anything the composer actually DRAWS below or
  *  after the input. Upstream's own predicate is `Lt = c.length > 0 || !!Y` (bundle L491072) — the suggestion
  *  list OR the inline ghost text — gating `hf("autocomplete", Lt)`, `cut("Autocomplete", Lt)` and the binding
- *  set on the same line. Both terms are here; the third is a DELIBERATE WIDENING (t9 re-review, traced):
- *  upstream's `Lt` is FALSE while CM38's empty message shows, so its Escape falls through to cancel with the
- *  message still on screen. Ours dismisses what the user can see first; one extra Escape before cancel arms,
- *  on purpose. Getting this wrong in either direction is a live bug: too narrow and Escape cannot dismiss
+ *  set on the same line (`co(gt, { context: "Autocomplete", isActive: Lt && !At })`, L491073).
+ *
+ *  Both of upstream's terms are here; the third is a DELIBERATE WIDENING (t9 re-review, traced): upstream's
+ *  `Lt` is FALSE while CM38's empty message shows, so its Escape falls through to cancel with the message
+ *  still on screen. **And the ghost term cannot rescue it, for a structural reason worth keeping written
+ *  down:** the empty message is written only inside the head branch (`YRr(mt) && kt > 0`, L490747), while the
+ *  ghost exists only for `head: false` — `Pli`'s whitespace-before-slash can never match a leading slash. The
+ *  two are mutually exclusive by construction, so there is no input for which `Lt`'s `!!Y` is true while the
+ *  message is on screen. Ours dismisses what the user can see first; one extra Escape before cancel arms, on
+ *  purpose. Getting this wrong in either direction is a live bug: too narrow and Escape cannot dismiss
  *  something the user is looking at, too wide and an invisible popup eats the cancel. */
 export function completionActive(s: EditorState): boolean {
   return commandActive(s) || mentionActive(s) || commandEmptyMessage(s) !== null || ghostText(s) !== null;
@@ -146,7 +159,7 @@ export function setCommandCatalog(s: EditorState, catalog: CommandEntry[]): Edit
 // ─── acceptance ──────────────────────────────────────────────────────────────────────────────────────────
 /** All three accepts replace the trigger's SPAN and leave everything around it alone. That is upstream's shape
  *  at two of the three sites verbatim (`oQa`'s insertion and `Pe`'s ghost splice, which reads
- *  `gr + "/" + fullCommand + " " + lr` at L490845); the third, `XJa`, replaces the whole input, which for the
+ *  `gr + "/" + fullCommand + " " + lr` at L490847); the third, `XJa`, replaces the whole input, which for the
  *  head arm IS the span, the token being the whole line. */
 function spliceSpan(s: EditorState, span: TokenSpan, repl: string): { lines: string[]; cursor: { row: number; col: number } } {
   const line = s.lines[span.row]; const lines = [...s.lines];
@@ -179,7 +192,7 @@ export function acceptCommand(s: EditorState, execute: boolean): EditorResult {
 }
 
 // ─── CM36: inline ghost text (the mid-text `/` surface) ──────────────────────────────────────────────────
-/** Upstream's `inlineGhostText` — `Y` at bundle L490556, fed by the `V` memo at L490535–L490544:
+/** Upstream's `inlineGhostText` — `Y` at bundle L490556, fed by the `V` memo at L490535–L490545:
  *
  *      V = useMemo(() => { if (s !== "prompt" || m) return;
  *                          let mt = Pli(o, i); if (!mt) return;
@@ -197,10 +210,10 @@ export function acceptCommand(s: EditorState, execute: boolean): EditorResult {
  *  is no ghost for `vew` because nothing starts with it. When SEVERAL entries are prefixes the shortest wins,
  *  because that is the order the ranker hands them over in — ours by `a.path.length - b.path.length`
  *  (fileComplete.ts), upstream by `if (L && x && w !== k) return w - k` over the same prefix lengths
- *  (L490054). So `mod` ghosts to `/mode`, not `/model`, on both sides.
+ *  (L490060). So `mod` ghosts to `/mode`, not `/model`, on both sides.
  *
  *  `visible` is upstream's RENDER gate, which sits somewhere else entirely: `Oe = k && L && k.insertPosition
- *  === M` (L395860) plus `_ === f.length - 1 && this.isAtEnd()` inside the renderer (L394779). So upstream
+ *  === M` (L395860) plus `_ === f.length - 1 && this.isAtEnd()` inside the renderer (L394780). So upstream
  *  draws the ghost only with the caret at the end of the whole buffer, but `Lt` and `Pe` read the UNGATED
  *  memo — Tab still completes `see /mod| end` where nothing is drawn. Both facts are kept, as one object with
  *  two readers, rather than as two derivations that could drift: `acceptGhost`/`completionActive` take the
@@ -220,10 +233,11 @@ export function ghostText(s: EditorState): GhostText | null {
   }
   return null;
 }
-/** `Pe`'s ghost arm (bundle L490841–L490847): `gr + "/" + fullCommand + " " + lr` spliced over `Pli`'s span
+/** `Pe`'s ghost arm (`Pe` at bundle L490839, `if (Y)` at L490840, the splice at L490847):
+ *  `gr + "/" + fullCommand + " " + lr` spliced over `Pli`'s span
  *  with the caret at `startPos + 1 + fullCommand.length + 1`. There is no `onSubmit` anywhere in the arm — a
  *  ghost accept inserts and stops, on Tab as on anything else. `Pe` checks the ghost BEFORE the suggestion
- *  list (`if (Y) {…}` at L490840, `if (c.length > 0)` at L490851); the two are mutually exclusive here
+ *  list (`if (Y) {…}` at L490840, `if (c.length > 0)` at L490852); the two are mutually exclusive here
  *  (`head` decides which one exists) but the order is transcribed anyway. */
 export function acceptGhost(s: EditorState, g: GhostText): EditorState {
   const { lines, cursor } = spliceSpan(s, g.span, "/" + g.fullCommand + " ");
@@ -231,7 +245,7 @@ export function acceptGhost(s: EditorState, g: GhostText): EditorState {
 }
 
 // ─── CM37: the inline argument hint ──────────────────────────────────────────────────────────────────────
-/** Upstream's `commandArgumentHint`, computed at bundle L490748–L490762 inside the head branch:
+/** Upstream's `commandArgumentHint`, computed at bundle L490749–L490762 inside the head branch (L490747):
  *
  *      let Nn = mt.indexOf(" "), Fn = Nn === -1 ? mt.slice(1) : mt.slice(1, Nn),
  *          ve = Nn !== -1 && mt.slice(Nn + 1).trim().length > 0,       // has non-blank arguments

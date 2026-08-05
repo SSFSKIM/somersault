@@ -1,5 +1,5 @@
 // tui/src/suggestPopup.tsx — CM30: the ONE suggestion popup. Upstream has exactly one (`DXe`, bundle
-// L432430–L432461, with the row renderer `q7p` at L432489–L432640) and every producer — slash commands,
+// L432430–L432453, with the row renderer `q7p` at L432488–L432640) and every producer — slash commands,
 // `@` file mentions, MCP resources, agents, directories, emoji — feeds it the same `{ id, displayText,
 // description }` shape. This port had grown two ad-hoc ones inside ChatComposer instead (`CommandPopup` and
 // `MentionPopup`, both eight fixed rows of `<Text inverse>`), which is why the composer jumped whenever the
@@ -23,7 +23,7 @@ import { resolveThemeColor, themeTokens } from "./theme.js";
 /** `Ut` — upstream's `Bun.stringWidth(s, { ambiguousIsNarrow: true })`; `string-width` is that function, and
  *  mdTable.ts already documents the equivalence. */
 const w = (s: string) => stringWidth(s);
-/** `YSn` (bundle L432384): `/\s+/g`, the whitespace collapse every description goes through. */
+/** `YSn` (bundle L432487): `/\s+/g`, the whitespace collapse every description goes through. */
 const WS = /\s+/g;
 
 /** One row. `id` is load-bearing, not decoration: `E_a` (L432427) keys the whole FILE-ish rendering branch off
@@ -39,30 +39,31 @@ export function isFileish(id: string): boolean {
  *  here and `agent-` rows are not a surface we feed, so `+` — its `file-` value and its default — is all of it. */
 const fileIcon = (_id: string): string => "+";
 
-/** `DXe`'s `d` (bundle L432431), the ONLY thing that decides how tall the region is. Not the item count. */
+/** `DXe`'s `d` (bundle L432431, the `let { rows: c, columns: u } = Br(), d = …` line) — the ONLY thing that
+ *  decides how tall the region is. Not the item count. */
 export function popupHeight(rows: number): number {
   return Math.max(1, Math.min(Math.max(6, Math.floor(rows / 2)), rows - 3));
 }
 
-/** `DXe`'s `p` (L432441): `maxColumnWidth ?? max(displayText widths) + 5`.
+/** `DXe`'s `p` (L432438): `maxColumnWidth ?? max(displayText widths) + 5`.
  *
- *  The slash catalog always passes one, computed at L490510 over the WHOLE visible command set rather than
+ *  The slash catalog always passes one, computed at L490508–L490513 over the WHOLE visible command set rather than
  *  over the currently-matching suggestions: `Math.max(...commands.filter(c => !c.isHidden).map(c => bd(c).length)) + 6`.
  *  Numerically that is the same sum — `bd(c)` is the bare name and `displayText` is `"/" + bd(c)` (`VJa`,
- *  L432406), so `name.length + 6 === displayText.length + 5` — and the difference is entirely the INPUT SET.
+ *  L490005–L490008), so `name.length + 6 === displayText.length + 5` — and the difference is entirely the INPUT SET.
  *  That is the point of the override: the name column is a property of the catalog, so it does not jitter as
  *  the user narrows the list. */
 export function nameColumn(items: readonly SuggestItem[], maxColumnWidth?: number): number {
   if (maxColumnWidth !== undefined) return maxColumnWidth;
   return Math.max(0, ...items.map((i) => w(i.displayText))) + 5;
 }
-/** The slash catalog's own override, `k` at bundle L490510. */
+/** The slash catalog's own override, `k` at bundle L490508–L490513 (the sum itself is L490512). */
 export function catalogColumnWidth(names: readonly string[]): number | undefined {
   if (names.length === 0) return undefined;
   return Math.max(...names.map((n) => n.length)) + 6;
 }
 
-/** `a0H` (bundle L432457–L432461) verbatim:
+/** `a0H` (bundle L432458–L432466) verbatim:
  *
  *      if (E_a(e.id) || !e.description) return 1;
  *      let n = Math.min(r, Math.floor(t * 0.4)),
@@ -80,7 +81,7 @@ export function catalogColumnWidth(names: readonly string[]): number | undefined
  *  source, so all three are 0 — written out as named zeros rather than deleted, because the day we grow a
  *  lane the budget has to shrink with it.
  *
- *  `n = min(nameCol, floor(columns * 0.4))` is the same clamp the row renderer applies to `RRe` (L432489),
+ *  `n = min(nameCol, floor(columns * 0.4))` is the same clamp the row renderer applies to `RRe` (L432540),
  *  which is what keeps the estimate and the render in agreement about how wide the name lane really is. */
 export function rowLines(item: SuggestItem, columns: number, nameCol: number): 1 | 2 {
   if (isFileish(item.id) || !item.description) return 1;
@@ -91,7 +92,7 @@ export function rowLines(item: SuggestItem, columns: number, nameCol: number): 1
   return w(item.description.replace(WS, " ").trim()) > budget ? 2 : 1;
 }
 
-/** `DXe`'s scroll walk (bundle L432443–L432448), verbatim. It is NOT "keep the selection three from the top":
+/** `DXe`'s scroll walk (bundle L432438–L432445), verbatim. It is NOT "keep the selection three from the top":
  *
  *      let g = clamp(t, 0, e.length - 1), y = g, _ = g + 1, E = m[g] ?? 1, A = 0, H = Math.floor(d / 2);
  *      while (y > 0 && E < d && A + (m[y-1] ?? 1) <= H) y--, A += m[y] ?? 1;   // walk up, budget floor(d/2)
@@ -113,24 +114,23 @@ export function scrollWindow(lineCounts: readonly number[], selected: number, d:
   return { start, end, rendered };
 }
 
-/** `gi` (bundle L432396): truncate on the RIGHT, one ellipsis character inside the budget. */
-function truncEnd(s: string, cap: number): string {
+/** `gi` (bundle L106951): truncate on the RIGHT, one ellipsis character inside the budget. */
+export function truncEnd(s: string, cap: number): string {
   if (w(s) <= cap) return s;
   if (cap <= 1) return "…";
   let used = 0, out = "";
   for (const ch of s) { const cw = w(ch); if (used + cw > cap - 1) break; out += ch; used += cw; }
   return out + "…";
 }
-/** `xG` (bundle L432410): truncate on the LEFT, keeping the tail — what upstream uses for anything with a `/`
- *  or `\` in it, because the end of a path carries the information. */
-function truncStart(s: string, cap: number): string {
+/** `xG` (bundle L106965): truncate on the LEFT, keeping the tail. */
+export function truncStart(s: string, cap: number): string {
   if (w(s) <= cap) return s;
   if (cap <= 1) return "…";
   const chars = [...s]; let used = 0, from = chars.length;
   for (let i = chars.length - 1; i >= 0; i--) { const cw = w(chars[i]); if (used + cw > cap - 1) break; used += cw; from = i; }
   return "…" + chars.slice(from).join("");
 }
-/** `MNe` (bundle L432477): the longest prefix that fits, no ellipsis. */
+/** `MNe` (bundle L106979): the longest prefix that fits, no ellipsis. */
 function prefixWithin(s: string, cap: number): string {
   if (w(s) <= cap) return s;
   if (cap <= 0) return "";
@@ -138,7 +138,39 @@ function prefixWithin(s: string, cap: number): string {
   for (const ch of s) { const cw = w(ch); if (used + cw > cap) break; out += ch; used += cw; }
   return out;
 }
-/** `W7p` (bundle L432469–L432476): split a description into the part that fits and the remainder, breaking on
+/** `bLt` (bundle L106938–L106949) — the PATH truncation, and a different shape from both of the above:
+ *
+ *      function bLt(e, t) {
+ *        if (Ut(e) <= t) return e;
+ *        if (t <= 0) return "…";
+ *        if (t < 5) return gi(e, t);
+ *        let r = e.lastIndexOf("/"), n = r >= 0 ? e.slice(r) : e, o = r >= 0 ? e.slice(0, r) : "", i = Ut(n);
+ *        if (i >= t - 1) return xG(e, t);
+ *        let s = t - 1 - i;
+ *        return MNe(o, s) + "…" + n;
+ *      }
+ *
+ *  A MIDDLE elide that keeps the whole basename: `src/tui/suggestPopup.tsx` at 20 columns becomes
+ *  `src/…/suggestPopup.tsx`-shaped rather than `…i/suggestPopup.tsx`. Note `n` is `e.slice(r)` — the basename
+ *  WITH its leading slash — so the ellipsis lands where the parent directories were cut, not next to the name.
+ *  Two fallbacks, both real: a basename that alone eats the budget drops to `xG` (left-elide, since there is
+ *  no middle left to elide), and a budget under five columns drops to `gi`.
+ *
+ *  This is what `q7p` routes every `file-` row through (L432510: `Lzo = h_a ? xG(…) : bLt(…)`, where `h_a` is
+ *  the `mcp-template-value::` id and every other file-ish id takes the `bLt` arm). Ours used `xG` for anything
+ *  containing a slash, which threw the parent directories away and kept an arbitrary head of them instead. */
+export function truncPath(s: string, cap: number): string {
+  if (w(s) <= cap) return s;
+  if (cap <= 0) return "…";
+  if (cap < 5) return truncEnd(s, cap);
+  const slash = s.lastIndexOf("/");
+  const base = slash >= 0 ? s.slice(slash) : s;                 // `n`: the basename, leading slash included
+  const parent = slash >= 0 ? s.slice(0, slash) : "";           // `o`
+  const baseW = w(base);
+  if (baseW >= cap - 1) return truncStart(s, cap);              // `if (i >= t - 1) return xG(e, t)`
+  return prefixWithin(parent, cap - 1 - baseW) + "…" + base;
+}
+/** `W7p` (bundle L432467–L432477): split a description into the part that fits and the remainder, breaking on
  *  a space when there is one to break on. The remainder is what makes a row two lines. */
 export function splitDescription(text: string, cap: number): [string, string] {
   if (cap <= 0 || w(text) <= cap) return [text, ""];
@@ -151,25 +183,27 @@ export function splitDescription(text: string, cap: number): [string, string] {
 
 const suggestionColor = () => resolveThemeColor(themeTokens().suggestion);
 
-/** `q7p`'s `E_a` branch (bundle L432491–L432532): one truncate-wrapped run, `icon displayText – description`,
- *  in `suggestion` when selected and `dimColor` when not. The en-dash at L432520 is a real `–`, and it
+/** `q7p`'s `E_a` branch (bundle L432490–L432538): one truncate-wrapped run, `icon displayText – description`,
+ *  in `suggestion` when selected and `dimColor` when not. The en-dash at L432530 is a real `–`, and it
  *  only appears when the item HAS a description — our `@`-mention rows carry none (upstream's own
- *  `UMo`, L314104, builds `{ id: "file-"+path, displayText: path }` with no description either), so in
- *  practice they render as `+ path`. */
+ *  `UMo`, L314103, builds `{ id: "file-"+path, displayText: path }` with no description either), so in
+ *  practice they render as `+ path`.
+ *
+ *  The name goes through `bLt` (L432510), not `xG`: every `file-` id takes that arm, and it is a middle
+ *  elide that preserves the basename. */
 function FileRow({ item, columns, selected }: { item: SuggestItem; columns: number; selected: boolean }) {
   const icon = fileIcon(item.id);
   const gap = item.description ? 3 : 0;                          // `e0H`
   const descCap = item.description ? Math.min(20, w(item.description)) : 0;
   const nameBudget = columns - 2 - 4 - gap - descCap;
-  const isPath = item.displayText.includes("/") || item.displayText.includes("\\");
-  const name = isPath ? truncStart(item.displayText, nameBudget) : truncEnd(item.displayText, nameBudget);
+  const name = truncPath(item.displayText, nameBudget);
   const text = item.description
     ? `${icon} ${name} – ${truncEnd(item.description.replace(WS, " "), Math.max(0, columns - 2 - w(name) - gap - 4))}`
     : `${icon} ${name}`;
   return <Text color={selected ? suggestionColor() : undefined} dimColor={!selected} wrap="truncate">{text}</Text>;
 }
 
-/** `q7p`'s general branch (bundle L432533–L432640): a name lane padded out to `RRe`, then the description in
+/** `q7p`'s general branch (bundle L432540–L432640): a name lane padded out to `RRe`, then the description in
  *  what is left, with the overflow on a second line indented to the same lane.
  *
  *  Skipped deliberately, each with the bundle's own reason: the `emoji:` pointer lane (`$Tr`, only for emoji
@@ -177,7 +211,7 @@ function FileRow({ item, columns, selected }: { item: SuggestItem; columns: numb
  *  `rowLines`), and `X4t`'s query highlighting, which bolds the matched substring inside both the name and
  *  the description. The last one is a real fidelity gap rather than an N/A; it is its own CM. */
 function GeneralRow({ item, columns, nameCol, selected, allowWrap }: { item: SuggestItem; columns: number; nameCol: number; selected: boolean; allowWrap: boolean }) {
-  // `SsI`/`RRe`, L432533: with a description the name lane is capped at 40% of the terminal; without one it
+  // `SsI`/`RRe`, L432540: with a description the name lane is capped at 40% of the terminal; without one it
   // gets everything but the four-column gutter.
   const lane = item.description ? Math.floor(columns * 0.4) : columns - 4;
   const nameW = Math.min(nameCol, lane);
@@ -201,13 +235,13 @@ function GeneralRow({ item, columns, nameCol, selected, allowWrap }: { item: Sug
 
 /** A run of blank rows. `<Text> </Text>` and not `<Text/>`, because Ink collapses a genuinely empty Text and
  *  the whole point of the padding is to occupy a line. Upstream writes the same literal (`h, { children: " " }`,
- *  L432437/L432453). */
+ *  L432436 for the empty-message pad, L432452 for the list pad). */
 const blanks = (n: number, key: string) => Array.from({ length: Math.max(0, n) }, (_, i) => <Text key={`${key}-${i}`}> </Text>);
 
 /**
  * `DXe`. `rows`/`columns` are the terminal's, threaded from ChatComposer the same way everything else in this
  * port is. `emptyMessage` is upstream's `n`: when there are no items and no message the popup is `null`, and
- * when there are no items and a message the message takes ONE line and the padding is `d - 1` (L432435–L432438).
+ * when there are no items and a message the message takes ONE line and the padding is `d - 1` (L432433–L432436).
  */
 export function SuggestPopup({ items, selected, columns, rows, maxColumnWidth, emptyMessage }: {
   items: readonly SuggestItem[]; selected: number; columns: number; rows: number;
@@ -224,7 +258,7 @@ export function SuggestPopup({ items, selected, columns, rows, maxColumnWidth, e
     );
   }
   const nameCol = nameColumn(items, maxColumnWidth);
-  // `f = d >= 2` (L432441): a one-line-tall popup cannot afford a wrapped row, so `a0H` is skipped entirely
+  // `f = d >= 2` (L432438): a one-line-tall popup cannot afford a wrapped row, so `a0H` is skipped entirely
   // and every row counts as one — which also turns the row renderer's `allowWrap` off.
   const allowWrap = d >= 2;
   const lineCounts = items.map((i) => (allowWrap ? rowLines(i, columns, nameCol) : 1));

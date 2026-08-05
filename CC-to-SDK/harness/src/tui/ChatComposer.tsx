@@ -68,7 +68,7 @@ function renderBuffer(state: EditorState, ghost: string | null, argHint: string 
     // every other row has always been and the frame's wrapping behaviour is pinned against that shape.
     if (r !== cursor.row) return hint ? <Box key={r} flexDirection="row"><Text>{line.length ? line : " "}</Text>{hint}</Box> : <Text key={r}>{line.length ? line : " "}</Text>;
     const before = line.slice(0, cursor.col);
-    // CM36's cursor rule (bundle L394779): with ghost text present the cursor sits ON THE GHOST'S FIRST
+    // CM36's cursor rule (bundle L394780–L394785): with ghost text present the cursor sits ON THE GHOST'S FIRST
     // CHARACTER (`x = e ? r(D) : D`, where `D` is the first grapheme of the ghost) and the remainder is dimmed
     // (`R = n.dim(P)`), instead of inverting the blank past the end of the buffer.
     const g = ghost ? [...ghost] : null;
@@ -133,8 +133,8 @@ export interface PlaceholderMemo { files?: string[]; draws: number[] }
  *   · `.split("\n")[0].slice(0, 48)` on the description — `q7p` collapses whitespace (`YSn`) and truncates to
  *     a WIDTH-derived budget, so a fixed 48 was both too long on a narrow terminal and too short on a wide one.
  *   · the `argumentHint` lane next to the name — upstream's row has none. Its argument evidence is
- *     `(arguments: …)` appended to the DESCRIPTION for prompt commands with `argNames`, a field we do not
- *     carry; `argumentHint` reaches the user through CM37's inline hint instead, which is this task's other half.
+ *     `(arguments: …)` appended to the DESCRIPTION for prompt commands with `argNames` (`VJa`, L490005–L490008),
+ *     a field we do not carry; `argumentHint` reaches the user through CM37's inline hint instead, which is this task's other half.
  *   · the `↑/↓ n/N · tab completes · esc closes` footer — our invention, with no counterpart in `DXe`, and a
  *     conditional extra line is exactly the kind of thing the blank padding exists to prevent. */
 function suggestProps(state: EditorState): { items: SuggestItem[]; selected: number; maxColumnWidth?: number; emptyMessage?: string | null } | null {
@@ -142,7 +142,7 @@ function suggestProps(state: EditorState): { items: SuggestItem[]; selected: num
   if (c?.head) return {
     items: c.items.map((e) => ({ id: `cmd-${e.name}`, displayText: `/${e.name}`, description: e.description })),
     selected: c.index,
-    // `k` (L490510) is computed over the WHOLE catalog, not the matches, so the name lane does not jitter as
+    // `k` (L490508–L490513) is computed over the WHOLE catalog, not the matches, so the name lane does not jitter as
     // the user narrows the list. `catalogColumnWidth` is that sum.
     maxColumnWidth: catalogColumnWidth(c.catalog.map((e) => e.name)),
     // CM38's message and its guards live in `commandEmptyMessage` (completions.ts), not here: the key router
@@ -151,12 +151,23 @@ function suggestProps(state: EditorState): { items: SuggestItem[]; selected: num
     emptyMessage: commandEmptyMessage(state),
   };
   const m = state.mention;
-  // `UMo` (bundle L314104): `{ id: "file-"+path, displayText: path }` — no description, which is why an
+  // `UMo` (bundle L314103): `{ id: "file-"+path, displayText: path }` — no description, which is why an
   // `@`-mention row renders as `+ path` and never reaches `q7p`'s en-dash arm. `file-` is the id prefix `E_a`
   // keys the whole file-ish rendering branch off, so it is data, not decoration.
   if (m) return { items: m.items.map((c2) => ({ id: `file-${c2.path}`, displayText: c2.path })), selected: m.index };
   return null;
 }
+/** `Ptl` (bundle L494604): `qMr.length > 0 || !!VMr` — suggestions OR an empty message. Upstream branches the
+ *  whole composer footer on it (`if (Ptl && !LRn) return <the suggestion box>`, L494609–L494615), so the
+ *  suggestion region and the hint rows are alternatives that occupy the same slot and exactly one of them is
+ *  on screen at a time.
+ *
+ *  Ours keyed the footer off the raw presence of `state.command`/`state.mention` instead, which was already
+ *  wrong for an empty `@zz` (state present, nothing drawn, two rows silently gone) and which t10's head gate
+ *  made worse: a mid-text `/zzz` that matches nothing, or any visible ghost, now draws no popup at all, and
+ *  before the gate the un-head-gated empty message at least filled the slot. The composer lost two lines and
+ *  put nothing there — the very jump the blank padding exists to prevent, reintroduced one layer up. */
+const popupDrawn = (s: ReturnType<typeof suggestProps>): boolean => s !== null && (s.items.length > 0 || !!s.emptyMessage);
 
 /** An injected editor may be sync (the pre-F5 DI shape, still used by several tests) or async (what the
  *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
@@ -667,8 +678,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const ghost = ghostText(state);
   const argHint = commandArgumentHint(bufferText(state), commandCatalog);
   // The editor owns these affordances: derive them from this render's state so the first draft/popup
-  // frame cannot inherit an out-of-date parent status-bar hint through a passive effect.
-  const showFooter = mode === "normal" && !state.mention && !state.command;
+  // frame cannot inherit an out-of-date parent status-bar hint through a passive effect. The footer and the
+  // suggestion region are ALTERNATIVES sharing one slot — upstream's `Ptl` branch; see `popupDrawn`.
+  const showFooter = mode === "normal" && !popupDrawn(suggest);
   // F2 task 10: every chord this component prints comes from the LIVE table, not from literals typed here —
   // rebind chat:cycleMode and the rung follows it; unbind it and the rung says `(unbound)` instead of promising
   // a key that no longer works. That covers the footer ladder, the Esc hint and both double-press arms (the

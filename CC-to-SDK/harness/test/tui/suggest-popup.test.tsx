@@ -6,7 +6,7 @@ import { render } from "ink-testing-library";
 import { Box } from "ink";
 import { applyKey, commandActive, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, setCommandCatalog, type EditorState } from "../../src/tui/editor.js";
 import type { CommandEntry } from "../../src/tui/commandComplete.js";
-import { catalogColumnWidth, nameColumn, popupHeight, rowLines, scrollWindow, splitDescription, SuggestPopup, type SuggestItem } from "../../src/tui/suggestPopup.js";
+import { catalogColumnWidth, nameColumn, popupHeight, rowLines, scrollWindow, splitDescription, SuggestPopup, truncEnd, truncPath, truncStart, type SuggestItem } from "../../src/tui/suggestPopup.js";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
 import { KeymapProvider } from "../../src/tui/keys/KeymapProvider.js";
 
@@ -23,8 +23,8 @@ const open = (text: string, catalog: CommandEntry[] = CAT): EditorState => {
 };
 const lines = (frame: string | undefined): string[] => (frame ?? "").split("\n");
 
-// ── geometry (`DXe`, bundle L432430–L432461) ───────────────────────────────────────────────────────────
-describe("CM30 geometry — DXe L432430–61", () => {
+// ── geometry (`DXe`, bundle L432430–L432453) ───────────────────────────────────────────────────────────
+describe("CM30 geometry — DXe L432430–453", () => {
   it("visible height is max(1, min(max(6, floor(rows/2)), rows - 3)), never a fixed 8", () => {
     expect(popupHeight(24)).toBe(12);       // floor(24/2)=12, capped by 21
     expect(popupHeight(40)).toBe(20);
@@ -39,7 +39,7 @@ describe("CM30 geometry — DXe L432430–61", () => {
     const items: SuggestItem[] = [{ id: "cmd-model", displayText: "/model" }, { id: "cmd-x", displayText: "/x" }];
     expect(nameColumn(items)).toBe(11);                            // 6 + 5
     expect(nameColumn(items, 40)).toBe(40);
-    // `k`, L490510 — the same arithmetic over the WHOLE catalog: `/model`.length + 5 === "model".length + 6.
+    // `k`, L490508–13 — the same arithmetic over the WHOLE catalog: `/model`.length + 5 === "model".length + 6.
     expect(catalogColumnWidth(["model", "mode", "review"])).toBe(12);
     expect(catalogColumnWidth([])).toBeUndefined();
   });
@@ -69,6 +69,32 @@ describe("CM30 geometry — DXe L432430–61", () => {
     expect(scrollWindow(one, 19, 6)).toEqual({ start: 14, end: 20, rendered: 6 });
     // a two-line row costs two of the budget in every loop
     expect(scrollWindow([2, 2, 2, 2], 0, 5)).toEqual({ start: 0, end: 2, rendered: 4 });
+  });
+
+  // The whole file-row name path had ZERO coverage before this: the t10 reviewer swapped `truncStart` for
+  // `truncEnd` in `FileRow` and all 3316 tests stayed green. All three of `bLt`'s arms are pinned here, and
+  // the row that uses it is pinned below.
+  it("bLt (L106938-49) MIDDLE-elides a path, keeping the whole basename", () => {
+    expect(truncPath("src/tui/suggestPopup.tsx", 40)).toBe("src/tui/suggestPopup.tsx");   // fits, untouched
+    // budget 20: basename `/suggestPopup.tsx` is 17 wide, so the parent gets `20 - 1 - 17 = 2` columns.
+    expect(truncPath("src/tui/suggestPopup.tsx", 20)).toBe("sr…/suggestPopup.tsx");
+    // budget 16: basename `/name.ts` is 8, parent gets 7 → `MNe("a/b/c/d/e/f/g", 7)`.
+    expect(truncPath("a/b/c/d/e/f/g/name.ts", 16)).toBe("a/b/c/d…/name.ts");
+    // the invariant the whole function exists for, on both:
+    expect(truncPath("src/tui/suggestPopup.tsx", 20)).toContain("/suggestPopup.tsx");
+    expect(truncPath("a/b/c/d/e/f/g/name.ts", 16)).toContain("/name.ts");
+    expect(truncPath("a/b/c/d/e/f/g/name.ts", 16).length).toBe(16);
+  });
+  it("bLt falls back to xG when the basename alone overflows, and to gi under a 5-column budget", () => {
+    // `if (i >= t - 1) return xG(e, t)` — no middle left to elide, so left-elide the whole thing.
+    expect(truncPath("src/aVeryLongFileNameIndeed.ts", 12)).toBe(truncStart("src/aVeryLongFileNameIndeed.ts", 12));
+    expect(truncPath("src/aVeryLongFileNameIndeed.ts", 12).startsWith("…")).toBe(true);
+    // `if (t < 5) return gi(e, t)` — right-elide.
+    expect(truncPath("src/app.ts", 4)).toBe(truncEnd("src/app.ts", 4));
+    expect(truncPath("src/app.ts", 4)).toBe("src…");
+    expect(truncPath("src/app.ts", 0)).toBe("…");
+    // a name with no slash at all takes the basename branch with an empty parent → xG
+    expect(truncPath("averylongsinglename.ts", 10)).toBe(truncStart("averylongsinglename.ts", 10));
   });
 
   it("W7p splits a description at a space and hands back the remainder that makes the second line", () => {
@@ -136,7 +162,7 @@ describe("CM30 rendering — SuggestPopup", () => {
     expect((without.lastFrame() ?? "").trim()).toBe("");
   });
 
-  it("a file-ish row is the icon lane, and only a DESCRIBED one gets q7p's en-dash (L432520)", () => {
+  it("a file-ish row is the icon lane, and only a DESCRIBED one gets q7p's en-dash (L432530)", () => {
     const files: SuggestItem[] = [
       { id: "file-src/app.ts", displayText: "src/app.ts" },
       { id: "file-README.md", displayText: "README.md", description: "the readme" },
@@ -147,11 +173,22 @@ describe("CM30 rendering — SuggestPopup", () => {
     expect(out).toContain("+ README.md – the readme");
     expect(out).not.toContain("src/app.ts –");
   });
+
+  it("an overlong file row middle-elides through bLt (L432510), keeping the basename — not xG's left-elide", () => {
+    const deep = "packages/harness/src/tui/components/composer/suggestPopup.tsx";
+    const files: SuggestItem[] = [{ id: `file-${deep}`, displayText: deep }];
+    const { lastFrame } = render(<SuggestPopup items={files} selected={0} columns={40} rows={24} />);
+    const row = lines(lastFrame()).map((l) => l.replace(/\x1b\[[0-9;]*m/g, "")).find((l) => l.includes("suggestPopup")) ?? "";
+    expect(row).toContain("/suggestPopup.tsx");                    // the basename survives
+    expect(row).toContain("packages");                             // …and so does the head of the parent
+    expect(row).toContain("…");
+    expect(row.trimStart().startsWith("+ …")).toBe(false);         // xG would have produced exactly this
+  });
 });
 
 // ── CM36 ghost text ────────────────────────────────────────────────────────────────────────────────────
 describe("CM36 inline ghost text", () => {
-  it("a mid-text `/` produces GHOST TEXT and no popup — Be's first branch clears suggestions and returns (L490616-24)", () => {
+  it("a mid-text `/` produces GHOST TEXT and no popup — Be's first branch clears suggestions and returns (L490617-25)", () => {
     const s = open("see /revi");
     expect(s.command).not.toBeNull();
     expect(s.command!.head).toBe(false);
@@ -170,7 +207,7 @@ describe("CM36 inline ghost text", () => {
     expect(ghostText(open("see /rev"))!.fullCommand).toBe("review");
     expect(ghostText(open("see /vew"))).toBeNull();                   // ranks /review, but it is no prefix
     // Both `/mode` and `/model` are prefixes of `mod`; the SHORTER one wins on both sides — ours by
-    // fileComplete's `a.path.length - b.path.length`, upstream by `w - k` over prefix lengths (L490054).
+    // fileComplete's `a.path.length - b.path.length`, upstream by `w - k` over prefix lengths (L490060).
     expect(ghostText(open("see /mod"))!.fullCommand).toBe("mode");
   });
 
@@ -178,7 +215,7 @@ describe("CM36 inline ghost text", () => {
     expect(ghostText(open("see /model"))).toBeNull();
   });
 
-  it("`visible` is upstream's RENDER gate only — caret at the end of the buffer (L395860 / L394779) — and Tab accepts either way", () => {
+  it("`visible` is upstream's RENDER gate only — caret at the end of the buffer (L395860 / L394780) — and Tab accepts either way", () => {
     let s = open("see /revi");
     expect(ghostText(s)!.visible).toBe(true);
     // A caret motion INSIDE the token keeps the trigger alive (the query is the whole token, past the caret —
@@ -196,7 +233,7 @@ describe("CM36 inline ghost text", () => {
     expect(completionActive(t)).toBe(true);                          // but `Lt` reads the UNGATED memo
   });
 
-  it("Tab accepts the ghost — upstream's tab branch returns early when Y exists (L491089) and hands the key to autocomplete:accept → Pe's ghost arm (L490841)", () => {
+  it("Tab accepts the ghost — upstream's tab branch returns early when Y exists (L491091-92) and hands the key to autocomplete:accept (co() L491073) → Pe's ghost arm (L490840, splice L490847)", () => {
     const s = open("see /revi");
     const r = applyKey(s, "", { tab: true });
     expect(r.submit).toBeUndefined();                                // Pe's ghost arm has no onSubmit
@@ -235,7 +272,7 @@ describe("CM36 inline ghost text", () => {
 });
 
 // ── CM37 argument hint ─────────────────────────────────────────────────────────────────────────────────
-describe("CM37 inline argument hint (L490748-62 model, L396283 render)", () => {
+describe("CM37 inline argument hint (L490749-62 model, L396283 render)", () => {
   it("fires only when a resolvable command is followed by a trailing space that is the LAST character (`De`)", () => {
     expect(commandArgumentHint("/review ", CAT)).toBe("[pr number]");
     expect(commandArgumentHint("/review", CAT)).toBeNull();          // no space yet
@@ -304,6 +341,47 @@ describe("through ChatComposer", () => {
     const plain = (lastFrame() ?? "").replace(/\x1b\[[0-9;]*m/g, "");
     expect(plain).toContain("see /revi end");                        // the buffer as typed
     expect(plain).not.toContain("see /review");                      // `isAtEnd()` is false → nothing drawn
+  });
+
+  // I2 (t10 review). The footer and the suggestion region are alternatives sharing one slot (`Ptl`,
+  // bundle L494604), so the footer must go only when something is actually DRAWN. Keying it off the raw
+  // presence of `state.command` meant a mid-text `/zzz` that matches nothing — or any visible ghost — took
+  // two rows away and put nothing in their place.
+  const FOOTER = "⏎ send";
+  it("the composer footer survives a mid-text `/` that draws nothing (Ptl, L494604)", async () => {
+    const { stdin, lastFrame } = render(wrap(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} />));
+    await tick();
+    stdin.write("see /zzz");
+    await tick();
+    expect(lastFrame()).toContain(FOOTER);
+    expect(lastFrame()).not.toContain("No commands match");        // head-only; nothing is drawn here
+  });
+
+  it("the frame height is stable across `see zzz` → `see /zzz` → a visible ghost", async () => {
+    const { stdin, lastFrame } = render(wrap(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} />));
+    await tick();
+    stdin.write("see zzz");
+    await tick();
+    const plain = () => lines(lastFrame()).length;
+    const noTrigger = plain();
+    for (let i = 0; i < 3; i++) stdin.write("\x7f");                // backspace to `see `
+    stdin.write("/zzz");
+    await tick();
+    expect(plain()).toBe(noTrigger);                                // mid-text miss: nothing gained, nothing lost
+    for (let i = 0; i < 3; i++) stdin.write("\x7f");
+    stdin.write("revi");                                            // `see /revi` → a visible ghost
+    await tick();
+    expect(lastFrame()).toContain(FOOTER);
+    expect(plain()).toBe(noTrigger);
+  });
+
+  it("a head `/` that DOES draw takes the footer's slot, as upstream's Ptl branch does", async () => {
+    const { stdin, lastFrame } = render(wrap(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} />));
+    await tick();
+    stdin.write("/revi");
+    await tick();
+    expect(lastFrame()).toContain("/review");
+    expect(lastFrame()).not.toContain(FOOTER);
   });
 
   it("`/review ` shows the argument hint inline and dim", async () => {
