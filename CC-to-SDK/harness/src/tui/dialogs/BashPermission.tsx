@@ -20,13 +20,23 @@
 //     by all six bodies (T8).
 //
 // Recorded, not built: the title's `(unsandboxed)` variant (`Oo.isSandboxingEnabled()`, L505259 — this
-// harness never sandboxes); the explain affordance (DG4, T7's job); the
-// auto-mode row (`UDr` L504815, its row L504872 — a claude.ai entitlement); and upstream's `onFocus`-driven
-// feedback hint node. The footer hints came in with T4 (`tab amend` now, `ctrl+e` when T7 passes `explain`).
-import React, { useRef, useState } from "react";
+// harness never sandboxes); the auto-mode row (`UDr` L504815, its row L504872 — a claude.ai entitlement);
+// and upstream's `onFocus`-driven feedback hint node. The footer hints came in with T4.
+//
+// THE EXPLAIN AFFORDANCE (Wave T t7, upstream's `ZMn` hook L505015-52, rendered by `eDn` L505095-104).
+// Upstream gates it on a setting (`Kdi()` = `permissionExplainerEnabled !== false`, L504907-09) and calls
+// its generator directly. Ours takes the generator's TRANSPORT as a prop, undefaulted, and the gate IS that
+// prop: with no transport the action registers nowhere, the footer advertises no `ctrl+e`, and the key falls
+// through to the Select's fallback (so a feedback row keeps readline's end-of-line). That is the shipping
+// state — W-T13 chose the route (structuredExplainTransport) but wiring a dialog that makes model calls by
+// default is a separate, deliberate decision. Everything else is upstream's: the request is issued on the
+// FIRST reveal only and the promise is kept, later toggles move nothing but `visible`, and unmount aborts.
+import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { DialogFrame } from "./DialogFrame.js";
 import { ConsultFooter } from "./ConsultFooter.js";
+import { ExplanationBlock } from "./ExplanationBlock.js";
+import { explainCommand as runExplain, type ExplainTransport, type Explanation } from "./explainCommand.js";
 import { Select } from "../select/Select.js";
 import { consentReasonLine } from "./consentReason.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
@@ -41,17 +51,21 @@ import type { PermissionDecision, PermissionUpdateLike } from "../../permissions
  *  satisfies it as-is. */
 export interface BashPermissionRequest {
   input: Record<string, unknown>;
+  /** Only the explain prompt reads it (upstream's `e.toolName`, L505231); "Bash" is what this body is for. */
+  toolName?: string;
   description?: string;
   subagentType?: string;
   suggestions?: PermissionUpdateLike[];
   decisionReason?: string;
 }
 
-export function BashPermission({ req, onDecision, cwd = process.cwd() }: {
+export function BashPermission({ req, onDecision, cwd = process.cwd(), explainCommand }: {
   req: BashPermissionRequest;
   onDecision: (d: PermissionDecision) => void;
   /** The SESSION's working directory (see permissionKind.ts) — the suggestions-summary row names it. */
   cwd?: string;
+  /** The explain transport (explainCommand.ts). Undefined = no explainer: no key, no hint. See the header. */
+  explainCommand?: ExplainTransport;
 }) {
   const command = typeof req.input.command === "string" ? req.input.command : "";
   const suggestions = req.suggestions ?? [];
@@ -70,17 +84,37 @@ export function BashPermission({ req, onDecision, cwd = process.cwd() }: {
   const warning = destructiveWarning(command);
   const reason = consentReasonLine(req.decisionReason);
 
+  const [explainVisible, setExplainVisible] = useState(false);
+  const [explanation, setExplanation] = useState<Promise<Explanation> | null>(null);
+  const explainAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => explainAbort.current?.abort(), []);
+  const toggleExplanation = () => {
+    if (!explainVisible && !explanation && explainCommand) {
+      const ac = new AbortController(); explainAbort.current = ac;
+      const p = runExplain({ toolName: req.toolName ?? "Bash", toolInput: req.input, toolDescription: req.description, signal: ac.signal }, explainCommand);
+      p.catch(() => {});          // the BLOCK reports the rejection; this only keeps node from calling it unhandled
+      setExplanation(p);
+    }
+    setExplainVisible((v) => !v);
+  };
+
   useKeyScope("Confirmation");
-  useKeyActions(inputFocused ? {} : {
-    "confirm:yes": () => onDecision({ kind: "allow_once" }),
-    "confirm:no": () => onDecision({ kind: "deny" }),
+  useKeyActions({
+    ...(inputFocused ? {} : {
+      "confirm:yes": () => onDecision({ kind: "allow_once" }),
+      "confirm:no": () => onDecision({ kind: "deny" }),
+    }),
+    // Registered ONLY with a transport in hand — see the header. Unlike y/n this stays live on a feedback
+    // row: upstream's gate is the setting alone (L505039), and T4's footer keeps advertising it there.
+    ...(explainCommand ? { "confirm:toggleExplanation": toggleExplanation } : {}),
   });
 
   return (
     <DialogFrame title="Bash command" subagentType={req.subagentType}>
       <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Text>{command}</Text>
-        {req.description ? <Text dimColor>{req.description}</Text> : null}
+        <Text dimColor={explainVisible}>{command}</Text>
+        {req.description && !explainVisible ? <Text dimColor>{req.description}</Text> : null}
+        <ExplanationBlock visible={explainVisible} promise={explanation} />
       </Box>
       <Box flexDirection="column">
         {reason ? <Text>{reason}</Text> : null}
@@ -99,7 +133,7 @@ export function BashPermission({ req, onDecision, cwd = process.cwd() }: {
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
       </Box>
-      <ConsultFooter inputMode={inputFocused} />
+      <ConsultFooter inputMode={inputFocused} explain={explainCommand ? (explainVisible ? "hide" : "explain") : undefined} />
     </DialogFrame>
   );
 }

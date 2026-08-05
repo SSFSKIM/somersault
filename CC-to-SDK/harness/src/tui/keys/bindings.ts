@@ -224,6 +224,12 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // owns the keyboard. A dialog that registers no handler falls through to the Select's fallback, where a
     // ctrl-modified key is already inert.
     "ctrl+g": "confirm:editExternal",
+    // Wave T t7, upstream L505015 (`pA("confirm:toggleExplanation","Confirmation","ctrl+e")` inside `ZMn`):
+    // the consult dialogs' "explain this command" toggle. Registered by a body only when an explainer
+    // transport is wired (BashPermission.tsx), and a body that registers no handler falls through to the
+    // fallback exactly as it does for shift+tab/ctrl+g above — which is what keeps the feedback row's
+    // readline ctrl+e (end-of-line) working in every dialog that has no explainer.
+    "ctrl+e": "confirm:toggleExplanation",
     // owner === "decision" fell THROUGH the old gate (only "overlay" returned early), so ctrl+c/o/r/t/b stay
     // live over a visible dialog — deliberately, per the ChatApp comment — and must not be unbound here.
     // Only ctrl+d is dead: the composer that owns it is unmounted while the dialog is up. (F6 t5 tested that
@@ -272,7 +278,7 @@ export const VALID_ACTIONS: readonly string[] = [
   // the table binds. The three `sessionPicker:*` names are OURS — upstream reads those keys raw (see the block).
   "modelPicker:thisSessionOnly", "sessionPicker:preview", "sessionPicker:rename", "sessionPicker:dismiss",
   "select:previous", "select:next", "select:accept", "select:cancel", "select:pageUp", "select:pageDown", "select:first", "select:last",
-  "confirm:yes", "confirm:no", "confirm:previous", "confirm:next", "confirm:cycleMode", "confirm:editExternal",
+  "confirm:yes", "confirm:no", "confirm:previous", "confirm:next", "confirm:cycleMode", "confirm:editExternal", "confirm:toggleExplanation",
   "settings:search",
   "tabs:next", "tabs:previous",
 ];
