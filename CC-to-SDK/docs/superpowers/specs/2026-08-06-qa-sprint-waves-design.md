@@ -129,87 +129,145 @@ the exact repros and frame evidence. Work-item tags: `(new)` / `(modify)`. Bundl
    for both. Root cause `qa3-01`: ccx's launch mode is `auto`; claude's is manual/default.
 2. **Decisions:** `[DECIDED-AUTO]` launch default becomes upstream's default (manual consults); `auto`
    stays reachable via the shift+tab ladder and flags. Alternative — keep `auto` and harden the
-   classifier — rejected: the canon is the installed default build, and the classifier misordered
-   (gated `touch`, allowed `rm`).
-3. **Current state:** `[BUG]` default set in the REPL/host defaults path (`resolveOptions` /
-   `cli/main.ts` — exact site pinned at Wave T spec time). Ladder itself is at parity (`qa3-15`,
-   triage §5.5).
-4. **Work items:** (modify) launch default → `default` mode; (new) four-line auto-mode safety notice
-   written into the transcript on *entering* auto (verbatim L547286, incl. "Ideal for long-running
-   tasks"/"Sessions are slightly more expensive"); (modify) while in there, examine the auto classifier's
-   ordering as a recorded observation (fix only if the wave spec confirms a defect).
+   classifier — rejected **and now known to be impossible**: ccx has **no dialog suppression of its own**
+   (the broker is installed unconditionally, `resolveOptions.ts:68`); the SDK's classifier alone decides
+   whether a call reaches `canUseTool`, so the `rm`-vs-`touch` ordering is not ours to fix. Changing the
+   posture is the only lever we hold.
+   `[DECIDED-AUTO]` scope the change to the REPL host construction in `cli/main.ts`, NOT
+   `DEFAULTS.permissionMode` (`config/types.ts:161`) — that single line governs headless `-p`, `--bg` and
+   the daemon too, where `auto` is the deliberate choice.
+3. **Current state:** `[BUG]` `config/types.ts:161` is `"auto"`, applied at `resolveOptions.ts:60-61`.
+   Separately `[BUG]` `cli/main.ts:239,244` read `inv.config.permissionMode ?? "default"` — the banner
+   claims `default` while the engine starts in `auto`, which is `qa3-02`'s contradiction; the exported
+   `resolvedPermissionMode()` is the correct value and the fix is two lines. Ladder at parity (`qa3-15`).
+4. **Work items:** (modify) REPL launch mode → `default`; (modify) the two banner call sites; (new)
+   auto-mode entry notice — a **single-string transcript `notice` message** (not four lines, not a
+   dialog: `AUTO_MODE_DESCRIPTION` L547286), inserted **800 ms** after the mode becomes auto and shown
+   **once per install** (L547935-955). The two other auto surfaces (the "auto is now the default"
+   startup notice L454518, the `AutoDefaultNudgeDialog` L547227) are distinct and defer to §16.
 5. **Acceptance:** fresh isolated-HOME launch → `rm <file>` prompt produces a consult dialog before
-   anything executes; footer/banner agree on the mode; shift+tab into auto prints the L547286 notice.
+   anything executes; banner, footer and engine agree on the mode in the same frame; shift+tab into auto
+   prints the L547286 notice once and never again.
 6. **Dependencies:** none; first epic of the sprint.
 
-#### EP-T2 · Feedback is actually collected (qa3-04, qa3-18, qa3-05, qa3-06) — P0
-1. **Context:** QA-3: "No, and tell Claude what to do differently" denies instantly — the promised text
-   box never appears; same for the plan modal's "Tell Claude what to change".
-2. **Decisions:** `[DECIDED-AUTO]` build these as upstream does: `type:"input"` rows with placeholders
-   (L504858/L504874, L505627/L505650, L506280/L506294; plan modal L500713), not select rows — the F6
-   `RLe` input-row primitive (empty-submit-cancels) already exists, this is wiring not invention.
-   `ctrl+e` explain (`confirm:toggleExplanation`, L183499 + generator L504931) rides along only if the
-   Wave T spec finds the SDK exposes enough to fill `riskLevel`/`explanation`; otherwise it defers to §16
-   with a note.
-3. **Current state:** `[PARTIAL]` — branches exist and fire; the input-collection half is missing. The
-   parked deny-feedback state ("Interrupted · What should Claude do instead?", L422225) is `[NOT-BUILT]`.
-4. **Work items:** (modify) deny-with-feedback and plan-feedback rows become input rows; (new) parked
-   post-interrupt feedback state; (modify) `qa3-06` double-space in the amended deny label.
-5. **Acceptance:** choosing either feedback row opens an inline input with upstream's placeholder; typed
-   text reaches the model as the deny/keep-planning feedback; empty submit cancels per the RLe rule.
+#### EP-T2 · Feedback is discoverable and never fires empty (qa3-04, qa3-18, qa3-05, qa3-06) — P0
+1. **Context (corrected by grounding):** the input row EXISTS and works end to end
+   (`optionRows.ts:28-32` → `Select.tsx:210-213` → `bashDecision` → `gate.ts:62` → the SDK's deny
+   `message`). Two real defects hide under QA's "fires without collecting": nothing on screen advertises
+   Tab (every dialog footer is a bare `esc cancel` where upstream's is
+   `Esc to cancel · Tab to amend · ctrl+e to explain`), and `allowEmptySubmitToCancel: true` on the No row
+   means Tab-then-Enter with nothing typed sends a bare deny — exactly QA's repro.
+2. **Decisions:** `[DECIDED-AUTO]` the fix is the footer hint + the empty-submit rule, not a new widget.
+   Upstream's `hintNode` (L505188) shows `tab / amend` only while the focused row is NOT already in input
+   mode, and auto-collapses the other row when focus leaves it empty (L505162-69) — transcribe that
+   logic. WebFetch is the one dialog whose No row is a plain label promising a channel it cannot deliver
+   (`smallDialogOptions.ts:104`) — upstream hangs no feedbackConfig on it either, so the fix is the copy,
+   not a new row. `ctrl+e` explain is **feasible** (bundle §7: one forced-tool Messages call, 4-field
+   schema, current main model) and is scoped as its own work item, not deferred.
+3. **Current state:** `[PARTIAL]` — collection built, discoverability `[NOT-BUILT]`, empty-submit `[BUG]`.
+   The "parked post-interrupt state" premise was `[MISREAD]`: L422225 is a static dim transcript row
+   substituted on three interrupt sentinels, with no input widget at all.
+4. **Work items:** (new) upstream footer hint row across the six dialogs; (modify) empty submit on a
+   feedback row is a no-op, not a bare deny; (new) `ctrl+e` explain-command (forced-tool call, 3-row
+   render, Low/Med/High risk labels); (modify) WebFetch No-row copy; (modify) `qa3-06` — the "double
+   space" is the inverse-video cursor block plus `", "` separator (`Select.tsx:129/293`), fix by
+   suppressing the separator on an empty input row; (new) the interrupt-sentinel transcript row.
+5. **Acceptance:** every consult footer shows the amend and explain hints; Tab-then-Enter on an empty
+   feedback row does nothing; typed text still reaches the model; ctrl+e renders explanation, reasoning
+   and a risk line.
 6. **Dependencies:** shares the dialog registry with EP-T3/EP-T6 — same-owner or sequenced.
 
-#### EP-T3 · Plan dialog mounts live and grants correctly (qa3-16, qa3-17) — P0
-1. **Context:** QA-3 live: plan approval arrived as a generic permission dialog — no `Ready to code?`, no
-   plan frame, no file path, no ctrl+g — though F6's component tests all pass (they inject `kind:"plan"`).
-   And option 1 grants `acceptEdits` where upstream grants `auto` (covers Bash too).
-2. **Decisions:** `[DECIDED-AUTO]` diagnose before building: the suspect is a wire kind-classification
-   miss (the decision never gets `kind:"plan"` on the live path). Verify with a live probe first; if the
-   modal itself is sound, the fix is classification, not UI.
-3. **Current state:** `[PARTIAL]` — PlanDialog built and component-tested (F6); live mount path `[BUG]`
-   (suspected, unverified); grant mapping `[BUG]` (`acceptEdits` vs upstream `auto`).
-4. **Work items:** (new) live probe/TTY repro pinning where the kind is lost; (modify) the classification
-   or mount path; (modify) option-1 grant → upstream's semantics; (modify) restore `Ready to code?` /
-   plan frame / file path / ctrl+g furniture live (L501111, L501091, L501126).
-5. **Acceptance:** a live plan-mode session's approval dialog shows upstream's plan furniture; approving
-   with option 1 leaves the session in the same permission posture upstream grants.
-6. **Dependencies:** after EP-T1 (mode semantics must be settled before the grant mapping).
+#### EP-T3 · Plan modal option parity and grants (qa3-16, qa3-17) — P0
+1. **Context (corrected by grounding, 2026-08-06):** the "generic permission dialog" premise was FALSE —
+   QA's own frame (`frames-qa3/qa3-14-ccx-plan-modal.txt`) shows `PlanDialog` mounted live with
+   `kind:"plan"` intact end-to-end. The real residue: the dashed rules around the plan body, the
+   availability-driven option set, the grant semantics, and approve-with-feedback.
+2. **Decisions:** `[DECIDED-AUTO]` no classification work; harden with a guard test on the live tool
+   name (`gate.ts:22`'s literal `"ExitPlanMode"` is the single point of evidence). Option rows follow
+   upstream's `sYf` availability logic; the clear-context row family (deny + re-drive as fresh turn,
+   L500948–964) is a separate mechanism and defers to §16 with a divergence note, as does the
+   plans-directory file path.
+3. **Current state:** `[PARTIAL]` — modal live-mounts; option 1 grants `acceptEdits`
+   (`PlanDialog.tsx:101`, `host.ts:527`) where upstream's availability ladder grants `auto` (imperative,
+   empty permissionUpdates, L500727/L500968) or `bypassPermissions` (L500729); no dashed-rule framing;
+   empty submit on the No row sends a feedback-less `plan_reject` where upstream's guard makes it a
+   no-op (L500976, the one row without `allowEmptySubmitToCancel`).
+4. **Work items:** (modify) option set + labels per `sYf` availability; (modify) widen `plan_approve`
+   to carry the granted mode; both upgrade appliers (`host.ts:527`, `appserver/planUpgrade.ts:32`);
+   (modify) approve-with-feedback (shift+tab and yes-row text ride into the allow); (modify) empty-submit
+   no-op on the No row; (new) dashed-rule plan-body framing; (new) live-tool-name guard test.
+5. **Acceptance:** with auto available, row 1 reads `Yes, and use auto mode` and approving it leaves the
+   session in `auto`; typed keep-planning feedback reaches the model; empty Enter on the No row does
+   nothing.
+6. **Dependencies:** after EP-T1 (mode semantics settled first).
 
 #### EP-T4 · Failure is visible (qa6-05) — P0
 1. **Context:** QA-6: with the network unreachable, ccx showed a healthy-looking spinner for 72+ seconds.
-   Upstream shows a typed error, live retry countdown and attempt counter within ~4 s
-   (`· Retrying in ${n}${unit} · attempt ${n}/${max}`, L408007).
-2. **Decisions:** `[DECIDED-AUTO]` probe-first (the A1 lesson): what the SDK actually emits headlessly on
-   transport failure/retry is unknown — write the probe before designing the channel. The rendered shape
-   follows the bundle regardless of which layer supplies the events.
-3. **Current state:** `[NOT-BUILT]` — no transport-error channel into the live turn
-   (`TurnSpinner.tsx`, `useChat.ts`).
-4. **Work items:** (new) probe: SDK behavior on unreachable network mid-turn (events? throw? silence?);
-   (new) error/retry channel host → wire → REPL; (modify) spinner region renders the typed error +
-   countdown + attempt counter.
-5. **Acceptance:** with networking cut mid-turn, ccx surfaces a visible typed error state within seconds,
-   with retry progress; restoring the network resumes or fails the turn honestly.
+   Upstream **replaces** the spinner row (not decorates it, L407973) with `✻ <label> · Retrying in <dur>
+   · attempt n/max`, where the label is the literal `"API error"` for attempts 1–2 and the real error
+   text only once `attempt >= min(3, maxRetries)` or the error is network-down/SSL/rate-limited
+   (`b0p`, L408007). A stalled (pre-retry) variant exists: `Waiting for API response · will retry in
+   <dur> · check your network` (L407992/L407997).
+2. **Decisions (probe 96, live 2026-08-06):** `[DECIDED-AUTO]` the retry data is **SDK-provided, not
+   host-synthesized**: every retry emits `{type:"system", subtype:"api_retry", attempt, max_retries,
+   retry_delay_ms, error_status, error}`, matching `SDKAPIRetryMessage`. The countdown is a local timer
+   seeded from `retry_delay_ms`. Three host-owned pieces the SDK does NOT give us: a pre-evidence
+   "connecting/stalled" state (a blackholed endpoint burns ~75 s of connect timeout in silence; a refused
+   one starts the ladder in ~20 ms), banner teardown (nothing announces a retry succeeded, and
+   `max_retries:10` is a ceiling — a 401 gave up after 3), and the **terminal-frame trap**: the SDK yields
+   a `result` frame whose `subtype` is still `"success"` on a dead connection and THEN throws — the
+   failure lives in `is_error:true` / `terminal_reason:"api_error"` / `api_error_status`. Any classifier
+   keyed on `subtype` misreads a total transport failure as a completed turn.
+3. **Current state:** `[NOT-BUILT]` — no retry channel; `TurnSpinner.tsx:14-25` has no stale/degraded
+   state; the turn wait (`chatAdapter.ts:110`) has **no deadline at all** — only a socket close settles
+   it. `[BUG]` on the way: a mid-turn failure renders `✗ <msg>` twice, from `useChat.ts:546` (event arm)
+   and `useChat.ts:1231` (submit-rejection arm), off the same frame.
+4. **Work items:** (new) forward `api_retry` system messages host → wire → REPL; (new) retry/stalled
+   spinner-replacement row with local countdown and teardown; (modify) terminal-frame classification to
+   read `is_error`/`terminal_reason`, not `subtype`; (modify) de-duplicate the double `✗` render.
+5. **Acceptance:** with the API endpoint unreachable mid-turn, ccx replaces the spinner with the typed
+   error row and a live countdown showing the SDK's own attempt/max within seconds of the first retry,
+   and a stalled row before that; a failed turn ends with exactly one error line.
 6. **Dependencies:** independent; parallel-safe with EP-T2/T3.
 
-#### EP-T5 · Bypass mode exists, gated by consent (qa3-14) — P1
-1. **Context:** QA-3: `--dangerously-skip-permissions` is rejected outright; the consent gate upstream
-   ships (WARNING dialog, L554075/L554070) has nothing to guard.
-2. **Decisions:** `[DECIDED-AUTO]` build it — the program's canon is fidelity to the installed build, and
-   the SDK's `bypassPermissions` mode is live-verified (memory: bypass silences the broker). Alternative —
-   deliberately omit as a safety divergence — rejected: omission is itself a divergence and the consent
-   gate is the safety mechanism.
-3. **Current state:** `[NOT-BUILT]` (flag rejected at `cli/args.ts`).
-4. **Work items:** (new) flag + consent dialog with upstream's verbatim warning copy; (modify) mode chip /
-   ladder representation of bypass.
-5. **Acceptance:** launching with the flag shows the WARNING gate; accepting enters bypass (no consults);
-   declining exits or falls back per upstream behavior (pinned at spec time from the bundle).
+#### EP-T5 · Bypass consent gate + the runtime-flip hazard (qa3-14) — P1
+1. **Context (corrected by grounding):** "no bypass mode" was `[MISREAD]` — `--permission-mode
+   bypassPermissions` already parses (`cli/args.ts:40,113`) and `/yolo` sets it at runtime
+   (`useChat.ts:711`). What is absent is upstream's flag NAME and, more importantly, the consent gate.
+   The grounding also surfaced a hazard QA never saw: `allowDangerouslySkipPermissions` is set only from
+   the LAUNCH mode (`resolveOptions.ts:66-67`), so a runtime flip may be refused by the SDK while
+   `useChat.ts:1438` swallows the rejection and `:1439` paints the status bar red anyway — the UI would
+   claim bypass while the engine is not in it.
+2. **Decisions:** `[DECIDED-AUTO]` build the gate to upstream's mechanics: two-button confirm with
+   **cancel first and focused** (L554075), accept persists `skipDangerousModePermissionPrompt` so it
+   never shows again (`M8()`, L43492), decline **exits with code 1** and does NOT fall back to another
+   mode, Escape exits with code 0. The mode's own chrome (`Bypass Permissions` / `⏵⏵` / error color,
+   L41536) belongs to EP-C4 but the vocabulary is pinned here (§15).
+3. **Current state:** `[PARTIAL]` — mode reachable, gate `[NOT-BUILT]`, runtime-flip `[BUG]` (code-shape,
+   not yet live-measured).
+4. **Work items:** (new) `--dangerously-skip-permissions` as an accepted alias; (new) blocking consent
+   dialog with the three verbatim paragraphs + docs link; (new) persisted acceptance; (modify) runtime
+   flips to bypass must surface a refusal instead of swallowing it.
+5. **Acceptance:** launching in bypass shows the WARNING gate before any turn; declining exits non-zero;
+   accepting once means the gate never reappears; `/yolo` against a refusing engine reports the refusal
+   instead of showing a false red chip.
 6. **Dependencies:** after EP-T1 (same defaults surface).
 
-#### EP-T6 · Dialog copy & framing polish (qa3-07, qa3-08) — P2 batch
-Create-file dialog framed as a numbered diff between `╌╌╌` rules (qa3-07); don't-ask-again suggestion row
-grammar — never conflate a directory grant with a command rule in one row (qa3-08). Acceptance: the two
-dialogs render upstream's framing on the same fixtures the QA agents used. Batches with any EP-T2 fix
-round touching the registry.
+#### EP-T6 · Dialog framing + the grant-mismatch (qa3-07, qa3-08) — P2 batch
+**Both QA descriptions were wrong about the canon and the grounding replaced them.** (a) `qa3-07`: there
+is no `╌` character anywhere in 2.1.220 (`grep -c` = 0) — a NEW file renders as a plain
+syntax-highlighted block with **no line numbers**, framed only by Ink's dashed top/bottom border
+(`SM`, L424999), with `"(No content)"` when empty; the numbered diff exists only on the **overwrite**
+branch (`lre`, L420073). ccx's `CodeBlock` is already close; the work is the dashed-rule box and the
+empty-content literal. (b) `qa3-08`: "upstream never puts a directory grant and a command rule in one
+row" is **refuted** — `Wdi` has two branches that do exactly that (L504800/L504801), and ccx's copy is a
+faithful transcription. The real rule is narrower (the *editable prefix* row is suppressed when any
+`addDirectories` or non-shell `addRules` suggestion is present, L504862). What the grounding found
+instead, and QA did not: the **generic** dialog's row promises a cwd-scoped "commands" grant
+(`smallDialogOptions.ts:238`) while `genericDecision` issues a whole-tool unscoped rule — e.g. "don't ask
+again for WebSearch commands in /Users/…" grants WebSearch everywhere, forever. That is the trust defect
+in this epic; the grammar is not. Acceptance: the create dialog matches upstream's framing on the QA
+fixture; the generic don't-ask-again row's copy matches the rule it actually writes.
 
 ---
 
@@ -417,21 +475,60 @@ which are opportunistic.
   is the safety mechanism.
 - **D8 [DECIDED-AUTO]** MOUSE-1 is a probe, not a build: neither the owner's testimony nor `qa2-02` is
   trusted until the re-probe lands (§5.2).
+- **D9 [DECIDED-AUTO, Wave T grounding]** Grounding runs BEFORE each wave's feature spec, as three
+  parallel workers: bundle transcription, ccx current-state pinning, live probes. Six of Wave T's
+  premises were overturned by it (§12) — including one epic that would have chased a nonexistent bug.
+  Repeat the pattern for Waves R, S and C.
+- **D10 [DECIDED-AUTO]** Wave T's launch-default change is scoped to the REPL host construction, not
+  `DEFAULTS.permissionMode`: the latter governs headless `-p`, `--bg` and the daemon, where `auto` is the
+  deliberate choice. Alternative (change the shared default) rejected — it would silently re-posture every
+  non-interactive surface.
+- **D11 [DECIDED-AUTO]** The `rm`-allowed/`touch`-gated classifier ordering is NOT ccx work: the broker is
+  installed unconditionally and the SDK's own classifier decides what reaches `canUseTool`
+  (`config/types.ts:34-40`, probe 64). Recorded so no future wave re-opens it as a ccx defect.
 
 ## §11 Open questions
 
 | Item | Owner | Deadline |
 |---|---|---|
-| MOUSE-1: does click-to-expand reproduce with a fold on screen? If the probe still finds nothing, we need the owner's terminal name + a screen recording of a click expanding a fold | Controller (probe, Wave R start); owner (demo, only if probe is negative) | Wave R spec time |
-| `ctrl+e` explain-command feasibility (EP-T2): does the SDK expose enough to fill riskLevel/explanation? | Wave T spec probe | Wave T spec time |
+| MOUSE-1: does click-to-expand reproduce with a fold on screen? The owner reports it works "for general claude code cli, on any terminals"; the fleet found no mouse-reporting mode requested and injected mouse bytes swallowed. If the re-probe is still negative, we need the owner's terminal name + a screen recording of a click expanding a fold | Controller (probe, Wave R start); owner (demo, only if probe is negative) | Wave R spec time |
+| ~~`ctrl+e` explain-command feasibility~~ **LANDED**: fully reproducible headlessly — one forced-tool Messages call (`explain_command`, 4-field schema) against the current main model, 3-row render. Scoped into EP-T2 | — | closed 2026-08-06 |
 | `#` memory mode and the ccx-extra context %% (qa6-13, qa1-10): keep or drop | Owner, surfaced at Wave C spec review | Wave C spec time |
 
 ## §12 Surprises & Discoveries *(living)*
 
-Seeded from grounding: the triage omission (`qa4-07`, §5.3); the `listSessions` misread reversal (§5.2);
+Seeded from triage: the triage omission (`qa4-07`, §5.3); the `listSessions` misread reversal (§5.2);
 the protective drift calls (`ctrl+_`, `ctrl+e to show all`, `#` memory — §5.2); `qa3-05`'s amend rows are
 the *same mechanism* as EP-T2's input rows (one primitive serves both); the pager close path as the proven
 repaint primitive (EP-R1); QA-1's `/history`→`/design-sync` fuzzy-match hazard (now a fleet-brief rule, D6).
+
+**Wave T grounding round (2026-08-06) — six QA premises overturned before a line was written.** Full
+evidence in `$CLAUDE_JOB_DIR/tmp/waveT-{bundle-transcription,ccx-grounding,probe-findings}.md`; the
+durable facts are transcribed into the Wave T spec.
+
+1. **The plan modal was never broken.** QA's own captured frame proves `PlanDialog` mounted live with
+   `kind:"plan"` intact; probe 97 confirms name-driven classification (`toolName === "ExitPlanMode"`) is
+   the only signal available — every other options field is undefined — which is exactly what
+   `gate.ts:22` already does. A whole suspected-defect epic dissolved into option-parity work (EP-T3).
+2. **`╌╌╌` does not exist in 2.1.220.** Zero occurrences bundle-wide; the create-file dialog is an
+   unnumbered highlighted block in a dashed-border box, and the numbered diff is the *overwrite* branch.
+   The QA description would have had us build the wrong widget (EP-T6).
+3. **"Upstream never conflates a directory grant with a command rule" is refuted** — two `Wdi` branches
+   do exactly that, and ccx's copy is a faithful transcription. The real trust defect is one QA missed
+   entirely: the generic dialog's row says "commands in \<cwd\>" while granting the whole tool everywhere.
+4. **The deny-feedback channel works** — the failure is discoverability (no `Tab to amend` hint anywhere)
+   plus an inverted empty-submit rule that turns an empty amend into a bare deny.
+5. **Bypass mode already exists** (`--permission-mode bypassPermissions`, `/yolo`); the gate is what's
+   missing — plus a latent hazard where a *runtime* flip can be refused by the SDK while the status bar
+   paints it red anyway (`useChat.ts:1438`'s swallowed rejection).
+6. **The retry banner is SDK-provided** (probe 96: `system/api_retry` with attempt/max/delay), so EP-T4 is
+   a rendering job, not a synthesis job — but the SDK's terminal frame reports `subtype:"success"` on a
+   dead connection, so the failure must be read from `is_error`/`terminal_reason`. A blackholed endpoint
+   also burns ~75 s in silence before the first retry event, which is precisely QA's 72-second spinner.
+
+**Probe-hygiene lesson (probe 97, run 1 discarded):** a live probe with default `settingSources` inherits
+this machine's global agents, hooks and skills — the model dispatched a subagent and never reached the
+surface under test. Probes needing a clean session must set `settingSources: []`.
 
 ## §13 Tracking map
 
@@ -485,3 +582,8 @@ Pending — written at sprint close.
 
 - v1 (2026-08-06): authored from the QA Sprint 1 triage per the owner's directive; D1–D8 landed;
   `qa4-07` omission corrected.
+- v1.1 (2026-08-06): Wave T grounding round folded in. Rewrote EP-T1 through EP-T6 against the bundle
+  transcription, the ccx pinning and probes 96/97; added D9–D11; seeded §12 with the six overturned
+  premises; closed the `ctrl+e` open question. Reason: six of Wave T's premises were factually wrong and
+  building from them would have produced the wrong widgets (a `╌╌╌` diff frame, a plan-classification fix
+  for a working classifier, a grammar "fix" that diverged from canon).
