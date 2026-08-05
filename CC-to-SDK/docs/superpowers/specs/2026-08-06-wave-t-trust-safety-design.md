@@ -377,8 +377,16 @@ A7, A8, A9.
 
 ### Work
 
-1. **(new)** Forward `system/api_retry` messages from the engine through the host wire to the REPL as a
-   typed turn-status event (attempt, max, delay, status, error).
+**No wire work is needed — verified 2026-08-06.** `src/host/host.ts:261-270`'s `onMessage` emits **every**
+SDK message as `{kind:"message", data}` (only `stream_event` is excluded from the replay buffer, and it is
+still emitted live), and `src/tui/useChat.ts:503` already routes every `system` frame whose subtype is not
+`compact_boundary` into `systemNoticeLines`. So `api_retry` frames **already arrive at the REPL today** and
+are simply not recognised. EP-T4 is a recognition-and-render change inside `useChat`/`TurnSpinner`, not a
+host/wire change.
+
+1. **(modify)** Recognise `data.type === "system" && data.subtype === "api_retry"` in `useChat`'s message
+   arm and drive a retry-status state from it (attempt, max_retries, retry_delay_ms, error_status, error).
+   Make sure `systemNoticeLines` does not also paint a transcript row for the same frame.
 2. **(new)** A retry/stalled row that **replaces** the spinner while a status is set, with a local
    one-second countdown seeded from `retry_delay_ms`, upstream's label rule (`API error` for the first
    two attempts, detail after), and teardown when the next real message arrives or the turn ends.
@@ -519,6 +527,10 @@ A12, A13.
   did not ask for.
 - **W-T11 [DECIDED-AUTO]** The plan file path is rendered from `input.planFilePath` (probe 97), closing a
   gap the grounding had listed as "never built". No plans-directory construction is needed in ccx.
+- **W-T12 [DECIDED-AUTO, verified in-tree]** EP-T4 adds **no wire event**. `host.ts:261-270` already emits
+  every SDK message and `useChat.ts:503` already receives every `system` frame, so `api_retry` reaches the
+  REPL today unrecognised. Rejected: a new typed `HostEvent` variant — it would duplicate an existing
+  channel and force a host/client version dance for data already on the wire.
 
 ## Open questions
 
