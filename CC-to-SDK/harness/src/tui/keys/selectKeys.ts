@@ -13,20 +13,29 @@ import { useKeyActions, useKeyScope } from "./KeymapProvider.js";
  *  that windows its list passes its visible-row count instead. */
 export const PAGE_ROWS = 10;
 
-export function useSelectKeys({ count, index, page = PAGE_ROWS, onMove, onAccept, onCancel }: {
+export function useSelectKeys({ count, index, page = PAGE_ROWS, wrap = false, inputFocused = false, onMove, onAccept, onCancel }: {
   count: number;
   index: number;
   page?: number;
-  /** Called with an ALREADY-CLAMPED row index; never called at all on an empty list. */
+  /** Wrap next-from-last to the first row and previous-from-first to the last, as upstream's option map does
+   *  (`nz_`, L396859/L396875). Off by default: the five F2 overlays shipped clamping and their tests pin it;
+   *  the F6 `Select` primitive opts in, which is what upstream's own dialogs do. Pages/first/last still clamp. */
+  wrap?: boolean;
+  /** The focused row is a `type:"input"` row. Upstream builds its Select action map inside `if (!m)` where `m`
+   *  is exactly this (L396672-396701), so next/previous/accept are NOT REGISTERED while a text row has the
+   *  cursor — the keys fall through to the component, which types them. Only cancel survives (L396702). */
+  inputFocused?: boolean;
+  /** Called with an ALREADY-CLAMPED (or wrapped) row index; never called at all on an empty list. */
   onMove: (next: number) => void;
   onAccept: () => void;
   onCancel: () => void;
 }): void {
   const last = Math.max(0, count - 1);
   const to = (i: number) => { if (count > 0) onMove(Math.max(0, Math.min(last, i))); };
+  const step = (i: number) => { if (count > 0) onMove(wrap ? (i + count) % count : Math.max(0, Math.min(last, i))); };
   useKeyScope("Select");
-  useKeyActions({
-    "select:previous": () => to(index - 1), "select:next": () => to(index + 1),
+  useKeyActions(inputFocused ? { "select:cancel": () => onCancel() } : {
+    "select:previous": () => step(index - 1), "select:next": () => step(index + 1),
     "select:pageUp": () => to(index - page), "select:pageDown": () => to(index + page),
     "select:first": () => to(0), "select:last": () => to(last),
     // accept/cancel still fire on an empty list: cancel must always close, and every caller guards its own
