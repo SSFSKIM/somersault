@@ -41,6 +41,19 @@ describe("permissionKind — the families", () => {
     expect(permissionKind("Glob", { pattern: "**/*.ts" })).toEqual({ kind: "file", filePath: CWD });
   });
 
+  it("takes the SESSION cwd for that fallback, not this process's", () => {
+    // Upstream's fallback is `xt()`, the session's working directory. A daemon session runs in its own
+    // worktree while this process sits wherever `ccx` was launched, so the caller must be able to say
+    // which one — otherwise a Grep consult gets titled with the wrong directory.
+    expect(permissionKind("Grep", { pattern: "x" }, "/w/worktree-3")).toEqual({ kind: "file", filePath: "/w/worktree-3" });
+    expect(permissionKind("Read", {}, "/w/worktree-3").filePath).toBe("/w/worktree-3");
+    expect(permissionKind("Glob", { pattern: "rel/**" }, "/w/worktree-3").filePath).toBe("/w/worktree-3");
+    expect(derivePath("Grep", { pattern: "x" }, "/w/worktree-3")).toBe("/w/worktree-3");
+    // An explicit path still wins over it, and the sessionless default is still this process.
+    expect(permissionKind("Grep", { path: "/w/src" }, "/w/worktree-3").filePath).toBe("/w/src");
+    expect(permissionKind("Grep", { pattern: "x" }).filePath).toBe(CWD);
+  });
+
   it("derives a Glob search dir only from an ABSOLUTE pattern (`eTs` L220016 returns null otherwise)", () => {
     expect(derivePath("Glob", { pattern: "/w/src/**/*.ts" })).toBe("/w/src");
     expect(derivePath("Glob", { pattern: "rel/**/*.ts", path: "/w/other" })).toBe("/w/other");

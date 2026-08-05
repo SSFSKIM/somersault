@@ -26,7 +26,12 @@ describe("DialogFrame — the border", () => {
     const lines = plain(frameOf(<DialogFrame title="Bash command">{body}</DialogFrame>)).split("\n");
     expect(lines[0]).toBe("");                                   // marginTop: 1
     expect(lines[1]).toMatch(/^─+$/);                            // the round border's top edge, alone
-    expect(lines.slice(2).join("\n")).not.toMatch(/[│╭╮╰╯]/);    // no verticals, no corners, no bottom rule
+    expect(lines.slice(2).join("\n")).not.toMatch(/[│╭╮╰╯]/);    // no verticals, no corners
+    // …and no bottom rule. The corner/vertical guard above is BLIND to it: with the sides off, ink paints
+    // `borderBottom` as a bare run of `─` carrying no corner glyph, which reads exactly like the top edge.
+    // Counting the rules is what actually pins `borderBottom:!1` (L438011) — flipping it to true leaves
+    // every other assertion in this file green.
+    expect(lines.filter((l) => /^─+$/.test(l))).toHaveLength(1);
     expect(plain(frameOf(<DialogFrame title="t">{body}</DialogFrame>))).toContain("body");
   });
 

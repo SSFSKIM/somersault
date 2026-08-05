@@ -34,7 +34,13 @@ const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? 
 /** `Vrn` L228408-228418 over each tool's own `getPath`. `null` = "no path could be derived", which is the
  *  condition that sends Edit/Write/NotebookEdit to the generic dialog. The three search/read tools have a
  *  cwd fallback baked into their `getPath` (L220178 Glob · L220299 Grep · L307642 Read), so they never
- *  return null — that asymmetry is upstream's, not ours. */
+ *  return null — that asymmetry is upstream's, not ours.
+ *
+ *  `cwd` is that fallback. Upstream reads it from `xt()`, the SESSION's working directory, which is NOT
+ *  the same thing as this process's: a daemon session runs in its own worktree while the REPL process sits
+ *  wherever it was launched, so defaulting to `process.cwd()` would title a Grep consult with the wrong
+ *  directory. Callers that know the session dir must pass it; the default is only right for an in-process
+ *  session. */
 export function derivePath(toolName: string, input: Record<string, unknown>, cwd: string = process.cwd()): string | null {
   switch (toolName) {
     case "Edit":
@@ -66,7 +72,10 @@ function globSearchDir(pattern: string | null): string | null {
   return base.length === 0 ? "/" : `/${base.join("/")}`;
 }
 
-export function permissionKind(toolName: string, input: Record<string, unknown>): PermissionKindResult {
+/** `cwd` is the SESSION's working directory — see `derivePath`. It only matters for the Glob/Grep/Read
+ *  fallback, and it defaults to this process's cwd, which is correct only for an in-process session; a
+ *  daemon session running in a worktree must pass its own. */
+export function permissionKind(toolName: string, input: Record<string, unknown>, cwd?: string): PermissionKindResult {
   // 1 — the registry (`w8y` L279380), narrowed to the dialogs this harness ships.
   if (toolName === "WebFetch") return { kind: "webfetch" };
   if (toolName === "Skill") return { kind: "skill" };
@@ -74,7 +83,7 @@ export function permissionKind(toolName: string, input: Record<string, unknown>)
 
   // 2 — the file family, but only when a path comes out of it.
   if (FILE_TOOLS.has(toolName)) {
-    const filePath = derivePath(toolName, input);
+    const filePath = derivePath(toolName, input, cwd);
     return filePath === null ? { kind: "generic" } : { kind: "file", filePath };
   }
 
