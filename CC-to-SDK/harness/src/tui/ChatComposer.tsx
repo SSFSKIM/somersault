@@ -163,14 +163,27 @@ export interface PlaceholderMemo { files?: string[]; draws: number[] }
  *     a field we do not carry; `argumentHint` reaches the user through CM37's inline hint instead, which is this task's other half.
  *   · the `↑/↓ n/N · tab completes · esc closes` footer — our invention, with no counterpart in `DXe`, and a
  *     conditional extra line is exactly the kind of thing the blank padding exists to prevent. */
-function suggestProps(state: EditorState): { items: SuggestItem[]; selected: number; maxColumnWidth?: number; emptyMessage?: string | null } | null {
+/** `VJa`'s `t` (bundle L490015): `Z.CLAUDE_CODE_ENABLE_MENU_KIND_LANES || Ke("tengu_mint_lanes", !1)`. The
+ *  gate is DEFAULT OFF and that is not a guess: the installed 2.1.220's `~/.claude.json` caches
+ *  `tengu_mint_lanes: false`, so the build this port is measured against shows no kind lane at all. The env
+ *  var half is reachable by a user, so it is the half we transcribe — same name, and same bare truthiness
+ *  upstream reads it with (`markdownInline.ts`'s `CLAUDE_CODE_FORCE_STRIKETHROUGH` does the same; note this
+ *  means `=0` turns it ON, upstream's behaviour, not a nicety we added).
+ *
+ *  Read off the passed env rather than `process.env` directly so a test can flip it per render — the same
+ *  `historyEnv` seam every history/paste/prefs path in this component already goes through. */
+const menuKindLanes = (env: NodeJS.ProcessEnv): boolean => !!env.CLAUDE_CODE_ENABLE_MENU_KIND_LANES;
+
+function suggestProps(state: EditorState, env: NodeJS.ProcessEnv): { items: SuggestItem[]; selected: number; maxColumnWidth?: number; emptyMessage?: string | null } | null {
   const c = state.command;
+  const lanes = menuKindLanes(env);
   if (c?.head) return {
     // DG55: `kind` is set HERE and only here. Upstream's slash source is the only producer of the field
     // (`VJa`, L490007 — `...t && { kind: p9f(e), sourceTag: nRb(e) }`), so "command rows only" is not a rule
     // the popup enforces, it is a fact about which of our three sources fills the field in. The `@`-mention
     // arm below and the history surfaces set nothing, and `S_a` gives a kindless row no lane at all.
-    items: c.items.map((e) => ({ id: `cmd-${e.name}`, displayText: `/${e.name}`, description: e.description, kind: commandKind(e) })),
+    // The `...(lanes && …)` spread is `VJa`'s own literal shape, gate included.
+    items: c.items.map((e) => ({ id: `cmd-${e.name}`, displayText: `/${e.name}`, description: e.description, ...(lanes && { kind: commandKind(e) }) })),
     selected: c.index,
     // `k` (L490508–L490513) is computed over the WHOLE catalog, not the matches, so the name lane does not jitter as
     // the user narrows the list. `catalogColumnWidth` is that sum.
@@ -880,7 +893,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // CM30's height is `f(rows)` (see `popupHeight`), read the same per-render way `columns` is so a resize
   // reaches the popup on the very next frame.
   const termRows = Math.max(1, Math.floor(rows?.() ?? DEFAULT_ROWS));
-  const suggest = suggestProps(state);
+  const suggest = suggestProps(state, historyEnvRef.current);
   const ghost = ghostText(state);
   const argHint = commandArgumentHint(bufferText(state), commandCatalog);
   // The editor owns these affordances: derive them from this render's state so the first draft/popup

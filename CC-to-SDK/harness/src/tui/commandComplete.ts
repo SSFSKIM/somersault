@@ -83,10 +83,12 @@ const KIND_BY_NAME = new Map<string, CommandKind>(
  *  `doctor`, the two the same audit confirmed really are `type: "prompt"`, are absent from `ZLb` and fall
  *  through to `skill`.
  *
- *  What the swap costs, written down rather than hidden: a user skill that happens to be NAMED one of these
- *  ~120 words (a `docs` or `tasks` skill) gets upstream's bucket for that word instead of `skill`. That is a
- *  colour on one lane, it needs a name collision to happen at all, and the alternative mis-paints ten names we
- *  have actually observed in the live catalog.
+ *  What the swap costs, and it is a LIVE cost rather than a hypothetical one: a skill NAMED one of these ~120
+ *  words gets upstream's bucket for that word instead of `skill`. This repo already has one — a `schedule`
+ *  skill, and `schedule` is in `ZLb`'s agent bucket, so its row reads `agent` where `skill` would be right.
+ *  That is one word and one colour on one lane; the alternative mis-paints ten names probe 73 actually
+ *  observed in the live catalog, so the trade still goes this way — but it is a known wrong row, not a
+ *  theoretical one.
  *
  *  Our locals take the else-arm whole: they are never prompt templates (the premise `executesOnEnter` already
  *  rests on), so an unknown local name is `action` — which prints as seven blank columns, i.e. no claim. */

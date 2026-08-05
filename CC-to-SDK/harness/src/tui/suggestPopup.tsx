@@ -37,13 +37,15 @@ export interface SuggestItem { id: string; displayText: string; description?: st
  *  and there is one definition of it, in commandComplete.ts. File/`@`-mention rows (`I9f`, L490269–L490278)
  *  and history rows build no `kind` at all, which is what keeps them on their existing single-line branch.
  *
- *  Two upstream facts about the field worth keeping written down, because we depart from the first:
+ *  Two upstream facts about the field worth keeping written down:
  *
- *   1. Upstream GATES it on a flag — `VJa`'s `t` argument is `Z.CLAUDE_CODE_ENABLE_MENU_KIND_LANES ||
- *      Ke("tengu_mint_lanes", !1)` (L490015), so on a default build `kind` is undefined on every row and the
- *      lane never appears. We render it unconditionally: this is the shipped code path with the flag ON, and
- *      the F5-era comment in `rowLines` calling the kind lane a lane "we do not render" is now out of date by
- *      choice, not by accident.
+ *   1. It is GATED — `VJa`'s `t` argument is `Z.CLAUDE_CODE_ENABLE_MENU_KIND_LANES || Ke("tengu_mint_lanes",
+ *      !1)` (L490015), and the installed 2.1.220's `~/.claude.json` caches `tengu_mint_lanes: false`, so the
+ *      build this port is measured against genuinely shows NO lane. The gate is transcribed with it, in
+ *      `ChatComposer`'s `suggestProps` — the same env var, defaulting off — because a row's `kind` is a fact
+ *      about the PRODUCER, not the renderer. Everything below this line therefore describes what happens once
+ *      the flag is on; with it off, `kind` is undefined on every row and `S_a` gives the row no lane at all,
+ *      which is exactly the F5 geometry.
  *   2. The same flag also turns on `sourceTag` — a `[project] `/`[org] ` lane (`nRb`, L489986–L489995, keyed on
  *      `f9f`'s command PROVENANCE: userSettings/projectSettings/plugin/policySettings…). `CommandEntry.source`
  *      is `"local" | "catalog"`, our own two-way split between a built-in and anything the engine reported, and
@@ -129,8 +131,10 @@ export function catalogColumnWidth(names: readonly string[]): number | undefined
  *  and left the other two as named zeros — "the day we grow a lane the budget has to shrink with it" was the
  *  reason they were written out rather than deleted, and this is that day for the kind lane. `i` is now
  *  `S_a`'s 7-column lane and costs 7 columns on every command row that carries a kind, `action` included
- *  (its lane is blank, not absent). `o` (the `[tag] ` lane, upstream only on dynamic-workflow commands) and
- *  `s` (the `[source] ` tag) stay 0 — see `SuggestKind` above for why neither is derivable from what we carry.
+ *  (its lane is blank, not absent) — which, since the lane is gated off by default, is in practice no row at
+ *  all until someone sets `CLAUDE_CODE_ENABLE_MENU_KIND_LANES`. `o` (the `[tag] ` lane, upstream only on
+ *  dynamic-workflow commands) and `s` (the `[source] ` tag) stay 0 — see `SuggestKind` above for why neither
+ *  is derivable from what we carry.
  *
  *  `n = min(nameCol, floor(columns * 0.4))` is the same clamp the row renderer applies to `RRe` (L432540),
  *  which is what keeps the estimate and the render in agreement about how wide the name lane really is. */

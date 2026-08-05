@@ -241,6 +241,16 @@ describe("DG55 kind lane — S_a (L432454)", () => {
     expect(rowFor(b.lastFrame(), "/compact")).toContain("/compact    compact the context");
   });
 
+  it("SsI's kind term (L432540): a DESCRIPTION-LESS row with a kind still caps its name lane at 40%", () => {
+    // Reachable, not theoretical: `toCatalogEntry` gives a catalog command with no description
+    // `description: ""` — falsy — so a kinded row with no description is an ordinary live row.
+    const bare: SuggestItem[] = [{ id: "cmd-x", displayText: "/x", kind: "config" }];
+    const { lastFrame } = render(<SuggestPopup items={bare} selected={0} columns={80} rows={24} maxColumnWidth={60} />);
+    // `description || tag || kind !== void 0 || sourceTag ? floor(80*0.4) : 80 - 4` — the kind term makes the
+    // 40% cap win over the 60-column name lane, so the lane opens at paddingX 2 + 32 and not at 2 + 60.
+    expect(rowFor(lastFrame(), "/x").indexOf("config")).toBe(34);
+  });
+
   it("skill and agent rows carry their theme ROLE colour on the lane; a config lane is dim", () => {
     const sgr = (token: string) => { const m = token.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)!; return `\x1b[38;2;${m[1]};${m[2]};${m[3]}m`; };
     const items: SuggestItem[] = [
@@ -474,17 +484,31 @@ describe("through ChatComposer", () => {
     expect(lastFrame()).not.toContain(FOOTER);
   });
 
-  // DG55: the lane only exists because the SLASH source feeds a kind (`VJa`, L490007). The composer is the
-  // one place our three sources meet, so this is where "command rows only" is actually decided.
-  it("the popup's command rows carry p9f's kind; an `@` row carries none", async () => {
-    const a = render(wrap(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} />));
+  // DG55: the lane only exists because the SLASH source feeds a kind (`VJa`, L490007), and `VJa` feeds one
+  // only when the menu-kind-lanes flag is on. The composer is the one place our three sources meet AND the
+  // one place that gate lives, so both arms of it are pinned here.
+  const popupOf = async (env?: NodeJS.ProcessEnv) => {
+    const a = render(wrap(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} historyEnv={env} />));
     await tick();
     a.stdin.write("/");
     await tick();
-    const plain = (a.lastFrame() ?? "").replace(/\x1b\[[0-9;]*m/g, "");
-    expect(plain).toMatch(/\/model\s+config change the model/);          // ZLb: model → config
-    expect(plain).toMatch(/\/mode\s{8,}cycle permission mode/);          // not in ZLb → action → seven blanks
-    expect(plain).toMatch(/\/review\s+skill\s+review a pull request/);   // a catalog entry is a prompt command
+    return (a.lastFrame() ?? "").replace(/\x1b\[[0-9;]*m/g, "");
+  };
+
+  it("DEFAULT: no lane on any row — the installed 2.1.220 caches tengu_mint_lanes:false, so this is canon", async () => {
+    const out = await popupOf();
+    expect(out).toMatch(/\/model\s+change the model/);
+    expect(out).not.toContain("config");
+    expect(out).not.toContain("skill");
+    // and the description starts exactly where F5 put it: nameCol is catalogColumnWidth(["model","mode","review"]) = 12
+    expect(lines(out).find((l) => l.includes("/model"))).toBe("  /model      change the model");
+  });
+
+  it("CLAUDE_CODE_ENABLE_MENU_KIND_LANES: every command row gains p9f's kind", async () => {
+    const out = await popupOf({ ...process.env, CLAUDE_CODE_ENABLE_MENU_KIND_LANES: "1" });
+    expect(out).toMatch(/\/model\s+config change the model/);          // ZLb: model → config
+    expect(out).toMatch(/\/mode\s{8,}cycle permission mode/);          // not in ZLb → action → seven blanks
+    expect(out).toMatch(/\/review\s+skill\s+review a pull request/);   // a catalog entry is a prompt command
   });
 
   it("`/review ` shows the argument hint inline and dim", async () => {
