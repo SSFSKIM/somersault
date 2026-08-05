@@ -19,7 +19,16 @@ export function parseCommand(input: string): ParsedCommand | null {
   return sp < 0 ? { name: body, args: "" } : { name: body.slice(0, sp), args: body.slice(sp + 1).trim() };
 }
 
-export const COMMANDS: { name: string; summary: string }[] = [
+/** One row of the local command table. `aliases` is upstream's own descriptor field (`gM_`, bundle L353066:
+ *  `{name:"rewind", aliases:["checkpoint","undo"], …}`) and it means what it means there — a SECOND NAME for
+ *  the same command, not a second command: the alias dispatches to the canonical arm (`JFy`, L243133:
+ *  `e.name === t || … || e.aliases?.includes(t)`) and it is a fuzzy-search key on the canonical row rather
+ *  than a row of its own (`eRb`'s `aliasKey`, L489928). `/settings` and `/allowed-tools` predate this field
+ *  and stay as they are — separate rows with "alias of …" summaries and their own switch arms — because the
+ *  help listing has printed them for four waves and collapsing them is a visible change this task does not own. */
+export interface CommandRow { name: string; summary: string; aliases?: string[] }
+
+export const COMMANDS: CommandRow[] = [
   { name: "model", summary: "<name> — switch model (no arg shows current)" },
   { name: "compact", summary: "compact the conversation context" },
   { name: "context", summary: "show context-window usage" },
@@ -33,7 +42,7 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "mcp", summary: "[reconnect <name> | toggle <name> on|off] — MCP server status / controls" },
   { name: "bg", summary: "list background tasks (k/x stops one)" },
   { name: "history", summary: "search prompt history in the full-screen picker (Ctrl-R searches inline)" },
-  { name: "rewind", summary: "rewind to a previous message (Esc Esc)" },
+  { name: "rewind", summary: "rewind to a previous message (Esc Esc · aliases /checkpoint /undo)", aliases: ["checkpoint", "undo"] },
   { name: "add-dir", summary: "<path> — add a new working directory" },
   { name: "theme", summary: "change the theme" },
   { name: "config", summary: "open the Settings dialog (Status · Config · Usage · Stats)" },
@@ -57,10 +66,19 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "quit", summary: "leave the REPL (alias: /exit)" },
 ];
 
-/** The 9 local engine-driving commands as CommandEntry[] (the palette merges these with the live catalog). */
-export const LOCAL_COMMAND_ENTRIES: CommandEntry[] = COMMANDS.map((c) => ({ name: c.name, description: c.summary, source: "local" }));
-/** Local command names — dispatch routes these to the engine switch (never submit-as-prompt). */
-export const LOCAL_NAMES = new Set(COMMANDS.map((c) => c.name));
+/** The 9 local engine-driving commands as CommandEntry[] (the palette merges these with the live catalog).
+ *  Aliases ride ALONG on the canonical entry rather than becoming entries of their own — that is upstream's
+ *  shape (one row, `aliasKey` as an extra search key) and it is why typing `/undo` narrows to the `/rewind`
+ *  row instead of showing a duplicate. */
+export const LOCAL_COMMAND_ENTRIES: CommandEntry[] = COMMANDS.map((c) => ({ name: c.name, description: c.summary, source: "local", ...(c.aliases ? { aliases: c.aliases } : {}) }));
+/** Local command names — dispatch routes these to the engine switch (never submit-as-prompt). Aliases are in
+ *  here too: `/undo` must not be forwarded to the model as a prompt just because the switch spells it `rewind`. */
+export const LOCAL_NAMES = new Set(COMMANDS.flatMap((c) => [c.name, ...(c.aliases ?? [])]));
+
+const ALIAS_TO_NAME = new Map(COMMANDS.flatMap((c) => (c.aliases ?? []).map((a) => [a, c.name] as const)));
+/** An alias → the command it names; anything else unchanged (`JFy`, L243133). Applied ONCE, where the parsed
+ *  command meets the dispatch switch, so every arm keeps matching on canonical names only. */
+export const canonicalCommand = (name: string): string => ALIAS_TO_NAME.get(name) ?? name;
 
 /** 31000→"31k", 18500→"18.5k". Exported because /stats renders the same counts (sessionTools.ts) — two
  *  copies would let /cost and /stats disagree about the same number the first time the rule changes. */

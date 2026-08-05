@@ -519,7 +519,7 @@ describe("<ChatApp>", () => {
 
     stdin.write("\x1b");                                            // second Esc within the window → opens the picker
     await waitFor(() => anchorsFetched === 1);
-    await waitFor(() => frame(lastFrame).includes("Rewind to a previous message"));
+    await waitFor(() => frame(lastFrame).includes("Restore the code and/or conversation"));
     expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
 
     stdin.write("\x1b");                                            // list-stage esc closes the picker (no selection made)
@@ -546,10 +546,12 @@ describe("<ChatApp>", () => {
     stdin.write("\x1b");                                            // arm
     await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
     stdin.write("\x1b");                                            // open the picker
-    await waitFor(() => frame(lastFrame).includes("Rewind to a previous message"));
-    stdin.write("\r");                                              // select the anchor → scope stage
-    await waitFor(() => frame(lastFrame).includes("Restore conversation only"));
-    stdin.write("2");                                               // conversation-only: no dryRun dependency
+    await waitFor(() => frame(lastFrame).includes("Restore the code and/or conversation"));
+    stdin.write("k");                                               // off the trailing `(current)` row onto the anchor
+    await waitFor(() => frame(lastFrame).includes("❯"));
+    stdin.write("\r");                                              // select the anchor → the confirmation panel
+    await waitFor(() => frame(lastFrame).includes("Confirm you want to restore"));
+    stdin.write("\r");                                              // accept the focused option (no code restore → conversation)
     await waitFor(() => frame(lastFrame).includes("fix the parser"));   // prefill landed in the composer
 
     stdin.write("\x15");                                            // Ctrl-U: clear the composer buffer
@@ -604,10 +606,12 @@ describe("<ChatApp>", () => {
     stdin.write("\x1b");                                              // Esc: arm
     await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
     stdin.write("\x1b");                                              // Esc: open the picker
-    await waitFor(() => frame(lastFrame).includes("Rewind to a previous message"));
-    stdin.write("\r");                                                // select the anchor → scope stage
-    await waitFor(() => frame(lastFrame).includes("Restore conversation only"));
-    stdin.write("2");                                                 // conversation-only → confirmRewind → rewind() hangs
+    await waitFor(() => frame(lastFrame).includes("Restore the code and/or conversation"));
+    stdin.write("k");                                                 // off the trailing `(current)` row onto the anchor
+    await waitFor(() => frame(lastFrame).includes("❯"));
+    stdin.write("\r");                                                // select the anchor → the confirmation panel
+    await waitFor(() => frame(lastFrame).includes("Confirm you want to restore"));
+    stdin.write("\r");                                                // conversation-only → confirmRewind → rewind() hangs
     await waitFor(() => frame(lastFrame).includes("restoring"));
 
     stdin.write("\x12");                                              // Ctrl-R must open NEITHER search surface here
@@ -937,7 +941,7 @@ describe("<ChatApp>", () => {
 
     stdin.write("\x1b");                                         // first Escape clears/arms locally; it cannot rewind
     await waitFor(() => frame(lastFrame).includes("Esc again to clear"));
-    expect(frame(lastFrame)).not.toContain("Rewind to a previous message");
+    expect(frame(lastFrame)).not.toContain("Restore the code and/or conversation");
   });
 
   it("app-level keys are gated while the history overlay is open (its Ctrl-C is cancel, not exit-arm)", async () => {
@@ -1099,10 +1103,12 @@ describe("<ChatApp>", () => {
     stdin.write("\x1b");
     await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
     stdin.write("\x1b");
-    await waitFor(() => frame(lastFrame).includes("Rewind to a previous message"));
+    await waitFor(() => frame(lastFrame).includes("Restore the code and/or conversation"));
+    stdin.write("k");
+    await waitFor(() => frame(lastFrame).includes("❯"));
     stdin.write("\r");
-    await waitFor(() => frame(lastFrame).includes("Restore conversation only"));
-    stdin.write("2");
+    await waitFor(() => frame(lastFrame).includes("Confirm you want to restore"));
+    stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("restoring"));
 
     // Now let /add-dir's listDirs() resolve — it tries to open the dialog while rewinding is still true.

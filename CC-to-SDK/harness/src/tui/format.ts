@@ -45,3 +45,23 @@ export const formatCompactNumber = (value: number): string => compactFormats[val
  *  deliberately does NOT (it pluralizes with `> 1`, so `0` reads `lines`), and `$Wo` strips a trailing `s`
  *  instead — both of those stay written out at their call sites rather than hiding behind this. */
 export const plural = (count: number, word: string, pluralWord = `${word}s`): string => (count === 1 ? word : pluralWord);
+
+/** Upstream `pie` (L107103-107115) in its DEFAULT `narrow` style, which is the only style any surface of ours
+ *  asks for — `RZ` (L107116) is a thin wrapper that only picks `numeric` for the `Intl.RelativeTimeFormat`
+ *  branch the narrow style never reaches, so the two collapse into one function here. The unit table is
+ *  upstream's, largest-first, and the walk stops at the first unit whose whole seconds fit: `5m ago`, `2h ago`,
+ *  `3d ago`, and `0s ago` for anything under a second. Future dates read `in 5m` — reachable only from a clock
+ *  skew, and printing `-5m ago` there would be worse than saying the future out loud. F6 T10's rewind
+ *  confirmation panel prints `(<this>)` under the message it is about to restore to. */
+const RELATIVE_UNITS: readonly [seconds: number, short: string][] = [
+  [31536000, "y"], [2592000, "mo"], [604800, "w"], [86400, "d"], [3600, "h"], [60, "m"], [1, "s"],
+];
+export function formatRelativeTime(date: Date, now: Date = new Date()): string {
+  const seconds = Math.trunc((date.getTime() - now.getTime()) / 1000);
+  for (const [unit, short] of RELATIVE_UNITS) {
+    if (Math.abs(seconds) < unit) continue;
+    const n = Math.trunc(seconds / unit);
+    return seconds < 0 ? `${Math.abs(n)}${short} ago` : `in ${n}${short}`;
+  }
+  return seconds <= 0 ? "0s ago" : "in 0s";
+}

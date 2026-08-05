@@ -199,7 +199,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     await waitFor(() => frame(b.lastFrame).includes("❯\u00a0"));
     b.stdin.write("\x1b"); await waitFor(() => frame(b.lastFrame).includes("Press Esc again to rewind"));
     b.stdin.write("\x1b"); await waitFor(() => anchorsFetched === 1);
-    await waitFor(() => frame(b.lastFrame).includes("Rewind to a previous message"));
+    await waitFor(() => frame(b.lastFrame).includes("Restore the code and/or conversation"));
   },
 
   "Ctrl-T": async () => {

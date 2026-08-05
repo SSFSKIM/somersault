@@ -2,14 +2,15 @@
 // Mirrors fileComplete.ts (the @-mention ranker) so editor.ts can drive a / command popup the same way.
 import { rankCandidates } from "./fileComplete.js";
 
-export interface CommandEntry { name: string; description: string; argumentHint?: string; source: "local" | "catalog" }
+export interface CommandEntry { name: string; description: string; argumentHint?: string; source: "local" | "catalog"; aliases?: string[] }
 
 /** Normalize a raw capabilities().commands entry (object or bare string) to a CommandEntry; null on bad shape. */
 export function toCatalogEntry(raw: unknown): CommandEntry | null {
   const r = raw as any;
   const name = typeof r === "string" ? r : r?.name;
   if (!name || typeof name !== "string") return null;
-  return { name, description: typeof r?.description === "string" ? r.description : "", argumentHint: r?.argumentHint || undefined, source: "catalog" };
+  const aliases = Array.isArray(r?.aliases) ? r.aliases.filter((a: unknown): a is string => typeof a === "string" && a.length > 0) : [];
+  return { name, description: typeof r?.description === "string" ? r.description : "", argumentHint: r?.argumentHint || undefined, source: "catalog", ...(aliases.length ? { aliases } : {}) };
 }
 
 /** Merge local commands with the live catalog; local wins on a name collision; local-first order then catalog. */
@@ -22,10 +23,24 @@ export function mergeCommands(local: CommandEntry[], catalog: CommandEntry[]): C
  *  `cap` defaults to NO truncation on purpose. The popup renders a scrolling 8-row window and arrow
  *  selection ranges over the whole of `items`, so a cap here does not merely shorten the view — it makes the
  *  tail of the catalog UNREACHABLE. With ~105 live commands, the old cap of 8 hid 90+ of them. */
+/** ALIASES ARE SEARCH KEYS, NOT ROWS (upstream `eRb`, L489928: `aliasKey: n.aliases` is one more weighted key
+ *  on the SAME fuse record). So every alias is scored as its own candidate string and then folded back onto
+ *  the entry that owns it: typing `undo` surfaces the one `/rewind` row, never a second row called `/undo`.
+ *  One candidate string can belong to more than one entry (two commands may claim the same alias, or a name
+ *  may equal another's alias), so the fold is one-to-many and every owner is surfaced. Ranking is NOT capped
+ *  before the fold — an alias hit and its own canonical row would each consume a slot there and the caller
+ *  would get fewer ROWS than it asked for; the cap applies to the deduped output, where the count is real. */
 export function rankCommands(entries: CommandEntry[], query: string, cap = entries.length): CommandEntry[] {
   if (!query) return entries.slice(0, cap);
-  const byName = new Map(entries.map((e) => [e.name, e]));
-  return rankCandidates(entries.map((e) => e.name), query, cap).map((c) => byName.get(c.path)).filter((e): e is CommandEntry => !!e);
+  const owners = new Map<string, CommandEntry[]>();
+  const add = (key: string, e: CommandEntry) => { const at = owners.get(key); if (at) at.push(e); else owners.set(key, [e]); };
+  for (const e of entries) { add(e.name, e); for (const a of e.aliases ?? []) add(a, e); }
+  const out: CommandEntry[] = [];
+  for (const c of rankCandidates([...owners.keys()], query)) {
+    for (const e of owners.get(c.path) ?? []) if (!out.includes(e)) out.push(e);
+    if (out.length >= cap) break;
+  }
+  return out.slice(0, cap);
 }
 
 /** CM28's honest mapping of upstream's Enter rule onto `CommandEntry`, which has no `type`. `XJa`

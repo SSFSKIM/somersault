@@ -64,14 +64,17 @@ describe("useChat: rewind flow", () => {
     await waitFor(() => frame(lastFrame).includes("picker:true:1"));
   });
 
-  it("2. openRewind with zero anchors notices 'nothing to rewind to' and stays closed", async () => {
+  // F6 T10: the "nothing to rewind to" NOTICE is gone. An empty anchor list still opens the picker, because
+  // upstream's empty state ("Nothing to rewind to yet.") lives inside the Rewind dialog and is reachable no
+  // other way — the picker owns it now, and rewind-picker.test.tsx pins the literal.
+  it("2. openRewind with zero anchors OPENS the picker (its own empty state), rather than noticing", async () => {
     const session = fakeRewindSession({ rewindAnchors: async () => [] });
     const api: Parameters<typeof RewindHost>[0]["api"] = {};
     const { lastFrame } = render(<RewindHost makeSession={() => session} api={api} />);
     await new Promise((r) => setTimeout(r, 20));
     api.openRewind!();
-    await waitFor(() => frame(lastFrame).includes("nothing to rewind to"));
-    expect(frame(lastFrame)).toContain("picker:false:0");
+    await waitFor(() => frame(lastFrame).includes("picker:true:0"));
+    expect(frame(lastFrame)).not.toContain("nothing to rewind to");
   });
 
   it("3. openRewind while busy notices and does not fetch", async () => {
@@ -173,7 +176,9 @@ describe("useChat: rewind flow", () => {
     expect(frame(lastFrame)).toContain("prefill:-");
   });
 
-  it("7. confirmRewind rejection surfaces '✗ rewind failed: busy', closes the picker, and does not crash", async () => {
+  // F6 T10: the failure copy is upstream's (`ce`, bundle L487142-154) — a heading chosen by the scope that
+  // was asked for, then the error on its own line — in place of the invented `✗ rewind failed: <e>`.
+  it("7. confirmRewind rejection surfaces upstream's failure copy for the chosen scope, closes the picker, and does not crash", async () => {
     const session = fakeRewindSession({ rewindAnchors: async () => [ANCHOR], rewind: async () => { throw new Error("busy"); } });
     const api: Parameters<typeof RewindHost>[0]["api"] = {};
     const { lastFrame } = render(<RewindHost makeSession={() => session} api={api} />);
@@ -181,7 +186,8 @@ describe("useChat: rewind flow", () => {
     api.openRewind!();
     await waitFor(() => frame(lastFrame).includes("picker:true:1"));
     api.confirmRewind!(ANCHOR, "both");
-    await waitFor(() => frame(lastFrame).includes("✗ rewind failed: busy"));
+    await waitFor(() => frame(lastFrame).includes("Failed to restore the conversation and code:"));
+    expect(frame(lastFrame)).toContain("busy");
     expect(frame(lastFrame)).toContain("picker:false:0");
   });
 

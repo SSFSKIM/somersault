@@ -86,13 +86,20 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
     "ctrl+x ctrl+b": null,          // …and ctrl+b's chord alias with it (final review; see Select)
   }},
+  // F6 T10 rebuilt the rewind picker on the `Select` primitive, and this block shrank to what Select does not
+  // already do. The picker still pushes `MessageSelector`, but it now sits OUTSIDE the `Select` its list is —
+  // so up/down/j/k/ctrl+n/ctrl+p/enter all resolve one layer in, at `Select`, and their old entries here would
+  // have been a lie in the table (the actions they named have no handler any more). What Select has no key for
+  // is upstream's jump pair, so those eight keys stay, RETARGETED onto Select's own first/last actions:
+  // resolution finds them in this context, and `handlerFor` (registry.ts) looks a handler up by ACTION NAME
+  // across the whole stack, so Select's `select:first`/`select:last` answer them. The picker keeps `home`/`end`
+  // from Select as well — a superset of what it had, not a trade.
+  // `escape` stays a MessageSelector action because it is the ONE key the picker must still answer with no
+  // Select mounted: the empty state ("Nothing to rewind to yet.") renders no list at all.
   { context: "MessageSelector", bindings: {
-    "up": "messageSelector:up", "down": "messageSelector:down", "enter": "messageSelector:select",
     "escape": "messageSelector:dismiss",
-    "k": "messageSelector:up", "j": "messageSelector:down",                       // NEW (KB14)
-    "ctrl+p": "messageSelector:up", "ctrl+n": "messageSelector:down",             // NEW (KB14)
-    "ctrl+up": "messageSelector:top", "shift+up": "messageSelector:top", "alt+up": "messageSelector:top", "shift+k": "messageSelector:top",          // NEW (KB14)
-    "ctrl+down": "messageSelector:bottom", "shift+down": "messageSelector:bottom", "alt+down": "messageSelector:bottom", "shift+j": "messageSelector:bottom", // NEW (KB14)
+    "ctrl+up": "select:first", "shift+up": "select:first", "alt+up": "select:first", "shift+k": "select:first",          // KB14, retargeted (F6 T10)
+    "ctrl+down": "select:last", "shift+down": "select:last", "alt+down": "select:last", "shift+j": "select:last",        // KB14, retargeted (F6 T10)
     // RewindPicker is an "overlay" owner (state.rewindPicker.open) — same total suppression as Select/Settings.
     "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
@@ -202,7 +209,10 @@ export const VALID_ACTIONS: readonly string[] = [
   "scroll:halfPageUp", "scroll:halfPageDown", "scroll:fullPageUp", "scroll:fullPageDown", "scroll:lineUp", "scroll:lineDown",
   "scroll:top", "scroll:bottom", "scroll:pageUp", "scroll:pageDown",
   "historySearch:next", "historySearch:accept", "historySearch:cancel", "historySearch:execute", "historySearch:cycleScope",
-  "messageSelector:up", "messageSelector:down", "messageSelector:select", "messageSelector:dismiss", "messageSelector:top", "messageSelector:bottom",
+  // The other five messageSelector actions retired with F6 T10 (see the MessageSelector block): the picker's
+  // list IS a `Select` now, so moving/accepting there are Select's actions, and a name this table no longer
+  // binds must not stay validatable — `keys-bindings.test.ts` pins VALID_ACTIONS to exactly the table's use.
+  "messageSelector:dismiss",
   "select:previous", "select:next", "select:accept", "select:cancel", "select:pageUp", "select:pageDown", "select:first", "select:last",
   "confirm:yes", "confirm:no", "confirm:previous", "confirm:next", "confirm:cycleMode", "confirm:editExternal",
   "settings:search",

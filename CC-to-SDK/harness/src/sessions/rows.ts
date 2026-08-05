@@ -45,7 +45,7 @@ export function rewindAnchorsFrom(messages: any[]): RewindAnchor[] {
       const p = messages[j] as any;
       if (p?.uuid && !PHANTOM.has(rowKind(p))) { prevUuid = String(p.uuid); break; }
     }
-    out.push({ uuid: String(m.uuid), prevUuid, text: promptText(m), index: i });
+    out.push({ uuid: String(m.uuid), prevUuid, text: promptText(m), index: i, ...(typeof m.timestamp === "string" ? { timestamp: m.timestamp } : {}) });
   });
   return out.reverse();
 }

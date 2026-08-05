@@ -30,7 +30,8 @@ import { FoldPendingState } from "./foldPendingState.js";
 import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgress.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
-import { parseCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { parseCommand, canonicalCommand, formatHelp, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { rewindFailureHeading } from "./rewindModel.js";
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
@@ -655,9 +656,13 @@ export function useChat(
 
   async function handleCommand(cmd: ParsedCommand) {
     // F4 Task 8: a slash command echoes through the SAME band as a prompt — `› ` + dim was our invention.
+    // The ECHO keeps what the user typed (`/undo`, not `/rewind`); only the DISPATCH is canonicalized, and
+    // exactly once, here — every arm below therefore matches on canonical names only (F6 T10's alias
+    // mechanism, commands.ts's `canonicalCommand`).
     appendNewLocal({ kind: "command-echo", lines: userEchoLines(`/${cmd.name}${cmd.args ? " " + cmd.args : ""}`, { width: columnsFn() }) });
+    const name = canonicalCommand(cmd.name);
     try {
-      switch (cmd.name) {
+      switch (name) {
         case "model":
           // `/model opus` must reach the engine as an id: the SDK's own `opus` alias still means Opus 4.8 (probe 72).
           if (cmd.args) { const m = resolveModelAlias(cmd.args)!; await session.setModel(m); if (!disposed.current) setModel(m); append(formatModel(m)); }
@@ -1097,7 +1102,9 @@ export function useChat(
     try {
       const anchors = await session.rewindAnchors();
       if (disposed.current) return;
-      if (!anchors.length) { notice("nothing to rewind to"); return; }
+      // AN EMPTY LIST STILL OPENS THE DIALOG (F6 T10). Upstream has no "nothing to rewind to" notice: the
+      // Rewind dialog opens and says `Nothing to rewind to yet.` inside its own frame (L487190's `!R` arm),
+      // which is also the only way that literal is reachable. The picker owns the empty state now.
       setRewindPicker({ open: true, anchors });
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
@@ -1141,7 +1148,10 @@ export function useChat(
         if (disposed.current) return;
         if (scope === "code") { notice(`⏪ code restored to before "${anchor.text.slice(0, 40)}"`); return; }
         await rebuildAfterRewind(anchor.text);
-      } catch (e) { append([{ text: `✗ rewind failed: ${(e as Error).message}`, color: role("error") }]); }
+      // Upstream's own failure copy (`ce`, bundle L487142-154), chosen by the scope that was asked for —
+      // see rewindFailureHeading for why the arm cannot be chosen by which half actually threw, and for the
+      // one arm of upstream's four that has no channel to reach us at all.
+      } catch (e) { append([{ text: rewindFailureHeading(scope), color: role("error") }, { text: (e as Error).message, color: role("error") }]); }
       finally { if (!disposed.current) setRewinding(false); }
     })();
   }

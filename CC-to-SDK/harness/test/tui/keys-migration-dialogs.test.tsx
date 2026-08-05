@@ -497,9 +497,10 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await armTodoRow(fake, stdin, lastFrame);
     stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
-    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("Rewind to a previous message"));
-    stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("Restore conversation only"));
-    stdin.write("2");    await waitFor(() => frame(lastFrame).includes("restoring"));
+    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("Restore the code and/or conversation"));
+    stdin.write("k");    await waitFor(() => frame(lastFrame).includes("❯"));
+    stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("Confirm you want to restore"));
+    stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("restoring"));
     await eachRootGlobalIsInert(stdin, lastFrame, "restoring");
     // …and the keys the hold must eat that are nobody's global: escape, enter, and the Task chord.
     for (const k of ["\x1b", "\r", "\x18\x02"]) { stdin.write(k); await new Promise((r) => setTimeout(r, 20)); }

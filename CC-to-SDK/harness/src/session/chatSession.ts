@@ -50,7 +50,11 @@ export interface SessionEvents {
  *  drives resumeSessionAt, because resumeSessionAt KEEPS its anchor and drops only what follows.
  *  prevUuid null = first prompt (or first-after-compact) → code-only restore. */
 export type RewindScope = "both" | "conversation" | "code";
-export interface RewindAnchor { uuid: string; prevUuid: string | null; text: string; index: number }
+/** `timestamp` is the persisted row's own ISO string (every `type:"user"` row on disk carries one), carried
+ *  so the F6 T10 confirmation panel can print upstream's `(<relative time>)` under the message it is about to
+ *  restore to (`RZ(new Date(D.timestamp))`, bundle L487190). Optional because it is a display nicety, not a
+ *  rewind input: a row without one simply loses that line. */
+export interface RewindAnchor { uuid: string; prevUuid: string | null; text: string; index: number; timestamp?: string }
 export interface RewindDryRun { canRewind: boolean; filesChanged?: string[]; insertions?: number; deletions?: number; error?: string }
 export interface RewindOps {
   rewindAnchors(): Promise<RewindAnchor[]>;

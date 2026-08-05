@@ -52,6 +52,15 @@ export interface SelectOption {
   allowEmptySubmitToCancel?: boolean;
   /** `false` keeps the description at full brightness (L397241 `dimDescription !== !1`). */
   dimDescription?: boolean;
+  /** F6 T10: the row BODY, rendered by the caller. Upstream has no such hook because upstream's list-shaped
+   *  surfaces that need a rich row are not `ZJs` at all — the rewind picker maps its own rows (L487190-193).
+   *  Ours are, because one list primitive is the point, so the escape hatch lives here: a row that needs more
+   *  than a string (two lines, per-span colour — the rewind row's prompt line plus its `<file> +A -R` badge)
+   *  supplies a node and `label` degrades to the measurement/fallback string. `focused` is passed rather than
+   *  read from a context because the caller colours ITS OWN spans by it, and the pointer gutter alone is not
+   *  the whole focus affordance upstream draws. Node rows opt out of `highlightText` (the caller owns its
+   *  spans) — everything else about the row, gutter and index column included, is unchanged. */
+  node?: (focused: boolean) => React.ReactNode;
 }
 
 export interface SelectProps {
@@ -82,6 +91,18 @@ export interface SelectProps {
    *  from the list: `fallbackHandler` hands the keyboard to exactly ONE handler, and inside a Select that
    *  handler has to be the Select's. */
   onUnhandledKey?: (e: KeyEvent | TextEvent) => void;
+  /** The scroll WINDOW, reported on mount and whenever it moves — the sibling of `onFocus`, and for the same
+   *  reason: the window lives in this component's reducer (`viewAfterFocus`, with upstream's scroll-one-row-
+   *  early hysteresis) and a caller that recomputed it would drift. F6 T10's rewind picker renders upstream's
+   *  `↑ N more above` / `↓ N more below` counters (L487190/193) OUTSIDE the list, and those counts are
+   *  `start` and `count - end`. Reported after a paint, so a handler may setState freely. */
+  onViewChange?: (view: SelectView) => void;
+  /** Terminal rows ONE option occupies — upstream's `perOptionHeight` (L397053), which it has always had a
+   *  third value for (`"expanded"`, 3) that no F6 surface shipped until the rewind row (prompt line + summary
+   *  line, `height: p ? 3 : 2` at L487192). It fixes the row box's height (so a row can never push the list
+   *  taller than the window it was sized for) and is what the visible-count clamp divides by. Absent: the
+   *  layout decides, exactly as before. */
+  rowHeight?: 1 | 2 | 3;
   rows?: number; columns?: number;
   focusColor?: ThemeTokenName;
   /** Which key context this list pushes. `"Select"` (the default) is the OVERLAY flavour — its bindings unbind
@@ -112,12 +133,13 @@ export function InputText({ text, cursor, placeholder }: { text: string; cursor:
 export function Select({
   options, onChange, onCancel, hideIndexes = false, visibleOptionCount = VISIBLE_OPTION_COUNT,
   inlineDescriptions = false, highlightText, defaultValue, defaultFocusValue, onInputModeToggle, onFocus, onUnhandledKey,
+  onViewChange, rowHeight,
   rows = process.stdout.rows ?? 24, columns = process.stdout.columns ?? 80, focusColor = "suggestion",
   context = "Select",
 }: SelectProps) {
   const count = options.length;
   const twoColumn = isTwoColumn(options, inlineDescriptions);
-  const visible = clampVisible(visibleOptionCount, rows, perOptionRows(twoColumn));
+  const visible = clampVisible(visibleOptionCount, rows, rowHeight ?? perOptionRows(twoColumn));
   const textOf = (o: SelectOption, map: Record<string, string>) => map[o.value] ?? o.initialValue ?? "";
 
   const [inputs, setInputs] = useState<Record<string, string>>({});
@@ -151,6 +173,16 @@ export function Select({
     onFocus?.(value);
   };
   useEffect(() => { reportFocus(current?.value); });
+  // Same idempotence trick as the focus report, on the pair that identifies a window. Not folded into the
+  // effect above: focus and window move independently (a page jump can leave the focused VALUE alone when the
+  // list is shorter than a page, and `options` changing can move the window with no focus change at all).
+  const viewRef = useRef<string>();
+  useEffect(() => {
+    const key = `${win.start}:${win.end}:${win.focus}`;
+    if (viewRef.current === key) return;
+    viewRef.current = key;
+    onViewChange?.(win);
+  });
 
   const moveTo = (target: number) => {
     const next = viewAfterFocus(win, count, visible, target);
@@ -278,6 +310,17 @@ export function Select({
             </Box>
           );
         }
+
+        // A caller-rendered body (see `node`). The row is a fixed-height column so a two-line body cannot
+        // spill past the window the visible-count was computed for — upstream's own rewind row is exactly
+        // this shape (`height: p ? 3 : 2, overflow:"hidden"`, L487192).
+        if (o.node) return (
+          <Box key={o.value} flexDirection="row" gap={1} flexShrink={0} {...(rowHeight ? { height: rowHeight, overflow: "hidden" as const } : {})}>
+            <Box flexShrink={0}>{gutter}</Box>
+            {!hideIndexes ? <Box flexShrink={0}>{index}</Box> : null}
+            <Box flexDirection="column" flexShrink={1}>{o.node(focused)}</Box>
+          </Box>
+        );
 
         return (                                             // L397241, inside `Fae`'s gap-1 row
           <Box key={o.value} flexDirection="row" gap={1}>
