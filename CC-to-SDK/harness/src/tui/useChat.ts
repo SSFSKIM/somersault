@@ -637,7 +637,14 @@ export function useChat(
       autoNoticeShown.current = true;
       if (!shouldShowAutoModeNotice(loadPrefs(historyEnv))) return;
       notice(AUTO_MODE_DESCRIPTION);
-      savePrefsFn({ hasSeenAutoModeEntryWarning: true }, historyEnv);
+      // Best-effort, mirrors theme's/output-style's own silent persistence (:1094). savePrefs does a mkdir + a
+      // file write, and THIS is a bare timer callback: no promise chain, no error boundary, and the tree
+      // installs no uncaughtException handler — so on a read-only home or a full disk an unguarded throw here
+      // would take down an interactive session over a cosmetic flag. That "a throw from a timer/fire-and-forget
+      // callback has nothing above it" shape is a recurring defect class in this codebase (an independent review
+      // caught the identical pattern in an earlier wave); every such write is wrapped. The per-process
+      // `autoNoticeShown` ref above is what still holds the notice to once when this write is the thing failing.
+      try { savePrefsFn({ hasSeenAutoModeEntryWarning: true }, historyEnv); } catch { /* best-effort */ }
     }, AUTO_MODE_NOTICE_DELAY_MS);
     return () => clearTimeout(id);
   }, [mode]);   // eslint-disable-line react-hooks/exhaustive-deps
