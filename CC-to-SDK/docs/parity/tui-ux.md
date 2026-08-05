@@ -1069,6 +1069,26 @@ Every place F6 knows what 2.1.220 does and shipped something else, with the reas
   rendered cleanly at default ambiguous-width (the side-by-side against a narrow-configured terminal remains
   untested — the one residual sliver). Bonus: a live AskUserQuestion rendered the two-column layout, the
   `[1/2]` tab marker, and the unfocused-input placeholder-over-label rule, all as pinned.
+- **Live-feedback round (2026-08-06, six reports from real ssh use, all closed same day — commits
+  `03d1f9ee3a` + `2885985ec1`).** The clean TTY pass above did not catch what days of real use did:
+  **(1)** ctrl+o during a streaming turn flooded scrollback — the pager box (`rows-6`) plus the spinner,
+  task panel, queue echo and pending stream rows beside it exceeded the terminal height, and Ink deposits
+  a frame copy per spinner tick for anything it cannot erase; the pager now hides every sibling transient
+  region while mounted, the overlay-divergence equivalent of upstream's whole-screen swap (`rUb` L499000).
+  **(2)** "diff context lines invisible" was environment, not code: pre-isolation F6 TTY runs had leaked
+  `theme:"light"` (plus a `__sentinel` fixture key) into the user's REAL `~/.claude/ccx/prefs.json` —
+  pollution removed; the isolate-HOME rule now has a shipped-harm example. **(3)** `/clear` had been
+  UI-only (engine context kept — its own comment said so); it now rides a busy-gated `clear` host op
+  through the same `swapEngine` seam as resume/rewind, with an explicit `resume: undefined` override so a
+  `--resume`-born host cannot reopen the dropped conversation. **(4)** `/compact` died on the 10 s wire
+  deadline mid-summarization every time on a real context — `COMPACT_TIMEOUT_MS = 300_000` (the rewind
+  timeout lesson re-learned) plus an immediate `compacting…` notice. **(5)** rewind printed only the bare
+  `⏪ rewound` divider: the replay raced the swap's new session id and the file's first flush (now a ~3 s
+  poll that re-reads the id each attempt, and the adapter learns the new id from the `rewound` broadcast),
+  and `app.clear()` cannot erase scrolled-out rows (the rebuild now performs `/clear`'s real `2J/3J/H`
+  wipe first). **(6)** option+backspace deleted one character — the bundle routes `meta|ctrl+backspace` to
+  `deleteWordBefore` **as a kill** and `meta+delete` to `deleteToLineEnd` (L395786–96); both ported, the
+  old single-char pin rewritten for the word arm.
 - ~~The relaunch half of acceptance #2~~ **PRODUCT-PROVEN at wave close (2026-08-06):** a Bash consult's
   suggestion row was applied in the ccx dialog, `.claude/settings.local.json` gained
   `Bash(touch /private/tmp/…/marker-a.txt)`, ccx was quit and relaunched, and the same command ran with
