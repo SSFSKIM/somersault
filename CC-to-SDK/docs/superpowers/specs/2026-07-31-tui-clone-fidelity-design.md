@@ -1207,6 +1207,22 @@ behind those rows — all forty `K1`–`K40` research rows, re-scored — sits a
 
 ## Revision Notes
 
+- 2026-08-05 — **F6's "composer still mounted" premise was wrong — upstream HIDES the prompt input
+  whenever a dialog is visible (T5 review, bundle-traced).** `KVf` renders only under
+  `zU.kind === "none"` and the dialog-visibility gate (L549494); `Fui()` (L499192) is `"visible"`
+  exactly when the dialog store has an open, unsuppressed dialog. `layout:"inline"` vs `"modal"`
+  (L507338) decides WHERE the dialog draws — in the scrollable transcript flow vs the overlaid modal
+  slot — not composer coexistence. Upstream protects a mid-typing draft by the OPPOSITE mechanism:
+  the dialog is **suppressed while typing** (`Xrl()` L499196 returns null while the composer's
+  activity flag is set — non-empty input sets it, cleared 1500 ms after the last keystroke,
+  L547796-802) and the composer shows a dim `Waiting for permission…` row (L496241) until typing
+  pauses. The F6 theme sentence and acceptance #3 are corrected accordingly: the Edit prompt's diff
+  renders in the transcript flow (not a screen-covering modal, transcript stays); the composer is
+  hidden while the dialog is visible; a prompt arriving mid-draft is suppressed behind
+  `Waiting for permission…`. DG27 is delivered in that corrected form.
+- 2026-08-05 — **F6's DG28 ("Enter plan mode?" dialog) is unreachable headlessly (probe 81).**
+  `EnterPlanMode` executes without ever consulting `canUseTool` — there is no hook to hang the
+  dialog on. Recorded beside CM6/CM7; the spec's Delivers line is superseded.
 - 2026-08-05 — **F5 acceptance #1's "40 lines" is 40 NEWLINES (Task 3).** `kmt` (L317378) counts newline
   matches, not visual rows, so the paste that mints `[Pasted text #1 +40 lines]` is one containing 40
   newlines — 41 lines of text. The threshold itself is also rows-dependent (`max(0, min(rows-10, 2))`), so

@@ -214,6 +214,18 @@ export function consentReasonLine(decisionReason: string | undefined): string | 
 
 ### Task 5: Inline-in-transcript dialog mount (DG27) — keyboard ownership FIRST
 
+> **rev3 correction (T5 review, bundle-traced — supersedes requirements 1-3 below where they
+> conflict):** upstream HIDES the prompt input whenever a dialog is visible (`KVf` gate L549494;
+> `Fui()` L499192). `layout:"inline"` decides only WHERE the dialog draws (transcript flow vs modal
+> slot). Drafts are protected by dialog SUPPRESSION while typing: non-empty input sets an activity
+> flag cleared 1500 ms after the last keystroke (L547796-802); while set, the dialog renders nothing
+> (`Xrl()` L499196) and the composer shows a dim `Waiting for permission…` row (L496241); the reveal
+> on expiry mounts the dialog fresh (`key={toolUseID}`). The corrected T5 shape: dialog visible →
+> composer NOT rendered (dialog in the flow, transcript stays); dialog suppressed (typing) →
+> composer + waiting row, dialog nothing; plan approval unchanged (modal). The `{active}` keymap
+> machinery stays (it guards overlay-close remount ordering). Spec Revision Note 2026-08-05 records
+> this; acceptance #3 is rewritten in Task 15.
+
 **Files:**
 - Modify: `src/tui/keys/KeymapProvider.tsx` + `src/tui/keys/registry.ts` (an `{active}` option on `useKeyFallback`, mirroring the scope machinery — scopes already support `active`/`preemptive`, `registry.ts:11`)
 - Modify: `src/tui/ChatComposer.tsx` (gate `useKeyScope("Chat")` / `useKeyScope("Autocomplete")` / `useKeyFallback(handleKey)` on composer ownership)
@@ -497,7 +509,7 @@ export function consentReasonLine(decisionReason: string | undefined): string | 
 
 1. *A Bash permission prompt is titled `Bash command`, shows the rendered command and its dim description, asks `Do you want to proceed?`, and for `rm -rf` or `git reset --hard` adds the matching warning line in the warning colour.*
 2. *Choosing `Yes, and don't ask again for: npm run *`, then quitting and relaunching ccx, runs the same command with no prompt — and the rule is visible in `.claude/settings.local.json`.* (Unit-pin the outcome payload + the gate's echo; the relaunch half is probe-81-proven and re-verified in the wave-close live pass.)
-3. *An Edit permission prompt shows the real diff inline in the transcript with the composer still visible below it, not a full-screen replacement.*
+3. *An Edit permission prompt shows the real diff in the transcript flow — the transcript stays visible, no screen-covering modal; the composer is hidden while the dialog is visible; a prompt arriving mid-draft is suppressed behind a dim `Waiting for permission…` row until typing pauses.* (Rewritten per the spec Revision Note 2026-08-05 — the original "composer still visible below it" contradicted the bundle at L549494.)
 4. *A plan approval is titled `Ready to code?`; choosing `No, keep planning` and submitting empty feedback leaves the dialog open rather than denying.*
 5. *The rewind picker shows each row's file-change summary before anything is selected.*
 6. *`j`/`k`, `ctrl+n`/`ctrl+p`, PageUp/PageDown and Home/End move the selection in every list in the app.* (Uniform because every list is Task 1's Select — pin via a shared helper over each surface.)
