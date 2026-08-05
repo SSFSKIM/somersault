@@ -206,13 +206,15 @@ describe("PermissionDialog — the kind switchboard", () => {
   });
 
   // Edit was the example here until T7 gave the file family a dialog of its own; an MCP tool is what is left
-  // on the generic body, and it is what task 8 will move next.
-  it("leaves every kind task 8 has yet to claim on the old generic body, contract intact", async () => {
+  // unclaimed, and T8 gave that its own body too — `GenericPermission` (`Gal` L506118), whose frame reads
+  // `Tool use`. The pre-F6 body this test used to pin no longer exists.
+  it("sends everything unclaimed to the generic body, key contract intact", async () => {
     const got: PermissionDecision[] = [];
     const view = render(<PermissionDialog req={{ toolName: "mcp__notes__append", input: { note: "hi" } }} onDecision={(d) => got.push(d)} />);
     await waitFor(() => (view.lastFrame() ?? "").length > 0);
     const f = plain(view.lastFrame() ?? "");
-    expect(f).toContain("Allow Claude to use");
+    expect(f).toContain("Tool use");
+    expect(f).not.toContain("Allow Claude to use");
     expect(f).toContain("1. Yes");
     view.stdin.write("1"); await waitFor(() => got.length === 1);
     expect(got[0]).toEqual({ kind: "allow_once" });

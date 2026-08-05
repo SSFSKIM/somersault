@@ -16,7 +16,8 @@
 //     upstream's list does, and Escape arrives as the Select's `onCancel`;
 //   · the legacy `a`/`A`/`d`/`D` letters ride `Select`'s `onUnhandledKey`, which is silent while a text row
 //     is focused. They cannot use a fallback of our own: `fallbackHandler` hands the keyboard to exactly one
-//     handler and that handler has to be the Select's.
+//     handler and that handler has to be the Select's. The mapping itself lives in `dialogKeys.ts`, shared
+//     by all six bodies (T8).
 //
 // Recorded, not built: the title's `(unsandboxed)` variant (`Oo.isSandboxingEnabled()`, L505259 — this
 // harness never sandboxes); the explain/amend affordances and their footer hints (DG4, a non-goal here); the
@@ -26,12 +27,11 @@ import { Box, Text } from "ink";
 import { DialogFrame } from "./DialogFrame.js";
 import { Select } from "../select/Select.js";
 import { consentReasonLine } from "./consentReason.js";
+import { legacyKeyDecision } from "./dialogKeys.js";
 import { destructiveWarning } from "./destructive.js";
 import { bashDecision, bashOptions } from "./bashOptions.js";
 import { escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
-import { toKeyFlags } from "../keys/editorAdapter.js";
-import type { KeyEvent, TextEvent } from "../keys/types.js";
 import { resolveThemeColor, themeTokens } from "../theme.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
 
@@ -70,16 +70,6 @@ export function BashPermission({ req, onDecision, cwd = process.cwd() }: {
     "confirm:no": () => onDecision({ kind: "deny" }),
   });
 
-  /** KB1's pre-F6 letters, kept for every client that learned them. `A` is the one outcome the F6 dialogs
-   *  never otherwise emit (`allow_always` is the old in-memory allowlist — permissions/types.ts). */
-  const legacyKey = (e: KeyEvent | TextEvent) => {
-    const { input, key } = toKeyFlags(e);
-    if (key.ctrl || key.meta) return;
-    if (input === "a") onDecision({ kind: "allow_once" });
-    else if (input === "A") onDecision({ kind: "allow_always" });
-    else if (input === "d" || input === "D") onDecision({ kind: "deny" });
-  };
-
   return (
     <DialogFrame title="Bash command" subagentType={req.subagentType}>
       <Box flexDirection="column" paddingX={2} paddingY={1}>
@@ -98,7 +88,7 @@ export function BashPermission({ req, onDecision, cwd = process.cwd() }: {
           onCancel={() => { const next = escapeFeedbackMode(feedback); if (next) setFeedback(next); else onDecision({ kind: "deny" }); }}
           onFocus={setFocus}
           onInputModeToggle={(value) => { if (value === "no") setFeedback(toggleFeedbackMode(feedback, value)); }}
-          onUnhandledKey={legacyKey}
+          onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
       </Box>
       <Box marginTop={1}><Text dimColor>esc cancel</Text></Box>

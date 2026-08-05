@@ -203,7 +203,7 @@ describe("<ChatApp>", () => {
       createdAt: Date.now(),
     });
     await waitFor(() => frame(lastFrame).includes("Red or blue?"));   // QuestionDialog up, not PermissionDialog
-    expect(frame(lastFrame)).not.toContain("Allow Claude to use");
+    expect(frame(lastFrame)).not.toContain("Tool use");              // T8: the generic body's frame title
     stdin.write("2");                                                // selects "blue" — single question → onAnswer fires
     await waitFor(() => fake.answeredCalls.length === 1);
     expect(fake.answeredCalls[0]).toEqual({ toolUseID: "t", decision: { kind: "question_answer", answers: { "Red or blue?": "blue" } } });
@@ -378,7 +378,8 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     const entry: PendingEntry = { sessionId: "s", toolUseID: "t", toolName: "Edit", kind: "permission", input: {}, createdAt: Date.now() };
     fake.parkPermission(entry);
-    await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
+    // An Edit with no derivable path routes to the generic body (`Gal`), whose frame title this is since T8.
+    await waitFor(() => frame(lastFrame).includes("Tool use"));
     stdin.write("\x1a");                                     // Ctrl-Z — same gating tier as Ctrl-C/Ctrl-B, above every dialog gate
     await waitFor(() => suspended === 1);
     expect(fake.answeredCalls).toEqual([]);                  // unanswered — stays parked, never denied

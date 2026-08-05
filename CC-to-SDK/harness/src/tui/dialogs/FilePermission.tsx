@@ -6,7 +6,8 @@
 //
 // Everything pure lives in `fileOptions.ts`; this file is the wiring, and it repeats `BashPermission.tsx`'s
 // key contract verbatim (digits to the Select · `y`/`n` deregistered while a text row has the cursor ·
-// Enter/Escape to the inner `SelectDecision` scope · the legacy letters on `onUnhandledKey`). THE SELECT
+// Enter/Escape to the inner `SelectDecision` scope · the legacy letters on `onUnhandledKey`, mapped by the
+// shared `dialogKeys.ts`). THE SELECT
 // MOUNTS INSIDE THIS COMPONENT, not beside it: the registry ranks scopes by MOUNT ORDER, so a sibling mount
 // would put `Confirmation` above `SelectDecision` and silently invert Enter and Escape.
 //
@@ -27,6 +28,7 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { DialogFrame } from "./DialogFrame.js";
 import { Select } from "../select/Select.js";
+import { legacyKeyDecision } from "./dialogKeys.js";
 import { Line } from "../Line.js";
 import { renderDiff } from "../diffRender.js";
 import { resolvePatch } from "../diffSource.js";
@@ -34,8 +36,6 @@ import { KNOWN_LANGS, highlightCode } from "../highlight.js";
 import { escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
 import { useBindingLookup, useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import { formatBindingLower } from "../keys/hints.js";
-import { toKeyFlags } from "../keys/editorAdapter.js";
-import type { KeyEvent, TextEvent } from "../keys/types.js";
 import { resolveThemeColor, themeTokens } from "../theme.js";
 import type { RenderLine } from "../render.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
@@ -215,15 +215,6 @@ export function FilePermission({ req, onDecision, filePath, sedEdit, cwd = proce
     "confirm:cycleMode": () => { const row = options.find((o) => o.value.startsWith("yes-")); if (row) decide(row.value); },
   });
 
-  /** KB1's pre-F6 letters, kept for every client that learned them (BashPermission.tsx's reasoning). */
-  const legacyKey = (e: KeyEvent | TextEvent) => {
-    const { input, key } = toKeyFlags(e);
-    if (key.ctrl || key.meta) return;
-    if (input === "a") onDecision({ kind: "allow_once" });
-    else if (input === "A") onDecision({ kind: "allow_always" });
-    else if (input === "d" || input === "D") onDecision({ kind: "deny" });
-  };
-
   const warning = descriptor.symlinkTarget === undefined ? undefined : symlinkWarning(descriptor.symlinkTarget, cwd);
   return (
     <DialogFrame title={descriptor.title} subtitle={descriptor.subtitle} subagentType={req.subagentType} innerPaddingX={0}>
@@ -237,7 +228,7 @@ export function FilePermission({ req, onDecision, filePath, sedEdit, cwd = proce
           onCancel={() => { const next = escapeFeedbackMode(feedback); if (next) setFeedback(next); else onDecision({ kind: "deny" }); }}
           onFocus={setFocus}
           onInputModeToggle={(value) => { if (value === "no") setFeedback(toggleFeedbackMode(feedback, value)); }}
-          onUnhandledKey={legacyKey}
+          onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
       </Box>
       <Box paddingX={1} marginTop={1}><Text dimColor>esc cancel</Text></Box>

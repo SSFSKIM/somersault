@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Transcript } from "../../src/tui/Transcript.js";
 import { TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
-import { GenericPermission, PermissionDialog } from "../../src/tui/PermissionDialog.js";
+import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
 import { ChatStatusBar, modeColor, ctxColor } from "../../src/tui/ChatStatusBar.js";
 import { SessionPicker } from "../../src/tui/SessionPicker.js";
 import { ModelPicker } from "../../src/tui/ModelPicker.js";
@@ -26,11 +26,14 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 }
-// F6 T7: this block pins the GENERIC body, so its request must name a tool the switchboard leaves generic.
-// `Edit` used to be one; it is not any more — every file tool that derives a path (and Edit with a
-// `file_path` does) now routes to `FilePermission`, which has its own suite. An MCP tool is the durable
-// choice: `permissionKind`'s registry claims no MCP name, and task 8 replaces the remaining kinds with
-// dialogs of their own, never this one.
+// F6 T7/T8: this block pins the GENERIC body reached THROUGH the switchboard, so its request must name a tool
+// the switchboard leaves generic. `Edit` used to be one; it is not any more — every file tool that derives a
+// path (and Edit with a `file_path` does) now routes to `FilePermission`. An MCP tool is the durable choice:
+// `permissionKind`'s registry claims no MCP name. T8 replaced the pre-F6 body these tests were written
+// against with `GenericPermission` (`Gal` L506118), which is why every expectation below moved — the frame is
+// the `Ed` rule and `Tool use` now, the option list is a real `Select`, and "don't ask again" writes a
+// localSettings rule instead of the old in-memory `allow_always`. The body's own suite is
+// `small-permissions.test.tsx`; what stays here is the switchboard-level contract.
 const req = { toolName: "mcp__notes__append", input: { note: "f.ts" }, toolUseID: "t", signal: new AbortController().signal };
 
 describe("<Transcript>", () => {
@@ -58,45 +61,47 @@ describe("<Transcript>", () => {
   });
 });
 describe("<PermissionDialog>", () => {
-  it("reconstructs a CC-style numbered prompt from toolName+input (no SDK title)", () => {
+  // The F6 `Select` dims its index column, so the digit and its label are separated by an SGR reset in the
+  // raw frame — every expectation on a row reads the STRIPPED frame.
+  it("renders the generic body's `Tool use` frame from toolName+input alone (no SDK title)", () => {
     const { lastFrame } = render(<PermissionDialog req={req} onDecision={() => {}} />);
-    const f = lastFrame() ?? "";
-    expect(f).toContain("Allow Claude to use");
+    const f = (lastFrame() ?? "").replace(/\x1b\[[0-9;]*m/g, "");
+    expect(f).toContain("Tool use");
     expect(f).toContain("mcp__notes__append");
     expect(f).toContain("f.ts");                          // the full target shown
     expect(f).toContain("1. Yes");
     expect(f).toContain("don't ask again");
-    expect(f).toContain("No, and tell Claude");
+    expect(f).toContain("No");
+    expect(f).not.toContain("Allow Claude to use");       // the pre-F6 reconstruction is gone (T8)
   });
-  it("attribution: subagentType renders 'Subagent (code-reviewer) asks:'", () => {
+  it("attribution rides the TITLE now (DG21), not a line above the box", () => {
     const attributed = { ...req, subagentType: "code-reviewer" };
     const f = render(<PermissionDialog req={attributed} onDecision={() => {}} />).lastFrame() ?? "";
-    expect(f).toContain("Subagent (code-reviewer) asks:");
+    expect(f).toContain("from the code-reviewer agent");
+    expect(f).not.toContain("Subagent (code-reviewer) asks:");
   });
-  // F6 T6 routed a plain Bash command to `BashPermission`, and T7 took the one remaining Bash route that was
-  // not the Bash dialog — the in-place `sed`, which `permissionKind` calls a FILE edit. The generic body's
-  // `$ ` prefix is therefore UNREACHABLE through the switchboard now; it is pinned on the component itself so
-  // the branch cannot rot while task 8 is still using this body as its fallback.
-  it("still prefixes a Bash command with `$ ` when the generic body renders one directly", () => {
-    const f = render(<GenericPermission req={{ toolName: "Bash", input: { command: "sed -i '' 's/a/b/' build.ts" } }} onDecision={() => {}} />).lastFrame() ?? "";
-    expect(f).toContain("$ sed -i '' 's/a/b/' build.ts");
-  });
-  it("number keys 1/2/3 and legacy a/A/d both map to allow_once/allow_always/deny", async () => {
+  it("number keys 1/2/3 and the legacy letters still answer through the switchboard", async () => {
     const got: PermissionDecision[] = [];
-    const { stdin } = render(<PermissionDialog req={req} onDecision={(d) => got.push(d)} />);
-    await new Promise((r) => setTimeout(r, 20)); // let useInput subscribe (passive effect) before non-idempotent keys
+    const { stdin } = render(<PermissionDialog req={req} cwd="/repo" onDecision={(d) => got.push(d)} />);
+    await new Promise((r) => setTimeout(r, 20)); // let the provider subscribe (passive effect) before non-idempotent keys
     stdin.write("1"); await waitFor(() => got.length === 1);
     stdin.write("2"); await waitFor(() => got.length === 2);
     stdin.write("3"); await waitFor(() => got.length === 3);
     stdin.write("a"); await waitFor(() => got.length === 4);   // legacy shortcuts still work
-    expect(got).toEqual([{ kind: "allow_once" }, { kind: "allow_always" }, { kind: "deny" }, { kind: "allow_once" }]);
+    // Row 2 is `gtm`'s whole-tool localSettings rule now — the old in-memory `allow_always` is dead (T8).
+    expect(got).toEqual([
+      { kind: "allow_once" },
+      { kind: "allow_with_updates", updatedPermissions: [{ type: "addRules", rules: [{ toolName: "mcp__notes__append" }], behavior: "allow", destination: "localSettings" }] },
+      { kind: "deny" },
+      { kind: "allow_once" },
+    ]);
   });
   it("bare y accepts and bare n rejects (KB1, F0 acceptance 7)", async () => {
     // …on the GENERIC body (the Bash body has its own y/n test in bash-permission.test.tsx).
     const decisions: PermissionDecision[] = [];
     const bashReq = req;
     const a = render(<PermissionDialog req={bashReq} onDecision={(d) => decisions.push(d)} />);
-    await new Promise((r) => setTimeout(r, 20)); // let useInput subscribe (passive effect) before non-idempotent keys
+    await new Promise((r) => setTimeout(r, 20)); // let the provider subscribe (passive effect) before non-idempotent keys
     a.stdin.write("y");
     await waitFor(() => decisions.length === 1);
     expect(decisions[0]).toEqual({ kind: "allow_once" });

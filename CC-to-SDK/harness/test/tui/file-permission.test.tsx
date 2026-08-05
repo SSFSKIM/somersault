@@ -310,12 +310,15 @@ describe("PermissionDialog — the switchboard routes the file kind", () => {
   it("Grep — which always derives a path — reaches it too, on the plain arm", async () =>
     expect((await mountVia({ toolName: "Grep", input: { pattern: "TODO" } })).frame()).toContain("Read file"));
 
+  // T8 replaced the pre-F6 body with `GenericPermission` (`Gal` L506118), so the frame these two look for is
+  // `Tool use` now — and WebFetch has left the fallback entirely for `FetchPermission` (`ull` L506735).
   it("an Edit with NO derivable path still falls to the generic body (`Vrn` L228408)", async () =>
-    expect((await mountVia({ toolName: "Edit", input: {} })).frame()).toContain("Allow Claude to use"));
+    expect((await mountVia({ toolName: "Edit", input: {} })).frame()).toContain("Tool use"));
 
-  it("a kind with no dialog of its own keeps the pre-F6 generic body, contract intact", async () => {
+  it("WebFetch is no longer the fallback's problem — it has a dialog of its own", async () => {
     const v = await mountVia({ toolName: "WebFetch", input: { url: "https://example.com" } });
-    expect(v.frame()).toContain("Allow Claude to use");
+    expect(v.frame()).toContain("Fetch");
+    expect(v.frame()).not.toContain("Tool use");
     v.stdin.write("1"); await waitFor(() => v.got.length === 1);
     expect(v.got[0]).toEqual({ kind: "allow_once" });
   });
