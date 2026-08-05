@@ -138,6 +138,14 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   { context: "Confirmation", bindings: {
     "enter": "confirm:yes", "escape": "confirm:no", "up": "confirm:previous", "down": "confirm:next",
     "y": "confirm:yes", "n": "confirm:no",          // F0 fix, re-homed
+    // F6 T7, upstream L505895 (`co({"confirm:cycleMode": A}, {context:"Confirmation"})` inside `Cem`): the
+    // file dialog's session rows PRINT this chord inside their own labels ("…during this session (shift+tab)",
+    // `tal` L505626), so the label is a lie unless the key it names picks that row. It is the same physical
+    // chord as Chat's `chat:cycleMode`, and that is not a collision: with T5's active-gating the composer's
+    // `Chat` scope is off the stack while a dialog owns the keyboard, so exactly one of the two ever resolves.
+    // A dialog that registers no handler for it (Bash, the generic body) falls through to the fallback, which
+    // is where shift+tab already went before this line existed — adding it changes nothing for them.
+    "shift+tab": "confirm:cycleMode",
     // owner === "decision" fell THROUGH the old gate (only "overlay" returned early), so ctrl+c/o/r/t/b stay
     // live over a visible dialog — deliberately, per the ChatApp comment — and must not be unbound here.
     // Only ctrl+d is dead: the composer that owns it is unmounted while the dialog is up. (F6 t5 tested that
@@ -179,7 +187,7 @@ export const VALID_ACTIONS: readonly string[] = [
   "historySearch:next", "historySearch:accept", "historySearch:cancel", "historySearch:execute", "historySearch:cycleScope",
   "messageSelector:up", "messageSelector:down", "messageSelector:select", "messageSelector:dismiss", "messageSelector:top", "messageSelector:bottom",
   "select:previous", "select:next", "select:accept", "select:cancel", "select:pageUp", "select:pageDown", "select:first", "select:last",
-  "confirm:yes", "confirm:no", "confirm:previous", "confirm:next",
+  "confirm:yes", "confirm:no", "confirm:previous", "confirm:next", "confirm:cycleMode",
   "settings:search",
   "tabs:next", "tabs:previous",
 ];

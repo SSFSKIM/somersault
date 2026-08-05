@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Transcript } from "../../src/tui/Transcript.js";
 import { TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
-import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
+import { GenericPermission, PermissionDialog } from "../../src/tui/PermissionDialog.js";
 import { ChatStatusBar, modeColor, ctxColor } from "../../src/tui/ChatStatusBar.js";
 import { SessionPicker } from "../../src/tui/SessionPicker.js";
 import { ModelPicker } from "../../src/tui/ModelPicker.js";
@@ -26,7 +26,12 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 }
-const req = { toolName: "Edit", input: { file_path: "f.ts" }, toolUseID: "t", signal: new AbortController().signal };
+// F6 T7: this block pins the GENERIC body, so its request must name a tool the switchboard leaves generic.
+// `Edit` used to be one; it is not any more — every file tool that derives a path (and Edit with a
+// `file_path` does) now routes to `FilePermission`, which has its own suite. An MCP tool is the durable
+// choice: `permissionKind`'s registry claims no MCP name, and task 8 replaces the remaining kinds with
+// dialogs of their own, never this one.
+const req = { toolName: "mcp__notes__append", input: { note: "f.ts" }, toolUseID: "t", signal: new AbortController().signal };
 
 describe("<Transcript>", () => {
   // F1 Task 4: every Transcript consumer speaks RenderItem now — including Task 2's raw-color boundary,
@@ -57,7 +62,7 @@ describe("<PermissionDialog>", () => {
     const { lastFrame } = render(<PermissionDialog req={req} onDecision={() => {}} />);
     const f = lastFrame() ?? "";
     expect(f).toContain("Allow Claude to use");
-    expect(f).toContain("Edit");
+    expect(f).toContain("mcp__notes__append");
     expect(f).toContain("f.ts");                          // the full target shown
     expect(f).toContain("1. Yes");
     expect(f).toContain("don't ask again");
@@ -68,12 +73,12 @@ describe("<PermissionDialog>", () => {
     const f = render(<PermissionDialog req={attributed} onDecision={() => {}} />).lastFrame() ?? "";
     expect(f).toContain("Subagent (code-reviewer) asks:");
   });
-  // F6 T6: a plain Bash command routes to the new `BashPermission` body, so the generic body's `$ ` prefix
-  // is now reachable only through the ONE Bash route that is not the Bash dialog — an in-place `sed`, which
-  // `permissionKind` sends to the file kind (and the file dialog is task 7, so it lands here meanwhile).
-  it("shows the full Bash command with a $ prefix", () => {
-    const bashReq = { toolName: "Bash", input: { command: "sed -i '' 's/a/b/' build.ts" }, toolUseID: "t", signal: new AbortController().signal };
-    const f = render(<PermissionDialog req={bashReq} onDecision={() => {}} />).lastFrame() ?? "";
+  // F6 T6 routed a plain Bash command to `BashPermission`, and T7 took the one remaining Bash route that was
+  // not the Bash dialog — the in-place `sed`, which `permissionKind` calls a FILE edit. The generic body's
+  // `$ ` prefix is therefore UNREACHABLE through the switchboard now; it is pinned on the component itself so
+  // the branch cannot rot while task 8 is still using this body as its fallback.
+  it("still prefixes a Bash command with `$ ` when the generic body renders one directly", () => {
+    const f = render(<GenericPermission req={{ toolName: "Bash", input: { command: "sed -i '' 's/a/b/' build.ts" } }} onDecision={() => {}} />).lastFrame() ?? "";
     expect(f).toContain("$ sed -i '' 's/a/b/' build.ts");
   });
   it("number keys 1/2/3 and legacy a/A/d both map to allow_once/allow_always/deny", async () => {

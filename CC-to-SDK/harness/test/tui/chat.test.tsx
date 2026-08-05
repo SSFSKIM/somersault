@@ -127,7 +127,7 @@ describe("<ChatApp>", () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     fake.parkPermission({ sessionId: "s", toolUseID: "t", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
-    await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));   // dialog up
+    await waitFor(() => frame(lastFrame).includes("Edit file"));   // dialog up
     expect(lastFrame()).toContain("Edit");
     stdin.write("a");
     await waitFor(() => fake.answeredCalls.length === 1);
@@ -139,11 +139,11 @@ describe("<ChatApp>", () => {
     const { lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     fake.parkPermission({ sessionId: "s", toolUseID: "p", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
-    await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
+    await waitFor(() => frame(lastFrame).includes("Edit file"));
     expect(frame(lastFrame)).not.toContain("Esc interrupt");
     expect(frame(lastFrame)).not.toContain("[y/n");
     fake.settlePermission("p", "me", "deny");
-    await waitFor(() => !frame(lastFrame).includes("Allow Claude to use"));
+    await waitFor(() => !frame(lastFrame).includes("Edit file"));
     fake.parkPermission({ sessionId: "s", toolUseID: "q", toolName: "AskUserQuestion", kind: "question", input: { questions: [{ question: "Continue?", options: [{ label: "yes" }], multiSelect: false }] }, createdAt: Date.now() });
     await waitFor(() => frame(lastFrame).includes("Continue?"));
     expect(frame(lastFrame)).not.toContain("Esc rewind");
@@ -760,11 +760,11 @@ describe("<ChatApp>", () => {
       view.stdin.write("\x03");                                // Ctrl-C belongs to the visible surface, never hidden pending
       await new Promise((r) => setTimeout(r, 20));
       expect(frame(view.lastFrame)).not.toContain("Press Ctrl-C again to exit");
-      if (testCase.closesOnCtrlC) await waitFor(() => frame(view.lastFrame).includes("Allow Claude to use"));
+      if (testCase.closesOnCtrlC) await waitFor(() => frame(view.lastFrame).includes("Edit file"));
       else {
         expect(frame(view.lastFrame)).toContain(testCase.name);
         view.stdin.write("\x1b");                              // visible overlay closes by its own Escape handler
-        await waitFor(() => frame(view.lastFrame).includes("Allow Claude to use"));
+        await waitFor(() => frame(view.lastFrame).includes("Edit file"));
       }
       view.stdin.write("a");
       await waitFor(() => fake.answeredCalls.length === 1);
@@ -779,12 +779,21 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
 
     fake.parkPermission({ sessionId: "s", toolUseID: "guard", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
-    await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
-    stdin.write("\x1b[Z");                                      // must not leak to the former composer
-    stdin.write("\x1b");                                        // dialog denies; it must not also arm rewind
+    await waitFor(() => frame(lastFrame).includes("Edit file"));
+    // shift+tab must not leak to the former composer. Since F6 T7 it is not merely SWALLOWED here — the file
+    // dialog BINDS it (`confirm:cycleMode`) and takes its own accept-session row with it, which is a stronger
+    // form of the same claim: the key reached the dialog and stopped there.
+    stdin.write("\x1b[Z");
     await waitFor(() => fake.answeredCalls.length === 1);
+    expect(fake.answeredCalls[0]!.decision).toMatchObject({ kind: "allow_with_updates" });
+    expect(modes).toEqual([]);                                  // …and the composer's mode ladder never ran
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
-    expect(modes).toEqual([]);
+
+    fake.parkPermission({ sessionId: "s", toolUseID: "guard2", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
+    await waitFor(() => frame(lastFrame).includes("Edit file"));
+    stdin.write("\x1b");                                        // dialog denies; it must not also arm rewind
+    await waitFor(() => fake.answeredCalls.length === 2);
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
   });
 
@@ -1887,7 +1896,7 @@ describe("<ChatApp>", () => {
     await new Promise((r) => setTimeout(r, 20));
 
     fake.parkPermission({ sessionId: "s", toolUseID: "rescue", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
-    await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
+    await waitFor(() => frame(lastFrame).includes("Edit file"));
     stdin.write("\x1b"); await waitFor(() => fake.answeredCalls.length === 1);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await new Promise((r) => setTimeout(r, 20));

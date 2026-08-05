@@ -205,9 +205,11 @@ describe("PermissionDialog — the kind switchboard", () => {
     expect(plain(view.lastFrame() ?? "")).toContain("Bash command");
   });
 
-  it("leaves every other kind on the old generic body, contract intact", async () => {
+  // Edit was the example here until T7 gave the file family a dialog of its own; an MCP tool is what is left
+  // on the generic body, and it is what task 8 will move next.
+  it("leaves every kind task 8 has yet to claim on the old generic body, contract intact", async () => {
     const got: PermissionDecision[] = [];
-    const view = render(<PermissionDialog req={{ toolName: "Edit", input: { file_path: "f.ts" } }} onDecision={(d) => got.push(d)} />);
+    const view = render(<PermissionDialog req={{ toolName: "mcp__notes__append", input: { note: "hi" } }} onDecision={(d) => got.push(d)} />);
     await waitFor(() => (view.lastFrame() ?? "").length > 0);
     const f = plain(view.lastFrame() ?? "");
     expect(f).toContain("Allow Claude to use");

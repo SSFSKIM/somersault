@@ -2,10 +2,11 @@
 // that has no dialog of its own still falls back to.
 //
 // `permissionKind(toolName, input, cwd)` is upstream's own routing question (`Ksn` L279164 — see
-// dialogs/permissionKind.ts), asked once here. Task 6 lands the `bash` arm; `file`/`webfetch`/`skill`/
-// `monitor`/`generic` keep the pre-F6 body below UNTOUCHED, key contract and all, until tasks 7-8 replace
-// them. Note what the routing already buys the old body: a Bash command that is really an in-place `sed`
-// edit resolves to the `file` kind, so it does NOT reach the Bash dialog.
+// dialogs/permissionKind.ts), asked once here. Task 6 landed the `bash` arm and Task 7 the `file` one — which
+// is the biggest of the three by traffic: six tools (Edit · Write · NotebookEdit · Read · Glob · Grep) plus a
+// Bash command that parses as an in-place `sed`, whose descriptor rides the route as `sedEdit`.
+// `webfetch`/`skill`/`monitor`/`generic` keep the pre-F6 body below UNTOUCHED, key contract and all, until
+// task 8 replaces them.
 //
 // ── the generic body (pre-F6, unchanged) ──────────────────────────────────────────────────────────────
 // CC-style approval gate: a numbered, arrow-selectable menu
@@ -28,6 +29,7 @@ import type { PermissionUpdateLike } from "../permissions/types.js";
 import { ACCENT } from "./theme.js";
 import { permissionKind } from "./dialogs/permissionKind.js";
 import { BashPermission } from "./dialogs/BashPermission.js";
+import { FilePermission } from "./dialogs/FilePermission.js";
 
 /** The salient target of a tool: the Bash command, the file path, else the first arg. */
 function target(toolName: string, input: Record<string, unknown>): string {
@@ -49,12 +51,17 @@ export interface PermissionDialogRequest {
 /** The switchboard. `cwd` is the SESSION's working directory, which the routing needs (a Glob/Grep/Read
  *  consult titles itself with it) and the Bash body's suggestion summary names — see permissionKind.ts. */
 export function PermissionDialog({ req, onDecision, cwd }: { req: PermissionDialogRequest; onDecision: (d: PermissionDecision) => void; cwd?: string }) {
-  const { kind } = permissionKind(req.toolName, req.input, cwd);
+  const { kind, filePath, sedEdit } = permissionKind(req.toolName, req.input, cwd);
   if (kind === "bash") return <BashPermission req={req} onDecision={onDecision} cwd={cwd} />;
+  if (kind === "file") return <FilePermission req={req} onDecision={onDecision} cwd={cwd} filePath={filePath} sedEdit={sedEdit} />;
   return <GenericPermission req={req} onDecision={onDecision} />;
 }
 
-function GenericPermission({ req, onDecision }: { req: PermissionDialogRequest; onDecision: (d: PermissionDecision) => void }) {
+/** Exported for its own test: since T7 the switchboard sends every file tool and every Bash command (plain or
+ *  sed-shaped) to a dialog of its own, so several of this body's branches — the `$ ` command prefix above all
+ *  — are no longer reachable THROUGH the switchboard even though the body still renders them for the kinds
+ *  task 8 has yet to claim. */
+export function GenericPermission({ req, onDecision }: { req: PermissionDialogRequest; onDecision: (d: PermissionDecision) => void }) {
   const opts: Opt[] = [
     { key: "1", label: "Yes", decision: { kind: "allow_once" } },
     { key: "2", label: `Yes, and don't ask again for ${req.toolName} this session`, decision: { kind: "allow_always" } },

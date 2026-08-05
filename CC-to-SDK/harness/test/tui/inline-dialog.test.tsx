@@ -33,7 +33,10 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 /** The composer's own prompt row is `❯` + NBSP (F5 t2); the transcript's echo uses a normal space, so this
  *  substring is a deterministic "the composer is mounted" probe and safe to assert negatively. */
 const GLYPH = "❯ ";
-const DIALOG = "Allow Claude to use";
+/** "A decision dialog is on screen". `permissionEntry` parks an Edit, which is what a real session parks far
+ *  more often than anything else — and since F6 T7 that routes to `FilePermission`, whose frame title this is
+ *  (`UMy` L228438). It was the generic body's `Allow Claude to use` until the switchboard grew a file arm. */
+const DIALOG = "Edit file";
 
 // Every history read here points at a throwaway fleet root, so no test touches the real ~/.claude prompt log.
 const roots: string[] = [];
@@ -83,7 +86,9 @@ describe("decision dialog — VISIBLE (upstream's `on === \"visible\"`)", () => 
     await waitFor(() => frame(lastFrame).includes(DIALOG));
     stdin.write("2");
     await waitFor(() => fake.answeredCalls.length === 1);
-    expect(fake.answeredCalls[0]).toEqual({ toolUseID: "d1", decision: { kind: "allow_always" } });
+    // Row 2 is `tal`'s session row now, not the generic body's tool-name allowlist: an in-directory write with
+    // no engine suggestion behind it constructs `iHr`'s own grant (F6 T7).
+    expect(fake.answeredCalls[0]).toEqual({ toolUseID: "d1", decision: { kind: "allow_with_updates", updatedPermissions: [{ type: "setMode", mode: "acceptEdits", destination: "session" }] } });
     await waitFor(() => frame(lastFrame).includes(GLYPH));            // composer comes back with the answer
     fake.parkPermission(permissionEntry("d2"));
     await waitFor(() => frame(lastFrame).includes(DIALOG));
