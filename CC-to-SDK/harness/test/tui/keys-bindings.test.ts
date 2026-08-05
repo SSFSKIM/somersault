@@ -39,9 +39,14 @@ function duplicateKeys(table: readonly ContextBindings[]): string[] {
 }
 
 describe("the context registry", () => {
-  it("has exactly the 20 upstream contexts, with no duplicates", () => {
-    expect(VALID_CONTEXTS).toHaveLength(20);
-    expect(new Set(VALID_CONTEXTS).size).toBe(20);
+  // 20 upstream + 1 of ours. `SelectDecision` is the only name in the registry that upstream does not have,
+  // and it is deliberate: upstream routes root globals by OWNER while we route by context name, so a `Select`
+  // list that is a DECISION surface needs a second name to stop inheriting the overlay suppression (F6 T2
+  // review, Important 1 — see the block in bindings.ts and the pins further down this file).
+  it("has exactly the 20 upstream contexts plus SelectDecision, with no duplicates", () => {
+    expect(VALID_CONTEXTS).toHaveLength(21);
+    expect(new Set(VALID_CONTEXTS).size).toBe(21);
+    expect(VALID_CONTEXTS).toContain("SelectDecision");
   });
   it("includes DiffPanel — a valid context with zero default bindings (06 §1.1)", () =>
     expect(VALID_CONTEXTS).toContain("DiffPanel"));
@@ -131,6 +136,23 @@ describe("overlay gating, expressed as null bindings", () => {
   // whose ctrl+x ctrl+b backgrounds the running turn from inside it.
   it.each(["Select", "Settings", "MessageSelector", "HistorySearch", "Transcript"])("%s unbinds task:background's chord alias too, not just the plain ctrl+b", (context) => {
     expect(block(context).bindings["ctrl+x ctrl+b"], `${context} ctrl+x ctrl+b must be null`).toBeNull();
+  });
+  // The other half of the gate, and the defect that produced this context: owner === "decision" FALLS THROUGH
+  // and keeps every root global. `Confirmation` has always expressed that; `SelectDecision` is the same claim
+  // for a list-shaped decision surface, and without it QuestionDialog's migration onto `Select` silently made
+  // Ctrl-C and Ctrl-O dead over a parked question.
+  it("SelectDecision is a DECISION owner: it keeps every root global, exactly like Confirmation", () => {
+    const b = block("SelectDecision").bindings;
+    for (const k of ["ctrl+c", "ctrl+o", "ctrl+t", "ctrl+r", "ctrl+b", "ctrl+x ctrl+b"]) {
+      expect(k in b, `SelectDecision must not bind ${k} at all`).toBe(false);
+    }
+    expect(b["ctrl+d"], "…except ctrl+d, whose owner (the composer) is unmounted").toBeNull();
+    for (const k of ["alt+p", "alt+t"]) expect(b[k], `SelectDecision ${k} must be null (Confirmation's rule)`).toBeNull();
+  });
+  it("SelectDecision offers the same eight actions as Select — only the suppression differs", () => {
+    const sel = block("Select").bindings, dec = block("SelectDecision").bindings;
+    const actions = (b: Record<string, string | null>) => Object.entries(b).filter(([, v]) => v !== null).sort();
+    expect(actions(dec)).toEqual(actions(sel));
   });
   it("HistorySearch is an overlay owner too, but rebinds ctrl+r/ctrl+c instead of unbinding them", () => {
     const b = block("HistorySearch").bindings;

@@ -10,11 +10,16 @@
 //     That is how today's owner gate in ChatApp.tsx:126-159 is expressed declaratively; see the block below.
 import type { KeyContextName } from "./types.js";
 
-/** The 20 valid contexts (06 §1.1/§1.2): the 19 with default bindings plus `DiffPanel`, which validates but ships
- *  no binding upstream either. A context name outside this list is a config error, not a silent no-op. */
+/** The 21 valid contexts: upstream's 20 (06 §1.1/§1.2 — the 19 with default bindings plus `DiffPanel`, which
+ *  validates but ships no binding upstream either) plus OUR `SelectDecision`. A context name outside this list
+ *  is a config error, not a silent no-op.
+ *
+ *  `SelectDecision` is the one addition to upstream's registry, and it exists because upstream never had to
+ *  make this distinction: its own key layer routes by OWNER, ours by context name, and a `Select` list can be
+ *  either kind of owner. See the block below for the whole argument. */
 export const VALID_CONTEXTS: readonly KeyContextName[] = ["Global", "Chat", "Autocomplete", "Confirmation", "Help",
   "Transcript", "HistorySearch", "Task", "ThemePicker", "Settings", "Tabs", "Attachments", "Footer",
-  "MessageSelector", "DiffDialog", "DiffPanel", "ModelPicker", "Select", "Plugin", "Scroll"];
+  "MessageSelector", "DiffDialog", "DiffPanel", "ModelPicker", "Select", "SelectDecision", "Plugin", "Scroll"];
 
 /** One context's bindings. `string` = an action name from `VALID_ACTIONS`; `null` = unbound in this context. */
 export interface ContextBindings { context: KeyContextName; bindings: Record<string, string | null> }
@@ -108,6 +113,27 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // the picker — one key dead while its alias fired, the split this table exists to remove. Free: a null
     // chord never arms its own prefix (resolver.ts), it is only consulted during the pending walk.
     "ctrl+x ctrl+b": null,
+  }},
+  // F6 T2 review, Important 1. `Select`'s eight actions with `Confirmation`'s SUPPRESSION set instead of its
+  // own — the context a list pushes when it is a DECISION surface (a dialog answering the model) rather than an
+  // OVERLAY (a picker the user opened). The distinction is upstream's, expressed in its owner gate; ours is a
+  // context stack, so it needs a second name. Without it, moving QuestionDialog's multiSelect onto the `Select`
+  // primitive silently killed five root globals over a parked question — Ctrl-C could no longer arm the exit
+  // hint and Ctrl-O could no longer open the pager, both of which stay live over the single-select branch's
+  // `Confirmation` scope deliberately (see that block's comment, and ChatApp.tsx:126-159).
+  //
+  // Every F6 surface that answers the MODEL passes `context="SelectDecision"` to `Select`/`MultiSelect`;
+  // pickers the USER opened keep the default `"Select"`. Tasks 5-9 (permission and plan dialogs) inherit this.
+  { context: "SelectDecision", bindings: {
+    "up": "select:previous", "down": "select:next", "j": "select:next", "k": "select:previous",
+    "ctrl+n": "select:next", "ctrl+p": "select:previous",
+    "enter": "select:accept", "escape": "select:cancel",
+    "pageup": "select:pageUp", "pagedown": "select:pageDown", "home": "select:first", "end": "select:last",
+    // Only the two `Confirmation` kills, for exactly its reasons: the composer that owns ctrl+d is unmounted
+    // while a dialog is up, and alt+p/alt+t are CHAT keys whose scope is already off the stack (the nulls only
+    // close the passive-flush sub-tick). ctrl+c/ctrl+o/ctrl+t/ctrl+r/ctrl+b are deliberately ABSENT — a
+    // decision dialog keeps every root global, and adding a null here would be the defect this context fixes.
+    "ctrl+d": null, "alt+p": null, "alt+t": null,
   }},
   { context: "Confirmation", bindings: {
     "enter": "confirm:yes", "escape": "confirm:no", "up": "confirm:previous", "down": "confirm:next",

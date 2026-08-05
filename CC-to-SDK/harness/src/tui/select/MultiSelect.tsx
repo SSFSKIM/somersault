@@ -1,26 +1,26 @@
 // tui/select/MultiSelect.tsx — the `MultiSelect` primitive (F6 T2), `Select`'s check-box sibling: the same
 // windowed list, but every row is a `[ ]`/`[✔]` toggle and the list ends in a bold submit row. Transcribed
-// from 2.1.220's `V3` (L397428) → `mQs` (L397448, the renderer) → `tQs` (L397306, the state + key handler),
+// from 2.1.220's `V3` (L397431) → `mQs` (L397448, the renderer) → `tQs` (L397306, the state + key handler),
 // over the SAME row chrome `Select` uses (`eg`/`Fae` L396317/L396446, gutter `uJs` L396391, input row `RLe`
 // L396465). Pure geometry is shared with `Select` through `selectModel.ts` — this file forks no window math.
 //
 // Three places where `tQs` is genuinely a DIFFERENT handler from `Select`'s `DJs`, and why the keymap wiring
 // below is not just `useSelectKeys`:
 //   1. THE SUBMIT ROW IS NOT AN OPTION. Movement wraps inside the option ring (`nz_`, L396859/L396875), and
-//      the submit row is reachable only by stepping DOWN off the last option (L397374-397381) and left by
-//      stepping UP off it (L397386-397390). So `previous` from the first row lands on the LAST OPTION, never
+//      the submit row is reachable only by stepping DOWN off the last option (L397367-397377) and left by
+//      stepping UP off it (L397378-397384). So `previous` from the first row lands on the LAST OPTION, never
 //      on the submit row, and `next` from the submit row is a dead end — neither of which a single wrapping
 //      ring of `options.length + 1` can express.
-//   2. `space` AND `enter` share one branch (L397399): submit-row focused → submit; no `submitButtonText` at
+//   2. `space` AND `enter` share one branch (L397393-397409): submit-row focused → submit; no `submitButtonText` at
 //      all → enter submits (space still toggles); otherwise toggle the focused row.
-//   3. A digit TOGGLES at the 1-based absolute index (L397410-397415) instead of picking, and `tQs` binds no
+//   3. A digit TOGGLES at the 1-based absolute index (L397410-397416) instead of picking, and `tQs` binds no
 //      home/end at all — so `select:first`/`select:last` are deliberately left unregistered and fall through.
 //
 // Keys are the F2 machinery, never `useInput`, and follow `Select`'s two paths exactly: the `Select` context's
 // actions via `useKeyActions`, plus a `useKeyFallback` for what the table does not name — the digits, `space`,
 // `tab`, and (while a `type:"input"` row has the cursor) the typing itself. That last case is upstream's own
 // gate: with an input row focused `tQs` returns early for every key outside
-// {up, down, escape, tab, return, ctrl+n, ctrl+p, ctrl+return} (L397352-397356), which is what leaves `j`,
+// {up, down, escape, tab, return, ctrl+n, ctrl+p, ctrl+return} (L397348-397351), which is what leaves `j`,
 // `k`, a digit and a space as literal characters on that row and navigation everywhere else.
 import React from "react";
 import { Box, Text } from "ink";
@@ -30,8 +30,7 @@ import { useRefState } from "../keys/refState.js";
 import type { KeyEvent, TextEvent } from "../keys/types.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "../theme.js";
 import { ARROW_DOWN, ARROW_UP, InputText, POINTER, TICK, type SelectOption } from "./Select.js";
-import { clampVisible, perOptionRows, viewAfterFocus, windowBounds, VISIBLE_OPTION_COUNT, type SelectView } from "./selectModel.js";
-import { digitTarget } from "./selectModel.js";
+import { clampVisible, digitTarget, perOptionRows, viewAfterFocus, windowBounds, VISIBLE_OPTION_COUNT, type SelectView } from "./selectModel.js";
 
 const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
 
@@ -42,22 +41,26 @@ export interface MultiSelectProps {
   values: ReadonlySet<string>;
   onToggle: (value: string) => void;
   /** The submit row was activated. The caller reads its own `values` — upstream hands them over (`l(d)`,
-   *  L397401) only because its state lives inside the hook; ours does not. */
+   *  L397399) only because its state lives inside the hook; ours does not. */
   onSubmit: () => void;
   onCancel: () => void;
-  /** "Submit" on the last question, "Next" otherwise — the CALLER decides (L504149). An empty string is
-   *  upstream's `!Fbr`: no submit row at all, and `enter` submits directly (L397405). */
+  /** "Submit" on the last question, "Next" otherwise — the CALLER decides (L504153). An empty string is
+   *  upstream's `!Fbr`: no submit row at all, and `enter` submits directly (L397402-397405). */
   submitButtonText: string;
-  /** Streams a `type:"input"` row's text back out (upstream's per-option `onChange`, L397331). */
+  /** Streams a `type:"input"` row's text back out (upstream's per-option `onChange`, L397331-397332). */
   onInputChange?: (value: string, text: string) => void;
   visibleOptionCount?: number;
   rows?: number;
   focusColor?: ThemeTokenName;
+  /** See `SelectProps.context`: `"Select"` is the overlay flavour (root globals unbound), `"SelectDecision"`
+   *  the decision flavour that keeps them. A list answering the MODEL must pass the latter. */
+  context?: "Select" | "SelectDecision";
 }
 
 export function MultiSelect({
   options, values, onToggle, onSubmit, onCancel, submitButtonText, onInputChange,
   visibleOptionCount = VISIBLE_OPTION_COUNT, rows = process.stdout.rows ?? 24, focusColor = "suggestion",
+  context = "Select",
 }: MultiSelectProps) {
   const count = options.length;
   const hasSubmit = submitButtonText.length > 0;
@@ -68,7 +71,7 @@ export function MultiSelect({
   // Ref-backed throughout (keys/refState.ts): one stdin chunk dispatches several events with NO render in
   // between, so a handler that read its render closure would toggle from a stale selection or type into a
   // stale buffer. `Select` predates this file and reads render state; the bug class is real either way.
-  const [inputs, setInputs, inputsRef] = useRefState<Record<string, string>>(
+  const [, setInputs, inputsRef] = useRefState<Record<string, string>>(
     Object.fromEntries(options.filter((o) => o.type === "input" && o.initialValue).map((o) => [o.value, o.initialValue!])),
   );
   const [view, setView, viewRef] = useRefState<SelectView>({ focus: 0, ...windowBounds(count, 0, visible) });
@@ -93,7 +96,7 @@ export function MultiSelect({
     const landed = options[next.focus];
     setCursor(landed?.type === "input" ? textOf(landed).length : 0);
   };
-  /** L397374-397384 (down/ctrl+n/j) — the submit row is a dead end without `onDownFromLastItem`, which no
+  /** L397367-397377 (down/ctrl+n/j) — the submit row is a dead end without `onDownFromLastItem`, which no
    *  F6 caller passes. */
   const focusNext = () => {
     if (submitFocusedRef.current || count === 0) return;
@@ -101,16 +104,16 @@ export function MultiSelect({
     if (hasSubmit && at === count - 1) { setSubmitFocused(true); return; }
     moveTo((at + 1) % count);
   };
-  /** L397386-397390 (up/ctrl+p/k): off the submit row lands back on the LAST option; inside the ring it wraps. */
+  /** L397378-397384 (up/ctrl+p/k): off the submit row lands back on the LAST option; inside the ring it wraps. */
   const focusPrev = () => {
     if (count === 0) return;
     if (submitFocusedRef.current) { setSubmitFocused(false); moveTo(count - 1); return; }
     moveTo((normalize(viewRef.current).focus - 1 + count) % count);
   };
-  /** L397391-397398: `tQs` pages the OPTION focus without ever consulting `isSubmitFocused` — faithful. */
+  /** L397385-397392: `tQs` pages the OPTION focus without ever consulting `isSubmitFocused` — faithful. */
   const pageBy = (delta: number) => { if (count > 0) moveTo(Math.max(0, Math.min(count - 1, normalize(viewRef.current).focus + delta * visible))); };
-  const toggle = (value: string) => { if (options.find((o) => o.value === value)?.disabled !== true) onToggle(value); };   // L397319-397323
-  /** The shared `return`/`space` branch (L397399-397409). `isEnter` is the one thing that separates them. */
+  const toggle = (value: string) => { if (options.find((o) => o.value === value)?.disabled !== true) onToggle(value); };   // L397319-397322
+  /** The shared `return`/`space` branch (L397393-397409). `isEnter` is the one thing that separates them. */
   const acceptOrToggle = (isEnter: boolean) => {
     if (submitFocusedRef.current && hasSubmit) { onSubmit(); return; }
     if (isEnter && !hasSubmit) { onSubmit(); return; }
@@ -118,10 +121,10 @@ export function MultiSelect({
     if (o) toggle(o.value);
   };
 
-  useKeyScope("Select");
+  useKeyScope(context);
   // With an input row focused upstream's handler returns before it can reach next/previous/accept, so those
   // actions must not be REGISTERED either — that is what turns `j`/`k`/`enter` back into text (Select.tsx's
-  // header spells the mechanism out). Only cancel survives (L397418).
+  // header spells the mechanism out). Only cancel survives (L397417-397418).
   useKeyActions(inputFocused ? { "select:cancel": () => onCancel() } : {
     "select:previous": focusPrev, "select:next": focusNext,
     "select:pageUp": () => pageBy(-1), "select:pageDown": () => pageBy(1),
@@ -130,7 +133,7 @@ export function MultiSelect({
 
   useKeyFallback((e: KeyEvent | TextEvent) => {
     const { input, key } = toKeyFlags(e);
-    // Tab is checked ahead of everything and on ANY row, input rows included (L397357-397370); both branches
+    // Tab is checked ahead of everything and on ANY row, input rows included (L397353-397366); both branches
     // are exactly `focusNext`/`focusPrev`, submit-row transitions and all.
     if (e.kind === "key" && e.name === "tab" && !e.ctrl && !e.alt) { if (e.shift) focusPrev(); else focusNext(); return; }
     const current = submitFocusedRef.current ? undefined : options[normalize(viewRef.current).focus];
@@ -141,7 +144,7 @@ export function MultiSelect({
         setInputs({ ...inputsRef.current, [current.value]: next });
         setCursor(Math.max(0, Math.min(next.length, to)));
         onInputChange?.(current.value, next);
-        // L397325-397341: typing into an input row SELECTS it and emptying it deselects. Gated on the
+        // L397333-397339: typing into an input row SELECTS it and emptying it deselects. Gated on the
         // transition (not on `values` alone) so a second keystroke in the same chunk cannot toggle it back.
         if (!text && next && !values.has(current.value)) onToggle(current.value);
         else if (text && !next && values.has(current.value)) onToggle(current.value);
@@ -149,7 +152,7 @@ export function MultiSelect({
       if (e.kind === "key") {
         if (e.name === "down" || (e.ctrl && e.name === "n")) { focusNext(); return; }
         if (e.name === "up" || (e.ctrl && e.name === "p")) { focusPrev(); return; }
-        if (e.name === "enter") { if (e.ctrl) onSubmit(); else acceptOrToggle(true); return; }   // L397400-397402
+        if (e.name === "enter") { if (e.ctrl) onSubmit(); else acceptOrToggle(true); return; }   // L397394-397397
         if (e.name === "left") { setCursor(Math.max(0, at - 1)); return; }
         if (e.name === "right") { setCursor(Math.min(text.length, at + 1)); return; }
         if (e.name === "home") { setCursor(0); return; }
@@ -185,7 +188,7 @@ export function MultiSelect({
             : showUp ? <Text dimColor>{ARROW_UP}</Text> : <Text> </Text>;
         const box = <Text color={selected ? role("success") : undefined}>{`[${selected ? TICK : " "}]`}</Text>;
 
-        if (o.type === "input") {                              // L397482-397487: `RLe` with the box as its child
+        if (o.type === "input") {                              // L397488: `RLe` with the box as its child
           const text = textOf(o);
           const withLabel = o.showLabelWithValue === true;      // `yJs` (L396471)
           const separator = o.labelValueSeparator ?? ", ";
@@ -214,7 +217,7 @@ export function MultiSelect({
           );
         }
 
-        return (                                               // L397489, inside `Fae`'s gap-1 row
+        return (                                               // L397490, inside `Fae`'s gap-1 row
           <Box key={o.value} flexDirection="column">
             <Box flexDirection="row" gap={1}>
               <Box flexShrink={0}>{gutter}</Box>
@@ -228,7 +231,7 @@ export function MultiSelect({
         );
       })}
       {hasSubmit ? (
-        // L397499. The third gutter state upstream has here is a MOUSE hover (a dim pointer); we have no mouse.
+        // L397502. The third gutter state upstream has here is a MOUSE hover (a dim pointer); we have no mouse.
         <Box flexDirection="row" marginTop={0} gap={1}>
           {submitFocused ? <Text color={role(focusColor)}>{POINTER}</Text> : <Text> </Text>}
           <Box marginLeft={3}><Text color={submitFocused ? role(focusColor) : undefined} bold>{submitButtonText}</Text></Box>

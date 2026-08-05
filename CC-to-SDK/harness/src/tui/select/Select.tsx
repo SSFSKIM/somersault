@@ -72,6 +72,13 @@ export interface SelectProps {
   onInputModeToggle?: (value: string) => void;
   rows?: number; columns?: number;
   focusColor?: ThemeTokenName;
+  /** Which key context this list pushes. `"Select"` (the default) is the OVERLAY flavour — its bindings unbind
+   *  the six root globals, which is right for a picker the USER opened. A list that is answering the MODEL is a
+   *  DECISION surface and must keep them (Ctrl-C's exit hint, Ctrl-O's pager…), so it passes
+   *  `"SelectDecision"`. Added in the F6 T2 review after the multiSelect migration killed five root globals
+   *  over a parked question; bindings.ts's `SelectDecision` block carries the full argument, and every F6
+   *  dialog that answers the model (QuestionDialog today, the permission/plan dialogs in tasks 5-9) sets it. */
+  context?: "Select" | "SelectDecision";
 }
 
 /** L397122-397124: the first literal occurrence of `highlightText` inside the label goes bold (`sK_`). */
@@ -94,6 +101,7 @@ export function Select({
   options, onChange, onCancel, hideIndexes = false, visibleOptionCount = VISIBLE_OPTION_COUNT,
   inlineDescriptions = false, highlightText, defaultValue, defaultFocusValue, onInputModeToggle,
   rows = process.stdout.rows ?? 24, columns = process.stdout.columns ?? 80, focusColor = "suggestion",
+  context = "Select",
 }: SelectProps) {
   const count = options.length;
   const twoColumn = isTwoColumn(options, inlineDescriptions);
@@ -144,7 +152,7 @@ export function Select({
     moveTo(index);
   };
 
-  useSelectKeys({ count, index: win.focus, page: visible, wrap: true, inputFocused, onMove: moveTo, onAccept: accept, onCancel });
+  useSelectKeys({ count, index: win.focus, page: visible, wrap: true, inputFocused, context, onMove: moveTo, onAccept: accept, onCancel });
 
   useKeyFallback((e: KeyEvent | TextEvent) => {
     const { input, key } = toKeyFlags(e);

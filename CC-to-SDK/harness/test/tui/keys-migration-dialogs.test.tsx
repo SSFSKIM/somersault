@@ -214,46 +214,75 @@ describe("F2 task 8 — Confirmation family: what the table adds, and what free 
   });
 });
 
-describe("F2 task 8 — QuestionDialog's free-text row keeps the Confirmation keys literal", () => {
+// PINS MOVED, NOT WEAKENED (F6 T2b). QuestionDialog no longer owns a single key: both question kinds are the
+// F6 list primitives now, so the "Other" row is a permanent `type:"input"` row of a `Select` instead of a MODE
+// this component enters, and the literal-text guarantee comes from `Select`'s own `RLe` semantics rather than
+// from gating a `Confirmation` scope off. What each pin claims changed with the shape; what they PROTECT did
+// not — a key the user typed into an answer must never be read as a decision:
+//   · `y`/`n` are still literal in the Other row, and are now literal for a stronger reason (nothing binds
+//     them here at all, in either mode) — so the third pin below is new: they are inert in LIST mode too.
+//   · Enter still submits the typed text; Escape still declines.
+//   · An EMPTY Enter used to close the row; upstream's `RLe` cancels the whole list on it (L397115-397118),
+//     which for this dialog is a decline. Pinned in questionDialog.test.tsx, not weakened away.
+describe("F6 task 2b — QuestionDialog's Other row keeps every decision key literal (Select's RLe semantics)", () => {
   const single = { questions: [{ question: "Red or blue?", header: "Color", multiSelect: false, options: [{ label: "red" }, { label: "blue" }] }] };
+  /** `Select` paints the gutter and the index as separate Text nodes, so the raw frame has escapes between. */
+  const bare = (f: () => string | undefined) => (f() ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 
-  it("y/n typed into the Other row are TEXT, not confirm:yes/confirm:no", async () => {
+  it("y/n typed into the Other row are TEXT, and enter still submits what was typed", async () => {
     let denies = 0;
     const answers: [Record<string, string>, string | undefined][] = [];
     const { stdin, lastFrame } = render(<QuestionDialog req={{ input: single }} onAnswer={(a, r) => answers.push([a, r])} onDeny={() => { denies++; }} />);
     await waitFor(() => frame(lastFrame).includes("Red or blue?"));
-    stdin.write("3");                                             // open the Other row
-    await waitFor(() => frame(lastFrame).includes("❯ Other:"));
-    stdin.write("y"); await waitFor(() => frame(lastFrame).includes("❯ Other: y"));
-    stdin.write("n"); await waitFor(() => frame(lastFrame).includes("❯ Other: yn"));
+    stdin.write("3");                                             // the digit focuses the (empty) Other row
+    await waitFor(() => bare(lastFrame).includes("❯ 3."));
+    stdin.write("y"); await waitFor(() => bare(lastFrame).includes("❯ 3. y"));
+    stdin.write("n"); await waitFor(() => bare(lastFrame).includes("❯ 3. yn"));
     expect([answers.length, denies]).toEqual([0, 0]);              // neither key decided anything
     stdin.write("\r"); await waitFor(() => answers.length === 1);  // enter still SUBMITS the typed text
     expect(answers[0]).toEqual([{}, "yn"]);
     expect(denies).toBe(0);
   });
 
-  it("back in LIST mode the same keys are the table's: n declines, y takes the highlighted option", async () => {
-    let denies = 0;
-    const { stdin, lastFrame } = render(<QuestionDialog req={{ input: single }} onAnswer={() => {}} onDeny={() => { denies++; }} />);
-    await waitFor(() => frame(lastFrame).includes("Red or blue?"));
-    stdin.write("n"); await waitFor(() => denies === 1);
-
+  it("digits typed into the Other row are TEXT too — they do not jump to another row", async () => {
     const answers: [Record<string, string>, string | undefined][] = [];
-    const b = render(<QuestionDialog req={{ input: single }} onAnswer={(a, r) => answers.push([a, r])} onDeny={() => {}} />);
-    await waitFor(() => frame(b.lastFrame).includes("Red or blue?"));
-    b.stdin.write("y"); await waitFor(() => answers.length === 1);
-    expect(answers[0]).toEqual([{ "Red or blue?": "red" }, undefined]);
+    const { stdin, lastFrame } = render(<QuestionDialog req={{ input: single }} onAnswer={(a, r) => answers.push([a, r])} onDeny={() => {}} />);
+    await waitFor(() => frame(lastFrame).includes("Red or blue?"));
+    stdin.write("3"); await waitFor(() => bare(lastFrame).includes("❯ 3."));
+    stdin.write("1"); await waitFor(() => bare(lastFrame).includes("❯ 3. 1"));
+    expect(answers, "the digit must not have picked row 1").toEqual([]);
+    stdin.write("\r"); await waitFor(() => answers.length === 1);
+    expect(answers[0]).toEqual([{}, "1"]);
   });
 
-  it("escape leaves the Other row without denying (the scope comes back with it)", async () => {
+  // NEW, and the honest replacement for the old "back in LIST mode n declines, y takes the highlighted
+  // option". That behaviour was `Confirmation`'s, an F0 re-homing; upstream's question dialog is a `Select`
+  // list with no such shortcut, and the scope is gone. Recorded as a deliberate loss in the task report.
+  it("in LIST mode y/n are INERT now — enter picks the cursor row and escape declines", async () => {
+    let denies = 0;
+    const answers: [Record<string, string>, string | undefined][] = [];
+    const { stdin, lastFrame } = render(<QuestionDialog req={{ input: single }} onAnswer={(a, r) => answers.push([a, r])} onDeny={() => { denies++; }} />);
+    await waitFor(() => frame(lastFrame).includes("Red or blue?"));
+    stdin.write("y"); await tick();
+    stdin.write("n"); await tick();
+    expect([answers.length, denies], "neither bare letter decides anything any more").toEqual([0, 0]);
+    stdin.write("\r"); await waitFor(() => answers.length === 1);
+    expect(answers[0]).toEqual([{ "Red or blue?": "red" }, undefined]);
+
+    const b = render(<QuestionDialog req={{ input: single }} onAnswer={() => {}} onDeny={() => { denies++; }} />);
+    await waitFor(() => frame(b.lastFrame).includes("Red or blue?"));
+    b.stdin.write("\x1b"); await waitFor(() => denies === 1);
+  });
+
+  it("escape from a half-typed Other row declines rather than silently discarding the answer", async () => {
     let denies = 0;
     const { stdin, lastFrame } = render(<QuestionDialog req={{ input: single }} onAnswer={() => {}} onDeny={() => { denies++; }} />);
     await waitFor(() => frame(lastFrame).includes("Red or blue?"));
-    stdin.write("3"); await waitFor(() => frame(lastFrame).includes("❯ Other:"));
-    stdin.write("x"); await waitFor(() => frame(lastFrame).includes("❯ Other: x"));
-    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("3. Other…"));
-    expect(denies).toBe(0);                                       // esc closed the row, it did not decline
-    stdin.write("\x1b"); await waitFor(() => denies === 1);        // …and now it declines
+    stdin.write("3"); await waitFor(() => bare(lastFrame).includes("❯ 3."));
+    stdin.write("x"); await waitFor(() => bare(lastFrame).includes("❯ 3. x"));
+    // `select:cancel` is the ONE action Select still registers while a text row has the cursor (L397418 /
+    // Select.tsx's useSelectKeys call), so escape reaches the dialog instead of being typed.
+    stdin.write("\x1b"); await waitFor(() => denies === 1);
   });
 });
 
@@ -315,6 +344,40 @@ async function eachRootGlobalIsInert(stdin: { write: (s: string) => void }, last
     expect(f, at).toBe(before);                                       // …and nothing else moved either
   }
 }
+
+// F6 T2 review, Important 1 — the DECISION half of the same gate, driven through the real ChatApp. The four
+// surfaces above are OVERLAYS and must be deaf; a dialog answering the MODEL is the opposite and must stay
+// reachable, which is what the `Confirmation` block's own comment has always said. Moving QuestionDialog's
+// lists onto the F6 primitives quietly broke that for multiSelect (the `Select` context nulls all six), and
+// this pin is what stops it coming back — for BOTH question kinds, since they take different code paths.
+describe("F6 task 2 — a QuestionDialog decision keeps the root globals (owner === decision falls through)", () => {
+  const parkQuestion = (fake: ReturnType<typeof fakeRemote>, multiSelect: boolean) => fake.parkPermission({
+    sessionId: "s", toolUseID: "q", toolName: "AskUserQuestion", kind: "question",
+    input: { questions: [{ question: "Which one?", options: [{ label: "alpha" }, { label: "bravo" }], multiSelect }] },
+    createdAt: Date.now(),
+  });
+
+  it.each([false, true])("multiSelect=%s: ctrl+c arms the exit hint over the parked question", async (multiSelect) => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
+    parkQuestion(fake, multiSelect);
+    await waitFor(() => frame(lastFrame).includes("Which one?"));
+    stdin.write("\x03");
+    await waitFor(() => frame(lastFrame).includes("Press Ctrl-C again to exit"));
+    expect(frame(lastFrame), "…and the dialog is still the one on screen").toContain("Which one?");
+  });
+
+  it.each([false, true])("multiSelect=%s: ctrl+o still opens the transcript pager over it", async (multiSelect) => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
+    parkQuestion(fake, multiSelect);
+    await waitFor(() => frame(lastFrame).includes("Which one?"));
+    stdin.write("\x0f");
+    await waitFor(() => frame(lastFrame).includes("Transcript"));
+  });
+});
 
 describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven through the real ChatApp)", () => {
   it("a Select overlay (the bg panel) is deaf to every root global, and the composer gets them back on close", async () => {

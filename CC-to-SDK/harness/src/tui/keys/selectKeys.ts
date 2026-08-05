@@ -13,10 +13,14 @@ import { useKeyActions, useKeyScope } from "./KeymapProvider.js";
  *  that windows its list passes its visible-row count instead. */
 export const PAGE_ROWS = 10;
 
-export function useSelectKeys({ count, index, page = PAGE_ROWS, wrap = false, inputFocused = false, onMove, onAccept, onCancel }: {
+export function useSelectKeys({ count, index, page = PAGE_ROWS, wrap = false, inputFocused = false, context = "Select", onMove, onAccept, onCancel }: {
   count: number;
   index: number;
   page?: number;
+  /** Which context to push. `"Select"` (the default) is the OVERLAY flavour — it unbinds the six root globals;
+   *  `"SelectDecision"` is the same eight actions without that suppression, for a list that is answering the
+   *  model rather than a picker the user opened (bindings.ts spells the distinction out). */
+  context?: "Select" | "SelectDecision";
   /** Wrap next-from-last to the first row and previous-from-first to the last, as upstream's option map does
    *  (`nz_`, L396859/L396875). Off by default: the five F2 overlays shipped clamping and their tests pin it;
    *  the F6 `Select` primitive opts in, which is what upstream's own dialogs do. Pages/first/last still clamp. */
@@ -33,7 +37,7 @@ export function useSelectKeys({ count, index, page = PAGE_ROWS, wrap = false, in
   const last = Math.max(0, count - 1);
   const to = (i: number) => { if (count > 0) onMove(Math.max(0, Math.min(last, i))); };
   const step = (i: number) => { if (count > 0) onMove(wrap ? (i + count) % count : Math.max(0, Math.min(last, i))); };
-  useKeyScope("Select");
+  useKeyScope(context);
   useKeyActions(inputFocused ? { "select:cancel": () => onCancel() } : {
     "select:previous": () => step(index - 1), "select:next": () => step(index + 1),
     "select:pageUp": () => to(index - page), "select:pageDown": () => to(index + page),
