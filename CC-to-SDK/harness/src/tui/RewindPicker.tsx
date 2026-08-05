@@ -199,6 +199,9 @@ export function RewindPicker({ anchors, onDryRun, onConfirm, onClose, rows = pro
   const open = (anchor: RewindAnchor) => {
     const have = summaries.get(anchor.uuid);
     if (have !== undefined) { setSelected({ anchor, dry: have }); setFocusedOption(defaultRestoreOption({ code: canRestoreCode(have), conversation: anchor.prevUuid != null })); return; }
+    // A held list invites a second Enter precisely because it looks unresponsive — without this guard each
+    // one issues ANOTHER out-of-band dry run (a multi-second engine call) for the same anchor (t10 re-review).
+    if (pending?.uuid === anchor.uuid) return;
     const token = ++pendingToken.current;
     setPending(anchor);
     void request(anchor.uuid).then((dry) => {
