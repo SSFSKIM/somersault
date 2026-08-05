@@ -12,7 +12,7 @@ import { PASTE_LIMIT } from "./pasteChips.js";
 import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
 import { composerMode } from "./promptMode.js";
 import { collectEntries, mentionWalkRoot, type AsyncReaddirFn, type DirEnt } from "./fileComplete.js";
-import type { CommandEntry } from "./commandComplete.js";
+import { commandKind, type CommandEntry } from "./commandComplete.js";
 import { editExternal as realEditExternal } from "./externalEditor.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, newlineHint } from "./composerFrame.js";
 import { InlineSearchRow, useInlineHistorySearch } from "./InlineHistorySearch.js";
@@ -166,7 +166,11 @@ export interface PlaceholderMemo { files?: string[]; draws: number[] }
 function suggestProps(state: EditorState): { items: SuggestItem[]; selected: number; maxColumnWidth?: number; emptyMessage?: string | null } | null {
   const c = state.command;
   if (c?.head) return {
-    items: c.items.map((e) => ({ id: `cmd-${e.name}`, displayText: `/${e.name}`, description: e.description })),
+    // DG55: `kind` is set HERE and only here. Upstream's slash source is the only producer of the field
+    // (`VJa`, L490007 — `...t && { kind: p9f(e), sourceTag: nRb(e) }`), so "command rows only" is not a rule
+    // the popup enforces, it is a fact about which of our three sources fills the field in. The `@`-mention
+    // arm below and the history surfaces set nothing, and `S_a` gives a kindless row no lane at all.
+    items: c.items.map((e) => ({ id: `cmd-${e.name}`, displayText: `/${e.name}`, description: e.description, kind: commandKind(e) })),
     selected: c.index,
     // `k` (L490508–L490513) is computed over the WHOLE catalog, not the matches, so the name lane does not jitter as
     // the user narrows the list. `catalogColumnWidth` is that sum.

@@ -6,9 +6,10 @@ import { render } from "ink-testing-library";
 import { Box } from "ink";
 import { applyKey, commandActive, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, setCommandCatalog, type EditorState } from "../../src/tui/editor.js";
 import type { CommandEntry } from "../../src/tui/commandComplete.js";
-import { catalogColumnWidth, nameColumn, popupHeight, rowLines, scrollWindow, splitDescription, SuggestPopup, truncEnd, truncPath, truncStart, type SuggestItem } from "../../src/tui/suggestPopup.js";
+import { catalogColumnWidth, kindLane, nameColumn, popupHeight, rowLines, scrollWindow, splitDescription, SuggestPopup, truncEnd, truncPath, truncStart, type SuggestItem } from "../../src/tui/suggestPopup.js";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
 import { KeymapProvider } from "../../src/tui/keys/KeymapProvider.js";
+import { themeTokens } from "../../src/tui/theme.js";
 
 const type = (s: EditorState, text: string): EditorState => [...text].reduce((a, ch) => applyKey(a, ch, {}).state, s);
 const key = (s: EditorState, k: Parameters<typeof applyKey>[2]): EditorState => applyKey(s, "", k).state;
@@ -183,6 +184,95 @@ describe("CM30 rendering — SuggestPopup", () => {
     expect(row).toContain("packages");                             // …and so does the head of the parent
     expect(row).toContain("…");
     expect(row.trimStart().startsWith("+ …")).toBe(false);         // xG would have produced exactly this
+  });
+});
+
+// ── DG55: the kind lane, COMMAND ROWS ONLY (`S_a` L432454, colours L432563) ─────────────────────────────
+describe("DG55 kind lane — S_a (L432454)", () => {
+  it("S_a: undefined → NO lane; action → seven BLANK columns; info → 'config'; every other kind padded to 7", () => {
+    expect(kindLane(undefined).text).toBe("");                       // `e.kind === void 0 ? "" : …`
+    expect(kindLane(undefined).label).toBe("");
+    expect(kindLane("action").text).toBe(" ".repeat(7));             // label "" → seven columns of padding
+    expect(kindLane("action").label).toBe("");
+    expect(kindLane("info").label).toBe("config");                   // `e.kind === "info" ? "config" : e.kind`
+    expect(kindLane("info").text).toBe("config ");
+    expect(kindLane("config").text).toBe("config ");
+    expect(kindLane("skill").text).toBe("skill  ");
+    expect(kindLane("agent").text).toBe("agent  ");
+    // the point of the lane: every DEFINED kind occupies exactly 7 columns, so the description lane lines up
+    for (const k of ["skill", "config", "action", "info", "agent"] as const) expect(kindLane(k).text.length).toBe(7);
+  });
+  it("the lane's colour (L432563) is a ROLE: skill → `skill`, agent → `background`, everything else dim", () => {
+    expect(kindLane("skill").role).toBe("skill");
+    expect(kindLane("agent").role).toBe("background");
+    expect(kindLane("config").role).toBeUndefined();
+    expect(kindLane("info").role).toBeUndefined();
+    expect(kindLane("action").role).toBeUndefined();
+    expect(kindLane(undefined).role).toBeUndefined();
+  });
+
+  it("a0H's kind subtrahend is real once a row carries one: the description budget loses the 7 columns", () => {
+    // columns 80, nameCol 12 → without a kind the budget is 80 - 12 - 4 = 64 (pinned above); with one, 57.
+    const desc = (n: number) => "x".repeat(n);
+    expect(rowLines({ id: "cmd-a", displayText: "/a", description: desc(57), kind: "config" }, 80, 12)).toBe(1);
+    expect(rowLines({ id: "cmd-a", displayText: "/a", description: desc(58), kind: "config" }, 80, 12)).toBe(2);
+    // `action` costs the same 7 columns even though it prints nothing — the lane is blank, not absent
+    expect(rowLines({ id: "cmd-a", displayText: "/a", description: desc(58), kind: "action" }, 80, 12)).toBe(2);
+    expect(rowLines({ id: "cmd-a", displayText: "/a", description: desc(58) }, 80, 12)).toBe(1);      // no kind, no cost
+  });
+
+  const plain = (s: string | undefined) => (s ?? "").replace(/\x1b\[[0-9;]*m/g, "");
+  const rowFor = (frame: string | undefined, needle: string) => lines(plain(frame)).find((l) => l.includes(needle)) ?? "";
+
+  it("the lane sits between the name pad and the description, and a kindless row has none at all", () => {
+    const withKind: SuggestItem[] = [
+      { id: "cmd-model", displayText: "/model", description: "change the model", kind: "config" },
+      { id: "cmd-compact", displayText: "/compact", description: "compact the context", kind: "action" },
+      { id: "cmd-context", displayText: "/context", description: "context usage", kind: "info" },
+    ];
+    const a = render(<SuggestPopup items={withKind} selected={0} columns={80} rows={24} maxColumnWidth={12} />);
+    // nameCol 12: `/model` + 6 pad, then the 7-column lane, then the description.
+    expect(rowFor(a.lastFrame(), "/model")).toContain("/model      config change the model");
+    expect(rowFor(a.lastFrame(), "/compact")).toContain("/compact           compact the context");   // 4 pad + 7 blanks
+    expect(rowFor(a.lastFrame(), "/context")).toContain("/context    config context usage");         // `info` prints `config`
+    // the same rows without a kind: the description butts straight up against the name pad
+    const b = render(<SuggestPopup items={withKind.map(({ kind, ...r }) => r)} selected={0} columns={80} rows={24} maxColumnWidth={12} />);
+    expect(rowFor(b.lastFrame(), "/model")).toContain("/model      change the model");
+    expect(rowFor(b.lastFrame(), "/compact")).toContain("/compact    compact the context");
+  });
+
+  it("skill and agent rows carry their theme ROLE colour on the lane; a config lane is dim", () => {
+    const sgr = (token: string) => { const m = token.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)!; return `\x1b[38;2;${m[1]};${m[2]};${m[3]}m`; };
+    const items: SuggestItem[] = [
+      { id: "cmd-brainstorming", displayText: "/brainstorming", description: "a skill", kind: "skill" },
+      { id: "cmd-tasks", displayText: "/tasks", description: "an agent", kind: "agent" },
+      { id: "cmd-model", displayText: "/model", description: "a control", kind: "config" },
+    ];
+    // selected: 2 — the CONFIG row — so neither coloured lane can be borrowing the `suggestion` colour.
+    const { lastFrame } = render(<SuggestPopup items={items} selected={2} columns={80} rows={24} maxColumnWidth={16} />);
+    const raw = lines(lastFrame() ?? "");
+    const rawRow = (needle: string) => raw.find((l) => plain(l).includes(needle)) ?? "";
+    expect(rawRow("/brainstorming")).toContain(sgr(themeTokens().skill));
+    expect(rawRow("/tasks")).toContain(sgr(themeTokens().background));
+    expect(rawRow("/model")).toContain("\x1b[2m");                    // `dimColor: GTr === void 0`
+    expect(rawRow("/model")).not.toContain(sgr(themeTokens().skill));
+  });
+
+  it("the wrapped second line is indented past the kind lane too (Nzo = RRe + y_a + H_a)", () => {
+    const wide: SuggestItem[] = [{ id: "cmd-a", displayText: "/a", description: "w".repeat(30) + " " + "z".repeat(20), kind: "config" }];
+    const { lastFrame } = render(<SuggestPopup items={wide} selected={0} columns={60} rows={24} maxColumnWidth={12} />);
+    const body = lines(plain(lastFrame())).filter((l) => l.includes("w") || l.includes("z"));
+    expect(body.length).toBe(2);
+    // paddingX 2 + nameCol 12 + the 7-column lane = 21 columns of indent before the continuation.
+    expect(body[1]).toBe(" ".repeat(21) + "z".repeat(20));
+  });
+
+  it("FILE rows ignore a kind entirely — E_a's branch never reaches S_a (L432489)", () => {
+    const files: SuggestItem[] = [{ id: "file-src/app.ts", displayText: "src/app.ts", kind: "skill" } as SuggestItem];
+    const { lastFrame } = render(<SuggestPopup items={files} selected={0} columns={80} rows={24} />);
+    expect(plain(lastFrame())).toContain("+ src/app.ts");
+    expect(plain(lastFrame())).not.toContain("skill");
+    expect(rowLines({ id: "file-a.ts", displayText: "a.ts", description: "x".repeat(200), kind: "skill" }, 80, 12)).toBe(1);
   });
 });
 
@@ -382,6 +472,19 @@ describe("through ChatComposer", () => {
     await tick();
     expect(lastFrame()).toContain("/review");
     expect(lastFrame()).not.toContain(FOOTER);
+  });
+
+  // DG55: the lane only exists because the SLASH source feeds a kind (`VJa`, L490007). The composer is the
+  // one place our three sources meet, so this is where "command rows only" is actually decided.
+  it("the popup's command rows carry p9f's kind; an `@` row carries none", async () => {
+    const a = render(wrap(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} />));
+    await tick();
+    a.stdin.write("/");
+    await tick();
+    const plain = (a.lastFrame() ?? "").replace(/\x1b\[[0-9;]*m/g, "");
+    expect(plain).toMatch(/\/model\s+config change the model/);          // ZLb: model → config
+    expect(plain).toMatch(/\/mode\s{8,}cycle permission mode/);          // not in ZLb → action → seven blanks
+    expect(plain).toMatch(/\/review\s+skill\s+review a pull request/);   // a catalog entry is a prompt command
   });
 
   it("`/review ` shows the argument hint inline and dim", async () => {

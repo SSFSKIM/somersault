@@ -19,6 +19,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import stringWidth from "string-width";
 import { resolveThemeColor, themeTokens } from "./theme.js";
+import type { CommandKind } from "./commandComplete.js";
 
 /** `Ut` — upstream's `Bun.stringWidth(s, { ambiguousIsNarrow: true })`; `string-width` is that function, and
  *  mdTable.ts already documents the equivalence. */
@@ -29,7 +30,57 @@ const WS = /\s+/g;
 /** One row. `id` is load-bearing, not decoration: `E_a` (L432427) keys the whole FILE-ish rendering branch off
  *  its prefix — `file-`, `mcp-resource-`, `mcp-template`, `agent-` — and those rows are always one line and
  *  are drawn as one icon-prefixed run instead of the two-lane name/description layout. */
-export interface SuggestItem { id: string; displayText: string; description?: string }
+export interface SuggestItem { id: string; displayText: string; description?: string; kind?: SuggestKind }
+
+/** `e.kind` — DG55. The popup is generic, but this field is not: the ONLY producer that sets it is the slash
+ *  source (`VJa`, bundle L490007, `...t && { kind: p9f(e), sourceTag: nRb(e) }`), so the vocabulary is `p9f`'s
+ *  and there is one definition of it, in commandComplete.ts. File/`@`-mention rows (`I9f`, L490269–L490278)
+ *  and history rows build no `kind` at all, which is what keeps them on their existing single-line branch.
+ *
+ *  Two upstream facts about the field worth keeping written down, because we depart from the first:
+ *
+ *   1. Upstream GATES it on a flag — `VJa`'s `t` argument is `Z.CLAUDE_CODE_ENABLE_MENU_KIND_LANES ||
+ *      Ke("tengu_mint_lanes", !1)` (L490015), so on a default build `kind` is undefined on every row and the
+ *      lane never appears. We render it unconditionally: this is the shipped code path with the flag ON, and
+ *      the F5-era comment in `rowLines` calling the kind lane a lane "we do not render" is now out of date by
+ *      choice, not by accident.
+ *   2. The same flag also turns on `sourceTag` — a `[project] `/`[org] ` lane (`nRb`, L489986–L489995, keyed on
+ *      `f9f`'s command PROVENANCE: userSettings/projectSettings/plugin/policySettings…). `CommandEntry.source`
+ *      is `"local" | "catalog"`, our own two-way split between a built-in and anything the engine reported, and
+ *      it carries no evidence of which settings file a catalog command came from. So `sourceTag` is NOT
+ *      derivable and stays a named zero, next to `tag` (upstream's `[dynamic workflow] `, set only for
+ *      `type === "prompt" && kind === "workflow"`, which we equally cannot see). */
+export type SuggestKind = CommandKind;
+
+/** `S_a`, bundle L432454 — the kind-lane builder, verbatim:
+ *
+ *      function S_a(e) {
+ *        let r = e.kind === void 0 || e.kind === "action" ? "" : e.kind === "info" ? "config" : e.kind,
+ *            n = e.kind === void 0 ? "" : r + Pm(" ", 7 - Ut(r)),
+ *            o = e.sourceTag ? `[${e.sourceTag}] ` : "";
+ *        return { kindLaneText: n, kindLabel: r, sourceText: o };
+ *      }
+ *
+ *  Three distinct outcomes, and the difference between the first two is the whole reason `kindLabel` and
+ *  `kindLaneText` are separate fields:
+ *
+ *   · `kind === undefined` → BOTH empty. No lane, no width, nothing between the name pad and the description.
+ *   · `kind === "action"`  → label empty but the lane is still SEVEN BLANK COLUMNS, because `n` is gated on
+ *     `undefined` only. An action row therefore pays for the lane and prints nothing in it — which is the
+ *     point: the description of every command row stays in the same column whether its kind has a word or not.
+ *   · anything else        → the label padded to exactly 7 (`info` renamed to `config` first, so the two share
+ *     a lane and a word). `Pm` is `e.repeat(t > 0 ? t : 0)`, hence the `Math.max(0, …)`.
+ *
+ *  `role` is `q7p`'s colour choice at L432563 — `GTr = r0H === "skill" ? "skill" : r0H === "agent" ?
+ *  "background" : void 0` — read off the LABEL, not the kind, which is why `info` cannot be coloured and
+ *  `action` cannot either. It is a theme role, and it is independent of selection: the lane keeps its own
+ *  colour on the highlighted row (`qTr` at L432588 takes `GTr` alone, never `suggestion`), and a lane with no
+ *  role is drawn `dimColor` regardless. */
+export function kindLane(kind?: SuggestKind): { text: string; label: string; role: "skill" | "background" | undefined } {
+  const label = kind === undefined || kind === "action" ? "" : kind === "info" ? "config" : kind;
+  const text = kind === undefined ? "" : label + " ".repeat(Math.max(0, 7 - w(label)));
+  return { text, label, role: label === "skill" ? "skill" : label === "agent" ? "background" : undefined };
+}
 
 /** `E_a`, bundle L432427. */
 export function isFileish(id: string): boolean {
@@ -74,19 +125,20 @@ export function catalogColumnWidth(names: readonly string[]): number | undefined
  *      let l = e.description.replace(YSn, " ").trim();
  *      return Ut(l) > a ? 2 : 1;
  *
- *  `r` is the name column, `t` the terminal width. Three of the five subtrahends are lanes we do not render:
- *  `o` is the `[tag] ` lane (upstream only sets `tag` on dynamic-workflow commands), and `i`/`s` are the
- *  kind lane (a 7-column padded `config`/`skill`/`background` label) and the `[source] ` tag, both of which
- *  `S_a` returns empty unless the MENU KIND LANES flag is on. Our `CommandEntry` carries no tag, kind, or
- *  source, so all three are 0 — written out as named zeros rather than deleted, because the day we grow a
- *  lane the budget has to shrink with it.
+ *  `r` is the name column, `t` the terminal width. Of the three lane subtrahends, DG55 made ONE of them real
+ *  and left the other two as named zeros — "the day we grow a lane the budget has to shrink with it" was the
+ *  reason they were written out rather than deleted, and this is that day for the kind lane. `i` is now
+ *  `S_a`'s 7-column lane and costs 7 columns on every command row that carries a kind, `action` included
+ *  (its lane is blank, not absent). `o` (the `[tag] ` lane, upstream only on dynamic-workflow commands) and
+ *  `s` (the `[source] ` tag) stay 0 — see `SuggestKind` above for why neither is derivable from what we carry.
  *
  *  `n = min(nameCol, floor(columns * 0.4))` is the same clamp the row renderer applies to `RRe` (L432540),
  *  which is what keeps the estimate and the render in agreement about how wide the name lane really is. */
 export function rowLines(item: SuggestItem, columns: number, nameCol: number): 1 | 2 {
   if (isFileish(item.id) || !item.description) return 1;
   const n = Math.min(nameCol, Math.floor(columns * 0.4));
-  const tagW = 0, kindW = 0, sourceW = 0;                       // lanes we do not render — see the doc above
+  const tagW = 0, sourceW = 0;                                  // lanes we do not render — see the doc above
+  const kindW = w(kindLane(item.kind).text);
   const budget = Math.max(0, columns - n - tagW - kindW - sourceW - 4);
   if (budget <= 0) return 1;
   return w(item.description.replace(WS, " ").trim()) > budget ? 2 : 1;
@@ -182,6 +234,11 @@ export function splitDescription(text: string, cap: number): [string, string] {
 }
 
 const suggestionColor = () => resolveThemeColor(themeTokens().suggestion);
+/** `q7p` names its colours as theme ROLES (`"suggestion"`, `"skill"`, `"background"`) and hands the role
+ *  straight to Ink, which resolves it against the active theme. Ours resolves at render time for the same
+ *  reason `themeTokens()` is called per render everywhere else in this port: `/theme` must be visible on the
+ *  next paint, not the next mount. */
+const roleColor = (role: "skill" | "background") => resolveThemeColor(themeTokens()[role]);
 
 /** `q7p`'s `E_a` branch (bundle L432490–L432538): one truncate-wrapped run, `icon displayText – description`,
  *  in `suggestion` when selected and `dimColor` when not. The en-dash at L432530 is a real `–`, and it
@@ -203,32 +260,48 @@ function FileRow({ item, columns, selected }: { item: SuggestItem; columns: numb
   return <Text color={selected ? suggestionColor() : undefined} dimColor={!selected} wrap="truncate">{text}</Text>;
 }
 
-/** `q7p`'s general branch (bundle L432540–L432640): a name lane padded out to `RRe`, then the description in
- *  what is left, with the overflow on a second line indented to the same lane.
+/** `q7p`'s general branch (bundle L432540–L432640). The row is a fixed run of lanes, in the bundle's own
+ *  child order at L432606 — which is NOT the order the lanes are computed in, and not the order this task's
+ *  brief predicted either:
  *
- *  Skipped deliberately, each with the bundle's own reason: the `emoji:` pointer lane (`$Tr`, only for emoji
- *  suggestions, which we do not produce), the `[tag] `/kind/source lanes (never populated for us — see
- *  `rowLines`), and `X4t`'s query highlighting, which bolds the matched substring inside both the name and
- *  the description. The last one is a real fidelity gap rather than an N/A; it is its own CM. */
+ *      [emoji pointer] [displayText] [pad to RRe] [kind lane] [tag] [source] [description]
+ *
+ *  i.e. the kind lane comes FIRST of the three metadata lanes, `[tag] ` second and `[source] ` last, all of
+ *  them after the name pad and before the description. Three of the seven are permanently absent for us and
+ *  each has its own reason: the `emoji:` pointer (`$Tr`, only for emoji suggestions, which we do not produce)
+ *  and the tag/source lanes (not derivable from `CommandEntry` — see `SuggestKind`). `X4t`'s query
+ *  highlighting, which bolds the matched substring inside both the name and the description, is still skipped
+ *  and is still a real fidelity gap rather than an N/A; it is its own CM.
+ *
+ *  DG55 adds the kind lane, and the second line moves with it: upstream's continuation indent is
+ *  `Nzo = RRe + y_a + H_a` (L432610) — name lane PLUS every metadata lane — so the wrapped remainder lines up
+ *  under the description rather than under the lane it would otherwise collide with. */
 function GeneralRow({ item, columns, nameCol, selected, allowWrap }: { item: SuggestItem; columns: number; nameCol: number; selected: boolean; allowWrap: boolean }) {
-  // `SsI`/`RRe`, L432540: with a description the name lane is capped at 40% of the terminal; without one it
-  // gets everything but the four-column gutter.
-  const lane = item.description ? Math.floor(columns * 0.4) : columns - 4;
+  // `SsI`, L432540: `description || tag || kind !== void 0 || sourceTag` — a row with ANY of them caps its
+  // name lane at 40% of the terminal; a bare name row gets everything but the four-column gutter. A kind
+  // counts even on a description-less row, because the lane still has to fit somewhere.
+  const lane = item.description || item.kind !== undefined ? Math.floor(columns * 0.4) : columns - 4;
   const nameW = Math.min(nameCol, lane);
   const raw = item.displayText;
   const isPath = raw.includes("/") || raw.includes("\\");
   const name = w(raw) > nameW - 2 ? (isPath ? truncStart(raw, nameW - 2) : truncEnd(raw, nameW - 2)) : raw;
   const pad = " ".repeat(Math.max(0, nameW - w(name)));
-  const budget = Math.max(0, columns - nameW - 4);
+  const { text: kindText, role } = kindLane(item.kind);
+  const kindW = w(kindText);                                      // `H_a`, minus the source lane we never have
+  const budget = Math.max(0, columns - nameW - kindW - 4);        // `b_a`
   const desc = item.description ? item.description.replace(WS, " ").trim() : "";
   const [first, rest] = allowWrap ? splitDescription(desc, budget) : [truncEnd(desc, budget), ""];
   const color = selected ? suggestionColor() : undefined;
-  const head = <Text wrap="truncate"><Text color={color} dimColor={!selected}>{name + pad + first}</Text></Text>;
+  // `qTr` (L432588): the lane is drawn only when `kindLaneText` is non-empty — which INCLUDES the seven blanks
+  // an `action` row gets — and its colour is the role alone, never the selection colour.
+  const kindNode = kindText ? <Text color={role ? roleColor(role) : undefined} dimColor={!role}>{kindText}</Text> : null;
+  const head = <Text wrap="truncate"><Text color={color} dimColor={!selected}>{name + pad}</Text>{kindNode}<Text color={color} dimColor={!selected}>{first}</Text></Text>;
   if (!rest) return head;
+  const indent = nameW + kindW;                                   // `Nzo`
   return (
     <Box flexDirection="column">
       {head}
-      <Text wrap="truncate">{" ".repeat(nameW)}<Text color={color} dimColor={!selected}>{truncEnd(rest, Math.max(0, columns - nameW - 4))}</Text></Text>
+      <Text wrap="truncate">{" ".repeat(indent)}<Text color={color} dimColor={!selected}>{truncEnd(rest, Math.max(0, columns - indent - 4))}</Text></Text>
     </Box>
   );
 }
