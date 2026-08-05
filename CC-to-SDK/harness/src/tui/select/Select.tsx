@@ -70,6 +70,17 @@ export interface SelectProps {
   defaultValue?: string;
   defaultFocusValue?: string;
   onInputModeToggle?: (value: string) => void;
+  /** The row the cursor MOVED to (`jr`'s own `onFocus`, L505286). Upstream drives a hint node off it; the F6
+   *  dialogs drive their key gating off it, because "is a text row focused" is the difference between `y`
+   *  meaning yes and `y` being a letter, and only this component knows the answer. Not fired for the initial
+   *  row — a caller that needs it knows its own first option (or passed `defaultFocusValue`). */
+  onFocus?: (value: string) => void;
+  /** Keys the list itself did not consume: everything except a digit shortcut, and NOTHING at all while a
+   *  text row has the cursor (there, every key is typing). It is how an embedding dialog keeps letter
+   *  shortcuts of its own — the legacy a/A/d/D of the permission dialogs — without stealing the fallback
+   *  from the list: `fallbackHandler` hands the keyboard to exactly ONE handler, and inside a Select that
+   *  handler has to be the Select's. */
+  onUnhandledKey?: (e: KeyEvent | TextEvent) => void;
   rows?: number; columns?: number;
   focusColor?: ThemeTokenName;
   /** Which key context this list pushes. `"Select"` (the default) is the OVERLAY flavour — its bindings unbind
@@ -99,7 +110,7 @@ export function InputText({ text, cursor, placeholder }: { text: string; cursor:
 
 export function Select({
   options, onChange, onCancel, hideIndexes = false, visibleOptionCount = VISIBLE_OPTION_COUNT,
-  inlineDescriptions = false, highlightText, defaultValue, defaultFocusValue, onInputModeToggle,
+  inlineDescriptions = false, highlightText, defaultValue, defaultFocusValue, onInputModeToggle, onFocus, onUnhandledKey,
   rows = process.stdout.rows ?? 24, columns = process.stdout.columns ?? 80, focusColor = "suggestion",
   context = "Select",
 }: SelectProps) {
@@ -132,6 +143,7 @@ export function Select({
     setView(next);
     const landed = options[next.focus];
     setCursor(landed?.type === "input" ? textOf(landed, inputs).length : 0);
+    if (landed) onFocus?.(landed.value);
   };
   const accept = () => {                                   // L396693-396700: never a disabled row
     if (!current || current.disabled === true) return;
@@ -179,7 +191,9 @@ export function Select({
     if (!hideIndexes && e.kind === "key" && !key.ctrl && !key.meta && /^[0-9]$/.test(input)) {
       const at = digitTarget(options, input);
       if (at >= 0) chooseByDigit(at);                      // a miss (disabled / "0" / past the end) is a DEAD key
+      return;
     }
+    onUnhandledKey?.(e);
   });
 
   const indexWidth = hideIndexes ? 0 : String(count).length;   // `EBt` (L397167)

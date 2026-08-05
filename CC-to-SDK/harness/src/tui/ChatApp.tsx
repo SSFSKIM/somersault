@@ -326,7 +326,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           ? <QuestionDialog key={inlineDecision.toolUseID} req={inlineDecision}
               onAnswer={(answers, response) => resolveDecision({ kind: "question_answer", answers, ...(response ? { response } : {}) })}
               onDeny={() => resolveDecision({ kind: "deny" })} />
-          : <PermissionDialog key={inlineDecision.toolUseID} req={inlineDecision} onDecision={(d) => resolveDecision(d)} />
+          // `cwd` is the SESSION's working directory, not this process's — the kind routing and the Bash
+          // body's rule summary both name it (permissionKind.ts).
+          : <PermissionDialog key={inlineDecision.toolUseID} req={inlineDecision} cwd={cwd} onDecision={(d) => resolveDecision(d)} />
         : null}
       {state.shortcutsOpen
         ? <ShortcutsOverlay onClose={closeShortcuts} />

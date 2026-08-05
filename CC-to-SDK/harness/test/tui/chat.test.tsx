@@ -1630,9 +1630,10 @@ describe("<ChatApp>", () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     fake.parkPermission({ sessionId: "s", toolUseID: "t1", toolName: "Bash", kind: "permission", input: { command: "rm -rf /" }, createdAt: Date.now() });
-    await waitFor(() => frame(lastFrame).includes("Allow Claude to use"));
+    // F6 T6: a Bash consult renders the `BashPermission` body, whose title is the dialog's own marker here.
+    await waitFor(() => frame(lastFrame).includes("Bash command"));
     fake.settlePermission("t1", "auto", "deny");                    // the auto-mode classifier denying it — dropPending records the ledger entry
-    await waitFor(() => !frame(lastFrame).includes("Allow Claude to use"));
+    await waitFor(() => !frame(lastFrame).includes("Bash command"));
     stdin.write("/permissions"); await waitFor(() => frame(lastFrame).includes("/permissions"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Permissions"));

@@ -68,10 +68,13 @@ describe("<PermissionDialog>", () => {
     const f = render(<PermissionDialog req={attributed} onDecision={() => {}} />).lastFrame() ?? "";
     expect(f).toContain("Subagent (code-reviewer) asks:");
   });
+  // F6 T6: a plain Bash command routes to the new `BashPermission` body, so the generic body's `$ ` prefix
+  // is now reachable only through the ONE Bash route that is not the Bash dialog — an in-place `sed`, which
+  // `permissionKind` sends to the file kind (and the file dialog is task 7, so it lands here meanwhile).
   it("shows the full Bash command with a $ prefix", () => {
-    const bashReq = { toolName: "Bash", input: { command: "rm -rf build && make" }, toolUseID: "t", signal: new AbortController().signal };
+    const bashReq = { toolName: "Bash", input: { command: "sed -i '' 's/a/b/' build.ts" }, toolUseID: "t", signal: new AbortController().signal };
     const f = render(<PermissionDialog req={bashReq} onDecision={() => {}} />).lastFrame() ?? "";
-    expect(f).toContain("$ rm -rf build && make");
+    expect(f).toContain("$ sed -i '' 's/a/b/' build.ts");
   });
   it("number keys 1/2/3 and legacy a/A/d both map to allow_once/allow_always/deny", async () => {
     const got: PermissionDecision[] = [];
@@ -84,8 +87,9 @@ describe("<PermissionDialog>", () => {
     expect(got).toEqual([{ kind: "allow_once" }, { kind: "allow_always" }, { kind: "deny" }, { kind: "allow_once" }]);
   });
   it("bare y accepts and bare n rejects (KB1, F0 acceptance 7)", async () => {
+    // …on the GENERIC body (the Bash body has its own y/n test in bash-permission.test.tsx).
     const decisions: PermissionDecision[] = [];
-    const bashReq = { toolName: "Bash", input: { command: "ls" }, toolUseID: "t", signal: new AbortController().signal };
+    const bashReq = req;
     const a = render(<PermissionDialog req={bashReq} onDecision={(d) => decisions.push(d)} />);
     await new Promise((r) => setTimeout(r, 20)); // let useInput subscribe (passive effect) before non-idempotent keys
     a.stdin.write("y");

@@ -1,4 +1,14 @@
-// tui/src/PermissionDialog.tsx — CC-style approval gate: a numbered, arrow-selectable menu
+// tui/src/PermissionDialog.tsx — the permission KIND SWITCHBOARD (F6 T6), and the generic body every kind
+// that has no dialog of its own still falls back to.
+//
+// `permissionKind(toolName, input, cwd)` is upstream's own routing question (`Ksn` L279164 — see
+// dialogs/permissionKind.ts), asked once here. Task 6 lands the `bash` arm; `file`/`webfetch`/`skill`/
+// `monitor`/`generic` keep the pre-F6 body below UNTOUCHED, key contract and all, until tasks 7-8 replace
+// them. Note what the routing already buys the old body: a Bash command that is really an in-place `sed`
+// edit resolves to the `file` kind, so it does NOT reach the Bash dialog.
+//
+// ── the generic body (pre-F6, unchanged) ──────────────────────────────────────────────────────────────
+// CC-style approval gate: a numbered, arrow-selectable menu
 // (Yes / Yes-don't-ask-again / No) over the tool + its full target. ↑/↓ + Enter, 1/2/3, Esc = No,
 // y = accept once, n = reject (KB1); the legacy a/A/d shortcuts still work. UI hints are absent
 // headlessly, so the prompt is reconstructed from toolName + input. Shared by the chat REPL (ChatApp)
@@ -14,7 +24,10 @@ import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvide
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
 import type { PermissionDecision } from "../index.js";
+import type { PermissionUpdateLike } from "../permissions/types.js";
 import { ACCENT } from "./theme.js";
+import { permissionKind } from "./dialogs/permissionKind.js";
+import { BashPermission } from "./dialogs/BashPermission.js";
 
 /** The salient target of a tool: the Bash command, the file path, else the first arg. */
 function target(toolName: string, input: Record<string, unknown>): string {
@@ -27,7 +40,21 @@ const clip = (s: string, n = 140): string => (s.length > n ? s.slice(0, n - 1) +
 
 interface Opt { key: string; label: string; decision: PermissionDecision }
 
-export function PermissionDialog({ req, onDecision }: { req: { toolName: string; input: Record<string, unknown>; title?: string; subagentType?: string }; onDecision: (d: PermissionDecision) => void }) {
+export interface PermissionDialogRequest {
+  toolName: string; input: Record<string, unknown>;
+  title?: string; description?: string; subagentType?: string;
+  suggestions?: PermissionUpdateLike[]; decisionReason?: string;
+}
+
+/** The switchboard. `cwd` is the SESSION's working directory, which the routing needs (a Glob/Grep/Read
+ *  consult titles itself with it) and the Bash body's suggestion summary names — see permissionKind.ts. */
+export function PermissionDialog({ req, onDecision, cwd }: { req: PermissionDialogRequest; onDecision: (d: PermissionDecision) => void; cwd?: string }) {
+  const { kind } = permissionKind(req.toolName, req.input, cwd);
+  if (kind === "bash") return <BashPermission req={req} onDecision={onDecision} cwd={cwd} />;
+  return <GenericPermission req={req} onDecision={onDecision} />;
+}
+
+function GenericPermission({ req, onDecision }: { req: PermissionDialogRequest; onDecision: (d: PermissionDecision) => void }) {
   const opts: Opt[] = [
     { key: "1", label: "Yes", decision: { kind: "allow_once" } },
     { key: "2", label: `Yes, and don't ask again for ${req.toolName} this session`, decision: { kind: "allow_always" } },
