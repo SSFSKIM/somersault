@@ -15,7 +15,7 @@
 import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderWithKeymap as render } from "./keysTestUtil.js";
-import { ChatComposer } from "../../src/tui/ChatComposer.js";
+import { ChatComposer, MENTION_WALK_DEBOUNCE_MS } from "../../src/tui/ChatComposer.js";
 import { collectEntries, collectFiles, mentionWalkRoot, rankCandidates, type DirEnt } from "../../src/tui/fileComplete.js";
 import { applyKey, initialEditorState, setMentionFiles, type EditorState, type KeyFlags } from "../../src/tui/editor.js";
 import { mentionInsertion } from "../../src/tui/completionTriggers.js";
@@ -87,6 +87,16 @@ describe("mentionWalkRoot — which directory the walk starts from", () => {
     expect(mentionWalkRoot("../sibling/x")).toBe("");
     expect(mentionWalkRoot("./src/x")).toBe("");
   });
+  // t11 review I1, ruled: an EXPLICIT request beats the default filter. `skipDir` keeps a bulk walk out of
+  // node_modules; naming the directory is asking for it, and upstream's per-level `FCH` (L432305) filters only
+  // dotfiles, so `@./node_modules/` lists it there too. Both halves are pinned so neither can drift alone.
+  it("re-rooting into an ignored directory LISTS it, while the whole-tree walk still refuses to descend", async () => {
+    const whole = await collectEntries("", async (d) => TREE[d] ?? []);
+    expect(whole.map((e) => e.path).some((p) => p.startsWith("node_modules"))).toBe(false);
+    const rooted = await collectEntries("", async (d) => TREE[d] ?? [], { root: "node_modules/" });
+    expect(rooted.map((e) => e.path)).toEqual(["node_modules/pkg.js"]);
+    expect(mentionWalkRoot("node_modules/pk")).toBe("node_modules/");   // …and the query really routes there
+  });
 });
 
 describe("ranking treats a directory like any other candidate", () => {
@@ -127,6 +137,22 @@ describe("CM40 — accepting a directory reopens the mention one level deeper", 
     s = press(s, { tab: true });                                                          // → @src/util/
     expect(s.lines[0]).toBe("@src/util/");
     expect(s.mention!.query).toBe("src/util/");
+  });
+  // t11 review M2. The carried parent list still holds the directory just accepted, and against the deeper
+  // query it is an exact match — so a second Tab inside the debounce window re-accepts it and changes nothing.
+  // Transcribed rather than filtered (see acceptMention's note); this pins both that it is harmless and that
+  // the re-rooted walk closes the window, since a walk rooted at `src/` never emits `src/` itself.
+  it("the double-Tab window is a no-op and self-heals when the re-rooted walk lands", () => {
+    const once = press(open(["src/", "src/app.ts"], "src"), { tab: true });
+    expect(once.lines[0]).toBe("@src/");
+    expect(once.mention!.items[0].path).toBe("src/");                   // the accepted dir still ranks first
+    const twice = press(once, { tab: true });
+    expect(twice.lines[0]).toBe("@src/");                               // …and re-accepting it is a no-op
+    expect(twice.mention).not.toBeNull();
+    // What the re-rooted walk hands back never contains the root itself, so the window closes.
+    const landed = setMentionFiles(once, ["src/app.ts", "src/util/"]);
+    expect(landed.mention!.items.map((c) => c.path)).not.toContain("src/");
+    expect(press(landed, { tab: true }).lines[0]).toBe("@src/util/");    // the same key now MOVES
   });
   it("a FILE still accepts-and-closes with the trailing space", () => {
     const s = press(open(["src/app.ts"], "app"), { tab: true });
@@ -231,6 +257,24 @@ describe("CM39 — the walk is debounced and generation-guarded", () => {
     expect(f).not.toContain("README.md");
     await slow.drain(TREE);
     await waitFor(() => frame(lastFrame).includes("README.md"));   // …and it appears when the walk lands
+  });
+
+  // t11 review M6: the exported constant has to be the one the composer actually runs on, or the export is a
+  // decoration. With no `mentionWalkMs` prop the first readdir cannot happen before the window has elapsed —
+  // a trailing-only setTimeout never fires early, so `elapsed >= 50` is a safe lower bound and a default of 0
+  // (or a leading edge) would land at ~0.
+  it("MENTION_WALK_DEBOUNCE_MS is 50 and IS the default the composer runs on", async () => {
+    expect(MENTION_WALK_DEBOUNCE_MS).toBe(50);                          // `Dee(Re, 50)`, bundle L490598
+    let firstReadAt = 0;
+    const readdir = async (d: string): Promise<DirEnt[]> => { firstReadAt ||= Date.now(); return TREE[d] ?? []; };
+    const { stdin, lastFrame } = render(
+      <ChatComposer onSubmit={() => {}} cwd="" commandCatalog={[]} mentionReaddir={readdir} />,
+    );
+    await tick(20);
+    const wroteAt = Date.now();
+    stdin.write("@");
+    await waitFor(() => frame(lastFrame).includes("README.md"));
+    expect(firstReadAt - wroteAt).toBeGreaterThanOrEqual(MENTION_WALK_DEBOUNCE_MS - 2);
   });
 
   it("`@src` lists `src/`, and accepting it reopens the popup on src's children", async () => {

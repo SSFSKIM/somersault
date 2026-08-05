@@ -191,7 +191,17 @@ function spliceSpan(s: EditorState, span: TokenSpan, repl: string): { lines: str
  *  `mention` is deliberately NOT nulled before the rescan: `withMention` carries `prev.files` forward, so the
  *  parent level's list stays on screen, re-ranked against the deeper query, until the composer's re-rooted
  *  walk lands. Upstream has the same property for the same reason — `Be` schedules the new search and returns,
- *  and `Re` only replaces `suggestions` once it resolves. */
+ *  and `Re` only replaces `suggestions` once it resolves.
+ *
+ *  ONE CONSEQUENCE OF CARRYING IT UNFILTERED (t11 review, M2), transcribed rather than fixed. The parent list
+ *  still contains the directory just accepted, and re-ranked against the deeper query `src/` that entry is an
+ *  exact match and therefore ranks FIRST — so a second Tab pressed inside the debounce window re-accepts
+ *  `src/` and splices the identical text: one dead keystroke, at most ~50 ms wide. It self-heals the moment
+ *  the re-rooted walk lands, because a walk rooted at `src/` emits only what is BELOW it and never `src/`
+ *  itself. Filtering the accepted path out of the carried list would close the window, and is deliberately not
+ *  done: upstream carries its own suggestion list across `Be` untouched and has the same window, and a list
+ *  that silently disagrees with the walk that produced it is the more expensive kind of wrong. Pinned in
+ *  test/tui/file-complete-async.test.tsx ("the double-Tab window is a no-op and self-heals"). */
 export function acceptMention(s: EditorState): EditorState {
   const m = s.mention!;                                          // only reached via `mentionActive`, so non-empty
   const chosen = m.items[Math.min(m.index, m.items.length - 1)];

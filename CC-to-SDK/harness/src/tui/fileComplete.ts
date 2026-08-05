@@ -80,14 +80,24 @@ export async function collectEntries(cwd: string, readdir: AsyncReaddirFn, opts:
  *  Upstream's counterpart is `A7p`'s `{ directory, prefix }` split inside `p_a` (bundle L432324): it reads one
  *  directory per level rather than re-searching a whole index. Two transcription notes:
  *
- *  · Upstream reaches that per-level lane ONLY for a token `d_a` accepts (L432302: `~/`, `/`, `./`, `../`, or
- *    exactly `~`, `.`, `..`); every other `@` token goes to the fuzzy git-file index (`Tcn`, L314140), which
- *    re-searches the whole repo on each keystroke and contains no directories at all. This port has one lane,
- *    so the split is by whether the query HAS a directory part instead — a plain `@app` still fuzzy-matches
+ *  · Upstream reaches that per-level lane ONLY for a token `d_a` accepts (L432303: `~/`, `/`, `./`, `../`, or
+ *    exactly `~`, `.`, `..`); every other `@` token goes to the fuzzy index (`Tcn`, L314140), which
+ *    re-searches the whole repo on each keystroke. That index holds DIRECTORIES too — `FNd` (L314068) builds
+ *    it from `[...await k2s(c), ...c]` (L314073–L314075), where `k2s` (L314031) walks every tracked file's
+ *    ancestor chain and returns each directory with a trailing separator (L314036). This port has one lane, so
+ *    the split is by whether the query HAS a directory part — a plain `@app` still fuzzy-matches
  *    `src/tui/ChatApp.tsx` across the tree, and `@src/util/f` reads only `src/util`.
  *  · The three shapes upstream's `A7p` handles and we do not — absolute, `~`-relative, and dot-relative — fall
  *    back to `""`, i.e. the whole-tree walk this port has always done for them. Answering them properly needs
- *    a path resolver, which this module cannot have (see the no-builtins note at the top). */
+ *    a path resolver, which this module cannot have (see the no-builtins note at the top).
+ *
+ *  THE IGNORE-SET RULE, ruled deliberately (t11 review, I1). Re-rooting BYPASSES `skipDir`: the root itself is
+ *  never filtered, so `@node_modules/` lists node_modules' children even though the whole-tree walk refuses to
+ *  descend into it. That asymmetry is the intended behavior, not a leak — **an explicit request beats the
+ *  default filter.** `skipDir` exists to keep a bulk walk from drowning in vendored files nobody asked for; a
+ *  user who has typed the directory's name has asked for it by name. Upstream's per-level lane behaves the
+ *  same way — `FCH` (L432305) filters only dotfiles and knows nothing about `node_modules`, so `@./node_modules/`
+ *  lists it there too. Pinned in test/tui/file-complete-async.test.tsx. */
 export function mentionWalkRoot(query: string): string {
   const i = query.lastIndexOf("/");
   if (i === -1) return "";
