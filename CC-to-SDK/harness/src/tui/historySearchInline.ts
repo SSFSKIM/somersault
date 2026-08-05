@@ -25,7 +25,11 @@
 //  · L489707  `G`, execute: an empty query submits the PARKED draft, a live match submits the match
 //  · L493445  `xWf`'s two literals — `search prompts:` and, on a failed walk, `no matching prompt:`
 //
-// FOUR recorded divergences:
+// FIVE recorded divergences. Note what is NOT among them: the walk has no scope and `ctrl+s` does nothing.
+// `r9f`'s action memo (L489750) registers four actions and `historySearch:cycleScope` is not one of them —
+// only the picker registers it (L492190). An unhandled action falls through to the composer's fallback,
+// where `handleKey` drops it for being a ctrl key, so the bound key is inert. That inertness is upstream's
+// behaviour reproduced at zero cost, not a gap.
 //
 //  1. THE `!` STAYS IN THE BUFFER, and the caret offset is measured against the text that is actually there.
 //     Upstream keeps `mode` in its own state and renders `LV(match.display)` (the display minus its `!`) as
@@ -34,12 +38,13 @@
 //     buffer's prefix (editor.ts's `inputMode`), so the buffer holds the display verbatim and the RAW offset
 //     is the right one. `installMatch` keeps upstream's two-offset shape for a different reason — see there.
 //
-//  2. THE SOURCE IS SCOPED. Upstream's inline walk reads `kBs()` (L317456), which streams the whole prompt
-//     log with no project, session or dedup filter — effectively scope "everywhere". Ours reads the SAME file
-//     through `readHistory` (`UUd`), which takes a scope, so ctrl+s cycles it exactly as the picker's does.
-//     Upstream registers `historySearch:cycleScope` only in the picker (L492190), which leaves the bound
-//     ctrl+s of the `HistorySearch` context dead inside its own inline search; ours answers it. The INITIAL
-//     scope is "everywhere", which is upstream's inline behaviour exactly.
+//  2. THE CORPUS IS DEDUPED AND CAPPED. Upstream's inline walk reads `kBs()` (L317456): the raw log,
+//     unfiltered and unbounded, with `r9f`'s own `R.current` Set deduping as the walk goes. Ours reads the
+//     SAME file through `readHistory` (`UUd`, L317460) at a fixed `everywhere` scope — which matches `kBs`'s
+//     lack of any project/session filter — but `UUd` also dedups by display and caps at `gDo` = 100 distinct
+//     entries before the walk starts. Deliberate: both search surfaces read one reader (F5 t12). The
+//     observable cost is narrow and real — ctrl+r cannot reach past the 100th distinct prompt where
+//     upstream's can. Upstream's own picker is `UUd`-based and has the same cap, so our two surfaces agree.
 //
 //  3. ONE INPUT, NOT TWO. Upstream mounts a second focused text input for the query and unfocuses the
 //     composer's (`focus: !we && !ae`, L496230). This port has a single key fallback, so while the search is
@@ -50,6 +55,12 @@
 //     same machinery the Up-arrow walk uses (editorHistory.ts, FRESH CHIP IDS) — a recalled `[Pasted text #1]`
 //     must not collide with an id the live session has already handed out. Upstream re-installs the original
 //     ids and has the collision.
+//
+//  5. FORWARD-DELETE ACTS AS BACKSPACE. Upstream's `V` (L489725) tests `Y.key === "backspace"` only; ours
+//     pairs `key.backspace || key.delete`, so Delete shortens the query and cancels on an empty one. Our
+//     query row paints its cursor as a block at the END and has no caret inside the text, so there is
+//     nothing forward to delete — and the picker's own field has always used the same pairing
+//     (HistorySearchOverlay.tsx), so the two search surfaces stay consistent with each other.
 import { bufferText, replaceBufferFromOutside, type Cursor, type EditorState, type PastedMap } from "./editor.js";
 import { rebuildChips } from "./editorHistory.js";
 

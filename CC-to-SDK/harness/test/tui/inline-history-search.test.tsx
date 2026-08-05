@@ -239,23 +239,34 @@ describe("<ChatComposer> — CM58's inline reverse-i-search", () => {
     expect(editorStateRef.current.lines).toEqual(["draft"]);
   });
 
-  it("ctrl+s cycles the scope (everywhere → session → project) and re-scans the new corpus", async () => {
-    // Only the PROJECT-scoped line is ours; "everywhere" sees both, "session" sees only sessionless ones.
-    appendHistory({ display: "elsewhere prompt", project: "/tmp/some-other-project" }, env);
-    appendHistory({ display: "elsewhere sibling", project: "/tmp/some-other-project" }, env);
+  it("ctrl+s is INERT inside the inline search — no scope, no handler, and it never reaches the editor", async () => {
+    // `r9f`'s action memo (bundle L489750) registers four actions and `historySearch:cycleScope` is not one
+    // of them; only the picker registers it (L492190), because only the picker has a scope. ctrl+s therefore
+    // resolves to a handler-less action, falls through to the composer fallback, and is dropped as a ctrl
+    // key. Pinned because "nothing happens" is the intended outcome and is otherwise indistinguishable from
+    // a wiring mistake.
+    seed("run typecheck");
     const editorStateRef = { current: initialEditorState() } as React.MutableRefObject<EditorState>;
-    const { stdin, lastFrame } = mount({ editorStateRef, sessionId: "sess-1" });
+    const { stdin, lastFrame } = mount({ editorStateRef });
     await settle();
     stdin.write(CTRL_R); await settle();
-    expect(strip(frame(lastFrame))).toContain("· everywhere");        // qGf's own initial scope (L492156)
-    stdin.write("elsewhere");
-    await waitFor(() => editorStateRef.current.lines[0] === "elsewhere sibling");
-    stdin.write(CTRL_S);                                              // → session: those lines carry sess ids? no
-    await waitFor(() => strip(frame(lastFrame)).includes("· session"));
-    await waitFor(() => strip(frame(lastFrame)).includes(NO_MATCH_PROMPT));
-    stdin.write(CTRL_S);                                              // → project: /tmp/ccx-inline-search-project
-    await waitFor(() => strip(frame(lastFrame)).includes("· project"));
-    expect(strip(frame(lastFrame))).toContain(NO_MATCH_PROMPT);
+    stdin.write("type");
+    await waitFor(() => editorStateRef.current.lines[0] === "run typecheck");
+    const before = strip(frame(lastFrame));
+    stdin.write(CTRL_S);
+    await settle();
+    expect(strip(frame(lastFrame))).toBe(before);                     // nothing moved at all
+    expect(strip(frame(lastFrame))).toContain(`${SEARCH_PROMPT} type`);   // the query did not eat the byte
+    expect(editorStateRef.current.lines).toEqual(["run typecheck"]);      // …and the editor never saw it
+  });
+
+  it("the search row carries no scope chip — xWf renders the label, the query and nothing else", async () => {
+    seed("run typecheck");
+    const { stdin, lastFrame } = mount();
+    await settle();
+    stdin.write(CTRL_R);
+    await waitFor(() => strip(frame(lastFrame)).includes(SEARCH_PROMPT));
+    for (const scope of ["everywhere", "session", "project"]) expect(strip(frame(lastFrame))).not.toContain(scope);
   });
 
   it("suppresses the paste-expand hint while searching (bundle L493769: `Rpk && !xMr`)", async () => {

@@ -12,20 +12,22 @@ import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { bufferText, type EditorState } from "./editor.js";
 import { hydrateEntry, readHistory } from "./promptHistory.js";
-import { nextScope, type HistoryScope } from "./historySearch.js";
+import type { HistoryScope } from "./historySearch.js";
 import { findInlineMatch, installMatch, restoreDraft, NO_MATCH_PROMPT, SEARCH_PROMPT, type SearchDraft, type SearchEntry } from "./historySearchInline.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
 
-/** `qGf`'s own initial value (bundle L492156), and the scope upstream's inline walk is pinned at by
- *  construction — `kBs` filters nothing (divergence 2 in historySearchInline.ts). */
-const INITIAL_SCOPE: HistoryScope = "everywhere";
+/** THE inline walk's scope, fixed. Upstream's inline corpus is `kBs()` (bundle L317456), which streams the
+ *  whole prompt log with no project or session filter — `everywhere` is the only scope it has, and `r9f`'s
+ *  action memo (L489750) registers four actions with `historySearch:cycleScope` deliberately not among them
+ *  (only the picker registers it, L492190). So this is a constant, not state: see divergence 2 in
+ *  historySearchInline.ts for the corpus difference that remains. */
+const SEARCH_SCOPE: HistoryScope = "everywhere";
 
 export interface InlineSearch {
   searching: boolean;
   query: string;
   failed: boolean;
-  scope: HistoryScope;
   /** Read by the composer's key path BEFORE anything else, for the same reason `stateRef` exists there: the
    *  keymap dispatches from a passive-effect listener, so two keys arriving in one stdin chunk see a scope
    *  flag that is one render stale. This ref is never stale. */
@@ -35,7 +37,6 @@ export interface InlineSearch {
   accept(): void;
   cancel(): void;
   execute(): void;
-  cycleScope(): void;
   /** The search field. Returns true when the event was consumed — which, while a search is live, is always:
    *  divergence 3 (one input, not two) means every key that is not a bound action belongs to the query or is
    *  swallowed, and none of them may reach the editor. */
@@ -67,29 +68,27 @@ export function useInlineHistorySearch(opts: {
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
   const [failed, setFailed] = useState(false);
-  const [scope, setScope] = useState<HistoryScope>(INITIAL_SCOPE);
   const searchingRef = useRef(false);
   const queryRef = useRef(""); queryRef.current = query;
   const draft = useRef<SearchDraft | null>(null);
   const entries = useRef<SearchEntry[]>([]);
-  /** Per-scope cache, the picker's own `u.current` (bundle L492159): a scope already scanned is not re-read. */
-  const cache = useRef<Partial<Record<HistoryScope, SearchEntry[]>>>({});
+  /** The scanned corpus, cached for the search's life — the picker's own `u.current` (bundle L492159). */
+  const cache = useRef<SearchEntry[] | null>(null);
   /** Where the walk stopped, and the displays it has already shown (`R.current`, L489665). */
   const from = useRef(0);
   const seen = useRef<Set<string>>(new Set());
   const disposed = useRef(false);
   useEffect(() => () => { disposed.current = true; }, []);
 
-  const load = (s: HistoryScope): SearchEntry[] => {
-    const hit = cache.current[s];
-    if (hit) return hit;
+  const load = (): SearchEntry[] => {
+    if (cache.current) return cache.current;
     const env = opts.envRef.current;
-    // `scope:"session"` needs a REAL id. A session that has not yet seen its first state event has none, and
-    // the prompts it wrote carry no `sessionId` either — `readHistory` then matches exactly those sessionless
-    // lines, which is the honest answer for "this session" and is recorded in Task 13.
-    const rows = readHistory({ scope: s, project: opts.projectRef.current, sessionId: opts.sessionIdRef.current }, env);
+    // `project`/`sessionId` are passed for completeness and are inert at `everywhere` scope — `readHistory`
+    // applies neither filter there. They are what would make any other scope answerable, and nothing here
+    // asks for one (see `SEARCH_SCOPE`).
+    const rows = readHistory({ scope: SEARCH_SCOPE, project: opts.projectRef.current, sessionId: opts.sessionIdRef.current }, env);
     const out = rows.map((r) => hydrateEntry(r, env));
-    cache.current[s] = out;
+    cache.current = out;
     return out;
   };
 
@@ -112,26 +111,25 @@ export function useInlineHistorySearch(opts: {
     if (wasEmpty && bufferText(opts.stateRef.current).length > 0) opts.onDraftStart?.();
   };
 
-  // Upstream's own effect (L493421): every query change re-runs the walk from the top. `scope` is in the
-  // deps for the same reason — cycling it swaps the corpus underneath the same query.
+  // Upstream's own effect (L493421): every query change re-runs the walk from the top.
   useEffect(() => {
     if (!searching || disposed.current) return;
-    entries.current = load(scope);
+    entries.current = load();
     scan(false, query);
-  }, [query, scope, searching]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [query, searching]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const close = () => { searchingRef.current = false; setSearching(false); setQuery(""); setFailed(false); draft.current = null; from.current = 0; seen.current = new Set(); };
 
   const api: InlineSearch = {
-    searching, query, failed, scope, searchingRef,
+    searching, query, failed, searchingRef,
     // `B` (L489683). Upstream's registration is `isActive: !a`, so a ctrl+r while already searching is not a
     // re-open — it is `historySearch:next`, which the HistorySearch context resolves instead.
     open() {
       if (searchingRef.current) return;
       const s = opts.stateRef.current;
       draft.current = { display: bufferText(s), cursor: s.cursor, pastedContents: s.pastedContents };
-      cache.current = {};                                // a fresh search re-reads: the log grew since the last one
-      setScope(INITIAL_SCOPE); setQuery(""); setFailed(false);
+      cache.current = null;                              // a fresh search re-reads: the log grew since the last one
+      setQuery(""); setFailed(false);
       from.current = 0; seen.current = new Set();
       searchingRef.current = true; setSearching(true);
       opts.onOpen?.();
@@ -152,10 +150,15 @@ export function useInlineHistorySearch(opts: {
     // draft is still there (the effect above restored it), and a live match means the match is. See
     // `submitBuffer` for why this is a re-entry rather than its own submit.
     execute() { if (!searchingRef.current) return; close(); opts.submitBuffer(); },
-    cycleScope() { if (searchingRef.current) setScope((s) => nextScope(s)); },
     handleKey(e) {
       if (!searchingRef.current) return false;
       const { input, key } = toKeyFlags(e);
+      // RECORDED DIVERGENCE (5): forward-DELETE is treated as a backspace here, so it shortens the query and
+      // cancels on an empty one. Upstream's `V` (L489725) tests `Y.key === "backspace"` only, and its query
+      // field is a real one-line input where Delete means delete-forward. We have no caret inside the query
+      // (the row paints a block at its end), so there is nothing forward to delete — and this is the same
+      // pairing the picker's own field has always used (`key.backspace || key.delete`,
+      // HistorySearchOverlay.tsx), so the two search surfaces stay consistent with each other.
       if (key.backspace || key.delete) {
         // `V` (L489725): a backspace on an already-empty query is the cancel, not a no-op.
         if (queryRef.current.length === 0) { api.cancel(); return true; }
@@ -169,19 +172,17 @@ export function useInlineHistorySearch(opts: {
   return api;
 }
 
-/** `xWf` (bundle L493443): a ROW of `<Text dimColor>{label}</Text>` and the query, gap 1. Its input is a real
- *  cursor-showing text field upstream; ours paints the inverse block the overlay's field already uses.
- *
- *  The ` · {scope}` tail is OURS, and only because the walk is scoped (divergence 2): ctrl+s cycles a corpus
- *  the user would otherwise have no way to see. The chip is borrowed verbatim from the picker's own title
- *  (`Search prompts · {scope}`, L492211) so the two surfaces name the same thing the same way. */
-export function InlineSearchRow({ query, failed, scope }: { query: string; failed: boolean; scope: HistoryScope }): React.ReactElement {
+/** `xWf` (bundle L493443): a ROW of `<Text dimColor>{label}</Text>` and the query, gap 1 — and NOTHING else.
+ *  Its input is a real cursor-showing text field upstream; ours paints the inverse block the overlay's field
+ *  already uses. There is deliberately no scope chip: the inline corpus has one scope and no key to change
+ *  it, so a chip would advertise a control that does not exist (the picker, which does cycle, keeps its own
+ *  `Search prompts · {scope}` title at L492211). */
+export function InlineSearchRow({ query, failed }: { query: string; failed: boolean }): React.ReactElement {
   return (
     <Box paddingX={1} flexDirection="row">
       <Text dimColor>{failed ? NO_MATCH_PROMPT : SEARCH_PROMPT}</Text>
       <Text dimColor>{" " + query}</Text>
       <Text inverse>{" "}</Text>
-      <Text dimColor>{` · ${scope}`}</Text>
     </Box>
   );
 }

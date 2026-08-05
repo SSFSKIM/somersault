@@ -87,8 +87,19 @@ describe("previewLines — `renderPreview`'s hard wrap, blank-line drop and six-
   it("drops blank lines BEFORE counting (upstream's `.filter(w => w.trim() !== \"\")`)", () => {
     expect(previewLines("a\n\n   \nb", 40).lines).toEqual(["a", "b"]);
   });
-  it("hard-wraps a long line at the given width", () => {
+  it("WORD-wraps — upstream's JB is Bun.wrapAnsi (bundle L106890), not a fixed-offset slice", () => {
+    // The load-bearing case, and the one a single-word fixture cannot distinguish: at width 10 a slice
+    // would cut "the quick " / "brown fox " mid-token; a word wrap breaks at the spaces.
+    expect(previewLines("the quick brown fox jumps", 10).lines).toEqual(["the quick", "brown fox", "jumps"]);
+  });
+  it("…and still HARD-breaks a single token too long to fit (`{ hard: true }`)", () => {
     expect(previewLines("abcdefghij", 4).lines).toEqual(["abcd", "efgh", "ij"]);
+    expect(previewLines("hi abcdefghij", 4).lines).toEqual(["hi", "abcd", "efgh", "ij"]);
+  });
+  it("measures DISPLAY width, so a CJK run breaks at half the code points", () => {
+    // Each of these is two columns wide, so width 6 holds three per row — a `.slice()` on code units would
+    // have put six on a row and overflowed the pane.
+    expect(previewLines("한한한한한한", 6).lines).toEqual(["한한한", "한한한"]);
   });
   it("with more than six lines keeps FIVE and puts the rest in the tail — the tail costs a row", () => {
     const { lines, more } = previewLines("1\n2\n3\n4\n5\n6\n7\n8", 40);

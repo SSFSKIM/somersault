@@ -461,6 +461,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // same stdin chunk as the ctrl+r that opened the search resolves against a scope stack one render stale,
     // so it can still land here as `chat:cancel`. It is the ACCEPT (keep the match, close the search) — never
     // an interrupt, never the Esc-Esc clear arm.
+    //
+    // BELT-AND-BRACES, AND UNPINNED — do not delete it as dead code. In the normal path the `HistorySearch`
+    // scope pushed above already resolves Escape to `historySearch:accept`, so this branch never runs and no
+    // test fails without it. It exists for the one-render-stale window described above, which the test
+    // harness cannot produce (ink-testing-library delivers one chunk per `stdin.write`). It is the same
+    // reasoning, and the same lack of a pin, as the live popup re-read in `handleKey` below.
     if (search.searchingRef.current) { search.accept(); return; }
     const s = stateRef.current;
     if (busyRef.current) { endInterceptedEditorAction(s); disarmClear(); onInterruptRef.current?.(); return; }   // running turn: interrupt; buffer untouched
@@ -640,7 +646,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     "historySearch:accept": () => search.accept(),
     "historySearch:cancel": () => search.cancel(),
     "historySearch:execute": () => search.execute(),
-    "historySearch:cycleScope": () => search.cycleScope(),
+    // NOT registered: `historySearch:cycleScope`. `r9f`'s action memo (bundle L489750) has exactly four
+    // entries and that is not one of them — only the picker registers it (L492190), because only the picker
+    // has a scope. ctrl+s therefore resolves to an action with no handler, falls through to the fallback
+    // below, and `search.handleKey` drops it (a ctrl key is not query text). An inert ctrl+s inside the
+    // inline search IS upstream's behaviour, and it costs nothing to reproduce.
     "chat:killAgents": () => { if (interceptChord()) onKillAgentsRef.current?.(); },
     // K6 (F2 task 10): `"ctrl+k": "command:clear"` in the user's keybindings.json runs `/clear` exactly as if
     // it had been typed here — same submit seam, so local commands, catalog commands and the unknown-name
@@ -834,7 +844,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
           rows live in the same slot and the search field is the one that matters (t5 review carry-forward). */}
       {pasteHint && !search.searching ? <Box paddingX={1}><Text dimColor>{PASTE_EXPAND_HINT}</Text></Box> : null}
       {/* …and `xMr && <Mel …>` on the very next line (L493783) is this row. */}
-      {search.searching ? <InlineSearchRow query={search.query} failed={search.failed} scope={search.scope} /> : null}
+      {search.searching ? <InlineSearchRow query={search.query} failed={search.failed} /> : null}
       {/* RECORDED DIVERGENCE (F7 owns the fix): upstream pushes this through the notification queue
           (`addNotification`, L489537), which renders it in the queue's own slot below the composer and lets
           `dismissSearchHint` pull it when the history-search overlay opens. No notification queue here yet,

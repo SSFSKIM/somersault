@@ -187,7 +187,7 @@ describe("the same band on every surface", () => {
     fake = fakeRemote({
       submit: async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); return new Promise(() => {}); },
     });
-    const deps = { columns: () => 40, getSessionMessages: async () => [] as any[], getSessionMessagesIn: async () => [] as any[], listHistorySessions: async () => [] };
+    const deps = { columns: () => 40, getSessionMessages: async () => [] as any[] };
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} />);
     await waitFor(() => (lastFrame() ?? "").includes("❯\u00a0"));
     stdin.write("start"); await waitFor(() => (lastFrame() ?? "").includes("start"));

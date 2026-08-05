@@ -2,8 +2,11 @@
 // `HistorySearch` context): the inline reverse-i-search the composer owns (`r9f`/`xWf`, see
 // historySearchInline.ts) and the full-screen picker (`qGf`, HistorySearchOverlay.tsx).
 //
-// Scopes cycle session → project → everywhere and start at "everywhere" — `SDo` (bundle L317659) for the
-// order, `qGf`'s own `useState("everywhere")` (L492156) for the initial value, both re-verified in F5 t12.
+// Scopes are the PICKER's, and only the picker's: they cycle session → project → everywhere and start at
+// "everywhere" — `SDo` (bundle L317659) for the order, `qGf`'s own `useState("everywhere")` (L492156) for
+// the initial value, both re-verified in F5 t12. The inline search has one fixed scope and no key to change
+// it, because upstream's inline corpus (`kBs`, L317456) is unfiltered and `historySearch:cycleScope` is
+// registered by the picker alone (L492190) — see `SEARCH_SCOPE` in InlineHistorySearch.tsx.
 // Ranking is the picker's two-class rule (`p`, L492196-L492205): substring matches first, then `oDb`
 // subsequence matches, order preserved within each class.
 //
@@ -15,6 +18,7 @@
 // `UUd`, the same file upstream's own picker scans — and those two transcript helpers are gone with no
 // callers left. The cost is recorded in Task 13: prompts submitted before F5 task 6 started writing
 // `history.jsonl` are not in the log and therefore drop out of search.
+import wrapAnsi from "wrap-ansi";
 import type { PastedMap } from "./editor.js";
 
 export const HISTORY_SCOPES = ["session", "project", "everywhere"] as const;
@@ -80,17 +84,24 @@ export function previewLayout(columns: number): { sideBySide: boolean; listWidth
   };
 }
 
-/** `renderPreview` (L492219) verbatim, minus the JSX: hard-wrap the display to `width`, DROP every blank
- *  line, then keep six — or five plus a tail row when there are more than six, because the tail costs a row
- *  of the same six-row budget (`H = E.slice(0, A ? aci - 1 : aci)`). */
+/** `renderPreview`'s body (L492219), minus the JSX: wrap the display to `width`, DROP every blank line, then
+ *  keep six — or five plus a tail row when there are more than six, because the tail costs a row of the same
+ *  six-row budget (`H = E.slice(0, A ? aci - 1 : aci)`).
+ *
+ *  THE WRAP IS UPSTREAM'S, NOT A FIXED-OFFSET SLICE. `JB(e, t, r)` (bundle L106890) is
+ *  `Bun.wrapAnsi(e, t, r)` and the call site passes `{ hard: true }` — so it breaks on WORD boundaries,
+ *  falling back to a hard break only for a token too long to fit. Slicing every `width` characters was
+ *  wrong for the common case (an ordinary sentence) and only looked right against a single-word fixture.
+ *  `wrap-ansi` is the same library, already a dependency (diffRender.ts's `wrapRows` is the precedent), and
+ *  it also gets the display WIDTH of CJK and emoji right, which a `.slice()` on code units cannot.
+ *
+ *  `trim` is left at its DEFAULT (true) here, unlike `wrapRows`, which passes `trim: false`. That is
+ *  deliberate and it is upstream's: the call site passes only `{ hard: true }`, so Bun's own default stands
+ *  — and leading indentation being trimmed off a preview row is invisible next to the blank-line filter this
+ *  function already applies. A diff row, where a leading space is data, is the case that needs `trim:false`. */
 export function previewLines(display: string, width: number, max: number = PREVIEW_LINES): { lines: string[]; more: number } {
   const w = Math.max(1, Math.floor(width));
-  const wrapped: string[] = [];
-  for (const raw of display.split("\n")) {
-    if (raw.length <= w) { wrapped.push(raw); continue; }
-    for (let i = 0; i < raw.length; i += w) wrapped.push(raw.slice(i, i + w));
-  }
-  const kept = wrapped.filter((l) => l.trim() !== "");
+  const kept = wrapAnsi(display, w, { hard: true }).split("\n").filter((l) => l.trim() !== "");
   const over = kept.length > max;
   const lines = kept.slice(0, over ? max - 1 : max);
   return { lines, more: kept.length - lines.length };
