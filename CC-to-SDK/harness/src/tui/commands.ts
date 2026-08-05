@@ -32,6 +32,7 @@ export const COMMANDS: { name: string; summary: string }[] = [
   { name: "think", summary: "<off|low|medium|high|xhigh|max|N> — set thinking budget (no arg shows current)" },
   { name: "mcp", summary: "[reconnect <name> | toggle <name> on|off] — MCP server status / controls" },
   { name: "bg", summary: "list background tasks (k/x stops one)" },
+  { name: "history", summary: "search prompt history in the full-screen picker (Ctrl-R searches inline)" },
   { name: "rewind", summary: "rewind to a previous message (Esc Esc)" },
   { name: "add-dir", summary: "<path> — add a new working directory" },
   { name: "theme", summary: "change the theme" },

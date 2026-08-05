@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { readdir } from "node:fs/promises";
-import { applyKey, bufferText, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
+import { applyKey, bufferText, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, rebuildChips, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
 import { catalogColumnWidth, SuggestPopup, type SuggestItem } from "./suggestPopup.js";
 import { applyQueueDrain } from "./queue.js";
 import { cachedExampleFiles, examplePool, pickPlaceholder, QUEUED_UP_HINT } from "./placeholder.js";
@@ -15,6 +15,7 @@ import { collectEntries, mentionWalkRoot, type AsyncReaddirFn, type DirEnt } fro
 import type { CommandEntry } from "./commandComplete.js";
 import { editExternalAsync as realEditExternal } from "./externalEditor.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, newlineHint } from "./composerFrame.js";
+import { InlineSearchRow, useInlineHistorySearch } from "./InlineHistorySearch.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope, usePasting, useSuspendInput, type SuspendInput } from "./keys/KeymapProvider.js";
 import { expandHintText, formatBindings } from "./keys/hints.js";
@@ -119,6 +120,11 @@ function seedHistory(project: string, env: NodeJS.ProcessEnv): HistNavEntry[] {
 /** The event a real ctrl+l produces — see the `chat:clearInput` registration for why the action re-enters the
  *  key path on this rather than on whatever key the user bound to it. */
 const CTRL_L: KeyEvent = { kind: "key", name: "l", ctrl: true, alt: false, shift: false, super: false, raw: "\x0c" };
+/** …and the event a real Return produces. CM58's `historySearch:execute` re-enters the key path on THIS
+ *  rather than calling `onSubmit` itself, for the same reason `chat:clearInput` re-enters on CTRL_L: the
+ *  submit that matters is `applyKey`'s (chip expansion, the history append, the bash/memory prefix arms),
+ *  and a second copy of it in the search hook is the definition guaranteed to drift. */
+const ENTER: KeyEvent = { kind: "key", name: "enter", ctrl: false, alt: false, shift: false, super: false, raw: "\r" };
 
 export type InputOwner = "composer" | "shortcuts" | "transcript" | "overlay" | "decision";
 
@@ -181,7 +187,7 @@ export type ComposerEditExternal = (text: string) => string | null | Promise<str
 
 export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>;
   /** CM56's once-only guard, owned by ChatApp so it outlives this component's remounts (see below). */
-  searchHintFiredRef?: React.MutableRefObject<boolean>; prefill?: { text: string; token: number; mode?: "replace" | "prepend" } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
+  searchHintFiredRef?: React.MutableRefObject<boolean>; prefill?: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
   /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
    *  one. Absent AND with no provider above, the editor simply runs without a handoff. */
   suspendInput?: SuspendInput; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number;
@@ -284,6 +290,18 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const searchHintFired = searchHintFiredRef ?? localSearchHintFiredRef;
   const searchHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { disposed.current = true; if (yankTimer.current) clearTimeout(yankTimer.current); if (pasteTimer.current) clearTimeout(pasteTimer.current); if (searchHintTimer.current) clearTimeout(searchHintTimer.current); }, []);
+  // ── CM58, the ctrl+r inline reverse-i-search (F5 task 12). A HOOK, not an overlay: see
+  // InlineHistorySearch.tsx's header for why, and historySearchInline.ts's for the bundle transcription and
+  // the four divergences. `submitBuffer` is threaded through a ref because it is `handleKey(ENTER)` and
+  // `handleKey` is declared below this line.
+  const submitBufferRef = useRef<() => void>(() => {});
+  const search = useInlineHistorySearch({
+    stateRef, commitState, projectRef: historyProjectRef, sessionIdRef, envRef: historyEnvRef,
+    submitBuffer: () => submitBufferRef.current(),
+    onDraftStart: () => onDraftStartRef.current?.(),
+    // `dismissSearchHint` (`z`, bundle L489630): using the chord retires the row that advertised it.
+    onOpen: () => { setSearchHint(false); if (searchHintTimer.current) { clearTimeout(searchHintTimer.current); searchHintTimer.current = null; } },
+  });
   // F2 task 8 removed the `mounted` one-flush guard that used to sit here. Its whole job was the readable-
   // before-data window: Ink reads stdin on "readable" and the keymap listens for "data" (emitted second), so
   // an unmigrated dialog could handle a key by unmounting itself and remounting this composer BEFORE our
@@ -363,7 +381,16 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     commitState((s) => {
       const draft = s.lines.join("\n");
       const text = prefill.mode === "prepend" && draft.length > 0 ? prefill.text + "\n" + draft : prefill.text;
-      return replaceBufferFromOutside(s, text);
+      const next = replaceBufferFromOutside(s, text);
+      // F5 task 12: a prefill MAY carry paste bodies (the `/history` picker's accept does — upstream's own
+      // `x(Wt.pastedContents)` at bundle L496212). Re-minted through the walk's `rebuildChips`, for the
+      // reason editorHistory.ts's FRESH CHIP IDS gives: those ids were minted in another session against
+      // another counter, and a collision silently expands the older label to the newer payload. The
+      // `prepend` arm is unreachable for a paste-bearing prefill today (only CM49's queue rescue prepends,
+      // and it carries none), so the relabelled text simply replaces the buffer.
+      if (!prefill.pastedContents || Object.keys(prefill.pastedContents).length === 0) return next;
+      const built = rebuildChips({ display: text, pastedContents: prefill.pastedContents }, s.pasteCounter);
+      return { ...replaceBufferFromOutside(s, built.display), pastedContents: built.pastedContents, pasteCounter: built.pasteCounter };
     });
     onPrefillAppliedRef.current?.();
   }, [prefill]);
@@ -384,6 +411,20 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // no keys, because it draws nothing (t9 review, I2). Keying this on the state instead meant an `@zz` that
   // matched no file silently ate Up, Down, Tab and Escape.
   useKeyScope("Autocomplete", { active: completionActive(state) });
+  // …and CM58's context AFTER both, for the identical reason (mount order = rank): while a search is live it
+  // must outrank Chat's `escape → chat:cancel` and Autocomplete's `escape → autocomplete:dismiss`, because
+  // upstream's Escape here is `historySearch:accept` — it KEEPS the match and closes the search, and must
+  // never reach `cancel()`. Belt-and-braces, exactly like Autocomplete's: `handleKey` and `cancel` both
+  // re-read `search.searchingRef` first, which is what covers two keys arriving in ONE stdin chunk.
+  //
+  // RECORDED DIVERGENCE, and it comes from sharing a context with the picker. Upstream's `HistorySearch`
+  // block binds exactly six keys; ours adds `null` unbinds for ctrl+o/t/b/d, alt+p/alt+t and `ctrl+x ctrl+b`
+  // (bindings.ts), because until F5 t12 the only surface pushing this context was the OVERLAY — an
+  // owner-gated one, where those globals genuinely do not reach. The inline search is composer-owned, so
+  // upstream would still let ctrl+o open the pager mid-search and we do not. The table is upstream's on the
+  // six keys that matter and the unbinds are a deliberate ccx addition, so they stay: a live search field
+  // being interrupted by the todo panel is the worse of the two behaviours. Task 13 carries the note.
+  useKeyScope("HistorySearch", { active: search.searching });
   const bindings = useBindingLookup();                 // the footer ladder below reads its chords from here
   const pasting = usePasting();                        // CM25: a bracketed paste still arriving (provider-owned)
   // Read stateRef.current (NOT the closure `state`): the provider dispatches from a listener attached in a
@@ -416,6 +457,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   };
   const cancel = () => {
     if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
+    // CM58 FIRST, and off the ref rather than the render's `search.searching`: an Escape that arrived in the
+    // same stdin chunk as the ctrl+r that opened the search resolves against a scope stack one render stale,
+    // so it can still land here as `chat:cancel`. It is the ACCEPT (keep the match, close the search) — never
+    // an interrupt, never the Esc-Esc clear arm.
+    if (search.searchingRef.current) { search.accept(); return; }
     const s = stateRef.current;
     if (busyRef.current) { endInterceptedEditorAction(s); disarmClear(); onInterruptRef.current?.(); return; }   // running turn: interrupt; buffer untouched
     if (!isEmptyBuffer(s)) {                                            // idle + text: CC's double-press clear (CM15)
@@ -468,6 +514,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   };
   const handleKey = (e: KeyEvent | TextEvent) => {
     if (inputOwnerRef && inputOwnerRef.current !== "composer") return;
+    // CM58's search field owns the fallback outright while it is live (divergence 3): the query takes every
+    // printable, backspace shortens it — and empties into the cancel — and nothing else reaches the editor.
+    // The ref, not the render value, for the one-chunk reason `cancel` above states.
+    if (search.searchingRef.current) { search.handleKey(e); return; }
     const { input, key } = toKeyFlags(e);
     const s = stateRef.current;
     if (!key.escape && clearArm.current) disarmClear();
@@ -540,6 +590,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     if (r.historyAppend) persistHistory(r.historyAppend);
     if (r.submit != null) onSubmitRef.current(r.submit); commitState(r.state);
   };
+  submitBufferRef.current = () => handleKey(ENTER);
   useKeyFallback(handleKey);
   // Ctrl-X Ctrl-K (CC chat:killAgents) and Ctrl-G / Ctrl-X Ctrl-E (chat:externalEditor) are the two keys
   // whose GATE moved into the resolver: the chord machine decides whether ctrl+k is the editor's
@@ -579,6 +630,17 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // beside it true. `interceptChord()` is the same owner-guard + kill-run/arm cleanup `handleKey` ran.
     "chat:cycleMode": () => { if (interceptChord()) onCycleModeRef.current?.(); },
     "autocomplete:dismiss": handleKey, "autocomplete:accept": handleKey,
+    // ── CM58's six keys. `history:search` is a GLOBAL-context action registered HERE and no longer in
+    // ChatApp: upstream's own registration lives in this hook (`Mn("history:search", B, {context:"Global"})`,
+    // bundle L489752), and the consequence is the right one — with the composer unmounted behind a dialog
+    // there is no buffer to search into, so ctrl+r does nothing at all instead of opening a surface over the
+    // dialog. `interceptChord()` is the same owner-guard + kill-run/Esc-arm cleanup every other chord runs.
+    "history:search": () => { if (interceptChord()) search.open(); },
+    "historySearch:next": () => search.next(),
+    "historySearch:accept": () => search.accept(),
+    "historySearch:cancel": () => search.cancel(),
+    "historySearch:execute": () => search.execute(),
+    "historySearch:cycleScope": () => search.cycleScope(),
     "chat:killAgents": () => { if (interceptChord()) onKillAgentsRef.current?.(); },
     // K6 (F2 task 10): `"ctrl+k": "command:clear"` in the user's keybindings.json runs `/clear` exactly as if
     // it had been typed here — same submit seam, so local commands, catalog commands and the unknown-name
@@ -768,7 +830,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       {mode === "bash" ? <Box paddingX={1}><Text color={role("bashBorder")} dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
       {mode === "memory" ? <Box paddingX={1}><Text color={role("remember")} dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
       {pasting ? <Box paddingX={1}><Text dimColor>{PASTING_TEXT}</Text></Box> : null}
-      {pasteHint ? <Box paddingX={1}><Text dimColor>{PASTE_EXPAND_HINT}</Text></Box> : null}
+      {/* `if (Rpk && !xMr)` (bundle L493769): upstream gates the expand hint on NOT searching, because both
+          rows live in the same slot and the search field is the one that matters (t5 review carry-forward). */}
+      {pasteHint && !search.searching ? <Box paddingX={1}><Text dimColor>{PASTE_EXPAND_HINT}</Text></Box> : null}
+      {/* …and `xMr && <Mel …>` on the very next line (L493783) is this row. */}
+      {search.searching ? <InlineSearchRow query={search.query} failed={search.failed} scope={search.scope} /> : null}
       {/* RECORDED DIVERGENCE (F7 owns the fix): upstream pushes this through the notification queue
           (`addNotification`, L489537), which renders it in the queue's own slot below the composer and lets
           `dismissSearchHint` pull it when the history-search overlay opens. No notification queue here yet,

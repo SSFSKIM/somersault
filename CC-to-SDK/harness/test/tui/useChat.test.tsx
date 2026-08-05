@@ -15,6 +15,10 @@ import type { RenderItem } from "../../src/tui/toolRenderer.js";
 import { KeymapProvider } from "../../src/tui/keys/KeymapProvider.js";
 import type { ContextBindings } from "../../src/tui/keys/bindings.js";
 import { READ_CALL, READ_RESULT_FLAT, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { appendHistory } from "../../src/tui/promptHistory.js";
 
 // Ink hard-wraps a long single-line <Text> at the terminal width, inserting a real "\n" at whichever word
 // boundary the reflow lands on — a boundary that shifts whenever earlier content in the SAME joined line
@@ -1303,66 +1307,55 @@ describe("U5b: /rename /tag /session /stats", () => {
   });
 });
 
-describe("Wave 2 final-review F1: loadHistory's scope-aware reader (out-of-project sessions)", () => {
-  const entryFor = (id: string) => [{ type: "user", uuid: `u-${id}`, message: { content: [{ type: "text", text: `prompt-${id}` }] }, timestamp: "2026-07-28T08:00:00.000Z" }];
-
-  it("scope 'session' reads the CURRENT session via the pinned getSessionMessages (never getSessionMessagesIn)", async () => {
-    const fake = fakeRemote({ sessionId: "sess-1" });
-    const pinnedCalls: string[] = [];
-    const inCalls: unknown[] = [];
+describe("F5 t12: loadHistory reads history.jsonl (readHistory), not the persisted transcripts", () => {
+  const PROJ = "/tmp/ccx-loadhistory-proj";
+  const withRoot = async (body: (env: NodeJS.ProcessEnv) => Promise<void>) => {
+    const root = mkdtempSync(join(tmpdir(), "ccx-loadhist-"));
+    try { await body({ ...process.env, CCX_FLEET_ROOT: root }); } finally { rmSync(root, { recursive: true, force: true }); }
+  };
+  const mountLoad = (env: NodeJS.ProcessEnv, sessionId?: string) => {
     let load!: (s: any) => Promise<any[]>;
     function H() {
-      const c = useChat(() => fake, {}, {
-        getSessionMessages: async (id: string) => { pinnedCalls.push(id); return entryFor(id); },
-        getSessionMessagesIn: async (id: string, cwd?: string) => { inCalls.push({ id, cwd }); return entryFor(id); },
-      });
+      const c = useChat(() => fakeRemote(sessionId ? { sessionId } : {}), { cwd: PROJ }, { env });
       load = c.loadHistory; return <Text />;
     }
     render(<H />);
-    await new Promise((r) => setTimeout(r, 20));
-    const entries = await load("session");
-    expect(pinnedCalls).toEqual(["sess-1"]);
-    expect(inCalls).toEqual([]);                 // scope "session" never touches the scope-aware reader
-    expect(entries.length).toBeGreaterThan(0);
-    expect(entries[0].text).toBe("prompt-sess-1");
+    return () => load;
+  };
+
+  it("scope 'project' returns only this project's prompts, newest first, with the ! prefix intact", async () => {
+    await withRoot(async (env) => {
+      appendHistory({ display: "run typecheck", project: PROJ }, env);
+      appendHistory({ display: "!git status", project: PROJ }, env);
+      appendHistory({ display: "someone else's", project: "/tmp/other" }, env);
+      const load = mountLoad(env);
+      await new Promise((r) => setTimeout(r, 20));
+      const entries = await load()("project");
+      expect(entries.map((e) => e.text)).toEqual(["!git status", "run typecheck"]);
+      expect(entries[0].ts).toBeGreaterThan(0);
+    });
   });
 
-  it("scope 'project' reads each listed session with the PROJECT cwd via getSessionMessagesIn", async () => {
-    const fake = fakeRemote();
-    const inCalls: { id: string; cwd: string | undefined }[] = [];
-    let load!: (s: any) => Promise<any[]>;
-    function H() {
-      const c = useChat(() => fake, { cwd: "/proj" }, {
-        listHistorySessions: async () => [{ sessionId: "a", summary: "", lastModified: 2 }, { sessionId: "b", summary: "", lastModified: 1 }],
-        getSessionMessagesIn: async (id: string, cwd?: string) => { inCalls.push({ id, cwd }); return entryFor(id); },
-      });
-      load = c.loadHistory; return <Text />;
-    }
-    render(<H />);
-    await new Promise((r) => setTimeout(r, 20));
-    const entries = await load("project");
-    expect(inCalls).toEqual([{ id: "a", cwd: "/proj" }, { id: "b", cwd: "/proj" }]);
-    expect(entries.length).toBe(2);               // both sessions' entries actually flowed back
+  it("scope 'everywhere' crosses projects; scope 'session' filters on the live session id", async () => {
+    await withRoot(async (env) => {
+      appendHistory({ display: "mine", project: PROJ, sessionId: "sess-1" }, env);
+      appendHistory({ display: "theirs", project: "/tmp/other", sessionId: "sess-2" }, env);
+      const load = mountLoad(env, "sess-1");
+      await new Promise((r) => setTimeout(r, 20));
+      expect((await load()("everywhere")).map((e) => e.text).sort()).toEqual(["mine", "theirs"]);
+      expect((await load()("session")).map((e) => e.text)).toEqual(["mine"]);
+    });
   });
 
-  it("scope 'everywhere' reads each listed session with an UNDEFINED cwd via getSessionMessagesIn — including an out-of-project session", async () => {
-    const fake = fakeRemote();
-    const inCalls: { id: string; cwd: string | undefined }[] = [];
-    let load!: (s: any) => Promise<any[]>;
-    function H() {
-      const c = useChat(() => fake, { cwd: "/proj" }, {
-        // "outside" stands in for a session from a DIFFERENT project — everywhere scope must still read it.
-        listHistorySessions: async () => [{ sessionId: "outside", summary: "", lastModified: 5 }, { sessionId: "a", summary: "", lastModified: 2 }],
-        getSessionMessagesIn: async (id: string, cwd?: string) => { inCalls.push({ id, cwd }); return entryFor(id); },
-      });
-      load = c.loadHistory; return <Text />;
-    }
-    render(<H />);
-    await new Promise((r) => setTimeout(r, 20));
-    const entries = await load("everywhere");
-    expect(inCalls).toEqual([{ id: "outside", cwd: undefined }, { id: "a", cwd: undefined }]);
-    expect(entries.length).toBe(2);                // the out-of-project session's prompt actually came back
-    expect(entries.map((e) => e.text)).toContain("prompt-outside");
+  it("carries pastedContents through, so an accepted match can rebuild its chips", async () => {
+    await withRoot(async (env) => {
+      appendHistory({ display: "look at [Pasted text #1 +2 lines]", project: PROJ, pastedContents: { 1: { id: 1, type: "text", content: "a\nb\nc", lineCount: 2 } } }, env);
+      const load = mountLoad(env);
+      await new Promise((r) => setTimeout(r, 20));
+      const [e] = await load()("project");
+      expect(e.text).toBe("look at [Pasted text #1 +2 lines]");
+      expect(e.pastedContents?.[1].content).toBe("a\nb\nc");
+    });
   });
 });
 

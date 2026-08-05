@@ -16,6 +16,7 @@ import type { PendingEntry } from "../../src/permissions/pending.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
 import { currentTheme, setTheme } from "../../src/tui/theme.js";
 import { createNoticeBridge } from "../../src/tui/chatMain.js";
+import { appendHistory } from "../../src/tui/promptHistory.js";
 
 // W3 T4: theme.ts's ACCENT/current live binding is module-scoped and vitest isolates per FILE, not per
 // test, so a /theme test that previews or persists a theme must not leak it into a later test in this
@@ -50,6 +51,24 @@ async function pressUntil(stdin: { write: (s: string) => void }, key: string, co
   const start = Date.now();
   for (;;) { stdin.write(key); if (cond()) return; if (Date.now() - start > timeout) throw new Error(`pressUntil(${JSON.stringify(key)}) timeout`); await new Promise((r) => setTimeout(r, 5)); }
 }
+// ── F5 t12: ctrl+r is the COMPOSER's inline reverse-i-search now (upstream's own layout routing — see
+// historySearchInline.ts's header), so every test below that wants the full-screen PICKER opens it the way a
+// user does: the `/history` command. `historyDeps` points `loadHistory` at a temp fleet root seeded with one
+// prompt, because both surfaces read `history.jsonl` (readHistory) instead of the persisted transcripts.
+const historyRoots: string[] = [];
+function seededHistory(display = "redo the build"): { env: NodeJS.ProcessEnv } {
+  const root = mkdtempSync(join(tmpdir(), "ccx-chat-hist-"));
+  historyRoots.push(root);
+  const env = { ...process.env, CCX_FLEET_ROOT: root };
+  appendHistory({ display, project: process.cwd() }, env);
+  return { env };
+}
+afterEach(() => { for (const d of historyRoots.splice(0)) rmSync(d, { recursive: true, force: true }); });
+async function openHistoryPicker(stdin: { write: (s: string) => void }, lastFrame: () => string | undefined) {
+  stdin.write("/history"); await waitFor(() => frame(lastFrame).includes("/history"));
+  stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Search prompts"));
+}
+
 // A fakeRemote() extended onto the RewindOps surface (fakeRemote() alone has no rewind methods, so
 // hasRewind() is false on it as-is — mirrors useChat-rewind.test.tsx's fakeRewindSession).
 type RewindFakeOpts = { rewindAnchors?: () => Promise<RewindAnchor[]>; rewindDryRun?: (uuid: string) => Promise<RewindDryRun>; rewind?: (anchor: RewindAnchor, scope: RewindScope) => Promise<void> };
@@ -583,9 +602,10 @@ describe("<ChatApp>", () => {
     stdin.write("2");                                                 // conversation-only → confirmRewind → rewind() hangs
     await waitFor(() => frame(lastFrame).includes("restoring"));
 
-    stdin.write("\x12");                                              // Ctrl-R must NOT open history search here
+    stdin.write("\x12");                                              // Ctrl-R must open NEITHER search surface here
     await new Promise((r) => setTimeout(r, 30));
-    expect(frame(lastFrame)).not.toContain("Search prompts");
+    expect(frame(lastFrame)).not.toContain("Search prompts");         // the /history picker
+    expect(frame(lastFrame)).not.toContain("search prompts:");        // …nor the composer's inline search (F5 t12)
     expect(frame(lastFrame)).toContain("restoring");                  // the rewinding modal is still the one showing
 
     stdin.write("\x0f");                                              // Ctrl-O must NOT open the transcript pager here
@@ -684,13 +704,11 @@ describe("<ChatApp>", () => {
   });
 
   it("Ctrl-Z has upstream process-level precedence over every ordinary visible overlay", async () => {
-    const historyDeps = {
-      getSessionMessages: async () => [] as any[], getSessionMessagesIn: async () => [] as any[], listHistorySessions: async () => [],
-    };
+    const historyDeps = seededHistory();
     const cases: { name: string; session: () => ReturnType<typeof fakeRemote>; deps?: any; open: (stdin: any, lastFrame: () => string | undefined) => Promise<void> }[] = [
       {
         name: "Search prompts", session: () => fakeRemote(), deps: historyDeps,
-        open: async (stdin, lastFrame) => { stdin.write("\x12"); await waitFor(() => frame(lastFrame).includes("Search prompts")); },
+        open: openHistoryPicker,
       },
       {
         name: "Settings", session: () => fakeRemote(),
@@ -719,11 +737,9 @@ describe("<ChatApp>", () => {
   });
 
   it("a hidden pending decision never bypasses the visible overlay's key ownership", async () => {
-    const historyDeps = {
-      getSessionMessages: async () => [] as any[], getSessionMessagesIn: async () => [] as any[], listHistorySessions: async () => [],
-    };
+    const historyDeps = seededHistory();
     const cases: { name: string; session: () => ReturnType<typeof fakeRemote>; deps?: any; open: (stdin: any, lastFrame: () => string | undefined) => Promise<void>; closesOnCtrlC?: boolean }[] = [
-      { name: "Search prompts", session: () => fakeRemote(), deps: historyDeps, closesOnCtrlC: true, open: async (stdin, lastFrame) => { stdin.write("\x12"); await waitFor(() => frame(lastFrame).includes("Search prompts")); } },
+      { name: "Search prompts", session: () => fakeRemote(), deps: historyDeps, closesOnCtrlC: true, open: openHistoryPicker },
       { name: "Settings", session: () => fakeRemote(), open: async (stdin, lastFrame) => { stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Settings")); } },
       { name: "switch model", session: () => fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) }), open: async (stdin, lastFrame) => { stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("switch model")); } },
       { name: "resume a session", session: () => fakeRemote(), deps: { listSessions: async () => [{ sessionId: "prior", summary: "saved", lastModified: 1 }] }, open: async (stdin, lastFrame) => { stdin.write("/resume"); await waitFor(() => frame(lastFrame).includes("/resume")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("resume a session")); } },
@@ -788,38 +804,41 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("hello"));
   });
 
-  it("Ctrl-R opens history search; Esc accepts the top entry into the composer", async () => {
-    const fakeDeps = {
-      getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
-      // HistorySearchOverlay opens on scope "everywhere" by default, which reads via getSessionMessagesIn
-      // (F1, final review) rather than the pinned getSessionMessages above — both need to agree here.
-      getSessionMessagesIn: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
-      listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
-    };
+  // F5 t12: this door is `/history`, not Ctrl-R — the chord is the composer's inline search now (see
+  // test/tui/inline-history-search.test.tsx and historySearchInline.ts's routing header).
+  it("/history opens the picker; Esc accepts the top entry into the composer", async () => {
+    const fakeDeps = seededHistory();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
-    stdin.write("\x12");                                   // Ctrl-R
-    await waitFor(() => frame(lastFrame).includes("Search prompts"));
+    await openHistoryPicker(stdin, lastFrame);
+    // Filter first: submitting `/history` wrote its own line to the prompt log (every submit does), so the
+    // newest entry is the command, not the seeded prompt.
+    stdin.write("redo"); await waitFor(() => frame(lastFrame).includes("redo the build"));
     stdin.write("\x1b");                                   // Esc = accept
-    await waitFor(() => frame(lastFrame).includes("redo the build"));
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     expect(frame(lastFrame)).toContain("redo the build");   // prefilled into the composer buffer
   });
 
-  it("a nonempty history prefill synchronously disarms rewind before its first composer frame", async () => {
-    const fakeDeps = {
-      getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
-      getSessionMessagesIn: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
-      listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
-    };
+  it("a recalled prompt synchronously disarms rewind before its first composer frame", async () => {
+    const fakeDeps = seededHistory();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x1b");
     await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
-    stdin.write("\x12");                                         // Ctrl-R opens history without disarming rewind itself
-    await waitFor(() => frame(lastFrame).includes("Search prompts"));
-    stdin.write("\x1b");                                         // accept the top history result as external prefill
-    await waitFor(() => frame(lastFrame).includes("redo the build"));
+    stdin.write("\x12");                                         // Ctrl-R opens the inline search, arm untouched
+    await waitFor(() => frame(lastFrame).includes("search prompts:"));
+    expect(frame(lastFrame)).toContain("Press Esc again to rewind");
+    stdin.write("redo");                                         // …the MATCH is what fills the buffer
+    // stripAnsiAll, not frame: the caret lands ON the match (offset 0 here), so the inverted first
+    // character puts an SGR run between "r" and "edo the build" in the raw frame.
+    await waitFor(() => stripAnsiAll(frame(lastFrame)).includes("redo the build"));
+    // The load-bearing bit: a match landing in an empty buffer reports a draft start, exactly as the
+    // picker's prefill and the queue drain do, so the rewind arm cannot outlive the empty composer it
+    // was armed on (F5 t12 — the inline search had to be taught this, it is not free).
     expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");
+    stdin.write("\x1b");                                         // Esc ACCEPTS: the match stays, the search closes
+    await waitFor(() => !frame(lastFrame).includes("search prompts:"));
+    expect(stripAnsiAll(frame(lastFrame))).toContain("redo the build");
     expect(frame(lastFrame)).toContain("Esc clear");
 
     stdin.write("\x1b");                                         // first Escape clears/arms locally; it cannot rewind
@@ -828,17 +847,10 @@ describe("<ChatApp>", () => {
   });
 
   it("app-level keys are gated while the history overlay is open (its Ctrl-C is cancel, not exit-arm)", async () => {
-    const fakeDeps = {
-      getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
-      // HistorySearchOverlay opens on scope "everywhere" by default, which reads via getSessionMessagesIn
-      // (F1, final review) rather than the pinned getSessionMessages above — both need to agree here.
-      getSessionMessagesIn: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
-      listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
-    };
+    const fakeDeps = seededHistory();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
-    stdin.write("\x12");                                   // Ctrl-R opens
-    await waitFor(() => frame(lastFrame).includes("Search prompts"));
+    await openHistoryPicker(stdin, lastFrame);             // /history opens the picker (F5 t12: ctrl+r is inline)
     stdin.write("\x03");                                   // Ctrl-C → overlay cancels; app exit-arm must NOT fire
     await waitFor(() => !frame(lastFrame).includes("Search prompts"));
     expect(frame(lastFrame)).not.toContain("Press Ctrl-C again to exit");
@@ -877,11 +889,7 @@ describe("<ChatApp>", () => {
   // With the pager on the scope stack, `Transcript` has to say so declaratively — hence the two null bindings.
   // Without them Global would newly fire history-search and the todo panel from inside the pager.
   it("Ctrl-R inside the transcript pager opens nothing (the Transcript null binding, not the old owner gate)", async () => {
-    const fakeDeps = {
-      getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
-      getSessionMessagesIn: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
-      listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
-    };
+    const fakeDeps = seededHistory();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("\x0f");                                              // Ctrl-O opens the pager
@@ -896,9 +904,10 @@ describe("<ChatApp>", () => {
     // have set historyOpen behind it and be revealed right here, the moment the pager unmounts.
     await new Promise((r) => setTimeout(r, 30));
     expect(frame(lastFrame)).not.toContain("Search prompts");
+    expect(frame(lastFrame)).not.toContain("search prompts:");        // …the inline surface leaked no more than the picker did
     expect(frame(lastFrame)).toContain("❯\u00a0");                          // the composer, not a history overlay
     stdin.write("\x12");                                              // …and Ctrl-R works again once the pager is gone
-    await waitFor(() => frame(lastFrame).includes("Search prompts"));
+    await waitFor(() => frame(lastFrame).includes("search prompts:"));   // F5 t12: the INLINE search is what it opens now
   });
 
   // W3 T3: /add-dir
@@ -1802,7 +1811,7 @@ describe("<ChatApp>", () => {
       },
       interrupt: async () => { interrupted++; fake.pushEvent({ kind: "turn", phase: "end", seq: 1 }); },
     });
-    const deps = { getSessionMessages: async () => [] as any[], getSessionMessagesIn: async () => [] as any[], listHistorySessions: async () => [] };
+    const deps = seededHistory();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("start"); await waitFor(() => frame(lastFrame).includes("start"));
@@ -1817,8 +1826,10 @@ describe("<ChatApp>", () => {
     stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Transcript"));
     stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await new Promise((r) => setTimeout(r, 20));
-    stdin.write("\x12"); await waitFor(() => frame(lastFrame).includes("Search prompts"));
-    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
+    // F5 t12: ctrl+r is the inline search. Opening it PARKS the rescued draft and Escape ACCEPTS with an
+    // empty query, which must hand exactly that draft back — one more remount the text has to survive.
+    stdin.write("\x12"); await waitFor(() => frame(lastFrame).includes("search prompts:"));
+    stdin.write("\x1b"); await waitFor(() => !frame(lastFrame).includes("search prompts:"));
     await new Promise((r) => setTimeout(r, 20));
 
     fake.parkPermission({ sessionId: "s", toolUseID: "rescue", toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });

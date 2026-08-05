@@ -103,7 +103,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
-  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
+  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
   // The queued band's own column budget: what is left inside the `paddingX: 2` box. `deps.columns` first for
   // the same reason useChat prefers it — the frame-capture fixture and the tests pin a width.
   const terminalColumns = () => deps?.columns?.() ?? stdout?.columns ?? 80;
@@ -151,7 +151,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const exitArmedRef = useRef(exitArmed); exitArmedRef.current = exitArmed;
   const suspendRef = useRef(suspend); suspendRef.current = suspend;
   const resumeOutputRef = useRef(resumeOutput); resumeOutputRef.current = resumeOutput;
-  const openHistorySearchRef = useRef(openHistorySearch); openHistorySearchRef.current = openHistorySearch;
   const interruptRef = useRef(interrupt); interruptRef.current = interrupt;
   const backgroundNowRef = useRef(backgroundNow); backgroundNowRef.current = backgroundNow;
   const openBgPanelRef = useRef(openBgPanel); openBgPanelRef.current = openBgPanel;
@@ -206,7 +205,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // ctrl+r are swallowed, rebound, or null-bound in that surface's own context.
   useKeyActions({
     "app:toggleTranscript": () => { setTranscriptOpen(true); disarm(); },
-    "history:search": () => { openHistorySearchRef.current(); disarm(); },
+    // ── WHERE ctrl+r WENT (F5 task 12). `history:search` used to open the full-screen picker from here. It
+    // is now ChatComposer's registration, and it opens the INLINE reverse-i-search instead. That is not a
+    // preference, it is upstream's own routing read off the layout:
+    //   · `Mn("history:search", B, {context:"Global", isActive: yie() ? !1 : !a})` — bundle L489752, the
+    //     inline hook claims the chord only when `yie()` (the fullscreen check, L110225) is FALSE;
+    //   · `if (yie() && mr) return <qGf …>` — bundle L496209, the picker renders only when it is TRUE.
+    // Our REPL is permanently classic layout (03-composer.md §6.4), so ctrl+r is the inline search. The
+    // picker is not lost: `/history` opens it, through `openHistorySearch` below — a recorded ccx addition,
+    // since upstream needs no such command (fullscreen hands it the picker for free).
     "app:toggleTodos": () => { setTodosOpen((v) => !v); disarm(); },
     "app:interrupt": () => {                                    // interrupt a turn, else arm/confirm exit (CC)
       if (rootStateRef.current.busy) { interruptRef.current(); disarm(); return; }
@@ -253,7 +260,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         // and never owns show-all state — Ctrl-E is pager-local, Ctrl-O/Escape are all this arm decides.
         ? <TranscriptPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} />
         : state.historyOpen
-        ? <HistorySearchOverlay load={loadHistory} onAccept={acceptHistory} onExecute={executeHistory} onCancel={closeHistorySearch} />
+        // CM59: the preview pane's side-by-side/stacked switch is a function of the live terminal width, read
+        // the same per-render way the composer's is so a resize reaches it on the next frame.
+        ? <HistorySearchOverlay load={loadHistory} onAccept={acceptHistory} onExecute={executeHistory} onCancel={closeHistorySearch} columns={terminalColumns} />
         // A confirmed rewind takes seconds (file restore + engine swap). Hold a modal until it settles:
         // if the composer came back first, a prompt typed in that window would be cleared from the editor,
         // sent, and refused by the host as busy — the user's text lost rather than queued.
@@ -311,6 +320,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
                       : <PermissionDialog key={state.pending.toolUseID} req={state.pending} onDecision={(d) => resolveDecision(d)} />
                   : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} searchHintFiredRef={searchHintFiredRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} sessionId={state.sessionId} project={cwd}
+                      // F5 t12: the composer's disk seed, its history append and now its inline search all
+                      // read this. Threaded from `deps.env` — the same source useChat's own `historyEnv`
+                      // takes — so a test that points ChatApp at a temp fleet root points BOTH surfaces
+                      // there. Undefined in the product, where the composer falls back to `process.env`.
+                      historyEnv={deps?.env}
                       queuePop={popQueueToComposer} queueHasEditable={state.queue.some(isEditableQueueEntry)}
                       submitCount={state.submitCount} hasMessages={state.hasMessages} queueHintCountedRef={queueHintCountedRef} placeholderMemoRef={placeholderMemoRef} />}
       {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}

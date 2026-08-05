@@ -48,7 +48,9 @@ import { backgroundHintText, expandHintText } from "./keys/hints.js";
 import { shortCwd } from "./banner.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
 import type { RawContextUsage } from "../index.js";
-import { promptEntries, mergeEntries, type HistEntry, type HistoryScope } from "./historySearch.js";
+import { type HistEntry, type HistoryScope } from "./historySearch.js";
+import { hydrateEntry, readHistory } from "./promptHistory.js";
+import { substituteChips } from "./pasteChips.js";
 import { isEditableQueueEntry, joinQueuedForComposer, type QueueEntry } from "./queue.js";
 import { composerMode } from "./promptMode.js";
 import type { PastedMap } from "./editor.js";
@@ -71,7 +73,7 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
   submitCount: number; hasMessages: boolean;
-  staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend" } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[]; }
+  staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[]; }
 
 // Tab cycles these; bypassPermissions stays off-cycle (/yolo). Single source with settingsRows.ts's own
 // permissionMode row (review finding 3) — importing it here instead of a second literal array means the
@@ -87,7 +89,7 @@ export function useChat(
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
   // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
-  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; getSessionMessagesIn?: (id: string, cwd?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; listHistorySessions?: (cwd?: string) => Promise<SessionInfo[]>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed" } = {},
+  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed" } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
@@ -194,7 +196,7 @@ export function useChat(
   const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[] }>({ open: false, sessions: [] });
   const [modelPicker, setModelPicker] = useState<{ open: boolean; models: ModelInfo[] }>({ open: false, models: [] });
   const [rewindPicker, setRewindPicker] = useState<{ open: boolean; anchors: RewindAnchor[] }>({ open: false, anchors: [] });
-  const [composerPrefill, setComposerPrefill] = useState<{ text: string; token: number; mode?: "replace" | "prepend" } | null>(null);
+  const [composerPrefill, setComposerPrefill] = useState<{ text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null>(null);
   const [rewinding, setRewinding] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);   // the `?` help overlay (pure display)
   const [historyOpen, setHistoryOpen] = useState(false);       // the Ctrl-R history-search overlay
@@ -235,10 +237,14 @@ export function useChat(
   const disposed = useRef(false);
   const listSessions = deps.listSessions ?? (() => realListSessions({ cwd: opts.cwd, limit: 30 }) as Promise<SessionInfo[]>);
   const getSessionMessages = deps.getSessionMessages ?? ((id: string) => realGetSessionMessages(id, { cwd: opts.cwd }) as Promise<any[]>);
-  // Scope-aware reader for loadHistory's project/everywhere passes (F1, final review): getSessionMessages
-  // above always pins `opts.cwd`, so a session from a DIFFERENT project (everywhere scope) reads back 0
-  // messages under it — an undefined cwd is what makes the SDK reader search across all projects.
-  const getSessionMessagesIn = deps.getSessionMessagesIn ?? ((id: string, c?: string) => realGetSessionMessages(id, c ? { cwd: c } : {}) as Promise<any[]>);
+  // GONE with F5 task 12: `getSessionMessagesIn` and `listHistorySessions`, the two readers that existed
+  // solely to reconstruct prompt history out of persisted TRANSCRIPTS. `loadHistory` reads `history.jsonl`
+  // now (see there), so neither has a caller left and neither is a dep any more.
+  //
+  // The env every history path in this hook reads (`CCX_FLEET_ROOT` and the skip gate), resolved once. Its
+  // ChatComposer counterpart is the `historyEnv` prop, and for the same reason: a test points the whole
+  // feature at a temp fleet root instead of mutating `process.env` for the rest of the suite.
+  const historyEnv = deps.env ?? process.env;
   const runBash = deps.runBash ?? realRunBash;
   const savePrefsFn = deps.savePrefs ?? realSavePrefs;   // W3 T5: applyOutputStyle is useChat's first ACTUAL reader of this dep (Task 4 only threaded it through to ThemeDialog)
   const appendMemory = deps.appendMemory ?? realAppendMemory;
@@ -257,7 +263,6 @@ export function useChat(
   const renameSessionFn = deps.renameSession ?? ((id: string, t: string) => realRenameSession(id, t, { cwd: opts.cwd }));
   const tagSessionFn = deps.tagSession ?? ((id: string, t: string | null) => realTagSession(id, t, { cwd: opts.cwd }));
   const getSessionInfoFn = deps.getSessionInfo ?? ((id: string) => realGetSessionInfo(id, { cwd: opts.cwd }));
-  const listHistorySessions = deps.listHistorySessions ?? ((c?: string) => realListSessions({ ...(c ? { cwd: c } : {}), limit: 15 }) as Promise<SessionInfo[]>);
   const lastAssistant = useRef("");    // the last assistant reply's text, for /copy
   // Real terminal clear: wipe screen + scrollback + home cursor (Static is append-only — a model reset alone
   // can't erase already-printed lines, so we also clear the terminal, exactly like CC's /clear).
@@ -666,6 +671,11 @@ export function useChat(
           break;
         }
         case "bg": openBgPanel(); break;
+        // A recorded ccx ADDITION, not an upstream command. Upstream reaches the full-screen picker only
+        // through ctrl+r in fullscreen layout (`if (yie() && mr)`, bundle L496209); our REPL is permanently
+        // classic, where that chord is the inline reverse-i-search instead — so without a command the picker
+        // would be unreachable. See ChatApp's `app:toggleTranscript` neighbour for the full routing note.
+        case "history": openHistorySearch(); break;
         case "rewind": void openRewind(); break;
         case "copy": { const t = lastAssistant.current; if (!t) { notice("nothing to copy"); break; } await copyText(t); notice(`✓ copied ${t.length} chars`); break; }
         case "export": {
@@ -1241,21 +1251,26 @@ export function useChat(
   function openHistorySearch() { if (!disposed.current) setHistoryOpen(true); }
   function closeHistorySearch() { if (!disposed.current) setHistoryOpen(false); }
   // Esc/Tab (historySearch:accept): the chosen prompt lands in the composer via the same prefill seam the
-  // rewind edit-and-resend uses — applied at most once, remount-safe.
-  function acceptHistory(text: string) { if (disposed.current) return; setHistoryOpen(false); setComposerPrefill({ text, token: Date.now() }); }
-  function executeHistory(text: string) { if (disposed.current) return; setHistoryOpen(false); submit(text); }
+  // rewind edit-and-resend uses — applied at most once, remount-safe. Its `pastedContents` rides along, so a
+  // recalled `[Pasted text #1 +9 lines]` comes back as a live chip the composer can expand and the submit can
+  // substitute, instead of a label that would be sent to the model as literal text.
+  function acceptHistory(e: HistEntry) { if (disposed.current) return; setHistoryOpen(false); setComposerPrefill({ text: e.text, token: Date.now(), pastedContents: e.pastedContents }); }
+  // …and the same payloads on the way OUT: `substituteChips` is what `submitTurn` (editor.ts) runs before
+  // handing text to the model, so running it here keeps the picker's Enter and a typed Enter identical.
+  function executeHistory(e: HistEntry) { if (disposed.current) return; setHistoryOpen(false); submit(substituteChips(e.text, e.pastedContents ?? {})); }
+  /** F5 task 12: BOTH search surfaces read `history.jsonl` (`readHistory` = upstream's `UUd`, the very file
+   *  upstream's own picker scans) instead of the persisted transcripts this used to reconstruct prompts from.
+   *  The transcript source disagreed with the log on two things a prompt search must get right — a transcript
+   *  row has already lost the `!` that makes a line bash mode, and it never carried `pastedContents` at all.
+   *  The cost, recorded in Task 13: prompts submitted before F5 task 6 began writing the log are not in it.
+   *
+   *  Async because the overlay's `load` contract is (and a paged reader could still want to be); the read
+   *  itself is synchronous — `readHistory` caps at 100 entries, which is tens of KiB. */
   async function loadHistory(scope: HistoryScope): Promise<HistEntry[]> {
-    if (scope === "session") {
-      const id = session.sessionId;
-      const msgs = id ? await getSessionMessages(id).catch(() => [] as any[]) : [];
-      return promptEntries(msgs, Date.now());
-    }
-    const sessions = await listHistorySessions(scope === "project" ? cwd : undefined).catch(() => [] as SessionInfo[]);
-    // getSessionMessagesIn, not the pinned getSessionMessages: "everywhere" must read sessions OUTSIDE
-    // this project too, and the pinned reader always scopes to opts.cwd (F1, final review).
-    const readCwd = scope === "project" ? cwd : undefined;
-    const lists = await Promise.all(sessions.slice(0, 15).map(async (s) => promptEntries(await getSessionMessagesIn(s.sessionId, readCwd).catch(() => [] as any[]), s.lastModified)));
-    return mergeEntries(lists);
+    // `scope:"session"` needs a REAL id; before the first state event there is none, and the prompts written
+    // in that window carry none either, so this matches exactly those sessionless lines (Task 13).
+    const rows = readHistory({ scope, project: cwd, sessionId: session.sessionId }, historyEnv);
+    return rows.map((r) => { const h = hydrateEntry(r, historyEnv); return { text: h.display, ts: r.timestamp, pastedContents: h.pastedContents }; });
   }
   function stopBgTask(id: string) { if (hasBgTasks(session)) void session.stopBgTask(id).catch((e) => append([{ text: `✗ ${(e as Error).message}`, color: role("error") }])); }
   // Ctrl-X Ctrl-K (CC chat:killAgents): double-press confirm within 3s, exactly the 2.1.220 flow —

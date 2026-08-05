@@ -9,7 +9,7 @@
 // verbatim (a local `waitFor(cond)` polling loop, plus a bare `await new Promise((r) => setTimeout(r, N))`
 // where a settle is needed with nothing to poll for) rather than a fictitious shared helper — chat.test.tsx
 // does not export one, and these helpers are file-local by convention across this whole test suite.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import React from "react";
 // F2 task 6: ChatApp/ChatComposer read stdin through <KeymapProvider> now, not `useInput` — rendered bare
 // they have no input path at all, so every render here goes through the provider wrapper.
@@ -21,6 +21,14 @@ import { ROWS } from "../../src/tui/ShortcutsOverlay.js";
 import { applyKey, initialEditorState, inputMode, UNDO_COALESCE_MS, type EditorState } from "../../src/tui/editor.js";
 import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
+import { appendHistory } from "../../src/tui/promptHistory.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// F5 t12: the Ctrl-R proof drives the real prompt log, so it needs a fleet root of its own — never the
+// user's. Collected and removed at the end, the same discipline chat.test.tsx uses for its fake homes.
+const honestyRoots: string[] = [];
 
 const frame = (f: () => string | undefined) => f() ?? "";
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");   // ShortcutsOverlay.test.tsx's own idiom
@@ -218,18 +226,20 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     await waitFor(() => !frame(lastFrame).includes("Transcript"));
   },
 
+  // F5 t12: Ctrl-R is the composer's INLINE reverse-i-search now, not the full-screen picker (upstream's own
+  // layout routing — historySearchInline.ts's header). The row still advertises "search history", and this
+  // proof still drives the real chord end to end: open, type, and watch the buffer become the match.
   "Ctrl-R": async () => {
-    const fakeDeps = {
-      getSessionMessages: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
-      getSessionMessagesIn: async () => [{ type: "user", uuid: "u1", message: { content: "redo the build" } }],
-      listHistorySessions: async () => [{ sessionId: "s1", summary: "", lastModified: 1 }],
-    };
-    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={fakeDeps} />);
+    const root = mkdtempSync(join(tmpdir(), "ccx-honesty-hist-"));
+    honestyRoots.push(root);
+    const env = { ...process.env, CCX_FLEET_ROOT: root };
+    appendHistory({ display: "redo the build", project: "/tmp" }, env);
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/tmp" deps={{ env }} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
-    stdin.write("\x12");                             // Ctrl-R opens history search
-    await waitFor(() => frame(lastFrame).includes("Search prompts"));
-    stdin.write("\x1b");                             // Esc accepts the top entry into the composer
-    await waitFor(() => frame(lastFrame).includes("redo the build"));
+    stdin.write("\x12");                             // Ctrl-R opens the inline search
+    await waitFor(() => stripAnsi(frame(lastFrame)).includes("search prompts:"));
+    stdin.write("redo");                             // …and the match rewrites the buffer in place
+    await waitFor(() => stripAnsi(frame(lastFrame)).includes("redo the build"));
   },
 
   "Ctrl-B": async () => {
@@ -361,3 +371,5 @@ it("the status bar never advertises composer-local keys", () => {
   expect(status).not.toContain("Esc rewind");
   expect(status).not.toContain("? help");
 });
+
+afterAll(() => { for (const d of honestyRoots.splice(0)) rmSync(d, { recursive: true, force: true }); });

@@ -306,7 +306,8 @@ async function eachRootGlobalIsInert(stdin: { write: (s: string) => void }, last
     await new Promise((r) => setTimeout(r, 20));
     const f = frame(lastFrame), at = `after ${JSON.stringify(k)}`;
     expect(f, at).toContain(marker);                                  // the surface still owns the screen
-    expect(f, at).not.toContain("Search prompts");                    // ctrl+r → history search
+    expect(f, at).not.toContain("Search prompts");                    // ctrl+r → the /history picker
+    expect(f, at).not.toContain("search prompts:");                   // …nor the composer's inline search (F5 t12)
     expect(f, at).not.toContain("Transcript");                        // ctrl+o → the pager
     expect(f, at).not.toContain("switch model");                      // alt+p → the model picker
     expect(f, at).not.toContain("Press Ctrl-C again to exit");        // ctrl+c → the exit arm
@@ -325,7 +326,9 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
     await waitFor(() => frame(lastFrame).includes("Background tasks"));
     await eachRootGlobalIsInert(stdin, lastFrame, "Background tasks");
     stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
-    stdin.write("\x12"); await waitFor(() => frame(lastFrame).includes("Search prompts"));   // scoped, not global
+    // F5 t12: ctrl+r opens the composer's inline search now, so "the composer got its keys back" is the
+    // inline row appearing — the picker's title would be the wrong thing to wait for.
+    stdin.write("\x12"); await waitFor(() => frame(lastFrame).includes("search prompts:"));   // scoped, not global
   });
 
   it("a Settings overlay (/config) is deaf to them too", async () => {
