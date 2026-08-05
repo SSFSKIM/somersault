@@ -11,8 +11,9 @@ import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import {
   HelpDialog, HELP_INTRO, HELP_DOCS_URL, HELP_DOCS_LABEL, HELP_FEEDBACK_LINE, HELP_TALL_ROWS,
-  BROWSE_DEFAULT_TITLE, BROWSE_CUSTOM_TITLE, NO_CUSTOM_COMMANDS, browserOptions, splitCommands,
+  BROWSE_DEFAULT_TITLE, BROWSE_CUSTOM_TITLE, NO_CUSTOM_COMMANDS, browserOptions, splitCommands, showsFeedbackLine,
 } from "../../src/tui/HelpDialog.js";
+import { withModSep, formatBindingLower } from "../../src/tui/keys/hints.js";
 import type { CommandEntry } from "../../src/tui/commandComplete.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 
@@ -87,16 +88,32 @@ describe("<HelpDialog> — the tabs and their copy", () => {
 });
 
 describe("<HelpDialog> — the footers", () => {
-  it("always offers the docs link, and the /feedback line only on a terminal at least 44 rows tall", async () => {
-    const short = render(<HelpDialog commands={CATALOG} onClose={() => {}} rows={HELP_TALL_ROWS - 1} columns={100} />);
+  it("always offers the docs link; the /feedback line needs BOTH 44 rows and a catalog that has the command", async () => {
+    // The height gate is upstream's (L459766). The catalog gate is OURS — `/feedback` is upstream's own
+    // client command and ccx does not implement it, so the sentence may only appear when the live engine
+    // really reports one (T14 review ruling; the `/powerup` rule applied consistently). Probe 73's audit says
+    // today's catalog does NOT carry it, so in the product the line is simply absent.
+    const withFeedback: CommandEntry[] = [...CATALOG, { name: "feedback", description: "report a bug", source: "catalog" }];
+
+    const short = render(<HelpDialog commands={withFeedback} onClose={() => {}} rows={HELP_TALL_ROWS - 1} columns={100} />);
     await waitFor(() => flat(short.lastFrame).includes(HELP_DOCS_URL));
     expect(flat(short.lastFrame)).toContain(`${HELP_DOCS_LABEL} ${HELP_DOCS_URL}`);
-    expect(flat(short.lastFrame)).not.toContain(HELP_FEEDBACK_LINE);
+    expect(flat(short.lastFrame)).not.toContain(HELP_FEEDBACK_LINE);      // tall enough? no
     short.unmount();
 
-    const tall = render(<HelpDialog commands={CATALOG} onClose={() => {}} rows={HELP_TALL_ROWS} columns={100} />);
-    await waitFor(() => flat(tall.lastFrame).includes(HELP_FEEDBACK_LINE));
-    tall.unmount();
+    const noCommand = render(<HelpDialog commands={CATALOG} onClose={() => {}} rows={HELP_TALL_ROWS} columns={100} />);
+    await waitFor(() => flat(noCommand.lastFrame).includes(HELP_DOCS_URL));
+    expect(flat(noCommand.lastFrame)).not.toContain(HELP_FEEDBACK_LINE);   // command exists? no
+    expect(flat(noCommand.lastFrame)).not.toContain("/feedback");
+    noCommand.unmount();
+
+    const both = render(<HelpDialog commands={withFeedback} onClose={() => {}} rows={HELP_TALL_ROWS} columns={100} />);
+    await waitFor(() => flat(both.lastFrame).includes(HELP_FEEDBACK_LINE));
+    both.unmount();
+
+    expect(showsFeedbackLine(withFeedback, HELP_TALL_ROWS)).toBe(true);
+    expect(showsFeedbackLine(withFeedback, HELP_TALL_ROWS - 1)).toBe(false);
+    expect(showsFeedbackLine(CATALOG, HELP_TALL_ROWS)).toBe(false);
   });
 
   it("prints the dismiss chord from the live table, so a rebind moves it", async () => {
@@ -144,6 +161,21 @@ describe("/help drives the dialog end to end", () => {
     await waitFor(() => flat(lastFrame).includes("Help dialog dismissed"));
     await settle();
     expect(frame(lastFrame)).toContain("❯ ");                // …and the composer comes back
+  });
+
+  // T14 review, Minor 2: the "same grid" test above compares CONTENT, so a fork of the grid inside this
+  // dialog — same sentences, dead to the live table — would sail straight past it. This one pins the
+  // LIVENESS through /help specifically: rebind the action in the user layer and the /help grid must move
+  // with it. Only a component that really reads `useBindingLookup()` can pass.
+  it("the /help grid resolves from the LIVE table — a rebind moves the sentence inside the dialog", async () => {
+    const moved = process.platform === "darwin" ? "opt+k" : "alt+k";
+    const { lastFrame } = render(<HelpDialog commands={[]} onClose={() => {}} rows={40} columns={100} />,
+      { userLayers: [{ context: "Global", bindings: { "ctrl+t": null, "alt+k": "app:toggleTodos" } }] });
+    await waitFor(() => flat(lastFrame).includes(HELP_INTRO));
+    const f = flat(lastFrame);
+    expect(f).toContain(`${withModSep(formatBindingLower(moved))} to toggle tasks`);
+    expect(f).not.toContain("ctrl + t to toggle tasks");
+    expect(f).toContain("ctrl + o for verbose output");            // …and everything unrebound is untouched
   });
 
   it("the `?` overlay and /help print the SAME grid", async () => {

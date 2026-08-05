@@ -24,7 +24,8 @@ import { UserKeymap } from "../../src/tui/keys/UserKeymap.js";
 import { useKeyActions, useKeyScope } from "../../src/tui/keys/KeymapProvider.js";
 import { loadUserBindings, userBindingsPath, type UserBindingsResult } from "../../src/tui/keys/userBindings.js";
 import { parseKeySpec } from "../../src/tui/keys/normalize.js";
-import { SHORTCUT_ROWS, UNBOUND, defaultLookup, formatBinding, formatBindingLower, shortcutRows, withModSep } from "../../src/tui/keys/hints.js";
+import { SHORTCUT_ROWS, UNBOUND, defaultLookup, formatBinding, formatBindingLower, shortcutGrid, shortcutRows, withModSep } from "../../src/tui/keys/hints.js";
+import { newlineHint } from "../../src/tui/composerFrame.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { ChatStatusBar } from "../../src/tui/ChatStatusBar.js";
 import type { KeyEvent } from "../../src/tui/keys/types.js";
@@ -470,12 +471,31 @@ describe("F2 — `command:<name>` bindings run the slash command", () => {
 describe("F2 — hint derivation coverage", () => {
   /** Every display string the default keymap would produce for an action one of these surfaces advertises.
    *  Seeing one written out in the source means someone typed a key instead of asking the table for it. */
-  const BANNED = [...new Set(SHORTCUT_ROWS.filter((r) => r.action).flatMap((r) => defaultLookup(r.action!)).map(formatBinding))];
+  const TITLE_CASE = SHORTCUT_ROWS.filter((r) => r.action).flatMap((r) => defaultLookup(r.action!)).map(formatBinding);
+  /** F6 T14 review, Minor 3: the title-case grammar is no longer the only one on screen. The shortcuts grid
+   *  and the Help dialog print upstream's LOWER-CASE sentence form (`ctrl + t to toggle tasks`), which the
+   *  ban list above cannot see at all — a hand-typed sentence would have passed this guard untouched. Two
+   *  more sources, both generated from the default table like the first:
+   *    · every composed GRID CELL (`shortcutGrid`), which is the exact string a fork would hardcode;
+   *    · every lower-case CHORD that carries a modifier (`ctrl + t`, `shift + tab`, `opt + p`).
+   *  The modifier filter is not cosmetic: an unmodified chord renders as a bare word (`esc`, `tab`, `j`), and
+   *  banning `esc` as a substring would fire on `escClearMs`, `escape` and every identifier that contains it.
+   *  Those single-word forms stay covered by their title-case spellings (`Esc`, `Tab`) in the first list. */
+  const hasModifier = (s: string) => s.includes(" + ");
+  const LOWER_CASE = [
+    ...shortcutGrid(defaultLookup, { newline: newlineHint(false) }).flat().filter(hasModifier),
+    ...SHORTCUT_ROWS.filter((r) => r.action).flatMap((r) => defaultLookup(r.action!))
+      .map((k) => withModSep(formatBindingLower(k))).filter(hasModifier),
+  ];
+  const BANNED = [...new Set([...TITLE_CASE, ...LOWER_CASE])];
 
   it("the composer, the status bar and the overlay carry no hardcoded chord literal for a table action", () => {
     expect(BANNED).toContain("⇧Tab");                                 // the list is really populated
     expect(BANNED).toContain("Ctrl-T");
     expect(BANNED).toContain("Esc");
+    expect(BANNED).toContain("ctrl + t");                             // …in BOTH grammars
+    expect(BANNED).toContain("ctrl + t to toggle tasks");             // …and as the whole composed sentence
+    expect(BANNED).toContain("shift + tab to auto-accept edits");
     const src = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
     // F6 T14 adds `HelpDialog.tsx` to the swept set: it prints the dismiss chord in its footer, and that chord
     // must come from the table like every other one on screen.

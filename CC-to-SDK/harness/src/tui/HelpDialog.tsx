@@ -6,7 +6,7 @@
 // surface (L494617), so ours imports `ShortcutsGrid` from ShortcutsOverlay.tsx: one component, one entry set,
 // one place a row can be added (T14 requirement 5).
 //
-// FOUR RECORDED DIVERGENCES, all forced by what ccx has rather than by taste:
+// SIX RECORDED DIVERGENCES, all forced by what ccx has rather than by taste:
 //  · FRAME COLOUR. Upstream paints `Jx`'s tab strip and `zu`'s rule in `professionalBlue` (L459743), which is
 //    not one of our theme tokens. We take `permission`, the default frame role every F6 dialog already uses
 //    (DialogFrame). T15 records the substitution.
@@ -20,6 +20,19 @@
 //  · THE `/powerup` LINE. `pei` prints "New here? Run /powerup to learn the features most people miss." on a
 //    tall terminal (L459661). There is no `/powerup` in ccx, so the line is dropped rather than advertising a
 //    command that does not exist.
+//  · THE `/feedback` LINE IS GATED ON THE LIVE CATALOG. Upstream shows it on any terminal ≥44 rows,
+//    unconditionally (L459752/L459766). `/feedback` is upstream's own client command and ccx does not
+//    implement it (command-coverage.md lists it out of scope), so printing the sentence verbatim would
+//    advertise a command that does not exist — the exact thing the `/powerup` line above is dropped for. THE
+//    GATE IS OURS: the line renders only when the LIVE catalog actually reports a `feedback` command, which
+//    probe 73's audit says it does not today, so in practice it is dropped for the same reason `/powerup` is
+//    — and it self-corrects the day the engine starts reporting it, which a hard delete could not. T14 review
+//    ruling (honesty beats byte-fidelity; T9's precedent).
+//  · UPSTREAM'S TWO-STATE DISMISS FOOTER IS UNREACHABLE. `RNa` renders `Press <key> again to exit` while its
+//    exit-state hook is armed and `<esc> to cancel` otherwise (L459757). That armed state is ctrl+c's
+//    double-press, and `ctrl+c` is NULLED in the `Help` context (bindings.ts) exactly as it is under every
+//    other ccx dialog — the arm can never happen here, so only the cancel arm is ported. Not an omission: the
+//    other arm has no state that can produce it.
 //  · A `/` SEARCH THE BROWSER DOES NOT HAVE UPSTREAM. `FIr` (L459440) is a plain scrolling `jr` with
 //    `disableSelection` — no query at all. With ~105 live commands that is a lot of scrolling, so the Commands
 //    tabs get SettingsDialog's own `/`-search idiom (the same one, deliberately: a query line plus a filtered
@@ -52,10 +65,13 @@ export const HELP_INTRO = "Claude understands your codebase, makes edits with yo
  *  which is what we print unconditionally. */
 export const HELP_DOCS_URL = "https://code.claude.com/docs/en/overview";
 export const HELP_DOCS_LABEL = "For more help:";
-/** L459752, shown only on a terminal at least `THF` rows tall (L459766). NB: `/feedback` is an upstream
- *  command that ccx does not implement (command-coverage.md lists it out of scope) — the literal is
- *  transcribed because T14 requirement 3 asks for it, and the mismatch is recorded for T15. */
+/** L459752, shown only on a terminal at least `THF` rows tall (L459766) — AND, here, only when the command it
+ *  names is really there. See the header's fifth divergence for why the extra gate exists. */
 export const HELP_FEEDBACK_LINE = "Something else? Use /feedback to report bugs or request features.";
+export const FEEDBACK_COMMAND = "feedback";
+/** The gate itself, exported so a test can state it as the rule rather than re-deriving it from two renders. */
+export const showsFeedbackLine = (commands: readonly CommandEntry[], rows: number): boolean =>
+  rows >= HELP_TALL_ROWS && commands.some((c) => c.name === FEEDBACK_COMMAND);
 /** `THF = 44` (L459766) — and `_Hf = 44` (L459682), the same number gating `pei`'s compact layout. */
 export const HELP_TALL_ROWS = 44;
 /** `FIr`'s two titles (L459726/L459734) and its empty state (L459734). */
@@ -182,7 +198,7 @@ export function HelpDialog({ commands, onClose, rows = process.stdout.rows ?? 24
       ) : tab === "commands" ? browser(defaults, BROWSE_DEFAULT_TITLE)
         : browser(custom, BROWSE_CUSTOM_TITLE, NO_CUSTOM_COMMANDS)}
       <Box marginTop={1} flexShrink={0}><Text>{HELP_DOCS_LABEL} {HELP_DOCS_URL}</Text></Box>
-      {rows >= HELP_TALL_ROWS ? <Box marginTop={1} flexShrink={0}><Text dimColor>{HELP_FEEDBACK_LINE}</Text></Box> : null}
+      {showsFeedbackLine(commands, rows) ? <Box marginTop={1} flexShrink={0}><Text dimColor>{HELP_FEEDBACK_LINE}</Text></Box> : null}
       {/* L459757: `<esc> to cancel`, italic and dim, with the chord resolved from the table like every other
           hint in this package — upstream's own `pc("help:dismiss","Help","esc")` (L459697). */}
       <Box marginTop={1} flexShrink={0}><Text dimColor italic>{escChord} to cancel</Text></Box>
