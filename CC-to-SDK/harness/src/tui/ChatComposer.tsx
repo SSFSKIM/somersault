@@ -13,7 +13,7 @@ import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
 import { composerMode } from "./promptMode.js";
 import { collectEntries, mentionWalkRoot, type AsyncReaddirFn, type DirEnt } from "./fileComplete.js";
 import type { CommandEntry } from "./commandComplete.js";
-import { editExternalAsync as realEditExternal } from "./externalEditor.js";
+import { editExternal as realEditExternal } from "./externalEditor.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, newlineHint } from "./composerFrame.js";
 import { InlineSearchRow, useInlineHistorySearch } from "./InlineHistorySearch.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
@@ -47,6 +47,11 @@ const PASTE_HINT_MS = 8000;
 export const HISTORY_SEARCH_HINT = "search history";
 /** `Lli` (L489464) — the `timeoutMs` upstream puts on that notification. */
 const HISTORY_HINT_MS = 5000;
+
+/** How long the external-edit chord waits for Ink to actually WRITE the in-flight row before the sync editor
+ *  freezes the loop. One Ink throttle window (32ms, ink/build/ink.js:39) plus a little — see the deferral in
+ *  `chat:externalEditor`. Exported so the paint-order pin reads the constant instead of re-typing it. */
+export const EDITOR_PAINT_MS = 40;
 
 /** CM39, bundle L490598: `let Ae = Dee(Re, 50)` — the @-walk's debounce window. `Dee` (L182690) is
  *  TRAILING-ONLY: every call clears the pending timer and reschedules, and there is no leading edge, so even
@@ -358,6 +363,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // render stale there — the same reason `stateRef`/`busyRef` exist above); the state drives the render.
   const [editorInFlight, setEditorInFlight] = useState(false);
   const editorInFlightRef = useRef(false);
+  // The paint-then-block deferral (see `chat:externalEditor`). Cleared on unmount so a composer that goes
+  // away inside the window never spawns an editor onto a terminal it no longer draws.
+  const editorPaintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (editorPaintTimer.current) clearTimeout(editorPaintTimer.current); }, []);
   const dArm = useRef(0);
   const dTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (dTimer.current) clearTimeout(dTimer.current); }, []);
@@ -658,11 +667,16 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // command, it did not send what the user was drafting. Registered as the `command:` FAMILY because the
     // name comes from the user's file; without it the resolver consumed the key and nothing ran it.
     "command:*": (_e, action) => { if (interceptChord()) onSubmitRef.current("/" + action.slice("command:".length)); },
-    // CM8: the edit is AWAITED now, not blocked on. `editExternalAsync` yields between spawning the editor
-    // and its exit, which is the only reason the `Save and close editor to continue...` row can paint at
-    // all — the old spawnSync stopped the event loop for the whole edit, so Ink never got a frame.
-    // `Promise.resolve` normalizes an injected SYNC editor (the DI shape several tests still use) onto the
-    // same path. `editorInFlight` is what the render below swaps the whole composer out for.
+    // CM8, PAINT-THEN-BLOCK (F5 real-TTY fix). T2 shipped this as an awaited `editExternalAsync` so the
+    // `Save and close editor to continue...` row could paint; on a real terminal that deterministically
+    // BRICKED the app — the editor restores the shared open file description to blocking on exit, a live
+    // libuv tty watcher then `read()`s it, and the main thread parks forever (full diagnosis on
+    // `restoreTtyNonblock` in externalEditor.ts). Upstream's spawnSync (bundle L317767/L317708) is
+    // load-bearing: a frozen event loop cannot have a watcher fire mid-edit. So we are back on the sync
+    // editor, and we buy the in-flight row a different way — set the state, hand control back so Ink can
+    // COMMIT AND FLUSH the frame, and only then block. The row stays frozen on screen for the whole edit,
+    // which is exactly what upstream shows. `Promise.resolve` still normalizes an injected async editor (the
+    // DI shape the tests use) onto the same path. `editorInFlight` is what the render below swaps out for.
     "chat:externalEditor": () => {
       const ended = interceptChord();
       if (!ended || editorInFlightRef.current) return;               // a second chord mid-edit is a no-op
@@ -682,9 +696,21 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       // turn mid-edit. `suspendInput` restores raw mode in a `finally`, so both arms below are covered.
       const run = () => Promise.resolve((editExternalRef.current ?? realEditExternal)(ended.lines.join("\n")));
       const suspend = suspendInputRef.current;
-      // A rejection is the same outcome as a null: the buffer stands and the in-flight row must lift, or
-      // the composer is stuck showing "Save and close editor…" with no editor to save.
-      (suspend ? suspend(run) : run()).then(done, () => done(null));
+      // THE DEFERRAL, and why it is a timer and not a microtask. React has not committed this setState yet,
+      // and Ink's own render is throttled (ink/build/ink.js:39, `throttle(this.onRender, 32, {leading,
+      // trailing})`) — a frame produced within 32ms of the previous one is only written on the TRAILING
+      // edge. A microtask (or a 0ms timer) can therefore run before the bytes reach the terminal, and the
+      // block would freeze a frame the user never saw. EDITOR_PAINT_MS clears that window. The cost is one
+      // throttle-window of latency before the editor opens — imperceptible, and the price of the row.
+      if (editorPaintTimer.current) clearTimeout(editorPaintTimer.current);
+      editorPaintTimer.current = setTimeout(() => {
+        editorPaintTimer.current = null;
+        // `suspendInput` still wraps the whole thing, and still does the right thing for a SYNC fn: its
+        // raw-mode release / stdin.pause / ?2004 disable all run BEFORE `fn()` is invoked, and its `finally`
+        // runs after the block returns. A rejection is the same outcome as a null — the buffer stands and
+        // the in-flight row must lift, or the composer is stuck showing "Save and close editor…" forever.
+        (suspend ? suspend(run) : run()).then(done, () => done(null));
+      }, EDITOR_PAINT_MS);
     },
   });
 

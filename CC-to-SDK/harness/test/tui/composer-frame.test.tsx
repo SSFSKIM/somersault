@@ -252,8 +252,9 @@ describe("external editor in flight (CM8)", () => {
     );
     await settle();
     stdin.write("\x07");
-    await waitFor(() => strip(frame(lastFrame)).includes(EDITOR_IN_FLIGHT_TEXT));
+    await waitFor(() => order.includes("edit"));
     expect(order).toEqual(["suspend", "edit"]);                  // NOT resumed while the editor still holds the tty
+    expect(strip(frame(lastFrame))).toContain(EDITOR_IN_FLIGHT_TEXT);
     release("done");
     await waitFor(() => strip(frame(lastFrame)).includes("done"));
     expect(order).toEqual(["suspend", "edit", "resume"]);
@@ -276,6 +277,26 @@ describe("external editor in flight (CM8)", () => {
     await waitFor(() => !strip(frame(lastFrame)).includes(EDITOR_IN_FLIGHT_TEXT));
     expect(order).toEqual(["suspend", "resume"]);
     expect(strip(frame(lastFrame))).toContain("keep");
+  });
+  // F5 real-TTY fix, THE pin for the whole redesign. The app path is the SYNC `editExternal` again (an
+  // awaited editor deadlocks the process on a real terminal — see restoreTtyNonblock's diagnosis), and a
+  // sync editor freezes the event loop, so the in-flight row is only ever seen if Ink has already WRITTEN it
+  // when the editor is entered. That ordering is the contract: at the instant the editor is called, the row
+  // is on screen. A regression to "call the editor straight from the key handler" fails this.
+  it("has already PAINTED the in-flight row by the time the editor is entered (paint-then-block)", async () => {
+    let frameAtEditTime = "";
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 40}
+        editExternal={(t) => { frameAtEditTime = strip(frame(lastFrame)); return t + "!"; }} />,
+    );
+    await settle();
+    stdin.write("draft");
+    await waitFor(() => strip(frame(lastFrame)).includes("draft"));
+    stdin.write("\x07");
+    await waitFor(() => frameAtEditTime !== "");
+    expect(frameAtEditTime).toContain(EDITOR_IN_FLIGHT_TEXT);
+    expect(frameAtEditTime).not.toContain("draft");                    // the composer really is swapped out
+    await waitFor(() => strip(frame(lastFrame)).includes("draft!"));
   });
   it("keeps the buffer and clears the in-flight row when the editor returns null", async () => {
     let release: (v: string | null) => void = () => {};

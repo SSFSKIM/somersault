@@ -10,7 +10,37 @@ import { join } from "node:path";
 export interface EditorIO { spawn?: typeof spawnSync; setRaw?: (on: boolean) => void; editorCmd?: string;
   /** Run once an editor is known to exist, before it is spawned — `/keybindings` writes its starter file here.
    *  Inside `openInEditor` rather than at the call site so that "no editor configured" creates nothing at all. */
-  prepare?: () => void }
+  prepare?: () => void;
+  /** The O_NONBLOCK repair below, injectable so a test can watch it fire. Defaults to `restoreTtyNonblock`. */
+  restoreTty?: () => void }
+
+// ── restoreTtyNonblock: the fix for a real-TTY deadlock that only a real terminal can produce ────────────
+//
+// DIAGNOSIS (measured on the built ccx under tmux, deterministic 3/3). O_NONBLOCK is a property of the OPEN
+// FILE DESCRIPTION, not of the fd — so a child spawned with stdio "inherit" shares ours, and whatever the
+// child leaves it as is what WE get back. Node puts fd 0 in non-blocking mode for its libuv tty watcher; vi
+// (like most curses editors) restores the description to BLOCKING when it exits. The moment it did, a
+// still-armed libuv tty watcher in our loop issued `read()` on a blocking tty and the MAIN THREAD parked
+// inside `uv__stream_io → read()` forever: no event loop, so SIGCHLD was never reaped (the editor stayed a
+// zombie), the child's "close" never fired, and the composer sat on `Save and close editor to continue...`
+// with the whole app dead. `sample` showed the blocked read; `lsof +fg` showed the tty fds with no NB flag.
+//
+// Upstream tolerates the blocking fd because it never awaits: its external edit is spawnSync (bundle
+// L317767/L317708), each loop iteration rides a keypress, and a read that blocks briefly on a tty the user
+// is typing at is invisible. We take the same spawnSync handoff (see `editExternal`) AND repair the flag,
+// because the app has tty fds beyond `process.stdin` (fd 11/15 observed) whose watchers we cannot pause.
+//
+// The repair has to happen in the same synchronous stretch as the editor's return — nothing may run the
+// loop in between. perl is the smallest thing that can do it: its inherited stdin IS the same open file
+// description, so its fcntl repairs OUR fd 0. Every failure mode (no perl, no tty, spawn throws) is
+// swallowed — a missing interpreter must never break an edit that already succeeded.
+const NONBLOCK_PERL = "use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK); my $f = fcntl(STDIN, F_GETFL, 0); fcntl(STDIN, F_SETFL, $f | O_NONBLOCK);";
+
+export function restoreTtyNonblock(io: { spawn?: typeof spawnSync; isTTY?: boolean } = {}): void {
+  if (!(io.isTTY ?? process.stdin.isTTY)) return;                 // no tty inherited → nothing shared, nothing to repair
+  const run = io.spawn ?? spawnSync;
+  try { run("/usr/bin/perl", ["-e", NONBLOCK_PERL], { stdio: ["inherit", "ignore", "ignore"] }); } catch { /* no perl / spawn refused */ }
+}
 
 /** The editor command as the user configured it, or null when neither variable is set. `||`, not `??`, for the
  *  reason spelled out in `editExternal` below: an exported-but-empty VISUAL/EDITOR means "unset" in every shell. */
@@ -29,18 +59,27 @@ export function openInEditor(file: string, io: EditorIO = {}): "no-editor" | "op
   const spawn = io.spawn ?? spawnSync;
   const setRaw = io.setRaw ?? ((on: boolean) => { try { if (process.stdin.isTTY) process.stdin.setRawMode(on); } catch { /* no tty */ } });
   const [cmd, ...args] = argv;
+  const restoreTty = io.restoreTty ?? (() => restoreTtyNonblock());
   io.prepare?.();
   try {
     setRaw(false);
     const r = spawn(cmd, [...args, file], { stdio: "inherit" });
+    restoreTty();                                                 // BEFORE anything can run the loop — see restoreTtyNonblock
     return r.error || r.status !== 0 ? "failed" : "opened";
   } finally { setRaw(true); }
 }
 
 /** Round-trip `text` through the user's editor. Returns the edited text (trailing newline stripped),
- *  or null when the editor errored/exited non-zero — the caller keeps the original buffer. */
+ *  or null when the editor errored/exited non-zero — the caller keeps the original buffer.
+ *
+ *  THIS is the form the app uses (ChatComposer's `chat:externalEditor`), and the blocking is deliberate:
+ *  see `restoreTtyNonblock` above and the warning on `editExternalAsync` below. A frozen event loop cannot
+ *  have a watcher fire mid-edit, which is exactly what makes the handoff safe. The composer pays for the
+ *  frozen frame by painting its `Save and close editor to continue...` row and letting Ink flush it BEFORE
+ *  calling in (a deferred macrotask), so the row is on screen for the whole edit — upstream's own UX. */
 export function editExternal(text: string, io: EditorIO = {}): string | null {
   const spawn = io.spawn ?? spawnSync;
+  const restoreTty = io.restoreTty ?? (() => restoreTtyNonblock());
   const setRaw = io.setRaw ?? ((on: boolean) => { try { if (process.stdin.isTTY) process.stdin.setRawMode(on); } catch { /* no tty */ } });
   // One resolver, shared with openInEditor — including its `||`-not-`??` handling of an exported-but-EMPTY
   // VISUAL/EDITOR. That case matters here specifically: an undefined `cmd` makes spawnSync throw
@@ -53,6 +92,9 @@ export function editExternal(text: string, io: EditorIO = {}): string | null {
   try {
     setRaw(false);
     const r = spawn(cmd, [...args, file], { stdio: "inherit" });
+    // The repair runs on BOTH arms and before either of them, in the same synchronous stretch as the return:
+    // nothing else can run the loop between the editor's exit and this line.
+    restoreTty();
     if (r.error || r.status !== 0) return null;
     try { return readFileSync(file, "utf8").replace(/\n$/, ""); } catch { return null; }   // file deleted / atomic-rename quirk — keep original buffer
   } finally {
@@ -63,22 +105,22 @@ export function editExternal(text: string, io: EditorIO = {}): string | null {
 
 export interface EditorIOAsync extends Omit<EditorIO, "spawn"> { spawn?: typeof spawn }
 
-/** F5 Task 2 (CM8): the SAME round-trip, awaited instead of blocking. `editExternal` above stops the event
- *  loop for the whole edit, which is why upstream's `Save and close editor to continue...` row could never
- *  paint here — Ink has no chance to repaint between the spawn and the exit. This form yields, so the
- *  composer can hold an `editorInFlight` frame for the duration and drop it on resolve.
+/** ⚠️ NEVER CALL THIS WITH A REAL INHERITED TTY. It deadlocks the process — deterministically, unrecoverably.
  *
- *  Everything else is `editExternal` verbatim: the same argv resolver (including its `||`-not-`??` handling
- *  of an exported-but-empty VISUAL/EDITOR and its `vi` default), the same temp round-trip, the same
- *  null-means-keep-the-buffer contract, and the same raw-mode discipline — released before the child owns
- *  the terminal, restored in the settle path whatever happened. A spawn that never starts (ENOENT) rejects
- *  on "error", so that arm returns null too rather than hanging the in-flight row forever.
+ *  F5 Task 2 (CM8) shipped this form to hold upstream's `Save and close editor to continue...` row while the
+ *  editor ran, and a real-TTY verification killed it: awaiting means our event loop is still alive when the
+ *  editor exits, and the editor exits having restored the SHARED open file description to blocking mode. The
+ *  next libuv tty watcher to fire calls `read()` on it and the main thread never comes back — no SIGCHLD, no
+ *  "close" event, no resolve, no repaint, no keys. The full diagnosis is on `restoreTtyNonblock` above.
+ *  `suspendInput` is not a defence: it pauses `process.stdin`, and the app has other tty fds whose watchers
+ *  it cannot reach. Isolated repros survive; the real app does not (3/3).
  *
- *  Raw mode is NOT the whole handoff for this form, and this function cannot do the rest of it. `spawnSync`
- *  above hands the terminal over by stopping the event loop; awaiting does not, so the harness's own stdin
- *  listener keeps reading fd 0 while the child is on it. The party that owns that listener is the keymap
- *  provider, so the caller wraps this call in its `suspendInput` (KeymapProvider.tsx) — see ChatComposer's
- *  `chat:externalEditor`. The `setRaw` pair here stays for callers with no provider above them. */
+ *  The app path is therefore `editExternal` (spawnSync), paint-then-block — upstream's shape, which the plan
+ *  review had flagged and we overrode. This function survives for callers with NO inherited terminal: tests
+ *  driving an injected `spawn`, and any headless/DI caller whose child does not own fd 0. It is otherwise
+ *  `editExternal` verbatim: same argv resolver (incl. `||`-not-`??` for an exported-but-empty VISUAL/EDITOR
+ *  and the `vi` default), same temp round-trip, same null-means-keep-the-buffer contract, same raw-mode
+ *  discipline. A spawn that never starts (ENOENT) rejects on "error", so that arm returns null too. */
 export function editExternalAsync(text: string, io: EditorIOAsync = {}): Promise<string | null> {
   const launch = io.spawn ?? spawn;
   const setRaw = io.setRaw ?? ((on: boolean) => { try { if (process.stdin.isTTY) process.stdin.setRawMode(on); } catch { /* no tty */ } });

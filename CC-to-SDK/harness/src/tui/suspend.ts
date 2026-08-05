@@ -27,8 +27,12 @@
 // `log(lastOutput)`. Its first operation has a stale terminal-relative line count after the shell printed.
 // chatMain's permanent ResumeSafeStdout owns that synchronous transaction and suppresses only that first
 // terminal write; Ink still resets and rebuilds its private bookkeeping through the forwarded replay.
+import { restoreTtyNonblock } from "./externalEditor.js";
+
 export interface SuspendDeps {
   stdin: { setRawMode?: (v: boolean) => void };
+  /** O_NONBLOCK repair for the resumed tty — see `restoreTtyNonblock`. Injectable; defaults to the real one. */
+  restoreTty?: () => void;
   stdout?: { isTTY?: boolean; write: (data: string) => unknown };
   repaint: () => void;
   platform?: NodeJS.Platform;
@@ -49,7 +53,12 @@ export function suspendProcess(deps: SuspendDeps): void {
   // handleSuspend L177985 pairs cursor/focus/mouse but never lho/Usr). Disable on the way out too: a shell
   // that does not manage the mode itself must not see paste markers at its own prompt.
   const paste = (on: boolean) => { if (deps.stdout?.isTTY) deps.stdout.write(on ? "\x1b[?2004h" : "\x1b[?2004l"); };
-  const onResume = () => { deps.stdin.setRawMode?.(true); cursor(false); paste(true); deps.repaint(); };
+  // Same class of damage as the external editor's (F5 real-TTY fix): while we were stopped the shell owned
+  // the tty, and `fg` can hand the shared open file description back in BLOCKING mode. Our libuv tty watchers
+  // re-arm the moment we resume, and a blocking `read()` on fd 0 parks the main thread forever. Repair first,
+  // before raw mode and the repaint touch the terminal. Failure-silent by construction.
+  const restoreTty = deps.restoreTty ?? restoreTtyNonblock;
+  const onResume = () => { restoreTty(); deps.stdin.setRawMode?.(true); cursor(false); paste(true); deps.repaint(); };
   let listenerAttempted = false;
   try {
     deps.stdin.setRawMode?.(false);

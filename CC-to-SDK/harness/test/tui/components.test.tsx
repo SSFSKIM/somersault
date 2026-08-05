@@ -377,7 +377,10 @@ describe("ChatComposer", () => {
       return applyKey(editor, "y", ctrl).state;
     };
     const makeEmptyPendingState = () => ({ ...makeYankedState(), lines: [""], cursor: { row: 0, col: 0 } });
-    const exercise = async (trigger: (stdin: { write(input: string): void }) => void | Promise<void>, props: Record<string, unknown> = {}, assertCallback: () => void = () => {}, initialState = makeYankedState()) => {
+    // `assertCallback` may be async: since the F5 real-TTY fix the external-edit chord DEFERS its editor by
+    // one Ink paint window (EDITOR_PAINT_MS) so the in-flight row reaches the terminal before the sync editor
+    // freezes the loop — so the two editExternal cases below have to wait for the edit, not read a counter.
+    const exercise = async (trigger: (stdin: { write(input: string): void }) => void | Promise<void>, props: Record<string, unknown> = {}, assertCallback: () => void | Promise<void> = () => {}, initialState = makeYankedState()) => {
       const editorStateRef = { current: initialState } as React.MutableRefObject<EditorState>;
       const view = render(<ChatComposer editorStateRef={editorStateRef} onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} {...props as any} />);
       await new Promise((r) => setTimeout(r, 20));
@@ -386,7 +389,7 @@ describe("ChatComposer", () => {
       await waitFor(() => editorStateRef.current.yankSite === null);
       expect(editorStateRef.current.killRun).toBe(false);
       expect(editorStateRef.current.lines).toEqual(initialState.lines);
-      assertCallback();
+      await assertCallback();
       view.stdin.write("\x1by");
       await new Promise((r) => setTimeout(r, 20));
       expect(editorStateRef.current.lines).toEqual(initialState.lines);
@@ -415,10 +418,10 @@ describe("ChatComposer", () => {
     }
 
     let externalEdits = 0;
-    await exercise((stdin) => stdin.write("\x07"), { editExternal: () => { externalEdits++; return null; } }, () => expect(externalEdits).toBe(1));
+    await exercise((stdin) => stdin.write("\x07"), { editExternal: () => { externalEdits++; return null; } }, () => waitFor(() => externalEdits === 1));
 
     let chordEdits = 0;
-    await exercise(async (stdin) => { stdin.write("\x18"); await new Promise((r) => setTimeout(r, 20)); stdin.write("\x05"); }, { editExternal: () => { chordEdits++; return null; } }, () => expect(chordEdits).toBe(1));
+    await exercise(async (stdin) => { stdin.write("\x18"); await new Promise((r) => setTimeout(r, 20)); stdin.write("\x05"); }, { editExternal: () => { chordEdits++; return null; } }, () => waitFor(() => chordEdits === 1));
 
     let killedAgents = 0;
     await exercise(async (stdin) => { stdin.write("\x18"); await new Promise((r) => setTimeout(r, 20)); stdin.write("\x0b"); }, { onKillAgents: () => killedAgents++ }, () => expect(killedAgents).toBe(1));
@@ -647,13 +650,16 @@ describe("Wave-1 keymap wiring", () => {
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("\x18");                                     // Ctrl-X
     stdin.write("\x05");                                     // Ctrl-E (within the chord window)
-    await new Promise((r) => setTimeout(r, 20));
+    // The editor runs one paint window after the chord now (F5 real-TTY fix: the in-flight row has to reach
+    // the terminal before the SYNC editor freezes the loop), so every arm here waits for it instead of
+    // assuming it already ran.
+    await waitFor(() => edits.length === 1);
     expect(edits).toEqual(["hi"]);
     stdin.write("\r");
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => submitted.length === 1);
     expect(submitted).toEqual(["from-editor"]);
     stdin.write("\x07");                                     // Ctrl-G — no chord needed
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => edits.length === 2);
     expect(edits).toEqual(["hi", ""]);
   });
   it("a nonempty external-editor replacement notifies the parent draft owner exactly once; an empty replacement does not", async () => {

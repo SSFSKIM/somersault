@@ -37,6 +37,24 @@ describe("suspendProcess", () => {
     expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', 'write("\\u001b[?2004l")', "once(SIGCONT)", "kill(0,SIGTSTP)", "raw(true)", 'write("\\u001b[?25l")', 'write("\\u001b[?2004h")', "repaint"]);
   });
 
+  // F5 real-TTY fix, same class as the external editor's: the shell owned the tty while we were stopped and
+  // `fg` can hand the shared open file description back in BLOCKING mode, which parks the main thread in the
+  // first read() a re-armed libuv tty watcher issues. Repair it before raw mode and the repaint.
+  it("repairs O_NONBLOCK on resume, before raw mode goes back on", () => {
+    const calls: string[] = [];
+    let onResume: (() => void) | undefined;
+    suspendProcess({
+      stdin: { setRawMode: (v) => calls.push(`raw(${v})`) },
+      restoreTty: () => calls.push("restoreTty"),
+      repaint: () => calls.push("repaint"),
+      once: (_s, handler) => { onResume = handler; },
+      kill: () => {},
+    });
+    expect(calls).toEqual(["raw(false)"]);                     // nothing on the way OUT — the fd is fine then
+    onResume?.();
+    expect(calls).toEqual(["raw(false)", "restoreTty", "raw(true)", "repaint"]);
+  });
+
   it("registers via `once`, not `on` — repeated suspend/resume cycles register exactly one listener per cycle, never accumulating", () => {
     let registrations = 0;
     const deps = {

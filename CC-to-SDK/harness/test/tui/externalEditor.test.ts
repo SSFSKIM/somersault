@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { EventEmitter } from "node:events";
-import { editExternal, editExternalAsync, openInEditor } from "../../src/tui/externalEditor.js";
+import { editExternal, editExternalAsync, openInEditor, restoreTtyNonblock } from "../../src/tui/externalEditor.js";
 
 describe("editExternal", () => {
   it("writes the buffer to the temp file, runs the editor, returns the edited text, restores raw mode", () => {
@@ -44,6 +44,40 @@ describe("editExternal", () => {
     editExternal("x", { spawn: ((c: string, a: string[]) => { seen = [c, a]; return { status: 0 } as any; }) as any, setRaw: () => {}, editorCmd: "code --wait" });
     expect(seen![0]).toBe("code");
     expect(seen![1][0]).toBe("--wait");
+  });
+});
+
+// F5 real-TTY fix. An editor spawned with stdio "inherit" shares fd 0's OPEN FILE DESCRIPTION with us and
+// vi restores it to BLOCKING on exit; the next libuv tty watcher then parks the main thread inside read()
+// and the whole app is dead. The repair has to run in the SAME synchronous stretch as the editor's return —
+// on both arms, before anything can run the loop again.
+describe("restoreTtyNonblock (the O_NONBLOCK repair)", () => {
+  it("spawns the perl fcntl helper with the tty INHERITED on stdin (that is what makes it our fd)", () => {
+    const calls: any[] = [];
+    restoreTtyNonblock({ isTTY: true, spawn: ((...a: any[]) => { calls.push(a); return {} as any; }) as any });
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe("/usr/bin/perl");
+    expect(calls[0][1][0]).toBe("-e");
+    expect(calls[0][1][1]).toContain("O_NONBLOCK");
+    expect(calls[0][2]).toEqual({ stdio: ["inherit", "ignore", "ignore"] });
+  });
+  it("does nothing without a tty, and swallows a helper that is missing or refuses to spawn", () => {
+    let called = false;
+    restoreTtyNonblock({ isTTY: false, spawn: (() => { called = true; return {} as any; }) as any });
+    expect(called).toBe(false);
+    expect(() => restoreTtyNonblock({ isTTY: true, spawn: (() => { throw new Error("ENOENT"); }) as any })).not.toThrow();
+  });
+  it("runs after the editor returns on BOTH arms — the 0-exit read and the failure that keeps the buffer", () => {
+    const order: string[] = [];
+    const restoreTty = () => order.push("restore");
+    editExternal("x", { restoreTty, editorCmd: "e", setRaw: () => {}, spawn: ((_c: string, a: string[]) => { order.push("edit"); writeFileSync(a[a.length - 1], "y"); return { status: 0 } as any; }) as any });
+    expect(order).toEqual(["edit", "restore"]);
+    order.length = 0;
+    expect(editExternal("x", { restoreTty, editorCmd: "e", setRaw: () => {}, spawn: (() => { order.push("edit"); return { status: 1 } as any; }) as any })).toBeNull();
+    expect(order).toEqual(["edit", "restore"]);                 // the failure arm returns early — repair still ran
+    order.length = 0;
+    openInEditor("/tmp/whatever", { restoreTty, editorCmd: "e", setRaw: () => {}, spawn: (() => { order.push("edit"); return { status: 0 } as any; }) as any });
+    expect(order).toEqual(["edit", "restore"]);                 // /keybindings shares the same inherited tty
   });
 });
 
