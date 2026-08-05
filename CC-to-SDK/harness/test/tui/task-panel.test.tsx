@@ -14,7 +14,7 @@ import React from "react";
 import { render } from "ink-testing-library";
 import { TaskPanel } from "../../src/tui/TaskPanel.js";
 import type { TaskItem } from "../../src/tui/taskList.js";
-import { todoOverflowLine, todoWindowSize } from "../../src/tui/taskPanelModel.js";
+import { OWNER_TAG_WIDTH, todoOverflowLine, todoWindowSize } from "../../src/tui/taskPanelModel.js";
 
 const plain = (s: string | undefined) => (s ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 const oneLine = (s: string | undefined) => plain(s).replace(/\s*\n\s*/g, " ").trim();
@@ -85,6 +85,11 @@ describe("TaskPanel — the three decorations (rendered only when the wire carri
     expect(oneLine(render(<TaskPanel tasks={tasks} columns={80} rows={40} />).lastFrame())).toContain("(@alice)");
     expect(oneLine(render(<TaskPanel tasks={tasks} columns={59} rows={40} />).lastFrame())).not.toContain("@alice");
     expect(oneLine(render(<TaskPanel tasks={[task({ id: "1", subject: "unclaimed" })]} columns={80} rows={40} />).lastFrame())).not.toContain("(@");
+  });
+
+  it("the owner tag's subject budget is measured in DISPLAY columns, not characters (`Ut`, L407214)", () => {
+    expect(OWNER_TAG_WIDTH("bob")).toBe(" (@bob)".length);
+    expect(OWNER_TAG_WIDTH("日本")).toBe(8);                             // 4 punctuation columns + 2 wide chars
   });
 
   it("the blocker clause names only blockers that are still open, numerically sorted", () => {

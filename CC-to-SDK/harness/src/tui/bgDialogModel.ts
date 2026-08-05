@@ -32,9 +32,6 @@ export function bgSection(taskType: string): BgSection {
   return "tasks";
 }
 
-/** `zSt` (L481282-481293): two leading spaces, the bold label, then a dim ` (n)`. */
-export const bgSectionHeader = (label: string, size: number): string => `  ${label} (${size})`;
-
 /** `Goi` (L478611) mapped through `S4` (L478603): the label a status prints and the theme role it takes.
  *  `running`/`pending` print the status word itself with no colour; an unknown status does the same, which is
  *  `S4`'s own `label ?? status` fallback rather than a guess. */

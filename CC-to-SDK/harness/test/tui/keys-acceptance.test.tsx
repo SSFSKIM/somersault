@@ -167,7 +167,9 @@ describe("F2 acceptance 2 — an open overlay owns the keyboard", () => {
     ] });
     await waitFor(() => frame(h.lastFrame).includes("⚙ 2 bg"));
     h.stdin.write(CTRL_B);                                           // idle ctrl+b opens the panel (Select context)
-    await waitFor(() => stripAnsi(frame(h.lastFrame)).includes("Shells (2)"));
+    // Two shells and nothing else, so the dialog draws BARE ROWS — the `Shells (n)` header only appears when a
+    // second category is present (F6 T13-fix, bundle L481255). The rows themselves are the marker.
+    await waitFor(() => stripAnsi(frame(h.lastFrame)).includes("alpha-task"));
     const selected = (): string => stripAnsi(frame(h.lastFrame)).split("\n").find((l) => l.includes("❯")) ?? "";
     expect(selected()).toContain("alpha-task");
     h.stdin.write("j");
@@ -348,9 +350,9 @@ describe("F2 — the mode-chip parenthetical is honest about who owns the keyboa
     fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "task-aaa", task_type: "bash", description: "alpha-task" }] });
     await waitFor(() => frame(h.lastFrame).includes("⚙ 1 bg"));
     h.stdin.write(CTRL_B);                                           // idle ctrl+b opens the picker over the composer
-    await waitFor(() => stripAnsi(frame(h.lastFrame)).includes("Shells (1)"));
+    await waitFor(() => stripAnsi(frame(h.lastFrame)).includes("alpha-task"));   // one category → bare rows
     expect(stripAnsi(frame(h.lastFrame))).not.toContain("to cycle");
-    expect(stripAnsi(frame(h.lastFrame))).toContain("Shells (1)");
+    expect(stripAnsi(frame(h.lastFrame))).toContain("alpha-task");
     h.unmount();
   });
 

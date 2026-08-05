@@ -32,7 +32,7 @@ import { formatDuration } from "./format.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
 import {
   BG_DETAIL_FOOTER, BG_EMPTY, BG_FOOTER, BG_TITLE, bgBadge, bgGroups, bgLabelWidth, bgRowLabel, bgSection,
-  bgSectionHeader, bgSubtitle, clipLine, MONITOR_DETAIL_TITLE, NO_OUTPUT, SHELL_DETAIL_TITLE, TAIL_LINES,
+  bgSubtitle, clipLine, MONITOR_DETAIL_TITLE, NO_OUTPUT, SHELL_DETAIL_TITLE, TAIL_LINES,
 } from "./bgDialogModel.js";
 
 const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
@@ -90,7 +90,7 @@ function ShellDetail({ row, columns, tail, now }: { row: BgTaskRow; columns: num
           : <>
               {/* upstream's `maxWidth: columns - 6` (L479924); stock Ink 5's Box has no maxWidth, so the same
                   budget is spent as a fixed `width` — the box is a reading pane either way. */}
-              <Box borderStyle="round" paddingX={1} flexDirection="column" width={Math.max(20, columns - 6)}>
+              <Box borderStyle="round" paddingX={1} flexDirection="column" height={12} width={Math.max(20, columns - 6)}>
                 {tail.map((l, i) => <Text key={i}>{l || " "}</Text>)}
               </Box>
               <Text dimColor italic>{`Showing ${tail.length} lines`}</Text>
@@ -108,11 +108,14 @@ const agentTitle = (row: BgTaskRow): string =>
 
 function AgentStatusLine({ row, now }: { row: BgTaskRow; now: number }) {
   const runtime = runtimeOf(row, now);
-  const word = row.status === "completed" ? "Completed" : row.status === "running" ? "Running" : row.status === "failed" ? "Failed" : "Stopped";
+  // `$ja` (L478354) is `status !== "running" && <Text …>` — a RUNNING agent gets no status word at all, and
+  // that is the point: the word is there to say the work has STOPPED. A live agent shows only its clock.
+  const word = row.status === "running" ? undefined
+    : row.status === "completed" ? "Completed" : row.status === "failed" ? "Failed" : "Stopped";
   const { color } = bgBadge(row.status);
   return (
     <Box flexDirection="row">
-      <Text color={color ? role(color) : undefined}>{word}</Text>
+      {word ? <Text color={color ? role(color) : undefined}>{word}</Text> : null}
       {runtime ? <Text dimColor>{` · ${runtime}`}</Text> : null}
       {row.summary ? <Text dimColor>{` · ${row.summary}`}</Text> : null}
     </Box>
@@ -140,7 +143,10 @@ export function BgTasksPanel({ tasks, onStop, onClose, readTail, columns = 80, n
   const read = readTail ?? realReadTail;
 
   // The tail is read ONCE per detail open (upstream re-polls its own promise every second while the shell
-  // runs; a keyless clone re-reads on re-entry instead — Escape/left and Enter again is the refresh).
+  // runs; a keyless clone re-reads on re-entry instead — Escape/left and Enter again is the refresh). The
+  // `Runtime:` row is the same trade in the other direction: upstream's `e4`/`Lc` tick it once a second
+  // (L479751/L478317), ours is recomputed per RENDER, so a running task's duration is as fresh as the last
+  // repaint and goes stale while nothing else changes. Re-entering the view refreshes both together.
   const [tail, setTail] = useState<string[]>([]);
   const openDetail = () => {
     const t = flat[sel];
@@ -185,14 +191,24 @@ export function BgTasksPanel({ tasks, onStop, onClose, readTail, columns = 80, n
   }
 
   const subtitle = bgSubtitle(tasks);
+  // `titleColor` IS AN ASSUMPTION, recorded as one: our `DialogFrame` is `Ed` (L437992), which takes a title
+  // colour separate from its border; the dialog this file transcribes uses `nr` (L184046), which paints its
+  // title with the SAME `color` it borders in. Passing both as `background` agrees with `nr` by coincidence
+  // of value, not by a read of `nr`'s props — a surface that wants the two to DIFFER must re-derive this.
   return (
     <DialogFrame title={BG_TITLE} titleColor="background" color="background" {...(subtitle ? { subtitle } : {})}>
       {flat.length === 0
         ? <Text dimColor>{BG_EMPTY}</Text>
         : groups.map((g, gi) => (
             <Box key={g.key} flexDirection="column" marginTop={gi > 0 ? 1 : 0}>
-              {/* `zSt` L481285: the LABEL is bold, the ` (n)` beside it only dim. */}
-              <Text dimColor><Text bold>{`  ${g.label}`}</Text>{` (${g.rows.length})`}</Text>
+              {/* THE HEADER IS CONDITIONAL (L481255). Upstream gates the Agents and Shells headers on ANOTHER
+                  category having rows (`(g.length > 0 || y.length > 0 || _.length > 0) && <zSt …>`), so a
+                  dialog listing shells and nothing else shows bare rows under the title — the label would be
+                  restating what the whole dialog already is. With our three categories that generalises to
+                  "more than one group present". `zSt` L481285 itself: the LABEL is bold, the ` (n)` only dim. */}
+              {groups.length > 1
+                ? <Text dimColor><Text bold>{`  ${g.label}`}</Text>{` (${g.rows.length})`}</Text>
+                : null}
               {g.rows.map((row) => <BgRow key={row.task_id} row={row} columns={columns} selected={row.task_id === flat[sel]?.task_id} />)}
             </Box>
           ))}

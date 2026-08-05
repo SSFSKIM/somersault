@@ -144,7 +144,7 @@ describe("F2 task 8 — KB14: j/k and ctrl+n/ctrl+p navigate in EVERY Select-fam
     // F6 T13 rebuilt this surface into the Background dialog: the row is `❯ <command> (running)` now, not
     // `❯ <glyph> <short id>`. The key facts this test exists for are unchanged and re-pinned as they were.
     const cursorOnRow = (label: string) => stripAnsi(frame(lastFrame)).split("\n").some((l) => l.includes("❯") && l.includes(label));
-    await waitFor(() => stripAnsi(frame(lastFrame)).includes("Shells (3)"));   // the bold label and its dim count are separate SGR runs
+    await waitFor(() => cursorOnRow("one"));   // three shells, one category → bare rows, no `Shells (n)` header
     stdin.write("j");    await waitFor(() => cursorOnRow("two"));
     stdin.write(CTRL_N); await waitFor(() => cursorOnRow("three"));
     stdin.write("k");    await waitFor(() => cursorOnRow("two"));

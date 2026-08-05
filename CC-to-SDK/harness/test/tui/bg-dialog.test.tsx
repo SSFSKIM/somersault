@@ -9,12 +9,24 @@ import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { BgTasksPanel } from "../../src/tui/BgTasksPanel.js";
-import { bgSection, bgSubtitle, bgBadge, bgGroups } from "../../src/tui/bgDialogModel.js";
+import { BG_DISMISSED, bgSection, bgSubtitle, bgBadge, bgGroups } from "../../src/tui/bgDialogModel.js";
+import { themeTokens } from "../../src/tui/theme.js";
 import type { BgTaskRow } from "../../src/tui/bgTaskMeta.js";
 
 const plain = (s: string | undefined) => (s ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 const frame = (f: () => string | undefined) => plain(f());
 const oneLine = (f: () => string | undefined) => frame(f).replace(/\s*\n\s*/g, " ");
+/** The RAW line (escapes intact) that `text` renders on — one row per line, so this is that row's whole SGR
+ *  state (task-panel.test.tsx uses the same idiom, and for the same reason: a stripped frame cannot say what
+ *  colour or weight anything was drawn in). */
+const rawLine = (f: () => string | undefined, text: string) =>
+  (f() ?? "").split("\n").find((l) => plain(l).includes(text)) ?? "";
+/** The token is `rgb(r,g,b)` and ink paints it as a truecolor SGR — read the token, not `resolveThemeColor`'s
+ *  hex (dialog-frame.test.tsx's helper). */
+const sgr = (name: "success" | "error" | "warning") => {
+  const m = /(\d+),\s*(\d+),\s*(\d+)/.exec(themeTokens()[name]);
+  return `\x1b[38;2;${m![1]};${m![2]};${m![3]}m`;
+};
 async function tick() { await new Promise((r) => setTimeout(r, 0)); }
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
@@ -49,6 +61,14 @@ describe("bgDialogModel", () => {
     expect(bgBadge("running")).toEqual({ label: "running" });
   });
 
+  it("the dismiss literal exists and is upstream's, even though nothing prints it", () => {
+    // `rsi` cancels with `onDone("Background dialog dismissed", {display:"skip"})` (L481256) and
+    // `display:"skip"` resolves to `messages: []` at the local-jsx call site (L241496) — the string is handed
+    // back and NOTHING reaches the transcript. The behavioural half of that claim is pinned below (`onClose`
+    // is called with no arguments at all); this is the literal half.
+    expect(BG_DISMISSED).toBe("Background dialog dismissed");
+  });
+
   it("groups keep section order and the flat list is what the cursor indexes", () => {
     const { groups, flat } = bgGroups([shell(), agent(), shell({ task_id: "s2" })]);
     expect(groups.map((g) => g.label)).toEqual(["Agents", "Shells"]);
@@ -69,6 +89,38 @@ describe("<BgTasksPanel> — the list", () => {
     expect(f).toContain("seq 1 20 (running)");
     expect(f).toContain("npm test (done)");
     expect(f).toContain("↑↓ select · enter view · x stop · escape close");
+  });
+
+  it("each badge is painted in its own role, and the section label is bold while its count is only dim", async () => {
+    const { lastFrame } = render(<BgTasksPanel onStop={() => {}} onClose={() => {}} tasks={[
+      agent(),
+      shell({ task_id: "s1", command: "done-one", status: "completed" }),
+      shell({ task_id: "s2", command: "failed-one", status: "failed" }),
+      shell({ task_id: "s3", command: "killed-one", status: "killed" }),
+      shell({ task_id: "s4", command: "live-one", status: "running" }),
+    ]} />);
+    await waitFor(() => frame(lastFrame).includes("Background"));
+    expect(rawLine(lastFrame, "done-one")).toContain(sgr("success"));
+    expect(rawLine(lastFrame, "failed-one")).toContain(sgr("error"));
+    expect(rawLine(lastFrame, "killed-one")).toContain(sgr("warning"));
+    const live = rawLine(lastFrame, "live-one");                         // `running` takes NO role at all
+    for (const role of ["success", "error", "warning"] as const) expect(live).not.toContain(sgr(role));
+    expect(live).toContain("\x1b[2m");                                   // …but the badge is still dim
+    // `zSt` L481285-481290: `<Text dimColor><Text bold>  Shells</Text> (4)</Text>`. Ink paints that as
+    // `\x1b[1m  Shells\x1b[2m (4)\x1b[22m` — bold opens on the LABEL and the count arrives under the dim
+    // attribute instead, so a header drawn as one bold string (or one dim string) fails this.
+    expect(rawLine(lastFrame, "Shells")).toContain("\x1b[1m  Shells\x1b[2m (4)");
+  });
+
+  it("the section header appears only when more than one category is present (L481255)", async () => {
+    const only = render(<BgTasksPanel tasks={[shell(), shell({ task_id: "s2", command: "npm test" })]} onStop={() => {}} onClose={() => {}} />);
+    await waitFor(() => frame(only.lastFrame).includes("Background"));
+    expect(frame(only.lastFrame)).not.toContain("Shells");               // one category → bare rows
+    expect(oneLine(only.lastFrame)).toContain("❯ seq 1 20 (running)");
+    const both = render(<BgTasksPanel tasks={[shell(), agent()]} onStop={() => {}} onClose={() => {}} />);
+    await waitFor(() => frame(both.lastFrame).includes("Background"));
+    expect(plain(both.lastFrame())).toContain("Shells (1)");
+    expect(plain(both.lastFrame())).toContain("Agents (1)");
   });
 
   it("says `No tasks currently running` and nothing else when the list is empty", async () => {
@@ -98,6 +150,15 @@ describe("<BgTasksPanel> — the list", () => {
     expect(stopped).toEqual(["bocnvmnhq"]);
     stdin.write("\x1b");
     await waitFor(() => closed === 1);
+  });
+
+  it("closing hands the caller NOTHING to print (display:\"skip\")", async () => {
+    const calls: unknown[][] = [];
+    const { stdin, lastFrame } = render(<BgTasksPanel tasks={[shell()]} onStop={() => {}} onClose={(...args: unknown[]) => { calls.push(args); }} />);
+    await waitFor(() => frame(lastFrame).includes("Background"));
+    stdin.write("\x1b");
+    await waitFor(() => calls.length === 1);
+    expect(calls[0]).toEqual([]);                                        // no message, no display option
   });
 });
 
@@ -155,9 +216,21 @@ describe("<BgTasksPanel> — the detail sub-view", () => {
     const f = oneLine(lastFrame);
     expect(f).toContain("agent › reviewing the diff");
     expect(f).toContain("Completed");
+    expect(f).not.toContain("Running");
     expect(f).toContain("5s");
     expect(f).toContain("3 files reviewed");
     expect(reads).toEqual([]);                                           // its .output is the transcript JSONL
+  });
+
+  it("a RUNNING agent gets no status word at all — only its clock (`$ja` L478354)", async () => {
+    const { stdin, lastFrame } = render(
+      <BgTasksPanel tasks={[agent({ startedAt: 0 })]} onStop={() => {}} onClose={() => {}} now={() => 12_000} />);
+    await waitFor(() => frame(lastFrame).includes("Background"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("›"));
+    const f = oneLine(lastFrame);
+    expect(f).toContain("12s");
+    for (const word of ["Running", "Completed", "Failed", "Stopped"]) expect(f).not.toContain(word);
   });
 
   it("x stops from inside the detail view, and escape there closes the whole dialog", async () => {

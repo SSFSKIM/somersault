@@ -5,6 +5,7 @@
 // THE WINDOW IS A FUNCTION OF THE TERMINAL HEIGHT, not of the list (L407118): `i <= 10 ? 0 : min(5, max(3,
 // i - 14))`. Its zero arm is not a guard — on a ten-row terminal upstream shows the header and NOTHING else
 // (the overflow line is itself gated on `u > 0`, L407191), because there is no room. Faithful, quirk and all.
+import stringWidth from "string-width";
 import type { TaskItem, TaskStatus } from "./taskList.js";
 
 /** `MCp = 30000` (L407265): how long a task that JUST completed stays pinned at the top of the window before
@@ -86,7 +87,10 @@ export function blockedByLine(openBlockers: readonly string[]): string {
  *  (probe 81 Q3). Presence of the name is therefore the whole gate, and that is a recorded divergence. */
 export const showsOwnerTag = (owner: string | undefined, columns: number): owner is string => columns >= 60 && !!owner;
 
-export const OWNER_TAG_WIDTH = (owner: string): number => ` (@${owner})`.length;
+/** `Ut(\` (@${owner})\`)` (L407214) — upstream measures the tag with its own DISPLAY-width function, not
+ *  `.length`, so a CJK or emoji owner name costs the columns it actually paints. `string-width` is the same
+ *  measure `truncateLabel` (upstream's `gi`) already runs on the subject this budget is subtracted from. */
+export const OWNER_TAG_WIDTH = (owner: string): number => stringWidth(` (@${owner})`);
 /** `xCp` / `LCp` (L407217/L407222): the subject gets what is left after the fixed 15-column budget and the
  *  owner tag; the activity line gets the same budget without it. Never below 15. */
 export const subjectWidth = (columns: number, ownerTag: number): number => Math.max(15, columns - 15 - ownerTag);
