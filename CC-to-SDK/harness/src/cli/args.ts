@@ -111,6 +111,10 @@ export function parseCcx(argv: string[]): CcxInvocation {
       case "--effort": a.config.effort = oneOf("--effort", val(t), EFFORT_LEVELS); break;
       case "-r": case "--resume": a.config.resume = val(t); break;
       case "--permission-mode": a.config.permissionMode = oneOf("--permission-mode", val(t), PERMISSION_MODES); break;
+      // The real CLI's own spelling for the same mode (Wave-T T15). It lands on the SAME field rather than a
+      // flag of its own, so the consent gate in main.ts keys on ONE resolved mode and can never cover one
+      // spelling and miss the other. Valueless, like upstream's.
+      case "--dangerously-skip-permissions": a.config.permissionMode = "bypassPermissions"; break;
       case "--settings": a.config.settings = parseSettings(val(t)); break;
       case "--think": { const v = val(t); if (!parseThinkArg(v)) throw new Error(`--think must be off|low|medium|high|xhigh|max or a token count, got ${JSON.stringify(v)}`); a.think = v; break; }
       case "--listen": {

@@ -67,6 +67,7 @@ import { TranscriptPager } from "./TranscriptPager.js";
 import { HistorySearchOverlay } from "./HistorySearchOverlay.js";
 import { AddDirDialog } from "./AddDirDialog.js";
 import { ThemeDialog } from "./ThemeDialog.js";
+import { BypassConsent } from "./bypassConsent.js";
 import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
@@ -133,7 +134,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
-  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
+  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
   // The queued band's own column budget: what is left inside the `paddingX: 2` box. `deps.columns` first for
   // the same reason useChat prefers it — the frame-capture fixture and the tests pin a width.
   const terminalColumns = () => deps?.columns?.() ?? stdout?.columns ?? 80;
@@ -196,7 +197,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ? "shortcuts"
     : transcriptOpen
       ? "transcript"
-      : state.helpOpen || state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open
+      : state.bypassConsent.open || state.helpOpen || state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open
         ? "overlay"
         // `Fui()`'s three states (bundle L499192), as two arms of this ladder. A parked decision while the
         // draft is live is SUPPRESSED — the dialog renders nothing (`Xrl()` L499196) and the composer keeps
@@ -379,7 +380,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           // re-adds a directory the session already holds).
           : <PermissionDialog key={inlineDecision.toolUseID} req={inlineDecision} cwd={cwd} directories={state.workDirs} onDecision={(d) => resolveDecision(d)} />
         : null}
-      {state.shortcutsOpen
+      {/* Wave-T T15: the head of the chain, above even the `?` overlay. `/yolo` is a request to stop being
+          asked before dangerous commands run, and until it is answered nothing else may take the keyboard —
+          this is the one dialog in the tree whose whole job is to be in the way. */}
+      {state.bypassConsent.open
+        ? <BypassConsent onAccept={acceptBypassConsent} onRefuse={refuseBypassConsent}
+            {...(deps?.savePrefs ? { savePrefs: deps.savePrefs } : {})} {...(deps?.env ? { env: deps.env } : {})} />
+        : state.shortcutsOpen
         ? <ShortcutsOverlay onClose={closeShortcuts} />
         // F6 T14: `/help`'s dialog sits directly behind the `?` overlay — they render the SAME grid, and the
         // one that was opened last is the one on screen. Both are USER surfaces (no parked decision under

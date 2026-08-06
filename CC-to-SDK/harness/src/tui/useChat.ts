@@ -16,6 +16,7 @@ import { appendDenial, removeFromArray, type DenialEntry } from "./permissionsMo
 import type { CcxPrefs } from "./prefs.js";
 import { loadPrefs, savePrefs as realSavePrefs } from "./prefs.js";
 import { AUTO_MODE_DESCRIPTION, AUTO_MODE_NOTICE_DELAY_MS, shouldShowAutoModeNotice } from "./autoModeNotice.js";
+import { hasAcceptedBypass } from "./bypassConsent.js";
 import { currentTheme, resolveThemeColor, setTheme, themeTokens, type ThemeId } from "./theme.js";
 import { buildRows, summarizeChanges, PERMISSION_MODE_OPTIONS, type SettingsRowCtx } from "./settingsRows.js";
 import { OUTPUT_STYLE_REDIRECT } from "./OutputStylePicker.js";
@@ -78,7 +79,7 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
   submitCount: number; hasMessages: boolean;
-  staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[];
+  staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[];
   /** The session's working directories — the cwd plus every `/add-dir` grant (`listDirs()`). The FILE
    *  permission dialog's in-directory test runs over this set; nothing else reads it. */
   workDirs: readonly string[];
@@ -267,6 +268,7 @@ export function useChat(
   const [historyOpen, setHistoryOpen] = useState(false);       // the Ctrl-R history-search overlay
   const [addDir, setAddDir] = useState<{ open: boolean; prefill?: string }>({ open: false });   // W3 T3: /add-dir overlay
   const [themeDialog, setThemeDialog] = useState<{ open: boolean }>({ open: false });   // W3 T4: /theme overlay
+  const [bypassConsent, setBypassConsent] = useState<{ open: boolean }>({ open: false });   // Wave-T T15: /yolo's consent gate
   const [settings, setSettings] = useState<{ open: boolean; tab?: string }>({ open: false });   // W3 T5: /config overlay
   // Baseline SettingsRowCtx captured the moment /config opens, diffed against a fresh snapshot when it
   // closes (closeSettings). A ref, not a local ref inside SettingsDialog: the Model row reuses the
@@ -789,7 +791,16 @@ export function useChat(
         case "help": openHelp(); break;
         case "resume": void openPicker(); break;
         case "continue": void doContinue(); break;
-        case "yolo": void applyMode("bypassPermissions"); break;
+        // Wave-T T15 / spec W-T20 — a DELIBERATE divergence: upstream's consent gate is launch-only, but
+        // upstream's mode ladder cannot reach bypass at all (settingsRows.ts:23-27 transcribes that
+        // exclusion), so this command is a ccx-specific route into the mode with no upstream precedent to
+        // inherit. Same dialog, same persisted answer as the launch gate — and unlike the launch path a
+        // refusal here simply leaves the session in the mode it is already in, because there is a live
+        // session to leave (the launch gate's "decline exits" has nothing to fall back TO; spec W-T10).
+        case "yolo":
+          if (hasAcceptedBypass(loadPrefs(historyEnv))) void applyMode("bypassPermissions");
+          else setBypassConsent({ open: true });
+          break;
         case "think":
           if (cmd.args) {
             const parsed = parseThinkArg(cmd.args);
@@ -1100,6 +1111,13 @@ export function useChat(
   // (this dialog needs no session access) — `line` is the exact verbatim result string ("Theme set to
   // {id}" / "Theme picker dismissed"), just close + print it.
   function closeThemeDialog(line: string) { if (!disposed.current) { setThemeDialog({ open: false }); notice(line); } }
+
+  // Wave-T T15 — the two answers to `/yolo`'s consent. The dialog persists the acceptance itself (every route
+  // into bypass records it, so no caller can forget to), which leaves these two the mode change and the
+  // notice. The refusal ignores the exit code the dialog reports: those codes are the LAUNCH path's, and a
+  // refusal mid-session means "stay where you are", never "end the session".
+  function acceptBypassConsent() { if (!disposed.current) { setBypassConsent({ open: false }); void applyMode("bypassPermissions"); } }
+  function refuseBypassConsent() { if (!disposed.current) { setBypassConsent({ open: false }); notice("bypass permissions declined — permission mode unchanged"); } }
 
   // W3 T5: /config. A snapshot-diff design, not incremental change-tracking (see the settingsBaselineRef
   // comment above) — currentSettingsCtx() reads currentTheme() FRESH each call (theme.ts's own contract:
@@ -1534,5 +1552,5 @@ export function useChat(
   }
   function clear() { if (!disposed.current) { clearScreen(); replaceDocument(new TranscriptDocument()); } }   // /clear: wipe screen + model (session context kept)
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials, workDirs, retryStatus } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, permissions, denials, workDirs, retryStatus } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
 }

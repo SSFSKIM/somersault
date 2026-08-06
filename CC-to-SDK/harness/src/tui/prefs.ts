@@ -24,7 +24,11 @@ import { THEMES, type ThemeId } from "./theme.js";
 /** `hasSeenAutoModeEntryWarning` is Wave-T T2's once-per-install gate for the auto-mode entry notice, and
  *  upstream's own flag name (bundle L454516 gate, L547951 writer): set the first time this install lands in
  *  `auto`, never cleared. Upstream keeps it in the app config; ours lives here, the client-side seam. */
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean }
+/** `skipDangerousModePermissionPrompt` is Wave-T T15's once-per-install record that the bypass-permissions
+ *  consent was accepted, and upstream's own flag name (bundle L554052 writer, `M8()` L43492 gate — which reads
+ *  it across four settings scopes; ours has the one). Written only by the accept arm of the consent dialog,
+ *  never cleared: once accepted, neither a bypass launch nor `/yolo` asks again. */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 

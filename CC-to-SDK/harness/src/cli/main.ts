@@ -45,6 +45,11 @@ export interface MainDeps {
   /** The ccx client prefs (F6 T11). Injected for the same reason every other seam here is: a test must be
    *  able to say what is on disk without writing to the user's real prefs file. */
   loadPrefs: () => CcxPrefs;
+  /** Wave-T T15 — the bypass consent gate. A SEAM, not a static import, for the same React-free reason
+   *  `runChatClient` is one: `../tui/bypassConsent.js` is a `.tsx` module, and naming it up top would pull
+   *  ink/React into every `-p` and `--bg` invocation. Resolves only when the warning is accepted; every
+   *  other outcome exits the process from inside (decline 1, Escape 0). */
+  showBypassConsent: () => Promise<void>;
 }
 const defaults: MainDeps = {
   runHostMain: realRunHostMain, collectFleet: realCollectFleet, spawnDetached: realSpawnDetached,
@@ -54,6 +59,9 @@ const defaults: MainDeps = {
   runChatClient: async (o) => (await import("../tui/chatMain.js")).runChatClient(o),
   prepareAttach: realPrepareAttach,
   loadPrefs: () => realLoadPrefs(),
+  // The React-free guarantee again: the ink/React module tree loads only when a bypass launch actually
+  // reaches the gate.
+  showBypassConsent: async () => (await import("../tui/bypassConsent.js")).showBypassConsent(),
   // Wraps the fleet's existing boolean prober (socketAnswers, which already swallows error codes) into
   // the throw-shaped seam attachToImpl expects — no second prober, no expectation of an error code.
   probeSocket: async (p) => {
@@ -141,6 +149,14 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
         catch (e) { return fail(`could not prepare worktree ${inv.worktree}: ${msg(e)}`, 1); }
         inv.config.cwd = inv.worktreePath;
       }
+      // Wave-T T15 (qa3-14): bypass permissions is the one mode that stops asking before it acts, and until
+      // now ccx entered it with no warning at all. Placed HERE — after the argument checks, before the spawn
+      // and before any session exists — so a refusal costs nothing that has to be unwound. The gate keys on
+      // the RESOLVED mode, so `--dangerously-skip-permissions` and `--permission-mode bypassPermissions` are
+      // one condition and neither spelling can slip past it. It covers every launch that renders a REPL,
+      // `--detachable` included; `-p` and `--bg` are deliberately outside it, matching upstream's own
+      // placement (L554501-04 sits in the interactive startup) — a headless run has no terminal to consent in.
+      if (needsBypassConsent(inv, deps)) await deps.showBypassConsent();
       if (inv.bg) { console.log(deps.spawnDetached(inv).banner); return 0; }
       // --detachable is an ATTACHED session that survives its terminal: spawn it exactly like --bg
       // (fully detached, kind:"interactive"), then attach to it ourselves — the prompt stays with US,
@@ -165,6 +181,16 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
       // exitAfterFlush as exit 0 — a command that did nothing, reported as success.
       return fail(`unhandled command ${String(inv.command)}`, 2);
   }
+}
+
+/** Wave-T T15's gate condition, kept out of the dispatch switch because it is three separate questions.
+ *  `resolvedPermissionMode` is the same reader the banner and hookOpts use, given the same `?? "default"`
+ *  foreground rule (EP-T1), so the mode this asks about is the mode the engine will actually run. */
+function needsBypassConsent(inv: CcxInvocation, deps: MainDeps): boolean {
+  if (inv.bg || inv.print || !deps.isTTY()) return false;
+  if (resolvedPermissionMode({ ...inv.config, permissionMode: inv.config.permissionMode ?? "default" }) !== "bypassPermissions") return false;
+  // `M8()` (bundle L43492): once accepted, never asked again.
+  return deps.loadPrefs().skipDangerousModePermissionPrompt !== true;
 }
 
 /** Retry classification: `fromSpawn` (the --detachable auto-attach) retries BOTH not-yet-resolvable (the

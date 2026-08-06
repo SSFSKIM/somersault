@@ -38,6 +38,9 @@ function deps(over: Partial<MainDeps> = {}): MainDeps {
     // Empty by default: no test may read the real ~/.claude/ccx/prefs.json, and a launch with no saved
     // default is the ordinary case anyway (F6 T11-fix).
     loadPrefs: () => ({}),
+    // Wave-T T15: a bypass launch is the ONLY thing that reaches it, and no test here launches one — a call
+    // from anywhere else is the gate firing where it should not, and must fail by name.
+    showBypassConsent: async () => { throw new Error("showBypassConsent must not run"); },
     ...over,
   };
 }

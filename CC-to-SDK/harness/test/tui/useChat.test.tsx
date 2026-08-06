@@ -19,6 +19,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendHistory } from "../../src/tui/promptHistory.js";
+import { savePrefs } from "../../src/tui/prefs.js";
 
 // Ink hard-wraps a long single-line <Text> at the terminal width, inserting a real "\n" at whichever word
 // boundary the reflow lands on — a boundary that shifts whenever earlier content in the SAME joined line
@@ -734,8 +735,8 @@ describe("useChat", () => {
 });
 
 describe("permission ladder", () => {
-  function LadderHost({ makeSession, api }: { makeSession: () => ChatSession; api: { cyc?: () => void; run?: (s: string) => void } }) {
-    const c = useChat(makeSession);
+  function LadderHost({ makeSession, api, env }: { makeSession: () => ChatSession; api: { cyc?: () => void; run?: (s: string) => void }; env?: NodeJS.ProcessEnv }) {
+    const c = useChat(makeSession, {}, { ...(env ? { env } : {}) });
     api.cyc = c.cycleMode; api.run = c.submit;
     return <Text>mode:{c.state.mode} model:{c.state.model ?? "-"} {allText(c)}</Text>;
   }
@@ -782,16 +783,24 @@ describe("permission ladder", () => {
     expect(setModelCalls).toEqual(["claude-opus-4-8"]);
     expect(frame(lastFrame)).not.toContain("switched model");
   });
-  it("/yolo enables bypassPermissions; Tab from bypass returns to default", async () => {
+  // Wave-T T15: `/yolo` is behind the bypass consent gate now, so this test states the ALREADY-CONSENTED
+  // case — its subject is the ladder, not the gate (bypass-consent.test.tsx owns that). The temp fleet root
+  // is what makes the acceptance a fact of THIS test rather than of whoever's machine it runs on: without it
+  // `loadPrefs()` would read the real ~/.claude/ccx/prefs.json and the result would differ per developer.
+  it("/yolo enables bypassPermissions (consent already accepted); Tab from bypass returns to default", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ccx-yolo-"));
+    const env = { ...process.env, CCX_FLEET_ROOT: root };
+    savePrefs({ skipDangerousModePermissionPrompt: true }, env);
     const setModeCalls: string[] = [];
     const session = fakeRemote({ setPermissionMode: (m: string) => { setModeCalls.push(m); } });
     const api: { cyc?: () => void; run?: (s: string) => void } = {};
-    const { lastFrame } = render(<LadderHost makeSession={() => session} api={api} />);
+    const { lastFrame } = render(<LadderHost makeSession={() => session} api={api} env={env} />);
     await waitFor(() => frame(lastFrame).includes("mode:default"));
     api.run!("/yolo");
     await waitFor(() => frame(lastFrame).includes("mode:bypassPermissions"));
     api.cyc!(); await waitFor(() => frame(lastFrame).includes("mode:default"));
     expect(setModeCalls).toEqual(["bypassPermissions", "default"]);
+    rmSync(root, { recursive: true, force: true });
   });
   it("cycleMode after unmount is a no-op (early disposed guard)", async () => {
     const setModeCalls: string[] = [];
