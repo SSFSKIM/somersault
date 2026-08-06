@@ -16,9 +16,11 @@ import React from "react";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { join } from "node:path";
 import {
-  PlanDialog, planOptions, planGrant, SHIFT_TAB_HINT, SAVED_FLASH_MS, SCROLL_HINT, DASHED_BORDER,
+  PlanDialog, planOptions, planGrant, SHIFT_TAB_HINT, SAVED_FLASH_MS, SCROLL_HINT,
   EMPTY_PLAN_TITLE, EMPTY_PLAN_BODY, optionBoxRows, planWindow, planRegionRows,
 } from "../../src/tui/PlanDialog.js";
+// Moved out of PlanDialog by t17, when the file dialog's write body became its second consumer.
+import { DASHED_BORDER } from "../../src/tui/boxStyles.js";
 import { editorDisplayName } from "../../src/tui/externalEditor.js";
 
 /** SGR-stripped, the same helper the sibling dialog tests use: the Select wraps the index and the label in

@@ -37,7 +37,8 @@ import { KNOWN_LANGS, highlightCode } from "../highlight.js";
 import { collapseOnFocusChange, escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
 import { useBindingLookup, useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import { formatBindingLower } from "../keys/hints.js";
-import { resolveThemeColor, themeTokens } from "../theme.js";
+import { resolveThemeColor, themeTokens, type ThemeTokenName } from "../theme.js";
+import { DASHED_BORDER } from "../boxStyles.js";
 import type { RenderLine } from "../render.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
 import type { SedEdit } from "./sedEdit.js";
@@ -62,7 +63,7 @@ export interface FilePermissionRequest {
   suggestions?: PermissionUpdateLike[];
 }
 
-const role = (name: "warning") => resolveThemeColor(themeTokens()[name]);
+const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
 const extensionOf = (path: string): string => { const name = basename(path), dot = name.lastIndexOf("."); return dot > 0 ? name.slice(dot + 1).toLowerCase() : ""; };
 
 /** `EM` — a syntax-highlighted block of the whole file, NOT the transcript's ten-line preview: this is the
@@ -118,13 +119,27 @@ function FileBody({ content, columns, fs, cwd }: { content: FileContent; columns
 
   switch (content.kind) {
     case "file-edit-diff":
-      // `Qsl` L505548: `SM paddingX: 0`, width = the full column budget.
+      // `Qsl` L505548: `SM paddingX: 0`, width = the full column budget. RECORDED GAP: that `SM` is the same
+      // dashed-rule box the write arm below now paints, and this arm does not yet paint it — t17 scoped
+      // itself to `ial`. `test/tui/file-permission.test.tsx` pins the absence, so closing it is a visible edit.
       return patch === undefined ? null : <DiffRows rows={renderDiff(patch, columns)} />;
     case "file-write-diff":
-      // `ial` L505666-687: `SM paddingX: 1`, width `columns - 2`; a file that does not exist yet has no diff
+      // `ial` L505666-694: `SM paddingX: 1`, width `columns - 2`; a file that does not exist yet has no diff
       // to show, so its CONTENT is the body — and an empty one says so rather than rendering a blank block.
+      //
+      // `SM` (L424994-425003) is the DASHED-RULE box, and `ial` wraps its WHOLE body in it — the overwrite
+      // diff and the create code block alike, which is why the box is out here and not around one arm. It is
+      // what tells a reader where the proposed content starts and stops: the create arm has no `+`/`-` gutter
+      // and no line numbers (`EM` at its default `startLine:1` renders no gutter, L423755-767) to do that job.
+      // The numbered variant belongs to `lre` (L420073), the overwrite arm's row renderer, and is F4's already.
+      // ONE FIELD IS NOT TRANSCRIBED, the same gap PlanDialog's plan body records: `SM` drops the style
+      // entirely under a screen reader (`const hGp = Ea() ? void 0 : "dashed"`, L424996, `Ea()` being Ink's
+      // `isScreenReaderEnabled` context, L182559), so upstream paints NO border there. We paint
+      // unconditionally — stock Ink 5 has no such context and this repo has no screen-reader surface to read
+      // it off, the same class of gap DialogFrame.tsx records for `srPrefix`.
       return (
-        <Box paddingX={1}>
+        <Box flexDirection="column" borderStyle={DASHED_BORDER} borderColor={role("subtle")}
+          borderLeft={false} borderRight={false} overflow="hidden" paddingX={1}>
           {patch !== undefined
             ? <DiffRows rows={renderDiff(patch, columns - 2)} />
             : <CodeBlock code={content.content || "(No content)"} filePath={content.filePath} />}

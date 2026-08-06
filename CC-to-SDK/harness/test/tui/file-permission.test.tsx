@@ -128,6 +128,57 @@ describe("<FilePermission> — the body is a real inline diff (`wem` L505860, F4
   });
 });
 
+// `ial` L505694 mounts its WHOLE body — the overwrite diff and the create code block alike — inside `SM`
+// (L424994-425003), the dashed-rule box, at `paddingX:1`. That box is what tells a reader where the proposed
+// content starts and stops when nothing else frames it: the create arm has no `+`/`-` gutter to do the job.
+describe("<FilePermission> — the write body's dashed rules (`ial` L505694 → `SM` L424994-425003)", () => {
+  const isRule = (r: string) => r.includes("╌╌╌");
+
+  it("fences a CREATE's content between two dashed rules, with the left and right edges off", async () => {
+    const f = plain((await mount({ toolName: "Write", input: { file_path: "/repo/new.ts", content: "const x = 1\nconst y = 2\n" } })).frame());
+    const rows = f.split("\n");
+    expect(rows.filter(isRule)).toHaveLength(2);                              // one above the content, one below
+    const top = rows.findIndex(isRule), bottom = rows.map(isRule).lastIndexOf(true);
+    expect(rows.findIndex((r) => r.includes("const x = 1"))).toBeGreaterThan(top);
+    expect(rows.findIndex((r) => r.includes("const y = 2"))).toBeLessThan(bottom);
+    // `borderLeft:!1, borderRight:!1` (L424999) — the vertical glyph must never paint.
+    expect(f).not.toContain("╎");
+  });
+
+  it("keeps the create arm UNNUMBERED — `EM` at its default `startLine:1` renders no gutter (L423755-767)", async () => {
+    const f = plain((await mount({ toolName: "Write", input: { file_path: "/repo/new.ts", content: "const x = 1\nconst y = 2\n" } })).frame());
+    const row = f.split("\n").find((r) => r.includes("const x = 1"))!;
+    // The numbered gutter is the OVERWRITE arm's (`lre` L420073); a create carries the bare source line.
+    expect(row.trimStart()).toMatch(/^const x = 1/);
+    expect(f).not.toMatch(/^\s*1\s+const x = 1/m);
+  });
+
+  it("still says `(No content)` for an EMPTY create, inside the same two rules", async () => {
+    const f = plain((await mount({ toolName: "Write", input: { file_path: "/repo/new.ts", content: "" } })).frame());
+    const rows = f.split("\n");
+    expect(rows.filter(isRule)).toHaveLength(2);
+    const top = rows.findIndex(isRule), bottom = rows.map(isRule).lastIndexOf(true);
+    const at = rows.findIndex((r) => r.includes("(No content)"));
+    expect(at).toBeGreaterThan(top);
+    expect(at).toBeLessThan(bottom);
+  });
+
+  it("frames an OVERWRITE's diff in the same rules — `SM` wraps `ial`'s whole body, not just the create arm", async () => {
+    const fs = fakeFs({ "/repo/a.ts": "one\ntwo\n" });
+    const f = plain((await mount({ toolName: "Write", input: { file_path: "/repo/a.ts", content: "one\nthree\n" } }, { fs })).frame());
+    expect(f.split("\n").filter(isRule)).toHaveLength(2);
+    expect(f).toContain("-two");
+  });
+
+  // RECORDED GAP, pinned so it cannot be mistaken for finished work: `Qsl` (L505548) wraps the EDIT arm in
+  // the same `SM`, at `paddingX:0`. Only `ial`'s box is this task's; the edit arm is still bare, and this
+  // expectation is the thing a later task has to flip.
+  it("does NOT yet fence the EDIT arm, though `Qsl` L505548 wraps it in `SM` too", async () => {
+    const f = plain((await mount({ toolName: "Edit", input: { file_path: "/repo/a.ts", old_string: "const a = 1", new_string: "const a = 2" } })).frame());
+    expect(f.split("\n").filter(isRule)).toHaveLength(0);
+  });
+});
+
 describe("<FilePermission> — the sed-as-edit route (`DCs` L228484)", () => {
   it("simulates the substitution against the file and renders it as an ordinary edit diff", async () => {
     const fs = fakeFs({ "/repo/src/a.ts": "alpha\n" });

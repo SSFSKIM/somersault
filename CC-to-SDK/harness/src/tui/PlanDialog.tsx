@@ -79,6 +79,8 @@ import { useKeyActions, useKeyScope, useSuspendInput } from "./keys/KeymapProvid
 import { useRefState } from "./keys/refState.js";
 import { editExternal, editorDisplayName } from "./externalEditor.js";
 import { renderMarkdown } from "./markdown.js";
+// `SM`'s fork-only border, shared with the file dialog's write body since t17 — see boxStyles.ts.
+import { DASHED_BORDER } from "./boxStyles.js";
 // The transcript's line renderer, reused verbatim: renderMarkdown's RenderLine carries bold/italic/segments
 // (not just `{text, dim?, color?}`), and one renderer keeps the dialog's styling from drifting from the
 // transcript's. `gutter` is never set on markdown output, so the shared branch is simply inert here.
@@ -107,14 +109,6 @@ export const SAVED_FLASH_MS = 5000;
 export const SHIFT_TAB_HINT = "shift+tab to approve";
 /** Divergence 1 above: the invented reading path, named in the clip marker so it is never a secret key. */
 export const SCROLL_HINT = "ctrl+u/ctrl+d scroll";
-/** `luy.dashed` (L179535), the box style upstream's ink FORK registers and stock `cli-boxes` does not have —
- *  its eight glyphs transcribed, corners included (they are spaces upstream, and with the left/right edges off
- *  they never print anyway). Ink 5 accepts a `BoxStyle` OBJECT wherever it accepts a registry name, which is
- *  the seam that lets `SM`'s rules be copied rather than approximated with a `single` border. */
-export const DASHED_BORDER = Object.freeze({
-  top: "╌", bottom: "╌", left: "╎", right: "╎", topLeft: " ", topRight: " ", bottomLeft: " ", bottomRight: " ",
-});
-
 /** The EMPTY-PLAN dialog (`Gnl` L501048-079) — a different frame, not an empty body. */
 export const EMPTY_PLAN_TITLE = "Exit plan mode?";
 export const EMPTY_PLAN_BODY = "Claude wants to exit plan mode";
