@@ -328,7 +328,7 @@ sets a flag and re-renders, and the renderer decides the bytes. Second, `onRende
 breaks `ccx`. Third, a forced redraw and a resize are **the same primitive** (`hasStaleTerminalSize()` →
 `handleResize()`), which is the grain of truth in the triage's "one primitive" instinct, arriving at a
 different level than it supposed. Two named concepts worth borrowing outright: `prevFrameContaminated`
-("the screen holds something we did not put there") and `probeExternalClear` (L180995), where upstream
+("the screen holds something we did not put there") and `probeExternalClear` (L180993), where upstream
 actively asks the terminal whether an external agent wiped the screen — notably gated on altscreen, which
 is further evidence that DSR is not a general-purpose tool here (SP-R0 candidate (c)).
 
@@ -414,7 +414,7 @@ a LOW row)"*. The diff path is real highlight.js behind a 24-scope truecolor map
 values), and `jmH` (256-colour fallback via palette indices). Language detection is not extension-only:
 `X$p` (L419856) maps bare filenames — `Dockerfile`, `Makefile`, `Rakefile`, `Gemfile`, `CMakeLists`.
 
-**Composition is band-under-token** (`ZmH`, L419733: `[{ ...c, background: y ? o : n }, A]`) — the diff
+**Composition is band-under-token** (`ZmH` L419733; the literal itself at **L419757**: `l.push([{ ...c, background: y ? o : n }, A])`) — the diff
 owns the background only. Pinned live on a word-diff row where one string token kept its foreground while
 the background flipped and flipped back.
 
