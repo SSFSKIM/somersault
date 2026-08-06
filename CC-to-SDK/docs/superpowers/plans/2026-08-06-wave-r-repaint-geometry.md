@@ -248,8 +248,10 @@ repeated above — use it verbatim).
 > excluding both is exactly `colBefore > newWidth && colBefore % newWidth !== 0`, plus a genuine narrowing.
 >
 > **`colBefore` cannot be chosen per-resize** — the new width is not known until the resize has already
-> happened, so "park at `newWidth + 1`" is not available. **Park near the far right instead** (e.g.
-> `oldWidth − 1`) after each frame write. That satisfies `colBefore > newWidth` for every shrink, and lands
+> happened, so "park at `newWidth + 1`" is not available, and it would be wrong anyway: the re-review found
+> that `newWidth + 1` re-wraps to exactly column 1, which is the one value a terminal might also report by
+> homing the cursor. Near-margin answers (`<= 1` or `>= newWidth − 1`) are now refused for that reason.
+> **Park near the far right instead** (e.g. `oldWidth − 1`) after each frame write. That satisfies `colBefore > newWidth` for every shrink, and lands
 > on the ambiguous multiple only for the few `newWidth` values dividing it. *Verify Ink's `cliCursor.hide()`
 > makes the parked cursor invisible.*
 >
@@ -266,10 +268,18 @@ repeated above — use it verbatim).
 > brief flicker on a session's first shrink only. *Verify that the erase-then-force-repaint ordering does
 > not destroy the new frame* — that hazard is why the synchronous path was specified in the first place.
 >
-> Two constraints inherited from Task 3's fix, both load-bearing: cursor reports are now delivered
-> **one-reply-one-consumer, oldest first**, so **keep exactly one probe in flight per resize** — a second
-> queued behind a live one is starved; and a straggler arriving while a later probe waits is swallowed, so
-> that probe times out to `"unknown"` (safe, re-probeable, but slower on a laggy link). **If none works, STOP and report** — the wave needs a different detection strategy and that is
+> Constraints inherited from Task 3's fixes, all load-bearing: cursor reports are delivered
+> **one-reply-one-consumer, oldest first**, so **keep exactly one probe in flight per resize**; and
+> **one timeout ends probing for the whole session** — a terminal that failed to answer once is one we
+> cannot measure, and since a single success caches the verdict forever, ending probing closes the
+> late-straggler hole completely instead of narrowing it.
+>
+> **ESCALATION THRESHOLD, controller-owned.** The oracle has taken three rounds of correctness fixes, each
+> refusing more inputs. If Task 4 cannot demonstrate a **realistic** terminal-and-resize combination that
+> yields `"reflow"` against the real binary under tmux, **stop and escalate rather than shipping it**. A
+> detector that is provably safe and practically inert is a no-op with a full test suite, and the honest
+> outcome would be to record EP-R1 as unfixed pending a different strategy — not to ship a correction that
+> never fires while its acceptance criteria are checked against synthetic frames. **If none works, STOP and report** — the wave needs a different detection strategy and that is
 > the controller's call, not a thing to work around. Do not proceed to a design where the correction
 > silently never fires; a fix that no-ops in production while its tests pass is worse than no fix.
 >
