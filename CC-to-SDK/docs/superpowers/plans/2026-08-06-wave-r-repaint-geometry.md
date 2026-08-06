@@ -62,7 +62,11 @@ from a measurement where X produced a worse defect than the one being fixed. Tak
   (height-only controls, which must stay clean). A cell passes when the capture shows **exactly one
   composer block and zero rules at any width other than the current one**.
 - **Driving tmux** — follow `docs/parity/qa-driver.md`. Sessions are named `wr-tN-*`; always
-  `tmux kill-session` in a `finally`. Resize with `tmux resize-window -t <s> -x <cols> -y <rows>`.
+  `tmux kill-session -t <name>` in a `finally`. Resize with `tmux resize-window -t <s> -x <cols> -y <rows>`.
+  **Never run `tmux kill-server`, `tmux kill-session -a`, or any other all-sessions form (W-R8).** The
+  owner keeps long-lived sessions on the same daemon; a Wave R agent killed two of them during teardown,
+  and its own sessions had already exited, so the destructive call gained nothing. Kill what you named,
+  by name, and nothing else.
 
 ### Task order
 

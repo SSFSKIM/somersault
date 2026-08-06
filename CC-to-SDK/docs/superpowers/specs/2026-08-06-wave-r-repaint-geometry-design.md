@@ -482,6 +482,17 @@ A9, A10, A11.
   real GUI terminal are gathered by **handing the owner a 30-second script to run**, never by driving the
   app. *Rejected alternative:* force-quitting to recover — it would have killed the owner's own long-lived
   shells (the process had been up 3 days 22 hours).
+- **W-R8 [DECIDED, from an incident]** **Teardown kills only the sessions you created, by name — never
+  `tmux kill-server`.** The Task 4 drag measurement finished its runs correctly and then tore down with
+  `tmux kill-server`, which killed the **owner's own two long-lived sessions (`main` and `sdk`)** along
+  with the agent's. Its own sessions had already exited, so the destructive call bought nothing at all.
+  The rule: every tmux-driving task names its sessions with the task's own prefix and tears down with a
+  per-session `tmux kill-session -t <name>` in a `finally`; **no agent runs `kill-server`, `kill-session
+  -a`, or any other all-sessions form, ever.** This generalises W-R7 rather than repeating it — W-R7 says
+  do not drive the owner's applications, and W-R8 says a shared daemon is one of the owner's applications
+  even when you are a legitimate client of it. *Rejected alternative:* trusting the driver doc to imply
+  it — `docs/parity/qa-driver.md` already showed per-session teardown and that was not enough, so the
+  prohibition has to be stated as a prohibition.
 
 ## Open questions
 
@@ -549,6 +560,15 @@ changed this document:
    between is not testing the workload a person produces by dragging a window edge, which is a *burst* of
    `SIGWINCH`. Stepped resizes and drags are different workloads, and this correction passed the first
    while failing the second.
+8. **The drag failure is an unimproved case, not a regression — measured, not argued.** With the design
+   in question, the tempting move is to reason about whether shipping it is safe. Instead the two builds
+   were driven through the same four drag shapes, three repetitions each, 46 cells: the corrected build is
+   **better than or equal to the uncorrected one everywhere**, and **no content was lost in either**, with
+   all eight marker rows and four content anchors byte-identical in the scrollback capture (not the visible
+   pane — the instrument rule matters here). The fine one-column drag is the honest gap: 1 composer block
+   and 3 stale rule rows, against the baseline's 3–4 composers and ~6 stale rows. That converts the
+   decision from "is this safe to ship" into "is a strict improvement enough for A2", which is a different
+   and much easier question to answer.
 
 ## Outcomes & Retrospective
 
