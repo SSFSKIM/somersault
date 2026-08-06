@@ -84,11 +84,18 @@ React tree but **never re-renders components**, so `ChatApp.tsx:140`'s `terminal
 when something else causes a render. Width-derived strings freeze at the launch width.
 `ChatComposer.tsx:252` documents the intended per-render read; the trigger is simply absent.
 
-**Interfaces produced (later tasks depend on these names):**
-- `ChatApp` gains an optional dep `onResize?: (cb: () => void) => () => void` — subscribe, returns an
-  unsubscribe. Default: `(cb) => { process.stdout.on("resize", cb); return () => process.stdout.off("resize", cb); }`.
-- `terminalColumns()` / `terminalRows()` keep their **function-valued** shape (`ChatApp.tsx:140`, `:143`).
-  Do not convert them to plain numbers — `ChatComposer` reads `columns()` per render deliberately.
+**Interfaces produced (later tasks depend on these names) — AS BUILT, corrected after Task 1 shipped:**
+- `ChatApp` gains a **top-level optional prop** `onResize?: (cb: () => void) => () => void` — subscribe,
+  returns the unsubscribe. Used as `<ChatApp onResize={…} />`, **not** `deps={{ onResize }}`.
+  *The brief originally said "an optional dep"; the implementer correctly refused.* `deps` is typed
+  `Parameters<typeof useChat>[2]` (`ChatApp.tsx:129`) — it is literally `useChat`'s own dep bag, and
+  `useChat` has no use for a resize subscription, so putting it there would widen an unrelated contract.
+  It follows the `suspend` prop's precedent instead.
+- `terminalColumns()` / `terminalRows()` keep their **function-valued** shape. Do not convert them to plain
+  numbers — `ChatComposer` reads `columns()` per render deliberately (`ChatComposer.tsx:252`).
+- **Behaviour change later tasks must know:** the size is now sampled at mount and on each resize event,
+  not on every call. **A test that wants a new width must fire the `onResize` emitter — mutating the
+  backing variable alone is no longer enough.**
 
 - [ ] **Step 1: Write the failing test.** In `test/tui/resize-state.test.tsx`, render `ChatApp` with an
       injected `columns` dep backed by a mutable variable and a fake `onResize` emitter. Assert the frame
