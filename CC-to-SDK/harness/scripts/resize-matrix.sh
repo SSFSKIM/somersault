@@ -23,11 +23,17 @@
 # assertion below is POSITIVE (a rule of the wrong width is present / a second composer block is present /
 # no content sits above the frame), so the ambiguity never arises.
 #
-# KEYLESS. Nothing here runs a model turn. `HOME` and `CCX_FLEET_ROOT` point at a scratch dir per cell (the
-# non-negotiable isolation rule in docs/parity/qa-driver.md §0 — an unisolated run once wrote to the
-# operator's live ~/.claude), and the content above the composer comes from `/status`, a local command.
-# The two live cells of the wave's matrix (A3's mid-turn resize and the two-turn cell) are controller-run and
-# are deliberately NOT here.
+# KEYLESS BY DEFAULT. Nothing in the matrix proper runs a model turn. `HOME` and `CCX_FLEET_ROOT` point at a
+# scratch dir per cell (the non-negotiable isolation rule in docs/parity/qa-driver.md §0 — an unisolated run
+# once wrote to the operator's live ~/.claude), and the content above the composer comes from `/status`, a
+# local command.
+#
+# THE ONE EXCEPTION IS THE A3 CELL (Wave R task 6, `run_a3_cell` below), which resizes DURING a streaming turn
+# and therefore cannot be faked: it runs only when `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` is already
+# in the environment, and SKIPS with a message otherwise. It is not part of the CI-required set — CI has no
+# credential, `RESIZE_MATRIX_REQUIRE_TMUX` does not reach it, and a skipped A3 records neither a pass nor a
+# fail. Nothing here ever reads `../.env` or prints either variable. The remaining live cell of the wave's
+# matrix (the two-turn cell) is still controller-run and deliberately not here.
 #
 # TEARDOWN (W-R8). Only the sessions this script named are killed, one `kill-session -t <name>` each. NEVER
 # `kill-server`, `kill-session -a`, or any other all-sessions form: the owner keeps long-lived sessions on the
@@ -143,8 +149,8 @@ self_test() {
 }
 
 # ── session helpers (docs/parity/qa-driver.md §2) ─────────────────────────────────────────────────────────
-launch() {                                  # launch <session> <cols> <rows>
-  local s="$1" x="$2" y="$3" home proj
+launch() {                                  # launch <session> <cols> <rows> [<env-var-name-to-forward>]
+  local s="$1" x="$2" y="$3" fwd="${4-}" home proj cmd
   home="$MATRIX_ROOT/$s-home"; proj="$MATRIX_ROOT/$s-proj"; mkdir -p "$home/.claude/ccx" "$proj"
   # `CI=false` IS LOAD-BEARING, AND WITHOUT IT THIS SUITE CANNOT RUN ON ANY CI RUNNER AT ALL. Ink asks
   # `is-in-ci`, which is true when `CI` or `CONTINUOUS_INTEGRATION` is merely PRESENT, or when any variable
@@ -154,8 +160,20 @@ launch() {                                  # launch <session> <cols> <rows>
   # reached the ready frame" — a red CI step that looks like a product regression and is not one.
   # `is-in-ci` short-circuits on the literal `"false"`, which is the one lever that beats all three clauses.
   # It is also the honest value here: the pane below is a real PTY being driven as an interactive user.
-  tmux new-session -d -s "$s" -x "$x" -y "$y" -c "$proj" \
-    "env HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CI=false node $BIN" || return 1
+  cmd="env HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CI=false node $BIN"
+  # THE CREDENTIAL, WHEN THERE IS ONE (task 6's A3 cell), GOES THROUGH `-e` AND NOT THROUGH `$cmd`. Appending
+  # it there would put it in the argv of the shell tmux runs, visible in `ps` for the whole life of the
+  # session; with `-e` the child's argv is the `env … node bin.js` line and nothing else (measured). What `-e`
+  # costs instead is tmux's SESSION environment, which this same user can read back with
+  # `tmux show-environment -t <session>` until the cell kills the session, plus the launching tmux client's own
+  # argv while that one call runs. That is the smallest exposure available here: nothing is written to disk and
+  # nothing is echoed. `${!fwd}` is an indirect expansion — the caller passes the NAME, so no value appears in
+  # this script's source or in any log line. tmux ≥ 3.2 (`run_a3_cell` gates on the version before asking).
+  if [ -n "$fwd" ]; then
+    tmux new-session -d -s "$s" -x "$x" -y "$y" -c "$proj" -e "$fwd=${!fwd}" "$cmd" || return 1
+  else
+    tmux new-session -d -s "$s" -x "$x" -y "$y" -c "$proj" "$cmd" || return 1
+  fi
   SESSIONS="$SESSIONS $s"
   tmux set-option -t "$s" remain-on-exit on >/dev/null
   # READY-NEEDLE. NOT qa-driver.md §2.1's `⇧Tab to cycle`, which this build no longer prints anywhere (its
@@ -287,6 +305,108 @@ run_a5_cell() {
   record "a5" "$rc"
 }
 
+# ── the live A3 cell: a resize DURING a streaming turn (Wave R task 6, qa2-09) ─────────────────────────────
+# `qa2-09` photographed up to FOUR `esc to interrupt` rows carrying THREE different elapsed times in one frame
+# after a mid-turn resize, and its claim that this self-heals at end of turn was refuted by measurement (spec
+# §12 item 14): every stale row survived the interrupt verbatim. Both halves are asserted here — one spinner
+# row while the turn runs, and none once Esc has ended it.
+#
+# WHY THIS ONE CANNOT BE KEYLESS. Every other cell stages its content with `/status`, a local command. A3's
+# subject is the LIVE TURN's own chrome: a spinner that reprints on its own timer while text streams under it.
+# There is nothing to resize into without a model actually answering, so this cell is gated on a credential
+# and skips (recording neither pass nor fail) when there is none. The component-level regression guard for the
+# same acceptance is `test/tui/resize-midturn.test.tsx`, which is keyless and runs in CI; it can prove that
+# ChatApp never mounts a second spinner, and cannot see repaint residue at all. This cell is the other half.
+spinner_rows() { grep -cF 'esc to interrupt' "$1"; }                        # spinner.ts:67's tail, verbatim
+elapsed_rows() { grep -cE '\(([0-9]+m )?[0-9]+s( · [0-9]+ tokens)? · esc to interrupt\)' "$1"; }   # …with its clock
+# How many captured rows are longer than <width>. Measured on the PRE-shrink capture, because `capture-pane`
+# already folds every row to the pane width — SP-R0's "a line longer than the new width" can only be observed
+# before the resize. Byte length (LC_ALL=C) slightly overstates for multi-byte glyphs; that only makes this
+# precondition easier to satisfy, and it gates nothing but the cell's own honesty.
+wide_rows() { LC_ALL=C awk -v w="$1" '{ line=$0; sub(/[ \t]+$/, "", line); if (length(line) > w) c++ } END { print c+0 }' "$2"; }
+# settle_frame's discipline applied to the spinner count: poll, never sleep on a fixed delay, and never send a
+# key during the wait (a keystroke forces a partial repaint that HIDES residue). The extra rule here is the
+# HOLD — the count must be right on three consecutive captures, because a live turn repaints continuously and
+# a single good capture between two repaints proves nothing. A build with the filed defect never reaches the
+# hold: the stale rows do not self-heal (qa-driver §5).
+settle_spinner() {                          # settle_spinner <session> <expected-count> <label>
+  local s="$1" want="$2" label="$3" i=0 hold=0 cap="$MATRIX_ROOT/cap-a3" n m
+  while [ "$i" -lt 40 ]; do                 # 10 s
+    tmux capture-pane -t "$s" -p > "$cap"
+    n=$(spinner_rows "$cap")
+    if [ "$n" = "$want" ]; then hold=$((hold+1)); [ "$hold" -ge 3 ] && break; else hold=0; fi
+    sleep 0.25; i=$((i+1))
+  done
+  tmux capture-pane -t "$s" -p > "$cap"
+  n=$(spinner_rows "$cap"); m=$(elapsed_rows "$cap")
+  if [ "$n" = "$want" ] && [ "$m" = "$want" ]; then printf '      ok   %-28s escRows=%s elapsedRows=%s\n' "$label" "$n" "$m"; return 0; fi
+  printf '      FAIL %-28s escRows=%s elapsedRows=%s (want %s of each)\n' "$label" "$n" "$m" "$want"
+  [ "$want" = 1 ] && [ "$n" = 0 ] && echo "      NB zero rows where one was expected means the TURN ENDED before this step — inconclusive, not a spinner defect. Lengthen A3_PROMPT and rerun."
+  echo "      ── frame ──"; sed 's/^/      | /' "$cap"; echo "      ───────────"
+  return 1
+}
+# `new-session -e` landed in tmux 3.2. Older tmux can still run every keyless cell, so this gates the live
+# cell only rather than the whole script — and it is a SKIP, because forwarding the credential any other way
+# would put it in an argv that lingers.
+tmux_has_session_env() {
+  local v maj min
+  v=$(tmux -V 2>/dev/null | awk '{print $2}'); [ -n "$v" ] || return 1
+  maj="${v%%.*}"; min=$(printf '%s' "${v#*.}" | tr -dc '0-9')
+  [ -n "$maj" ] && [ -n "$min" ] || return 1
+  [ "$maj" -gt 3 ] || { [ "$maj" -eq 3 ] && [ "$min" -ge 2 ]; }
+}
+# EIGHT PARAGRAPHS, NO LISTS, NO CODE, NO TOOLS — every clause is load-bearing. Length: the cell has to
+# shrink, re-grow and interrupt INSIDE one turn, and each of those steps polls for a settled frame, so the
+# answer must stream for tens of seconds rather than a couple. Prose and not a list: SP-R0's second condition
+# is an emitted row LONGER than the post-shrink width, which flowing paragraphs at 120 columns supply and a
+# list of short items does not. No tools: a permission dialog mid-turn would replace the composer and end the
+# stream, which is a different acceptance entirely.
+A3_PROMPT='Write eight long paragraphs of flowing prose, roughly 800 words in total, about why redrawing a terminal user interface after a window resize is difficult. No lists, no headings, no code, no tools.'
+run_a3_cell() {
+  local s="wr-t6-a3" rc=0 cap="$MATRIX_ROOT/cap-a3" fwd="" i=0 wide=0
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then fwd=CLAUDE_CODE_OAUTH_TOKEN          # subscription-billed; preferred
+  elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then fwd=ANTHROPIC_API_KEY
+  else
+    echo "  SKIP a3 (live): no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment — a mid-turn resize needs a real streaming turn. Not part of the CI-required set."
+    return 0
+  fi
+  tmux_has_session_env || { echo "  SKIP a3 (live): tmux is older than 3.2, which is where 'new-session -e' arrived — the only way this cell can hand the child a credential without leaving it in a lingering argv."; return 0; }
+  echo "  cell a3 (live, forwarding \$$fwd): 120x40, submit a multi-second turn -> shrink 80x40 mid-stream -> grow 100x40 -> Esc"
+  launch "$s" 120 40 "$fwd" || { record "a3" 1; kill_cell "$s"; return; }
+  settle_frame "$s" 120 "a3 start 120x40" || rc=1
+  type_line "$s" "$A3_PROMPT"
+  # PRECONDITION 1 — the turn is really in flight. Resizing an idle REPL is cell c1, not this one.
+  settle_spinner "$s" 1 "a3 spinner up" || { echo "      FAIL a3 precondition: no live spinner to resize under"; kill_cell "$s"; record "a3" 1; return; }
+  # PRECONDITION 2 — SP-R0's second condition, asserted rather than assumed: rows wider than the width the
+  # next step shrinks to. Polled, because the first seconds of a turn carry the prompt echo and nothing else.
+  while [ "$i" -lt 40 ]; do
+    tmux capture-pane -t "$s" -p > "$cap"
+    wide=$(wide_rows 80 "$cap"); [ "$wide" != 0 ] && break
+    sleep 0.25; i=$((i+1))
+  done
+  if [ "$wide" = 0 ]; then
+    echo "      FAIL a3 precondition: no streamed row is wider than 80 — the shrink below could not strand anything"
+    sed 's/^/      | /' "$cap"; kill_cell "$s"; record "a3" 1; return
+  fi
+  printf '      ok   %-28s %s row(s) wider than 80 are on screen, spinner live\n' "a3 preconditions" "$wide"
+  # THE SHRINK, MID-STREAM. Both assertions run on the settled screen: the spinner count (this cell's own)
+  # and check_frame's composer/rule verdict (every other cell's), because a mid-turn resize must not break the
+  # composer geometry either.
+  tmux resize-window -t "$s" -x 80 -y 40 || { echo "      FAIL resize-window failed"; rc=1; }
+  settle_spinner "$s" 1 "a3 shrink 80x40" || rc=1
+  settle_frame   "$s" 80 "a3 frame 80x40" || rc=1
+  tmux resize-window -t "$s" -x 100 -y 40 || { echo "      FAIL resize-window failed"; rc=1; }
+  settle_spinner "$s" 1 "a3 grow 100x40" || rc=1
+  settle_frame   "$s" 100 "a3 frame 100x40" || rc=1
+  # …AND THE INTERRUPT, which is the half the original finding got wrong. Esc on a busy turn is always
+  # interrupt (ChatApp's onInterrupt), so no second key is needed and none is sent.
+  tmux send-keys -t "$s" Escape
+  settle_spinner "$s" 0 "a3 after interrupt" || rc=1
+  settle_frame   "$s" 100 "a3 frame after interrupt" || rc=1
+  kill_cell "$s"
+  record "a3" "$rc"
+}
+
 # ── run ───────────────────────────────────────────────────────────────────────────────────────────────────
 echo "Wave R — QA-2 width matrix (A12)"
 self_test
@@ -318,6 +438,7 @@ run_cell c4 120x40 100x40 90x40 80x40          # the accumulation cell (A2): thr
 run_cell h1 120x24 120x40                      # height-only control
 run_cell h2 80x40 80x15                        # height-only control
 run_a5_cell
+run_a3_cell                                    # live (task 6, A3); skips cleanly with no credential
 
 PREFS_AFTER=$(prefs_stamp)
 if [ "$PREFS_BEFORE" != "$PREFS_AFTER" ]; then
