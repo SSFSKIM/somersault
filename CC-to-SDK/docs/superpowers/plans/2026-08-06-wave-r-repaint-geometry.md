@@ -539,6 +539,15 @@ so `ink.js:121`'s `outputHeight >= this.options.stdout.rows` never fires under `
 is not installed there at all. **Write this as a unit test** against the proxy with a stub that exposes
 `rows`, simulating a full-screen-branch write directly. Then confirm the real behaviour under tmux.
 
+**Carried from Task 4b's review (Important, assigned here).** The resynchronization on the `\x1b[2J`
+branch must reset **`widthAtPaint`** as well as the frame geometry — a `widthAtPaint` that survives the
+tall-frame write feeds the write-time corrector a region measured off a frame that no longer describes
+the screen, and the injected erase walks upward into `fullStaticOutput` (live scrollback the correction
+never repaints). And the desync is not theoretical: Task 4b's instrumented drag log caught Ink's own
+erase prefix at 12 rows against a recorded frame of 8 lines mid-drag. Reading `inkErases` off the wire
+(the prefix) rather than off the recorded frame is what kept that instance on the under-erase side —
+preserve that property here.
+
 - [ ] **Step 1: Write the failing unit test.** Simulate a taller-than-`rows` write reaching the proxy,
       then a resize, and assert the erase computed by Task 4 matches the **actual** frame rather than the
       stale bookkeeping.

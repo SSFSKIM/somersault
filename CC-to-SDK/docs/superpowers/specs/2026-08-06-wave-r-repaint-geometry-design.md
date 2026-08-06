@@ -583,6 +583,17 @@ changed this document:
    and 3 stale rule rows, against the baseline's 3–4 composers and ~6 stale rows. That converts the
    decision from "is this safe to ship" into "is a strict improvement enough for A2", which is a different
    and much easier question to answer.
+9. **After W-R9, the residual windows are named, bounded, and all on the under-erase side.** Task 4b's
+   write-time corrector leaves exactly two uncorrected windows, both known rather than discovered: (a)
+   **pre-verdict frame writes** — during a literal one-column drag every probe is refused (a ≤3-column
+   step can never satisfy `colBefore > newWidth` with the park at `oldWidth − 3`), so a session's *first*
+   fine drag paints 1–4 stale rule rows until a ≥4-column shrink lets a probe answer; measured
+   indistinguishable from Task 4's signal-time design on that cell (means 2.25 vs 1.63 stale rows over 8
+   interleaved reps) while strictly better everywhere else. (b) **`<Static>` flushes** open with an
+   erase-only `log.clear()` that the corrector deliberately does not touch (it corrects frame writes
+   only). Both windows under-erase; neither can lose content. Closing (a) means accumulating the
+   shortfall of pre-verdict writes and discharging it when the verdict lands — a design change deferred
+   as a wave close-out decision, not folded into Task 4b.
 
 ## Outcomes & Retrospective
 
