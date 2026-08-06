@@ -221,6 +221,13 @@ repeated above — use it verbatim).
 term, which Task 2's helper deliberately excludes. Worked example to pin in a test: **6 logical, Ink
 erased 7, occupied 10, correct 11.**
 
+**Cap the count at the terminal height, and treat `lastFrame()` as a LOWER bound** (Task 2 review,
+concerns 2-3). `lastFrame()` can be one frame stale — after `app.clear()`, after resume, and after Ink's
+tall-frame branch, which is never recorded at all (that branch fires on every ctrl+o pager open). A stale
+frame is usually the *taller* one, so an uncapped count can exceed what is actually on screen. **Cap the
+erase at `stdout.rows`**; combined with the "emit nothing unless the verdict is `reflow`" rule, that keeps
+every failure on the under-erase side, which is the cosmetic one.
+
 **Timing.** Ink's own `resized` handler (`ink.js:83`) runs synchronously on `SIGWINCH` and repaints before
 any of our async work can finish. **The erase must be emitted before Ink's repaint**, i.e. from a
 synchronous `resize` listener registered **before** Ink's (Ink subscribes in its constructor at
