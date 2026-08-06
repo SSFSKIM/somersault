@@ -97,11 +97,18 @@ export function fetchUrl(input: Record<string, unknown>): string {
 
 /** L506752-771. The No row is a PLAIN label that names `(esc)` in its own text — upstream hangs no
  *  `feedbackConfig` on it (unlike Skill/Monitor/generic), so it can never become a text row and this dialog
- *  has no Tab-to-feedback affordance at all. The `(esc)` in the label is the footer the others get. */
+ *  has no Tab-to-feedback affordance at all. The `(esc)` in the label is the footer the others get.
+ *
+ *  ONE DELIBERATE DIVERGENCE FROM THE LABEL (wave T t8, spec W-T18 / A15): upstream reads `No, and tell
+ *  Claude what to do differently (esc)` (L506767-770), and that clause is undeliverable in BOTH harnesses —
+ *  no `feedbackConfig` on the row, no feedback arm in `Wtm` (L506721-730), so the row can only ever send a
+ *  bare deny. Transcribing it faithfully transcribed a promise the dialog breaks, which is the one class of
+ *  fidelity this wave trades away. The `(esc)` STAYS, and no `ConsultFooter` is mounted here: this body is
+ *  footerless by transcription, so the label is the only place its escape hint can live. */
 export function fetchOptions({ hostname }: { hostname: string }): SelectOption[] {
   const options: SelectOption[] = [yesRow(false)];
   if (hostname !== "") options.push({ label: `Yes, and don't ask again for ${hostname}`, value: "yes-dont-ask-again-domain" });
-  options.push({ label: "No, and tell Claude what to do differently (esc)", value: "no" });
+  options.push({ label: "No (esc)", value: "no" });
   return options;
 }
 
@@ -235,6 +242,13 @@ export function isMcpToolName(toolName: string): boolean {
 export function genericOptions({ userFacingName, cwd, feedback }: { userFacingName: string; cwd: string; feedback?: FeedbackMode }): SelectOption[] {
   return [
     yesRow(false),
+    // CANON PIN, wave T t8 (spec W-T16). A trust review filed this row as a defect — "it says commands in this
+    // directory, then grants the whole tool everywhere, forever" — and BOTH halves are wrong. The copy is
+    // upstream verbatim (L506166); the content-less whole-tool rule `genericDecision` writes is upstream
+    // verbatim too (L506109, and see its own comment below); and the grant is not "everywhere" — it goes to
+    // `localSettings`, i.e. `<cwd>/.claude/settings.local.json` (LOCAL_SETTINGS, `:43-45`), which IS the
+    // directory the label names. Nothing to narrow, nothing to re-word: this is a transcription, and the
+    // exact-string assertion in `test/tui/small-dialog-options.test.ts` pins it so it is not "fixed" later.
     { label: `Yes, and don't ask again for ${userFacingName} commands in ${cwd}`, value: "yes-dont-ask-again" },
     noRow(feedback?.no ?? false),
   ];

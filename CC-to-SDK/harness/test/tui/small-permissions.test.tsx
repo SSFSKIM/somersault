@@ -76,7 +76,7 @@ describe("<FetchPermission> (`ull` L506735-816)", () => {
 
   it("drops the domain row when the URL will not parse, leaving Yes/No", async () => {
     const v = await mountFetch(fetchReq("not a url"));
-    expect(v.frame()).toContain("2. No, and tell Claude what to do differently (esc)");
+    expect(v.frame()).toContain("2. No (esc)");
     expect(v.frame()).not.toContain("don't ask again");
   });
 
@@ -87,7 +87,7 @@ describe("<FetchPermission> (`ull` L506735-816)", () => {
     const before = v.frame();
     v.stdin.write("\t"); await tick();
     expect(v.frame()).toBe(before);                               // Tab changed NOTHING — there is no mode to enter
-    expect(v.frame()).toContain("3. No, and tell Claude what to do differently (esc)");
+    expect(v.frame()).toContain("3. No (esc)");                   // wave T t8: no clause it cannot deliver
     v.stdin.write("\r"); await waitFor(() => v.got.length === 1);
     expect(v.got[0]).toEqual({ kind: "deny" });                   // never a `feedback` field
   });

@@ -288,6 +288,14 @@ export function Select({
           const text = textOf(o);
           const withLabel = inlineDescriptions || o.showLabelWithValue === true;   // `yJs` (L396471)
           const separator = o.labelValueSeparator ?? ", ";
+          // wave T t8 (qa3-06, A16). Upstream prints `<label><separator>` unconditionally on a focused labelled
+          // row (L396606) and can afford to: its text input inverts the placeholder's FIRST CHARACTER, so the
+          // caret costs no column and the row reads `No, say something`. `InputText` draws an inverse-video
+          // SPACE ahead of the placeholder instead (the only shape available without owning the placeholder's
+          // characters), which lands a second space after the separator. Trimming the separator's trailing
+          // whitespace while the field is focused AND empty restores upstream's exact rendered width; a row
+          // holding text prints the separator verbatim, `", "` and the Bash prefix row's `": "` alike.
+          const focusedSeparator = text === "" ? separator.replace(/\s+$/, "") : separator;
           return (
             <Box key={o.value} flexDirection="column" flexShrink={0}>
               <Box flexDirection="row" gap={1}>
@@ -298,7 +306,7 @@ export function Select({
                   <Box flexShrink={0}><Text dimColor>{`${at + 1}.`.padEnd(indexWidth + 2)}</Text></Box>
                   {withLabel
                     ? focused
-                      ? <><Text color={role(focusColor)}>{o.label}{separator}</Text><InputText text={text} cursor={cursor} placeholder={o.placeholder} /></>
+                      ? <><Text color={role(focusColor)}>{o.label}{focusedSeparator}</Text><InputText text={text} cursor={cursor} placeholder={o.placeholder} /></>
                       : <Text>{o.label}{text ? separator : null}{text || null}</Text>
                     : focused
                       ? <InputText text={text} cursor={cursor} placeholder={o.placeholder || o.label} />

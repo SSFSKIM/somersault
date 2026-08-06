@@ -295,6 +295,34 @@ describe("<Select> input rows (RLe, L396465-396652)", () => {
     expect(plain(frame(r.lastFrame))).toContain("Note, hi there");
   });
 
+  // Wave T t8 (qa3-06, A16). Upstream prints `<label><separator>` unconditionally on a focused labelled row
+  // (L396606) and its own text input inverts the placeholder's FIRST CHARACTER, so the caret costs no column:
+  // `No, say something`. Our `InputText` (L137) draws an inverse-video SPACE ahead of the placeholder instead,
+  // which lands a SECOND space after the separator — the "double space" QA read as a rendering bug. Trimming
+  // the separator's trailing whitespace while the field is focused AND empty restores upstream's exact width.
+  it("drops the separator's trailing space while a labelled input row is FOCUSED and EMPTY (wave T t8)", async () => {
+    const r = await mount(<Select options={withInput({ showLabelWithValue: true })} onChange={noop} onCancel={noop} defaultFocusValue="note" rows={40} columns={100} />);
+    const f = plain(frame(r.lastFrame));
+    expect(f).toContain("Note, say something");                     // the cursor block IS that single space
+    expect(f).not.toContain("Note,  say something");
+    // the Bash editable-prefix row's own `": "` collapses the same way, and for the same reason
+    const r2 = await mount(<Select options={withInput({ showLabelWithValue: true, labelValueSeparator: ": " })} onChange={noop} onCancel={noop} defaultFocusValue="note" rows={40} columns={100} />);
+    expect(plain(frame(r2.lastFrame))).toContain("Note: say something");
+    expect(plain(frame(r2.lastFrame))).not.toContain("Note:  say something");
+  });
+
+  it("keeps the separator VERBATIM the moment the row has text — `, ` and the Bash `: ` alike (wave T t8)", async () => {
+    const r = await mount(<Select options={withInput({ showLabelWithValue: true })} onChange={noop} onCancel={noop} defaultFocusValue="note" rows={40} columns={100} />);
+    r.stdin.write("hi");
+    await waitFor(() => plain(frame(r.lastFrame)).includes("hi"));
+    expect(plain(frame(r.lastFrame))).toContain("Note, hi");        // focused, non-empty: trailing space back
+    const r2 = await mount(<Select options={withInput({ showLabelWithValue: true, labelValueSeparator: ": ", initialValue: "git commit" })} onChange={noop} onCancel={noop} defaultFocusValue="note" rows={40} columns={100} />);
+    expect(plain(frame(r2.lastFrame))).toContain("Note: git commit");
+    // and the UNFOCUSED branch (L396612) is untouched: it prints the separator only when there is text
+    const r3 = await mount(<Select options={withInput({ showLabelWithValue: true, initialValue: "hi there" })} onChange={noop} onCancel={noop} rows={40} columns={100} />);
+    expect(plain(frame(r3.lastFrame))).toContain("Note, hi there");
+  });
+
   it("types into the focused row instead of navigating, and leaves it with down/ctrl+n (L396717-396749)", async () => {
     const r = await mount(<Select options={withInput()} onChange={noop} onCancel={noop} rows={40} columns={100} />);
     r.stdin.write("j");                                             // move onto the input row (still a nav key here)

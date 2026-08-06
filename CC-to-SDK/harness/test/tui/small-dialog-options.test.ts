@@ -63,12 +63,26 @@ describe("WebFetch (`ull` L506735-816 · `Wtm` L506721-730 · `fid` L228310-318)
     expect(labels(options)).toEqual([
       "Yes",
       "Yes, and don't ask again for example.com",
-      "No, and tell Claude what to do differently (esc)",
+      "No (esc)",
     ]);
     expect(values(options)).toEqual(["yes", "yes-dont-ask-again-domain", "no"]);
     // `ull` builds its No from a plain label with no `feedbackConfig` (L506757-771): it can never become a
     // text row, which is why this dialog alone has no Tab-to-feedback affordance.
     expect(options.every((o) => o.type === undefined)).toBe(true);
+  });
+
+  // Wave T t8 (spec W-T18 / A15). A DELIBERATE DIVERGENCE, and the only one in this file: upstream's label
+  // reads `No, and tell Claude what to do differently (esc)` (L506767-770) while the same component hangs no
+  // `feedbackConfig` on the row and `Wtm` (L506721-730) has no feedback arm — so the clause names a channel
+  // upstream cannot deliver either, and reproducing it faithfully reproduced a promise the dialog breaks. The
+  // `(esc)` STAYS: this body is footerless by transcription, so the label is the only place its escape hint
+  // lives (which is also why no ConsultFooter is mounted here).
+  it("its No row promises no feedback channel, and keeps the inline (esc) hint (wave T t8)", () => {
+    const no = fetchOptions({ hostname: "example.com" }).find((o) => o.value === "no")!;
+    expect(no.label).toBe("No (esc)");
+    expect(no.label).not.toContain("tell Claude");
+    expect(no.type).toBeUndefined();
+    expect(fetchDecision("no", { toolName: "WebFetch", hostname: "example.com" })).toEqual({ kind: "deny" });
   });
 
   it("suppresses the domain row when no hostname could be derived (`qtm`'s `hostname !== \"\"`)", () => {
