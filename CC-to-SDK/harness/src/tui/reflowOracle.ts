@@ -27,8 +27,11 @@
 //   5. `1 < wrapped < newWidth − 1` — the margins are where a truncator's OTHER plausible behaviours land
 //      (clamp to `newWidth`, clamp to `newWidth − 1`, home/wrap to 1), and each of those reads as "reflow".
 // What is left is an interior column past the new right edge: e.g. the 120→80 drag with the cursor parked at
-// `oldWidth − 1 = 119` re-wraps to 39. Roughly three re-wrap values per screen width are refused, plus the
+// `oldWidth − 3 = 117` re-wraps to 37. Roughly three re-wrap values per screen width are refused, plus the
 // one-column narrowing — the cost of never guessing on a terminal nobody has measured.
+// The parking column is task 4's and is NOT `oldWidth − 1`: 119 answers 99 of the 118 possible new widths from a
+// 120-column start but permanently refuses the exact-half drag (120→60 re-wraps to 59, i.e. `newWidth − 1`, which
+// clause 5 reads as a margin). 117 answers 105 of 118 and puts 120→60 on column 57. Measured against tmux 3.7b.
 //
 // WHY NO STDIN READER LIVES HERE. `keys/KeymapProvider` owns the single raw-stdin reader for the whole tree; a
 // second consumer would race it and produce intermittent, unreproducible key loss. The reply reaches us the
@@ -95,14 +98,19 @@ export function createCursorReports(): CursorReports {
  *
  *  The timeout is not a formality: plenty of terminals never answer a cursor query, and this promise is awaited
  *  on the resize path — a hang here would freeze the UI. It resolves `"unknown"`, which is the verdict that
- *  keeps the correction off a terminal we could not measure. */
+ *  keeps the correction off a terminal we could not measure.
+ *
+ *  WHY THE DEFAULT IS GENEROUS. It is a one-shot fuse: a single timeout ends probing for the whole process (see
+ *  the latch), so on any link slower than the default the FIRST shrink would disable the correction permanently.
+ *  A single success caches the verdict for the session, so waiting longer costs nothing — and the only thing
+ *  waiting delays is one uncorrected resize. 750 ms, not 150. */
 export function probeReflow(deps: {
   write: (s: string) => void;
   onReply: (cb: (row: number, col: number) => void) => () => void;
   colBefore: number; oldWidth: number; newWidth: number;
   timeoutMs?: number;
 }): Promise<ReflowVerdict> {
-  const { write, onReply, colBefore, oldWidth, newWidth, timeoutMs = 150 } = deps;
+  const { write, onReply, colBefore, oldWidth, newWidth, timeoutMs = 750 } = deps;
   // WHICH PROBES CAN ANSWER AT ALL — the domain enumerated in the header, in guard order. Every clause refuses a
   // case that would otherwise read as "reflow" and over-erase live transcript rows (the one failure this oracle
   // exists to prevent), or would cache a verdict off a measurement that never happened. A truncating emulator was

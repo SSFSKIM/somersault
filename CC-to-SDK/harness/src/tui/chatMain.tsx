@@ -2,7 +2,6 @@
 // ChatApp over a remote adapter; owning the HOST is the caller's job (loopback owns one, attach does not).
 import React from "react";
 import { render } from "ink";
-import stringWidth from "string-width";
 import { remoteChatSession } from "../client/chatAdapter.js";
 import type { ChatSession } from "../session/chatSession.js";
 import { ChatApp } from "./ChatApp.js";
@@ -12,6 +11,8 @@ import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import type { InitialResume } from "./commands.js";
 import { loadPrefs } from "./prefs.js";
 import { refreshExampleFiles } from "./placeholder.js";
+import { createCursorReports, probeReflow } from "./reflowOracle.js";
+import { createResizeRepaint, parkColumn, parkSequence } from "./resizeRepaint.js";
 import { setTheme } from "./theme.js";
 
 export interface ChatClientOpts {
@@ -38,6 +39,8 @@ export interface ResumeSafeStdout {
   repaint(runInkWrite: () => void): void;
   /** The last live frame Ink painted, erase prefix stripped, or undefined before the first one (W-R t2). */
   lastFrame(): string | undefined;
+  /** The column the cursor is parked in, or 0 if it is not parked (W-R t4 — see `parkSequence`). */
+  parkedColumn(): number;
 }
 
 /** Ink's erase prefix: `ansiEscapes.eraseLines(n)` is a run of `\x1b[2K` / `\x1b[1A` closed by `\x1b[G`. It is
@@ -45,20 +48,23 @@ export interface ResumeSafeStdout {
  *  of a session (and any frame right after a `log.clear()`) arrives with no prefix at all. */
 const INK_ERASE_PREFIX = /^(?:\x1b\[2K|\x1b\[1A|\x1b\[G)+/;
 
-/** How many PHYSICAL terminal rows `frame` occupies at `width` — the reflowed height, which is what a resize
- *  changes and what Ink's own `previousLineCount` (logical lines, at the OLD width) gets wrong. Counts the frame's
- *  own lines only: Ink writes `str + "\n"` and records `split("\n").length`, i.e. logical lines + 1, so callers add
- *  that trailing term themselves — deliberately, so the convention stays visible at the point of use (W-R t4). */
-export function physicalRows(frame: string, width: number): number {
-  let rows = 0;
-  for (const line of frame.replace(/\n$/, "").split("\n")) rows += Math.max(1, Math.ceil(stringWidth(line) / width));
-  return rows;
-}
+/** Writes that begin their own line: Ink's erase run, and the `clearTerminal` the tall-frame branch opens with.
+ *  Everything else would start painting from wherever the park left the cursor, so it gets homed first. */
+const INK_WRITE_HEAD = /^(?:\x1b\[2K|\x1b\[1A|\x1b\[G|\x1b\[2J)/;
+
+/** A write that is nothing but escape sequences — no printable cell, so it leaves the cursor exactly where it
+ *  found it. The keymap's DECSET 2004 pair and suspend's cursor show/hide are the ones that matter: they arrive
+ *  between frames, and treating them like painted output would drop the park until the NEXT frame — which, at
+ *  launch, is not until after the first resize, i.e. exactly when the oracle needed it. */
+const ESCAPES_ONLY = /^(?:\x1b\[[0-9;?]*[a-zA-Z]|\x1b[78])+$/;
+
+export { physicalRows } from "./resizeRepaint.js";   // W-R t4 moved it there; this stays the import site it had
 
 export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeStdout {
   let suppressNextWrite = false;
   let frame: string | undefined;                 // the last live frame, as painted
   let justErased = false;                        // previous write was erase-only → the next bare write is <Static>
+  let parkedCol = 0;                             // W-R t4: where the cursor sits between frames, 0 if nowhere
   const targetWrite = stdout.write.bind(stdout) as (...args: any[]) => boolean;
   // Five kinds of write reach here and only one of them is the live frame. FRAME writes carry the erase prefix (or
   // none, at first paint) and content: record what remains. ERASE-ONLY writes (`log.clear()`, `Instance.clear()`)
@@ -78,17 +84,48 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   // so an erase measured off it is NOT guaranteed to land on the under-erase side; EP-R4 resynchronizes the recorded
   // geometry after this branch. `clearTerminal` is `\x1b[2J\x1b[3J\x1b[H` (and `\x1b[2J\x1b[0f` on old Windows) —
   // both open with `\x1b[2J`, which no other write Ink makes ever does.
-  const record = (chunk: unknown): void => {
-    if (typeof chunk !== "string") return;
-    if (chunk.startsWith("\x1b[2J")) { justErased = false; return; }
+  const record = (chunk: unknown): boolean => {
+    if (typeof chunk !== "string") return false;
+    if (chunk.startsWith("\x1b[2J")) { justErased = false; return false; }
     const prefix = chunk.match(INK_ERASE_PREFIX)?.[0] ?? "";
     const body = chunk.slice(prefix.length);
-    if (body === "") { justErased = true; frame = undefined; return; }
-    if (prefix === "" && justErased) { justErased = false; return; }
+    if (body === "") { justErased = true; frame = undefined; return false; }
+    // Ink's log() writes `str + "\n"` and its <Static> chunk ends the same way, so a body that does NOT end in a
+    // newline is nobody's frame — it is another consumer of this same stdout (W-R t4: the keymap's DECSET writes,
+    // suspend's cursor show/hide). Recording those used to clobber `lastFrame()` with a bare escape sequence, and
+    // now would also park the cursor mid-sequence.
+    if (!body.endsWith("\n")) return false;
+    if (prefix === "" && justErased) { justErased = false; return false; }
     justErased = false; frame = body;
+    return true;
+  };
+  // W-R t4: PARK THE CURSOR ON EVERY FRAME. `probeReflow` can only answer when the cursor is past the new right
+  // edge, and the new width is not known until SIGWINCH has already fired — so the column has to be chosen in
+  // advance, off the CURRENT width, and re-chosen after every paint. The padding is load-bearing, not cosmetic:
+  // tmux clamps a reflowing cursor to its line's used cells, so a bare column move on the blank row Ink leaves the
+  // cursor on reports column 1 after the drag and tells us nothing (measured). Parking only after a RECORDED frame
+  // is equally load-bearing: after an erase-only write Ink's `previousLineCount` is 0, its next write carries no
+  // erase prefix, and a parked column would displace that frame sideways.
+  const park = (): void => {
+    const col = stdout.isTTY ? parkColumn(stdout.columns) : 0;
+    if (col > 0) targetWrite(parkSequence(col));
+    parkedCol = col;
   };
   const write = ((...args: any[]): boolean => {
-    if (!suppressNextWrite) { record(args[0]); return targetWrite(...args); }
+    if (!suppressNextWrite) {
+      // Ink itself never notices the park (every write it makes opens with a full-line erase or homes the column),
+      // but anything else sharing this tty would paint from column 117 — ctrl+z's cursor hand-off to the shell and
+      // the keymap's DECSET writes both come through here. Home the cursor for those, then put the park back if
+      // the write could not have moved it; a write that PAINTS gets no park until the next frame, because padding
+      // over what it just printed would erase it.
+      const chunk = typeof args[0] === "string" ? args[0] as string : "";
+      const foreign = parkedCol > 0 && !INK_WRITE_HEAD.test(chunk);
+      if (foreign) { targetWrite("\x1b[G"); parkedCol = 0; }
+      const recorded = record(args[0]);
+      const wrote = targetWrite(...args);
+      if (recorded || (foreign && ESCAPES_ONLY.test(chunk))) park();
+      return wrote;
+    }
     suppressNextWrite = false;
     const callback = args.find((arg) => typeof arg === "function") as (() => void) | undefined;
     if (callback) queueMicrotask(callback);
@@ -105,6 +142,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   return {
     stdout: stream,
     lastFrame() { return frame; },
+    parkedColumn() { return parkedCol; },
     repaint(runInkWrite) {
       suppressNextWrite = true;
       try { runInkWrite(); } finally { suppressNextWrite = false; }
@@ -172,8 +210,25 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // and the harvested names appear from the next launch on.
   const harvest = setTimeout(() => refreshExampleFiles({ cwd: opts.cwd }), 0);
   harvest.unref?.();
+  // W-R t4: the resize correction. The listener goes up BEFORE render() on purpose — Ink subscribes to `resize` in
+  // its constructor (`ink.js:77`) and repaints synchronously, so a listener added afterwards could never get ahead
+  // of it, and the erase would land on top of the new frame instead of the stale one. `emit` goes straight to the
+  // tty (bookkeeping, not a frame — the recorder must not adopt it), while `repaint` goes through Ink's own stdout
+  // so an erase-plus-frame write re-records the frame and re-parks the cursor on it. The DSR reply comes back the
+  // long way round: the keymap provider owns the ONE raw-stdin reader, and forwards unclaimed escape sequences to
+  // `onUnknownSequence` — that forward has existed since task 3 and is inert until wired here.
+  const reports = createCursorReports();
+  const resize = createResizeRepaint({
+    lastFrame: output.lastFrame, parkedColumn: output.parkedColumn,
+    size: () => ({ columns: process.stdout.columns ?? 0, rows: process.stdout.rows ?? 0 }),
+    emit: (s) => { if (process.stdout.isTTY) process.stdout.write(s); },
+    repaint: (s) => { if (process.stdout.isTTY) output.stdout.write(s); },
+    probe: (a) => probeReflow({ write: (s) => { process.stdout.write(s); }, onReply: reports.onReply, ...a }),
+  });
+  process.stdout.on("resize", resize.onResize);
   const app = render(
-    <UserKeymap file={keybindingsFile} onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
+    <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
+      onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
       <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}
         initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
         clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
@@ -183,5 +238,10 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     { exitOnCtrlC: false, stdout: output.stdout },
   );
   bridge.bind(() => app.clear());
-  await app.waitUntilExit();
+  try { await app.waitUntilExit(); }
+  finally {
+    process.stdout.off("resize", resize.onResize);
+    // Unpark before the shell gets the terminal back, or its prompt draws from column 117 on a row of our spaces.
+    if (process.stdout.isTTY && output.parkedColumn() > 0) process.stdout.write("\x1b[2K\x1b[G");
+  }
 }

@@ -217,13 +217,15 @@ describe("probeReflow — the timeout", () => {
     expect(await probeReflow({ write: t.write, onReply: t.onReply, colBefore: 121, oldWidth: 120, newWidth: 80, timeoutMs: 1 })).toBe("unknown");
   });
 
-  it("waits the documented 150 ms by default, and not a tick less", async () => {
+  // Raised from 150 by task 4: the timeout is a ONE-SHOT FUSE (a single timeout ends probing for the process), so
+  // a default shorter than a slow link's round trip would disable the correction permanently on the first shrink.
+  it("waits the documented 750 ms by default, and not a tick less", async () => {
     vi.useFakeTimers();
     try {
       const t = fakeTerminal();
       let settled: string | undefined;
       void probeReflow({ write: t.write, onReply: t.onReply, colBefore: 121, oldWidth: 120, newWidth: 80 }).then((v) => { settled = v; });
-      await vi.advanceTimersByTimeAsync(149);
+      await vi.advanceTimersByTimeAsync(749);
       expect(settled).toBeUndefined();
       await vi.advanceTimersByTimeAsync(1);
       expect(settled).toBe("unknown");
