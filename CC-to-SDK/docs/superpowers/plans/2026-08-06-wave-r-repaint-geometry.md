@@ -96,6 +96,9 @@ when something else causes a render. Width-derived strings freeze at the launch 
 - **Behaviour change later tasks must know:** the size is now sampled at mount and on each resize event,
   not on every call. **A test that wants a new width must fire the `onResize` emitter — mutating the
   backing variable alone is no longer enough.**
+- **`onResize` must have a stable identity at every call site** — a module-scoped function or a
+  `useCallback`, **never an inline arrow**. It is in the subscribing effect's dependency array, so a fresh
+  closure per render tears down and re-attaches the listener every frame. (Task 1 review, Minor 2.)
 
 - [ ] **Step 1: Write the failing test.** In `test/tui/resize-state.test.tsx`, render `ChatApp` with an
       injected `columns` dep backed by a mutable variable and a fake `onResize` emitter. Assert the frame
