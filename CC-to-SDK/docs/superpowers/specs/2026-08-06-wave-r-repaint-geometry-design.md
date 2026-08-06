@@ -123,10 +123,59 @@ content reflows taller, the viewport **scrolls**, pushing the top of the frame o
 count computed from frame geometry **must be clamped to the rows still on screen**; erasing the raw count
 walks past the viewport top and damages what is above it.
 
-**Promote-or-discard criterion.** If every non-pyte emulator measured reflows, promote strategy (a) with
-the clamp and record pyte's divergence as an instrument limitation (which A12 already accounts for). If
-any real terminal truncates, (a) is unsafe and the wave takes (b) — in which case EP-R1 grows
-substantially and the owner is told before implementation, because that is a different-sized wave.
+### The reframing that came out of measuring (controller, and it changes the spike)
+
+Working through the two measurements produced an insight that neither report contains: **the defect exists
+exactly where strategy (a) is correct, and is absent exactly where it is wrong.**
+
+- On a **reflowing** emulator, a 111-character logical line written at 120 columns becomes 2 physical rows
+  at 80. Ink erases 1. One row of residue. **Bug present**, and `ceil(111/80) = 2` is the right erase.
+- On a **truncating** emulator, that line stays 1 physical row (the overflow is discarded). Ink erases 1.
+  **No bug at all** — and strategy (a) would erase 2, eating a row of transcript.
+
+So the two regimes are not "one is safe, one is unsafe": they need *different* counts, and using the wrong
+one is harmful in the truncating case. That rules out "just always compute and erase" and gives the spike
+a third candidate:
+
+- **(c) Ask the terminal.** Query the cursor position with `ESC[6n` (DSR) across the resize. The reply
+  reports where the cursor actually ended up, which encodes what the emulator did to the painted frame —
+  no assumption about reflow policy required, and it works on emulators nobody has tested. Costs a
+  round-trip on stdin and needs a timeout for terminals that do not answer, which is the risk to evaluate.
+
+**Promote-or-discard criterion.** Prefer **(c)** if the DSR round-trip proves reliable under tmux, pyte
+and a real terminal, including a timeout path that degrades to doing nothing rather than to erasing
+wrongly — it is the only candidate that does not depend on knowing the emulator. Fall back to **(a) with
+the clamp** if DSR is unreliable, gated on a reflow probe run once at startup. Take **(b)** only if both
+fail, and tell the owner first: it means owning the viewport, which is a different-sized wave.
+
+**The one measurement that still wants the owner's machine.** The owner's terminal is **Apple Terminal**
+(`deepLinkTerminal: "Terminal"`, and Claude Code has written `optionAsMetaKeyInstalled: true` plus a
+`com.apple.Terminal.plist` backup path into their config). Whatever we ship must be right there.
+
+### Spike results so far — two candidates already weakened, and a method correction
+
+Run by the controller before the plan was written, so the plan is not built on hope.
+
+**(c) is refuted as formulated.** A DSR probe (`$CLAUDE_JOB_DIR/tmp/dsr-probe.mjs`) painted a 119-character
+line in a 120-column tmux pane, queried the cursor with `ESC[6n`, resized to 80, and queried again. The
+cursor reported **row 3 both times**, where a reflowing emulator predicts +1. The reason is not that tmux
+truncates — it reflows, measured independently — but that **tmux holds the cursor's screen row fixed and
+scrolls the excess off the top**, so reflow and scroll cancel exactly in the signal we were reading.
+Cursor row alone therefore cannot distinguish the regimes. A richer DSR scheme might (querying before and
+after with a known anchor), but the simple form is dead.
+
+**(a) is not yet validated, because the synthetic probe did not reproduce the bug.** A second probe
+(`erase-probe.mjs`) painted a four-line frame with full-width rules at 120 columns, resized to 80, and
+compared Ink's erase count against the computed physical count. The arithmetic came out exactly as the
+diagnosis predicts — **Ink would erase 5 rows where the frame now occupies 7** — but *both* strategies
+left a clean screen, because on an otherwise-empty pane tmux's scroll-on-reflow carried the excess rows
+off the top before any erase ran.
+
+**The method correction that follows, and it is the spike's most useful output:** the defect involves a
+real transcript above the frame and repeated renders, not a single synthetic paint. **SP-R0 must reproduce
+`qa2-08` against the real `ccx` binary first, and only then evaluate strategies against that reproduction.**
+A synthetic harness that cannot show the bug cannot certify a fix — which is the same trap as the pyte
+instrument (W-R2), arriving from a different direction.
 
 **Recording:** the verdict goes into this spec's `## Surprises & Discoveries` and the chosen strategy into
 the `## Decision Log` as W-R6, before EP-R1's first line of implementation.
