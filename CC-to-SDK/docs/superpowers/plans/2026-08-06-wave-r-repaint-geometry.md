@@ -70,7 +70,8 @@ from a measurement where X produced a worse defect than the one being fixed. Tak
 
 ### Task order
 
-Tasks 1–6 (EP-R1) are **strictly sequential** and share `chatMain.tsx` / `ChatApp.tsx`. Tasks 7 (EP-R2)
+Tasks 1–6 (EP-R1) are **strictly sequential** and share `chatMain.tsx` / `ChatApp.tsx` — Task 4b (the
+write-time restructure Task 4's review forced) sits between 4 and 5 and is part of that chain. Tasks 7 (EP-R2)
 and 8 (EP-R4) touch the same render bookkeeping and follow them, in that order. Tasks 9–12 (EP-R5) are
 independent of everything above and may run in parallel under a **different owner**, but among themselves
 are **strictly sequential: 9 → 10 → 11 → 12**. Task 13 is last.
@@ -354,6 +355,88 @@ on the **first** resize and reuse it, re-probing only if the answer was `"unknow
 - [ ] **Step 5: Verify against the real binary under tmux** with all three reproduction conditions.
       Record before/after captures in the task report.
 - [ ] **Step 6: Commit** — `f5(waveR-t4): erase the previous frame's physical rows on a reflowing shrink`.
+
+---
+
+## Task 4b: Move the correction to frame-write time — SIGWINCH does not imply a write
+
+**Epic:** EP-R1, the restructure Task 4's review forced. **Files:** `src/tui/resizeRepaint.ts`,
+`src/tui/chatMain.tsx`, `test/unit/resize-repaint.test.ts`. **Base:** Task 4 as fixed (`f236ad32a5`).
+
+**Why — the shipped design assumes a guarantee Ink does not offer.** `correctionBeforeRepaint` erases the
+rows *above* what Ink is about to erase, on the contract that Ink's `eraseLines(previousLineCount)`
+follows immediately and the two runs share one row. Ink's own source breaks that contract twice
+(controller-verified in `node_modules/ink/build/`): `ink.js:83` `resized()` calls `onRender()`, but
+`onRender` (`:133`) hands the write to `throttledLog` — `throttle(this.log, undefined,
+{leading:true, trailing:true})` (`:45`-`:48`) — so a burst of `SIGWINCH` produces one immediate write and
+one deferred to a trailing timer, and our erase runs against a cursor Ink has not moved. And
+`log-update.js`'s `render` returns early on `output === previousOutput`, so Ink may write **nothing at
+all**. Measured consequence (46-cell drag comparison, report at
+`/Users/new/.claude/jobs/4b30d1a4/tmp/waveR-task4-drag-measurement.md`): a one-column-at-a-time drag
+leaves 3 stale rule rows on the fixed build — better than baseline's ~6 with 3–4 duplicate composers, no
+content loss anywhere, but short of A2.
+
+**The principle: residue is created only by a frame write that under-erases — so correct the write, not
+the signal.** The proxy already intercepts every byte Ink writes. At the moment a *frame write* arrives,
+everything is known exactly, with no timing assumption at all: what is on screen (the recorded previous
+frame + the parked row), how many rows Ink's own erase prefix covers (count its `\x1b[1A`s + 1), and the
+*live* width. If Ink never writes (dedupe), the re-wrapped old frame is simply on screen, correct, and
+nothing is needed. If the throttle defers the write, the correction happens at the deferred write, against
+the width that is true *then*. Bursts stop being a case at all.
+
+**Consumes:** `physicalRows`, `occupiedRows`, `eraseRows`, `inkErases`, `correctionAfterRepaint`,
+`createResizeRepaint` (Task 4); `lastFrame`/`parkedColumn` and the write classifier in
+`createResumeSafeStdout` (Tasks 2/4).
+
+**Produces (for Tasks 5–8):**
+
+```ts
+export interface FrameWriteInfo { inkErases: number; prevFrame: string; parkedCol: number;
+  widthAtPaint: number; width: number; rows: number }
+export function frameWriteCorrection(info: FrameWriteInfo, verdict: ReflowVerdict | undefined): string
+```
+
+returning the erase run to inject **between Ink's erase prefix and the body**, or `""`. Rule:
+`""` unless `verdict === "reflow" && info.width < info.widthAtPaint`; otherwise
+`shortfall = min(occupiedRows(prevFrame, parkedCol, width), max(1, rows)) − inkErases`, and the result is
+`shortfall > 0 ? eraseRows(shortfall + 1) : ""`. The `+ 1` is the shared-row term: Ink's prefix leaves the
+cursor at column 1 of the topmost row it cleared, `eraseRows(shortfall + 1)` re-clears that row plus
+`shortfall` above it, so the two runs cover exactly `inkErases + shortfall` distinct rows and the body
+paints from the region's true top. Worked example to pin in a test (SP-R0 fixture, 120→40 with the park at
+117): prev frame 6 logical lines occupies 10 rows + `ceil(117/40) = 3` park rows = 13; Ink's prefix erases
+7; inject `eraseRows(7)`; distinct rows 13.
+
+- [ ] **Step 1: Write the failing tests.** `frameWriteCorrection`: the worked example above; `""` when
+      the verdict is `undefined` / `"truncate"` / `"unknown"`; `""` on a grow or equal width; `""` when
+      `shortfall <= 0`; the `rows` cap binds. Proxy level, with a recording target: a frame write while a
+      `"reflow"` verdict is set and the width has narrowed since the previous frame goes to the tty as
+      `prefix + injected + body` **in one chunk**, and the recorder then stores the new body with the new
+      width; **two frame writes in a burst at two different widths are each corrected against their own
+      live width** (this is the throttle case, and it is also sabotage gap #22's axis — a corrector that
+      captures state early must fail it); a write with no erase prefix is untouched.
+- [ ] **Step 2: Run them and watch them fail.**
+- [ ] **Step 3: Implement.**
+      - `createResumeSafeStdout` records `widthAtPaint` (`stdout.columns` at record time) beside the
+        frame, and gains a setter `setFrameCorrector(fn: (info: FrameWriteInfo) => string)` (needed
+        because the proxy is constructed before the resize machinery — set it in `runChatClient` right
+        after `createResizeRepaint`). On a frame write with a prefix and a recorded previous frame, build
+        `FrameWriteInfo` (with `parkedCol` as it stands **before** this write — that is the park sitting
+        on screen) and inject the corrector's return between prefix and body.
+      - `createResizeRepaint` exposes `verdict(): ReflowVerdict | undefined`; its resize listener keeps
+        width tracking, probe launching, and the async first-shrink `correctionAfterRepaint` path
+        (verdict is `undefined` at the uncorrected write; the probe continuation still repairs it), but
+        **delete `correctionBeforeRepaint` and the sync emission path** — the write-time corrector is
+        that path, done correctly. Remove `emitRaw` if nothing else uses it, and retire its tests with it.
+- [ ] **Step 4: Run — expect PASS.** Sabotage-check the new tests (mutate: drop the live-width read, use
+      `widthAtPaint` for the erase arithmetic instead of `width`, drop the `+ 1`, drop the verdict gate —
+      each must go red). Then `npm run typecheck`, `npm run test:unit`, `npm run test:tui`.
+- [ ] **Step 5: Verify against the real binary under tmux** (session `wr-t4b-*`, per-session
+      `kill-session -t` only — W-R8). Re-run the drag measurement's scenarios with the marker pre-fill:
+      the stepped matrix and the two-event burst must stay clean, and **the fine one-column drag
+      (120→90, then 90→70) must now end with one composer block and zero stale rules** — that is the cell
+      Task 4 left short of A2. Record captures in the task report. If the fine drag still shows residue,
+      report the capture and stop — do not widen the correction beyond `"reflow"`-gated writes.
+- [ ] **Step 6: Commit** — `f5(waveR-t4b): correct the erase at frame-write time — SIGWINCH does not imply a write`.
 
 ---
 

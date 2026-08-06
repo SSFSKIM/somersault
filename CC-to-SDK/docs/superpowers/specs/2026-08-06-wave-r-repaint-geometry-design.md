@@ -493,6 +493,20 @@ A9, A10, A11.
   even when you are a legitimate client of it. *Rejected alternative:* trusting the driver doc to imply
   it — `docs/parity/qa-driver.md` already showed per-session teardown and that was not enough, so the
   prohibition has to be stated as a prohibition.
+- **W-R9 [DECIDED]** **The resize correction fires at frame-write time, not at signal time.** Task 4 as
+  shipped paired a synchronous erase with Ink's own repaint, on the assumption that a `SIGWINCH` implies
+  an immediate Ink write. Ink's source refutes the assumption twice: `resized()` routes the actual write
+  through a leading+trailing `throttle` (`ink.js:45`, `:133`), and `log-update` dedupes identical output
+  into **no write at all**. Measured consequence: a one-column drag left 3 stale rule rows (strictly
+  better than baseline's ~6, no content loss — the 46-cell comparison — but short of A2). The repair:
+  the stdout proxy corrects the *write itself* — at the moment a frame write arrives, the previous
+  frame, the parked row, Ink's own erase-prefix count, and the **live** width are all known exactly, so
+  the shortfall is injected between Ink's prefix and the body in one chunk. No write → no under-erase →
+  nothing to correct; a deferred write is corrected against the width true at write time. Bursts stop
+  being a case. Plan Task 4b. *Rejected alternatives:* keeping the signal-time pairing and debouncing our
+  erase to match Ink's throttle (couples us to an undocumented timer constant, and still cannot see the
+  dedupe-to-nothing case); widening the correction to fire on `"unknown"` verdicts to catch more drags
+  (violates W-R6's asymmetry — the unmeasured-terminal over-erase is the one unacceptable failure).
 
 ## Open questions
 
