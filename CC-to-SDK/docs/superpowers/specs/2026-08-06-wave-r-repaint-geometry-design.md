@@ -615,7 +615,13 @@ Pending — written at finish.
 - **2026-08-07 (Task 7)** — A7 amended: the `❯ /clear` echo does NOT survive upstream's inline reset
   (the `clearTerminal` event erases `viewportRows: e.viewport.height`, L178442); the criterion's
   substance — scrollback intact, no `ESC[3J` — is unchanged. The Task 7 implementer caught the
-  contradiction and followed the bundle; the controller verified the line before amending.
+  contradiction and followed the bundle; the controller verified the line before amending. Same root
+  cause, second instance (Task 7 review, Minor 4): the plan's Step-1 "assert the frame carries the
+  banner" was also impossible — the banner lives in `<Static>`/scrollback and never appears in a
+  post-clear live frame; the shipped test asserts the frame *lands* instead, which is the criterion's
+  point. And the review measured that Ink's tall-frame branch UNDOES both `/clear` guarantees
+  (`clearTerminal` carries `3J`; the `fullStaticOutput` replay resurrects cleared transcript rows) —
+  carried into Task 8's brief as its raised stakes.
 
 ## Deferred (out of this wave)
 

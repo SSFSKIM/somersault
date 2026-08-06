@@ -548,6 +548,18 @@ erase prefix at 12 rows against a recorded frame of 8 lines mid-drag. Reading `i
 (the prefix) rather than off the recorded frame is what kept that instance on the under-erase side —
 preserve that property here.
 
+**Carried from Task 7's review (Important, assigned here — and it raises this task's stakes).** The
+tall-frame branch **undoes `/clear`'s two guarantees**, measured live (`wr-t7-rev-tall2`): the chunk
+opens with `ansiEscapes.clearTerminal`, which contains `ESC[3J` — scrollback marker rows went 60 → 0 —
+and it replays the whole accumulated `fullStaticOutput`, which nothing resets from outside Ink, so a
+transcript row cleared by `/clear` **reappeared on screen** (a staged `SECRETTRANSCRIPT` marker, 2
+occurrences). A user who ran `/clear` to get something off their screen gets it back the first time the
+window is short enough for a tall frame. Task 8's fix must decide what the proxy does with this branch —
+at minimum record the desync (the original scope), and state explicitly whether the `3J`-wipe and the
+`fullStaticOutput` replay are fixable at the proxy layer or need Ink's clear path to reset
+`fullStaticOutput` (an `app.clear()` does NOT — `Instance.clear()` touches log-update only). If the
+replay half is not fixable here, it goes to the wave findings as a named residual with this evidence.
+
 - [ ] **Step 1: Write the failing unit test.** Simulate a taller-than-`rows` write reaching the proxy,
       then a resize, and assert the erase computed by Task 4 matches the **actual** frame rather than the
       stale bookkeeping.
