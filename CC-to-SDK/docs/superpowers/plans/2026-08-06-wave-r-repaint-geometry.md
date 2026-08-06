@@ -239,13 +239,37 @@ repeated above — use it verbatim).
 > usable probe therefore needs `colBefore > newWidth` **and** `colBefore % newWidth !== 0` **and** a
 > genuine narrowing.
 >
-> **Answer this first, with a measurement, not an argument:** can Task 4 obtain a `colBefore` in that
-> domain at resize time? Candidate answers to test — (a) **park the cursor deliberately**: after each frame
-> write, move it to a chosen column near the right edge, and pick that column to avoid the multiple case —
-> since we choose it, an ambiguous pairing can be re-parked one column over and re-probed. Ink hides the
-> cursor (`cliCursor.hide()`), so this should not be visible; **verify that**. (b) calibrate on the first
-> shrink and correct from the second onward, accepting visible residue on the first, which users will hit.
-> (c) a different oracle entirely. **If none works, STOP and report** — the wave needs a different detection strategy and that is
+> **The gate is now ANSWERED — Task 3's fixer proved the domain and the controller resolved the design.**
+> Read this rather than re-deriving it; then verify the two starred claims by measurement.
+>
+> **The domain, with a complete proof (not an enumeration of cases someone thought of):** a truncating
+> emulator can report only two things — `colBefore` (cursor untouched) or `newWidth` (cursor clamped to the
+> new right margin). Those are therefore the *only* two values the re-wrap arithmetic can collide with, and
+> excluding both is exactly `colBefore > newWidth && colBefore % newWidth !== 0`, plus a genuine narrowing.
+>
+> **`colBefore` cannot be chosen per-resize** — the new width is not known until the resize has already
+> happened, so "park at `newWidth + 1`" is not available. **Park near the far right instead** (e.g.
+> `oldWidth − 1`) after each frame write. That satisfies `colBefore > newWidth` for every shrink, and lands
+> on the ambiguous multiple only for the few `newWidth` values dividing it. *Verify Ink's `cliCursor.hide()`
+> makes the parked cursor invisible.*
+>
+> **A missed probe costs nothing, because the verdict is a property of the TERMINAL, not of the resize.**
+> One successful probe per session is enough; cache it and stop probing. An ambiguous shrink simply yields
+> `"unknown"`, corrects nothing that time, and the next shrink tries again.
+>
+> **The consequence that changes the design — and the acceptance.** `probeReflow` is async, so the first
+> shrink of a session cannot be corrected *synchronously*. Left there, the first resize always shows
+> residue, and **acceptance A1 ("the width matrix re-runs green in every cell") would fail on its first
+> cell.** Do not quietly accept that. **Correct it asynchronously instead: erase once the verdict arrives,
+> then force a repaint** — which is the same "force a render that cannot be deduped" primitive Task 7 builds
+> for `/clear`. Task 4 and Task 7 therefore share machinery; whichever lands first builds it. The cost is a
+> brief flicker on a session's first shrink only. *Verify that the erase-then-force-repaint ordering does
+> not destroy the new frame* — that hazard is why the synchronous path was specified in the first place.
+>
+> Two constraints inherited from Task 3's fix, both load-bearing: cursor reports are now delivered
+> **one-reply-one-consumer, oldest first**, so **keep exactly one probe in flight per resize** — a second
+> queued behind a live one is starved; and a straggler arriving while a later probe waits is swallowed, so
+> that probe times out to `"unknown"` (safe, re-probeable, but slower on a laggy link). **If none works, STOP and report** — the wave needs a different detection strategy and that is
 > the controller's call, not a thing to work around. Do not proceed to a design where the correction
 > silently never fires; a fix that no-ops in production while its tests pass is worse than no fix.
 >
