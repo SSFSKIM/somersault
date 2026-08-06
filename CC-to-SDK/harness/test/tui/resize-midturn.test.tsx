@@ -51,14 +51,37 @@ function fakeResize() {
 // been concatenated. Every width used below keeps the row under ink-testing-library's fixed 100-column stdout
 // (longest possible: glyph + the 18-char `Flibbertigibbeting…` + the 36-char tail ≈ 58), so no assertion here
 // depends on where the fake terminal happens to wrap.
-const ELAPSED_TAIL = /\((?:\d+m )?\d+s(?: · \d+ tokens)? · esc to interrupt\)/g;
+const ELAPSED_TAIL = /\(((?:\d+m )?\d+s)(?: · \d+ tokens)? · esc to interrupt\)/g;
 const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
 const escRows = (f: () => string | undefined) => count(strip(frame(f)), /esc to interrupt/g);
-const elapsedRows = (f: () => string | undefined) => count(strip(frame(f)), ELAPSED_TAIL);
+/** Every elapsed tail in the frame, as its clock READING — `["1s"]`, or `["0s","2s","3s"]` on the frame QA
+ *  photographed. Counting alone cannot tell one clock from three frozen ones that all read `0s`, which is
+ *  what the first version of this file asserted (fix round 1, finding F6). */
+const elapsedValues = (f: () => string | undefined) => [...strip(frame(f)).matchAll(ELAPSED_TAIL)].map((m) => m[1]);
+const elapsedRows = (f: () => string | undefined) => elapsedValues(f).length;
+const secs = (v: string) => { const m = /^(?:(\d+)m )?(\d+)s$/.exec(v); if (!m) throw new Error(`unparseable elapsed: ${v}`); return Number(m[1] ?? 0) * 60 + Number(m[2]); };
+/** Wait for the live clock to actually MOVE, and return the reading it moved off. There is no clock seam at
+ *  this level and this deliberately does not add one: `TurnSpinner`'s `now` prop IS injectable, but ChatApp
+ *  never passes it (ChatApp.tsx's `<TurnSpinner startedAt tokens />`), and threading one through production
+ *  code for a test's convenience is not worth it. The real clock is enough — the spinner re-renders itself
+ *  every 120 ms (TurnSpinner.tsx's `setInterval`), so this polls rather than sleeping a fixed second, and
+ *  returns as soon as the reading ticks over (≤ ~1 s). */
+async function elapsedMoves(f: () => string | undefined) {
+  const before = elapsedValues(f);
+  expect(before).toHaveLength(1);
+  await waitFor(() => elapsedValues(f).some((v) => v !== before[0]), 4000);
+  return before[0];
+}
 
-/** SP-R0's repro needs at least one emitted line LONGER THAN THE NEW WIDTH. The live region renders markdown
- *  at `columnsFn()`, so a paragraph this long is wrapped into 120-column rows that the 70-column shrink then
- *  overflows — the condition a shrink with only short rows on screen cannot reproduce. */
+/** SP-R0's repro needs at least one emitted line LONGER THAN THE NEW WIDTH. It supplies that as ONE long
+ *  logical line rather than as pre-wrapped rows, and the distinction is measured, not assumed (fix round 1,
+ *  finding F1 — the first version of this comment said the paragraph was "wrapped into 120-column rows" and
+ *  that is simply false): `renderMarkdown` does not wrap prose at ANY width. `opts.width` reaches exactly one
+ *  consumer, `renderTable` (markdown.ts:234 → :249, src/tui/mdTable.ts), so this 531-character paragraph
+ *  renders as a SINGLE RenderLine at 120, 70 and 40 alike (measured). What satisfies the condition is the
+ *  TERMINAL: the line is far longer than any width used below, so the surface printing it folds it and the
+ *  frame carries rows wider than the post-shrink width — which is also why the check below is on the frame's
+ *  rows and not on the render's. */
 const LONG_PARA = "This paragraph exists to put emitted rows wider than the post-shrink width on screen, because a shrink whose frame carries no over-wide line cannot reproduce the defect at all. ".repeat(3);
 
 const streamEvent = (event: unknown) => ({ kind: "message" as const, data: { type: "stream_event", event } });
@@ -87,9 +110,15 @@ describe("a mid-turn resize leaves one spinner, and the interrupt clears it (A3)
     // …and the over-wide content really is on screen, or the shrink below is not the filed repro.
     expect(strip(frame(r.lastFrame)).split("\n").some((l) => l.trimEnd().length > 70)).toBe(true);
 
+    // Let the clock TICK before each resize, so the assertions below bite against a moving value: a build
+    // that minted a spinner per width would show two readings, and one that froze the surviving row at the
+    // pre-resize reading would fail the `>` (fix round 1, finding F6 — every assertion here used to read
+    // `0s`, which one clock and three stopped ones satisfy equally).
+    const t0 = await elapsedMoves(r.lastFrame);
     cols = 70; resize.fire(); await tick();                         // the shrink, mid-stream
     expect(escRows(r.lastFrame)).toBe(1);
-    expect(elapsedRows(r.lastFrame)).toBe(1);
+    expect(elapsedValues(r.lastFrame)).toHaveLength(1);
+    expect(secs(elapsedValues(r.lastFrame)[0])).toBeGreaterThan(secs(t0));
     // A delta arriving AFTER the resize re-snapshots the live region at the new width — the second half of a
     // mid-turn resize, and the moment a width-keyed spinner would mint its twin.
     fake.pushEvent(streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " Still streaming after the shrink." } }));
@@ -97,9 +126,11 @@ describe("a mid-turn resize leaves one spinner, and the interrupt clears it (A3)
     expect(escRows(r.lastFrame)).toBe(1);
     expect(elapsedRows(r.lastFrame)).toBe(1);
 
+    const t1 = await elapsedMoves(r.lastFrame);
     cols = 110; resize.fire(); await tick();                        // …and back out again
     expect(escRows(r.lastFrame)).toBe(1);
-    expect(elapsedRows(r.lastFrame)).toBe(1);
+    expect(elapsedValues(r.lastFrame)).toHaveLength(1);
+    expect(secs(elapsedValues(r.lastFrame)[0])).toBeGreaterThan(secs(t1));
 
     r.stdin.write("\x1b");                                          // Esc on a busy turn is always interrupt
     await waitFor(() => escRows(r.lastFrame) === 0);
@@ -124,10 +155,17 @@ describe("a mid-turn resize leaves one spinner, and the interrupt clears it (A3)
     fake.pushEvent(streamEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
     fake.pushEvent(streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: LONG_PARA } }));
     await waitFor(() => escRows(r.lastFrame) > 0);
+    // The clock moves across the run (it is let tick before the 2nd and 4th shrinks — two waits, not four,
+    // because each costs up to a real second and two are enough to make the reading change twice). THIS is
+    // the case qa2-09's frame belongs to: three elapsed times coexisting after successive mid-turn shrinks.
+    // With a still clock the whole loop reads `0s` and cannot tell three rows apart from one (fix round 1, F6).
+    let prev = elapsedValues(r.lastFrame)[0];
     for (const w of [100, 90, 80, 70]) {
+      if (w === 90 || w === 70) prev = await elapsedMoves(r.lastFrame);
       cols = w; resize.fire(); await tick();
       expect(escRows(r.lastFrame)).toBe(1);
-      expect(elapsedRows(r.lastFrame)).toBe(1);
+      expect(elapsedValues(r.lastFrame)).toHaveLength(1);            // …exactly one clock, not one per width
+      expect(secs(elapsedValues(r.lastFrame)[0])).toBeGreaterThanOrEqual(secs(prev));   // …and it is the LATEST reading
     }
     r.stdin.write("\x1b");
     await waitFor(() => escRows(r.lastFrame) === 0);

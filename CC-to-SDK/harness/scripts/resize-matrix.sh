@@ -127,7 +127,8 @@ check_frame() {                            # check_frame <capture-file> <width> 
 # A frame check that cannot fail is worse than no check. These three canned frames run BEFORE any session is
 # launched: the broken one is the shape docs/parity/qa-driver.md §5 recorded live (a 120-wide rule hard-wrapped
 # into 80 + 40, and the composer painted twice), and if the checker greens it the whole run aborts.
-rule_of() { local n="$1" s=""; local i=0; while [ "$i" -lt "$n" ]; do s="$s$DASH"; i=$((i+1)); done; printf '%s\n' "$s"; }
+repeat_glyph() { local g="$1" n="$2" s="" i=0; while [ "$i" -lt "$n" ]; do s="$s$g"; i=$((i+1)); done; printf '%s\n' "$s"; }
+rule_of() { repeat_glyph "$DASH" "$1"; }
 self_test() {
   local dir; dir=$(mktemp -d /tmp/wr-t5-self-XXXXXX)
   { echo "  Tips for getting started"; rule_of 80; echo "$CARET Try \"edit <filepath> to...\""; rule_of 80; } > "$dir/clean"
@@ -143,9 +144,20 @@ self_test() {
   check_frame "$dir/broken" 80 "self-test/broken" >/dev/null 2>&1 && { echo "SELF-TEST: the checker ACCEPTS the recorded broken frame — it has no teeth"; ok=0; }
   check_frame "$dir/nocontent" 80 "self-test/no-content" >/dev/null 2>&1 && { echo "SELF-TEST: the checker accepts a frame with no content above it"; ok=0; }
   check_frame "$dir/multiple" 80 "self-test/exact-multiple" >/dev/null 2>&1 && { echo "SELF-TEST: the checker accepts residue whose width is an exact multiple"; ok=0; }
+  # …and the live A3 cell's OWN precondition checker, for the same reason and by the same construction (fix
+  # round 1). `bare120` is a 120-column composer frame with NOTHING streamed above it — the exact screen the
+  # A3 cell sees in the first second of a turn, and the screen its "no row is wider than 80" branch has to
+  # fire on. `wide_carets` is 30 `❯` = 90 bytes but 30 columns: a byte-length check calls it wide, which is
+  # why the count is over glyphs.
+  { rule_of 120; echo "$CARET Try \"edit <filepath> to...\""; rule_of 120; } > "$dir/bare120"
+  { repeat_glyph x 100; rule_of 120; echo "$CARET "; rule_of 120; } > "$dir/streamed"
+  { repeat_glyph "$CARET" 30; rule_of 120; echo "$CARET "; rule_of 120; } > "$dir/wide_carets"
+  [ "$(wide_rows_above_frame 80 "$dir/bare120")" = 0 ]  || { echo "SELF-TEST: the A3 wide-row precondition counts the composer's own rules — its failure branch can never fire"; ok=0; }
+  [ "$(wide_rows_above_frame 80 "$dir/streamed")" = 1 ] || { echo "SELF-TEST: the A3 wide-row precondition misses a streamed row wider than 80"; ok=0; }
+  [ "$(wide_rows_above_frame 80 "$dir/wide_carets")" = 0 ] || { echo "SELF-TEST: the A3 wide-row precondition measures bytes, not columns"; ok=0; }
   rm -rf "$dir"
   [ "$ok" = 1 ] || { echo "ABORT: frame checker self-test failed."; exit 1; }
-  echo "  checker self-test: rejects the recorded broken frame and the exact-multiple residue, accepts the clean one, demands content above."
+  echo "  checker self-test: rejects the recorded broken frame and the exact-multiple residue, accepts the clean one, demands content above; the A3 wide-row precondition fires on a bare composer frame."
 }
 
 # ── session helpers (docs/parity/qa-driver.md §2) ─────────────────────────────────────────────────────────
@@ -164,11 +176,16 @@ launch() {                                  # launch <session> <cols> <rows> [<e
   # THE CREDENTIAL, WHEN THERE IS ONE (task 6's A3 cell), GOES THROUGH `-e` AND NOT THROUGH `$cmd`. Appending
   # it there would put it in the argv of the shell tmux runs, visible in `ps` for the whole life of the
   # session; with `-e` the child's argv is the `env … node bin.js` line and nothing else (measured). What `-e`
-  # costs instead is tmux's SESSION environment, which this same user can read back with
-  # `tmux show-environment -t <session>` until the cell kills the session, plus the launching tmux client's own
-  # argv while that one call runs. That is the smallest exposure available here: nothing is written to disk and
-  # nothing is echoed. `${!fwd}` is an indirect expansion — the caller passes the NAME, so no value appears in
-  # this script's source or in any log line. tmux ≥ 3.2 (`run_a3_cell` gates on the version before asking).
+  # costs instead, stated at its TRUE bound (fix round 1 — the first version understated it): tmux's SESSION
+  # environment, which this same user can read back with `tmux show-environment -t <session>` until the cell
+  # kills the session; AND the `tmux new-session … -e NAME=value …` argv itself, which is the launching client's
+  # — normally gone the moment that call returns, but when this call is what STARTS the tmux server the client
+  # BECOMES the server, so a process with ppid 1 carries that argv for the server's whole life, outliving the
+  # session it was passed to (measured on tmux 3.7b: killing the `-e` session left the server's argv intact;
+  # it goes only when the last session does and the server exits). Both are same-uid readable only — macOS and
+  # Linux both refuse another user's argv — and nothing is written to disk or echoed, which is what makes this
+  # the smallest exposure available here. `${!fwd}` is an indirect expansion: the caller passes the NAME, so no
+  # value appears in this script's source or in any log line. tmux ≥ 3.2 (`run_a3_cell` gates on the version).
   if [ -n "$fwd" ]; then
     tmux new-session -d -s "$s" -x "$x" -y "$y" -c "$proj" -e "$fwd=${!fwd}" "$cmd" || return 1
   else
@@ -204,13 +221,24 @@ stage_content() {                           # stage_content <session>
 # is ever sent during the wait — a keystroke forces a partial repaint that HIDES the residue. The optional
 # needle gates the check on some text having arrived first (a5 waits for its submit echo this way); the
 # frame check still runs loudly on the final capture either way, so a missing needle cannot mask a failure.
-settle_frame() {                            # settle_frame <session> <cols> <label> [needle]
-  local s="$1" x="$2" label="$3" needle="${4-}" i=0 cap; cap="$MATRIX_ROOT/cap"
+#
+# THE HOLD (fix round 1) IS FOR THE LIVE CELL ONLY. This polls until one capture passes and then asserts on a
+# FRESH capture — which is right for an idle REPL, where nothing moves between the two, and a flake channel on
+# A3's mid-turn frames, where the screen is repainting continuously: a transient capture taken mid-repaint can
+# show `rules=4` / `composerBlocks=2`, i.e. exactly the defect under test, and fail a healthy build. So
+# `settle_frame_hold` demands the check pass on THREE consecutive captures before it stops polling — the same
+# rule `settle_spinner` already carries, for the same reason. The seven idle cells keep hold=1 and are not
+# slowed. Neither form can turn a broken build green: the verdict is always the final capture's, and the
+# residue does not self-heal on a timer (qa-driver §5), so a broken build still fails once the window closes.
+settle_frame()      { _settle_frame "$1" "$2" "$3" "${4-}" 1; }   # settle_frame <session> <cols> <label> [needle]
+settle_frame_hold() { _settle_frame "$1" "$2" "$3" "${4-}" 3; }   # …with the three-capture hold, for a repainting screen
+_settle_frame() {                           # _settle_frame <session> <cols> <label> <needle> <hold>
+  local s="$1" x="$2" label="$3" needle="$4" need="$5" i=0 hold=0 cap; cap="$MATRIX_ROOT/cap"
   while [ "$i" -lt 24 ]; do                 # 6 s — the 160→80 step transits a four-rule frame on the way down
     tmux capture-pane -t "$s" -p > "$cap"
-    if [ -z "$needle" ] || grep -qF "$needle" "$cap"; then
-      check_frame "$cap" "$x" "$label" >/dev/null 2>&1 && break
-    fi
+    if { [ -z "$needle" ] || grep -qF "$needle" "$cap"; } && check_frame "$cap" "$x" "$label" >/dev/null 2>&1; then
+      hold=$((hold+1)); [ "$hold" -ge "$need" ] && break
+    else hold=0; fi
     sleep 0.25; i=$((i+1))
   done
   tmux capture-pane -t "$s" -p > "$cap"
@@ -319,11 +347,30 @@ run_a5_cell() {
 # ChatApp never mounts a second spinner, and cannot see repaint residue at all. This cell is the other half.
 spinner_rows() { grep -cF 'esc to interrupt' "$1"; }                        # spinner.ts:67's tail, verbatim
 elapsed_rows() { grep -cE '\(([0-9]+m )?[0-9]+s( · [0-9]+ tokens)? · esc to interrupt\)' "$1"; }   # …with its clock
-# How many captured rows are longer than <width>. Measured on the PRE-shrink capture, because `capture-pane`
-# already folds every row to the pane width — SP-R0's "a line longer than the new width" can only be observed
-# before the resize. Byte length (LC_ALL=C) slightly overstates for multi-byte glyphs; that only makes this
-# precondition easier to satisfy, and it gates nothing but the cell's own honesty.
-wide_rows() { LC_ALL=C awk -v w="$1" '{ line=$0; sub(/[ \t]+$/, "", line); if (length(line) > w) c++ } END { print c+0 }' "$2"; }
+# How many rows of the STREAMED REGION — everything ABOVE the composer's first rule — are wider than <width>.
+# Measured on the PRE-shrink capture, because `capture-pane` already folds every row to the pane width, so
+# SP-R0's "a line longer than the new width" can only be observed before the resize.
+#
+# THE REGION BOUND IS THE ENTIRE POINT (fix round 1). The first version measured the WHOLE capture, and the
+# composer's own two rules are one glyph per column — 360 BYTES each at 120 columns. The count was therefore
+# ≥ 2 on the very first poll of a screen with no streamed text on it at all, so precondition 2 below could
+# never fail and the cell was free to assert a "mid-stream" shrink over an empty transcript. Stopping at the
+# first rule leaves exactly the streamed region, which is what SP-R0's second condition is about. The bare-
+# composer case is pinned in `self_test` above so this cannot silently regress.
+#
+# GLYPHS, NOT BYTES. `length()` under LC_ALL=C counts bytes, and a prose row carrying a handful of multi-byte
+# glyphs would measure over-wide while occupying fewer columns than the shrink target — a precondition that
+# passes on a row that could not actually be stranded. Counting UTF-8 LEAD bytes (every byte outside the
+# 0x80–0xBF continuation range) is the column count for the text this cell streams, and needs no locale.
+wide_rows_above_frame() {                   # wide_rows_above_frame <width> <capture-file>
+  LC_ALL=C awk -v w="$1" -v dash="$DASH" '
+    function glyphs(s,   i, c, n) { n = 0; for (i = 1; i <= length(s); i++) { c = substr(s, i, 1); if (c < "\200" || c >= "\300") n++ } return n }
+    { line = $0; sub(/[ \t]+$/, "", line)
+      if (line ~ ("^(" dash ")+$")) exit                        # the composer frame starts here; stop
+      if (glyphs(line) > w) c++ }
+    END { print c+0 }
+  ' "$2"
+}
 # settle_frame's discipline applied to the spinner count: poll, never sleep on a fixed delay, and never send a
 # key during the wait (a keystroke forces a partial repaint that HIDES residue). The extra rule here is the
 # HOLD — the count must be right on three consecutive captures, because a live turn repaints continuously and
@@ -377,27 +424,31 @@ run_a3_cell() {
   type_line "$s" "$A3_PROMPT"
   # PRECONDITION 1 — the turn is really in flight. Resizing an idle REPL is cell c1, not this one.
   settle_spinner "$s" 1 "a3 spinner up" || { echo "      FAIL a3 precondition: no live spinner to resize under"; kill_cell "$s"; record "a3" 1; return; }
-  # PRECONDITION 2 — SP-R0's second condition, asserted rather than assumed: rows wider than the width the
-  # next step shrinks to. Polled, because the first seconds of a turn carry the prompt echo and nothing else.
+  # PRECONDITION 2 — SP-R0's second condition, asserted rather than assumed: STREAMED rows (above the composer
+  # frame — see `wide_rows_above_frame`, and the self-test that proves this branch can fire) wider than the
+  # width the next step shrinks to. Polled, because the first seconds of a turn carry the prompt echo and
+  # nothing else.
   while [ "$i" -lt 40 ]; do
     tmux capture-pane -t "$s" -p > "$cap"
-    wide=$(wide_rows 80 "$cap"); [ "$wide" != 0 ] && break
+    wide=$(wide_rows_above_frame 80 "$cap"); [ "$wide" != 0 ] && break
     sleep 0.25; i=$((i+1))
   done
   if [ "$wide" = 0 ]; then
     echo "      FAIL a3 precondition: no streamed row is wider than 80 — the shrink below could not strand anything"
     sed 's/^/      | /' "$cap"; kill_cell "$s"; record "a3" 1; return
   fi
-  printf '      ok   %-28s %s row(s) wider than 80 are on screen, spinner live\n' "a3 preconditions" "$wide"
+  printf '      ok   %-28s %s streamed row(s) wider than 80 are on screen, spinner live\n' "a3 preconditions" "$wide"
   # THE SHRINK, MID-STREAM. Both assertions run on the settled screen: the spinner count (this cell's own)
   # and check_frame's composer/rule verdict (every other cell's), because a mid-turn resize must not break the
-  # composer geometry either.
+  # composer geometry either. The frame verdict takes the HOLD form here and nowhere else: text is still
+  # arriving under the composer, so a single capture snatched mid-repaint can show the four-rule / two-composer
+  # shape transiently on a healthy build (fix round 1).
   tmux resize-window -t "$s" -x 80 -y 40 || { echo "      FAIL resize-window failed"; rc=1; }
-  settle_spinner "$s" 1 "a3 shrink 80x40" || rc=1
-  settle_frame   "$s" 80 "a3 frame 80x40" || rc=1
+  settle_spinner    "$s" 1 "a3 shrink 80x40" || rc=1
+  settle_frame_hold "$s" 80 "a3 frame 80x40" || rc=1
   tmux resize-window -t "$s" -x 100 -y 40 || { echo "      FAIL resize-window failed"; rc=1; }
-  settle_spinner "$s" 1 "a3 grow 100x40" || rc=1
-  settle_frame   "$s" 100 "a3 frame 100x40" || rc=1
+  settle_spinner    "$s" 1 "a3 grow 100x40" || rc=1
+  settle_frame_hold "$s" 100 "a3 frame 100x40" || rc=1
   # …AND THE INTERRUPT, which is the half the original finding got wrong. Esc on a busy turn is always
   # interrupt (ChatApp's onInterrupt), so no second key is needed and none is sent.
   tmux send-keys -t "$s" Escape
