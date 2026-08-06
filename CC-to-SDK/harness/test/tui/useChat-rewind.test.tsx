@@ -299,6 +299,6 @@ describe("useChat: rewind flow", () => {
     await new Promise((r) => setTimeout(r, 20));
     api.confirmRewind!(ANCHOR, "both");
     await waitFor(() => frame(lastFrame).includes("fresh view"));
-    expect(wipes).toBe(1);                                        // the same 2J/3J/H wipe /clear performs
+    expect(wipes).toBe(1);                                        // the 2J/3J/H wipe — rewind's alone since W-R t7 gave /clear the viewport-only one
   });
 });

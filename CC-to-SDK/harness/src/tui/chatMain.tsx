@@ -111,7 +111,13 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
     // newline is nobody's frame — it is another consumer of this same stdout (W-R t4: the keymap's DECSET writes,
     // suspend's cursor show/hide). Recording those used to clobber `lastFrame()` with a bare escape sequence, and
     // now would also park the cursor mid-sequence.
-    if (!body.endsWith("\n")) return false;
+    // …and a write that is not a frame BREAKS the erase→static→frame triple, so the `justErased` latch has to
+    // fall with it (W-R t7). The triple is emitted inside one synchronous `onRender` and nothing can interleave
+    // with it, but `/clear` deliberately writes BETWEEN a `log.clear()` and the frame that follows it — Ink's
+    // own `writeToStdout` (`ink.js:140`-`:155`) is `log.clear()` → `write(data)` → `log(this.lastOutput)`.
+    // Leaving the latch up there made that forced frame read as <Static> scrollback: not recorded, and the
+    // cursor left unparked until the next keystroke, which is exactly when the reflow oracle needs it most.
+    if (!body.endsWith("\n")) { justErased = false; return false; }
     if (prefix === "" && justErased) { justErased = false; return false; }
     // W-R t4b: THE RESIZE CORRECTION IS APPLIED HERE, BECAUSE THIS IS WHERE THE RESIDUE IS CREATED. Ink's prefix
     // erases the previous frame's LOGICAL line count; if that frame has since re-wrapped taller, the rows it no

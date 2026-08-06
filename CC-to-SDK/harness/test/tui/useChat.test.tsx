@@ -430,10 +430,12 @@ describe("useChat", () => {
     expect(frame(lastFrame)).toContain("engine context unchanged");
   });
 
-  it("clear() empties the transcript and fires the terminal clear-screen", async () => {
+  // W-R t7: `/clear` fires the VIEWPORT reset (upstream's inline arm, scrollback kept), not the 2J/3J/H
+  // screen+scrollback wipe — that one is rewind's now. test/tui/clear-repaint.test.tsx pins the payload.
+  it("clear() empties the transcript and fires the terminal viewport reset", async () => {
     let cleared = 0;
     const api: { run?: (s: string) => void; clear?: () => void } = {};
-    function H() { const c = useChat(() => fakeRemote(), {}, { clearScreen: () => { cleared++; } }); api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.staticItems.length}</Text>; }
+    function H() { const c = useChat(() => fakeRemote(), {}, { clearViewport: () => { cleared++; } }); api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.staticItems.length}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("hi");  await waitFor(() => !frame(lastFrame).includes("L:0"));   // lines present

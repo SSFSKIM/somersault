@@ -4,6 +4,7 @@
 // only. Owns the transcript, the streaming turn, the decision queue, mode switching (Tab ladder + host
 // truth via state events), the bg-task panel, and idempotent teardown.
 import { useEffect, useRef, useState } from "react";
+import { useStdout } from "ink";
 import { mkdirSync, writeFileSync as realWriteFileSync, readFileSync as realReadFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve as resolvePath } from "node:path";
@@ -50,6 +51,7 @@ import { STARTER_KEYBINDINGS, userBindingsPath } from "./keys/userBindings.js";
 import { useBindingLookup } from "./keys/KeymapProvider.js";
 import { backgroundHintText, expandHintText } from "./keys/hints.js";
 import { shortCwd } from "./banner.js";
+import { clearViewport } from "./clearViewport.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
 import type { RawContextUsage } from "../index.js";
 import { type HistEntry, type HistoryScope } from "./historySearch.js";
@@ -101,7 +103,7 @@ export function useChat(
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
   // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
-  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number } } = {},
+  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number } } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
@@ -331,9 +333,17 @@ export function useChat(
   const tagSessionFn = deps.tagSession ?? ((id: string, t: string | null) => realTagSession(id, t, { cwd: opts.cwd }));
   const getSessionInfoFn = deps.getSessionInfo ?? ((id: string) => realGetSessionInfo(id, { cwd: opts.cwd }));
   const lastAssistant = useRef("");    // the last assistant reply's text, for /copy
-  // Real terminal clear: wipe screen + scrollback + home cursor (Static is append-only — a model reset alone
-  // can't erase already-printed lines, so we also clear the terminal, exactly like CC's /clear).
+  // THE REWIND WIPE: screen AND scrollback (`ESC[2J ESC[3J ESC[H`) — upstream's `Rms()`, bundle L176982. It is
+  // deliberately harsher than `/clear`'s (next line), and only rewind may use it: a rewind TRUNCATES the
+  // conversation, and Ink's app.clear() cannot reach rows that have already scrolled out of the viewport, so
+  // without `ESC[3J` the discarded turns stay readable above the rebuilt transcript (see rebuildAfterRewind).
   const clearScreen = deps.clearScreen ?? (() => { try { if (process.stdout.isTTY) process.stdout.write("\x1b[2J\x1b[3J\x1b[H"); } catch { /* no tty */ } });
+  // THE `/clear` RESET: viewport only, plus the repaint Ink's dedupe would otherwise swallow. Upstream's
+  // INLINE clear arm (`yJr`, L176988) is the one being cloned here — L177120-177121 picks it over `Rms()`
+  // whenever the alt screen is not in use, and it preserves scrollback because a cleared session stays on
+  // disk and its transcript stays scrollable. Both halves and their citations live in clearViewport.ts.
+  const inkStdout = useStdout();
+  const clearViewportFn = deps.clearViewport ?? (() => { clearViewport(inkStdout); });
   const ranInitial = useRef(false);
   const ranInitialPrompt = useRef(false);
 
@@ -1271,8 +1281,10 @@ export function useChat(
     //    attempt (the adapter may learn the new id mid-poll), and accept the first non-empty replay.
     //  · Ink's app.clear() (replaceDocument's bridge) cannot erase rows already scrolled OUT of the
     //    viewport, so the pre-rewind conversation survived above and the rebuild below read as "nothing
-    //    re-rendered". /clear always did the real wipe (2J/3J/H — screen AND scrollback); rewind now
-    //    does the same, immediately before the fresh document mounts.
+    //    re-rendered". So rewind does the real wipe (2J/3J/H — screen AND scrollback), immediately before
+    //    the fresh document mounts. It is now the ONLY caller of that wipe: W-R t7 moved `/clear` onto
+    //    upstream's viewport-only inline arm, which keeps scrollback on purpose. A rewind cannot, because
+    //    the turns it discards must not stay readable above the transcript that replaced them.
     const retry = deps.rewindReplayRetry ?? { attempts: 8, delayMs: 375 };   // ≈3s worst case; injectable so tests never sit it out
     let id = session.sessionId;
     let msgs: any[] = [];
@@ -1577,7 +1589,14 @@ export function useChat(
     setQueue([]);
     void session.interrupt().catch(() => {});
   }
-  function clear() { if (!disposed.current) { clearScreen(); replaceDocument(new TranscriptDocument()); } }   // /clear: wipe screen + model (session context kept)
+  // `/clear` (W-R t7): the MODEL first, the SCREEN second — the one order that cannot leave a blank pane.
+  // `replaceDocument` runs the Static seam (`app.clear()`), which erases the live frame's rows AND zeroes
+  // log-update's counters; the reset then wipes the viewport and forces the frame back in the very same
+  // synchronous burst, so no render can sit between them. React's re-render lands after: an identical frame is
+  // deduped (the screen already carries it) and a changed one is written with a correct `eraseLines`, because
+  // the reset left those counters describing exactly what it painted. Reversed, `app.clear()` would erase the
+  // frame the reset had just put back — which is the blank pane, one step later.
+  function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
   return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, permissions, denials, workDirs, retryStatus } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
 }
