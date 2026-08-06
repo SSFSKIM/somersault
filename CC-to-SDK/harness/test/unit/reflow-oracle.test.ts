@@ -66,11 +66,25 @@ describe("probeReflow — the verdict", () => {
     expect(t.order).toEqual([]);
   });
 
-  it("never answers `reflow` when the width did not shrink, even if the arithmetic matches", async () => {
+  // A HEIGHT-ONLY DRAG KEEPS THE WIDTH, and it must not be answerable. Task 4 caches the verdict, so if an
+  // equal-width probe came back "truncate" — as it did before this guard — one height drag would silently
+  // disable the correction for the rest of the session. Non-shrinks are "unknown": re-probeable, uncacheable.
+  it("takes no round-trip when the width did not shrink, even if the arithmetic would match", async () => {
     const t = fakeTerminal();
     const verdict = probeReflow({ write: t.write, onReply: t.onReply, colBefore: 121, oldWidth: 120, newWidth: 120 });
     t.answer(3, 1);                                        // ((121−1) mod 120) + 1 === 1, and yet: not a shrink
-    expect(await verdict).toBe("truncate");
+    expect(await verdict).toBe("unknown");
+    expect(t.order).toEqual([]);
+  });
+
+  it("takes no round-trip on a widening either, whatever column the cursor held", async () => {
+    for (const colBefore of [41, 121, 161]) {
+      const t = fakeTerminal();
+      const verdict = probeReflow({ write: t.write, onReply: t.onReply, colBefore, oldWidth: 80, newWidth: 120 });
+      t.answer(3, 41);
+      expect(await verdict, `colBefore ${colBefore}`).toBe("unknown");
+      expect(t.order, `colBefore ${colBefore}`).toEqual([]);
+    }
   });
 
   // THE PROBE ONLY DISCRIMINATES FROM PAST THE NEW EDGE. SP-R0 parked the cursor at column 121 of an
@@ -86,6 +100,27 @@ describe("probeReflow — the verdict", () => {
       expect(await verdict, `colBefore ${colBefore}`).toBe("unknown");
       expect(t.order, `colBefore ${colBefore}`).toEqual([]);   // no query written, nothing subscribed
     }
+  });
+
+  // THE OTHER ARM OF THE SAME AMBIGUITY. A truncating emulator that CLAMPS the cursor to the new right margin
+  // (xterm's documented behaviour on a narrowing resize) answers `newWidth`, and the re-wrap arithmetic ALSO
+  // lands on `newWidth` whenever `colBefore` is an exact multiple of it — so a half-width drag (120→60 with the
+  // cursor at the old last column) reads as "reflow" and over-erases. Dragging a window to half width is the
+  // most ordinary resize there is, so this is refused too, and for the same reason: no information in it.
+  it("refuses the column whose re-wrap lands on the new right margin — a clamping truncator answers the same", async () => {
+    const t = fakeTerminal();
+    const verdict = probeReflow({ write: t.write, onReply: t.onReply, colBefore: 120, oldWidth: 120, newWidth: 60 });
+    t.answer(3, 60);                                       // ((120−1) mod 60) + 1 === 60, and so does the clamp
+    expect(await verdict).toBe("unknown");
+    expect(t.order).toEqual([]);                           // no query written, nothing subscribed
+  });
+
+  it("still probes one column short of that multiple (119 @ 120 → 60 lands on 59, which no truncator reports)", async () => {
+    const t = fakeTerminal();
+    const verdict = probeReflow({ write: t.write, onReply: t.onReply, colBefore: 119, oldWidth: 120, newWidth: 60 });
+    expect(t.order).toEqual(["subscribe", "write:\x1b[6n"]);
+    t.answer(3, 59);                                       // ((119−1) mod 60) + 1 === 59
+    expect(await verdict).toBe("reflow");
   });
 
   it("still probes from the first column that CAN discriminate (newWidth + 1)", async () => {
@@ -148,12 +183,14 @@ describe("probeReflow — the timeout", () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it("unsubscribes on the timeout path too — a late report reaches nothing", async () => {
+  // The timeout path leaks no listener either — but it lets go a beat later than the answered path, because the
+  // straggler it is holding the line for is the whole point (see "a late reply belongs to the probe that asked").
+  it("leaves at most the swallower behind on the timeout path, and a late report is harmless", async () => {
     const t = fakeTerminal();
     expect(await probeReflow({ write: t.write, onReply: t.onReply, colBefore: 121, oldWidth: 120, newWidth: 80, timeoutMs: 1 })).toBe("unknown");
+    t.answer(3, 41);                                       // the terminal answering late must not throw
     expect(t.unsubscribes).toBe(1);
     expect(t.subscribed).toBe(false);
-    t.answer(3, 41);                                       // the terminal answering late must not throw
   });
 
   it("cancels the timer when the answer lands, so a pending probe cannot hold the process open", async () => {
@@ -164,6 +201,57 @@ describe("probeReflow — the timeout", () => {
       t.answer(3, 41);
       expect(await verdict).toBe("reflow");
       expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+// A DSR REPLY CARRIES NO CORRELATION TOKEN, so nothing in the bytes says which query it answers. A probe that
+// times out on a slow link (ssh, tmux over latency) and is answered a moment later would otherwise hand that
+// stale column — a fact about the PREVIOUS geometry — to whichever probe is listening now. Below, the stale
+// column is 1, and 1 is exactly what the second probe's own re-wrap arithmetic expects: the corrupted answer is
+// "reflow", the verdict that erases live transcript rows. So a probe stays installed after it gives up, long
+// enough to eat its own late answer, and the bus hands each reply to ONE probe, oldest first.
+describe("probeReflow — a late reply belongs to the probe that asked for it", () => {
+  it("does not let a timed-out probe's late answer resolve the NEXT probe", async () => {
+    const reports = createCursorReports();
+    const a = await probeReflow({ write: () => {}, onReply: reports.onReply, colBefore: 161, oldWidth: 120, newWidth: 80, timeoutMs: 1 });
+    expect(a).toBe("unknown");                             // A gave up: ((161−1) mod 80) + 1 === 1 never arrived
+    const b = probeReflow({ write: () => {}, onReply: reports.onReply, colBefore: 121, oldWidth: 120, newWidth: 60, timeoutMs: 25 });
+    reports.deliver("\x1b[9;1R");                          // …and now it does — but ((121−1) mod 60) + 1 is ALSO 1
+    expect(await b).toBe("unknown");                       // B timed out honestly; it was not fed A's answer
+  });
+
+  it("still answers the next probe from ITS OWN reply once the stale one has been eaten", async () => {
+    const reports = createCursorReports();
+    expect(await probeReflow({ write: () => {}, onReply: reports.onReply, colBefore: 161, oldWidth: 120, newWidth: 80, timeoutMs: 1 })).toBe("unknown");
+    const b = probeReflow({ write: () => {}, onReply: reports.onReply, colBefore: 121, oldWidth: 120, newWidth: 60, timeoutMs: 500 });
+    reports.deliver("\x1b[9;1R");                          // A's, swallowed
+    reports.deliver("\x1b[3;1R");                          // B's own — the swallower must be out of the way by now
+    expect(await b).toBe("reflow");
+  });
+
+  it("swallows its own late answer and hands the subscription back at that moment", async () => {
+    const t = fakeTerminal();
+    expect(await probeReflow({ write: t.write, onReply: t.onReply, colBefore: 121, oldWidth: 120, newWidth: 80, timeoutMs: 1 })).toBe("unknown");
+    expect(t.subscribed).toBe(true);                       // still listening, purely to eat the straggler
+    t.answer(3, 41);
+    expect(t.subscribed).toBe(false);
+    expect(t.unsubscribes).toBe(1);
+  });
+
+  it("hands the subscription back after the grace window even when the straggler never comes", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = fakeTerminal();
+      let settled: string | undefined;
+      void probeReflow({ write: t.write, onReply: t.onReply, colBefore: 121, oldWidth: 120, newWidth: 80, timeoutMs: 10 }).then((v) => { settled = v; });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(settled).toBe("unknown");                     // resolves ON the timeout, not after the grace
+      expect(t.subscribed).toBe(true);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(t.subscribed).toBe(false);
+      expect(t.unsubscribes).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);                  // and nothing is left to hold the process open
     } finally { vi.useRealTimers(); }
   });
 });
@@ -210,6 +298,24 @@ describe("createCursorReports", () => {
     off();
     reports.deliver("\x1b[9;1R");
     expect(seen).toEqual([[3, 41]]);
+  });
+
+  // Request/response, not broadcast: the Nth reply answers the Nth outstanding query, so it goes to exactly one
+  // subscriber and it is the oldest one. Fanning out instead would resolve every listening probe from a single
+  // reply — which is how a stale answer reaches a probe it knows nothing about. Task 4 should still keep one
+  // probe in flight per resize: a second one queued behind the first is starved until the first lets go.
+  it("hands each reply to ONE subscriber, oldest first", () => {
+    const reports = createCursorReports();
+    const first: Array<[number, number]> = [], second: Array<[number, number]> = [];
+    const off = reports.onReply((row, col) => { first.push([row, col]); });
+    reports.onReply((row, col) => { second.push([row, col]); });
+    reports.deliver("\x1b[3;41R");
+    expect(first).toEqual([[3, 41]]);
+    expect(second).toEqual([]);                             // NOT fanned out
+    off();
+    reports.deliver("\x1b[9;1R");
+    expect(second).toEqual([[9, 1]]);                       // now it is at the head of the queue
+    expect(first).toEqual([[3, 41]]);
   });
 
   it("carries a real probe end to end", async () => {

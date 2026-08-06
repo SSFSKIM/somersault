@@ -48,11 +48,17 @@ export interface CursorReports {
 }
 
 /** The adapter between the provider's ONE raw-string sink and `probeReflow`'s subscribe/unsubscribe seam.
- *  Both halves are closures, so `deliver` and `onReply` can be passed as bare function references. */
+ *  Both halves are closures, so `deliver` and `onReply` can be passed as bare function references.
+ *
+ *  ONE REPLY, ONE CONSUMER, OLDEST FIRST — this is a request/response protocol, not an event bus. A DSR reply
+ *  carries no correlation token, so the only thing that can match answers to queries is their order: the Nth
+ *  reply answers the Nth outstanding query. Broadcasting instead would let one reply resolve every listening
+ *  probe (and, with a probe that timed out but is still owed an answer, resolve the WRONG one). `Set` iterates
+ *  in insertion order, which is exactly the queue we want. */
 export function createCursorReports(): CursorReports {
   const subs = new Set<(row: number, col: number) => void>();
   return {
-    deliver: (raw) => { const at = parseCursorReport(raw); if (at) for (const cb of [...subs]) cb(at.row, at.col); },
+    deliver: (raw) => { const at = parseCursorReport(raw); if (at) for (const cb of subs) { cb(at.row, at.col); break; } },
     onReply: (cb) => { subs.add(cb); return () => { subs.delete(cb); }; },
   };
 }
@@ -69,27 +75,49 @@ export function probeReflow(deps: {
   timeoutMs?: number;
 }): Promise<ReflowVerdict> {
   const { write, onReply, colBefore, oldWidth, newWidth, timeoutMs = 150 } = deps;
-  // A cursor that was ALREADY within the new width tells us nothing: it reports `colBefore` on a reflowing
-  // terminal (the arithmetic is the identity there) and sits untouched at `colBefore` on a truncating one. Both
-  // answer the same, and the verdict rule would read that as "reflow" — the false positive that over-erases
-  // live transcript rows. SP-R0's own probe parked the cursor at column 121 of an 80-column screen for exactly
-  // this reason. Refuse the round-trip instead of taking an answer we cannot read; "unknown" (not "truncate")
-  // because it is a fact about THIS probe, not about the terminal, and the caller may re-probe.
-  if (!(colBefore > newWidth)) return Promise.resolve("unknown");
+  // WHICH PROBES CAN ANSWER AT ALL. A truncating emulator has exactly two things it can report: `colBefore`
+  // (the cell was inside the new width, so it was never touched) or `newWidth` (the cursor was past the edge and
+  // got CLAMPED to the new right margin — xterm's documented narrowing behaviour). A reflowing one reports
+  // `wrappedColumn(colBefore, newWidth)`. The probe only discriminates where those differ, so both collisions
+  // are refused WITHOUT a round-trip — each of them would otherwise read as "reflow" and over-erase live
+  // transcript rows, the one failure this oracle exists to prevent:
+  //   · `wrapped === colBefore`  ⇔ `colBefore <= newWidth`      (SP-R0 parked the cursor at column 121 of an
+  //                                                              80-column screen for exactly this reason)
+  //   · `wrapped === newWidth`   ⇔ `colBefore % newWidth === 0` (a plain half-width drag: 120 → 60 at column 120)
+  // The shrink test joins them here rather than living in the verdict: a widening or a HEIGHT-ONLY drag is not
+  // evidence about anything, and answering "truncate" to it would let Task 4 cache a verdict that disables the
+  // correction for the life of the process. "unknown" (never "truncate") throughout, because these are facts
+  // about THIS probe, not about the terminal, and the caller may re-probe. NaN `colBefore` falls in here too.
+  if (!(newWidth < oldWidth) || !(colBefore > newWidth) || colBefore % newWidth === 0) return Promise.resolve("unknown");
   return new Promise((resolve) => {
     let off: (() => void) | undefined;
-    let done = false;
+    let done = false, swallowing = false;
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    const release = () => { clearTimeout(grace); off?.(); off = undefined; };   // idempotent: never double-unsubscribe
     const settle = (verdict: ReflowVerdict) => {
       if (done) return;                                    // a report racing the timeout, or a second report
       done = true;
       clearTimeout(timer);                                 // …so a pending probe cannot hold the process open
-      off?.();
+      release();
       resolve(verdict);
     };
-    const timer = setTimeout(() => settle("unknown"), timeoutMs);
+    // GIVING UP IS NOT THE SAME AS LETTING GO. The answer to THIS query may still be in flight (a slow link is
+    // the realistic case, not a silent terminal), and it carries nothing that identifies it, so if we stepped
+    // aside now the next probe would read our stale column as its own — and by the arithmetic above, that can
+    // land on its "reflow" value and erase live transcript rows. Resolve on time, then stay at the head of the
+    // queue for one more window and eat exactly that straggler. Bounded either way: whichever comes first.
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true; swallowing = true;
+      grace = setTimeout(release, timeoutMs);
+      resolve("unknown");
+    }, timeoutMs);
     // Subscribe BEFORE the query goes out: a terminal that answers immediately must not answer into nothing.
     // The reported ROW is deliberately unread (see the header — tmux pins it).
-    off = onReply((_row, col) => { settle(newWidth < oldWidth && col === wrappedColumn(colBefore, newWidth) ? "reflow" : "truncate"); });
+    off = onReply((_row, col) => {
+      if (swallowing) { release(); return; }               // our own straggler: eat it, then get out of the way
+      settle(col === wrappedColumn(colBefore, newWidth) ? "reflow" : "truncate");
+    });
     write(DSR_CURSOR_QUERY);
   });
 }
