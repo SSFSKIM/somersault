@@ -94,12 +94,17 @@ export const TYPING_IDLE_MS = 1500;
 const EMPTY_ITEMS: readonly RenderItem[] = [];
 const EMPTY_LINES: readonly RenderLine[] = [];
 
+/** WAVE R TASK 1 (defect i) — the default terminal-resize subscription. Module-scoped rather than a default
+ *  arrow in the parameter list so its identity is stable across renders: the effect below lists it as a
+ *  dependency, and a fresh closure per render would tear down and re-attach the listener every frame. */
+const DEFAULT_ON_RESIZE = (cb: () => void): (() => void) => { process.stdout.on("resize", cb); return () => { process.stdout.off("resize", cb); }; };
+
 function RestoringModal(): React.ReactElement {
   useSwallowKeys(true);
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, onResize = DEFAULT_ON_RESIZE }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -128,6 +133,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   typingIdleMs?: number;
   suspend?: typeof suspendProcess;
   resumeOutput?: { repaint: (runInkWrite: () => void) => void };
+  /** WAVE R TASK 1 — subscribe to terminal resizes; returns the unsubscribe. A seam for the same reason
+   *  `suspend` is one: a test cannot resize `ink-testing-library`'s fake stdout, and the real default
+   *  (`DEFAULT_ON_RESIZE`) listens on the process's own tty. */
+  onResize?: (cb: () => void) => () => void;
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
   // suspend.ts needs the REAL tty object, not Ink's ref-counted `setRawMode` function — see that module's
@@ -135,12 +144,24 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
   const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
-  // The queued band's own column budget: what is left inside the `paddingX: 2` box. `deps.columns` first for
-  // the same reason useChat prefers it — the frame-capture fixture and the tests pin a width.
-  const terminalColumns = () => deps?.columns?.() ?? stdout?.columns ?? 80;
-  // The composer's paste-chip threshold reads the terminal HEIGHT (F5 task 3). No `deps` override: nothing
-  // pins a row count the way the frame fixtures pin a width, and 24 is the same POSIX default pasteChips uses.
-  const terminalRows = () => stdout?.rows ?? 24;
+  // WAVE R TASK 1 (defect i) — the terminal's SIZE IS REACT STATE. Ink's own SIGWINCH handler
+  // (node_modules/ink/build/ink.js:83) re-runs Yoga layout over the EXISTING element tree and re-serializes
+  // it; it never re-renders components. Nothing in ccx subscribed to "resize" at all, so the reads below
+  // happened only when something else caused a render and every width-derived string in the tree froze at
+  // the launch width. The subscription sets this state, React re-renders, and the two readers hand the
+  // fresh numbers to their consumers.
+  //   · `deps.columns` still comes FIRST, for the same reason useChat prefers it — the frame-capture fixture
+  //     and the tests pin a width; the resize event is when we go back and ask it again.
+  //   · No `deps` override for the HEIGHT (the composer's paste-chip threshold, F5 task 3): nothing pins a
+  //     row count the way the frame fixtures pin a width, and 24 is the POSIX default pasteChips uses.
+  const readSize = () => ({ columns: deps?.columns?.() ?? stdout?.columns ?? 80, rows: stdout?.rows ?? 24 });
+  const readSizeRef = useRef(readSize); readSizeRef.current = readSize;      // the effect below runs once; the reader must not be a mount-time closure
+  const [size, setSize] = useState(readSize);
+  useEffect(() => onResize(() => setSize(readSizeRef.current())), [onResize]);
+  // BOTH STAY FUNCTION-VALUED. `ChatComposer` calls `columns()` per render on purpose (ChatComposer.tsx:252):
+  // a plain number would be a prop identity that only changes when the parent re-renders for another reason.
+  const terminalColumns = () => size.columns;
+  const terminalRows = () => size.rows;
   const queueWidth = Math.max(8, terminalColumns() - QUEUE_PAD * 2);
   const [exitArmed, setExitArmed] = useState(false);
   const [todosOpen, setTodosOpen] = useState(initialTodosOpen);
