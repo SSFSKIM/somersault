@@ -491,7 +491,10 @@ which are opportunistic.
 
 | Item | Owner | Deadline |
 |---|---|---|
-| MOUSE-1: does click-to-expand reproduce with a fold on screen? The owner reports it works "for general claude code cli, on any terminals"; the fleet found no mouse-reporting mode requested and injected mouse bytes swallowed. If the re-probe is still negative, we need the owner's terminal name + a screen recording of a click expanding a fold | Controller (probe, Wave R start); owner (demo, only if probe is negative) | Wave R spec time |
+| ~~MOUSE-1: does click-to-expand reproduce?~~ **SETTLED 2026-08-06 (§12 item 17)** — yes, live-reproduced, but only inside the **fullscreen renderer**, which the owner runs and the fleet's isolated profile did not. Upstream advertises it in its own switch notice (L453184). Both testimonies stand; the fleet's finding is re-scoped to the inline renderer. No terminal name or screen recording needed | — | closed 2026-08-06 |
+| **MOUSE-1 residual (a):** is the `tengu_pewter_brook` remote gate a broad default or a rollout cohort? Measured on one account only. If broad, most users drift into fullscreen after their first session and the fullscreen renderer's priority rises sharply | Controller (second account) | Before the fullscreen scope call |
+| **MOUSE-1 residual (b):** which row does the owner click — the collapsed `Ran N shell commands` summary, or something literally reading `+N lines (ctrl+o to expand)`? The latter was never seen as a click target in fullscreen across twelve polls | Owner | Whenever convenient; does not block Wave R |
+| **FULLSCREEN-1:** does upstream's fullscreen renderer become a ccx roadmap item, and at what priority? It is a whole rendering mode (alternate screen, app-owned scrollable viewport, three mouse affordances) that ccx lacks entirely, and it is the mode the owner experiences daily. Out of scope for Wave R either way | Owner, with a controller recommendation | Wave R close-out |
 | ~~`ctrl+e` explain-command feasibility~~ **LANDED**: fully reproducible headlessly — one forced-tool Messages call (`explain_command`, 4-field schema) against the current main model, 3-row render. Scoped into EP-T2 | — | closed 2026-08-06 |
 | `#` memory mode and the ccx-extra context %% (qa6-13, qa1-10): keep or drop | Owner, surfaced at Wave C spec review | Wave C spec time |
 
@@ -651,12 +654,47 @@ surface under test. Probes needing a clean session must set `settingSources: []`
     and with no fix at all. **EP-R1's acceptance must be measured under tmux or a real terminal, and that
     belongs in the acceptance criteria, not in a comment.** The two instruments have opposite blind spots —
     pyte hides reflow defects, `tmux capture-pane` cannot distinguish a painted blank row from an unwritten
-    one (item 12) — so neither may be used alone. Any existing frame fixture claiming resize coverage is
-    suspect and must be re-checked.
+    one (item 12) — so neither may be used alone. Checked while writing this: **there is no resize fixture
+    or resize regression test in the repo at all** (`scripts/frames/` holds five `.keys` scripts, none for
+    resize; the two test files mentioning "resize" assert width-keyed cache eviction and per-snapshot
+    `columns()` re-reads, not repaint). So the P0 has zero regression coverage today and the obvious
+    instrument for adding it is blind — both halves of that must be fixed together.
     The tmux measurement also adds a requirement no code reading would have surfaced: because a resize can
     push frame rows off the top of the viewport, **an erase count computed from the frame's geometry must
     be clamped to the rows still on screen**, or the erase walks past the viewport top and damages what is
     above it.
+17. **MOUSE-1 is settled — the owner is right, the fleet is right, and upstream says so in its own words.**
+    Live-reproduced three times: clicking a collapsed tool result expands it. It is **not** "on any
+    terminal" — it exists only in the **fullscreen renderer**, which the owner has been in continuously
+    (item 12). The mechanism is ordinary SGR mouse reporting (`?1000h ?1002h ?1003h ?1006h`) welded to the
+    alternate screen: one component enables both on mount and disables both on unmount. The escapes are
+    **composed at runtime from integers** (L177070), which is why grepping a bundle or binary for the
+    literal `?1000h` finds nothing — a false-negative trap for any future search. **Not OSC 8**: the fold
+    row is plain text, and a hyperlink click can only open a URL, never toggle in-process state.
+    **The decisive citation is upstream's own switch notice, L453184** — controller-verified verbatim. On
+    switching to fullscreen Claude Code prints "Using flicker-free rendering", then
+    `· Click to move your cursor in the text input`, **`· Click to expand collapsed tool results`**, and
+    `· By default, text auto-copies when you select it (/config to change)`. Three mouse affordances ccx
+    has none of, advertised as the mode's selling points.
+    `qa2-02` is **confirmed but mis-scoped**: all-zeros and clean-swallow are accurate for the *inline*
+    renderer its isolated profile produced; the implied "upstream has no mouse support" is wrong. Version
+    is a red herring — the machinery and the feature string are identical across 220/221/222/223.
+    **For ccx this is not a mouse bug.** ccx emits only `?2004` and `?25`, has no alternate-screen mode,
+    and already parses SGR mouse only to discard it. Click-to-expand sits downstream of a renderer ccx does
+    not have; it should be filed as *missing upstream's fullscreen renderer*, with mouse falling out of
+    that work rather than driving it.
+    Two open threads. **(a)** The reconciliation's proximate cause was a cached remote gate
+    (`tengu_pewter_brook`, measured on one account) that flips a warm profile into fullscreen while a cold
+    profile stays inline. If that gate is broadly on rather than a rollout cohort, most users drift into
+    fullscreen after their first session and the owner's "everywhere" becomes true in practice — which
+    would raise the fullscreen renderer's priority substantially. Worth checking on a second account.
+    **(b)** One question only the owner can answer: which row they click — the collapsed
+    `Ran N shell commands` summary, or something literally reading `+N lines (ctrl+o to expand)`. The
+    latter was never observed as a click target in fullscreen across twelve polls.
+    **Reproduction trap worth carrying:** a `pty.fork()` child inherits the parent's cwd and strands on the
+    trust dialog, which looks exactly like "fullscreen won't turn on". **Absence of `ESC[?1049h` means
+    "never reached the REPL", not "fullscreen is off"** — this is what blocked the parallel agent at
+    item 15.
 
 ## §13 Tracking map
 
