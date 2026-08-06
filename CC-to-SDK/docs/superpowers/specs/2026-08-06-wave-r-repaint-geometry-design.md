@@ -271,14 +271,47 @@ event — wiping `<Static>` makes `staticOutput === '\n'`, which the guard at `i
 this defect is a different cache that EP-R1 never touches. The parent spec's `EP-R1 → EP-R2` edge is
 retracted (W-R4); they parallelize, subject to the shared-ownership note below.
 
+### Upstream's shape, read line by line — and it is the shape we should copy
+
+`forceRedraw` (L180978), controller-verified:
+
+```js
+forceRedraw(e) {
+  if (!this.options.stdout.isTTY || this.isUnmounted || this.isPaused) return !1;
+  if (e?.flushReact) rxe.flushSyncFromReconciler();
+  …
+  if (this.hasStaleTerminalSize()) return this.handleResize(), !0;
+  if (this.altScreenActive) this.needsEraseBeforePaint = !0, …
+  else this.log.forceFullReset(), this.prevFrameContaminated = !0;
+  return this.resetScreenReaderDiffState(), this.onRender(), !0;
+}
+```
+
+`forceFullReset()` (L178271) does one thing — `this.forceReset = !0` — which the renderer consumes at
+L178318 (`if (this.forceReset) return this.forceReset = !1, TJr(t, "clear", …)`), taking the same
+clear-and-repaint branch a resize takes.
+
+**Three things to take from this.** First, **upstream never writes escapes from the command handler**: it
+sets a flag and re-renders, and the renderer decides the bytes. Second, `onRender()` is called
+**unconditionally** — there is no output-equality dedupe on this path, which is exactly the guard that
+breaks `ccx`. Third, a forced redraw and a resize are **the same primitive** (`hasStaleTerminalSize()` →
+`handleResize()`), which is the grain of truth in the triage's "one primitive" instinct, arriving at a
+different level than it supposed. Two named concepts worth borrowing outright: `prevFrameContaminated`
+("the screen holds something we did not put there") and `probeExternalClear` (L180995), where upstream
+actively asks the terminal whether an external agent wiped the screen — notably gated on altscreen, which
+is further evidence that DSR is not a general-purpose tool here (SP-R0 candidate (c)).
+
 ### Work items
 
-- **(new)** Invalidate Ink's `lastOutput` dedupe across a reset. The `ResumeSafeStdout` proxy sees every
-  write and is the likeliest seam; the implementation may find a cleaner one, and is free to — the
+- **(new)** Make a reset produce a render that **cannot be skipped**, mirroring the shape above: mark the
+  frame contaminated, then force the render — rather than `ccx`'s current "write an erase and hope a
+  render follows". The `ResumeSafeStdout` proxy sees every write and is one candidate seam; the
   requirement is the behaviour, not the mechanism.
 - **(modify)** Replace the `3J` in the reset payload so the scrollback survives, matching upstream inline
-  (A7). Upstream's `/clear` emits no escape of its own; the renderer owns it through one forced-repaint
-  primitive (`forceRedraw` → `forceFullReset` → `TJr(next, "clear")`).
+  (A7). Upstream's `/clear` emits no escape of its own, and its inline reset is viewport-only.
+  **Note the false canon claim to correct while there:** `useChat.ts:334-335` says the wipe is *"exactly
+  like CC's /clear"*. It is not — upstream preserves scrollback inline. That comment is a defect in its
+  own right under the programme's "comments as canon record" rule.
 
 ### Acceptance
 
