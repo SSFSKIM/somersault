@@ -371,9 +371,11 @@ A4, A5, A6 (gated on W-T13), A14, A15, A16, A17.
    mode**, preserving the no-double-upgrade rule documented at `PlanDialog.tsx:190-193`. Update both
    appliers (`host.ts:527`, `appserver/planUpgrade.ts:32`). **The applier must also do what
    `useChat.applyMode` does at `:1428-1433`: swap the model before granting `auto`, and report failure
-   instead of swallowing it.** `host.ts:526-530`'s empty `catch {}` plus auto's silent fallback to
-   `default` on an unsupported model would otherwise write `this.mode = "auto"` while the engine sits in
-   `default` — re-creating in a new place the exact lying-chip failure EP-T5 W3 exists to remove.
+   instead of swallowing it.** `host.ts:526-530`'s empty `catch {}` would otherwise swallow the engine's
+   answer entirely. **[Corrected 2026-08-06 by probe 99]** the reason is NOT a silent fallback: off its
+   supported set the engine REFUSES `auto` ("Cannot set permission mode to auto: auto mode unavailable for
+   this model") and stays in the previous mode, so the unswapped grant is *lost*, not downgraded — the
+   lying chip cannot arise on the auto path, but the approved upgrade vanishes unless the swap comes first.
 3. **(modify)** Approve-with-feedback: `shift+tab` and a typed yes-row submit carry the feedback into the
    allow, per the row's own description.
 4. **RETRACTED — ccx already matches canon here (W-T21).** The first draft asked for "empty `Enter` on the

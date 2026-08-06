@@ -4,9 +4,10 @@
 // upgrade the RPC reports success while every later edit still runs in the old mode and prompts again.
 //
 // ONE DIVERGENCE FROM THE HOST'S APPLIER, recorded: the host swaps the model before granting `auto`
-// (auto is model-gated and falls back to `default` in silence off its supported set). This one cannot —
-// `EngineSession` carries no `setModel` and the appserver tracks no current model — but it also holds no
-// mode state of its own, so an unnoticed fallback here cannot make any surface report a mode the engine
+// (auto is model-gated, and off its supported set the engine REFUSES the mode — probe 99: "Cannot set
+// permission mode to auto: auto mode unavailable for this model"). This one cannot — `EngineSession`
+// carries no `setModel` and the appserver tracks no current model — so on an unsupported model the grant
+// is simply refused; it also holds no mode state of its own, so nothing here can report a mode the engine
 // is not in. A client that wants the guarantee reads the session's own status frames.
 //
 // ORDERING IS THE HOST'S (host.ts §mode-sync): the flag is only ARMED at answer time. The CLI performs its

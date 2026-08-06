@@ -618,11 +618,12 @@ thread one in, with `autoAvailable` defaulting to `false` when the model is unkn
 client (where `useChat.ts:1423-1426` documents `model` as `undefined` until a turn ends) falls back to
 upstream's neither-available arm, `Yes, auto-accept edits`.
 
-**The applier must not re-create the lying chip.** `host.ts:526-530` grants inside a `try` with an empty
+**The applier must not lose the grant.** `host.ts:526-530` grants inside a `try` with an empty
 `catch {}` and does **no** model swap, unlike `useChat.applyMode` (`:1428-1433`) which swaps first
-precisely because auto is model-gated. Per `autoModel.ts`'s recorded contract, an unsupported model makes
-`auto` fall back to `default` silently — so without the swap, `this.mode` would be written `"auto"` while
-the engine sits in `default`. Do the swap, and report failure instead of swallowing it.
+precisely because auto is model-gated. **[Corrected 2026-08-06 by probe 99]** an unsupported model does
+not make `auto` fall back to `default` silently — the engine REFUSES the setter ("auto mode unavailable
+for this model") and stays put, so without the swap the approved upgrade is simply lost and the empty
+`catch {}` hides that. Do the swap, and report failure instead of swallowing it.
 
 **Twelve test files reference `plan_approve` and must be migrated in this task's commit:**
 `test/unit/host-park.test.ts`, `test/unit/index.test.ts` (pins the public API surface),

@@ -195,7 +195,7 @@ describe("host mode sync (one source of truth, last-write-wins)", () => {
       expect(calls).toEqual(["mode:auto"]);                                     // the swap is skipped, as designed
       expect(err).toHaveBeenCalledTimes(1);
       expect(String(err.mock.calls[0]![0])).toContain("auto mode");
-      expect(String(err.mock.calls[0]![0])).toContain("falls back to default");
+      expect(String(err.mock.calls[0]![0])).toContain("will refuse the mode");
     } finally { err.mockRestore(); }
     expect(host.status().permissionMode).toBe("auto");
     await host.stop();

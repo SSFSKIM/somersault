@@ -560,7 +560,7 @@ describe("<PlanDialog> — pure geometry and literal pins (T9-fix 4/5/6)", () =>
 // strictly narrower grant than the label the user read.
 describe("<PlanDialog> — the availability-driven approval row (qa3-17)", () => {
   const AUTO_MODEL = "claude-sonnet-5";        // autoModel.ts's live-verified set (probe 72)
-  const NO_AUTO_MODEL = "claude-haiku-4-5";    // not in it — `auto` would silently fall back to `default`
+  const NO_AUTO_MODEL = "claude-haiku-4-5";    // not in it — the engine REFUSES `auto` on it (probe 99)
   const pickFirst = async (props: Record<string, unknown>) => {
     const decisions: unknown[] = [];
     const { stdin, lastFrame } = mount({ ...props, onDecision: (o: unknown) => decisions.push(o) });

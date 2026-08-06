@@ -1522,17 +1522,17 @@ export function useChat(
       // Only ever switch a model we actually KNOW. When `model` is undefined (an `attach` client that has
       // not seen a turn end) the old code resolved it to DEFAULT_AUTO_MODEL and switched — downgrading a
       // session whose model the user deliberately chose. Say what we can't determine instead of guessing.
-      if (model === undefined) notice("auto — can't check this client's model; if it doesn't support auto the engine falls back to default");
+      if (model === undefined) notice("auto — can't check this client's model; if it doesn't support auto the engine will refuse the mode");
       else {
         const target = resolveAutoModel(model);
         if (model !== target) {
           // Same rule as the mode below (and as host.ts's applyPlanUpgrade): the MODEL truth moves only once
           // the engine took the swap, and a refused swap is reported rather than announced as done. The old
           // `.catch(() => {})` painted the new model and claimed the switch either way, so a failed swap left
-          // the chip on a model the session isn't running while auto quietly fell back to default.
+          // the chip on a model the session isn't running while the engine refused auto outright (probe 99).
           let swapped = true;
           try { await session.setModel(target); }
-          catch (e) { swapped = false; if (!disposed.current) append([{ text: `✗ auto — model swap to ${target} failed (${(e as Error)?.message ?? e}); ${model} doesn't support auto, so the engine may fall back to default`, color: role("error") }]); }
+          catch (e) { swapped = false; if (!disposed.current) append([{ text: `✗ auto — model swap to ${target} failed (${(e as Error)?.message ?? e}); ${model} doesn't support auto, so the engine will refuse the mode`, color: role("error") }]); }
           if (disposed.current) return;
           if (swapped) {
             setModel(target);
