@@ -461,15 +461,24 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         : state.rewinding
         ? <RestoringModal />
         : state.rewindPicker.open
-          ? <RewindPicker anchors={state.rewindPicker.anchors} onDryRun={rewindDryRun} onConfirm={confirmRewind} onClose={closeRewindPicker} />
+          ? <RewindPicker anchors={state.rewindPicker.anchors} onDryRun={rewindDryRun} onConfirm={confirmRewind} onClose={closeRewindPicker} rows={terminalRows()} columns={terminalColumns()} />
           : state.bgPanelOpen
             ? <BgTasksPanel tasks={state.bgRows} onStop={stopBgTask} onClose={closeBgPanel} columns={terminalColumns()} />
             : state.modelPicker.open
               // F6 T11: `savePrefs` reaches the picker for the same reason it reaches SettingsDialog and
               // ThemeDialog — Enter here writes the default model, and the write seam is injectable so a
               // test never touches the real prefs file.
+              //
+              // WAVE R TASK 5 (qa2-10a) — `rows`/`columns` are Task 1's state, and every dialog in this chain
+              // that ACCEPTS them now gets them (ModelPicker, RewindPicker, SessionPicker, PlanDialog's height).
+              // They were declared and never passed, so each fell through to `Select`'s own
+              // `process.stdout.rows ?? 24` / `.columns ?? 80` defaults — evaluated at the width the dialog
+              // mounted at, with no route back to the terminal afterwards. Threading the state is the whole
+              // fix: it is one source of size for the tree, it re-renders on SIGWINCH like everything else,
+              // and it keeps `deps.columns` authoritative so a test pins the dialogs and the composer alike
+              // (a second `process.stdout` read inside the dialog would silently ignore that pin).
               ? <ModelPicker models={state.modelPicker.models} current={state.modelPicker.current} sessionModel={state.modelPicker.sessionModel}
-                  onPick={pickModel} onCancel={closeModelPicker} savePrefs={deps?.savePrefs} />
+                  onPick={pickModel} onCancel={closeModelPicker} savePrefs={deps?.savePrefs} rows={terminalRows()} columns={terminalColumns()} />
               // W3 T4/T5/T7: the four new settings-surface dialogs slot HERE, between modelPicker and picker,
               // in the order settings → permissions → theme → addDir (plan Global Constraints line 38);
               // settings goes immediately after this modelPicker arm precisely so its Model row can reuse
@@ -497,7 +506,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                   ? <AddDirDialog prefill={state.addDir.prefill} onValidate={addDirValidate} onConfirm={confirmAddDir} onCancel={cancelAddDir} />
                   : state.picker.open
                   ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker}
-                      loadMessages={previewSession} renameSession={renamePickedSession} />
+                      loadMessages={previewSession} renameSession={renamePickedSession} rows={terminalRows()} columns={terminalColumns()} />
                   // F6 TASK 5 (t5-fix) — THE COMPOSER'S SLOT IS EMPTY WHILE A DIALOG IS VISIBLE. `owner ===
                   // "decision"` is exactly upstream's `on === "visible"` (a decision is parked, no overlay is
                   // over it, and the draft is idle), and `KVf`'s gate at L549494 renders no prompt input in
@@ -515,7 +524,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     // in bypass cannot be granted it. `state.model` is undefined on an attach client until a
                     // turn ends, which PlanDialog reads as "auto not available".
                     ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)}
-                        model={state.model} bypassAvailable={hookOpts?.initialMode === "bypassPermissions"} />
+                        model={state.model} bypassAvailable={hookOpts?.initialMode === "bypassPermissions"} rows={terminalRows()} />
                     : null
                   : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} onInputActivity={noteInputActivity} waitingForPermission={inputOwnerRef.current === "typing"} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} searchHintFiredRef={searchHintFiredRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} sessionId={state.sessionId} project={cwd}
                       // F5 t12: the composer's disk seed, its history append and now its inline search all
