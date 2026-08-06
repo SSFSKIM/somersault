@@ -582,6 +582,44 @@ surface under test. Probes needing a clean session must set `settingSources: []`
     pager close path actually invalidates that accounting. The decision is provisional until the pager's
     real mechanism is read; the durable requirement is that a width change must invalidate Ink's erase
     accounting, however that is reached.
+12. **Claude Code has a second rendering mode the programme had never seen, and the owner runs it.**
+    `~/.claude/settings.json` line 268 carries `"tui": "fullscreen"` (controller-verified, read-only).
+    Fullscreen enters the **alternate screen buffer** (`ESC[?1049h` in the raw pty bytes) and bottom-anchors
+    the prompt; the default is inline with no anchor. Bundle: the wrapper `cZo` (L455844) has three
+    branches — fullscreen (L455888) is a `flexGrow:1` sticky scroller over a `flexShrink:0` prompt block
+    capped at `rows − 2`; **the default branch (L455996) is a bare fragment with no height and no anchor,
+    which is structurally what ccx already does**. `CLAUDE_CODE_NO_FLICKER=1` forces the mode.
+    **`qa2-12` is therefore not a defect** — at 100×40 with the screen pre-filled with markers, ccx and
+    upstream-default put the composer within one row of each other and *neither* pads below; the "30 blank
+    rows" were unwritten pane rows that `tmux capture-pane` cannot distinguish from painted ones. It is
+    reclassified from defect to **unimplemented mode**. The larger point outlives the finding: **the
+    owner's daily experience of Claude Code is a mode ccx does not implement at all**, so their reports
+    and the fleet's isolated-HOME measurements describe two different programs. This also supplies the
+    leading MOUSE-1 hypothesis — the alternate screen has no native scrollback, so a fullscreen TUI must
+    handle wheel and click itself.
+13. **EP-R1's `[DECIDED-AUTO]` is refuted, and upstream's real mechanism is now known to the byte.**
+    The ctrl+o pager close path is `onClose={() => setTranscriptOpen(false)}` — a `useState` setter and
+    nothing else; there is no clear anywhere in the pager. What the fleet recorded as "the pager close path
+    already clears" was just a React re-render rebuilding width-derived strings, which any keystroke does
+    equally well, and which does **not** remove the residue. The decision had no referent. What upstream
+    actually does (every anchor re-opened and every constant resolved by the controller): it does not ship
+    stock Ink's renderer at all (`grep -c previousLineCount` → **0**), owning its own screen cell buffer;
+    it subscribes at L180674; it branches on a width mismatch at L178320 into `TJr` (L178440), which emits
+    a `clearTerminal` op and repaints every cell. The bytes (L177120, L176982-176990, L166348, L166401-402):
+    **inline** = `ESC[H` + (`ESC[2K` `ESC[1B`) × viewportRows + `ESC[H`, **deliberately without `ESC[3J`
+    so the scrollback transcript survives**; **fullscreen** = `ESC[2J` `ESC[3J` `ESC[H`.
+    A second ccx defect surfaced alongside: **nothing in `harness/src/` subscribes to resize at all**, and
+    Ink's own handler only re-runs Yoga layout and re-serializes the existing tree without re-rendering
+    React — so width-derived strings freeze at the launch width. Two independent defects; a fix must
+    address both. **A naive port of upstream's sequence is wrong for ccx** — upstream's renderer owns the
+    whole viewport and can repaint every visible cell, while ccx's visible screen is partly Ink `<Static>`
+    output Ink will not re-emit, so erasing the viewport and homing would orphan the transcript. Recorded
+    design direction, to be tested rather than assumed: make terminal size real React state, and erase
+    exactly the **physical** rows the previous frame occupies *at the new width*.
+14. **`qa2-09`'s "self-heals at end of turn" is refuted.** After four mid-turn resizes the grounding run
+    saw four `esc to interrupt` rows carrying three different elapsed times in one frame, and after
+    interrupting, **every stale spinner row persisted verbatim**. The mid-stream case is worse than filed,
+    not better.
 
 ## §13 Tracking map
 
