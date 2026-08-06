@@ -494,6 +494,7 @@ which are opportunistic.
 | ~~MOUSE-1: does click-to-expand reproduce?~~ **SETTLED 2026-08-06 (§12 item 17)** — yes, live-reproduced, but only inside the **fullscreen renderer**, which the owner runs and the fleet's isolated profile did not. Upstream advertises it in its own switch notice (L453184). Both testimonies stand; the fleet's finding is re-scoped to the inline renderer. No terminal name or screen recording needed | — | closed 2026-08-06 |
 | **MOUSE-1 residual (a):** is the `tengu_pewter_brook` remote gate a broad default or a rollout cohort? Measured on one account only. If broad, most users drift into fullscreen after their first session and the fullscreen renderer's priority rises sharply | Controller (second account) | Before the fullscreen scope call |
 | **MOUSE-1 residual (b):** which row does the owner click — the collapsed `Ran N shell commands` summary, or something literally reading `+N lines (ctrl+o to expand)`? The latter was never seen as a click target in fullscreen across twelve polls | Owner | Whenever convenient; does not block Wave R |
+| **HLJS-1:** EP-R5 needs a real `highlight.js` dependency to match upstream's diff tokenizing (24-scope truecolor map, ~383 languages). This reverses a recorded decision — `highlight.ts` was written zero-dep *explicitly* because fenced code was a LOW row. **Controller recommends taking the dependency**: same structural work either way, this is P1, fidelity is the programme's stated goal, and ~1 MB is noise beside the SDK's bundled ~270 MB binary. Proceeding on that basis unless overridden | Owner (override only) | Wave R spec review |
 | **FULLSCREEN-1:** does upstream's fullscreen renderer become a ccx roadmap item, and at what priority? It is a whole rendering mode (alternate screen, app-owned scrollable viewport, three mouse affordances) that ccx lacks entirely, and it is the mode the owner experiences daily. Out of scope for Wave R either way | Owner, with a controller recommendation | Wave R close-out |
 | ~~`ctrl+e` explain-command feasibility~~ **LANDED**: fully reproducible headlessly — one forced-tool Messages call (`explain_command`, 4-field schema) against the current main model, 3-row render. Scoped into EP-T2 | — | closed 2026-08-06 |
 | `#` memory mode and the ccx-extra context %% (qa6-13, qa1-10): keep or drop | Owner, surfaced at Wave C spec review | Wave C spec time |
@@ -695,6 +696,38 @@ surface under test. Probes needing a clean session must set `settingSources: []`
     trust dialog, which looks exactly like "fullscreen won't turn on". **Absence of `ESC[?1049h` means
     "never reached the REPL", not "fullscreen is off"** — this is what blocked the parallel agent at
     item 15.
+18. **EP-R5's observation is confirmed; its proposed fix shape is not.** Upstream really does tokenize
+    inside diff bodies — on one added row, five distinct foregrounds over a single constant background
+    (`export`, `const`, an identifier, a string, a number, each its own colour). Two corrections follow.
+    **(a) Removed lines are NOT tokenized, and ccx's flat removed row is already correct.**
+    Controller-verified verbatim at **L419813**:
+    `let { lineNumber: g, marker: y, code: _ } = d[m], E = y === "-" ? [[cWo(o), _]] : i2p(s, _, o), ...`
+    — the `-` branch emits one style/text pair; only the non-`-` branch tokenizes. Building highlighting
+    into removed rows would be a *regression*. **(b) The composition is band-under-token**: the diff owns
+    only the background. Pinned live on a word-diff row where one string token kept a single foreground
+    while its background flipped and flipped back; mechanism `ZmH` at L419733 (`{ ...c, background: ... }`).
+    **The load-bearing assumption — "the highlighter exists; apply it per diff row" — is wrong.**
+    `harness/src/tui/highlight.ts` is a clone of upstream's **markdown fenced-code** map `DhH` (L420495):
+    four chalk colours, ten languages, and its own header records the trade — *"zero-dep syntax highlighter
+    for fenced code (spec Decision Log: no 1MB dep for a LOW row)"*. The **diff** path is a different
+    renderer entirely: real highlight.js behind a 24-scope truecolor map (`K$p`, L419855) over ~383 hljs
+    names and aliases. ccx also ported upstream's *fallback* renderer `H2p` (L419987) — the branch upstream
+    takes only when highlighting is **off**.
+    Mechanically the reuse is possible (`highlightCode` is per-line callable and returns `Segment[]`;
+    `Segment` at `render.ts:18` carries `color` and `bg` independently, so band-over-token is a spread),
+    but it needs segment-aware wrapping (`diffRender.ts:152` `plainRows` rewrite) and the word-diff arm's
+    order inverted — **the same structural work either way**, ending either visibly right or visibly wrong.
+    **Controller recommendation, open to owner override (§11 HLJS-1): take the real dependency.** The
+    original trade was made explicitly for a LOW-priority surface; this is P1, the programme's stated goal
+    is fidelity over convenience, and ~1 MB of `node_modules` is noise beside the Agent SDK's bundled
+    ~270 MB CLI binary. Reusing `highlight.ts` costs the same work and still misses the palette and ~373 of
+    ~383 languages.
+    **One caution the report did not raise:** every RGB above was measured on 2.1.223 under one theme.
+    Band colours must be pinned **per theme** before ccx's are called wrong — the fenced-code precedent in
+    `highlight.ts`'s header is that upstream's code colours are deliberately theme-*independent*, so the
+    diff path's theme behaviour is an open question, not an assumption. Version drift is otherwise nil:
+    every RGB matches a 2.1.220 constant, and `strings -a` on the 223 binary still carries
+    `Monokai Extended`, `addDecoration`, `deleteWord`.
 
 ## §13 Tracking map
 
