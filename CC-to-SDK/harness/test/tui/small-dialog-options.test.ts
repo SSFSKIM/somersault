@@ -63,7 +63,7 @@ describe("WebFetch (`ull` L506735-816 · `Wtm` L506721-730 · `fid` L228310-318)
     expect(labels(options)).toEqual([
       "Yes",
       "Yes, and don't ask again for example.com",
-      "No (esc)",
+      "No, and tell Claude what to do differently (esc)",
     ]);
     expect(values(options)).toEqual(["yes", "yes-dont-ask-again-domain", "no"]);
     // `ull` builds its No from a plain label with no `feedbackConfig` (L506757-771): it can never become a
@@ -71,17 +71,20 @@ describe("WebFetch (`ull` L506735-816 · `Wtm` L506721-730 · `fid` L228310-318)
     expect(options.every((o) => o.type === undefined)).toBe(true);
   });
 
-  // Wave T t8 (spec W-T18 / A15). A DELIBERATE DIVERGENCE, and the only one in this file: upstream's label
-  // reads `No, and tell Claude what to do differently (esc)` (L506767-770) while the same component hangs no
-  // `feedbackConfig` on the row and `Wtm` (L506721-730) has no feedback arm — so the clause names a channel
-  // upstream cannot deliver either, and reproducing it faithfully reproduced a promise the dialog breaks. The
-  // `(esc)` STAYS: this body is footerless by transcription, so the label is the only place its escape hint
-  // lives (which is also why no ConsultFooter is mounted here).
-  it("its No row promises no feedback channel, and keeps the inline (esc) hint (wave T t8)", () => {
+  // CANON PIN, wave T t8 — this label is a TRANSCRIPTION, do not "fix" it. A trust review read `and tell
+  // Claude what to do differently` as a promise of a channel this row cannot deliver and t8's first pass cut
+  // the clause; both halves of that were wrong. Upstream ships these exact words on this row (L506771) and on
+  // the browser dialog's twin (L544640), plus `Deny, and tell Claude what to do differently (esc)` at
+  // L503212 — its standing idiom for a LABEL-form decline row, the same words the INPUT-form rows carry as a
+  // `placeholder` (L504874, L505650, L506294). And the sentence is true: declining returns the human to the
+  // composer, where telling Claude what to do differently is simply the next message. What the row genuinely
+  // cannot do — carry feedback INLINE, because no `feedbackConfig` hangs on it and `Wtm` has no feedback arm
+  // — is upstream's structure and is pinned by the bare-deny assertion below. `(esc)` is load-bearing too:
+  // this dialog is footerless, so the label is the only place its escape hint lives.
+  it("CANON PIN: the No row's label is upstream's L506771 string, character for character", () => {
     const no = fetchOptions({ hostname: "example.com" }).find((o) => o.value === "no")!;
-    expect(no.label).toBe("No (esc)");
-    expect(no.label).not.toContain("tell Claude");
-    expect(no.type).toBeUndefined();
+    expect(no.label).toBe("No, and tell Claude what to do differently (esc)");
+    expect(no.type).toBeUndefined();                       // a plain label row: no inline feedback field
     expect(fetchDecision("no", { toolName: "WebFetch", hostname: "example.com" })).toEqual({ kind: "deny" });
   });
 

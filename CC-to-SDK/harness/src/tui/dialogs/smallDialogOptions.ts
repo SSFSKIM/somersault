@@ -99,16 +99,22 @@ export function fetchUrl(input: Record<string, unknown>): string {
  *  `feedbackConfig` on it (unlike Skill/Monitor/generic), so it can never become a text row and this dialog
  *  has no Tab-to-feedback affordance at all. The `(esc)` in the label is the footer the others get.
  *
- *  ONE DELIBERATE DIVERGENCE FROM THE LABEL (wave T t8, spec W-T18 / A15): upstream reads `No, and tell
- *  Claude what to do differently (esc)` (L506767-770), and that clause is undeliverable in BOTH harnesses —
- *  no `feedbackConfig` on the row, no feedback arm in `Wtm` (L506721-730), so the row can only ever send a
- *  bare deny. Transcribing it faithfully transcribed a promise the dialog breaks, which is the one class of
- *  fidelity this wave trades away. The `(esc)` STAYS, and no `ConsultFooter` is mounted here: this body is
- *  footerless by transcription, so the label is the only place its escape hint can live. */
+ *  CANON PIN, wave T t8 — the No row's copy is a TRANSCRIPTION and stays byte-for-byte. A trust review read
+ *  `and tell Claude what to do differently` as a promise of a channel this dialog cannot deliver, and the
+ *  first pass of t8 cut the clause; that was wrong twice over. It is not a one-off phrase: upstream ships it
+ *  verbatim on this row (L506771) AND on the browser dialog's twin (L544640), with `Deny, and tell Claude
+ *  what to do differently (esc)` at L503212 — it is upstream's standing idiom for a LABEL-form decline row,
+ *  the same words the INPUT-form rows carry as their `placeholder` (L504874, L505650, L506294). And it is
+ *  true as written: declining returns the human to the composer, where telling Claude what to do differently
+ *  is the next message rather than text attached to the denial. That reading holds in both harnesses.
+ *  What IS structural — and is upstream's structure, not our defect — is that no `feedbackConfig` hangs on
+ *  this row and `Wtm` (L506721-730) has no feedback arm, so the row itself can only ever send a bare deny.
+ *  The `(esc)` is load-bearing besides: no `ConsultFooter` is mounted here (this body is footerless by
+ *  transcription), so the label is the only place this dialog's escape hint lives. */
 export function fetchOptions({ hostname }: { hostname: string }): SelectOption[] {
   const options: SelectOption[] = [yesRow(false)];
   if (hostname !== "") options.push({ label: `Yes, and don't ask again for ${hostname}`, value: "yes-dont-ask-again-domain" });
-  options.push({ label: "No (esc)", value: "no" });
+  options.push({ label: "No, and tell Claude what to do differently (esc)", value: "no" });
   return options;
 }
 
