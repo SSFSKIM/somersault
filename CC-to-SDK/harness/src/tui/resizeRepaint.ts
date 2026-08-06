@@ -167,6 +167,14 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
     void deps.probe({ colBefore: parkedCol, oldWidth, newWidth }).then((answer) => {
       probing = false;
       if (answer !== "unknown") verdict = answer;
+      // THE VERDICT SURVIVES A LATER DRAG; THE MEASUREMENT DOES NOT. `probeReflow` waits up to 750 ms, and every
+      // row count in `sample` was taken at `sample.newWidth`. If the terminal has been dragged again since, the
+      // frame on screen re-wrapped to a different height and the sample's erase is measured against a width that
+      // no longer exists — a shrink to 80 followed by a widen to 200 mid-flight erases 13 rows over 7 occupied,
+      // i.e. six live transcript rows, the over-erase this whole correction exists to avoid. So keep the answer
+      // (it describes the TERMINAL) and abandon the emission (it described a screen that is gone). The next
+      // shrink takes the cached-verdict path and is corrected synchronously, with no stale sample at all.
+      if (deps.size().columns !== sample.newWidth) return;
       const seq = correctionAfterRepaint(sample, answer, deps.lastFrame(), deps.parkedColumn());
       if (seq) deps.repaint(seq);
     });

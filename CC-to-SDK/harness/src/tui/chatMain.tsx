@@ -41,6 +41,9 @@ export interface ResumeSafeStdout {
   lastFrame(): string | undefined;
   /** The column the cursor is parked in, or 0 if it is not parked (W-R t4 — see `parkSequence`). */
   parkedColumn(): number;
+  /** Terminal bookkeeping straight to the tty: never recorded as a frame, and it moves the cursor off the park,
+   *  so the park is forgotten with it (W-R t4 — task 4's synchronous erase run is the only caller). */
+  emitRaw(s: string): void;
 }
 
 /** Ink's erase prefix: `ansiEscapes.eraseLines(n)` is a run of `\x1b[2K` / `\x1b[1A` closed by `\x1b[G`. It is
@@ -84,12 +87,21 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   // so an erase measured off it is NOT guaranteed to land on the under-erase side; EP-R4 resynchronizes the recorded
   // geometry after this branch. `clearTerminal` is `\x1b[2J\x1b[3J\x1b[H` (and `\x1b[2J\x1b[0f` on old Windows) —
   // both open with `\x1b[2J`, which no other write Ink makes ever does.
+  // BOTH NON-FRAME BRANCHES ALSO FORGET THE PARK (W-R t4 review). `parkedCol` claims the cursor is sitting in a
+  // row of our own padding; a `\x1b[2J…\x1b[H` or an `eraseLines` run moves it somewhere else entirely, and the
+  // proxy is the only thing that knows. Measured on the tall-frame branch: `parkedColumn()` reported 117 while the
+  // cursor was at column 20. Three things read that lie, all of them badly — `probeReflow` gets a `colBefore` the
+  // cursor is not in, so the reply cannot match and the verdict caches as `"truncate"` for the whole session
+  // (permanently disabling the correction; the rarer coincidental match caches a false `"reflow"` on an unmeasured
+  // terminal); the exit unpark erases whatever row the cursor is genuinely on; and a following escapes-only write
+  // would re-park, padding a row Ink is about to repaint from. Zero means "not parked", which is the truth after
+  // either write.
   const record = (chunk: unknown): boolean => {
     if (typeof chunk !== "string") return false;
-    if (chunk.startsWith("\x1b[2J")) { justErased = false; return false; }
+    if (chunk.startsWith("\x1b[2J")) { justErased = false; parkedCol = 0; return false; }
     const prefix = chunk.match(INK_ERASE_PREFIX)?.[0] ?? "";
     const body = chunk.slice(prefix.length);
-    if (body === "") { justErased = true; frame = undefined; return false; }
+    if (body === "") { justErased = true; frame = undefined; parkedCol = 0; return false; }
     // Ink's log() writes `str + "\n"` and its <Static> chunk ends the same way, so a body that does NOT end in a
     // newline is nobody's frame — it is another consumer of this same stdout (W-R t4: the keymap's DECSET writes,
     // suspend's cursor show/hide). Recording those used to clobber `lastFrame()` with a bare escape sequence, and
@@ -114,10 +126,19 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   const write = ((...args: any[]): boolean => {
     if (!suppressNextWrite) {
       // Ink itself never notices the park (every write it makes opens with a full-line erase or homes the column),
-      // but anything else sharing this tty would paint from column 117 — ctrl+z's cursor hand-off to the shell and
-      // the keymap's DECSET writes both come through here. Home the cursor for those, then put the park back if
-      // the write could not have moved it; a write that PAINTS gets no park until the next frame, because padding
-      // over what it just printed would erase it.
+      // but anything else sharing this tty would paint from column 117 — the keymap's DECSET writes and suspend's
+      // cursor show/hide both come through here. Home the cursor for those, then put the park back if the write
+      // could not have moved it; a write that PAINTS gets no park until the next frame, because padding over what
+      // it just printed would erase it.
+      // WHAT THIS DOES *NOT* DO, stated because the previous version of this comment claimed otherwise (t4 review):
+      // it does not hand an unparked cursor to the shell on ctrl+z. `suspendProcess` and `suspendInput` write only
+      // escape sequences (`\x1b[?25h`, `\x1b[?2004l`), so each one is homed, written, and then RE-PARKED by the
+      // rule above — the shell inherits the cursor at column 117 on a row of our spaces. That re-park is the same
+      // rule the launch sequence depends on (the DECSET pair and the cursor hide are the only writes between the
+      // first frame and the first resize; dropping the park for them made the first probe report `colBefore = 0`),
+      // so it is not removable from here, and telling the two apart inside the proxy is not possible — the bytes
+      // are identical. A live tmux ctrl+z under bash showed no visible damage, so it stays as measured cosmetics
+      // rather than a guess at a fix; the EXIT path unparks explicitly (see `runChatClient`'s `finally`).
       const chunk = typeof args[0] === "string" ? args[0] as string : "";
       const foreign = parkedCol > 0 && !INK_WRITE_HEAD.test(chunk);
       if (foreign) { targetWrite("\x1b[G"); parkedCol = 0; }
@@ -143,6 +164,9 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
     stdout: stream,
     lastFrame() { return frame; },
     parkedColumn() { return parkedCol; },
+    // `eraseLines` leaves the cursor at column 1 of the topmost row it cleared, so after this the park is gone from
+    // the screen — and a `parkedCol` that still claimed 117 would have the exit unpark erase a live row.
+    emitRaw(s) { if (stdout.isTTY) targetWrite(s); parkedCol = 0; },
     repaint(runInkWrite) {
       suppressNextWrite = true;
       try { runInkWrite(); } finally { suppressNextWrite = false; }
@@ -213,15 +237,16 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // W-R t4: the resize correction. The listener goes up BEFORE render() on purpose — Ink subscribes to `resize` in
   // its constructor (`ink.js:77`) and repaints synchronously, so a listener added afterwards could never get ahead
   // of it, and the erase would land on top of the new frame instead of the stale one. `emit` goes straight to the
-  // tty (bookkeeping, not a frame — the recorder must not adopt it), while `repaint` goes through Ink's own stdout
-  // so an erase-plus-frame write re-records the frame and re-parks the cursor on it. The DSR reply comes back the
-  // long way round: the keymap provider owns the ONE raw-stdin reader, and forwards unclaimed escape sequences to
-  // `onUnknownSequence` — that forward has existed since task 3 and is inert until wired here.
+  // tty through `emitRaw` (bookkeeping, not a frame — the recorder must not adopt it; and it walks the cursor off
+  // the park, which is why it is the proxy's own method and not a bare `process.stdout.write`), while `repaint`
+  // goes through Ink's own stdout so an erase-plus-frame write re-records the frame and re-parks the cursor on it.
+  // The DSR reply comes back the long way round: the keymap provider owns the ONE raw-stdin reader, and forwards
+  // unclaimed escape sequences to `onUnknownSequence` — a forward that has existed since task 3, inert until here.
   const reports = createCursorReports();
   const resize = createResizeRepaint({
     lastFrame: output.lastFrame, parkedColumn: output.parkedColumn,
     size: () => ({ columns: process.stdout.columns ?? 0, rows: process.stdout.rows ?? 0 }),
-    emit: (s) => { if (process.stdout.isTTY) process.stdout.write(s); },
+    emit: output.emitRaw,
     repaint: (s) => { if (process.stdout.isTTY) output.stdout.write(s); },
     probe: (a) => probeReflow({ write: (s) => { process.stdout.write(s); }, onReply: reports.onReply, ...a }),
   });

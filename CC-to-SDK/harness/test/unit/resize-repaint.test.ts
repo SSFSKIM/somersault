@@ -122,20 +122,26 @@ describe("createForceRepaint — a render Ink's own dedupe cannot swallow (share
 });
 
 describe("createResizeRepaint — the driver", () => {
+  const flush = (): Promise<void> => new Promise((r) => { setTimeout(r, 0); });
   const rig = (opts: { frame?: string | undefined; verdicts?: ReflowVerdict[] } = {}) => {
-    let columns = 120, parked = 117;
+    let columns = 120, parked = 117, frame: string | undefined = "frame" in opts ? opts.frame : SP_R0;
     const emitted: string[] = [], repainted: string[] = [], probes: Array<{ colBefore: number; oldWidth: number; newWidth: number }> = [];
     const verdicts = [...(opts.verdicts ?? ["reflow"])];
     let resolve: ((v: ReflowVerdict) => void) | undefined;
     const driver = createResizeRepaint({
-      lastFrame: () => ("frame" in opts ? opts.frame : SP_R0),
+      lastFrame: () => frame,
       parkedColumn: () => parked,
       size: () => ({ columns, rows: 40 }),
       emit: (s) => { emitted.push(s); },
       repaint: (s) => { repainted.push(s); },
       probe: (a) => { probes.push(a); const next = verdicts.shift(); return next ? Promise.resolve(next) : new Promise((r) => { resolve = r; }); },
     });
-    return { driver, emitted, repainted, probes, resize: (to: number) => { columns = to; driver.onResize(); parked = parkColumn(to); }, settle: (v: ReflowVerdict) => resolve?.(v) };
+    return { driver, emitted, repainted, probes,
+      resize: (to: number) => { columns = to; driver.onResize(); parked = parkColumn(to); },
+      /** Ink repaints and the proxy re-parks on the new frame — the live state the async continuation has to read
+       *  instead of the sample it took when SIGWINCH fired. */
+      repaintedAs: (next: string) => { frame = next; parked = parkColumn(columns); },
+      settle: (v: ReflowVerdict) => resolve?.(v) };
   };
 
   it("probes on the first shrink and corrects asynchronously when the answer is reflow", async () => {
@@ -186,6 +192,52 @@ describe("createResizeRepaint — the driver", () => {
     r.resize(60);
     expect(r.probes.length).toBe(1);
     r.settle("reflow");
+  });
+
+  // THE STALE-SAMPLE AXIS (t4 review). `probeReflow` waits up to 750 ms and everything in the sample was measured
+  // at the width the drag landed on. Three separate things can move underneath it before the answer arrives.
+
+  // 1. THE WIDTH. Driven against the real driver, a shrink to 80 + a widen to 200 mid-probe + a "reflow" answer
+  // erased 13 rows over 7 occupied — six live transcript rows, the exact over-erase this wave exists to prevent.
+  // The verdict is still a fact about the terminal, so it is kept; only the emission is abandoned.
+  it("abandons the correction when the terminal is no longer the width the sample was measured at", async () => {
+    const r = rig({ verdicts: [] });
+    r.resize(80);                                                         // probe goes out, answer not back yet
+    r.resize(200);                                                        // …and the user keeps dragging
+    r.settle("reflow");
+    await flush();
+    expect(r.repainted).toEqual([]);                                      // nothing emitted against a width that is gone
+    expect(r.emitted).toEqual([]);
+    r.resize(120);                                                        // but the verdict was cached all the same:
+    expect(r.probes.length).toBe(1);                                      // …no second probe…
+    expect(r.emitted).toEqual([correctionBeforeRepaint({ frame: SP_R0, parkedCol: 197, oldWidth: 200, newWidth: 120, rows: 40 }, "reflow")]);
+  });
+
+  // 2. THE FRAME AND THE PARK. By the time the answer lands Ink has repainted (possibly more than once) and the
+  // proxy has re-parked on whatever it painted. The erase has to cover THAT frame and write THAT frame back;
+  // reusing the sample's would erase the wrong height and then paint a frame the screen has moved on from.
+  it("erases and repaints the frame that is on screen now, not the one the sample captured", async () => {
+    const r = rig({ verdicts: [] });
+    r.resize(80);
+    const now = ["x".repeat(30), "y"].join("\n") + "\n";                  // shorter than SP_R0, and parked at 77
+    r.repaintedAs(now);
+    r.settle("reflow");
+    await flush();
+    expect(r.repainted).toEqual([correctionAfterRepaint({ frame: SP_R0, parkedCol: 117, oldWidth: 120, newWidth: 80, rows: 40 }, "reflow", now, 77)]);
+    expect(r.repainted[0]?.endsWith(now)).toBe(true);                     // the live frame goes back, not the stale one
+    expect(r.repainted[0]?.includes(SP_R0)).toBe(false);
+  });
+
+  // 3. THE TRACKED WIDTH ITSELF. `onResize` compares against the width it last saw, not the width at startup — a
+  // 120 → 80 → 100 sequence ends on a GROW. A driver that never advanced its own `width` would read the last step
+  // as 120 → 100, a shrink, and correct a resize that has nothing to correct.
+  it("advances the width it compares against, so a later grow is still a grow", async () => {
+    const r = rig();
+    r.resize(80);
+    await vi.waitFor(() => expect(r.repainted.length).toBe(1));
+    r.resize(100);
+    expect(r.emitted).toEqual([]);
+    expect(r.repainted.length).toBe(1);
   });
 
   it("never probes or corrects on a grow, a height-only resize, or with no recorded frame", () => {
@@ -247,6 +299,52 @@ describe("the parked cursor", () => {
     out.stdout.write("\x1b[?25h");
     expect(chunks).toEqual(["\x1b[G", "\x1b[?25h", parkSequence(117)]);   // …and put straight back: it painted nothing
     expect(out.parkedColumn()).toBe(117);
+  });
+
+  // A PARK THE CURSOR HAS LEFT IS A LIE, AND EVERY READER OF IT IS HARMED (t4 review). Ink's tall-frame branch
+  // opens with `clearTerminal`, which homes the cursor; measured on the real proxy, `parkedColumn()` went on
+  // reporting 117 while the cursor sat at column 20. `probeReflow` would then be handed a `colBefore` the cursor is
+  // not in, could not match the reply, and would cache `"truncate"` for the whole session — permanently disabling
+  // the correction (or, on a coincidental match, caching a false `"reflow"` on a terminal nobody measured).
+  it("forgets the park across Ink's tall-frame clearTerminal write", () => {
+    const chunks: string[] = [];
+    const terminal = { isTTY: true, columns: 120, rows: 40, write: (c: string) => { chunks.push(c); return true; } };
+    const out = createResumeSafeStdout(terminal as never);
+    out.stdout.write(inkEraseLines(3) + "one\ntwo\n");
+    expect(out.parkedColumn()).toBe(117);
+    chunks.length = 0;
+    out.stdout.write("\x1b[2J\x1b[3J\x1b[H" + "scrollback\n" + "one\ntwo\n");   // ink.js:121-124, one chunk
+    expect(out.parkedColumn()).toBe(0);
+    expect(chunks).toEqual(["\x1b[2J\x1b[3J\x1b[H" + "scrollback\n" + "one\ntwo\n"]);   // no park written after it
+    expect(out.lastFrame()).toBe("one\ntwo\n");                            // and the chunk itself is still not a frame
+  });
+
+  // The same rule for the other write that moves the cursor without painting: `eraseLines` leaves it at column 1 of
+  // the topmost row it cleared. A `parkedCol` that stayed at 117 would have the exit unpark clear a row the cursor
+  // is genuinely on, and would re-park a following escapes-only write onto a row Ink is about to repaint from.
+  it("forgets the park across an erase-only write", () => {
+    const chunks: string[] = [];
+    const terminal = { isTTY: true, columns: 120, rows: 40, write: (c: string) => { chunks.push(c); return true; } };
+    const out = createResumeSafeStdout(terminal as never);
+    out.stdout.write(inkEraseLines(3) + "one\n");
+    expect(out.parkedColumn()).toBe(117);
+    out.stdout.write(inkEraseLines(2));                                    // log.clear()
+    expect(out.parkedColumn()).toBe(0);
+    expect(out.lastFrame()).toBeUndefined();
+  });
+
+  // Task 4's synchronous erase run does not go through Ink's stdout (the recorder must not adopt it as a frame), so
+  // it would otherwise leave `parkedCol` claiming a column the erase has just walked the cursor out of.
+  it("emitRaw writes straight to the tty, records nothing, and drops the park", () => {
+    const chunks: string[] = [];
+    const terminal = { isTTY: true, columns: 120, rows: 40, write: (c: string) => { chunks.push(c); return true; } };
+    const out = createResumeSafeStdout(terminal as never);
+    out.stdout.write(inkEraseLines(3) + "one\n");
+    chunks.length = 0;
+    out.emitRaw(inkEraseLines(5));
+    expect(chunks).toEqual([inkEraseLines(5)]);
+    expect(out.parkedColumn()).toBe(0);
+    expect(out.lastFrame()).toBe("one\n");                                 // an erase is bookkeeping, never a frame
   });
 
   // The park at launch has to survive the writes that land BETWEEN the first frame and the first resize — at the
