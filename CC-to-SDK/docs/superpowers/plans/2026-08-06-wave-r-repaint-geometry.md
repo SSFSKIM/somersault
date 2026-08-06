@@ -251,7 +251,15 @@ repeated above — use it verbatim).
 > happened, so "park at `newWidth + 1`" is not available, and it would be wrong anyway: the re-review found
 > that `newWidth + 1` re-wraps to exactly column 1, which is the one value a terminal might also report by
 > homing the cursor. Near-margin answers (`<= 1` or `>= newWidth − 1`) are now refused for that reason.
-> **Park near the far right instead** (e.g. `oldWidth − 1`) after each frame write. That satisfies `colBefore > newWidth` for every shrink, and lands
+> **Park a few columns in from the far right — `oldWidth − 3`, not `oldWidth − 1`.** Task 3's fixer
+> enumerated the domain and I re-ran it: parking at 119 answers **99 of 118** possible new widths from a
+> 120-column start but permanently refuses the **exact-half drag** (120→60 wraps to 59, i.e. `newWidth − 1`);
+> parking at 117 answers **105 of 118** and puts 120→60 on column 57, comfortably interior. The exact-half
+> drag is one of the commonest resizes a person performs, so this is not a marginal gain.
+> **Also raise `probeReflow`'s default timeout from 150 ms to ~750 ms** — it is now a one-shot fuse (one
+> timeout ends probing for the session), so on any link slower than 150 ms the first shrink would kill the
+> feature permanently. One success caches forever, so a generous timeout costs nothing.
+> The original note, for context: That satisfies `colBefore > newWidth` for every shrink, and lands
 > on the ambiguous multiple only for the few `newWidth` values dividing it. *Verify Ink's `cliCursor.hide()`
 > makes the parked cursor invisible.*
 >
@@ -274,7 +282,19 @@ repeated above — use it verbatim).
 > cannot measure, and since a single success caches the verdict forever, ending probing closes the
 > late-straggler hole completely instead of narrowing it.
 >
-> **ESCALATION THRESHOLD, controller-owned.** The oracle has taken three rounds of correctness fixes, each
+> **Escalation NOT triggered — the oracle demonstrably fires.** Task 3's fixer quantified it rather than
+> asserting it: 105 of 118 possible new widths are answerable from a 120-column start with the parking
+> column above, and **tmux — the emulator SP-R0 measured reflowing, and the one the residue bug actually
+> reproduces under — answers the cursor query**, the canonical 120→80 drag landing comfortably interior.
+> Refusals are per-resize and re-probeable, so an unanswerable drag costs one uncorrected resize, not the
+> feature.
+> **The honest residual risk, stated by the fixer and not papered over:** nobody has probed a *real*
+> non-reflowing emulator. Every refusal added in the later rounds defends against behaviour we reason is
+> plausible, not behaviour anyone has observed. We are confident there is no false `"reflow"`; we are less
+> confident the surviving `"truncate"` answers come from the emulators we assume. That asymmetry is the
+> safe one — a wrong `"truncate"` means no correction, a wrong `"reflow"` means data loss.
+>
+> **ESCALATION THRESHOLD, retained for Task 4's own verification.** The oracle has taken three rounds of correctness fixes, each
 > refusing more inputs. If Task 4 cannot demonstrate a **realistic** terminal-and-resize combination that
 > yields `"reflow"` against the real binary under tmux, **stop and escalate rather than shipping it**. A
 > detector that is provably safe and practically inert is a no-op with a full test suite, and the honest
