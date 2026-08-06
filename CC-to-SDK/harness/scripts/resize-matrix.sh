@@ -178,22 +178,32 @@ stage_content() {                           # stage_content <session>
   while [ "$i" -lt 40 ]; do tmux capture-pane -t "$s" -p | grep -qF "$CARET /status" && return 0; sleep 0.25; i=$((i+1)); done
   echo "      FAIL $s never painted the staged /status content"; return 1
 }
-# Resize, then give the app a bounded window to converge WITHOUT further input. Polling rather than a fixed
+# Give the app a bounded window to converge WITHOUT further input, then assert on the settled screen.
+# EVERY frame assertion goes through here — a one-shot capture right after launch or a submit is a timing
+# gamble a slow CI runner will eventually lose (t5-fix re-review, finding A). Polling rather than a fixed
 # sleep is deliberate on both sides: a slow-but-correct repaint is not a defect, and the defect this guards
 # does not self-heal on a timer (qa-driver §5), so a broken build still fails after the window closes. No key
-# is ever sent during the wait — a keystroke forces a partial repaint that HIDES the residue.
-resize_to() {                               # resize_to <session> <cols> <rows> <label>
-  local s="$1" x="$2" y="$3" label="$4" i=0 cap; cap="$MATRIX_ROOT/cap"
-  tmux resize-window -t "$s" -x "$x" -y "$y" || { echo "      FAIL resize-window failed"; return 1; }
-  local got; got=$(tmux display -p -t "$s" '#{pane_width}x#{pane_height}')
-  [ "$got" = "${x}x${y}" ] || { echo "      FAIL pane is $got, asked for ${x}x${y}"; return 1; }
+# is ever sent during the wait — a keystroke forces a partial repaint that HIDES the residue. The optional
+# needle gates the check on some text having arrived first (a5 waits for its submit echo this way); the
+# frame check still runs loudly on the final capture either way, so a missing needle cannot mask a failure.
+settle_frame() {                            # settle_frame <session> <cols> <label> [needle]
+  local s="$1" x="$2" label="$3" needle="${4-}" i=0 cap; cap="$MATRIX_ROOT/cap"
   while [ "$i" -lt 24 ]; do                 # 6 s — the 160→80 step transits a four-rule frame on the way down
     tmux capture-pane -t "$s" -p > "$cap"
-    check_frame "$cap" "$x" "$label" >/dev/null 2>&1 && break
+    if [ -z "$needle" ] || grep -qF "$needle" "$cap"; then
+      check_frame "$cap" "$x" "$label" >/dev/null 2>&1 && break
+    fi
     sleep 0.25; i=$((i+1))
   done
   tmux capture-pane -t "$s" -p > "$cap"
   check_frame "$cap" "$x" "$label"
+}
+resize_to() {                               # resize_to <session> <cols> <rows> <label>
+  local s="$1" x="$2" y="$3" label="$4"
+  tmux resize-window -t "$s" -x "$x" -y "$y" || { echo "      FAIL resize-window failed"; return 1; }
+  local got; got=$(tmux display -p -t "$s" '#{pane_width}x#{pane_height}')
+  [ "$got" = "${x}x${y}" ] || { echo "      FAIL pane is $got, asked for ${x}x${y}"; return 1; }
+  settle_frame "$s" "$x" "$label"
 }
 kill_cell() { tmux kill-session -t "$1" 2>/dev/null; SESSIONS=$(echo "$SESSIONS" | sed "s/ $1//"); }
 
@@ -211,8 +221,7 @@ run_cell() {                                # run_cell <name> <w0>x<h0> [<w>x<h>
   launch "$s" "$w0" "$h0" || { record "$name" 1; kill_cell "$s"; return; }
   stage_content "$s" || { record "$name" 1; kill_cell "$s"; return; }
   local cap="$MATRIX_ROOT/cap"
-  tmux capture-pane -t "$s" -p > "$cap"
-  check_frame "$cap" "$w0" "start ${w0}x${h0}" || rc=1
+  settle_frame "$s" "$w0" "start ${w0}x${h0}" || rc=1
   for step in "$@"; do
     resize_to "$s" "${step%x*}" "${step#*x}" "$step" || rc=1
   done
@@ -241,8 +250,7 @@ run_a5_cell() {
   local s="wr-t5-a5" rc=0 cap="$MATRIX_ROOT/cap"
   echo "  cell a5: launch 120x40 (placeholder painted) -> 100x40 -> shrink 80x24 -> submit -> no stranded placeholder"
   launch "$s" 120 40 || { record "a5" 1; kill_cell "$s"; return; }
-  tmux capture-pane -t "$s" -p > "$cap"
-  check_frame "$cap" 120 "a5 start 120x40" || rc=1
+  settle_frame "$s" 120 "a5 start 120x40" || rc=1
   # PRECONDITION 1 — the string whose residue is under test is on screen BEFORE the shrink. (The launch banner
   # is also what satisfies check_frame's content-above-the-frame demand here.)
   if ! grep -qF 'Try "' "$cap"; then
@@ -260,15 +268,9 @@ run_a5_cell() {
   fi
   printf '      ok   %-28s placeholder painted at 120 and still live at 80\n' "a5 preconditions"
   type_line "$s" "/status"
-  local i=0
-  while [ "$i" -lt 40 ]; do
-    tmux capture-pane -t "$s" -p > "$cap"
-    grep -qF "$CARET /status" "$cap" && break
-    sleep 0.25; i=$((i+1))
-  done
-  sleep 1                                   # the echo lands before the repaint settles; read the settled screen
-  tmux capture-pane -t "$s" -p > "$cap"
-  check_frame "$cap" 80 "a5 after submit" || rc=1
+  # One bounded poll covers both waits: the echo must have arrived AND the frame must have settled. A broken
+  # build never converges, so this changes flake exposure only, not detection (t5-fix re-review, finding A).
+  settle_frame "$s" 80 "a5 after submit" "$CARET /status" || rc=1
   # …and the A5 assertion proper: the echo of the submitted prompt is on screen, and NO placeholder row
   # survives at or above it.
   local echo_line placeholder
