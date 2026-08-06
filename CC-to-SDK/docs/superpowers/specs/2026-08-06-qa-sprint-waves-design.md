@@ -604,7 +604,7 @@ which are opportunistic.
 | Item | Owner | Deadline |
 |---|---|---|
 | ~~MOUSE-1: does click-to-expand reproduce?~~ **SETTLED 2026-08-06 (§12 item 17)** — yes, live-reproduced, but only inside the **fullscreen renderer**, which the owner runs and the fleet's isolated profile did not. Upstream advertises it in its own switch notice (L453184). Both testimonies stand; the fleet's finding is re-scoped to the inline renderer. No terminal name or screen recording needed | — | closed 2026-08-06 |
-| **MOUSE-1 residual (a):** is the `tengu_pewter_brook` remote gate a broad default or a rollout cohort? Measured on one account only. If broad, most users drift into fullscreen after their first session and the fullscreen renderer's priority rises sharply | Controller (second account) | Before the fullscreen scope call |
+| ~~**MOUSE-1 residual (a):** is the `tengu_pewter_brook` remote gate a broad default?~~ **CLOSED 2026-08-06 — the premise was wrong.** The gate reads `false` on this account; the owner is in fullscreen because they opted in explicitly after three upsell impressions. Fullscreen is a promoted opt-in, not a silent rollout (§12 item 17a) | — | closed 2026-08-06 |
 | **MOUSE-1 residual (b):** which row does the owner click — the collapsed `Ran N shell commands` summary, or something literally reading `+N lines (ctrl+o to expand)`? The latter was never seen as a click target in fullscreen across twelve polls | Owner | Whenever convenient; does not block Wave R |
 | **HLJS-1:** EP-R5 needs a real `highlight.js` dependency to match upstream's diff tokenizing (24-scope truecolor map, ~383 languages). This reverses a recorded decision — `highlight.ts` was written zero-dep *explicitly* because fenced code was a LOW row. **Controller recommends taking the dependency**: same structural work either way, this is P1, fidelity is the programme's stated goal, and ~1 MB is noise beside the SDK's bundled ~270 MB binary. Proceeding on that basis unless overridden | Owner (override only) | Wave R spec review |
 | **FULLSCREEN-1:** does upstream's fullscreen renderer become a ccx roadmap item, and at what priority? It is a whole rendering mode (alternate screen, app-owned scrollable viewport, three mouse affordances) that ccx lacks entirely, and it is the mode the owner experiences daily. Out of scope for Wave R either way | Owner, with a controller recommendation | Wave R close-out |
@@ -796,11 +796,19 @@ surface under test. Probes needing a clean session must set `settingSources: []`
     and already parses SGR mouse only to discard it. Click-to-expand sits downstream of a renderer ccx does
     not have; it should be filed as *missing upstream's fullscreen renderer*, with mouse falling out of
     that work rather than driving it.
-    Two open threads. **(a)** The reconciliation's proximate cause was a cached remote gate
-    (`tengu_pewter_brook`, measured on one account) that flips a warm profile into fullscreen while a cold
-    profile stays inline. If that gate is broadly on rather than a rollout cohort, most users drift into
-    fullscreen after their first session and the owner's "everywhere" becomes true in practice — which
-    would raise the fullscreen renderer's priority substantially. Worth checking on a second account.
+    **(a) — corrected by the controller, do not propagate the reporting agent's version.** The report
+    attributed the warm-vs-cold difference to a cached remote gate `tengu_pewter_brook` which it "measured
+    True". Reading the real config directly: **`tengu_pewter_brook: false`.** So the gate is *off* for this
+    account, and cannot be why the owner is in fullscreen. The actual reason is simpler and is right there
+    in the same file — the owner **opted in explicitly** (`"tui": "fullscreen"`, settings line 268), having
+    been shown the mode's upsell three times (`fullscreenUpsellSeenCount: 3`, alongside `copyOnSelect:
+    true`). The report's own decisive experiment agrees and needs no gate: **a cold profile seeded with
+    only `"tui":"fullscreen"` produced `ESC[?1049h` plus all four mouse modes on first launch.** The
+    setting alone is sufficient.
+    What survives, and it is the product-relevant part: **fullscreen is an actively promoted opt-in, not a
+    silent rollout.** Upstream repeatedly upsells it and ships a `/tui` command to switch. That is a
+    weaker argument than "most users are already in it" for prioritising the renderer, and the priority
+    question should be decided on that honest footing (§11 FULLSCREEN-1).
     **(b)** One question only the owner can answer: which row they click — the collapsed
     `Ran N shell commands` summary, or something literally reading `+N lines (ctrl+o to expand)`. The
     latter was never observed as a click target in fullscreen across twelve polls.
