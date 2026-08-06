@@ -27,6 +27,7 @@ import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { LiveTurn } from "./liveTurn.js";
+import { retryStatusFrom, type RetryStatus } from "./retryStatus.js";
 import { FoldPendingState } from "./foldPendingState.js";
 import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgress.js";
 import { TaskList, type TaskItem } from "./taskList.js";
@@ -78,7 +79,10 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
   staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[];
   /** The session's working directories — the cwd plus every `/add-dir` grant (`listDirs()`). The FILE
    *  permission dialog's in-directory test runs over this set; nothing else reads it. */
-  workDirs: readonly string[]; }
+  workDirs: readonly string[];
+  /** Wave T Task 12: the live turn's API-retry state, driven by the SDK's `system/api_retry` frames. Set
+   *  means the API is not answering; the row that replaces the spinner while it is set is Task 13's. */
+  retryStatus?: RetryStatus; }
 
 // Tab cycles these; bypassPermissions stays off-cycle (/yolo). Single source with settingsRows.ts's own
 // permissionMode row (review finding 3) — importing it here instead of a second literal array means the
@@ -177,6 +181,12 @@ export function useChat(
   });
   const [pendingItems, setPendingItems] = useState<readonly RenderItem[]>(() => livePending());
   const [streaming, setStreaming] = useState<RenderLine[]>([]);
+  // Wave T Task 12: the live turn's retry state. The REF is what the hot path reads — the message arm runs
+  // per stream_event delta (thousands per turn), and an unguarded `setRetryStatus(undefined)` there would
+  // queue a setState per token; the ref lets the clear cost one comparison when there is nothing to clear.
+  const [retryStatus, setRetryStatus] = useState<RetryStatus | undefined>(undefined);
+  const retryRef = useRef<RetryStatus | undefined>(undefined);
+  const clearRetry = () => { if (retryRef.current) { retryRef.current = undefined; setRetryStatus(undefined); } };
   const docEpoch = useRef(0);              // bumped at every terminal boundary (rewind / clear / real session swap)
   const localSeq = useRef(0);              // monotonic within one epoch — two equal-looking /help runs stay distinct
   const followGen = useRef(0);             // one per follow subscription: a REDELIVERED idle replay reuses its gap identity
@@ -454,10 +464,23 @@ export function useChat(
         // The SAME injected clock the projection uses: the thinking clock's arrival stamps and the `now`
         // the fold row is rendered against must not come from two different sources (a frame-capture
         // fixture pins one of them, and a live-reading LiveTurn would make its output unreproducible).
-        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]);
+        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]); clearRetry();
       }
       else if (ev.kind === "message") {
         const data = ev.data as any;
+        // Wave T Task 12 (probe 96). The SDK emits one `system/api_retry` frame per attempt, and it is
+        // LIVE-TURN chrome, not history: a ten-attempt ladder is ONE replaced spinner row, not ten notices.
+        // Hence the early return — the frame must not reach `systemNoticeLines` (which already paints
+        // nothing for it, pinned in species-system.test.ts) nor the document, and it starts no fold break.
+        // Stamped with `Date.now()` rather than the injected `nowFn`: `deadline` is read by the same
+        // wall-clock render loop as `turnStartedAt` (TurnSpinner's `now = Date.now`), and a countdown seeded
+        // off a different clock than the one it is compared against would tick wrong.
+        const retry = retryStatusFrom(data, Date.now());
+        if (retry) { retryRef.current = retry; setRetryStatus(retry); return; }
+        // NOTHING announces "the retry succeeded" (probe 96: no cancel/success event, and `max_retries` is a
+        // ceiling a 401 gave up short of) — so the teardown is every OTHER frame, the first `stream_event`
+        // delta of the recovered answer included. Turn end, turn start and an idle host clear it too.
+        clearRetry();
         // A `stream_event` is a PARTIAL, and it changes NOTHING outside the live turn: `appendSdk` rejects
         // partials outright, the bg harvest and the task list read only complete assistant/user frames, and
         // so do `stampAgentCalls`/`syncLiveOpen`. So the retained document cannot move here — and with
@@ -548,7 +571,7 @@ export function useChat(
         // A call still open at turn end is an ORPHAN (interrupted, denied, or a result that never came):
         // the turn is over, so nothing is running — end the blink epoch instead of leaving a "running" row.
         clearLiveOpen();
-        setStreaming([]); setBusy(false); void refreshCtx(); void refreshUsage(); drainNext();
+        setStreaming([]); setBusy(false); clearRetry(); void refreshCtx(); void refreshUsage(); drainNext();
       }
       else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);
       else if (ev.kind === "task") {
@@ -567,7 +590,7 @@ export function useChat(
       else if (ev.kind === "rewound") void rebuildAfterRewind();   // ANOTHER client rewound: rebuild from disk (no prefill — not our prompt)
       else if (ev.kind === "state") {
         idleFollowReplay.current = false;                          // the trailing frame of a follow replay ends the idle-ingestion mode
-        if (ev.status.status === "idle") clearLiveOpen();           // the host says nothing is running — no call of ours can still be live
+        if (ev.status.status === "idle") { clearLiveOpen(); clearRetry(); }   // the host says nothing is running — no call of ours can still be live, and no retry of ours is still pending
         if (ev.status.permissionMode && ev.status.permissionMode !== modeRef.current) setMode(ev.status.permissionMode);
       }
     });
@@ -1480,5 +1503,5 @@ export function useChat(
   }
   function clear() { if (!disposed.current) { clearScreen(); replaceDocument(new TranscriptDocument()); } }   // /clear: wipe screen + model (session context kept)
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials, workDirs } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, settings, outputStyle, permissions, denials, workDirs, retryStatus } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
 }
