@@ -217,6 +217,35 @@ Residue is exactly `min(rowsAboveFrame, physicalRows(prev @ newWidth) − logica
 **Consumes:** `physicalRows`, `lastFrame` (Task 2); `ReflowVerdict`, `probeReflow` (Task 3, signature
 repeated above — use it verbatim).
 
+> ### STEP 0 — FEASIBILITY GATE. Do this before writing any other code, and escalate if it fails.
+>
+> Task 3 shipped the oracle and, in doing so, found that **my verdict rule was ambiguous**: when the
+> cursor's column is already `<= newWidth`, the modulo is the identity and a reflowing and a truncating
+> terminal report the *same* column. The rule would have said `"reflow"` on both, firing the correction on
+> a terminal with no defect — the over-erase that destroyed six transcript rows in SP-R0. `probeReflow`
+> now returns `"unknown"` for that case without even sending a query. **That deviation is accepted and
+> correct.**
+>
+> But it leaves an open question that decides whether this task is buildable as designed: **`probeReflow`
+> is only informative when the cursor sits past the new right edge, and after Ink writes a frame the cursor
+> is at column 1.** A `colBefore` of 1 is `<= newWidth` for every realistic width, so every probe would
+> return `"unknown"` and the correction would never fire. Worse, the new width is not known until the
+> resize has already happened, so the cursor cannot be parked in advance for *that* resize.
+>
+> **Answer this first, with a measurement, not an argument:** can Task 4 obtain a `colBefore` greater than
+> the new width at resize time? Candidate answers to test — (a) park the cursor at a far-right column after
+> each frame write so a later resize has an anchor; (b) calibrate on the first shrink and correct from the
+> second onward (accepting visible residue on the first, which users will hit); (c) a different oracle
+> entirely. **If none works, STOP and report** — the wave needs a different detection strategy and that is
+> the controller's call, not a thing to work around. Do not proceed to a design where the correction
+> silently never fires; a fix that no-ops in production while its tests pass is worse than no fix.
+>
+> Also inherited from Task 3: `probeReflow` is **async** while the erase must be **synchronous** relative
+> to Ink's own `SIGWINCH` repaint, so the first shrink of a session is necessarily uncorrected. That is the
+> safe side (under-erase) and is acceptable — but it must be stated in the code, not discovered later.
+> And the forward Task 3 added is **inert until wired**: nothing passes `onUnknownSequence` in production
+> yet. The wiring point is `chatMain.tsx`'s `<UserKeymap deps={{ … }}>`; wiring it is part of this task.
+
 **The erase count is `physicalRows(lastFrame, newWidth) + 1`** — the `+ 1` mirrors Ink's trailing-newline
 term, which Task 2's helper deliberately excludes. Worked example to pin in a test: **6 logical, Ink
 erased 7, occupied 10, correct 11.**
