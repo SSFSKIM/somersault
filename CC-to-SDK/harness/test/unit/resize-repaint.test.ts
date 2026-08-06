@@ -4,7 +4,7 @@
 // pin the empty string.
 import { describe, expect, it, vi } from "vitest";
 import { createResumeSafeStdout } from "../../src/tui/chatMain.js";
-import { correctionAfterRepaint, createForceRepaint, createResizeRepaint, eraseRows, frameWriteCorrection,
+import { correctionAfterRepaint, createResizeRepaint, eraseRows, frameWriteCorrection,
   inkErases, occupiedRows, parkColumn, parkSequence, physicalRows, type FrameWriteInfo,
   type ResizeSample } from "../../src/tui/resizeRepaint.js";
 import type { ReflowVerdict } from "../../src/tui/reflowOracle.js";
@@ -118,23 +118,6 @@ describe("correctionAfterRepaint — the first shrink, corrected once the async 
     expect(correctionAfterRepaint(sample(), "truncate", now, 37)).toBe("");
     expect(correctionAfterRepaint(sample(), "unknown", now, 37)).toBe("");
     expect(correctionAfterRepaint(sample({ frame: "one\ntwo\n", newWidth: 80 }), "reflow", now, 37)).toBe("");
-  });
-});
-
-describe("createForceRepaint — a render Ink's own dedupe cannot swallow (shared with task 7)", () => {
-  it("writes the recorded frame back, optionally behind a prefix", () => {
-    const written: string[] = [];
-    const force = createForceRepaint({ lastFrame: () => "frame\n", write: (s) => { written.push(s); } });
-    expect(force()).toBe(true);
-    expect(force("\x1b[2J\x1b[3J\x1b[H")).toBe(true);
-    expect(written).toEqual(["frame\n", "\x1b[2J\x1b[3J\x1b[H" + "frame\n"]);
-  });
-
-  it("still emits the prefix, and reports failure, when nothing is recorded", () => {
-    const written: string[] = [];
-    const force = createForceRepaint({ lastFrame: () => undefined, write: (s) => { written.push(s); } });
-    expect(force("\x1b[2J")).toBe(false);
-    expect(written).toEqual(["\x1b[2J"]);
   });
 });
 

@@ -25,12 +25,13 @@
 //    `previousOutput = ''`. It never consults `Instance.lastOutput`, so Ink's frame dedupe is not in the path
 //    at all. Upstream forces the same way and for the same reason — `forceRedraw` (L180978) calls
 //    `this.log.forceFullReset()` (L178271) and then `this.onRender()` UNCONDITIONALLY.
-//      WHY NOT `createForceRepaint` (resizeRepaint.ts), whose `prefix` parameter task 4 wrote for this caller.
-//    Because `/clear` runs `app.clear()` first (replaceDocument's Static seam) and that zeroes log-update's
-//    `previousLineCount`. Re-writing the recorded frame bytes ourselves would leave N rows painted while
-//    log-update believes 0 are, so its next render emits `eraseLines(0)` and paints the FOLLOWING frame BELOW
-//    ours — a duplicate composer block, the exact residue class this wave exists to delete. Going through
-//    `writeToStdout` leaves `previousOutput`/`previousLineCount` describing the screen, which is the same
+//      WHY NOT RE-WRITE THE RECORDED FRAME BYTES OURSELVES, the way task 4's own first-shrink repair does (and
+//    which task 4 had left a `prefix`-taking primitive in resizeRepaint.ts for this caller to reuse — measuring
+//    our way here retired it, so it is gone). Because `/clear` runs `app.clear()` first (replaceDocument's Static
+//    seam) and that zeroes log-update's `previousLineCount`. Re-writing the frame ourselves would leave N rows
+//    painted while log-update believes 0 are, so its next render emits `eraseLines(0)` and paints the FOLLOWING
+//    frame BELOW ours — a duplicate composer block, the exact residue class this wave exists to delete. Going
+//    through `writeToStdout` leaves `previousOutput`/`previousLineCount` describing the screen, which is the same
 //    invariant `correctionAfterRepaint` states it depends on.
 
 /** Upstream `yJr` (bundle L176988), byte for byte. `rows` is the viewport height; 0 collapses to a bare home,

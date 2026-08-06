@@ -34,7 +34,7 @@
 // a case at all.
 // ONE EMISSION POINT SURVIVES HERE. At a session's FIRST shrink the verdict is still unknown when Ink writes, so
 // that one write goes out uncorrected and `correctionAfterRepaint` repairs the screen once the probe answers:
-// erase the residue AND the frame Ink just painted, then write that frame straight back (`createForceRepaint`).
+// erase the residue AND the frame Ink just painted, then write that frame straight back, in one chunk.
 // Every later shrink is a property of a TERMINAL already measured, so the write-time corrector has its verdict.
 import stringWidth from "string-width";
 import type { ReflowVerdict } from "./reflowOracle.js";
@@ -135,21 +135,6 @@ export function correctionAfterRepaint(s: ResizeSample, verdict: ReflowVerdict, 
   return eraseRows(erase) + frameNow;
 }
 
-/** FORCE A RENDER INK'S DEDUPE CANNOT SWALLOW. `log-update` returns early when the output equals the last one and
- *  `ink.js` guards on `output !== this.lastOutput`, so nothing in the tree can ask for the same frame twice — and
- *  after we erase, the same frame is exactly what the screen needs. Write the recorded bytes ourselves instead:
- *  they are Ink's own, so every counter it keeps stays true. `prefix` carries whatever must land in the same write
- *  (task 4 the erase run; task 7's `/clear` the terminal wipe) and is emitted even with nothing recorded to
- *  repaint, which is why the return value reports whether a frame actually went back. */
-export function createForceRepaint(deps: { lastFrame: () => string | undefined; write: (s: string) => void }): (prefix?: string) => boolean {
-  return (prefix = "") => {
-    const frame = deps.lastFrame();
-    if (frame === undefined) { if (prefix) deps.write(prefix); return false; }
-    deps.write(prefix + frame);
-    return true;
-  };
-}
-
 export interface ResizeRepaintDeps {
   lastFrame: () => string | undefined;
   parkedColumn: () => number;
@@ -168,8 +153,6 @@ export interface ResizeRepaint {
    *  erase and goes back through Ink's stdout (which is what re-records the frame and re-parks the cursor) — so it
    *  passes the corrector too, and a second erase run stacked on the first walks into live transcript. */
   verdict: () => ReflowVerdict | undefined;
-  /** The task-7-shared primitive, exposed so `/clear` does not have to rebuild it. */
-  forceRepaint: (prefix?: string) => boolean;
 }
 
 export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
@@ -184,7 +167,6 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
   // Our own erase-plus-frame writes carry their own full-region erase; see `ResizeRepaint.verdict`.
   let selfWriting = false;
   const repaintSelf = (s: string): void => { selfWriting = true; try { deps.repaint(s); } finally { selfWriting = false; } };
-  const forceRepaint = createForceRepaint({ lastFrame: deps.lastFrame, write: repaintSelf });
   const onResize = (): void => {
     const oldWidth = width, size = deps.size(), newWidth = size.columns;
     width = newWidth;
@@ -211,5 +193,5 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
       if (seq) repaintSelf(seq);
     });
   };
-  return { onResize, verdict: () => (selfWriting ? undefined : verdict), forceRepaint };
+  return { onResize, verdict: () => (selfWriting ? undefined : verdict) };
 }

@@ -3,18 +3,23 @@
 // Task 4 erases on resize from exactly these two answers, so both are pinned here rather than inferred later.
 import { describe, expect, it } from "vitest";
 import { createResumeSafeStdout, physicalRows } from "../../src/tui/chatMain.js";
+import { eraseViewport } from "../../src/tui/clearViewport.js";
+import { parkColumn } from "../../src/tui/resizeRepaint.js";
 
 // Ink's erase prefix, byte-for-byte: ansiEscapes.eraseLines(n) === "\x1b[2K" + ("\x1b[1A\x1b[2K" * (n-1)) + "\x1b[G".
 // eraseLines(0) is the EMPTY string, which is why a first frame (and any frame right after log.clear()) arrives bare.
 const eraseLines = (n: number): string => (n === 0 ? "" : "\x1b[2K" + "\x1b[1A\x1b[2K".repeat(n - 1) + "\x1b[G");
 
+// `columns` stays undefined unless a case needs the park: `parkColumn(undefined)` is 0, so the proxy emits no
+// padding write and the byte-for-byte `terminal.chunks` assertions below stay about Ink's own bytes.
 class RecordingTerminal {
   isTTY = true;
   readonly chunks: string[] = [];
+  constructor(readonly columns?: number, readonly rows?: number) {}
   write(chunk: string): boolean { this.chunks.push(chunk); return true; }
 }
 
-const proxy = () => { const terminal = new RecordingTerminal(); return { terminal, out: createResumeSafeStdout(terminal as any) }; };
+const proxy = (columns?: number, rows?: number) => { const terminal = new RecordingTerminal(columns, rows); return { terminal, out: createResumeSafeStdout(terminal as any) }; };
 
 describe("ResumeSafeStdout.lastFrame", () => {
   it("has no frame before Ink has written one", () => {
@@ -85,6 +90,26 @@ describe("ResumeSafeStdout.lastFrame", () => {
     out.stdout.write("frame\n");                         // log(output)
     expect(out.lastFrame()).toBe("frame\n");
     expect(physicalRows(out.lastFrame()!, 80)).toBe(1);  // …one row, NOT 40-odd
+  });
+
+  // …and the burst that BREAKS the triple, which is the whole of task 7 (W-R t7). The erase→static→frame triple
+  // is emitted inside one synchronous onRender and nothing can interleave with it — but `/clear` deliberately
+  // writes BETWEEN a log.clear() and the frame: `app.clear()` (replaceDocument's Static seam) erases the live
+  // frame, then Ink's own writeToStdout (ink.js:140-155) runs log.clear() → write(data) → log(this.lastOutput),
+  // and `data` is the viewport wipe, which is NOT a frame (no trailing newline, and it opens on ESC[H rather than
+  // an erase run). If that foreign write left the erase latch UP, the forced frame right behind it would be read
+  // as <Static> scrollback: not recorded, and the cursor left unparked until the next keystroke — exactly when
+  // the reflow oracle needs the park most. So the latch falls with the foreign write, and the frame is recorded.
+  it("records the frame in Ink's clear→foreign→frame burst (writeToStdout) and parks the cursor on it", () => {
+    const { out } = proxy(80, 24);
+    out.stdout.write("live frame\n");                    // the frame /clear is about to wipe
+    out.stdout.write(eraseLines(2));                     // app.clear() → log.clear()
+    out.stdout.write(eraseLines(0));                     // writeToStdout's log.clear(), previousLineCount now 0
+    out.stdout.write(eraseViewport(24));                 // write(data) — ESC[H-prefixed, no trailing newline
+    expect(out.lastFrame()).toBeUndefined();             // mid-burst nothing is painted, and we do not claim it is
+    out.stdout.write("composer frame\n");                // log(this.lastOutput) — bare, the dedupe cannot skip it
+    expect(out.lastFrame()).toBe("composer frame\n");
+    expect(out.parkedColumn()).toBe(parkColumn(80));     // …and > 0: the park is back on the new frame's cursor row
   });
 
   // Kind 4 — repaint() suppresses Ink's stale post-resume clear. A suppressed write never reaches the terminal, so
