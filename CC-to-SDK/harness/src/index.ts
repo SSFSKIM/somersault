@@ -42,7 +42,8 @@ export { createPostgresSessionStore, ensurePostgresSessionStoreSchema, postgresS
 export type { PgLike, PostgresSessionStoreOptions } from "./store/postgresSessionStore.js";
 export { sessionStoreConformance } from "./store/conformance.js";
 export type { ConformanceOpts } from "./store/conformance.js";
-export type { MirrorErrorInfo } from "./session/session.js";
+export type { MirrorErrorInfo, TurnOutcome } from "./session/session.js";
+export type { TurnFailure } from "./session/turnResult.js";
 export { runStructured, StructuredRunError } from "./structured/run.js";
 export { classifyLimitText, classifyLimitMessage } from "./limits/classify.js";
 export type { LimitState, LimitKind } from "./limits/classify.js";

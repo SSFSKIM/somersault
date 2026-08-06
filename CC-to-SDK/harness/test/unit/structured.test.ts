@@ -40,11 +40,22 @@ describe("runStructured", () => {
     expect(capture.options.outputFormat.schema.stale).toBeUndefined();
   });
 
-  it("non-success subtype → StructuredRunError with subtype + raw attached", async () => {
-    const err = await runStructured(shape, "p", {}, { query: fakeQuery({ subtype: "error_max_structured_output_retries", result: "nope" }) }).catch((e) => e);
+  // `is_error` is declared REQUIRED on both SDK result shapes; the fixture used to omit it, which let this
+  // case reach the "no structured_output" arm and pass for the wrong reason (Task 14).
+  it("a failed result → StructuredRunError with subtype + raw attached", async () => {
+    const err = await runStructured(shape, "p", {}, { query: fakeQuery({ subtype: "error_max_structured_output_retries", is_error: true, errors: ["retries exhausted"], result: "nope" }) }).catch((e) => e);
     expect(err).toBeInstanceOf(StructuredRunError);
+    expect(err.message).toBe("structured run failed: nope");
     expect(err.subtype).toBe("error_max_structured_output_retries");
     expect(err.raw.result).toBe("nope");
+  });
+
+  // Task 14 / probe 96: the transport-failure frame. `subtype` still says "success" — classifying on it
+  // reported this as "result carried no structured_output", which blamed the schema for a dead connection.
+  it("subtype:\"success\" + is_error:true (a dead connection) → StructuredRunError naming the API error", async () => {
+    const err = await runStructured(shape, "p", {}, { query: fakeQuery({ subtype: "success", is_error: true, terminal_reason: "api_error", api_error_status: 401, result: "Failed to authenticate. API Error: 401" }) }).catch((e) => e);
+    expect(err).toBeInstanceOf(StructuredRunError);
+    expect(err.message).toBe("structured run failed: Failed to authenticate. API Error: 401");
   });
 
   it("success but structured_output absent → StructuredRunError", async () => {

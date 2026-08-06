@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { createHarness, type HarnessDeps } from "../harness.js";
 import type { HarnessConfig } from "../config/types.js";
+import { turnFailureOf } from "../session/turnResult.js";
 
-/** A structured run that produced no parseable structured_output: non-success result subtype
+/** A structured run that produced no parseable structured_output: a result frame that reported failure
  *  (incl. the SDK's own `error_max_structured_output_retries`), or a result with the field absent.
  *  Schema mismatches on a PRESENT structured_output throw zod's ZodError instead (more informative). */
 export class StructuredRunError extends Error {
@@ -26,7 +27,11 @@ export async function runStructured<S extends z.ZodType>(
   const { messages } = await harness.run(prompt);
   const result = (messages as any[]).find((m) => m?.type === "result");
   if (!result) throw new StructuredRunError("structured run produced no result message", undefined, messages);
-  if (result.subtype !== "success") throw new StructuredRunError(`structured run failed: ${result.subtype}`, result.subtype, result);
+  // Task 14: `subtype` is NOT the classifier. Probe 96 measured the SDK reporting a dead connection as
+  // `subtype:"success"` with `is_error:true`, so keying on subtype made a transport failure look like a
+  // run that merely forgot its structured_output — and reported the "no structured_output" message for it.
+  const failure = turnFailureOf(result);
+  if (failure) throw new StructuredRunError(`structured run failed: ${failure.message}`, result.subtype, result);
   if (result.structured_output === undefined) throw new StructuredRunError("result carried no structured_output", result.subtype, result);
   return schema.parse(result.structured_output);
 }
