@@ -73,9 +73,14 @@ distinguishable. A criterion measured only under pyte is not met, however green 
    after a resize — parent §12 item 19.)
 6. **A6 (qa5-01, P0)** Typing `/clear` redraws banner, composer and footer **with zero keystrokes**,
    within one frame. Measured with the marker pre-fill so "blank" is proven rather than inferred.
-7. **A7 (`/clear` fidelity)** After `/clear`, the `❯ /clear` echo is still visible and **the scrollback
-   above is intact**. Upstream's inline reset erases the viewport only, deliberately omitting `ESC[3J`
-   (L177120, L176988); `ccx` currently sends `\x1b[2J\x1b[3J\x1b[H` at `useChat.ts:336` and wipes it.
+7. **A7 (`/clear` fidelity)** After `/clear`, **the scrollback above the viewport is intact**. Upstream's
+   inline reset erases the viewport only, deliberately omitting `ESC[3J` (L177120, L176988); `ccx`
+   previously sent `\x1b[2J\x1b[3J\x1b[H` at `useChat.ts:336` and wiped it. *(Amended at Task 7: the
+   original criterion also required the `❯ /clear` echo to survive — false. The echo is painted inside
+   the viewport moments before the reset, and upstream's `clearTerminal` event carries
+   `viewportRows: e.viewport.height` (L178442, controller-verified), i.e. the whole viewport is erased,
+   echo included. What survives is exactly what had already scrolled above — which is what the `3J`
+   was destroying.)*
 8. **A8 (qa2-11)** After opening and closing the ctrl+o pager, the scrollback contains no modal-border
    fragments — **and a width change performed immediately afterwards still satisfies A1**. The second
    half is the real test: the pager's damage is to the renderer's bookkeeping, so a fix that only cleans
@@ -604,6 +609,13 @@ Pending — written at finish.
 - **v1 (2026-08-06)** — authored after the five-worker grounding round, against parent spec §12 items
   10–19. Born landed: every decision above was settled by evidence before this document existed, and the
   epics were re-cut in the parent spec first.
+- **2026-08-07 (Task 4b)** — W-R9 added: the resize correction moved from signal time to frame-write
+  time after Ink's source refuted the SIGWINCH-implies-write assumption; Surprises 6–9 record the padded
+  park, the throttle/dedupe mechanism, the 46-cell drag measurement, and the two named residual windows.
+- **2026-08-07 (Task 7)** — A7 amended: the `❯ /clear` echo does NOT survive upstream's inline reset
+  (the `clearTerminal` event erases `viewportRows: e.viewport.height`, L178442); the criterion's
+  substance — scrollback intact, no `ESC[3J` — is unchanged. The Task 7 implementer caught the
+  contradiction and followed the bundle; the controller verified the line before amending.
 
 ## Deferred (out of this wave)
 
