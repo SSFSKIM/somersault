@@ -221,12 +221,18 @@ repeated above — use it verbatim).
 term, which Task 2's helper deliberately excludes. Worked example to pin in a test: **6 logical, Ink
 erased 7, occupied 10, correct 11.**
 
-**Cap the count at the terminal height, and treat `lastFrame()` as a LOWER bound** (Task 2 review,
-concerns 2-3). `lastFrame()` can be one frame stale — after `app.clear()`, after resume, and after Ink's
-tall-frame branch, which is never recorded at all (that branch fires on every ctrl+o pager open). A stale
-frame is usually the *taller* one, so an uncapped count can exceed what is actually on screen. **Cap the
-erase at `stdout.rows`**; combined with the "emit nothing unless the verdict is `reflow`" rule, that keeps
-every failure on the under-erase side, which is the cosmetic one.
+**Emit nothing when `lastFrame()` is `undefined`, and cap the count at the terminal height.**
+*(Corrected — the first version of this paragraph was wrong, and the Task 2 review disproved it.)*
+I had claimed the `stdout.rows` cap "keeps every failure on the under-erase side". **It does not.** After
+`app.clear()` the recorded frame can be stale in the **taller** direction while the cap never binds — the
+review's counter-example is a recorded frame of 20 rows against 6 rows of real content in a 40-row
+terminal, erasing 21 and destroying 15 live rows. The cap is not a safety mechanism; it is a bound on a
+miscalculation.
+**What actually makes it safe is upstream, in Task 2:** an erase-only write now clears the recorded frame,
+so `lastFrame()` is `undefined` whenever the previous frame is known to be off screen. **Task 4 must emit
+nothing in that case.** Combined with the "emit nothing unless the verdict is `reflow`" rule, that is what
+keeps every remaining failure on the under-erase side. Ink's tall-frame chunk is never recorded either
+(it fires on every ctrl+o pager open), so `lastFrame()` is a **lower** bound after it — EP-R4 resyncs.
 
 **Timing.** Ink's own `resized` handler (`ink.js:83`) runs synchronously on `SIGWINCH` and repaints before
 any of our async work can finish. **The erase must be emitted before Ink's repaint**, i.e. from a
