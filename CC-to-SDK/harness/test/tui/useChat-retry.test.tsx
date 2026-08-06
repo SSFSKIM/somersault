@@ -34,8 +34,8 @@ describe("useChat: system/api_retry frames drive a live retry status", () => {
     fake.pushEvent({ kind: "message", data: retryFrame({ attempt: 1 }) });
     await waitFor(() => frame(lastFrame).includes("RETRY:1/10:API error"));
     // NON-GOAL pin: live-turn chrome, never a transcript row — a ten-attempt ladder must not print ten rows.
-    fake.pushEvent({ kind: "message", data: retryFrame({ attempt: 3, error: "authentication_failed", retry_delay_ms: 2413 }) });
-    await waitFor(() => frame(lastFrame).includes("RETRY:3/10:authentication_failed"));
+    fake.pushEvent({ kind: "message", data: retryFrame({ attempt: 3, error_status: 401, error: "authentication_failed", retry_delay_ms: 2413 }) });
+    await waitFor(() => frame(lastFrame).includes("RETRY:3/10:Authentication failed"));
     expect(frame(lastFrame)).toContain("[]");   // the whole transcript, still empty
 
     // Nothing announces "the retry succeeded" (probe 96) — the next non-retry frame is what tears it down.

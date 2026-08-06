@@ -1,8 +1,10 @@
 // tui/test/retry-row.test.tsx — Wave T Task 13: the retry/stalled row REPLACES the spinner. Task 12 built
 // the recognition half (`retryStatusFrom` → `state.retryStatus`); this pins the rendering half against canon
-// `qyn` (bundle L407973-408034) and pins the replacement at ChatApp's single live-turn indicator mount.
+// `qyn` (bundle L407975-408035, mounted at L407973) and pins the replacement at ChatApp's single live-turn
+// indicator mount.
 //
-// Canon copy verified character for character at L407989-8001 (stalled) and L408002-34 (retrying); the ✻ is
+// Canon copy verified character for character at L407989-8001 (stalled — label L407992, tail L407997) and
+// L408002-34 (retrying — tail L408007, label L408010); the ✻ is
 // `i5 = "✻"` (L41482), the same glyph the spinner animates. The ONE deliberate divergence is the
 // stalled row's ` · will retry in <dur>` clause — see the stalled test's comment.
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -74,7 +76,7 @@ describe("retryCountdown: canon `ra` restricted to whole-second remainders", () 
 describe("RetryRow: the stalled variant", () => {
   // DELIBERATE DIVERGENCE, one clause. Canon's `qyn` computes `$ra` from `GLe.deadline` BEFORE it branches
   // on `kind`, so upstream's stalled row DOES carry a duration: `" · will retry in ", $ra, " · check your
-  // network"` (L407989-8001), and `{ kind: "stalled", deadline: Date.now() + Math.max(0, Kn - ss) }` is
+  // network"` (L407997), and `{ kind: "stalled", deadline: Date.now() + Math.max(0, Kn - ss) }` is
   // minted at L358821 — `Kn` being `Math.min(pYi(…), watchdog)`, the request's own abort timeout, read from
   // INSIDE the fetch that stalled. We are outside that fetch: the timeout is chosen per request by env vars
   // and a gate (`dYi`/`pYi`, L99030-99044) inside the `claude` CLI subprocess, no frame reports it, and our
@@ -94,10 +96,10 @@ describe("ChatApp: the row replaces the spinner", () => {
     await tick();
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     await waitFor(() => line(lastFrame).includes("esc to interrupt"));   // the spinner is up first
-    fake.pushEvent({ kind: "message", data: retryFrame({ attempt: 4, error: "overloaded", retry_delay_ms: 5000 }) });
+    fake.pushEvent({ kind: "message", data: retryFrame({ attempt: 4, error_status: 529, error: "overloaded", retry_delay_ms: 5000 }) });
     await waitFor(() => line(lastFrame).includes("Retrying in"));
     const f = line(lastFrame);
-    expect(f).toContain("✻ overloaded · Retrying in");
+    expect(f).toContain("✻ API overloaded · Retrying in");                  // canon `rZp` prose, not the wire slug
     expect(f).toContain("· attempt 4/10");
     expect(f).not.toContain("esc to interrupt");                          // …and the spinner is GONE, not beside it
     unmount();
@@ -119,22 +121,61 @@ describe("ChatApp: the row replaces the spinner", () => {
     } finally { unmount(); }
   });
 
-  it("a frame arriving inside the window restarts the stall clock, and a later frame clears the row", async () => {
+  // CRITICAL 1 regression. The watchdog is anchored to TURN START, not to a rolling frame gap: the first
+  // frame that proves the API answered retires it for the rest of the turn. A rolling gap would paint
+  // `✻ Waiting for API response · check your network` under `⏺ Bash(npm test)` after ten quiet seconds of a
+  // perfectly healthy command — canon cannot produce that, because its `Ss` (L358804-22) measures silence
+  // INSIDE the fetch. Our only mid-tool keepalive is `tool_progress` on a 30 s interval, three times this
+  // threshold, so a rolling gap would also oscillate stalled → spinner → stalled for a one-minute command.
+  it("a tool_use frame retires the watchdog — a long healthy tool run never paints the stalled row", async () => {
     const fake = fakeRemote();
     const { lastFrame, unmount } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
     await tick();
     vi.useFakeTimers();
     try {
       await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); });
-      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
-      await act(async () => { fake.pushEvent({ kind: "message", data: { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hi" } } } }); });
-      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });   // 13 s into the turn, 5 s since the frame
+      await act(async () => {
+        fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "npm test" } }] } } });
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(12_000); });   // `npm test` is simply running
       expect(line(lastFrame)).not.toContain("Waiting for API response");
+      expect(line(lastFrame)).toContain("esc to interrupt");                   // the spinner, unchanged
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });   // …and it stays retired, no oscillation
+      expect(line(lastFrame)).not.toContain("Waiting for API response");
+    } finally { unmount(); }
+  });
+
+  it("a frame landing after the stalled row tears it down and gives the spinner back", async () => {
+    const fake = fakeRemote();
+    const { lastFrame, unmount } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
+    await tick();
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); });
       await waitForFakeTimers(() => line(lastFrame).includes("Waiting for API response"), 15_000);
-      // …and a frame that finally lands tears the row down and gives the spinner back.
       await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "recovered" }] } } }); });
       await waitForFakeTimers(() => line(lastFrame).includes("esc to interrupt"));
       expect(line(lastFrame)).not.toContain("Waiting for API response");
+    } finally { unmount(); }
+  });
+
+  // IMPORTANT 3 regression — the `if (retryRef.current) return;` guard in useChat's stall timer. An
+  // api_retry frame is evidence of FAILURE, not of health, so it deliberately does NOT retire the watchdog;
+  // probe 96's ladder delays run to 39 s, far past the 10 s timer, so without that guard a live
+  // `Retrying in 33s · attempt 7/10` countdown gets overwritten mid-flight by the stalled GUESS.
+  it("a live retrying countdown is never downgraded to the stalled guess", async () => {
+    const fake = fakeRemote();
+    const { lastFrame, unmount } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
+    await tick();
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); });
+      await act(async () => { fake.pushEvent({ kind: "message", data: retryFrame({ attempt: 7, retry_delay_ms: 33_073 }) }); });
+      await waitForFakeTimers(() => line(lastFrame).includes("Retrying in"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(12_000); });   // past the 10 s stall threshold
+      const f = line(lastFrame);
+      expect(f).not.toContain("Waiting for API response");
+      expect(f).toContain("· attempt 7/10");
     } finally { unmount(); }
   });
 });

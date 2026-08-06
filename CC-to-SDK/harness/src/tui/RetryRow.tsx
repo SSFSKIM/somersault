@@ -1,10 +1,11 @@
 // tui/src/RetryRow.tsx — Wave T Task 13: the live-turn row that REPLACES the spinner while the API is in
 // trouble. The QA fleet watched a 72-second motionless spinner during an outage with no sign anything was
-// wrong; upstream never shows that, because `qyn` (bundle L407973-408034) takes over the whole indicator
-// slot the moment a retry status exists — hence `status ? <RetryRow/> : <TurnSpinner/>` at ChatApp's single
-// mount, not two rows side by side.
+// wrong; upstream never shows that, because `qyn` (bundle L407975-408035, mounted at L407973) takes over the
+// whole indicator slot the moment a retry status exists — hence `status ? <RetryRow/> : <TurnSpinner/>` at
+// ChatApp's single mount, not two rows side by side.
 //
-// Copy is verbatim canon, character for character (L407989-8001 stalled, L408002-34 retrying), and `✻` is
+// Copy is verbatim canon, character for character (L407989-8001 stalled — label L407992, tail L407997; and
+// L408002-34 retrying — tail L408007, label L408010), and `✻` is
 // `i5` (L41482) — the same glyph the spinner animates, here held still and painted `error`. Structure
 // mirrors TurnSpinner's flat <Text> rather than canon's `<Box width={2}>` glyph cell: the visible row is
 // identical and one Text cannot be re-wrapped into two lines by a narrow test terminal.
@@ -26,7 +27,8 @@ import type { RetryStatus } from "./retryStatus.js";
 const GLYPH = "✻";                                        // canon `i5`, L41482 — U+273B, held still, not animated
 
 /** Canon `ra(Ura, {mostSignificantOnly: Ura >= 300000})` where `Ura` is canon's own
- *  `Math.max(0, Math.ceil(remaining / 1000)) * 1000`. Restricted to that call site: the argument is always a
+ *  `Math.max(0, Math.ceil(remaining / 1000)) * 1000` (computed at L407976, before the `kind` branch).
+ *  Restricted to that call site: the argument is always a
  *  whole number of seconds, so `ra`'s 59.5→60 carry normalisation is unreachable and left out. */
 export function retryCountdown(remainingMs: number): string {
   const ms = Math.max(0, Math.ceil(remainingMs / 1000)) * 1000;

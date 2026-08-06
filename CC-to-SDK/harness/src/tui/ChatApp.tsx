@@ -340,10 +340,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     <Box flexDirection="column">
       <Transcript key={state.staticEpoch} staticItems={state.staticItems} pendingItems={pagerUp ? EMPTY_ITEMS : state.pendingItems} streaming={pagerUp ? EMPTY_LINES : state.streaming} />
       {todosOpen && !pagerUp ? <TaskPanel tasks={state.tasks} columns={terminalColumns()} rows={terminalRows()} /> : null}
-      {/* Wave T Task 13 — the live-turn indicator is ONE slot. Canon `qyn` (L407973) takes the whole slot
-          over while a retry status exists, so the row REPLACES the spinner rather than sitting beside it:
-          a spinner still pulsing next to "Retrying in 4s" is exactly the "nothing is wrong" reading the QA
-          fleet's 72-second outage produced. */}
+      {/* Wave T Task 13 — the live-turn indicator is ONE slot. Canon `qyn` (L407975, mounted at L407973)
+          takes the whole slot over while a retry status exists, so the row REPLACES the spinner rather than
+          sitting beside it: a spinner still pulsing next to "Retrying in 4s" is exactly the "nothing is
+          wrong" reading the QA fleet's 72-second outage produced. */}
       {state.busy && !pagerUp
         ? (state.retryStatus ? <RetryRow status={state.retryStatus} /> : <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} />)
         : null}

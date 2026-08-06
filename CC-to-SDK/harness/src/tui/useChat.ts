@@ -191,23 +191,27 @@ export function useChat(
   const clearRetry = () => { if (retryRef.current) { retryRef.current = undefined; setRetryStatus(undefined); } };
   // Wave T Task 13: the STALLED watchdog — the half of the outage surface no frame can announce. Probe 96
   // measured ~75 s of silence on a blackholed endpoint BEFORE the first api_retry frame exists (vs ~20 ms on
-  // a refused one), so without this the first 75 s of a real outage still look like a healthy turn. Canon's
-  // own detector (`Ss`, L358806-22) is the same shape — one `setTimeout` re-armed from a last-frame stamp,
-  // NOT a polling clock — so the message arm stays a stamp write and the timer does the comparing. Threshold
-  // 10 s: canon's `SWs` is 20 s measured from inside the fetch, ours is measured from the turn clock and has
-  // no earlier evidence to wait for. A guess never outranks a real api_retry frame (the `retryRef` check).
-  const lastMsgAt = useRef(0);
+  // a refused one), so without this the first 75 s of a real outage still look like a healthy turn.
+  // ANCHORED TO TURN START, NOT TO A ROLLING GAP: armed once when the turn begins, retired for good by the
+  // first frame that proves the API answered, never re-armed. Canon's `Ss` (L358804-22) can afford a rolling
+  // gap because it measures silence INSIDE the fetch (`mr.lastAt` is the last stream chunk), so local work
+  // never trips it; out here a gap between frames is indistinguishable from a `Bash(npm test)` that is simply
+  // running — and the only mid-tool keepalive on our wire (`tool_progress`, 30 s) is three times this
+  // threshold, so a rolling gap would tell someone to check their network while their test suite ran, and
+  // oscillate while it did. Threshold 10 s: canon's `SWs` is 20 s measured from inside the fetch, ours is
+  // measured from the turn clock and has no earlier evidence to wait for. A guess never outranks a real
+  // api_retry frame (the `retryRef` check) — an api_retry frame is evidence of FAILURE, not of health, so it
+  // does NOT retire the watchdog, and probe 96's ladder delays run to 39 s, longer than this timer.
   const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disarmStall = () => { if (stallTimer.current) { clearTimeout(stallTimer.current); stallTimer.current = null; } };
   const armStall = () => {
     disarmStall();
     stallTimer.current = setTimeout(() => {
       stallTimer.current = null;
-      if (Date.now() - lastMsgAt.current < STALL_MS) { armStall(); return; }   // a frame landed after we armed — re-arm for the remainder
-      if (retryRef.current) return;                                            // already saying something truer; the next frame re-arms us
+      if (retryRef.current) return;                                            // already saying something truer — a guess never downgrades a true signal
       const stalled: RetryStatus = { kind: "stalled" };
       retryRef.current = stalled; setRetryStatus(stalled);
-    }, Math.max(0, STALL_MS - (Date.now() - lastMsgAt.current)));
+    }, STALL_MS);
     stallTimer.current.unref?.();
   };
   useEffect(() => () => disarmStall(), []);
@@ -488,17 +492,10 @@ export function useChat(
         // The SAME injected clock the projection uses: the thinking clock's arrival stamps and the `now`
         // the fold row is rendered against must not come from two different sources (a frame-capture
         // fixture pins one of them, and a live-reading LiveTurn would make its output unreproducible).
-        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]); clearRetry(); lastMsgAt.current = Date.now(); armStall();
+        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]); clearRetry(); armStall();
       }
       else if (ev.kind === "message") {
         const data = ev.data as any;
-        // Wave T Task 13: ANY frame is proof the pipe is alive, api_retry included — canon stamps `mr.lastAt`
-        // per chunk the same way. A stamp write, never a timer rebuild: this arm runs per stream_event delta
-        // (thousands per turn) and re-arming a timeout on each would be the cost Task 12's ref guard avoids.
-        // The re-arm covers the two ways the watchdog stops: it fired, and a follow replay that reached us
-        // before any turn start. Outside a live turn it stays disarmed — nothing would paint the row anyway.
-        lastMsgAt.current = Date.now();
-        if (liveTurnRef.current && !stallTimer.current) armStall();
         // Wave T Task 12 (probe 96). The SDK emits one `system/api_retry` frame per attempt, and it is
         // LIVE-TURN chrome, not history: a ten-attempt ladder is ONE replaced spinner row, not ten notices.
         // Hence the early return — the frame must not reach `systemNoticeLines` (which already paints
@@ -508,6 +505,9 @@ export function useChat(
         // off a different clock than the one it is compared against would tick wrong.
         const retry = retryStatusFrom(data, Date.now());
         if (retry) { retryRef.current = retry; setRetryStatus(retry); return; }
+        // Wave T Task 13: every OTHER frame IS proof the API answered, so it retires the turn-start stall
+        // watchdog for the rest of the turn — every later gap belongs to a tool that is simply running.
+        disarmStall();
         // NOTHING announces "the retry succeeded" (probe 96: no cancel/success event, and `max_retries` is a
         // ceiling a 401 gave up short of) — so the teardown is every OTHER frame, the first `stream_event`
         // delta of the recovered answer included. Turn end, turn start and an idle host clear it too.
