@@ -8,8 +8,13 @@
 // excess off the top, so re-wrapping and scrolling cancel out exactly. The COLUMN is not pinned: it moved
 // 121 → 41, which is `((121−1) mod 80) + 1`, while a truncating emulator destroys that cell instead. Do not
 // "simplify" any of this to use the row.
-import { describe, it, expect, vi } from "vitest";
-import { probeReflow, parseCursorReport, createCursorReports, DSR_CURSOR_QUERY } from "../../src/tui/reflowOracle.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { probeReflow, parseCursorReport, createCursorReports, DSR_CURSOR_QUERY, resetReflowProbingForTest } from "../../src/tui/reflowOracle.js";
+
+// ONE TIMEOUT ENDS PROBING FOR THE PROCESS (see the module header), so the give-up latch is process-wide state and
+// every test here has to start from a fresh process's worth of it — otherwise the first timeout test silently
+// disables the probe for every test after it and they all pass for the wrong reason.
+beforeEach(() => { resetReflowProbingForTest(); });
 
 /** The two seams `probeReflow` takes, wired to a fake terminal: `write` records the query, `onReply` records the
  *  subscription so a test can answer it (or deliberately never answer it). `order` proves the subscription is in
@@ -37,13 +42,6 @@ describe("probeReflow — the verdict", () => {
     const t = fakeTerminal();
     const verdict = probeReflow({ write: t.write, onReply: t.onReply, colBefore: 121, oldWidth: 120, newWidth: 80 });
     t.answer(3, 41);
-    expect(await verdict).toBe("reflow");
-  });
-
-  it("answers `reflow` when the re-wrap lands exactly on a row boundary (161 @ 80 → column 1)", async () => {
-    const t = fakeTerminal();
-    const verdict = probeReflow({ write: t.write, onReply: t.onReply, colBefore: 161, oldWidth: 120, newWidth: 80 });
-    t.answer(9, 1);
     expect(await verdict).toBe("reflow");
   });
 
@@ -115,20 +113,54 @@ describe("probeReflow — the verdict", () => {
     expect(t.order).toEqual([]);                           // no query written, nothing subscribed
   });
 
-  it("still probes one column short of that multiple (119 @ 120 → 60 lands on 59, which no truncator reports)", async () => {
+  // THE MARGINS ARE NOT TRUSTWORTHY EITHER — the "a truncator reports only `colBefore` or `newWidth`" model was an
+  // unprobed premise, and both of its plausible third behaviours live at a margin: an emulator that HOMES or wraps
+  // the cursor answers 1, and one that clamps a cell short of the edge answers `newWidth − 1`. Either would read as
+  // "reflow" and over-erase. Nobody has measured a non-reflowing emulator to rule them out, so the whole boundary
+  // band is refused: only an INTERIOR re-wrap column (`1 < wrapped < newWidth − 1`) is evidence.
+  it("refuses a re-wrap that lands on column 1 — a terminal that homes the cursor answers 1 too (81 @ 120 → 80)", async () => {
+    for (const colBefore of [81, 161]) {                   // both re-wrap to ((c−1) mod 80) + 1 === 1
+      const t = fakeTerminal();
+      const verdict = probeReflow({ write: t.write, onReply: t.onReply, colBefore, oldWidth: 120, newWidth: 80 });
+      expect(await verdict, `colBefore ${colBefore}`).toBe("unknown");
+      expect(t.order, `colBefore ${colBefore}`).toEqual([]);
+    }
+  });
+
+  it("refuses a re-wrap that lands one short of the new margin — a clamping truncator can answer that too", async () => {
     const t = fakeTerminal();
     const verdict = probeReflow({ write: t.write, onReply: t.onReply, colBefore: 119, oldWidth: 120, newWidth: 60 });
+    expect(await verdict).toBe("unknown");                 // ((119−1) mod 60) + 1 === 59 === newWidth − 1
+    expect(t.order).toEqual([]);
+  });
+
+  // …and what SURVIVES all of that: an interior column, which is still the ordinary case. `oldWidth − 1` (the column
+  // Task 4 parks at) re-wraps to 39 on the canonical 120→80 drag — nowhere near either margin.
+  it("still probes, and still answers `reflow`, from an interior re-wrap column (119 @ 120 → 80 lands on 39)", async () => {
+    const t = fakeTerminal();
+    const verdict = probeReflow({ write: t.write, onReply: t.onReply, colBefore: 119, oldWidth: 120, newWidth: 80 });
     expect(t.order).toEqual(["subscribe", "write:\x1b[6n"]);
-    t.answer(3, 59);                                       // ((119−1) mod 60) + 1 === 59
+    t.answer(3, 39);                                       // ((119−1) mod 80) + 1 === 39
     expect(await verdict).toBe("reflow");
   });
 
-  it("still probes from the first column that CAN discriminate (newWidth + 1)", async () => {
+  // `process.stdout.columns` is 0 off a tty, and `colBefore % 0` is NaN — which is not `=== 0`, so the old refusal
+  // waved it through, spent a round-trip, compared against a NaN wrapped column and answered "truncate": the
+  // CACHEABLE verdict, which would disable Task 4's correction for the life of the process on a bogus width.
+  it("takes no round-trip when the new width is not a real width", async () => {
+    for (const newWidth of [0, 1, -5, NaN]) {
+      const t = fakeTerminal();
+      const verdict = probeReflow({ write: t.write, onReply: t.onReply, colBefore: 121, oldWidth: 120, newWidth });
+      expect(await verdict, `newWidth ${newWidth}`).toBe("unknown");
+      expect(t.order, `newWidth ${newWidth}`).toEqual([]);
+    }
+  });
+
+  it("takes no round-trip on a non-finite column either (same cacheable-`truncate` trap)", async () => {
     const t = fakeTerminal();
-    const verdict = probeReflow({ write: t.write, onReply: t.onReply, colBefore: 81, oldWidth: 120, newWidth: 80 });
-    expect(t.order).toEqual(["subscribe", "write:\x1b[6n"]);
-    t.answer(3, 1);                                        // ((81−1) mod 80) + 1 === 1
-    expect(await verdict).toBe("reflow");
+    const verdict = probeReflow({ write: t.write, onReply: t.onReply, colBefore: Infinity, oldWidth: 120, newWidth: 80 });
+    expect(await verdict).toBe("unknown");
+    expect(t.order).toEqual([]);
   });
 
   it("ignores the reported ROW entirely (tmux pins it; SP-R0 refuted using it)", async () => {
@@ -149,6 +181,21 @@ describe("probeReflow — the query", () => {
     expect(DSR_CURSOR_QUERY).toBe("\x1b[6n");
     t.answer(3, 41);
     await verdict;
+  });
+
+  // The write is a real syscall on a real handle and it can throw synchronously (write-after-end, EPIPE while the
+  // terminal is tearing down). Inside the promise executor an uncaught throw REJECTS — on a path whose whole
+  // contract is "resolves `unknown` rather than hanging", and an unhandled rejection is worse than the hang.
+  it("settles `unknown` instead of rejecting when the write throws, and leaves nothing behind", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = fakeTerminal();
+      const verdict = probeReflow({ write: () => { throw new Error("EPIPE"); }, onReply: t.onReply, colBefore: 121, oldWidth: 120, newWidth: 80 });
+      await expect(verdict).resolves.toBe("unknown");
+      expect(t.subscribed).toBe(false);                    // …and it does not sit at the head of the bus eating replies
+      expect(t.unsubscribes).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
   });
 
   it("unsubscribes once the answer lands, and never settles twice", async () => {
@@ -207,27 +254,37 @@ describe("probeReflow — the timeout", () => {
 
 // A DSR REPLY CARRIES NO CORRELATION TOKEN, so nothing in the bytes says which query it answers. A probe that
 // times out on a slow link (ssh, tmux over latency) and is answered a moment later would otherwise hand that
-// stale column — a fact about the PREVIOUS geometry — to whichever probe is listening now. Below, the stale
-// column is 1, and 1 is exactly what the second probe's own re-wrap arithmetic expects: the corrupted answer is
-// "reflow", the verdict that erases live transcript rows. So a probe stays installed after it gives up, long
-// enough to eat its own late answer, and the bus hands each reply to ONE probe, oldest first.
-describe("probeReflow — a late reply belongs to the probe that asked for it", () => {
-  it("does not let a timed-out probe's late answer resolve the NEXT probe", async () => {
+// stale column — a fact about the PREVIOUS geometry — to whichever probe is listening now, and that stale column
+// can be exactly the later probe's own "reflow" value: the verdict that erases live transcript rows. A grace
+// window only narrows that hole (a reply later than `2 × timeoutMs` outlives the swallower and lands on the next
+// probe — demonstrated live). Closing it takes the blunt rule: ONE TIMEOUT ENDS PROBING FOR THE PROCESS.
+describe("probeReflow — one timeout ends probing", () => {
+  it("refuses every later probe once one has timed out — no query, no subscription, and the straggler lands on nothing", async () => {
     const reports = createCursorReports();
-    const a = await probeReflow({ write: () => {}, onReply: reports.onReply, colBefore: 161, oldWidth: 120, newWidth: 80, timeoutMs: 1 });
-    expect(a).toBe("unknown");                             // A gave up: ((161−1) mod 80) + 1 === 1 never arrived
-    const b = probeReflow({ write: () => {}, onReply: reports.onReply, colBefore: 121, oldWidth: 120, newWidth: 60, timeoutMs: 25 });
-    reports.deliver("\x1b[9;1R");                          // …and now it does — but ((121−1) mod 60) + 1 is ALSO 1
-    expect(await b).toBe("unknown");                       // B timed out honestly; it was not fed A's answer
+    const a = await probeReflow({ write: () => {}, onReply: reports.onReply, colBefore: 121, oldWidth: 120, newWidth: 80, timeoutMs: 1 });
+    expect(a).toBe("unknown");                             // A gave up: ((121−1) mod 80) + 1 === 41 never arrived
+    const t = fakeTerminal();
+    const b = probeReflow({ write: t.write, onReply: t.onReply, colBefore: 121, oldWidth: 120, newWidth: 80, timeoutMs: 25 });
+    expect(t.order).toEqual([]);                           // B never asked, so no answer can be mistaken for its own
+    expect(await b).toBe("unknown");
+    reports.deliver("\x1b[9;41R");                         // A's straggler, arriving past every window: harmless
+    expect(await b).toBe("unknown");
+    expect(t.subscribed).toBe(false);
   });
 
-  it("still answers the next probe from ITS OWN reply once the stale one has been eaten", async () => {
-    const reports = createCursorReports();
-    expect(await probeReflow({ write: () => {}, onReply: reports.onReply, colBefore: 161, oldWidth: 120, newWidth: 80, timeoutMs: 1 })).toBe("unknown");
-    const b = probeReflow({ write: () => {}, onReply: reports.onReply, colBefore: 121, oldWidth: 120, newWidth: 60, timeoutMs: 500 });
-    reports.deliver("\x1b[9;1R");                          // A's, swallowed
-    reports.deliver("\x1b[3;1R");                          // B's own — the swallower must be out of the way by now
-    expect(await b).toBe("reflow");
+  // The latch is per PROCESS, not per bus or per caller: the fact it records is "this terminal did not answer",
+  // and there is only one terminal. A fresh `createCursorReports` does not buy a second chance.
+  it("stays latched across a fresh reports bus, and refuses without spending the timeout", async () => {
+    expect(await probeReflow({ write: () => {}, onReply: createCursorReports().onReply, colBefore: 121, oldWidth: 120, newWidth: 80, timeoutMs: 1 })).toBe("unknown");
+    vi.useFakeTimers();
+    try {
+      const t = fakeTerminal();
+      let settled: string | undefined;
+      void probeReflow({ write: t.write, onReply: t.onReply, colBefore: 121, oldWidth: 120, newWidth: 80 }).then((v) => { settled = v; });
+      await vi.advanceTimersByTimeAsync(0);                // settles on the spot, not 150 ms later
+      expect(settled).toBe("unknown");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
   });
 
   it("swallows its own late answer and hands the subscription back at that moment", async () => {
