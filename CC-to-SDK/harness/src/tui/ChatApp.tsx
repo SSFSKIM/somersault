@@ -99,6 +99,13 @@ const EMPTY_LINES: readonly RenderLine[] = [];
  *  dependency, and a fresh closure per render would tear down and re-attach the listener every frame. */
 const DEFAULT_ON_RESIZE = (cb: () => void): (() => void) => { process.stdout.on("resize", cb); return () => { process.stdout.off("resize", cb); }; };
 
+export type TermSize = { columns: number; rows: number };
+/** WAVE R TASK 1 (review finding) — the functional update the sampler below hands to `setSize`: the PREVIOUS
+ *  object whenever the size has not moved. Identity is the whole point — React compares the eager next state
+ *  with Object.is, so an unchanged size schedules no render at all. That is what makes the resample-on-subscribe
+ *  free, and it de-duplicates any later resize event that reports a size we already hold. */
+export const nextSize = (prev: TermSize, next: TermSize): TermSize => next.columns === prev.columns && next.rows === prev.rows ? prev : next;
+
 function RestoringModal(): React.ReactElement {
   useSwallowKeys(true);
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
@@ -135,7 +142,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   resumeOutput?: { repaint: (runInkWrite: () => void) => void };
   /** WAVE R TASK 1 — subscribe to terminal resizes; returns the unsubscribe. A seam for the same reason
    *  `suspend` is one: a test cannot resize `ink-testing-library`'s fake stdout, and the real default
-   *  (`DEFAULT_ON_RESIZE`) listens on the process's own tty. */
+   *  (`DEFAULT_ON_RESIZE`) listens on the process's own tty.
+   *  MUST HAVE A STABLE IDENTITY across the caller's renders — a module-scoped function (as
+   *  `DEFAULT_ON_RESIZE` is, for exactly this reason) or a `useCallback`, never an inline arrow. The
+   *  subscribing effect lists it as its only dependency, so a fresh closure per frame would unsubscribe and
+   *  re-subscribe the terminal listener on every render. */
   onResize?: (cb: () => void) => () => void;
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
@@ -157,7 +168,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const readSize = () => ({ columns: deps?.columns?.() ?? stdout?.columns ?? 80, rows: stdout?.rows ?? 24 });
   const readSizeRef = useRef(readSize); readSizeRef.current = readSize;      // the effect below runs once; the reader must not be a mount-time closure
   const [size, setSize] = useState(readSize);
-  useEffect(() => onResize(() => setSize(readSizeRef.current())), [onResize]);
+  //   · RESAMPLE ONCE AFTER SUBSCRIBING (review finding). The read above happens during RENDER; the listener
+  //     only attaches here, a commit later. A resize landing in that window fires no callback — nothing is
+  //     subscribed yet — and the state would stay wrong until the next resize. The functional update returns
+  //     the PREVIOUS object when nothing moved, so the extra sample costs a comparison and no render, and the
+  //     same guard de-duplicates any later resize event that reports an unchanged size.
+  useEffect(() => {
+    const sample = () => setSize((prev) => nextSize(prev, readSizeRef.current()));
+    const off = onResize(sample); sample(); return off;
+  }, [onResize]);
   // BOTH STAY FUNCTION-VALUED. `ChatComposer` calls `columns()` per render on purpose (ChatComposer.tsx:252):
   // a plain number would be a prop identity that only changes when the parent re-renders for another reason.
   const terminalColumns = () => size.columns;
