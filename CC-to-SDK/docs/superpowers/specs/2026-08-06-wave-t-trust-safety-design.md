@@ -74,8 +74,11 @@ QA finding's own repro. `[BEHAVIOR]` markers are what a reviewer observes, not w
     as canon-by-transcription rather than as a defect (see W-T16 — the original finding was wrong).
 15. **A14 (EP-T2 W3)** Moving focus off an *empty* feedback row collapses it back to a plain row; a row
     holding typed text stays open.
-16. **A15 (EP-T2 W5)** The WebFetch No row no longer promises a feedback channel it cannot deliver, and
-    keeps its inline `(esc)` — that dialog stays footerless, as upstream builds it.
+16. **A15 (EP-T2 W5) — AMENDED mid-execution, see W-T22.** The WebFetch No row is pinned as
+    canon-by-transcription: it reads `No, and tell Claude what to do differently (esc)` verbatim, keeps its
+    inline `(esc)`, and that dialog stays footerless, as upstream builds it. The original criterion
+    ("no longer promises a feedback channel it cannot deliver") was withdrawn — the string is upstream's
+    standing idiom, not a ccx defect.
 17. **A16 (EP-T2 W6)** An empty amended row renders `No,<cursor><placeholder>` with no doubled space.
 18. **A17 (EP-T2 W7)** An interrupted *tool call* still shows the interrupt line exactly **once** (the
     F3 suppression at `species.ts:258-260` is preserved), and the third upstream sentinel now shows it too.
@@ -676,9 +679,10 @@ A12, A13.
 - **W-T17 [DECIDED]** `Select` is **not** modified for EP-T2 — dropping the option flag suffices, because
   every consult body's `onCancel` already collapses feedback mode. The primitive change moves to EP-T3,
   which genuinely needs Esc and empty-Enter to diverge.
-- **W-T18 [DECIDED]** `FetchPermission` stays footerless and keeps `(esc)` in its No-row label; only the
-  undeliverable clause is removed. Rejected: mounting a footer there, which would add an `esc cancel` row
-  upstream does not have (L506752-771) and could carry neither hint.
+- **W-T18 [DECIDED, then PARTLY SUPERSEDED by W-T22]** `FetchPermission` stays footerless and keeps
+  `(esc)` in its No-row label. Rejected: mounting a footer there, which would add an `esc cancel` row
+  upstream does not have (L506752-771) and could carry neither hint. The clause "only the undeliverable
+  clause is removed" no longer holds — see W-T22.
 - **W-T19 [DECIDED]** The interrupt tool-form sentinel stays silent (`species.ts:268`). Rejected: the
   first draft's "substitute on all three sentinels", which would regress an F3 decision and double-print
   on every interrupted tool call.
@@ -686,6 +690,21 @@ A12, A13.
   launch-only gate, because upstream's ladder cannot reach bypass at all — inheriting the *shape* of its
   gate without its *fence* leaves a hole upstream does not have.
 
+- **W-T22 [RETRACTION, mid-execution 2026-08-06]** EP-T2 W5's premise — that the WebFetch No row's
+  "and tell Claude what to do differently" clause is a ccx-side broken promise — was wrong, and A15 is
+  amended accordingly. Task 8's implementer read the row in the bundle and found our label is upstream
+  **verbatim**; a controller check then found the same string again at L544640 and a near-twin
+  (`Deny, and tell Claude what to do differently (esc)`) at L503212, while the *input*-form decline rows
+  (L504874, L505650, L506294) carry the identical words as a `placeholder`. The phrasing is upstream's
+  standing idiom across both row shapes, not a slip. It is also not false: after declining, both harnesses
+  return the user to the composer, where they can indeed tell Claude what to do differently — as a
+  following message rather than as text attached to the denial. Rejected: the drafted rewrite to
+  `No (esc)`, which would have replaced a verbatim canon string with copy that appears **nowhere** in the
+  bundle, and would have had this wave pinning one upstream-verbatim row as canon (W-T16, item (c) of the
+  very same task) while unilaterally rewriting another. The absence of an inline feedback row on this
+  dialog is recorded in the Deferred section as a product question about upstream, not a ccx defect.
+  **Third premise in this wave overturned by reading the bundle instead of the QA report** (cf. W-T16,
+  W-T19, W-T21).
 - **W-T21 [RETRACTION, mid-execution 2026-08-06]** EP-T3 W4's "empty Enter on the plan No row should be a
   no-op" was wrong; ccx already matches canon (see the item for the L500994 evidence). Surfaced by Task 3's
   implementer, who noticed the behavior was a *deliberate* F6 acceptance pin and flagged the collision
@@ -734,6 +753,12 @@ Pending — written at wave close.
   acceptance criterion given A14–A19; citation drift corrected.
 
 ## Deferred (out of this wave)
+
+- **The WebFetch dialog has no inline feedback row, in either harness** (W-T22). Upstream builds its other
+  decline rows as `type:"input"` with `allowEmptySubmitToCancel` (L504874, L505650, L506294) but builds
+  this one as a plain label (L506771), so a user who picks "No, and tell Claude what to do differently"
+  gets no place to type. We now match that exactly. Whether ccx should *improve* on upstream here is a
+  product decision for the owner, not a fidelity defect — raise it as such rather than fixing it silently.
 
 - The plan modal's **clear-context** row family (deny + re-drive as a fresh turn with
   `initialMessage.mode`, L500948-64) — a different mechanism from a permission grant, and unreachable

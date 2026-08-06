@@ -514,8 +514,11 @@ durable facts are transcribed into the Wave T spec.
    unnumbered highlighted block in a dashed-border box, and the numbered diff is the *overwrite* branch.
    The QA description would have had us build the wrong widget (EP-T6).
 3. **"Upstream never conflates a directory grant with a command rule" is refuted** — two `Wdi` branches
-   do exactly that, and ccx's copy is a faithful transcription. The real trust defect is one QA missed
-   entirely: the generic dialog's row says "commands in \<cwd\>" while granting the whole tool everywhere.
+   do exactly that, and ccx's copy is a faithful transcription. *(Second half corrected during execution:
+   this item originally claimed the generic dialog "grants the whole tool everywhere" as a defect QA
+   missed. Wave T's spec review refuted that too — see W-T16. The copy is upstream verbatim at L506166,
+   the content-less whole-tool rule at L506109, and the grant is scoped to `localSettings`, i.e. the
+   project, not "everywhere". It ships unchanged, pinned as canon.)*
 4. **The deny-feedback channel works** — the failure is discoverability (no `Tab to amend` hint anywhere)
    plus an inverted empty-submit rule that turns an empty amend into a bare deny.
 5. **Bypass mode already exists** (`--permission-mode bypassPermissions`, `/yolo`); the gate is what's
@@ -525,6 +528,27 @@ durable facts are transcribed into the Wave T spec.
    a rendering job, not a synthesis job — but the SDK's terminal frame reports `subtype:"success"` on a
    dead connection, so the failure must be read from `is_error`/`terminal_reason`. A blackholed endpoint
    also burns ~75 s in silence before the first retry event, which is precisely QA's 72-second spinner.
+
+**Wave T execution round — three more premises overturned, this time by workers mid-task.** The grounding
+round caught six before any code; these three survived it and were caught only when someone opened the
+bundle to implement the change. Recorded in the Wave T spec as W-T16, W-T19, W-T21, W-T22.
+
+7. **The plan modal's empty-Enter was already correct** (W-T21). Task 3's implementer noticed the planned
+   "fix" collided with a deliberate F6 acceptance pin and flagged it instead of complying; the bundle
+   (L500994) showed upstream denies there, exactly as ccx already did.
+8. **The interrupt row already shipped** (W-T19); only one of three sentinels was missing, and the
+   tool-form's silence is a deliberate F3 decision the draft would have regressed into double-printing.
+9. **The WebFetch No-row copy is upstream verbatim** (W-T22). Task 8's implementer read L506771 and found
+   our "broken promise" is Claude Code's own standing idiom — repeated at L544640, near-twinned at L503212,
+   and used as the `placeholder` on every input-form decline row. The drafted rewrite was reverted and the
+   row pinned as canon; the missing feedback row is deferred as a product question about upstream.
+
+**The pattern across all nine: the QA report described symptoms accurately and diagnosed causes
+unreliably.** Every overturn came from reading the canonical bundle rather than from reasoning about the
+report. Treat a QA finding's *observation* as evidence and its *diagnosis* as a hypothesis — and note that
+three of these nine got past a dedicated grounding round and two independent reviews, surfacing only at the
+moment of implementation. Keep implementers licensed to stop and challenge their own brief; the two who did
+are the reason items 7 and 9 are in this list.
 
 **Probe-hygiene lesson (probe 97, run 1 discarded):** a live probe with default `settingSources` inherits
 this machine's global agents, hooks and skills — the model dispatched a subagent and never reached the
