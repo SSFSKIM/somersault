@@ -554,6 +554,35 @@ are the reason items 7 and 9 are in this list.
 this machine's global agents, hooks and skills — the model dispatched a subagent and never reached the
 surface under test. Probes needing a clean session must set `settingSources: []`.
 
+**Wave R grounding round (2026-08-06) — opened with two controller-verified facts.** Evidence in
+`$CLAUDE_JOB_DIR/tmp/wave-r-controller-notes.md`; both were read first-hand, not delegated.
+
+10. **The comparison target was never the citation target — and it drifts weekly.** `claude --version`
+    now reports **2.1.223**, a Mach-O arm64 binary at `~/.local/share/claude/versions/2.1.223` (272 MB,
+    no `cli.js`; grep it with `strings -a`). Builds 2.1.221 (Aug 4) and 2.1.222 (Aug 5) sit beside it.
+    Canon is the **2.1.220** JS bundle (Jul 30). **The fleet ran 2026-08-05, so every "claude does X"
+    in the triage is a statement about 2.1.222**, adjudicated against 220 source. Three releases separate
+    the two. This is a standing caveat on the whole corpus, not a MOUSE-1 detail: any live-vs-bundle
+    disagreement is a version-drift candidate before it is a misread. It also supplies a clean
+    reconciliation route for MOUSE-1 (§11) that no amount of 220-reading could have produced.
+11. **The width-resize defect is Ink's erase accounting, not a missing resize handler** (ink 5.2.1).
+    `ink.js:83` already subscribes to `stdout.on('resize')` and recomputes layout. The defect is in
+    `log-update.js`: `previousLineCount = output.split('\n').length` counts **logical** lines, then
+    `eraseLines(previousLineCount)` erases that many **physical** rows. The two agree only while the
+    width has not changed since the frame was written. After a shrink the terminal re-wraps the
+    already-emitted frame, the erase falls short, and the remainder survives — which is exactly the
+    reported hard-wrapped remainder rules and their accumulation across a resize history. A second
+    contributor: `if (output === previousOutput) return;` writes *nothing* when a resize yields a
+    byte-identical frame, leaving the re-wrapped copy standing. **The mechanism predicts the fleet's own
+    control result** — height-only resizes re-wrap nothing, so their erase is exact and they are always
+    clean. `ink.js:121` already carries the escape hatch (`outputHeight >= stdout.rows` writes
+    `clearTerminal + fullStaticOutput + output`), which is both the shape of the fix and the source of
+    the recorded "frame taller than the viewport leaks copies" hazard that EP-R3 must respect.
+    **Consequence for EP-R1's `[DECIDED-AUTO]`:** "wire in the pager's clear" is only correct if the
+    pager close path actually invalidates that accounting. The decision is provisional until the pager's
+    real mechanism is read; the durable requirement is that a width change must invalidate Ink's erase
+    accounting, however that is reached.
+
 ## §13 Tracking map
 
 **No issue board (D3).** The materialization contract for this project is:
