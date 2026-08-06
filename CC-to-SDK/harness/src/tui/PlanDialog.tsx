@@ -36,13 +36,17 @@
 //     updatedPermissions?, toolUseID?, decisionClassification?}` (sdk.d.ts L2113-2119) — no message field —
 //     and the tool result is assembled inside the engine, where a client has no hook. The three near-misses
 //     were checked and rejected: `updatedInput.plan` is NOT a spare channel (ExitPlanMode WRITES that string
-//     to the plan file, L229928, and echoes it under "## Approved Plan:", L229999, so appended feedback
+//     to the plan file, L229930, and echoes it under "## Approved Plan:", L230000, so appended feedback
 //     would corrupt the saved plan and read to the model as plan content); an extra `updatedInput` key is
-//     read by nothing (L229927 takes `plan` alone); and a follow-up user message is a QUEUED TURN
+//     read by nothing (L229928 takes `plan` alone); and a follow-up user message is a QUEUED TURN
 //     (session.ts's `enqueueTurn`) that would land only after the model had executed the entire plan.
-//     SO THE TEXT TRAVELS AS FAR AS CCX'S OWN DECISION AND STOPS. `plan_approve` carries `feedback`, which
-//     the host, the app-server's `decision/resolved` fan-out and any attached client can see; the gate
-//     deliberately does not put it on the allow arm, because there is no arm to put it on. The row's
+//     SO THE TEXT TRAVELS AS FAR AS CCX'S OWN DECISION AND STOPS. `plan_approve` carries `feedback`, and
+//     exactly one consumer reads it: the app-server's `decision/resolved` fan-out, which broadcasts the whole
+//     outcome to every subscriber of the thread (server.ts:278). The HOST path drops it — `decision_settled`
+//     carries `outcome.kind` alone (host.ts:701), and the gate deliberately does not put it on the allow arm
+//     because there is no arm to put it on — so on `ccx` and `ccx attach` the sentence is parsed and then
+//     discarded. KNOWN GAP: nothing surfaces it on the REPL path. An approved-plan transcript row carrying
+//     the text is the piece that would complete this, and it is deliberately not built. The row's
 //     description stays trimmed to `SHIFT_TAB_HINT` below rather than restored to upstream's "shift+tab to
 //     approve with this feedback": that wording promises the MODEL will read it, and advertising a channel
 //     that drops the user's sentence is the one thing F0's honesty rule forbids — and the one thing this
@@ -275,8 +279,9 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
    *  the narrowest of upstream's three arms, so the dialog printed that arm's label whatever the session
    *  could actually grant (qa3-17).
    *  `feedback` is divergence 3's reachable half: upstream's `acceptFeedback`, carried on OUR decision (the
-   *  host, `decision/resolved` and every attached client see it) and deliberately not on the SDK's allow arm,
-   *  which has no field for it. Trimmed and omitted when empty, exactly as `oMn = eYf || void 0` (L500936). */
+   *  app-server's `decision/resolved` fan-out hands the whole outcome to subscribed clients; the host path
+   *  drops it, so the REPL surfaces nothing) and deliberately not on the SDK's allow arm, which has no field
+   *  for it. Trimmed and omitted when empty, exactly as `oMn = eYf || void 0` (L500936). */
   const approve = (mode: PlanGrantMode) => {
     const feedback = feedbackRef.current.trim();
     onDecision({ kind: "plan_approve", mode, ...(feedback ? { feedback } : {}), ...(editedRef.current ? { plan: planRef.current } : {}) });
@@ -370,7 +375,12 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
           <Box paddingX={1} flexDirection="column"><Text>{PLAN_BODY_TITLE}</Text></Box>
           {/* `EDr` (L501096) wraps the plan in `SM` (L424994-425003): dashed rules top and bottom, left and
               right edges off, in the `subtle` role, `paddingX:1` and `marginBottom:1`. The two rules are what
-              separate the plan from the title above it and the consent line below without a second frame. */}
+              separate the plan from the title above it and the consent line below without a second frame.
+              ONE FIELD IS NOT TRANSCRIBED: `SM` drops the style entirely under a screen reader (`const hGp =
+              Ea() ? void 0 : "dashed"`, L424996, `Ea()` being Ink's `isScreenReaderEnabled` context,
+              L182559 over the provider at L181297), so upstream paints NO border there. We paint
+              unconditionally — stock Ink 5 has no such context and this repo has no screen-reader surface to
+              read it off, the same class of gap DialogFrame.tsx records for `srPrefix`. */}
           <Box flexDirection="column" borderStyle={DASHED_BORDER} borderColor={role("subtle")}
             borderLeft={false} borderRight={false} overflow="hidden" paddingX={1} marginBottom={1}>
             {lines.slice(top, top + window).map((l, i) => <Line key={top + i} l={l} />)}

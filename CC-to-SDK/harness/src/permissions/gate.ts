@@ -73,7 +73,8 @@ export function createPermissionGate(broker: PermissionBroker): CanUseTool {
     // `d.feedback` is DROPPED HERE ON PURPOSE and this is the honest place to say so: upstream appends it to
     // the tool_result content (L298586-589), a place no permission result can reach, and the allow arm above
     // has no message field. Folding it into `plan` would corrupt the file ExitPlanMode writes from that string
-    // (L229928); a spare `updatedInput` key is read by nothing. It stays a ccx-local decision record.
+    // (read at L229928, written at L229930); a spare `updatedInput` key is read by nothing. It stays a
+    // ccx-local decision record — see permissions/types.ts for who actually gets to see it.
     if (d.kind === "plan_approve") return { behavior: "allow", updatedInput: d.plan !== undefined ? { ...input, plan: d.plan } : input, ...(d.updatedPermissions ? { updatedPermissions: d.updatedPermissions } : {}) };
     // The real "don't ask again": hand the engine's own suggestion back untouched. Deliberately does NOT
     // also add to `allowed` — the rule replaces that in-memory Set rather than shadowing it.

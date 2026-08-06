@@ -26,7 +26,8 @@ const structuredAnswer = z.discriminatedUnion("kind", [
   // not z.string(), because this schema is the only thing standing between a client's typo and a
   // setPermissionMode call the engine will reject.
   // `feedback` (Wave T t11) is the approver's typed sentence — ccx-local by construction (permissions/types.ts):
-  // it reaches other clients through the decision record and never the SDK's allow arm, which has no field for it.
+  // the app-server's `decision/resolved` fan-out is its one consumer, THIS host path forwards it nowhere, and
+  // it never reaches the SDK's allow arm, which has no field for it.
   z.object({ kind: z.literal("plan_approve"), mode: planGrantMode, updatedPermissions: z.array(permissionUpdate).optional(), plan: z.string().optional(), feedback: z.string().optional() }),
   z.object({ kind: z.literal("plan_reject"), feedback: z.string().optional() }),
 ]);

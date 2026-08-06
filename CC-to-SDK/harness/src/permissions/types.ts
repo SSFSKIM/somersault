@@ -61,8 +61,10 @@ export type DecisionOutcome =
    *  `acceptFeedback` (`Inl` L500936), which there becomes a second `{type:"text"}` block appended to the
    *  TOOL RESULT the model reads (L298586-589). THAT DESTINATION IS UNREACHABLE FROM A `canUseTool`: the
    *  allow arm carries no message field and the tool result is built inside the engine. So this field is
-   *  ccx-local by construction — the host, `decision/resolved` and every attached client see what the
-   *  approver said, and `gate.ts` deliberately does not forward it. Absent when the row was empty.
+   *  ccx-local by construction, with ONE consumer: the app-server's `decision/resolved` fan-out broadcasts
+   *  the whole outcome, feedback included, to every subscriber of the thread (server.ts:278). The HOST path
+   *  drops it — `decision_settled` carries `outcome.kind` alone (host.ts:701) and `gate.ts` deliberately
+   *  does not forward it — so on `ccx`/`ccx attach` nothing shows it. Absent when the row was empty.
    *  PlanDialog.tsx's divergence 3 records the three near-miss channels that were checked and rejected. */
   | { kind: "plan_approve"; mode: PlanGrantMode; updatedPermissions?: PermissionUpdateLike[]; plan?: string; feedback?: string }
   | { kind: "plan_reject"; feedback?: string };
