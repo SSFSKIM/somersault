@@ -45,13 +45,16 @@ describe("ResumeSafeStdout.lastFrame", () => {
     expect(out.lastFrame()).toBe("newer\n");
   });
 
-  // Kind 2 — Instance.clear() → log.clear() writes the erase run and NOTHING else. The screen is now blank, but the
-  // component tree is unchanged, so the previously recorded frame is still the best answer we have. Don't drop it.
-  it("leaves the recorded frame in place for an erase-only write", () => {
+  // Kind 2 — Instance.clear() → log.clear() writes the erase run and NOTHING else. Those rows are GONE from the
+  // screen, so the frame we recorded is no longer painted anywhere and must stop being reported as painted. In the
+  // clear→static→frame burst the very next frame write re-records it a moment later; on the app.clear() path no
+  // frame follows, and lastFrame() staying undefined is what makes task 4 erase NOTHING instead of erasing a stale
+  // (and possibly much taller) frame's worth of live transcript.
+  it("drops the recorded frame on an erase-only write", () => {
     const { out } = proxy();
     out.stdout.write(eraseLines(2) + "live frame\n");
     out.stdout.write(eraseLines(3));
-    expect(out.lastFrame()).toBe("live frame\n");
+    expect(out.lastFrame()).toBeUndefined();
   });
 
   // Kind 3 — the <Static> path. ink.js onRender does log.clear() → write(staticOutput) → log(output): the static
@@ -62,9 +65,26 @@ describe("ResumeSafeStdout.lastFrame", () => {
     out.stdout.write(eraseLines(2) + "old frame\n");
     out.stdout.write(eraseLines(2));                     // log.clear()
     out.stdout.write("committed transcript row\n");      // staticOutput — scrollback, not the live frame
-    expect(out.lastFrame()).toBe("old frame\n");
+    expect(out.lastFrame()).toBeUndefined();             // mid-burst the old frame is off-screen, so it is not reported
     out.stdout.write("new frame\n");                     // log(output), bare because clear() zeroed the count
-    expect(out.lastFrame()).toBe("new frame\n");
+    expect(out.lastFrame()).toBe("new frame\n");         // …and the burst still ENDS with the frame recorded
+  });
+
+  // …and the SAME burst with an EMPTY clear, which is the shape ccx actually launches in. When previousLineCount
+  // is 0 — first paint, or right after app.clear() — log.clear() writes eraseLines(0) === "", so the "erase" is a
+  // zero-length write. That empty write setting the flag is the ONLY thing that tells the bootstrapped <Static>
+  // transcript apart from the frame; miss it and the whole session's scrollback is adopted as the frame and task
+  // 4's erase eats the live transcript. Pinned with a static write far taller than the frame so the failure would
+  // show up in physicalRows, not just in identity.
+  it("skips the static write when log.clear() is a ZERO-LENGTH erase", () => {
+    const { out } = proxy();
+    const bootstrapped = Array.from({ length: 40 }, (_, i) => `bootstrapped transcript row ${i}`).join("\n") + "\n";
+    out.stdout.write(eraseLines(0));                     // log.clear() with previousLineCount === 0 → ""
+    out.stdout.write(bootstrapped);                      // staticOutput — the entire replayed transcript
+    expect(out.lastFrame()).toBeUndefined();
+    out.stdout.write("frame\n");                         // log(output)
+    expect(out.lastFrame()).toBe("frame\n");
+    expect(physicalRows(out.lastFrame()!, 80)).toBe(1);  // …one row, NOT 40-odd
   });
 
   // Kind 4 — repaint() suppresses Ink's stale post-resume clear. A suppressed write never reaches the terminal, so
