@@ -128,11 +128,14 @@ export class Session implements ControllableSession {
   }
 
   /** Convenience: run one turn as an async generator. Yields the turn's streamed (non-result) messages,
-   *  then a terminal { type:"result", result } (or { type:"error", error } if the turn rejects). Sugar over submit. */
+   *  then a terminal { type:"result", result } — or { type:"error", error } both when the turn rejects and
+   *  when it resolves error-tagged. The tag is the SAME failure a rejection used to be (Task 14 changed how
+   *  it settles, not whether it failed), so this public generator must not report it as a result: the
+   *  terminal shape is what a `stream()` consumer branches on. Sugar over submit. */
   async *stream(prompt: string): AsyncGenerator<unknown> {
     const out = new AsyncQueue<unknown>();
     const done = this.submit(prompt, (m) => out.push(m)).then(
-      (r) => out.push({ type: "result", result: r.result }),
+      (r) => out.push(r.error ? { type: "error", error: r.error.message } : { type: "result", result: r.result }),
       (e) => out.push({ type: "error", error: (e as Error).message }),
     ).finally(() => out.close());
     for await (const m of out) yield m;

@@ -42,6 +42,30 @@ describe("DaemonServer over a real UDS", () => {
     await daemonRequest(sock, { op: "shutdown" });
     await server.closed;
   });
+  it("submit op: a turn whose terminal frame REPORTED failure replies { ok:false, error }, never { type:'done' }", async () => {
+    // Task 14 made that turn RESOLVE with an additive error tag instead of rejecting. Pre-Task-14 it threw
+    // and the handler's catch sent `{ok:false,error}` — a UDS client branching on `ok:false` must keep
+    // seeing failure. The frame is probe 96's: `subtype:"success"` while `is_error` is true.
+    const d = tmp();
+    const sock = join(d, "sock");
+    const apiErrorQuery = ({ prompt }: any) => (async function* () {
+      for await (const t of prompt) {
+        yield { type: "assistant", message: { content: [{ type: "text", text: "Failed to authenticate. API Error: 401" }] } };
+        yield { type: "result", subtype: "success", is_error: true, terminal_reason: "api_error", api_error_status: 401, user_message_uuid: t.uuid, result: "Failed to authenticate. API Error: 401" };
+      }
+    })();
+    const sup = new DaemonSupervisor({ query: apiErrorQuery }, { dir: join(d, "sessions") });
+    const server = new DaemonServer(sup, sock);
+    await server.listen();
+    const id = (await daemonRequest(sock, { op: "spawn" }))[0].id;
+    const lines: any[] = [];
+    await daemonRequest(sock, { op: "submit", id, prompt: "hi" }, (o) => lines.push(o));
+    expect(lines.find((l) => l.type === "chunk")).toBeTruthy();      // the turn still streamed
+    expect(lines.find((l) => l.type === "done")).toBeUndefined();
+    expect(lines.find((l) => l.ok === false)).toEqual({ ok: false, error: "Failed to authenticate. API Error: 401" });
+    await daemonRequest(sock, { op: "shutdown" });
+    await server.closed;
+  });
   it("fork op over UDS: captures sessionId on a turn, forks, replies { ok, id, sessionId }", async () => {
     const d = tmp();
     const sock = join(d, "sock");

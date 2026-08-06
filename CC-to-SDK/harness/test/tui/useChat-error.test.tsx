@@ -3,7 +3,12 @@
 //
 // The original claim was "the failure renders twice". Measured, it did not: on probe 96's terminal frame
 // `submit()` RESOLVED, the turn-end event carried no error, and the transcript held exactly one row — the
-// synthetic assistant message, painted by species.ts's `JG`/`lca` arm as a canon warning bullet. The
+// synthetic assistant message, rendered as an ORDINARY assistant message (an `⏺` bullet + markdown,
+// render.ts:205). It is NOT the `JG`/`lca` warning bullet: `JG_PREFIXES` (species.ts:462-466) matches only
+// text that STARTS WITH `API Error` or one of the four cloud-credential prefixes, and this text starts
+// with "Failed to authenticate.", so `errorSentinelLines` returns undefined and species.ts:578 never
+// fires. (`is_api_error_message` is not read anywhere in `src/`.) Verified by calling both functions on
+// the exact text below. The
 // SECOND line only appeared on the uuid-less variant, where nothing settled the waiter and readLoop's
 // `finally` rejected it "session disposed" — a line that named the wrong cause. Task 14 makes both
 // variants resolve error-tagged, so both render the one canon row. These tests pin the COUNT.

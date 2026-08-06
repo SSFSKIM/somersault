@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import type { Peer } from "./peer.js";
 import type { ItemEvent } from "./items/types.js";
 import type { PlanGrantMode } from "../permissions/types.js";
+import type { TurnFailure } from "../session/turnResult.js";
 
 export type ThreadOrigin = "inProcess"; // fleet adoption is M3
 
@@ -16,7 +17,11 @@ export interface BufferedItemEvent { turnId: string; event: ItemEvent }
 /** The subset of the lib Session the server drives in M1 (structural — the real Session satisfies
  *  this without adapting). */
 export interface EngineSession {
-  submit(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown }>;
+  /** `error` is Task 14's additive failure tag: a turn that reached a terminal result frame and reported
+   *  failure RESOLVES carrying it (only a transport exception rejects), so turns.ts's success path has to
+   *  read it to keep broadcasting `turn/completed{status:"failed"}` for a failed turn. Optional — a DI
+   *  fake returning a bare `{result}` still satisfies this. */
+  submit(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown; error?: TurnFailure }>;
   interrupt(): Promise<unknown>;
   dispose(): Promise<void>;
   onFrame(cb: (m: unknown) => void): () => void;

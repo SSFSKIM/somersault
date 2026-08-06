@@ -1,5 +1,6 @@
 import { SessionRegistry } from "./registry.js";
 import { DaemonSession } from "./session.js";
+import type { TurnOutcome } from "../session/session.js";
 import { DaemonError } from "./types.js";
 import type { DaemonOptions, RestartPolicy, SessionRecord } from "./types.js";
 import type { TelemetryConfig } from "../config/telemetry.js";
@@ -137,7 +138,10 @@ export class DaemonSupervisor {
     return id;
   }
 
-  async submit(id: string, prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown }> {
+  // Returns the session's own TurnOutcome verbatim — including Task 14's additive `error` tag, which the
+  // UDS handler (daemon/server.ts) needs to keep reporting a failed turn as a failure. Restart policy is
+  // driven by session DEATH, not by this tag, so nothing here changes on the failure path.
+  async submit(id: string, prompt: string, onMessage: (m: unknown) => void): Promise<TurnOutcome> {
     const session = this.ensureLive(id);
     if (!session) {
       const rec = this.registry.get(id);

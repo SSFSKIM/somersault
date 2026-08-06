@@ -82,8 +82,22 @@ describe("turnFailureOf: classify a result frame by is_error, never by subtype",
     expect(turnFailureOf({ type: "result", subtype: "error_max_turns", is_error: true, errors: [], terminal_reason: "max_turns" }))
       .toEqual({ message: "max_turns", terminalReason: "max_turns" });
   });
-  it("api_error_status alone is enough — it is only ever set on an API error", () => {
+  it("api_error_status alone is enough AT >= 400", () => {
     expect(turnFailureOf({ type: "result", subtype: "success", api_error_status: 529, result: "overloaded" })?.apiErrorStatus).toBe(529);
+    expect(turnFailureOf({ type: "result", subtype: "success", api_error_status: 400, result: "bad request" })?.apiErrorStatus).toBe(400);
+  });
+  it("a SUB-400 api_error_status is NOT a failure — the >= 400 threshold is this repo's own", () => {
+    // The threshold comes from the reviewed correlation probes, not from taste: `probes/probes/
+    // 94-tool-census.ts:768` and `probes/probes/94b-result-correlation.ts:170-171` call a result frame
+    // unhealthy only at `(apiErrorStatus ?? 0) >= 400`, and `validResultFrameShape`
+    // (94-tool-census.ts:1322) accepts any finite status on a `subtype:"success"` frame. Classifying every
+    // finite status as failure would make runStructured throw on a healthy structured run. 529 (above)
+    // cannot catch that regression — only a sub-400 status can.
+    expect(turnFailureOf({ type: "result", subtype: "success", api_error_status: 200, result: "ok" })).toBeUndefined();
+    expect(turnFailureOf({ type: "result", subtype: "success", is_error: false, api_error_status: 399, result: "ok" })).toBeUndefined();
+    // is_error still decides alone: a sub-400 status never SUBTRACTS a failure, it only fails to add one.
+    expect(turnFailureOf({ type: "result", subtype: "success", is_error: true, api_error_status: 200, result: "boom" }))
+      .toEqual({ message: "boom", apiErrorStatus: 200 });
   });
   it("a null api_error_status is not a number and never decides on its own", () => {
     expect(turnFailureOf({ type: "result", subtype: "success", is_error: false, api_error_status: null, result: "ok" })).toBeUndefined();
@@ -106,8 +120,11 @@ describe("Session: probe 96's terminal frame RESOLVES submit() with an error tag
     const r = await s.submit("hi", (m) => seen.push(m));
     expect(r.result).toBe(API_ERROR_TEXT);
     expect(r.error).toEqual({ message: API_ERROR_TEXT, terminalReason: "api_error", apiErrorStatus: 401 });
-    // The synthetic assistant message still streams — it is the ONE row the transcript paints (canon
-    // `JG`/`lca` warning bullet), and the error tag must not mint a second one.
+    // The synthetic assistant message still streams — it is the ONE row the transcript paints, and the
+    // error tag must not mint a second one. That row is the ORDINARY assistant render (`⏺` + markdown,
+    // render.ts:205), not species.ts's `JG`/`lca` warning bullet: `JG_PREFIXES` (species.ts:462-466)
+    // requires the text to START WITH `API Error` or a cloud-credential prefix, and this one starts with
+    // "Failed to authenticate.", so `errorSentinelLines` returns undefined for it.
     expect(seen).toEqual([SYNTHETIC_ASSISTANT]);
   });
 
@@ -130,6 +147,16 @@ describe("Session: probe 96's terminal frame RESOLVES submit() with an error tag
     expect(r.result).toBe("ok");
     expect(r.error).toBeUndefined();
     s.dispose();
+  });
+
+  it("stream() reports the tag as a terminal { type:'error' } — it must not surface a failure as a result", async () => {
+    // stream() is public API and its TERMINAL FRAME SHAPE is what a consumer branches on. The tag is the
+    // same failure a rejection used to be, so it has to keep arriving as `{type:"error"}` here.
+    const s = new Session({ query: probe96Query(true) as any }, {});
+    const seen: any[] = [];
+    for await (const m of s.stream("hi")) seen.push(m);
+    expect(seen.map((m: any) => m.type)).toEqual(["assistant", "error"]);
+    expect(seen[seen.length - 1]).toEqual({ type: "error", error: API_ERROR_TEXT });
   });
 
   it("a query that dies WITHOUT any terminal frame still rejects — that is a real transport exception", async () => {
