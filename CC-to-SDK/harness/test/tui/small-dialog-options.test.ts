@@ -71,16 +71,15 @@ describe("WebFetch (`ull` L506735-816 · `Wtm` L506721-730 · `fid` L228310-318)
     expect(options.every((o) => o.type === undefined)).toBe(true);
   });
 
-  // CANON PIN, wave T t8 — this label is a TRANSCRIPTION, do not "fix" it. A trust review read `and tell
-  // Claude what to do differently` as a promise of a channel this row cannot deliver and t8's first pass cut
-  // the clause; both halves of that were wrong. Upstream ships these exact words on this row (L506771) and on
-  // the browser dialog's twin (L544640), plus `Deny, and tell Claude what to do differently (esc)` at
-  // L503212 — its standing idiom for a LABEL-form decline row, the same words the INPUT-form rows carry as a
-  // `placeholder` (L504874, L505650, L506294). And the sentence is true: declining returns the human to the
-  // composer, where telling Claude what to do differently is simply the next message. What the row genuinely
-  // cannot do — carry feedback INLINE, because no `feedbackConfig` hangs on it and `Wtm` has no feedback arm
-  // — is upstream's structure and is pinned by the bare-deny assertion below. `(esc)` is load-bearing too:
-  // this dialog is footerless, so the label is the only place its escape hint lives.
+  // CANON PIN, wave T t8 — this label is a TRANSCRIPTION, do not "fix" it. Upstream ships these exact words
+  // on this row (L506771) and on the browser dialog's twin (L544640), plus `Deny, and tell Claude what to do
+  // differently (esc)` at L503212 — its standing idiom for a LABEL-form decline row, the same words the
+  // INPUT-form rows carry as a `placeholder` (L504874, L505650, L506294). And the sentence is true, in this
+  // harness as in upstream: declining returns the human to the composer, where telling Claude what to do
+  // differently is simply the next message. What the row genuinely cannot do — carry feedback INLINE, because
+  // no `feedbackConfig` hangs on it and `Wtm` has no feedback arm — is upstream's structure, and is pinned by
+  // the bare-deny assertion below. `(esc)` is load-bearing too: this dialog is footerless, so the label is the
+  // only place its escape hint lives.
   it("CANON PIN: the No row's label is upstream's L506771 string, character for character", () => {
     const no = fetchOptions({ hostname: "example.com" }).find((o) => o.value === "no")!;
     expect(no.label).toBe("No, and tell Claude what to do differently (esc)");

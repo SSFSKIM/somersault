@@ -99,14 +99,13 @@ export function fetchUrl(input: Record<string, unknown>): string {
  *  `feedbackConfig` on it (unlike Skill/Monitor/generic), so it can never become a text row and this dialog
  *  has no Tab-to-feedback affordance at all. The `(esc)` in the label is the footer the others get.
  *
- *  CANON PIN, wave T t8 — the No row's copy is a TRANSCRIPTION and stays byte-for-byte. A trust review read
- *  `and tell Claude what to do differently` as a promise of a channel this dialog cannot deliver, and the
- *  first pass of t8 cut the clause; that was wrong twice over. It is not a one-off phrase: upstream ships it
- *  verbatim on this row (L506771) AND on the browser dialog's twin (L544640), with `Deny, and tell Claude
- *  what to do differently (esc)` at L503212 — it is upstream's standing idiom for a LABEL-form decline row,
- *  the same words the INPUT-form rows carry as their `placeholder` (L504874, L505650, L506294). And it is
- *  true as written: declining returns the human to the composer, where telling Claude what to do differently
- *  is the next message rather than text attached to the denial. That reading holds in both harnesses.
+ *  CANON PIN, wave T t8 — the No row's copy is a TRANSCRIPTION and stays byte-for-byte; do not "fix" it.
+ *  `and tell Claude what to do differently` is no one-off phrase: upstream ships it verbatim on this row
+ *  (L506771) AND on the browser dialog's twin (L544640), with `Deny, and tell Claude what to do differently
+ *  (esc)` at L503212 — it is upstream's standing idiom for a LABEL-form decline row, the same words the
+ *  INPUT-form rows carry as their `placeholder` (L504874, L505650, L506294). And it is true as written:
+ *  declining returns the human to the composer, where telling Claude what to do differently is the next
+ *  message rather than text attached to the denial. That reading holds in both harnesses.
  *  What IS structural — and is upstream's structure, not our defect — is that no `feedbackConfig` hangs on
  *  this row and `Wtm` (L506721-730) has no feedback arm, so the row itself can only ever send a bare deny.
  *  The `(esc)` is load-bearing besides: no `ConsultFooter` is mounted here (this body is footerless by

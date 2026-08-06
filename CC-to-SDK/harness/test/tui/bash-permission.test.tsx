@@ -170,6 +170,21 @@ describe("<BashPermission> — feedback mode (Tab on No)", () => {
     expect(v.got[0]).toEqual({ kind: "deny", feedback: "ask any human" });
   });
 
+  // Wave T t8 (qa3-06, A16). `select.test.tsx` pins the single-space frame on a row it labels by setting
+  // `showLabelWithValue` itself; the real amended row is labelled by the dialog's `inlineDescriptions`
+  // (`BashPermission.tsx:124`), and nothing at THIS level pinned the width — every other assertion in this
+  // file passes the substring test with a doubled space in the frame, which is exactly what QA filed. The
+  // block cursor is an inverse-video SPACE, so on the plain frame it IS the space after the separator.
+  it("renders the empty amended No row as `No,` + cursor + placeholder — one space, never two", async () => {
+    const v = await mount(req("ls"));
+    v.stdin.write("\x1b[B"); await tick();                        // focus No
+    v.stdin.write("\t"); await tick();                            // …and turn it into the amend field
+    const f = plain(v.frame());
+    expect(f).toContain("No, and tell Claude what to do differently");
+    expect(f).not.toContain("No,  and tell Claude what to do differently");
+    expect(v.got).toEqual([]);
+  });
+
   // Wave T t4 review (I1). The amend hint is gated on the LIVE `inputMode` the BODY passes down: once the
   // focused row is already a text field, the hint that told you how to open one is noise (`aZf` L505186).
   // `consult-footer.test.tsx` pins the component and the mount-state assertions above pin `inputMode={false}`,
