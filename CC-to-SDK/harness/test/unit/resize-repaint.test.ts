@@ -4,8 +4,9 @@
 // pin the empty string.
 import { describe, expect, it, vi } from "vitest";
 import { createResumeSafeStdout } from "../../src/tui/chatMain.js";
-import { correctionAfterRepaint, correctionBeforeRepaint, createForceRepaint, createResizeRepaint, eraseRows,
-  inkErases, occupiedRows, parkColumn, parkSequence, physicalRows, type ResizeSample } from "../../src/tui/resizeRepaint.js";
+import { correctionAfterRepaint, createForceRepaint, createResizeRepaint, eraseRows, frameWriteCorrection,
+  inkErases, occupiedRows, parkColumn, parkSequence, physicalRows, type FrameWriteInfo,
+  type ResizeSample } from "../../src/tui/resizeRepaint.js";
 import type { ReflowVerdict } from "../../src/tui/reflowOracle.js";
 
 // ansi-escapes' eraseLines(n), byte-for-byte — the same shape test/unit/resume-safe-stdout.test.ts pins, because
@@ -50,34 +51,50 @@ describe("occupiedRows — the region a painted frame owns", () => {
   });
 });
 
-describe("correctionBeforeRepaint — emitted from the resize listener, ahead of Ink's own repaint", () => {
-  // Ink is about to erase `inkErases(frame)` rows itself and repaint from there. We erase the rows ABOVE that,
-  // plus the one row eraseLines leaves the cursor sitting on, so the two runs meet exactly and cover the region.
-  it("erases what Ink's logical-line count will miss on a reflowing shrink", () => {
-    const seq = correctionBeforeRepaint(sample(), "reflow");
-    expect(seq).toBe(inkEraseLines(5));                                  // 11 - 7 + 1
-    expect(rowsCleared(seq) + inkErases(SP_R0) - 1).toBe(11);            // …and together they cover the region
+// TASK 4B: THE CORRECTION MOVED TO THE WRITE. A SIGWINCH does not imply an Ink write — `resized()` hands the
+// repaint to a throttle (leading + trailing) and `log-update` drops a write whose output is unchanged — so a
+// correction emitted from the resize listener runs against a cursor Ink may not move for another tick, or ever.
+// Residue is created only by a frame write that under-erases, so the correction belongs to that write, where the
+// live width, the frame on screen, the park and Ink's own erase depth are all known exactly and none of them is
+// a prediction. Task 4's `correctionBeforeRepaint` and the listener's synchronous emission are gone with it.
+describe("frameWriteCorrection — injected between Ink's erase prefix and the body, at the write itself", () => {
+  const info = (over: Partial<FrameWriteInfo> = {}): FrameWriteInfo =>
+    ({ inkErases: 7, prevFrame: SP_R0, parkedCol: 117, widthAtPaint: 120, width: 40, rows: 40, ...over });
+
+  // The brief's worked example, verbatim: the frame Ink is erasing occupies 10 rows at the LIVE width plus the
+  // padded park's 3 = 13, while Ink's own prefix covers 7. The injected run re-clears Ink's topmost row plus the
+  // 6 above it, so the two runs together cover exactly 13 distinct rows and the body paints from the true top.
+  it("reproduces the SP-R0 worked example", () => {
+    const seq = frameWriteCorrection(info(), "reflow");
+    expect(occupiedRows(SP_R0, 117, 40)).toBe(13);
+    expect(seq).toBe(inkEraseLines(7));                                  // 13 - 7 + 1
+    expect(rowsCleared(seq) + 7 - 1).toBe(13);                           // …and the two runs meet on one shared row
   });
 
-  it("counts the padded cursor row's re-wrap into the region", () => {
-    expect(correctionBeforeRepaint(sample({ parkedCol: 117 }), "reflow")).toBe(inkEraseLines(13 - 7 + 1));
+  // The asymmetry rule: only a MEASURED "reflow" corrects. `undefined` is the session's first shrink, before the
+  // probe has answered — that write goes out uncorrected and `correctionAfterRepaint` repairs it. "unknown" is a
+  // terminal we could not measure and behaves exactly like "truncate": a wrong "truncate" costs a cosmetic row,
+  // a wrong "reflow" costs live transcript.
+  it("emits nothing without a measured reflow", () => {
+    for (const verdict of [undefined, "truncate", "unknown"] as (ReflowVerdict | undefined)[])
+      expect(frameWriteCorrection(info(), verdict), String(verdict)).toBe("");
   });
 
-  it("emits nothing on a grow, a height-only resize, or a frame that did not re-wrap", () => {
-    expect(correctionBeforeRepaint(sample({ oldWidth: 40, newWidth: 120 }), "reflow")).toBe("");
-    expect(correctionBeforeRepaint(sample({ oldWidth: 120, newWidth: 120 }), "reflow")).toBe("");
-    expect(correctionBeforeRepaint(sample({ frame: "one\ntwo\n", newWidth: 80 }), "reflow")).toBe("");
+  // The width compared is the one the RECORDED frame was painted at, not the one the resize listener saw: a
+  // frame painted at 120 and re-written while the terminal is 40 wide is the whole of the defect.
+  it("emits nothing when the width has not narrowed since that frame was painted", () => {
+    expect(frameWriteCorrection(info({ width: 160 }), "reflow")).toBe("");
+    expect(frameWriteCorrection(info({ width: 120 }), "reflow")).toBe("");
+    expect(frameWriteCorrection(info({ width: 0 }), "reflow")).toBe("");   // and never off a bogus width
   });
 
-  // The asymmetry rule: only a MEASURED "reflow" corrects. "unknown" is a terminal we could not measure, and it
-  // must behave exactly like "truncate" — a wrong "truncate" costs a cosmetic row, a wrong "reflow" costs data.
-  it("emits nothing for truncate and unknown", () => {
-    for (const verdict of ["truncate", "unknown"] as ReflowVerdict[])
-      expect(correctionBeforeRepaint(sample(), verdict), verdict).toBe("");
+  it("emits nothing when Ink's own prefix already covers the region", () => {
+    expect(frameWriteCorrection(info({ inkErases: 13 }), "reflow")).toBe("");
+    expect(frameWriteCorrection(info({ inkErases: 20 }), "reflow")).toBe("");
   });
 
   it("caps the region at the rows on screen", () => {
-    expect(correctionBeforeRepaint(sample({ rows: 9 }), "reflow")).toBe(inkEraseLines(9 - 7 + 1));
+    expect(frameWriteCorrection(info({ rows: 9 }), "reflow")).toBe(inkEraseLines(9 - 7 + 1));
   });
 });
 
@@ -125,18 +142,20 @@ describe("createResizeRepaint — the driver", () => {
   const flush = (): Promise<void> => new Promise((r) => { setTimeout(r, 0); });
   const rig = (opts: { frame?: string | undefined; verdicts?: ReflowVerdict[] } = {}) => {
     let columns = 120, parked = 117, frame: string | undefined = "frame" in opts ? opts.frame : SP_R0;
-    const emitted: string[] = [], repainted: string[] = [], probes: Array<{ colBefore: number; oldWidth: number; newWidth: number }> = [];
+    const repainted: string[] = [], verdictAtRepaint: (ReflowVerdict | undefined)[] = [];
+    const probes: Array<{ colBefore: number; oldWidth: number; newWidth: number }> = [];
     const verdicts = [...(opts.verdicts ?? ["reflow"])];
     let resolve: ((v: ReflowVerdict) => void) | undefined;
+    let verdictNow: () => ReflowVerdict | undefined = () => undefined;
     const driver = createResizeRepaint({
       lastFrame: () => frame,
       parkedColumn: () => parked,
       size: () => ({ columns, rows: 40 }),
-      emit: (s) => { emitted.push(s); },
-      repaint: (s) => { repainted.push(s); },
+      repaint: (s) => { repainted.push(s); verdictAtRepaint.push(verdictNow()); },
       probe: (a) => { probes.push(a); const next = verdicts.shift(); return next ? Promise.resolve(next) : new Promise((r) => { resolve = r; }); },
     });
-    return { driver, emitted, repainted, probes,
+    verdictNow = driver.verdict;
+    return { driver, repainted, verdictAtRepaint, probes,
       resize: (to: number) => { columns = to; driver.onResize(); parked = parkColumn(to); },
       /** Ink repaints and the proxy re-parks on the new frame — the live state the async continuation has to read
        *  instead of the sample it took when SIGWINCH fired. */
@@ -148,19 +167,33 @@ describe("createResizeRepaint — the driver", () => {
     const r = rig();
     r.resize(80);
     expect(r.probes).toEqual([{ colBefore: 117, oldWidth: 120, newWidth: 80 }]);
-    expect(r.emitted).toEqual([]);                                        // nothing synchronous: the verdict is not in yet
+    expect(r.driver.verdict()).toBeUndefined();                           // nothing to correct that write with, yet
     await vi.waitFor(() => expect(r.repainted.length).toBe(1));
     expect(r.repainted[0]?.endsWith(SP_R0)).toBe(true);                   // erase, then the frame straight back
   });
 
-  it("reuses the cached verdict on the next shrink and corrects synchronously", async () => {
+  // Task 4b: the cached verdict is no longer a licence to emit from the listener. Ink may not write for another
+  // tick (throttle) or at all (dedupe), so the listener publishes the verdict and the WRITE does the correcting.
+  it("reuses the cached verdict on the next shrink and leaves the correcting to the write", async () => {
     const r = rig();
     r.resize(80);
     await vi.waitFor(() => expect(r.repainted.length).toBe(1));
     r.resize(60);
     expect(r.probes.length).toBe(1);                                      // the verdict is a property of the TERMINAL
-    expect(r.emitted.length).toBe(1);                                     // …and this one lands ahead of Ink's repaint
-    expect(r.emitted[0]).toBe(correctionBeforeRepaint({ frame: SP_R0, parkedCol: 77, oldWidth: 80, newWidth: 60, rows: 40 }, "reflow"));
+    expect(r.driver.verdict()).toBe("reflow");                            // …published for the write-time corrector…
+    expect(r.repainted.length).toBe(1);                                   // …and nothing at all emitted from here
+  });
+
+  // OUR OWN ERASE-PLUS-FRAME WRITE ALREADY CARRIES A FULL-REGION ERASE. It goes back through Ink's stdout (so the
+  // proxy re-records the frame and re-parks on it), which also puts it under the write-time corrector — and a
+  // second erase run stacked on the first walks straight into live transcript. So for exactly the duration of
+  // that write the corrector is told there is no verdict.
+  it("hides the verdict from the write-time corrector while it writes its own repaint", async () => {
+    const r = rig();
+    r.resize(80);
+    await vi.waitFor(() => expect(r.repainted.length).toBe(1));
+    expect(r.verdictAtRepaint).toEqual([undefined]);
+    expect(r.driver.verdict()).toBe("reflow");                            // …and it is back the moment the write ends
   });
 
   it("caches truncate too, and never corrects again", async () => {
@@ -169,7 +202,7 @@ describe("createResizeRepaint — the driver", () => {
     await vi.waitFor(() => expect(r.probes.length).toBe(1));
     r.resize(60);
     expect(r.probes.length).toBe(1);
-    expect(r.emitted).toEqual([]);
+    expect(r.driver.verdict()).toBe("truncate");
     expect(r.repainted).toEqual([]);
   });
 
@@ -207,10 +240,9 @@ describe("createResizeRepaint — the driver", () => {
     r.settle("reflow");
     await flush();
     expect(r.repainted).toEqual([]);                                      // nothing emitted against a width that is gone
-    expect(r.emitted).toEqual([]);
     r.resize(120);                                                        // but the verdict was cached all the same:
     expect(r.probes.length).toBe(1);                                      // …no second probe…
-    expect(r.emitted).toEqual([correctionBeforeRepaint({ frame: SP_R0, parkedCol: 197, oldWidth: 200, newWidth: 120, rows: 40 }, "reflow")]);
+    expect(r.driver.verdict()).toBe("reflow");                            // …and every write from here is corrected
   });
 
   // 2. THE FRAME AND THE PARK. By the time the answer lands Ink has repainted (possibly more than once) and the
@@ -236,7 +268,6 @@ describe("createResizeRepaint — the driver", () => {
     r.resize(80);
     await vi.waitFor(() => expect(r.repainted.length).toBe(1));
     r.resize(100);
-    expect(r.emitted).toEqual([]);
     expect(r.repainted.length).toBe(1);
   });
 
@@ -244,7 +275,7 @@ describe("createResizeRepaint — the driver", () => {
     const grow = rig(); grow.resize(160);
     const flat = rig(); flat.resize(120);
     const bare = rig({ frame: undefined }); bare.resize(80);
-    for (const r of [grow, flat, bare]) { expect(r.probes).toEqual([]); expect(r.emitted).toEqual([]); expect(r.repainted).toEqual([]); }
+    for (const r of [grow, flat, bare]) { expect(r.probes).toEqual([]); expect(r.repainted).toEqual([]); }
   });
 });
 
@@ -333,20 +364,6 @@ describe("the parked cursor", () => {
     expect(out.lastFrame()).toBeUndefined();
   });
 
-  // Task 4's synchronous erase run does not go through Ink's stdout (the recorder must not adopt it as a frame), so
-  // it would otherwise leave `parkedCol` claiming a column the erase has just walked the cursor out of.
-  it("emitRaw writes straight to the tty, records nothing, and drops the park", () => {
-    const chunks: string[] = [];
-    const terminal = { isTTY: true, columns: 120, rows: 40, write: (c: string) => { chunks.push(c); return true; } };
-    const out = createResumeSafeStdout(terminal as never);
-    out.stdout.write(inkEraseLines(3) + "one\n");
-    chunks.length = 0;
-    out.emitRaw(inkEraseLines(5));
-    expect(chunks).toEqual([inkEraseLines(5)]);
-    expect(out.parkedColumn()).toBe(0);
-    expect(out.lastFrame()).toBe("one\n");                                 // an erase is bookkeeping, never a frame
-  });
-
   // The park at launch has to survive the writes that land BETWEEN the first frame and the first resize — at the
   // real binary those are the keymap's DECSET 2004 enable and Ink's cursor hide, and dropping the park for them
   // made the first shrink's probe report `colBefore = 0`, i.e. "unknown", i.e. no correction ever (measured).
@@ -359,5 +376,96 @@ describe("the parked cursor", () => {
     out.stdout.write("a bare line of text");
     expect(chunks).toEqual(["\x1b[G", "a bare line of text"]);
     expect(out.parkedColumn()).toBe(0);
+  });
+});
+
+// TASK 4B AT THE PROXY. The only thing that can create residue is a frame write whose erase prefix is shorter than
+// the region that frame now occupies — so this is where the correction is applied, and every input it needs is
+// read at the instant the bytes arrive: the live `stdout.columns`, the frame recorded from the PREVIOUS write and
+// the width THAT write went out at, and the park as it currently stands on screen.
+describe("the write-time frame corrector", () => {
+  const rig = (columns = 120) => {
+    const chunks: string[] = [];
+    const terminal = { isTTY: true, columns, rows: 40, write: (c: string) => { chunks.push(c); return true; } };
+    const out = createResumeSafeStdout(terminal as never);
+    let verdict: ReflowVerdict | undefined = "reflow";
+    const seen: FrameWriteInfo[] = [];
+    out.setFrameCorrector((i) => { seen.push(i); return frameWriteCorrection(i, verdict); });
+    return { chunks, terminal, out, seen, setVerdict: (v: ReflowVerdict | undefined) => { verdict = v; } };
+  };
+
+  // The SP-R0 fixture end to end: a frame painted at 120 with the park at 117, then re-written while the terminal
+  // is 40 columns wide and Ink's prefix erases only its 7 logical lines. Prefix, correction and body leave as ONE
+  // chunk — a separate write would let the terminal (or another writer) interleave between the two erase runs.
+  it("injects the correction between Ink's erase prefix and the body, in a single write", () => {
+    const r = rig();
+    r.out.stdout.write(SP_R0);                                             // first frame of the session: no prefix
+    expect(r.out.parkedColumn()).toBe(117);
+    r.terminal.columns = 40;                                               // …the drag…
+    r.chunks.length = 0;
+    r.out.stdout.write(inkEraseLines(7) + "next\n");                       // …and Ink's repaint, under-erasing
+    expect(r.seen.at(-1)).toEqual({ inkErases: 7, prevFrame: SP_R0, parkedCol: 117, widthAtPaint: 120, width: 40, rows: 40 });
+    expect(r.chunks).toEqual([inkEraseLines(7) + inkEraseLines(7) + "next\n", parkSequence(37)]);
+    expect(r.out.lastFrame()).toBe("next\n");                              // …and the new frame is what is recorded
+  });
+
+  // THE THROTTLE CASE, WHICH IS WHY THIS LIVES AT THE WRITE (sabotage gap #22). Ink's `resized()` renders through
+  // `throttle(this.log, undefined, {leading:true, trailing:true})`, so a drag emits one write immediately and one
+  // on a trailing timer — by which time the terminal is a different width again. Each write is corrected against
+  // the width that is true when IT arrives; a corrector that captured state when SIGWINCH fired cannot do this.
+  it("corrects two frame writes in one burst against their own live widths", () => {
+    const r = rig();
+    r.out.stdout.write(SP_R0);                                             // painted at 120, parked at 117
+    r.terminal.columns = 80;
+    r.chunks.length = 0;
+    r.out.stdout.write(inkEraseLines(7) + SP_R0);                          // the throttle's leading write
+    r.terminal.columns = 40;
+    r.out.stdout.write(inkEraseLines(7) + SP_R0);                          // …and its trailing one, a drag later
+    expect(r.chunks[0]).toBe(inkEraseLines(7) + inkEraseLines(4) + SP_R0);   // 8 rows + park 117 → 2 = 10; 10-7+1
+    expect(r.chunks[1]).toBe(parkSequence(77));
+    expect(r.chunks[2]).toBe(inkEraseLines(7) + inkEraseLines(6) + SP_R0);   // 10 rows + park 77 → 2 = 12; 12-7+1
+    expect(r.seen.map((i) => [i.widthAtPaint, i.width, i.parkedCol])).toEqual([[120, 80, 117], [80, 40, 77]]);
+  });
+
+  // `eraseLines(0)` is the empty string, so the first frame of a session — and any frame right after a clear —
+  // arrives with no prefix at all. There is nothing above it that Ink failed to erase, so there is nothing to
+  // correct; the corrector is not even consulted.
+  it("leaves a frame that carries no erase prefix exactly as Ink wrote it", () => {
+    const r = rig();
+    r.out.stdout.write(inkEraseLines(3) + SP_R0);
+    r.terminal.columns = 40;
+    r.chunks.length = 0;
+    r.out.stdout.write("next\n");
+    expect(r.chunks).toEqual(["\x1b[G", "next\n", parkSequence(37)]);       // homed off the park, then untouched
+    expect(r.seen).toEqual([]);                                            // …and with nothing recorded before it either
+  });
+
+  // Every one of these is a genuine narrowing with residue on screen — only the verdict refuses. "unknown" is a
+  // terminal nobody measured and it must behave exactly like "truncate": a wrong "truncate" leaves a cosmetic
+  // row, a wrong "reflow" erases the user's transcript.
+  it("leaves every write alone while the verdict is not a measured reflow", () => {
+    const r = rig();
+    r.out.stdout.write(inkEraseLines(3) + SP_R0);
+    r.chunks.length = 0;
+    for (const [width, verdict] of [[40, undefined], [30, "truncate"], [20, "unknown"]] as const) {
+      r.terminal.columns = width;
+      r.setVerdict(verdict);
+      r.out.stdout.write(inkEraseLines(7) + SP_R0);
+    }
+    expect(r.chunks.filter((c) => c.startsWith("\x1b[2K"))).toEqual(Array(3).fill(inkEraseLines(7) + SP_R0));
+    expect(r.seen.map((i) => [i.widthAtPaint, i.width])).toEqual([[120, 40], [40, 30], [30, 20]]);
+  });
+
+  // A proxy nobody wired a corrector into (every test above task 4b, and any tree that renders without the resize
+  // machinery) writes exactly what Ink handed it.
+  it("is inert until a corrector is set", () => {
+    const chunks: string[] = [];
+    const terminal = { isTTY: true, columns: 120, rows: 40, write: (c: string) => { chunks.push(c); return true; } };
+    const out = createResumeSafeStdout(terminal as never);
+    out.stdout.write(SP_R0);
+    terminal.columns = 40;
+    chunks.length = 0;
+    out.stdout.write(inkEraseLines(7) + "next\n");
+    expect(chunks).toEqual([inkEraseLines(7) + "next\n", parkSequence(37)]);
   });
 });

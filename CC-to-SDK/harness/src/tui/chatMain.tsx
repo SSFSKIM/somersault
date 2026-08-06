@@ -12,7 +12,7 @@ import type { InitialResume } from "./commands.js";
 import { loadPrefs } from "./prefs.js";
 import { refreshExampleFiles } from "./placeholder.js";
 import { createCursorReports, probeReflow } from "./reflowOracle.js";
-import { createResizeRepaint, parkColumn, parkSequence } from "./resizeRepaint.js";
+import { createResizeRepaint, frameWriteCorrection, parkColumn, parkSequence, type FrameWriteInfo } from "./resizeRepaint.js";
 import { setTheme } from "./theme.js";
 
 export interface ChatClientOpts {
@@ -41,9 +41,11 @@ export interface ResumeSafeStdout {
   lastFrame(): string | undefined;
   /** The column the cursor is parked in, or 0 if it is not parked (W-R t4 — see `parkSequence`). */
   parkedColumn(): number;
-  /** Terminal bookkeeping straight to the tty: never recorded as a frame, and it moves the cursor off the park,
-   *  so the park is forgotten with it (W-R t4 — task 4's synchronous erase run is the only caller). */
-  emitRaw(s: string): void;
+  /** W-R t4b: the resize correction, applied to the write that would otherwise create residue. Called for every
+   *  frame write that carries an erase prefix and has a recorded frame in front of it; whatever it returns is
+   *  injected between that prefix and the body, inside the SAME write. Set once, from `runChatClient` — the proxy
+   *  is built before the resize machinery exists, which is the only reason this is a setter. */
+  setFrameCorrector(fn: (info: FrameWriteInfo) => string): void;
 }
 
 /** Ink's erase prefix: `ansiEscapes.eraseLines(n)` is a run of `\x1b[2K` / `\x1b[1A` closed by `\x1b[G`. It is
@@ -66,8 +68,11 @@ export { physicalRows } from "./resizeRepaint.js";   // W-R t4 moved it there; t
 export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeStdout {
   let suppressNextWrite = false;
   let frame: string | undefined;                 // the last live frame, as painted
+  let widthAtPaint = 0;                          // W-R t4b: …and the terminal width it was painted at
   let justErased = false;                        // previous write was erase-only → the next bare write is <Static>
   let parkedCol = 0;                             // W-R t4: where the cursor sits between frames, 0 if nowhere
+  let corrector: ((info: FrameWriteInfo) => string) | undefined;   // W-R t4b: the resize correction, set by runChatClient
+  let rewritten: string | undefined;             // …and the chunk it produced, consumed by the write that made it
   const targetWrite = stdout.write.bind(stdout) as (...args: any[]) => boolean;
   // Five kinds of write reach here and only one of them is the live frame. FRAME writes carry the erase prefix (or
   // none, at first paint) and content: record what remains. ERASE-ONLY writes (`log.clear()`, `Instance.clear()`)
@@ -108,7 +113,21 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
     // now would also park the cursor mid-sequence.
     if (!body.endsWith("\n")) return false;
     if (prefix === "" && justErased) { justErased = false; return false; }
-    justErased = false; frame = body;
+    // W-R t4b: THE RESIZE CORRECTION IS APPLIED HERE, BECAUSE THIS IS WHERE THE RESIDUE IS CREATED. Ink's prefix
+    // erases the previous frame's LOGICAL line count; if that frame has since re-wrapped taller, the rows it no
+    // longer covers stay on screen and this body paints below them. Everything the correction needs is exact at
+    // this instant and none of it is a prediction about Ink's timing: the depth of Ink's own erase is countable in
+    // its prefix (`eraseLines(n)` carries n − 1 `\x1b[1A`s), `frame`/`widthAtPaint` are the previous write's, the
+    // park is the one still sitting on screen (a frame write opens with an erase or a column home, so the `foreign`
+    // branch above never cleared it), and the width is read live. A frame with no prefix has nothing above it to
+    // correct (`eraseLines(0)` is empty — first frame of a session, or the one after a clear), and with no recorded
+    // frame there is no measurement to correct FROM, which is the same refusal `lastFrame()` has always meant.
+    if (prefix !== "" && frame !== undefined && corrector !== undefined) {
+      const seq = corrector({ inkErases: (prefix.match(/\x1b\[1A/g)?.length ?? 0) + 1, prevFrame: frame,
+        parkedCol, widthAtPaint, width: stdout.columns ?? 0, rows: stdout.rows ?? 0 });
+      if (seq) rewritten = prefix + seq + body;
+    }
+    justErased = false; frame = body; widthAtPaint = stdout.columns ?? 0;
     return true;
   };
   // W-R t4: PARK THE CURSOR ON EVERY FRAME. `probeReflow` can only answer when the cursor is past the new right
@@ -143,7 +162,10 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
       const foreign = parkedCol > 0 && !INK_WRITE_HEAD.test(chunk);
       if (foreign) { targetWrite("\x1b[G"); parkedCol = 0; }
       const recorded = record(args[0]);
-      const wrote = targetWrite(...args);
+      // ONE CHUNK, ALWAYS (W-R t4b). The correction and Ink's own erase are two halves of one erase run: split
+      // across two writes, anything else sharing this tty could land between them.
+      const corrected = rewritten; rewritten = undefined;
+      const wrote = corrected === undefined ? targetWrite(...args) : targetWrite(corrected, ...args.slice(1));
       if (recorded || (foreign && ESCAPES_ONLY.test(chunk))) park();
       return wrote;
     }
@@ -164,9 +186,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
     stdout: stream,
     lastFrame() { return frame; },
     parkedColumn() { return parkedCol; },
-    // `eraseLines` leaves the cursor at column 1 of the topmost row it cleared, so after this the park is gone from
-    // the screen — and a `parkedCol` that still claimed 117 would have the exit unpark erase a live row.
-    emitRaw(s) { if (stdout.isTTY) targetWrite(s); parkedCol = 0; },
+    setFrameCorrector(fn) { corrector = fn; },
     repaint(runInkWrite) {
       suppressNextWrite = true;
       try { runInkWrite(); } finally { suppressNextWrite = false; }
@@ -235,21 +255,25 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   const harvest = setTimeout(() => refreshExampleFiles({ cwd: opts.cwd }), 0);
   harvest.unref?.();
   // W-R t4: the resize correction. The listener goes up BEFORE render() on purpose — Ink subscribes to `resize` in
-  // its constructor (`ink.js:77`) and repaints synchronously, so a listener added afterwards could never get ahead
-  // of it, and the erase would land on top of the new frame instead of the stale one. `emit` goes straight to the
-  // tty through `emitRaw` (bookkeeping, not a frame — the recorder must not adopt it; and it walks the cursor off
-  // the park, which is why it is the proxy's own method and not a bare `process.stdout.write`), while `repaint`
-  // goes through Ink's own stdout so an erase-plus-frame write re-records the frame and re-parks the cursor on it.
-  // The DSR reply comes back the long way round: the keymap provider owns the ONE raw-stdin reader, and forwards
-  // unclaimed escape sequences to `onUnknownSequence` — a forward that has existed since task 3, inert until here.
+  // its constructor (`ink.js:77`) and repaints synchronously, so a listener added afterwards could never see a
+  // narrowing before Ink has acted on it. What it does with that head start changed in task 4b: it no longer emits
+  // anything itself, it MEASURES (one probe per terminal) and publishes the verdict, because a SIGWINCH does not
+  // imply an Ink write — the throttle can defer it and the dedupe can drop it entirely. `repaint` (the first
+  // shrink's after-the-fact repair, the one correction that cannot be applied at the write because the verdict is
+  // not in yet) goes through Ink's own stdout so its erase-plus-frame write re-records the frame and re-parks the
+  // cursor on it. The DSR reply comes back the long way round: the keymap provider owns the ONE raw-stdin reader,
+  // and forwards unclaimed escape sequences to `onUnknownSequence` — a forward that has existed since task 3.
   const reports = createCursorReports();
   const resize = createResizeRepaint({
     lastFrame: output.lastFrame, parkedColumn: output.parkedColumn,
     size: () => ({ columns: process.stdout.columns ?? 0, rows: process.stdout.rows ?? 0 }),
-    emit: output.emitRaw,
     repaint: (s) => { if (process.stdout.isTTY) output.stdout.write(s); },
     probe: (a) => probeReflow({ write: (s) => { process.stdout.write(s); }, onReply: reports.onReply, ...a }),
   });
+  // …and this is the correction itself: every frame write Ink makes passes the proxy, and the ones that would
+  // leave residue get the missing erase injected into the same chunk. The proxy is built before the resize
+  // machinery (Ink's stdout has to exist first), hence the setter rather than a constructor argument.
+  output.setFrameCorrector((info) => frameWriteCorrection(info, resize.verdict()));
   process.stdout.on("resize", resize.onResize);
   const app = render(
     <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
