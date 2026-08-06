@@ -13,6 +13,7 @@ import { render } from "ink-testing-library";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { useKeyScope, useKeyActions, useKeyFallback, useSwallowKeys, useBinding, useBindingLookup, usePasting, useSuspendInput, type SuspendInput } from "../../src/tui/keys/KeymapProvider.js";
 import type { KeyContextName, KeyEvent, TextEvent } from "../../src/tui/keys/types.js";
+import { createCursorReports, probeReflow } from "../../src/tui/reflowOracle.js";
 
 // The matched ACTION is the second argument (only a `family:*` handler reads it — see the family block below).
 type Handlers = Record<string, (e: KeyEvent, action: string) => void>;
@@ -771,6 +772,58 @@ describe("KeymapProvider — the paste OPEN marker torn across two stdin reads",
     h.unmount(); await tick();
     h.stdin.write("0~late\x1b[201~");
     expect(fallback).not.toHaveBeenCalled();
+  });
+});
+
+// Wave R task 3 — the DELIVERY GAP. A terminal REPLY (a DSR cursor report, `\x1b[<row>;<col>R`) parses to
+// `ignored("unknown-sequence")`, which is correct — `CSI_LETTER` has no `R` — but `dispatch`'s first line then
+// dropped it on the floor, so nothing in the tree could ever read a terminal's answer. The reflow oracle needs
+// exactly one such answer per resize, and it must NOT get it by adding a second stdin reader: two consumers of
+// raw stdin race and the failures are intermittent and unreproducible. So the provider, which owns the one
+// reader, forwards the raw bytes instead.
+describe("KeymapProvider — onUnknownSequence (terminal replies)", () => {
+  it("forwards an unknown CSI reply raw, and it still reaches nothing in the keymap", async () => {
+    const onUnknownSequence = vi.fn(), fallback = vi.fn(), cancel = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} actions={{ "chat:cancel": cancel }} />, { onUnknownSequence });
+    await tick();
+    h.stdin.write("\x1b[38;121R");
+    expect(onUnknownSequence.mock.calls).toEqual([["\x1b[38;121R"]]);
+    expect(fallback).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+    h.unmount();
+  });
+
+  it("forwards a reply that arrives in the same chunk as real keystrokes, without disturbing them", async () => {
+    const onUnknownSequence = vi.fn(), fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />, { onUnknownSequence });
+    await tick();
+    h.stdin.write("ab\x1b[3;41Rcd");
+    expect(onUnknownSequence.mock.calls).toEqual([["\x1b[3;41R"]]);
+    expect(fallback.mock.calls.map((c) => c[0].text)).toEqual(["ab", "cd"]);
+    h.unmount();
+  });
+
+  // Mouse and focus reports are `ignored` too, and the oracle must not be handed a stream of them: the forward
+  // is named for what it carries. (They still never reach the keymap — that invariant is pinned above.)
+  it("does NOT forward mouse or focus reports", async () => {
+    const onUnknownSequence = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" />, { onUnknownSequence });
+    await tick();
+    h.stdin.write("\x1b[<0;10;5M");
+    h.stdin.write("\x1b[I");
+    h.stdin.write("\x1b[O");
+    expect(onUnknownSequence).not.toHaveBeenCalled();
+    h.unmount();
+  });
+
+  it("carries a whole reflow probe from raw stdin to a verdict", async () => {
+    const reports = createCursorReports();
+    const h = renderWithKeymap(<Probe scope="Chat" />, { onUnknownSequence: reports.deliver });
+    await tick();
+    const verdict = probeReflow({ write: () => {}, onReply: reports.onReply, colBefore: 121, oldWidth: 120, newWidth: 80 });
+    h.stdin.write("\x1b[3;41R");                          // what a reflowing terminal answers after 120→80
+    expect(await verdict).toBe("reflow");
+    h.unmount();
   });
 });
 

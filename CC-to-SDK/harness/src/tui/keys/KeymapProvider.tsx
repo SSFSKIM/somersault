@@ -30,6 +30,12 @@ export interface KeymapDeps {
   now?: () => number; setTimeout?: typeof setTimeout; clearTimeout?: typeof clearTimeout;
   userLayers?: readonly ContextBindings[];            // task 9 feeds live ~/.claude/keybindings.json here
   suspend?: () => void;                               // ctrl+z pre-table hook; `useKeySuspend` outranks it
+  /** Wave R task 3: raw terminal REPLIES, forwarded verbatim. A DSR cursor report (`\x1b[<row>;<col>R`, the
+   *  reflow oracle's answer) parses to `ignored("unknown-sequence")` — correctly, `CSI_LETTER` has no `R` — and
+   *  `dispatch` then drops it, so nothing in the tree could read a terminal's answer at all. The forward exists
+   *  because this provider owns the ONE raw-stdin reader: a second consumer would race it and lose keystrokes
+   *  intermittently. Mouse and focus reports are `ignored` too and deliberately do NOT come through here. */
+  onUnknownSequence?: (raw: string) => void;
   /** Test seam for the DECSET 2004 writes below. Real runs take `useStdout()`; ink-testing-library's stdout
    *  stub has no `isTTY`, so without this a keyless test cannot observe the mode toggles at all (and the real
    *  writes would otherwise pollute `lastFrame()`, since that stub's `write` IS the frame buffer). */
@@ -148,7 +154,9 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   };
 
   const dispatch = (ev: InputEvent) => {
-    if (ev.kind === "ignored") return;                                  // mouse/focus/garbage: consumed, never inserted
+    // mouse/focus/garbage: consumed, never inserted. An unknown SEQUENCE is also how a terminal REPLY arrives
+    // (the oracle's DSR cursor report), so it is forwarded raw on the way out — see `onUnknownSequence`.
+    if (ev.kind === "ignored") { if (ev.reason === "unknown-sequence") depsRef.current?.onUnknownSequence?.(ev.raw); return; }
     // ctrl+z is handled ABOVE the table, like upstream's raw input loop: it must suspend even while Help
     // swallows everything and even mid-chord (F0 contract).
     if (ev.kind === "key" && ev.ctrl && ev.name === "z") { (suspendHandler(reg) ?? depsRef.current?.suspend)?.(); return; }
