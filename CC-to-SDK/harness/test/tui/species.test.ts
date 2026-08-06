@@ -5,7 +5,7 @@
 // line form, and (c) that both the live path (`renderMessage`) and the disk path (`replayDocument`) route
 // through the same classifier, so a sentinel can never be band-wrapped as an ordinary prompt on either.
 import { describe, it, expect } from "vitest";
-import { classifyUserText, speciesLines, tagInner, INTERRUPT_PLAIN, INTERRUPT_TOOL, INTERRUPTED_TEXT, TOOL_RESULT_GUTTER, LOCAL_OUTPUT_GUTTER, COMMAND_ECHO_RE, COMMAND_OUTPUT_RE, CAVEAT_RE, COMPACT_SUMMARY_RE } from "../../src/tui/species.js";
+import { classifyUserText, speciesLines, tagInner, INTERRUPT_CANCELLED, INTERRUPT_PLAIN, INTERRUPT_TOOL, INTERRUPTED_TEXT, TOOL_RESULT_GUTTER, LOCAL_OUTPUT_GUTTER, COMMAND_ECHO_RE, COMMAND_OUTPUT_RE, CAVEAT_RE, COMPACT_SUMMARY_RE } from "../../src/tui/species.js";
 import * as rows from "../../src/sessions/rows.js";
 import { renderMessage } from "../../src/tui/render.js";
 import { replayDocument } from "../../src/tui/replay.js";
@@ -53,6 +53,12 @@ describe("classifyUserText — the fifteen-exit order of `ERe`", () => {
     expect(classifyUserText(INTERRUPT_TOOL)).toBe("interrupt-tool");
     expect(classifyUserText(`${INTERRUPT_PLAIN} and then some`)).toBe("prompt");
   });
+  // Wave T Task 9 GUARD. `INTERRUPT_CANCELLED` is the third sentinel on the same bundle line (L108575) but it
+  // is NOT an `ERe` exit — L426473 tests `Tq`/`Wk` and nothing else. It arrives as tool-RESULT content and is
+  // routed by `toolResult.ts`'s normalizer instead. Adding it here as a `startsWith` would fire on a user who
+  // merely quotes the sentence and would still never see the frame that actually carries it.
+  it("exit 9 has no third member: the cancellation sentinel is tool-result content, not a user text frame", () =>
+    expect(classifyUserText(INTERRUPT_CANCELLED)).toBe("prompt"));
   it("exits 10–15: bash-input, command echo, memory, task notification, mcp update, fork boilerplate — all `includes`", () => {
     expect(classifyUserText("please <bash-input>ls</bash-input>")).toBe("bash-input");
     expect(classifyUserText("<command-name>/compact</command-name><command-message>compact</command-message>")).toBe("command-echo");

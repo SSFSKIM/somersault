@@ -1009,6 +1009,19 @@ describe("F3 Task 9 — the interrupt sentinel user frame (LT14)", () => {
     expect(projectCompact(doc, context).length).toBeGreaterThan(0);   // only a frame whose SOLE text IS the sentinel is suppressed
   });
 
+  // Wave T Task 9: the CANCELLED tool_result (`F7`, L108575 → `HVo` L429119) rides the TOOL row, and a real
+  // Esc during a tool call puts BOTH it and the `Wk` user frame on the wire. F3's suppression of that frame is
+  // exactly what keeps the count at one — so this pins the pair, not either half alone.
+  it("paints the Interrupted row exactly once for a cancelled tool call plus its suppressed sentinel frame", () => {
+    const doc = new TranscriptDocument();
+    doc.appendSdk("host", { type: "assistant", uuid: "ac", message: { id: "mc", content: [{ type: "tool_use", id: "bc", name: "Bash", input: { command: "sleep 90" } }] } });
+    doc.appendSdk("host", { type: "user", uuid: "uc", message: { content: [{ type: "tool_result", tool_use_id: "bc", content: "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.", is_error: true }] } });
+    doc.appendSdk("host", SENTINEL);
+    const text = projectCompact(doc, context).flatMap((item) => (item.kind === "gutter-block" ? item.body : [item.line])).map((line) => line.text).join("\n");
+    expect(text.split("Interrupted · What should Claude do instead?")).toHaveLength(2);   // split into 2 ⇒ exactly one occurrence
+    expect(text).not.toContain("STOP what you are doing");                                // the engine's instruction text never reaches the transcript
+  });
+
   it("still BREAKS the fold run, so a read run either side of it renders as two group rows", () => {
     const doc = new TranscriptDocument();
     for (const frame of [...readPair(1), ...readPair(2), SENTINEL, ...readPair(3), ...readPair(4)]) doc.appendSdk("host", frame);

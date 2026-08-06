@@ -111,4 +111,22 @@ describe("F1 structured-first results", () => {
     const event = { id: "b9", name: "Bash", input: { command: "sleep 9" }, callSequence: 1, route: "top-level" as const, result: { content: "Interrupted", isError: true, resultSequence: 2 } };
     expect(normalizeToolResult(event).status).toBe("interrupted");
   });
+
+  // ── Wave T Task 9 (L429122): the THIRD sentinel on bundle line L108575 (`F7`) ──────────────────────────
+  // It is NOT an `ERe` exit and never wears a user TEXT frame the way `Tq`/`Wk` do — `CLo` (L298302) writes
+  // it as the CANCELLED tool_result's own CONTENT (`content = Mpt(F7)`, `toolDenialKind: "cancelled"`), so
+  // `classifyUserText` never sees it. Upstream's tool-result renderer `HVo` (L429119) matches it with
+  // `startsWith`, not equality, because `Mpt` (L373032) appends a statsig-gated suffix to it — and then
+  // paints `BP`, the very row an `interrupted` status already renders here. Hence: normalizer, not router.
+  const CANCELLED = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.";
+  const cancelled = (content: string) => ({ id: "b7", name: "Bash", input: { command: "sleep 90" }, callSequence: 1, route: "top-level" as const, result: { content, isError: true, resultSequence: 2 } });
+  it("classifies the cancellation sentinel tool_result as interrupted, `Mpt` suffix and all", () => {
+    expect(normalizeToolResult(cancelled(CANCELLED)).status).toBe("interrupted");
+    expect(normalizeToolResult(cancelled(`${CANCELLED} extra gated clause`)).status).toBe("interrupted");
+    expect(normalizeToolResult(cancelled(CANCELLED)).rawContent).toBe(CANCELLED);   // the source stays faithful; the row is a prompt, not a copy
+  });
+  it("stays a prefix test, so an ordinary error that merely MENTIONS the sentinel is still an error", () => {
+    expect(normalizeToolResult(cancelled("boom")).status).toBe("error");
+    expect(normalizeToolResult(cancelled(`Error: ${CANCELLED}`)).status).toBe("error");
+  });
 });

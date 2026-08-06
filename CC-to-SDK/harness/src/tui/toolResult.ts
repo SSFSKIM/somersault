@@ -5,6 +5,7 @@
 // infer it per tool or per session. Shape guards are deliberately narrow: an unrecognized or forwarded sidecar
 // falls back and stays retained raw rather than being narrowed into a shape it does not have.
 import type { ToolEvent } from "./transcriptModel.js";
+import { INTERRUPT_CANCELLED } from "./species.js";
 
 export type ToolStatus = "running" | "success" | "error" | "interrupted" | "rejected" | "suppressed";
 export interface NormalizedToolResult {
@@ -249,11 +250,16 @@ export function normalizeToolResult(event: ToolEvent, options?: { verbose?: bool
   const value = sidecar?.scope === "call" ? sidecar.value : undefined;       // only a uniquely associated sidecar is usable
   const flat = flatText(content), outputLines = textLines(flat), trimmed = flat.trim();
   const input = isRecord(event.input) ? event.input : {};
-  // The wire field FIRST: it is the engine's own annotation, while the two flat-text tests below are shapes a
+  // The wire field FIRST: it is the engine's own annotation, while the flat-text tests below are shapes a
   // tool happened to write. (`Interrupted` stays: a Bash killed by its own timeout reports it that way, with
   // no `tool_use_result` at all.)
+  // `INTERRUPT_CANCELLED` is the one flat-text test the ENGINE writes rather than a tool: `CLo` (L298302)
+  // makes it the whole content of a cancelled call's `tool_result`, and upstream's `HVo` (L429119) reads it
+  // with `startsWith` — a prefix, because `Mpt` (L373032) may append a statsig-gated suffix — then paints
+  // `BP`, which is the row `status: "interrupted"` already renders here. Prefix and not `includes`: a tool
+  // that merely quotes the sentence inside a genuine failure is still a failure.
   let status: ToolStatus = value === USER_REJECTED_TOOL_USE ? "interrupted"
-    : trimmed === "Interrupted" ? "interrupted" : trimmed === "Tool use rejected" ? "rejected" : isError ? "error" : "success";
+    : trimmed === "Interrupted" || trimmed.startsWith(INTERRUPT_CANCELLED) ? "interrupted" : trimmed === "Tool use rejected" ? "rejected" : isError ? "error" : "success";
   let structured: Record<string, unknown> | undefined;
   let summary = tool;                                                        // generic default; unknown tools keep exactly this
   if (tool === "Read") {

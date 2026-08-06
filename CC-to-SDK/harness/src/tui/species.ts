@@ -72,6 +72,16 @@ export const NO_CONTENT = "(no content)";
  *  longer prompt still gets you your own prompt row. */
 export const INTERRUPT_PLAIN = "[Request interrupted by user]";
 export const INTERRUPT_TOOL = "[Request interrupted by user for tool use]";
+/** `F7` (L108575) — the THIRD sentinel on that same `var` line, and the one that is NOT an `ERe` exit: exit 9
+ *  (L426473) tests `Tq`/`Wk` and nothing else. It never wears a user TEXT frame. `CLo` (L298302) writes it as
+ *  the CANCELLED tool_result's own CONTENT (`content = Mpt(F7)`, `toolDenialKind: "cancelled"`), so the
+ *  classifier that sees it is `toolResult.ts`'s `normalizeToolResult`, which resolves it to
+ *  `status: "interrupted"` and reaches `INTERRUPTED_TEXT` through the tool row — exactly what upstream's
+ *  tool-result renderer `HVo` (L429119) does when it paints `BP` for it. Matched by PREFIX there, not by
+ *  equality, because `Mpt` (L373032) appends a statsig-gated suffix to it. The constant lives beside its two
+ *  siblings because they are one upstream line; widening exit 9 to a prefix test to reach it would fire on a
+ *  user who merely quotes the sentence and still never see the frame that carries it. */
+export const INTERRUPT_CANCELLED = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.";
 /** `zWo` (L422222–422229): two dim `Text` nodes, `"Interrupted "` and `"· What should Claude do instead?"`. */
 export const INTERRUPTED_TEXT = "Interrupted · What should Claude do instead?";
 /** `Cr`'s gutter children (L406895): `"  "` then `"⎿ \xa0"` — two spaces, ⎿ (U+23BF), space, NBSP. Five
