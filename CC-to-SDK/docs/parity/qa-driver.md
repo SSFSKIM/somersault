@@ -121,7 +121,7 @@ tmux new-session -d -s qaccx -x 120 -y 40 -c "$CCX_PROJ" \
    node /Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness/dist/cli/bin.js"
 
 tmux set-option -t qaccx remain-on-exit on    # keeps the final frame + exit code readable
-wait_until qaccx '⇧Tab to cycle' 30           # ready-needle for ccx
+wait_until qaccx '⏎ send' 30                  # ready-needle for ccx (see §5.4 — NOT '⇧Tab to cycle')
 ```
 
 `ccx` needs no onboarding seed at all — a bare isolated `HOME` lands straight in the REPL.
@@ -421,7 +421,15 @@ Things that needed retries or timing care. Read this before debugging a flaky QA
 4. **The ready-needle differs by permission mode.** `? for shortcuts` is the manual-mode footer;
    under `--dangerously-skip-permissions` the footer reads `⏵⏵ bypass permissions on (shift+tab to
    cycle)` instead, and a wait on `for shortcuts` burned its full 30 s timeout on a REPL that was
-   ready in 1 s. Use `for agents`, which is in both footers. For ccx use `⇧Tab to cycle`.
+   ready in 1 s. Use `for agents`, which is in both footers.
+
+   **For ccx use `⏎ send`.** The `⇧Tab to cycle` this section used to name is GONE from the build —
+   the tips line now reads `⇧Tab to change mode` and the footer `⇧Tab mode`, and the old string
+   appears nowhere, so a wait on it burns its whole timeout on every session (measured: 60 s × 7
+   cells in the first `scripts/resize-matrix.sh` run). `⏎ send` is the composer's own hint row; it
+   wraps at narrow widths but never disappears, which is what makes it safe across a resize matrix.
+   The frame quoted in §2.2 above is a *recording* from the older build — read it as history, not as
+   a needle to copy.
 
 5. **claude's double-`C-c` window is short.** 0.2 s apart exits; 1.2 s apart does not (the second
    press is treated as a new first press). `C-d` on an empty composer did not exit at all.

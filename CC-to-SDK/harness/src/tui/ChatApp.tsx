@@ -472,11 +472,17 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
               // WAVE R TASK 5 (qa2-10a) — `rows`/`columns` are Task 1's state, and every dialog in this chain
               // that ACCEPTS them now gets them (ModelPicker, RewindPicker, SessionPicker, PlanDialog's height).
               // They were declared and never passed, so each fell through to `Select`'s own
-              // `process.stdout.rows ?? 24` / `.columns ?? 80` defaults — evaluated at the width the dialog
-              // mounted at, with no route back to the terminal afterwards. Threading the state is the whole
-              // fix: it is one source of size for the tree, it re-renders on SIGWINCH like everything else,
-              // and it keeps `deps.columns` authoritative so a test pins the dialogs and the composer alike
-              // (a second `process.stdout` read inside the dialog would silently ignore that pin).
+              // `process.stdout.rows ?? 24` / `.columns ?? 80` defaults.
+              //
+              // WHY THAT MATTERS IS SINGLE-SOURCE-OF-TRUTH, NOT STALENESS (fix round 1 — the first version of
+              // this comment claimed the default was read "once, at mount, with no route back", which is
+              // false: a default parameter is re-evaluated on every render, and after Task 1 every SIGWINCH
+              // re-renders this tree). The real cost is that `process.stdout` is a SECOND source of size and
+              // an uninjectable one: `deps.columns`/`terminalRows()` is what the app, the composer and every
+              // test/frame-capture fixture treat as authoritative, and a dialog reading stdout behind its back
+              // silently ignores that pin — under `ink-testing-library` the fake stdout reports the runner's
+              // own geometry (and no `rows` at all), so the dialog and the composer disagree about the size of
+              // the same terminal. Threading the state is the whole fix: one size for the whole tree.
               ? <ModelPicker models={state.modelPicker.models} current={state.modelPicker.current} sessionModel={state.modelPicker.sessionModel}
                   onPick={pickModel} onCancel={closeModelPicker} savePrefs={deps?.savePrefs} rows={terminalRows()} columns={terminalColumns()} />
               // W3 T4/T5/T7: the four new settings-surface dialogs slot HERE, between modelPicker and picker,

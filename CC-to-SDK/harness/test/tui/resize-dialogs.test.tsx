@@ -2,9 +2,16 @@
 // terminal resizes must re-derive its geometry from the app's size state, exactly as the composer does.
 //
 // The filed defect is one line: `ModelPicker` ACCEPTS `rows`/`columns` (ModelPicker.tsx:31) and ChatApp
-// rendered it passing NEITHER, so the picker fell through to `Select`'s own `process.stdout` defaults — read
-// once, at the width the picker happened to mount at, with no route back to the terminal afterwards. Task 1
+// rendered it passing NEITHER, so the picker fell through to `Select`'s own `process.stdout` defaults. Task 1
 // made the size React state; the fix is to THREAD it, not to add a second re-derivation inside the dialog.
+//
+// WHAT MAKES THE STDOUT DEFAULT WRONG (fix round 1 — an earlier version of this header said it was read "once,
+// at mount, with no route back", which is not true: a default parameter re-evaluates every render, and after
+// Task 1 every SIGWINCH re-renders). It is wrong because it is a SECOND, uninjectable source of size.
+// `deps.columns`/`terminalRows()` is the one the app, the composer and every fixture pin; a dialog that reads
+// `process.stdout` behind that pin ignores it — which is precisely why these tests can exist at all. Under
+// `ink-testing-library` the fake stdout reports the vitest runner's own geometry (and no `rows` whatsoever),
+// so an unthreaded dialog measures a terminal nobody in the test is describing.
 //
 // Each case asserts in BOTH directions (wide→narrow AND narrow→wide) on purpose. A one-direction assertion
 // can be satisfied by an unfixed build that happens to be stuck at a width matching the expectation — the
@@ -20,6 +27,8 @@ import { ChatApp } from "../../src/tui/ChatApp.js";
 import { ModelPicker, type ModelInfo } from "../../src/tui/ModelPicker.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
+import type { RewindAnchor, RewindDryRun } from "../../src/session/chatSession.js";
+import type { PendingEntry } from "../../src/permissions/pending.js";
 
 let fleetRootDir = "";
 let priorFleetRoot: string | undefined;
@@ -142,6 +151,113 @@ describe("a dialog on screen when the terminal resizes follows the new size", ()
     expect(short).toBeLessThan(tall);
     rows = 40; resize.fire(); await tick();
     expect(rowCount()).toBe(tall);
+    r.unmount();
+  });
+
+  // ── the rest of the sweep, each dialog pinned by its OWN prop (fix round 1) ─────────────────────────────
+  // The three tests above pin ModelPicker's width and height and SessionPicker's height — and NOTHING else.
+  // Measured: deleting `rows`/`columns` from ChatApp's RewindPicker render site, `rows` from its PlanDialog
+  // one, or `columns` from its SessionPicker one left the whole suite green, so three quarters of the sweep
+  // shipped unprotected. Each test below was sabotage-checked by reverting exactly its own dialog's threading
+  // and confirming that test — and only that test — went red.
+
+  /** RewindPicker clips every row at `columns - REWIND_ROW_PADDING_RIGHT` (10, rewindModel.ts) and windows the
+   *  list with `rewindVisibleRows(rows)` — one width-derived string and one height-derived count. */
+  const LONG_PROMPT = "rename every helper in the toolbox module and update all of its call sites everywhere";
+  const rewindRemote = (anchors: RewindAnchor[]) => ({
+    ...fakeRemote(),
+    rewindAnchors: async () => anchors,
+    rewindDryRun: async () => ({ canRewind: true }) as RewindDryRun,
+    rewind: async () => {},
+  });
+  /** Esc-Esc on an EMPTY composer, which is the only route to this picker (escape.test.tsx's own recipe). */
+  async function openRewindPicker(stdin: { write: (s: string) => void }, lastFrame: () => string | undefined) {
+    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
+    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("Restore the code and/or conversation"));
+  }
+
+  it("the open rewind picker re-clips its rows when the terminal WIDTH changes", async () => {
+    let cols = 200;
+    const resize = fakeResize();
+    const deps = { columns: () => cols, getSessionMessages: async () => [] as any[] };
+    const session = rewindRemote([{ uuid: "u1", prevUuid: null, text: LONG_PROMPT, index: 0 }]);
+    const r = renderWithKeymap(<ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} onResize={resize.onResize} />);
+    await waitFor(() => frame(r.lastFrame).includes("❯\u00a0"));
+    await openRewindPicker(r.stdin, r.lastFrame);
+    expect(strip(frame(r.lastFrame))).toContain(LONG_PROMPT);
+    cols = 40; resize.fire(); await tick();
+    expect(strip(frame(r.lastFrame))).not.toContain(LONG_PROMPT);       // clipped at 40 − 10
+    cols = 200; resize.fire(); await tick();
+    expect(strip(frame(r.lastFrame))).toContain(LONG_PROMPT);
+    r.unmount();
+  });
+
+  it("the open rewind picker re-windows its list when the terminal HEIGHT changes", async () => {
+    let rows = 40;
+    const resize = fakeResize();
+    const deps = { columns: () => 200, getSessionMessages: async () => [] as any[] };
+    // Eight anchors plus the synthetic `(current)` row: `rewindVisibleRows` is max(2, floor((rows−12)/3)),
+    // so 40 shows nine and 14 shows two — the catalog is never what decides.
+    const anchors: RewindAnchor[] = Array.from({ length: 8 }, (_, i) => ({ uuid: `u${i}`, prevUuid: null, text: `rewind prompt ${i}`, index: i }));
+    const session = rewindRemote(anchors);
+    const r = renderWithKeymap(<ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} onResize={resize.onResize} />);
+    Object.defineProperty(r.stdout, "rows", { configurable: true, get: () => rows });
+    await waitFor(() => frame(r.lastFrame).includes("❯\u00a0"));
+    await openRewindPicker(r.stdin, r.lastFrame);
+    const rowCount = () => strip(frame(r.lastFrame)).split("\n").filter((l) => /rewind prompt \d/.test(l)).length;
+    resize.fire(); await tick();
+    const tall = rowCount();
+    expect(tall).toBeGreaterThan(2);
+    rows = 14; resize.fire(); await tick();
+    expect(rowCount()).toBeLessThan(tall);
+    rows = 40; resize.fire(); await tick();
+    expect(rowCount()).toBe(tall);
+    r.unmount();
+  });
+
+  /** SessionPicker's `columns` reaches `Select`, whose label column is `min(widest, floor(columns * 0.6))` —
+   *  the same clip the ModelPicker case above uses, on the session TITLE. Its `rows` is pinned separately. */
+  it("the open /resume session picker re-clips its titles when the terminal WIDTH changes", async () => {
+    let cols = 200;
+    const resize = fakeResize();
+    const LONG_TITLE = "a saved conversation with a deliberately long summary line for the clip";
+    const sessions = [{ sessionId: "s0", summary: LONG_TITLE, lastModified: 1 }];
+    const deps = { columns: () => cols, listSessions: async () => sessions, getSessionMessages: async () => [] as any[] };
+    const session = fakeRemote();
+    const r = renderWithKeymap(<ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} onResize={resize.onResize} />);
+    await waitFor(() => frame(r.lastFrame).includes("❯\u00a0"));
+    r.stdin.write("/resume"); await waitFor(() => frame(r.lastFrame).includes("/resume"));
+    r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("Resume session"));
+    expect(strip(frame(r.lastFrame))).toContain(LONG_TITLE);
+    cols = 40; resize.fire(); await tick();
+    expect(strip(frame(r.lastFrame))).not.toContain(LONG_TITLE);
+    cols = 200; resize.fire(); await tick();
+    expect(strip(frame(r.lastFrame))).toContain(LONG_TITLE);
+    r.unmount();
+  });
+
+  /** PlanDialog takes `rows` only (it has no width-derived string of its own): the terminal height minus the
+   *  option box minus chrome is `planRegionRows`, and `planWindow` is how many plan lines actually print. */
+  it("the open plan dialog re-windows its plan body when the terminal HEIGHT changes", async () => {
+    let rows = 60;
+    const resize = fakeResize();
+    const deps = { columns: () => 200, getSessionMessages: async () => [] as any[] };
+    const plan = Array.from({ length: 60 }, (_, i) => `plan step ${i}`).join("\n\n");
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "p", toolName: "ExitPlanMode", kind: "plan", input: { plan }, createdAt: Date.now() } as PendingEntry;
+    const session = fakeRemote();
+    const r = renderWithKeymap(<ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} onResize={resize.onResize} />);
+    Object.defineProperty(r.stdout, "rows", { configurable: true, get: () => rows });
+    await waitFor(() => frame(r.lastFrame).includes("❯\u00a0"));
+    session.parkPermission(entry);
+    await waitFor(() => frame(r.lastFrame).includes("Ready to code?"));
+    const stepCount = () => strip(frame(r.lastFrame)).split("\n").filter((l) => /plan step \d/.test(l)).length;
+    resize.fire(); await tick();
+    const tall = stepCount();
+    expect(tall).toBeGreaterThan(1);
+    rows = 24; resize.fire(); await tick();
+    expect(stepCount()).toBeLessThan(tall);
+    rows = 60; resize.fire(); await tick();
+    expect(stepCount()).toBe(tall);
     r.unmount();
   });
 });

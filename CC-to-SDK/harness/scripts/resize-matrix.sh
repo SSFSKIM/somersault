@@ -35,6 +35,9 @@
 #
 # Usage:  bash scripts/resize-matrix.sh [--no-build]      (or: npm run test:resize-matrix)
 # Exit:   0 = every cell passed (or tmux is absent and the run SKIPPED), 1 = at least one cell failed.
+# CI:     .github/workflows/cc-to-sdk.yml runs this on the node-22 leg with RESIZE_MATRIX_REQUIRE_TMUX=1,
+#         which makes a missing tmux exit 1 instead of skipping. Two environment traps are handled below and
+#         both are fatal if reinstated: the flag must not be named `CI_*`, and each ccx child needs `CI=false`.
 
 set -uo pipefail
 
@@ -43,14 +46,25 @@ BIN="$HARNESS_DIR/dist/cli/bin.js"
 BUILD=1
 for arg in "$@"; do case "$arg" in --no-build) BUILD=0 ;; *) echo "unknown flag: $arg" >&2; exit 2 ;; esac; done
 
-# ── skip cleanly, never fail, on a machine that cannot run this ────────────────────────────────────────────
-# A CI runner without tmux (or without a working `new-session`) must not turn the suite red — the matrix is a
-# terminal-behaviour test and there is no terminal to test.
-if ! command -v tmux >/dev/null 2>&1; then
-  echo "SKIP: resize matrix needs tmux, which is not on PATH. (Install tmux to run this suite.)"
+# ── skip cleanly on a laptop that cannot run this — but NEVER in CI ────────────────────────────────────────
+# A developer machine without tmux should not turn the suite red; a CI job that silently skips forever is a
+# decorative net, which is the exact thing this matrix exists to replace. So `RESIZE_MATRIX_REQUIRE_TMUX=1`
+# (set by .github/workflows/cc-to-sdk.yml, which installs tmux itself) turns the skip into a hard failure.
+#
+# THE NAME IS NOT `CI_REQUIRE_TMUX`, AND THAT IS DELIBERATE — see the `CI=false` note in `launch` below.
+# `is-in-ci` treats ANY environment variable whose name starts with `CI_` as proof of a CI environment, so
+# the obvious name for this flag silently disabled the very rendering the matrix measures (measured: all 7
+# cells "never reached the ready frame").
+missing() {                                 # missing <what>
+  if [ -n "${RESIZE_MATRIX_REQUIRE_TMUX:-}" ]; then
+    echo "FAIL: resize matrix needs $1, which is not on PATH, and RESIZE_MATRIX_REQUIRE_TMUX is set." >&2
+    exit 1
+  fi
+  echo "SKIP: resize matrix needs $1, which is not on PATH. (Install it to run this suite.)"
   exit 0
-fi
-if ! command -v node >/dev/null 2>&1; then echo "SKIP: resize matrix needs node on PATH."; exit 0; fi
+}
+command -v tmux >/dev/null 2>&1 || missing tmux
+command -v node >/dev/null 2>&1 || missing node
 
 DASH="─"                                   # U+2500, 3 bytes — the composer's rule glyph
 CARET="❯"                                  # U+276F, the composer prompt
@@ -132,8 +146,16 @@ self_test() {
 launch() {                                  # launch <session> <cols> <rows>
   local s="$1" x="$2" y="$3" home proj
   home="$MATRIX_ROOT/$s-home"; proj="$MATRIX_ROOT/$s-proj"; mkdir -p "$home/.claude/ccx" "$proj"
+  # `CI=false` IS LOAD-BEARING, AND WITHOUT IT THIS SUITE CANNOT RUN ON ANY CI RUNNER AT ALL. Ink asks
+  # `is-in-ci`, which is true when `CI` or `CONTINUOUS_INTEGRATION` is merely PRESENT, or when any variable
+  # named `CI_*` is — and GitHub Actions always exports `CI=true`. Under that flag `ink.js:76` never
+  # subscribes to `resize` and `:111` writes STATIC OUTPUT ONLY: no live frame, no repaint, no SIGWINCH
+  # handling. That is precisely the machinery this matrix measures, so every cell would report "never
+  # reached the ready frame" — a red CI step that looks like a product regression and is not one.
+  # `is-in-ci` short-circuits on the literal `"false"`, which is the one lever that beats all three clauses.
+  # It is also the honest value here: the pane below is a real PTY being driven as an interactive user.
   tmux new-session -d -s "$s" -x "$x" -y "$y" -c "$proj" \
-    "env HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color node $BIN" || return 1
+    "env HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CI=false node $BIN" || return 1
   SESSIONS="$SESSIONS $s"
   tmux set-option -t "$s" remain-on-exit on >/dev/null
   # READY-NEEDLE. NOT qa-driver.md §2.1's `⇧Tab to cycle`, which this build no longer prints anywhere (its
@@ -200,21 +222,51 @@ run_cell() {                                # run_cell <name> <w0>x<h0> [<w>x<h>
 
 # ── the A5 cell: a submit AFTER a shrink must leave no composer placeholder behind ─────────────────────────
 # A5 is the other half of the P0: the residue that survives into the STATIC region. Upstream's placeholder
-# (`Try "…"`) is the string that gets stranded, so its presence anywhere at or above the submitted prompt is
-# the failure. The submit here is a local command for the same keyless reason as `stage_content`.
+# (`Try "…"`) is the string that gets stranded, so its presence at or above the submitted prompt is the
+# failure. The submit is a local command for the same keyless reason as `stage_content`.
+#
+# THE ORDER IS THE WHOLE CELL, AND THE OBVIOUS ORDER IS WRONG (fix round 1). The first draft staged `/status`
+# BEFORE the shrink, which made this assertion unfailable: `pickPlaceholder` (src/tui/placeholder.ts:145-155)
+# returns NOTHING once `submitCount >= 1`, so the placeholder was already gone before the cell looked for it —
+# green on a build with the correction stubbed out. The genuine repro SHRINKS FIRST, while the placeholder is
+# still painted, and takes its "content above the frame" from the launch banner instead of from `/status`.
+# Both preconditions below are asserted rather than assumed, so this cell cannot quietly go vacuous again.
+#
+# WHY THERE ARE TWO SHRINKS AND NOT ONE. A session's FIRST shrink is repaired by `correctionAfterRepaint`
+# (the verdict is not in yet when Ink writes); every LATER shrink is repaired by `frameWriteCorrection` at the
+# write itself (resizeRepaint.ts's header). A single-shrink cell therefore exercises only the first of those —
+# measured: with `frameWriteCorrection` stubbed to `""` a one-shrink a5 stays green. 120→100 warms the
+# verdict, 100→80 is the shrink under test, and the cell now goes red for a stub of EITHER corrector.
 run_a5_cell() {
   local s="wr-t5-a5" rc=0 cap="$MATRIX_ROOT/cap"
-  echo "  cell a5: content -> shrink 120x40 -> 80x24 -> submit -> no stranded placeholder"
+  echo "  cell a5: launch 120x40 (placeholder painted) -> 100x40 -> shrink 80x24 -> submit -> no stranded placeholder"
   launch "$s" 120 40 || { record "a5" 1; kill_cell "$s"; return; }
-  stage_content "$s" || { record "a5" 1; kill_cell "$s"; return; }
-  resize_to "$s" 80 24 "a5 shrink 80x24" || rc=1
+  tmux capture-pane -t "$s" -p > "$cap"
+  check_frame "$cap" 120 "a5 start 120x40" || rc=1
+  # PRECONDITION 1 — the string whose residue is under test is on screen BEFORE the shrink. (The launch banner
+  # is also what satisfies check_frame's content-above-the-frame demand here.)
+  if ! grep -qF 'Try "' "$cap"; then
+    echo "      FAIL a5 precondition: no composer placeholder at launch — the cell would assert on nothing"
+    sed 's/^/      | /' "$cap"; kill_cell "$s"; record "a5" 1; return
+  fi
+  resize_to "$s" 100 40 "a5 warm 100x40" || rc=1        # first shrink: puts a MEASURED verdict on the terminal
+  resize_to "$s" 80 24 "a5 shrink 80x24" || rc=1        # the shrink under test, corrected at the write itself
+  # PRECONDITION 2 — it survived the shrink as LIVE composer text. The question this cell asks is whether the
+  # copy of it painted at the OLD width gets stranded when the submit repaints, so it has to still be there.
+  tmux capture-pane -t "$s" -p > "$cap"
+  if ! grep -qF 'Try "' "$cap"; then
+    echo "      FAIL a5 precondition: the placeholder vanished at the shrink — nothing left to strand"
+    sed 's/^/      | /' "$cap"; kill_cell "$s"; record "a5" 1; return
+  fi
+  printf '      ok   %-28s placeholder painted at 120 and still live at 80\n' "a5 preconditions"
   type_line "$s" "/status"
   local i=0
   while [ "$i" -lt 40 ]; do
     tmux capture-pane -t "$s" -p > "$cap"
-    [ "$(grep -cF "$CARET /status" "$cap")" -ge 2 ] && break
+    grep -qF "$CARET /status" "$cap" && break
     sleep 0.25; i=$((i+1))
   done
+  sleep 1                                   # the echo lands before the repaint settles; read the settled screen
   tmux capture-pane -t "$s" -p > "$cap"
   check_frame "$cap" 80 "a5 after submit" || rc=1
   # …and the A5 assertion proper: the echo of the submitted prompt is on screen, and NO placeholder row
