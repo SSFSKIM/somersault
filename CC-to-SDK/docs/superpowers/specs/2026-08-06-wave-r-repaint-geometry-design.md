@@ -522,6 +522,28 @@ changed this document:
    isolation held (real `prefs.json` mtime unchanged), but clearing it needed a human click on a terminal
    that had been running for nearly four days. The agent was right not to force-quit. The rule that
    follows: **never drive a GUI application on the owner's machine** — hand them a script instead.
+6. **Moving the cursor is not enough to park it — the park has to PAD.** Task 4's implementer measured
+   this before writing any implementation code, and it overturned the design the STEP 0 gate had settled.
+   tmux clamps a reflowing cursor to its line's *used* cells (`grid_wrap_position`:
+   `if (px >= gl->cellused) xx = ax + gl->cellused;`), and Ink leaves the cursor on the **blank** row below
+   the frame — `cellused == 0`. So a bare `\x1b[117G` reports column **1** after every drag, `probeReflow`
+   correctly refuses column 1 as near-margin, and every verdict would have been `"unknown"` forever. That
+   is precisely the inert-fix outcome the escalation threshold exists to catch, and it was one measurement
+   away from shipping. Writing spaces out to the park column makes the cells used, and the same drags then
+   report the re-wrap arithmetic exactly (120→80 → 37, the exact-half 120→60 → 57). **Consequence:** the
+   padded row re-wraps too, so the erase count carries `ceil(parkedCol / newWidth)` for the cursor row
+   rather than the plan's flat `+ 1`.
+7. **Our erase was written to interleave with Ink's, and Ink offers no such guarantee.** The synchronous
+   path erases the rows *above* what Ink is about to erase, on the contract that Ink's own
+   `eraseLines(previousLineCount)` follows immediately and the two runs share one row. Ink's repaint
+   actually goes through `throttle(this.log, undefined, {leading:true, trailing:true})` (`ink.js:45`), so a
+   second resize inside the throttle window defers Ink's half to the trailing edge while ours runs anyway,
+   against a cursor Ink has not moved. The review reproduced the resulting residue against the real binary;
+   the throttle is the strongly-indicated mechanism, not a confirmed one. **The general lesson is bigger
+   than the bug:** an acceptance matrix that drives one `tmux resize-window` per cell with a capture
+   between is not testing the workload a person produces by dragging a window edge, which is a *burst* of
+   `SIGWINCH`. Stepped resizes and drags are different workloads, and this correction passed the first
+   while failing the second.
 
 ## Outcomes & Retrospective
 
