@@ -56,8 +56,8 @@ const planEntry = (): PendingEntry =>
 
 /** `typingIdleMs` is the injected `fs`. Tests that want a STABLE suppressed state pass a long one; tests that
  *  watch the window close pass a short one and wait it out for real (the house pattern — see `yankHintMs`). */
-const app = (fake: ReturnType<typeof fakeRemote>, typingIdleMs: number) =>
-  render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ env: tmpEnv() }} typingIdleMs={typingIdleMs} />);
+const app = (fake: ReturnType<typeof fakeRemote>, typingIdleMs: number, hookOpts?: { initialMode?: string; initialModel?: string }) =>
+  render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ env: tmpEnv() }} typingIdleMs={typingIdleMs} hookOpts={hookOpts} />);
 const IDLE_SHORT = 40, IDLE_LONG = 10000;
 
 describe("decision dialog — VISIBLE (upstream's `on === \"visible\"`)", () => {
@@ -242,6 +242,50 @@ describe("decision dialog — SUPPRESSED (upstream's `Xrl()` null while typing)"
     await waitFor(() => frame(lastFrame).includes(WAITING_FOR_PERMISSION));
     expect(frame(lastFrame)).not.toContain("Ready to code?");
     await waitFor(() => frame(lastFrame).includes("Ready to code?"));   // …until the window closes
+    cleanupRoots();
+  });
+});
+
+// ── Wave T Task 10 fix — the two props ChatApp sources for the plan dialog's one-of arm ────────────────
+// PlanDialog decides WHICH approval arm it can offer from `model` and `bypassAvailable`, and ChatApp:464 is
+// the single line that sources them. Nothing pinned that line: every other ChatApp test renders with no
+// model and no hookOpts, which is exactly the neither-available arm — so deleting both props left all 186
+// ChatApp-level tests green and silently restored the pre-t10 "always grant the narrowest mode" defect.
+// These two tests are the missing pin, one per source, asserting BOTH the label the human reads and the
+// mode the answer actually carries. The bypass one deliberately cycles the LIVE mode away from the launch
+// mode first, because the plausible mis-sourcing is `bypassAvailable={state.mode === "bypassPermissions"}`
+// — which tracks where the session is now, not what it launched with, and which a test that never moved the
+// mode could not tell apart from the real thing.
+describe("plan dialog availability — the wiring ChatApp owns", () => {
+  it("the bypass arm follows the LAUNCH mode, and survives the live mode moving off it", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = app(fake, IDLE_SHORT, { initialMode: "bypassPermissions" });
+    await waitFor(() => flat(lastFrame).includes("mode bypassPermissions"));
+    // bypassPermissions is OFF the Tab ladder (useChat's `ladderNext`), so shift+tab re-enters at `default`:
+    // the live mode is now something the launch flag is not.
+    stdin.write("\x1b[Z");
+    await waitFor(() => flat(lastFrame).includes("mode default"));
+    fake.parkPermission(planEntry());
+    await waitFor(() => frame(lastFrame).includes("Ready to code?"));
+    expect(flat(lastFrame)).toContain("Yes, and bypass permissions");
+    expect(flat(lastFrame)).not.toContain("Yes, auto-accept edits");
+    stdin.write("1");
+    await waitFor(() => fake.answeredCalls.length === 1);
+    expect(fake.answeredCalls[0]).toEqual({ toolUseID: "p", decision: { kind: "plan_approve", mode: "bypassPermissions" } });
+    cleanupRoots();
+  });
+
+  it("the auto arm follows the model ChatApp hands down", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = app(fake, IDLE_SHORT, { initialModel: "claude-opus-5" });   // autoModel.ts's live-verified set
+    await waitFor(() => flat(lastFrame).includes("model claude-opus-5"));
+    fake.parkPermission(planEntry());
+    await waitFor(() => frame(lastFrame).includes("Ready to code?"));
+    expect(flat(lastFrame)).toContain("Yes, and use auto mode");
+    expect(flat(lastFrame)).not.toContain("Yes, auto-accept edits");
+    stdin.write("1");
+    await waitFor(() => fake.answeredCalls.length === 1);
+    expect(fake.answeredCalls[0]).toEqual({ toolUseID: "p", decision: { kind: "plan_approve", mode: "auto" } });
     cleanupRoots();
   });
 });

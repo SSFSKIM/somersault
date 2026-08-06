@@ -552,6 +552,13 @@ export class SessionHost {
       try { await this.session?.setModel?.(target); this.model = target; }
       catch (e) { console.error(`cc-harness host ${this.opts.short}: plan approved auto mode but the model swap to ${target} failed (${(e as Error)?.message ?? e}) — auto may fall back to default`); }
     }
+    // The NO-SWAP arm, and why it still speaks. `this.model` is undefined on a host whose config named no
+    // model — and stays that way after a `{op:"set_model"}` carrying none (ops.ts:43 declares the field
+    // optional). Not swapping is deliberate, the same call useChat.applyMode makes (:1450-1453): resolving
+    // an unknown model to DEFAULT_AUTO_MODEL would downgrade a session the user configured on purpose. But
+    // useChat pairs that refusal with a visible notice, and this line is the only reason `this.mode = "auto"`
+    // below is not the very lying chip the docblock forbids — the grant is real, the verification is not.
+    if (mode === "auto" && this.model === undefined) console.error(`cc-harness host ${this.opts.short}: plan approved auto mode but this client's model can't be checked — if it doesn't support auto the engine falls back to default`);
     try { await this.session?.setPermissionMode?.(mode); this.mode = mode; }
     catch (e) { console.error(`cc-harness host ${this.opts.short}: plan approved ${mode} but the engine refused it (${(e as Error)?.message ?? e}) — the session stays in ${this.mode}`); }
     this.emit({ kind: "state", status: this.status() });

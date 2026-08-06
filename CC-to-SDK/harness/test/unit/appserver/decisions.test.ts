@@ -82,6 +82,42 @@ describe("appserver decisions (Task 7)", () => {
     expect(reply.error.code).toBe(ERR.INVALID_PARAMS);
   });
 
+  // Wave T Task 10 fix, the SECOND wire's copy of permission-wire.test.ts:67. server.ts's plan_approve arm
+  // pins `mode` to the same four-value enum host/ops.ts does, but the two schemas are hand-maintained
+  // duplicates with no compiler check spanning them — and nothing here ever sent a bad mode, so loosening
+  // this one to `z.string()` passed the whole suite. A mode outside the grant set must be refused at the
+  // schema, before dispatch, exactly as the host wire refuses it.
+  it("a plan_approve naming a mode outside the grant set is invalid params", async () => {
+    let broker: any;
+    const srv = new AppServer({}, { sessionFactory: (cfg: any) => { broker = cfg.permissionBroker; return fakeSession(); } });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    const decision = broker.request({ toolName: "ExitPlanMode", input: {}, toolUseID: "toolu_bad", kind: "plan", signal: new AbortController().signal });
+    await new Promise((r) => setTimeout(r, 0));
+
+    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_bad", answer: { kind: "plan_approve", mode: "dontAsk" } } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(parsed(a.lines).find((f) => f.id === 3).error.code).toBe(ERR.INVALID_PARAMS);
+
+    // The retired pre-t10 payload is gone from this wire too, and the decision is still parked either way —
+    // a rejected answer must never settle the broker.
+    send(connA, { id: 4, method: "decision/respond", params: { threadId, toolUseId: "toolu_bad", answer: { kind: "plan_approve", acceptEdits: true } } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(parsed(a.lines).find((f) => f.id === 4).error.code).toBe(ERR.INVALID_PARAMS);
+
+    send(connA, { id: 5, method: "decision/list", params: { threadId } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(parsed(a.lines).find((f) => f.id === 5).result.data).toHaveLength(1);
+
+    send(connA, { id: 6, method: "decision/respond", params: { threadId, toolUseId: "toolu_bad", answer: { kind: "plan_approve", mode: "auto" } } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(await decision).toEqual({ kind: "plan_approve", mode: "auto" });     // …and a legal one still lands
+  });
+
   it("unattended:'deny' with zero watchers denies immediately", async () => {
     // hasWatchers = record.subscribers.size > 0 (Task 9): connA never subscribes to this thread, so it
     // is not a watcher even while still connected. Closing it too is just belt-and-suspenders for the

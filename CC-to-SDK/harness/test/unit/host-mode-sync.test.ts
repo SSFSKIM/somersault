@@ -173,6 +173,34 @@ describe("host mode sync (one source of truth, last-write-wins)", () => {
     await host.stop();
   });
 
+  // The OTHER half of that guard, and the arm no test reached before — every test here seeds a model
+  // through the config, and `resolvedModel` falls back to DEFAULTS.model, so `this.model` is never
+  // undefined at construction. It becomes undefined the reachable way: `set_model`'s model field is
+  // OPTIONAL (ops.ts:43, and host-ops.test.ts:226 parses a bare `{op:"set_model"}` as valid), after which
+  // host.ts:313 writes `resolveModelAlias(undefined)` and it stays undefined for the life of the host.
+  // Refusing to swap a model we cannot see is correct — resolving it to DEFAULT_AUTO_MODEL would downgrade
+  // a session the user configured on purpose, which is exactly why useChat.applyMode refuses too — but the
+  // grant that follows is then UNVERIFIED, so the applier must say so instead of writing `auto` in silence.
+  it("granting `auto` with NO known model swaps nothing and reports that it could not be checked", async () => {
+    const { fake, drive, calls } = fakeSession();
+    const host = hostFor(fake);
+    await host.start();
+    await host.control({ op: "set_model" });                                    // the model field is optional: this UNSETS it
+    calls.length = 0;
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      (host as any).planUpgradeMode = "auto";
+      drive({ type: "system", subtype: "status", status: null, permissionMode: "default" });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(calls).toEqual(["mode:auto"]);                                     // the swap is skipped, as designed
+      expect(err).toHaveBeenCalledTimes(1);
+      expect(String(err.mock.calls[0]![0])).toContain("auto mode");
+      expect(String(err.mock.calls[0]![0])).toContain("falls back to default");
+    } finally { err.mockRestore(); }
+    expect(host.status().permissionMode).toBe("auto");
+    await host.stop();
+  });
+
   it("a REJECTED plan-upgrade setter leaves the chip on the engine's real mode and REPORTS it", async () => {
     const { fake, drive } = fakeSession({ setPermissionMode: async () => { throw new Error("nope"); } });
     const host = hostFor(fake);
