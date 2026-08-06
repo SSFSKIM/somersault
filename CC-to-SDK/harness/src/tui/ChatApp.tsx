@@ -42,6 +42,7 @@ import { useKeyActions, useKeyScope, useKeySuspend, useSwallowKeys } from "./key
 import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
+import { clearViewport } from "./clearViewport.js";
 import { Line } from "./Line.js";
 import { userEchoLines } from "./render.js";
 import { ChatComposer, composerOwns, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
@@ -111,7 +112,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, onResize = DEFAULT_ON_RESIZE }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize = DEFAULT_ON_RESIZE }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -139,7 +140,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   /** `fs` (see TYPING_IDLE_MS). */
   typingIdleMs?: number;
   suspend?: typeof suspendProcess;
-  resumeOutput?: { repaint: (runInkWrite: () => void) => void };
+  resumeOutput?: { repaint: (runInkWrite: () => void) => void; tallWrites?: () => number; screenResynced?: () => void };
+  /** WAVE R TASK 8 — the viewport reset that recovers from Ink's tall-frame branch, defaulting to the real
+   *  `clearViewport` over Ink's own stdout. A seam for the reason every other one here is: `ink-testing-library`
+   *  renders with `debug: true`, whose stdout stub is not a tty, so the real reset short-circuits to `false` and
+   *  a test could not tell "recovered" from "declined to". Returns whether anything was written. */
+  resyncViewport?: () => boolean;
   /** WAVE R TASK 1 — subscribe to terminal resizes; returns the unsubscribe. A seam for the same reason
    *  `suspend` is one: a test cannot resize `ink-testing-library`'s fake stdout, and the real default
    *  (`DEFAULT_ON_RESIZE`) listens on the process's own tty.
@@ -309,6 +315,32 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       if (output) output.repaint(repaint); else repaint();
     } });
   });
+  // WAVE R TASK 8 (EP-R4) — RECOVER THE SCREEN AFTER INK'S TALL-FRAME BRANCH. When a frame reaches the terminal
+  // height (`ink.js:118`) Ink writes `clearTerminal + fullStaticOutput + output` straight to stdout and returns:
+  // log-update is never called, so its `previousOutput`/`previousLineCount` keep describing the frame from before.
+  // The ctrl+o pager takes that branch whenever it is taller than the pane, and the damage lands on the way OUT —
+  // measured live at 60x15 (`wr-t8-probe2`): closing the pager wrote ZERO bytes, because the post-close frame is
+  // byte-identical to the pre-pager one and `log-update.js:13` drops it, and the pager stayed fully painted until
+  // a resize replaced its bottom rows and left the rest as border fragments.
+  //   The proxy cannot repair that — there is no write to correct — so the repair is a forced repaint from here,
+  // and `clearViewport` is exactly the right one: task 7 built it for the same dedupe reached through `/clear`,
+  // it wipes the viewport WITHOUT touching scrollback, and it goes through Ink's `writeToStdout`, which leaves
+  // log-update's counters describing what it painted.
+  //   TWO CONDITIONS, AND BOTH ARE FACTS RATHER THAN INFERENCES. The wipe is only safe while the viewport holds
+  // nothing but a tall chunk's own bytes; run it on an ordinary screen and it erases live <Static> rows that have
+  // not scrolled into scrollback yet. `tallWrites() > 0` is the proxy's report that the screen IS in that state,
+  // and the pager closing is the event that says the tall surface has come down. An earlier version tried to
+  // derive the second from the first — fire whenever the count stood still across a commit, on the theory that
+  // `ink.js:118` has no dedupe so every tall render bumps it — which would have covered any tall surface, not
+  // just this one. It is a bet on "every React commit reaches `onRender`", and its losing side wipes the pager
+  // out from under the user mid-scroll; a test that re-rendered without a tall write collected exactly that. The
+  // pager is the one surface that deliberately sizes itself to the screen, so it is the one this keys on, and a
+  // tall dialog left desynchronized until the next pager cycle is a named residual rather than a silent bet.
+  useEffect(() => {
+    const output = resumeOutputRef.current;
+    if (transcriptOpen || !(output?.tallWrites?.() ?? 0)) return;
+    if ((resyncViewport ?? (() => clearViewport({ stdout, write })))()) output!.screenResynced?.();
+  }, [transcriptOpen]);   // eslint-disable-line react-hooks/exhaustive-deps
   // Ctrl-O opens the pager (the PAGER owns closing it — Transcript's own ctrl+o → transcript:exit, task 7);
   // Ctrl-R/T/B are Composer-only. Ctrl-C is allowed from Composer and a visible decision dialog, but never
   // from an ordinary overlay hidden behind a decision. Shift+Tab/Esc are the composer's (Chat context) — it

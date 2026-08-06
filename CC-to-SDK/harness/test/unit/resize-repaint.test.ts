@@ -327,10 +327,15 @@ describe("the parked cursor", () => {
     out.stdout.write(inkEraseLines(3) + "one\ntwo\n");
     expect(out.parkedColumn()).toBe(117);
     chunks.length = 0;
-    out.stdout.write("\x1b[2J\x1b[3J\x1b[H" + "scrollback\n" + "one\ntwo\n");   // ink.js:121-124, one chunk
+    out.stdout.write("\x1b[2J\x1b[3J\x1b[H" + "scrollback\n" + "one\ntwo\n");   // ink.js:118-122, one chunk
     expect(out.parkedColumn()).toBe(0);
-    expect(chunks).toEqual(["\x1b[2J\x1b[3J\x1b[H" + "scrollback\n" + "one\ntwo\n"]);   // no park written after it
-    expect(out.lastFrame()).toBe("one\ntwo\n");                            // and the chunk itself is still not a frame
+    // …and NOTHING is written after it. W-R t8 rewrites the chunk itself — the `\x1b[3J` in `clearTerminal` comes
+    // out, because it erases the scrollback this app's committed transcript lives in and nothing Ink does needs it
+    // (`\x1b[2J` already blanks the screen it is about to paint on). Every other byte passes through as written.
+    expect(chunks).toEqual(["\x1b[2J\x1b[H" + "scrollback\n" + "one\ntwo\n"]);
+    // The chunk is still not adopted as a frame — and from t8 the frame it displaced is not retained either: it is
+    // no longer on screen, so `lastFrame()` claiming it feeds task 4b's corrector a region measured off nothing.
+    expect(out.lastFrame()).toBeUndefined();
   });
 
   // The same rule for the other write that moves the cursor without painting: `eraseLines` leaves it at column 1 of

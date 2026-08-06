@@ -122,20 +122,25 @@ describe("ResumeSafeStdout.lastFrame", () => {
     expect(terminal.chunks.join("")).toBe(eraseLines(2) + "live frame\n");
   });
 
-  // Kind 5 — Ink's TALL-FRAME path (ink.js:121-124): when outputHeight >= stdout.rows it writes ONE chunk of
+  // Kind 5 — Ink's TALL-FRAME path (ink.js:118-122): when outputHeight >= stdout.rows it writes ONE chunk of
   // clearTerminal + fullStaticOutput + output, i.e. the whole accumulated scrollback of the session followed by
   // the frame. Nothing in the bytes marks where the scrollback ends and the frame begins, so adopting the chunk
   // would make lastFrame() the entire session and physicalRows() a count over it — task 4 would then erase the
   // live transcript. The ctrl+o pager opens taller than the pane every time, so this is a routine path.
-  it("never records Ink's tall-frame clearTerminal chunk as a frame", () => {
+  //   W-R t8 CHANGED WHAT HAPPENS TO THE FRAME IT DISPLACED. Retaining it (which is what this case used to pin)
+  // leaves `lastFrame()` naming a frame `clearTerminal` has just wiped off the screen, and task 4b's corrector
+  // then measures its erase off a frame that describes nothing. Dropping it is the only honest record — the whole
+  // of that branch and its evidence lives in test/unit/pager-bookkeeping.test.ts.
+  it("never records Ink's tall-frame clearTerminal chunk as a frame, and drops the one it displaced", () => {
     const { terminal, out } = proxy();
     out.stdout.write(eraseLines(2) + "live frame\n");
     const history = Array.from({ length: 40 }, (_, i) => `committed transcript row ${i}`).join("\n") + "\n";
     const tall = "\x1b[2J\x1b[3J\x1b[H" + history + "pager frame line a\npager frame line b\n";
     out.stdout.write(tall);
-    expect(out.lastFrame()).toBe("live frame\n");                  // the previous frame is RETAINED, not replaced
-    expect(physicalRows(out.lastFrame()!, 80)).toBe(1);            // …so the height stays small, not 40-odd rows
-    expect(terminal.chunks.join("")).toBe(eraseLines(2) + "live frame\n" + tall);   // bytes still reach the terminal
+    expect(out.lastFrame()).toBeUndefined();                       // neither the chunk NOR the frame it replaced
+    // …and the bytes still reach the terminal, less the `\x1b[3J` t8 strips out of `clearTerminal` (that one
+    // escape erases the terminal's scrollback; `pager-bookkeeping.test.ts` carries the reasoning and the evidence).
+    expect(terminal.chunks.join("")).toBe(eraseLines(2) + "live frame\n" + tall.replace("\x1b[3J", ""));
   });
 
   // The same chunk on a virgin proxy leaves us with NO frame rather than a bogus one: undefined is the honest

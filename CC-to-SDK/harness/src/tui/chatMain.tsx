@@ -41,6 +41,15 @@ export interface ResumeSafeStdout {
   lastFrame(): string | undefined;
   /** The column the cursor is parked in, or 0 if it is not parked (W-R t4 — see `parkSequence`). */
   parkedColumn(): number;
+  /** W-R t8: how many of Ink's tall-frame chunks (`ink.js:118-122`) have gone out since the screen was last
+   *  known to be in sync — 0 meaning log-update's counters still describe what is painted. A COUNT and not a
+   *  flag because the recovery must not fire on the very commit whose own frame took the branch, and "did this
+   *  commit bump it" is the only question that separates the two. */
+  tallWrites(): number;
+  /** …and the caller's acknowledgement that it has repainted the viewport from a known state, which is the one
+   *  thing that puts the count back to 0. A later ordinary frame write does NOT: its erase prefix is measured
+   *  off the same stale `previousLineCount`, so it lands on the wrong rows and the screen stays desynchronized. */
+  screenResynced(): void;
   /** W-R t4b: the resize correction, applied to the write that would otherwise create residue. Called for every
    *  frame write that carries an erase prefix and has a recorded frame in front of it; whatever it returns is
    *  injected between that prefix and the body, inside the SAME write. Set once, from `runChatClient` — the proxy
@@ -63,6 +72,12 @@ const INK_WRITE_HEAD = /^(?:\x1b\[2K|\x1b\[1A|\x1b\[G|\x1b\[2J)/;
  *  launch, is not until after the first resize, i.e. exactly when the oracle needed it. */
 const ESCAPES_ONLY = /^(?:\x1b\[[0-9;?]*[a-zA-Z]|\x1b[78])+$/;
 
+/** The scrollback-erasing head of `ansiEscapes.clearTerminal` (base.js:124), which is `\x1b[2J\x1b[3J\x1b[H` on
+ *  every platform but pre-1607 Windows (whose arm is `\x1b[2J\x1b[0f` and has nothing to strip). Matched as this
+ *  exact two-escape prefix so only the tall-frame head is ever rewritten and the `\x1b[H` behind it — which Ink
+ *  needs, it paints from there — is untouched, as is any `\x1b[3J` occurring later in the chunk as content. */
+const CLEAR_SCROLLBACK_HEAD = "\x1b[2J\x1b[3J";
+
 export { physicalRows } from "./resizeRepaint.js";   // W-R t4 moved it there; this stays the import site it had
 
 export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeStdout {
@@ -71,6 +86,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   let widthAtPaint = 0;                          // W-R t4b: …and the terminal width it was painted at
   let justErased = false;                        // previous write was erase-only → the next bare write is <Static>
   let parkedCol = 0;                             // W-R t4: where the cursor sits between frames, 0 if nowhere
+  let tall = 0;                                  // W-R t8: tall-frame chunks written since the screen was last in sync
   let corrector: ((info: FrameWriteInfo) => string) | undefined;   // W-R t4b: the resize correction, set by runChatClient
   let rewritten: string | undefined;             // …and the chunk it produced, consumed by the write that made it
   const targetWrite = stdout.write.bind(stdout) as (...args: any[]) => boolean;
@@ -84,14 +100,32 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   // re-records inside the same synchronous burst. After a bare `app.clear()` no frame follows, `lastFrame()` stays
   // undefined, and task 4 erases NOTHING rather than a stale (possibly much taller) frame's worth of live
   // transcript. SUPPRESSED writes never reached the terminal, so they never painted anything. TALL-FRAME writes are
-  // ink.js:121-124 — when `outputHeight >= stdout.rows` Ink writes ONE chunk of `ansiEscapes.clearTerminal +
+  // ink.js:118-122 — when `outputHeight >= stdout.rows` Ink writes ONE chunk of `ansiEscapes.clearTerminal +
   // this.fullStaticOutput + output`, i.e. the session's entire accumulated scrollback with the frame glued on the
   // end. Nothing in the bytes marks the seam between them, so it is never recorded: adopting it would make
-  // `physicalRows` a count over the whole session and task 4's erase would eat the live transcript. The frame
-  // retained across that branch is then unrelated to what is on screen and can be taller than the new live region,
-  // so an erase measured off it is NOT guaranteed to land on the under-erase side; EP-R4 resynchronizes the recorded
-  // geometry after this branch. `clearTerminal` is `\x1b[2J\x1b[3J\x1b[H` (and `\x1b[2J\x1b[0f` on old Windows) —
-  // both open with `\x1b[2J`, which no other write Ink makes ever does.
+  // `physicalRows` a count over the whole session and task 4's erase would eat the live transcript.
+  //   W-R t8 RESYNCHRONIZES HERE, AND DOWNWARD IS THE ONLY DIRECTION AVAILABLE. The frame this branch used to
+  // RETAIN is unrelated to what is on screen and can be taller than the new live region, so an erase measured off
+  // it is not guaranteed to land on the under-erase side (task 4b's review); `widthAtPaint` goes with it, or the
+  // corrector measures a region off a frame that no longer describes the screen and the injected erase walks
+  // upward into the replayed scrollback the correction never repaints. What we know AFTER this write is only
+  // that the viewport holds this chunk's own bytes and nothing else — not where its frame begins — so the honest
+  // record is no frame at all, and `tallWrites` carries the one fact a recovery needs: log-update was bypassed,
+  // its counters are stale, and nothing it writes from here on lands where it thinks. ChatApp acts on that when
+  // the tall surface comes down; the proxy cannot, because Ink makes NO write to correct (measured live at 60x15:
+  // closing the pager emits zero bytes — the post-close frame is byte-identical to the pre-pager one and
+  // `log-update.js:13` swallows it).
+  //   AND THE `ESC[3J` COMES OUT. `clearTerminal` is `\x1b[2J\x1b[3J\x1b[H` (and `\x1b[2J\x1b[0f` on old Windows)
+  // — both open with `\x1b[2J`, which no other write Ink makes ever does. `\x1b[2J` blanks the screen Ink is
+  // about to paint on, which is all this branch needs; `\x1b[3J` additionally erases the terminal's SCROLLBACK,
+  // which is where this app's committed transcript and everything the user had on screen before launch live.
+  // Task 7 settled the same point for `/clear` from the 2.1.220 bundle (clearViewport.ts, note 1) and its review
+  // measured this branch doing it: marker rows 60 → 0, session `wr-t7-rev-tall2`. Stripping one escape from the
+  // prefix is the whole intervention — every other byte, the `fullStaticOutput` replay included, is passed
+  // through as Ink wrote it. That replay is LOAD-BEARING and is deliberately not touched: `\x1b[2J` erases the
+  // rows above the frame without scrolling them anywhere, so the replay is the only thing that puts the visible
+  // transcript back into history. Suppressing it would need the seam we just said the bytes do not carry, and
+  // would trade a duplicated transcript for a destroyed one.
   // BOTH NON-FRAME BRANCHES ALSO FORGET THE PARK (W-R t4 review). `parkedCol` claims the cursor is sitting in a
   // row of our own padding; a `\x1b[2J…\x1b[H` or an `eraseLines` run moves it somewhere else entirely, and the
   // proxy is the only thing that knows. Measured on the tall-frame branch: `parkedColumn()` reported 117 while the
@@ -103,7 +137,11 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   // either write.
   const record = (chunk: unknown): boolean => {
     if (typeof chunk !== "string") return false;
-    if (chunk.startsWith("\x1b[2J")) { justErased = false; parkedCol = 0; return false; }
+    if (chunk.startsWith("\x1b[2J")) {
+      justErased = false; parkedCol = 0; frame = undefined; widthAtPaint = 0; tall += 1;
+      if (chunk.startsWith(CLEAR_SCROLLBACK_HEAD)) rewritten = "\x1b[2J" + chunk.slice(CLEAR_SCROLLBACK_HEAD.length);
+      return false;
+    }
     const prefix = chunk.match(INK_ERASE_PREFIX)?.[0] ?? "";
     const body = chunk.slice(prefix.length);
     if (body === "") { justErased = true; frame = undefined; parkedCol = 0; return false; }
@@ -192,6 +230,8 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
     stdout: stream,
     lastFrame() { return frame; },
     parkedColumn() { return parkedCol; },
+    tallWrites() { return tall; },
+    screenResynced() { tall = 0; },
     setFrameCorrector(fn) { corrector = fn; },
     repaint(runInkWrite) {
       suppressNextWrite = true;
