@@ -5,7 +5,9 @@ import { TERMINAL, finalizeRoster, readRoster, writeRoster } from "../fleet/rost
 import { procStartOf as realProcStartOf } from "../fleet/liveness.js";
 import type { FleetState, RosterRow } from "../fleet/roster.js";
 import { openSession as realOpenSession } from "../session/index.js";
-import { resolvedPermissionMode } from "../config/resolveOptions.js";
+import { resolvedModel, resolvedPermissionMode } from "../config/resolveOptions.js";
+import { isAutoSupportedModel, resolveAutoModel } from "../config/autoModel.js";
+import { resolveModelAlias } from "../config/models.js";
 import type { HarnessConfig } from "../config/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import { rewindAnchorsFrom } from "../sessions/rows.js";
@@ -15,7 +17,7 @@ import { TurnBuffer } from "./follow.js";
 import type { HostEvent } from "./wire.js";
 import { PendingDecisions } from "../permissions/pending.js";
 import type { PendingDecision } from "../permissions/pending.js";
-import type { PermissionBroker, PermissionRequest, DecisionOutcome, DecisionKind } from "../permissions/types.js";
+import type { PermissionBroker, PermissionRequest, DecisionOutcome, DecisionKind, PlanGrantMode } from "../permissions/types.js";
 
 export interface SessionHostOpts {
   short: string; name: string; cwd: string; kind: "bg" | "interactive";
@@ -118,13 +120,18 @@ export class SessionHost {
   // Who answered what, so a second answerer can be told. A host that runs for days would otherwise
   // accumulate one entry per decision for its whole life.
   private settledBy = new Map<string, string>();
-  // Set when a plan_approve settles with acceptEdits:true — consumed by the status-frame handler (Task
-  // 5), which is the only reason this task ever SETS it rather than also acting on it.
-  private planUpgradePending = false;
+  // The mode an approved plan GRANTED, set when the plan_approve settles and consumed by the status-frame
+  // handler. Undefined = nothing armed, which includes a `default` grant: the engine flips there by itself
+  // ten milliseconds after the allow (probe 97), so there is nothing for us to set.
+  private planUpgradeMode?: PlanGrantMode;
   // ONE source of truth for the engine's permission mode; last-write-wins between an intercepted CLI
   // `status` frame and a successful set_permission_mode/plan-upgrade setter (spec §mode-sync). Seeded
   // from resolvedPermissionMode in start(), before this default is ever read.
   private mode = "default";
+  // ONE source of truth for the engine's MODEL, on the same rule: seeded from the launch config in start()
+  // and rewritten by a successful set_model. Read by the plan-upgrade applier alone — `auto` is model-gated
+  // (autoModel.ts) and needs a supported model under it before the mode is worth setting.
+  private model?: string;
   // Nested tool_use id → parent Agent tool_use id (from nested assistant frames' parent_tool_use_id).
   private parentOf = new Map<string, string>();
   // Agent tool_use id → subagent_type (from task_started frames).
@@ -192,6 +199,7 @@ export class SessionHost {
     // Seed the mode truth from the SAME config the engine is about to be opened with — before opening
     // it, so a fresh client's status bar never shows a placeholder (spec §mode-sync).
     this.mode = resolvedPermissionMode(this.opts.config);
+    this.model = resolvedModel(this.opts.config);
     try {
       this.session = this.deps.openSession(this.engineConfig());
       this.offFrame = this.session.onFrame?.((m) => this.onSessionFrame(m));
@@ -273,16 +281,16 @@ export class SessionHost {
     // rather than frozen at a state that reads like the whole session is over.
     try {
       await this.session!.submit(prompt, onMessage);
-      // Turn-end belt: a plan_approve(acceptEdits:true) that settled but never saw the CLI's own
-      // post-approval status frame (e.g. the turn ended before the CLI emitted one) must still upgrade —
-      // never leave an approved upgrade silently unapplied (spec §mode-sync ordering).
-      if (this.planUpgradePending) { this.planUpgradePending = false; await this.applyPlanUpgrade(); }
+      // Turn-end belt: an approved plan that settled but never saw the CLI's own post-approval status
+      // frame (e.g. the turn ended before the CLI emitted one) must still upgrade — never leave an
+      // approved upgrade silently unapplied (spec §mode-sync ordering).
+      await this.applyPlanUpgrade();
       this.state = this.opts.kind === "bg" ? "done" : "working";
     }
     catch (e) {
       // A failed/interrupted turn must not leave a stale approved-upgrade that fires at the NEXT turn's
       // status frame (plan-review M2) — the plan this upgrade belonged to did not survive the turn.
-      this.planUpgradePending = false;
+      this.planUpgradeMode = undefined;
       this.state = "error"; this.emit({ kind: "turn", phase: "end", seq, error: (e as Error)?.message }); throw e;
     }
     // For a BG worker the turn's completion IS the terminal event, so record it here: a host that dies
@@ -301,7 +309,8 @@ export class SessionHost {
     const s = this.session;
     const need = <T>(v: T | undefined, name: string): T => { if (!v) throw new Error(`${name} unsupported by this host`); return v; };
     switch (op.op) {
-      case "set_model": await need(s?.setModel?.bind(s), "set_model")(op.model); return { ok: true };
+      // The model truth moves only after the engine took it — same rule as set_permission_mode below.
+      case "set_model": await need(s?.setModel?.bind(s), "set_model")(op.model); this.model = resolveModelAlias(op.model); return { ok: true };
       case "set_permission_mode": {
         await need(s?.setPermissionMode?.bind(s), "set_permission_mode")(op.mode);
         this.mode = op.mode;                                      // our own successful set is the second writer
@@ -362,7 +371,7 @@ export class SessionHost {
     // turn on the new engine never observes a mid-swap window with the grants silently dropped.
     await this.replayFlagState();
     this.bgTasks = []; this.emit({ kind: "tasks_changed", tasks: [] });   // the old session's tasks are gone
-    this.planUpgradePending = false;                                       // (field exists from T3)
+    this.planUpgradeMode = undefined;                                      // (field exists from T3)
     this.emit({ kind: "state", status: this.status() });
     const graceMs = this.deps.disposeGraceMs ?? DISPOSE_GRACE_MS;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -513,7 +522,7 @@ export class SessionHost {
       this.mode = mm.permissionMode;
       // The upgrade is triggered by OBSERVING this frame, never by answer release — the CLI's own flip
       // rides the message stream and an eager setter would race it (spec §mode-sync ordering).
-      if (this.planUpgradePending) { this.planUpgradePending = false; void this.applyPlanUpgrade(); }
+      if (this.planUpgradeMode) void this.applyPlanUpgrade();
       else this.emit({ kind: "state", status: this.status() });
       return;
     }
@@ -523,9 +532,28 @@ export class SessionHost {
     }
   }
 
+  /** Apply an armed plan upgrade, once — a no-op unless one is armed, so the status-frame watcher and the
+   *  turn-end belt can both call it.
+   *
+   *  TWO THINGS THIS MUST NOT DO, both of which it used to (Wave T t10, the qa3-17 / qa3-02 pair):
+   *  · GRANT `auto` WITHOUT A MODEL THAT CAN RUN IT. `auto` is model-gated (autoModel.ts, probe 18d/72):
+   *    off its supported set the engine falls back to `default` IN SILENCE, so writing `this.mode = "auto"`
+   *    after a setter that "succeeded" would put the chip on a mode the engine is not in. Swap first, the
+   *    same order and for the same reason as useChat's applyMode.
+   *  · SWALLOW A REFUSAL. A rejected setter left `this.mode` at whatever the status frame wrote — correct —
+   *    but said nothing, so an upgrade the human explicitly approved could vanish with no trace anywhere.
+   *    The mode truth still only moves on success; the failure is now reported. */
   private async applyPlanUpgrade(): Promise<void> {
-    try { await this.session?.setPermissionMode?.("acceptEdits"); this.mode = "acceptEdits"; }
-    catch { /* the CLI's own flip stands; mode stays what the status frame wrote */ }
+    const mode = this.planUpgradeMode;
+    if (!mode) return;
+    this.planUpgradeMode = undefined;
+    if (mode === "auto" && this.model !== undefined && !isAutoSupportedModel(this.model)) {
+      const target = resolveAutoModel(this.model);
+      try { await this.session?.setModel?.(target); this.model = target; }
+      catch (e) { console.error(`cc-harness host ${this.opts.short}: plan approved auto mode but the model swap to ${target} failed (${(e as Error)?.message ?? e}) — auto may fall back to default`); }
+    }
+    try { await this.session?.setPermissionMode?.(mode); this.mode = mode; }
+    catch (e) { console.error(`cc-harness host ${this.opts.short}: plan approved ${mode} but the engine refused it (${(e as Error)?.message ?? e}) — the session stays in ${this.mode}`); }
     this.emit({ kind: "state", status: this.status() });
   }
 
@@ -658,9 +686,10 @@ export class SessionHost {
       // its answer landed.
       return who ? { ok: true, alreadyAnsweredBy: who } : { ok: false, error: `no parked request ${toolUseID}` };
     }
-    // acceptEdits upgrades the SESSION's permission mode going forward — this task only flags it; the
-    // status-frame handler (Task 5) is what actually calls setPermissionMode and clears the flag.
-    if (outcome.kind === "plan_approve" && outcome.acceptEdits) this.planUpgradePending = true;
+    // An approval upgrades the SESSION's permission mode going forward — this only ARMS the mode it
+    // granted; the status-frame handler is what calls setPermissionMode and clears it. A `default` grant
+    // arms nothing: the engine flips there by itself ten milliseconds after the allow (probe 97).
+    if (outcome.kind === "plan_approve" && outcome.mode !== "default") this.planUpgradeMode = outcome.mode;
     this.settledBy.set(toolUseID, by);
     this.emit({ kind: "decision_settled", toolUseID, by, decision: outcome.kind });
     this.emit({ kind: "state", status: this.status() });

@@ -35,11 +35,11 @@
 //     go. shift+tab is built — the approve half is fully reachable — and the row's description is trimmed
 //     from upstream's "shift+tab to approve with this feedback" to `SHIFT_TAB_HINT` below, because
 //     advertising a channel that drops the user's sentence is the one thing F0's honesty rule forbids.
-//  4. THE OPTION LIST IS THE REACHABLE SUBSET (DG30, partial). `sYf`'s clear-context family, the Ultraplan
-//     row and the bypass/auto-mode one-of arms all gate on host state a client cannot see — an entitlement
-//     probe (`gI()`), a remote-session flag, a context-usage percentage — and each of them ends in a
-//     `{behavior:"deny"}` plus an app-state hand-off (L500960-969) rather than a tool answer. Recorded, not
-//     built. What ships is the three arms that map onto a real outcome.
+//  4. THE OPTION LIST IS THE REACHABLE SUBSET (DG30, partial). `sYf`'s clear-context family and the
+//     Ultraplan row gate on host state a client cannot see — a remote-session flag, a context-usage
+//     percentage — and each of them ends in a `{behavior:"deny"}` plus an app-state hand-off (L500960-969)
+//     rather than a tool answer. Recorded, not built. The bypass/auto one-of arms ARE built (Wave T t10):
+//     upstream's single `gI()` has no ccx equivalent, but its two halves do — see `PlanAvailability`.
 //
 // ── Keys ──────────────────────────────────────────────────────────────────────────────────────────────
 // Nothing here reads stdin. The `Select` pushes `SelectDecision` from INSIDE the dialog and owns the list
@@ -67,7 +67,8 @@ import { renderMarkdown } from "./markdown.js";
 // transcript's. `gutter` is never set on markdown output, so the shared branch is simply inert here.
 import { Line } from "./Transcript.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
-import type { DecisionOutcome } from "../permissions/types.js";
+import { isAutoSupportedModel } from "../config/autoModel.js";
+import type { DecisionOutcome, PlanGrantMode } from "../permissions/types.js";
 
 const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
 
@@ -94,14 +95,43 @@ export const EMPTY_PLAN_OPTIONS: readonly SelectOption[] = Object.freeze([
   { label: "Yes", value: "yes" }, { label: "No", value: "no" },
 ]);
 
-/** `sYf`'s three reachable arms, in its own order and carrying its own values. The keep-planning row is an
- *  `RLe` text row with NO `allowEmptySubmitToCancel` — that omission is what makes an empty Enter behave
- *  like Esc (see `cancel` below), and it is upstream's, not ours. */
-export const PLAN_OPTIONS: readonly SelectOption[] = Object.freeze([
-  { label: "Yes, auto-accept edits", value: "yes-accept-edits-keep-context" },
-  { label: "Yes, manually approve edits", value: "yes-default-keep-context" },
-  { type: "input", label: "No, keep planning", value: "no", placeholder: "Tell Claude what to change", description: SHIFT_TAB_HINT },
-]);
+/** Which of upstream's one-of arms this SESSION can actually offer (`sYf`'s `isBypassPermissionsModeAvailable`
+ *  / `isAutoModeAvailable` params, L500695). ccx has no single `gI()`, so the two sources are named
+ *  separately: auto is `isAutoSupportedModel(model)` (autoModel.ts's live-verified set — the mode is
+ *  MODEL-gated and falls back to `default` in silence off it), bypass is the launch-time
+ *  `allowDangerouslySkipPermissions`, which resolveOptions.ts:67 sets iff the session launched in
+ *  `bypassPermissions`. Both default to FALSE where the client cannot know: an attach client has no model
+ *  until its first turn ends (useChat.ts's `applyMode` note), and guessing there would offer a grant the
+ *  engine may refuse. */
+export interface PlanAvailability { autoAvailable: boolean; bypassAvailable: boolean }
+
+/** `sYf` L500705-714: the clear-context family and the Ultraplan row are DG30's unbuilt arms, but the
+ *  one-of in the middle is exactly upstream's — bypass first, then auto, then the plain accept-edits arm,
+ *  and never two of them. The keep-planning row is an `RLe` text row with NO `allowEmptySubmitToCancel` —
+ *  that omission is what makes an empty Enter behave like Esc (see `cancel` below), and it is upstream's,
+ *  not ours. A FUNCTION rather than a frozen const since Wave T t10: the label the human reads and the
+ *  mode the approval grants are one decision, and freezing the label froze the grant to the narrowest
+ *  one upstream has (qa3-17). */
+export function planOptions({ autoAvailable, bypassAvailable }: PlanAvailability): SelectOption[] {
+  return [
+    bypassAvailable
+      ? { label: "Yes, and bypass permissions", value: "yes-accept-edits-keep-context" }
+      : autoAvailable
+      ? { label: "Yes, and use auto mode", value: "yes-resume-auto-mode" }
+      : { label: "Yes, auto-accept edits", value: "yes-accept-edits-keep-context" },
+    { label: "Yes, manually approve edits", value: "yes-default-keep-context" },
+    { type: "input", label: "No, keep planning", value: "no", placeholder: "Tell Claude what to change", description: SHIFT_TAB_HINT },
+  ];
+}
+
+/** `lYf` L500727-731, transcribed: the option value plus the same availability decides the granted mode.
+ *  Note the auto row's own fallback — `yes-resume-auto-mode` WITHOUT `gI()` grants `default`, not auto
+ *  (L500728) — which is why this reads availability again instead of trusting the value alone. */
+export function planGrant(value: string, { autoAvailable, bypassAvailable }: PlanAvailability): PlanGrantMode {
+  if (value === "yes-resume-auto-mode") return autoAvailable ? "auto" : "default";
+  if (value === "yes-accept-edits-keep-context") return bypassAvailable ? "bypassPermissions" : "acceptEdits";
+  return "default";
+}
 
 // ── How tall the plan region gets ─────────────────────────────────────────────────────────────────────
 // `zCk = Math.max(1, VCk.rows - tvt - 4)` (L500881) in the branch where there is no app scroll region:
@@ -111,17 +141,19 @@ export const PLAN_OPTIONS: readonly SelectOption[] = Object.freeze([
 /** Rows the option box occupies: its top rule, the prompt, the Select's `marginTop`, one row per option plus
  *  one more for each option that carries a description, and (when an editor is configured) the ctrl+g row's
  *  margin and the row itself. DERIVED from the list, so adding one of DG30's unbuilt arms cannot silently
- *  desynchronise the height from what is on screen. */
-export function optionBoxRows(hasEditor: boolean): number {
-  return 1 + 1 + 1 + PLAN_OPTIONS.length + PLAN_OPTIONS.filter((o) => o.description).length + (hasEditor ? 2 : 0);
+ *  desynchronise the height from what is on screen — which is also why `options` is a PARAMETER and not a
+ *  second `planOptions()` call: the caller must feed the very array it renders, or the region is sized for
+ *  a list nobody sees. */
+export function optionBoxRows(options: readonly SelectOption[], hasEditor: boolean): number {
+  return 1 + 1 + 1 + options.length + options.filter((o) => o.description).length + (hasEditor ? 2 : 0);
 }
 /** Rows the frame spends on chrome before a single plan line prints: the frame's `marginTop`, its rule, its
  *  title, the body's `marginTop`, "Here is Claude's plan:", the `marginBottom` under the plan, and the consent
  *  line when there is one — plus upstream's own four rows of slack. The CLIP MARKER is deliberately not in
  *  here: it costs a row only when something is actually hidden, which `planWindow` decides. */
-export function planRegionRows(rows: number, hasEditor: boolean, hasReason: boolean): number {
+export function planRegionRows(rows: number, options: readonly SelectOption[], hasEditor: boolean, hasReason: boolean): number {
   const chrome = 1 + 1 + 1 + 1 + 1 + 1 + (hasReason ? 1 : 0) + 4;
-  return Math.max(3, rows - optionBoxRows(hasEditor) - chrome);
+  return Math.max(3, rows - optionBoxRows(options, hasEditor) - chrome);
 }
 /** How many plan lines actually print. A plan that FITS gets the whole region; one that does not gives a row
  *  back to the marker — so a plan of exactly `region + 1` lines is not clipped for the sake of a marker row
@@ -136,9 +168,16 @@ export interface PlanDialogRequest {
   decisionReason?: string;
 }
 
-export function PlanDialog({ req, onDecision, editor = editExternal, editorName, rows, suspendInput }: {
+export function PlanDialog({ req, onDecision, editor = editExternal, editorName, rows, suspendInput, model, bypassAvailable = false }: {
   req: PlanDialogRequest;
   onDecision: (o: DecisionOutcome) => void;
+  /** The model the ENGINE is running, for the auto arm's gate. `undefined` — an attach client before its
+   *  first turn end (useChat.ts:1450-1453) — is "unknown", which means NOT available: falling back to
+   *  upstream's neither-available arm offers a narrower grant than the session might allow, and that is
+   *  the honest direction to be wrong in. */
+  model?: string;
+  /** The launch-time `allowDangerouslySkipPermissions` (resolveOptions.ts:67). */
+  bypassAvailable?: boolean;
   /** The keymap's terminal handoff, injectable for the same reason ChatComposer injects it: the ORDER of
    *  release → spawn → restore is the contract, and only a stub can watch it. Defaults to the provider's. */
   suspendInput?: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -172,8 +211,14 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
   // `Exit plan mode?` branch below.
   const emptyPlan = plan.trim() === "";
 
+  // ONE options array per render, fed to BOTH the geometry and the Select — a second `planOptions()` call
+  // with different arguments would size the region for a list the frame does not contain. (No memo: the
+  // Select has always received a fresh array each render, `[...PLAN_OPTIONS]`, and owns its own state.)
+  const avail: PlanAvailability = { autoAvailable: isAutoSupportedModel(model), bypassAvailable };
+  const options = planOptions(avail);
+
   const lines = useMemo(() => renderMarkdown(plan), [plan]);
-  const region = planRegionRows(term, name !== null, reason !== undefined);
+  const region = planRegionRows(term, options, name !== null, reason !== undefined);
   const window = planWindow(region, lines.length);
   const maxTop = Math.max(0, lines.length - window);
   // Derived, not stored, for the reason `Select`'s own window is: a ctrl+g edit can shorten the plan under a
@@ -187,12 +232,15 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
     return () => clearTimeout(t);
   }, [saved]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** `lYf`'s two allow arms (L500729-731), collapsed onto ONE channel. T3 widened `plan_approve` with an
+  /** `lYf`'s allow arms (L500727-731), collapsed onto ONE channel. T3 widened `plan_approve` with an
    *  optional `updatedPermissions`, and upstream does send `Bnl(mode)` = `[{type:"setMode", …}]` beside the
-   *  mode — but appserver/planUpgrade.ts already applies the session mode off the `acceptEdits` BOOLEAN, so
-   *  emitting both would upgrade twice. The boolean is the channel; no setMode rides along. */
-  const approve = (acceptEdits: boolean) =>
-    onDecision({ kind: "plan_approve", acceptEdits, ...(editedRef.current ? { plan: planRef.current } : {}) });
+   *  mode — but both appliers (host.ts's applyPlanUpgrade, appserver/planUpgrade.ts) act on the mode FIELD,
+   *  so emitting the rule too would upgrade twice. The mode is the channel; no setMode rides along.
+   *  Wave T t10 turned that field from a boolean into the granted mode itself: a boolean could only carry
+   *  the narrowest of upstream's three arms, so the dialog printed that arm's label whatever the session
+   *  could actually grant (qa3-17). */
+  const approve = (mode: PlanGrantMode) =>
+    onDecision({ kind: "plan_approve", mode, ...(editedRef.current ? { plan: planRef.current } : {}) });
 
   const pick = (value: string, text?: string) => {
     if (value === "no") {
@@ -203,7 +251,7 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
       if (feedback) onDecision({ kind: "plan_reject", feedback });
       return;
     }
-    approve(value === "yes-accept-edits-keep-context");
+    approve(planGrant(value, avail));
   };
   /** `xnl` (L500995) — the Select's `onCancel`, which upstream answers with a bare `{behavior:"deny"}`. TWO
    *  keys land here and both mean the same thing: Esc, and Enter on an EMPTY keep-planning row (`RLe` sends
@@ -221,9 +269,12 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
 
   useKeyScope("Confirmation");
   useKeyActions({
-    // `tYf` L501054: shift+tab approves with auto-accept edits, from ANY row — including while the
-    // keep-planning row is being typed into, which is what its description advertises.
-    "confirm:cycleMode": () => approve(true),
+    // `tYf` L501047: shift+tab approves from ANY row — including while the keep-planning row is being typed
+    // into, which is what its description advertises. The value it submits is FIXED (`gWt(k6e ?
+    // "yes-accept-edits" : "yes-accept-edits-keep-context")`), NOT the focused row's: so with the auto arm on
+    // screen this chord still grants accept-edits (or bypass, where that arm is the one being offered).
+    // Transcribed, not reasoned to — it reads like an upstream inconsistency and is upstream's all the same.
+    "confirm:cycleMode": () => approve(planGrant("yes-accept-edits-keep-context", avail)),
     // `tYf` L501036-052, the no-plan-file branch (`Rte(dk)`): round-trip the LIVE plan through $EDITOR.
     //
     // THE WHOLE FLIGHT RUNS INSIDE THE KEYMAP'S TERMINAL HANDOFF, exactly as ChatComposer's own
@@ -252,7 +303,7 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
   // `DZe` (L500763-500779 + L501048-501079): no plan to show, so there is nothing to approve EDITS about —
   // upstream swaps the whole dialog for a two-row yes/no over `Ed title="Exit plan mode?"`. Its Yes sends
   // `permissionUpdates: [{type:"setMode", mode:"default", …}]` (L501008), i.e. the manual-approve arm, which is
-  // `acceptEdits:false` on our one channel; its No and its cancel are both a bare `{behavior:"deny"}` — which
+  // `mode:"default"` on our one channel; its No and its cancel are both a bare `{behavior:"deny"}` — which
   // we emit as plan_reject, not deny (t9 re-review): the wire behavior is identical (both reach the gate's
   // plan-family deny copy), but a bare deny would land this ExitPlanMode in the Recently-denied ledger
   // (permissionsModel no-ops on plan_reject) and read "denied" instead of "sent back" in the cross-client
@@ -264,7 +315,7 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
           <Text>{EMPTY_PLAN_BODY}</Text>
           <Box marginTop={1}>
             <Select options={[...EMPTY_PLAN_OPTIONS]} context="SelectDecision"
-              onChange={(value) => { if (value === "yes") approve(false); else onDecision({ kind: "plan_reject" }); }}
+              onChange={(value) => { if (value === "yes") approve("default"); else onDecision({ kind: "plan_reject" }); }}
               onCancel={() => onDecision({ kind: "plan_reject" })} />
           </Box>
         </Box>
@@ -293,7 +344,7 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
         borderLeft={false} borderRight={false} borderBottom={false} paddingX={1} flexShrink={0}>
         <Text dimColor>{PLAN_PROMPT}</Text>
         <Box marginTop={1}>
-          <Select options={[...PLAN_OPTIONS]} onChange={pick} onCancel={cancel} context="SelectDecision" />
+          <Select options={options} onChange={pick} onCancel={cancel} context="SelectDecision" />
         </Box>
         {name !== null
           ? (

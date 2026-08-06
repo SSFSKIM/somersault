@@ -184,7 +184,7 @@ describe("F2 task 8 — Confirmation family: what the table adds, and what free 
     const { stdin, lastFrame } = plan((o) => decisions.push(o));
     await waitFor(() => frame(lastFrame).includes("Build it"));
     stdin.write("\r"); await waitFor(() => decisions.length === 1);
-    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: true });   // row 1 is focused on mount
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "acceptEdits" });   // row 1 is focused on mount
   });
 
   // The other half of the reversal: `y` and `n` were `Confirmation` shortcuts this dialog re-homed in F0, and

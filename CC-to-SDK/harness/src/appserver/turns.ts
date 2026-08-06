@@ -87,7 +87,7 @@ function statusChanged(srv: AppServer, record: ThreadRecord): void {
   srv.broadcast(record.id, "thread/status/changed", { threadId: record.id, status: record.busy ? "active" : "idle" });
 }
 
-/** Turn-end belt for a plan_approve(acceptEdits:true) that settled but never saw the engine's own
+/** Turn-end belt for an approved plan_approve that settled but never saw the engine's own
  *  post-approval status frame (the turn ended first) — an approved upgrade must never stay unapplied.
  *  Fired on EVERY completion path below, a no-op unless one is armed (planUpgrade.ts). */
 function settleTurn(record: ThreadRecord): void {

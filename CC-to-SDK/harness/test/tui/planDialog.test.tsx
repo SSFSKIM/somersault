@@ -15,7 +15,7 @@ import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import {
-  PlanDialog, PLAN_OPTIONS, SHIFT_TAB_HINT, SAVED_FLASH_MS, SCROLL_HINT,
+  PlanDialog, planOptions, planGrant, SHIFT_TAB_HINT, SAVED_FLASH_MS, SCROLL_HINT,
   EMPTY_PLAN_TITLE, EMPTY_PLAN_BODY, optionBoxRows, planWindow, planRegionRows,
 } from "../../src/tui/PlanDialog.js";
 import { editorDisplayName } from "../../src/tui/externalEditor.js";
@@ -88,22 +88,22 @@ describe("<PlanDialog> — the frame (`Gnl` L501091-136)", () => {
 });
 
 describe("<PlanDialog> — the effects (`lYf` L500721-738)", () => {
-  it("option 1 approves with acceptEdits TRUE and carries no updatedPermissions (one channel, T3 review)", async () => {
+  it("option 1 approves with the acceptEdits GRANT and carries no updatedPermissions (one channel, T3 review)", async () => {
     const decisions: unknown[] = [];
     const { stdin, lastFrame } = mount({ onDecision: (o: unknown) => decisions.push(o) });
     await waitFor(() => frame(lastFrame).includes("Build it"));
     stdin.write("1");
     await waitFor(() => decisions.length === 1);
-    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: true });
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "acceptEdits" });
   });
 
-  it("option 2 approves with acceptEdits FALSE", async () => {
+  it("option 2 approves with the `default` grant", async () => {
     const decisions: unknown[] = [];
     const { stdin, lastFrame } = mount({ onDecision: (o: unknown) => decisions.push(o) });
     await waitFor(() => frame(lastFrame).includes("Build it"));
     stdin.write("2");
     await waitFor(() => decisions.length === 1);
-    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: false });
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "default" });
   });
 
   // The reversed F2-task-8 pin. Upstream's dialog is Select-driven, Enter is `select:accept`, and the focused
@@ -114,7 +114,7 @@ describe("<PlanDialog> — the effects (`lYf` L500721-738)", () => {
     await waitFor(() => frame(lastFrame).includes("Build it"));
     stdin.write("\r");
     await waitFor(() => decisions.length === 1);
-    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: true });
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "acceptEdits" });
   });
 
   it("Enter after moving the cursor accepts THAT row, not the first one", async () => {
@@ -124,7 +124,7 @@ describe("<PlanDialog> — the effects (`lYf` L500721-738)", () => {
     stdin.write("\x1b[B"); await tick();                                      // ↓ → row 2
     stdin.write("\r");
     await waitFor(() => decisions.length === 1);
-    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: false });
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "default" });
   });
 
   it("the keep-planning row rejects with the typed feedback", async () => {
@@ -186,7 +186,7 @@ describe("<PlanDialog> — shift+tab (`tYf` L501054-060)", () => {
     stdin.write("\x1b[B"); await tick();                                      // even with row 2 focused
     stdin.write(SHIFT_TAB);
     await waitFor(() => decisions.length === 1);
-    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: true });
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "acceptEdits" });
   });
 
   it("still approves WHILE the keep-planning row is being typed into (the row's description names it)", async () => {
@@ -197,7 +197,7 @@ describe("<PlanDialog> — shift+tab (`tYf` L501054-060)", () => {
     stdin.write("looks fine"); await waitFor(() => frame(lastFrame).includes("looks fine"));
     stdin.write(SHIFT_TAB);
     await waitFor(() => decisions.length === 1);
-    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: true });
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "acceptEdits" });
   });
 });
 
@@ -220,7 +220,7 @@ describe("<PlanDialog> — ctrl+g (DG34, `tYf` L501036-053 + `Anl` L500757)", ()
     await waitFor(() => frame(lastFrame).includes("step three"));
     stdin.write("1");
     await waitFor(() => decisions.length === 1);
-    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: true, plan: `${PLAN}\n- step three` });
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "acceptEdits", plan: `${PLAN}\n- step three` });
   });
 
   it("an approve with NO edit carries no plan override at all (`u = planEditedLocally ? {plan} : {}`)", async () => {
@@ -323,13 +323,13 @@ describe("<PlanDialog> — the empty-plan dialog (`DZe` L500763 / L501048-079, T
     await waitFor(() => frame(lastFrame).includes(EMPTY_PLAN_TITLE));
   });
 
-  it("Yes approves with acceptEdits FALSE (upstream's setMode `default`, L501008)", async () => {
+  it("Yes approves with the `default` grant (upstream's setMode `default`, L501008)", async () => {
     const decisions: unknown[] = [];
     const { stdin, lastFrame } = empty({ onDecision: (o: unknown) => decisions.push(o) });
     await waitFor(() => frame(lastFrame).includes(EMPTY_PLAN_TITLE));
     stdin.write("1");
     await waitFor(() => decisions.length === 1);
-    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: false });
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "default" });
   });
 
   // plan_reject, not bare deny (t9 re-review follow-up): identical at the wire (upstream's yWt("no") IS
@@ -386,7 +386,7 @@ describe("<PlanDialog> — the plan-region reading path (T9-fix 3, an INVENTED b
     stdin.write(CTRL_D); await tick();
     stdin.write("\r");
     await waitFor(() => decisions.length === 1);
-    expect(decisions[0]).toEqual({ kind: "plan_approve", acceptEdits: true });
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "acceptEdits" });
   });
 
   it("PageDown stays the SELECT's — it moves the row cursor and does not scroll the plan", async () => {
@@ -396,7 +396,7 @@ describe("<PlanDialog> — the plan-region reading path (T9-fix 3, an INVENTED b
     stdin.write("\x1b[6~"); await tick();                                  // PageDown
     expect(frame(lastFrame)).toContain("- line 0");                        // plan did NOT move
     stdin.write("\r"); await waitFor(() => decisions.length === 1);
-    expect(decisions[0]).not.toEqual({ kind: "plan_approve", acceptEdits: true });   // …the cursor did
+    expect(decisions[0]).not.toEqual({ kind: "plan_approve", mode: "acceptEdits" });   // …the cursor did
   });
 
   it("a ctrl+g edit re-anchors the view at the top of the new text", async () => {
@@ -409,10 +409,14 @@ describe("<PlanDialog> — the plan-region reading path (T9-fix 3, an INVENTED b
 });
 
 describe("<PlanDialog> — pure geometry and literal pins (T9-fix 4/5/6)", () => {
-  it("optionBoxRows is DERIVED from the option list, not a hardcoded count", () => {
-    const rows = PLAN_OPTIONS.length + PLAN_OPTIONS.filter((o) => o.description).length;
-    expect(optionBoxRows(false)).toBe(3 + rows);
-    expect(optionBoxRows(true)).toBe(3 + rows + 2);
+  it("optionBoxRows is DERIVED from the list it is HANDED, not a hardcoded count", () => {
+    const opts = planOptions({ autoAvailable: false, bypassAvailable: false });
+    const rows = opts.length + opts.filter((o) => o.description).length;
+    expect(optionBoxRows(opts, false)).toBe(3 + rows);
+    expect(optionBoxRows(opts, true)).toBe(3 + rows + 2);
+    // The one that matters: a list with an extra description costs an extra row, so the geometry can
+    // never be computed from a DIFFERENT planOptions() call than the one the frame renders.
+    expect(optionBoxRows([...opts, { label: "x", value: "x", description: "d" }], false)).toBe(3 + rows + 2);
   });
 
   it("planWindow gives a row back to the marker ONLY when something is hidden", () => {
@@ -426,7 +430,7 @@ describe("<PlanDialog> — pure geometry and literal pins (T9-fix 4/5/6)", () =>
   // exactly one line, so `region` items must all print and `region + 1` must clip by TWO (the line that did
   // not fit, plus the one the marker takes).
   it("a plan of exactly the region height is NOT clipped, and one line more clips by two", async () => {
-    const region = planRegionRows(40, true, false);
+    const region = planRegionRows(40, planOptions({ autoAvailable: false, bypassAvailable: false }), true, false);
     const items = (n: number) => Array.from({ length: n }, (_, i) => `- l${i}`).join("\n");
 
     const fits = mount({ req: { input: { plan: items(region) } } });
@@ -459,6 +463,96 @@ describe("<PlanDialog> — pure geometry and literal pins (T9-fix 4/5/6)", () =>
       await vi.advanceTimersByTimeAsync(SAVED_FLASH_MS + 10);
       expect(frame(lastFrame)).not.toContain("Plan saved!");
     } finally { vi.useRealTimers(); }
+  });
+});
+
+// ── Wave T Task 10: the one-of arm follows availability (qa3-17) ──────────────────────────────────────
+// `sYf` L500705-711 builds EXACTLY ONE of three second rows, and `lYf` L500727-729 grants a different mode
+// for each. ccx hard-coded the narrowest arm and always granted acceptEdits — the same keystroke, a
+// strictly narrower grant than the label the user read.
+describe("<PlanDialog> — the availability-driven approval row (qa3-17)", () => {
+  const AUTO_MODEL = "claude-sonnet-5";        // autoModel.ts's live-verified set (probe 72)
+  const NO_AUTO_MODEL = "claude-haiku-4-5";    // not in it — `auto` would silently fall back to `default`
+  const pickFirst = async (props: Record<string, unknown>) => {
+    const decisions: unknown[] = [];
+    const { stdin, lastFrame } = mount({ ...props, onDecision: (o: unknown) => decisions.push(o) });
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    const label = frame(lastFrame);
+    stdin.write("1");
+    await waitFor(() => decisions.length === 1);
+    return { label, decision: decisions[0] };
+  };
+
+  it("neither arm available: the row reads `Yes, auto-accept edits` and grants acceptEdits", async () => {
+    const { label, decision } = await pickFirst({ model: NO_AUTO_MODEL });
+    expect(label).toContain("1. Yes, auto-accept edits");                     // `sYf` L500711
+    expect(decision).toEqual({ kind: "plan_approve", mode: "acceptEdits" });
+  });
+
+  it("auto available: the row reads `Yes, and use auto mode` and grants auto", async () => {
+    const { label, decision } = await pickFirst({ model: AUTO_MODEL });
+    expect(label).toContain("1. Yes, and use auto mode");                     // `sYf` L500709
+    expect(decision).toEqual({ kind: "plan_approve", mode: "auto" });
+  });
+
+  it("bypass available WINS over auto: `Yes, and bypass permissions`, granting bypassPermissions", async () => {
+    const { label, decision } = await pickFirst({ model: AUTO_MODEL, bypassAvailable: true });
+    expect(label).toContain("1. Yes, and bypass permissions");                // `sYf` L500707, the `if (o)` arm
+    expect(decision).toEqual({ kind: "plan_approve", mode: "bypassPermissions" });
+  });
+
+  it("an UNKNOWN model (an attach client before its first turn end) falls back to the neither arm", async () => {
+    const { label, decision } = await pickFirst({});                          // no `model` prop at all
+    expect(label).toContain("1. Yes, auto-accept edits");
+    expect(decision).toEqual({ kind: "plan_approve", mode: "acceptEdits" });
+  });
+
+  it("row 2 always grants `default`, whatever the first row offers", async () => {
+    const decisions: unknown[] = [];
+    const { stdin, lastFrame } = mount({ model: AUTO_MODEL, onDecision: (o: unknown) => decisions.push(o) });
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    stdin.write("2");
+    await waitFor(() => decisions.length === 1);
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "default" });
+  });
+
+  // `tYf` L501047: `gWt(k6e ? "yes-accept-edits" : "yes-accept-edits-keep-context")` — the chord carries a
+  // FIXED value, not the focused row's, so with the auto row on screen shift+tab still grants accept-edits.
+  it("shift+tab keeps upstream's fixed value: acceptEdits even while the auto row is on screen", async () => {
+    const decisions: unknown[] = [];
+    const { stdin, lastFrame } = mount({ model: AUTO_MODEL, onDecision: (o: unknown) => decisions.push(o) });
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    stdin.write(SHIFT_TAB);
+    await waitFor(() => decisions.length === 1);
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "acceptEdits" });
+  });
+});
+
+describe("planOptions / planGrant (`sYf` L500705-711, `lYf` L500727-729)", () => {
+  const neither = { autoAvailable: false, bypassAvailable: false };
+  const auto = { autoAvailable: true, bypassAvailable: false };
+  const bypass = { autoAvailable: true, bypassAvailable: true };
+
+  it("builds exactly one of the three arms, in upstream's order and with its values", () => {
+    expect(planOptions(neither).map((o) => o.label)).toEqual(["Yes, auto-accept edits", "Yes, manually approve edits", "No, keep planning"]);
+    expect(planOptions(neither)[0]!.value).toBe("yes-accept-edits-keep-context");
+    expect(planOptions(auto)[0]).toMatchObject({ label: "Yes, and use auto mode", value: "yes-resume-auto-mode" });
+    expect(planOptions(bypass)[0]).toMatchObject({ label: "Yes, and bypass permissions", value: "yes-accept-edits-keep-context" });
+    expect(planOptions(bypass)).toHaveLength(3);                              // never two arms at once
+  });
+
+  it("the keep-planning row still omits allowEmptySubmitToCancel (empty Enter must reach onCancel)", () => {
+    const row = planOptions(neither)[2]!;
+    expect(row).toMatchObject({ type: "input", value: "no", placeholder: "Tell Claude what to change", description: SHIFT_TAB_HINT });
+    expect(row).not.toHaveProperty("allowEmptySubmitToCancel");
+  });
+
+  it("maps every value onto `lYf`'s mode, including its auto-unavailable fallback", () => {
+    expect(planGrant("yes-accept-edits-keep-context", neither)).toBe("acceptEdits");
+    expect(planGrant("yes-accept-edits-keep-context", bypass)).toBe("bypassPermissions");
+    expect(planGrant("yes-resume-auto-mode", auto)).toBe("auto");
+    expect(planGrant("yes-resume-auto-mode", neither)).toBe("default");       // `lYf` L500728's own fallback
+    expect(planGrant("yes-default-keep-context", bypass)).toBe("default");
   });
 });
 

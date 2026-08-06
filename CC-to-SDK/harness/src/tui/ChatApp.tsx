@@ -455,7 +455,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                   // carry stale scroll/feedback state into an unrelated decision.
                   : inputOwnerRef.current === "decision"
                   ? state.pending?.kind === "plan"
-                    ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)} />
+                    // `model`/`bypassAvailable` decide WHICH of upstream's one-of approval arms the dialog can
+                    // offer (Wave T t10). The launch mode is the bypass source because resolveOptions.ts:67
+                    // sets `allowDangerouslySkipPermissions` from exactly that — a session that did not launch
+                    // in bypass cannot be granted it. `state.model` is undefined on an attach client until a
+                    // turn ends, which PlanDialog reads as "auto not available".
+                    ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)}
+                        model={state.model} bypassAvailable={hookOpts?.initialMode === "bypassPermissions"} />
                     : null
                   : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} onInputActivity={noteInputActivity} waitingForPermission={inputOwnerRef.current === "typing"} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} searchHintFiredRef={searchHintFiredRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} sessionId={state.sessionId} project={cwd}
                       // F5 t12: the composer's disk seed, its history append and now its inline search all

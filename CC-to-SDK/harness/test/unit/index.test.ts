@@ -49,7 +49,7 @@ describe("public API", () => {
   });
   it("exports the decision kinds + PendingDecision(s) (goal B, task 1)", () => {
     const k: api.DecisionKind = "question";
-    const out: api.DecisionOutcome = { kind: "plan_approve", acceptEdits: true };
+    const out: api.DecisionOutcome = { kind: "plan_approve", mode: "acceptEdits" };
     const pd: api.PendingDecision = { sessionId: "s", toolUseID: "t", toolName: "AskUserQuestion", kind: k, input: {}, createdAt: 0 };
     expect(pd.kind).toBe("question");
     expect(out.kind).toBe("plan_approve");

@@ -113,3 +113,11 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
 export function resolvedPermissionMode(config: HarnessConfig): string {
   return String((resolveOptions(config) as { permissionMode?: string }).permissionMode ?? "default");
 }
+
+/** The model the engine will ACTUALLY run for this config, read back the same way — so a caller that has
+ *  to reason about model-gated behaviour (the host's plan-upgrade applier and `auto`) sees the alias
+ *  resolution, the DEFAULTS fallback and the explicit-auto swap above, not the raw config field. */
+export function resolvedModel(config: HarnessConfig): string | undefined {
+  const m = (resolveOptions(config) as { model?: unknown }).model;
+  return typeof m === "string" ? m : undefined;
+}

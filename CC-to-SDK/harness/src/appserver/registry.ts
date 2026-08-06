@@ -3,6 +3,7 @@
 import { randomBytes } from "node:crypto";
 import type { Peer } from "./peer.js";
 import type { ItemEvent } from "./items/types.js";
+import type { PlanGrantMode } from "../permissions/types.js";
 
 export type ThreadOrigin = "inProcess"; // fleet adoption is M3
 
@@ -19,8 +20,8 @@ export interface EngineSession {
   interrupt(): Promise<unknown>;
   dispose(): Promise<void>;
   onFrame(cb: (m: unknown) => void): () => void;
-  /** Optional (the real lib Session has it; a DI fake need not): the seam a plan_approve(acceptEdits:true)
-   *  upgrades the session's permission mode through — see appserver/planUpgrade.ts. */
+  /** Optional (the real lib Session has it; a DI fake need not): the seam an approved plan upgrades the
+   *  session's permission mode through — see appserver/planUpgrade.ts. */
   setPermissionMode?(mode: string): Promise<void>;
   readonly sessionId?: string;
 }
@@ -48,8 +49,10 @@ export interface ThreadRecord {
   buffer: BufferedItemEvent[]; // reset at the start of every turn (see BufferedItemEvent) — not a rolling lifetime window
   subscribers: Set<Peer>;
   chain: Promise<unknown>;      // serialization scope for thread-scoped methods (record.chain = record.chain.then(...))
-  planUpgradePending?: boolean; // set when a plan_approve settled with acceptEdits:true and the engine has
-                                // not been upgraded yet; cleared by planUpgrade.ts's applyPlanUpgrade
+  planUpgradeMode?: PlanGrantMode; // the mode an approved plan GRANTED, set when the plan_approve settled and
+                                // the engine has not been upgraded to it yet; cleared by applyPlanUpgrade
+                                // (planUpgrade.ts). Absent = nothing armed — including a `default` grant,
+                                // which the engine reaches on its own after the allow (probe 97).
   planUpgradeOff?: () => void;  // unsubscribes the status-frame watcher that arms the upgrade (same file)
   sessionId?: string;
   createdAt: number;            // unix seconds

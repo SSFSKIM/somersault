@@ -32,8 +32,8 @@ describe("PendingDecisions", () => {
     const p = new PendingDecisions({ expireAfterMs: "never" });
     const d1 = p.brokerFor("s").request(req("p1", "plan"));
     await Promise.resolve();
-    p.respond("p1", { kind: "plan_approve", acceptEdits: true });
-    await expect(d1).resolves.toEqual({ kind: "plan_approve", acceptEdits: true });
+    p.respond("p1", { kind: "plan_approve", mode: "acceptEdits" });
+    await expect(d1).resolves.toEqual({ kind: "plan_approve", mode: "acceptEdits" });
     const d2 = p.brokerFor("s").request(req("p2", "plan"));
     await Promise.resolve();
     p.respond("p2", { kind: "plan_reject", feedback: "add tests" });

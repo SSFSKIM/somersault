@@ -7,6 +7,10 @@ const decisionKind = z.enum(["allow_once", "allow_always", "deny"]);
 // record ON PURPOSE — the engine authors these and we echo them back, so the wire must not reshape or
 // strip-by-schema anything inside one, including keys a future SDK adds.
 const permissionUpdate = z.record(z.string(), z.unknown());
+// Kept in lockstep with permissions/types.ts's PlanGrantMode and with appserver/server.ts's copy of this
+// union (two wires, one shape) — a `satisfies` on the outcome type is not possible here: zod schemas are
+// VALUES, so nothing in the compiler notices when one drifts from the other.
+const planGrantMode = z.enum(["default", "acceptEdits", "bypassPermissions", "auto"]);
 // Every answer that carries a PAYLOAD travels structured; the flat `decision` field above stays the
 // legacy payload-free 3-way permission shape (spec: an old client's permission answer must still parse
 // on a new host, see server.ts's dispatch arm). F6 T3 widened this from question/plan-only: the
@@ -18,7 +22,10 @@ const structuredAnswer = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("allow_always") }),
   z.object({ kind: z.literal("deny"), feedback: z.string().optional() }),
   z.object({ kind: z.literal("question_answer"), answers: z.record(z.string(), z.string()), response: z.string().optional() }),
-  z.object({ kind: z.literal("plan_approve"), acceptEdits: z.boolean(), updatedPermissions: z.array(permissionUpdate).optional(), plan: z.string().optional() }),
+  // `mode` (permissions/types.ts PlanGrantMode) replaced a boolean `acceptEdits` in Wave T t10 — an ENUM,
+  // not z.string(), because this schema is the only thing standing between a client's typo and a
+  // setPermissionMode call the engine will reject.
+  z.object({ kind: z.literal("plan_approve"), mode: planGrantMode, updatedPermissions: z.array(permissionUpdate).optional(), plan: z.string().optional() }),
   z.object({ kind: z.literal("plan_reject"), feedback: z.string().optional() }),
 ]);
 const withId = { id: z.number().int().nonnegative().optional() };

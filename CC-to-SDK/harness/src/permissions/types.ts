@@ -32,19 +32,32 @@ export type PermissionDecision =
  *  plan = ExitPlanMode. The gate routes by toolName; everything else in the park lifecycle is kind-blind. */
 export type DecisionKind = "permission" | "question" | "plan";
 
+/** The permission mode a plan approval GRANTS — the whole payload of an approved ExitPlanMode, and the
+ *  one field the appliers (host/host.ts's applyPlanUpgrade, appserver/planUpgrade.ts) read. These four
+ *  are exactly the modes `lYf` (L500727-731) maps its option values onto: `yes-accept-edits-keep-context`
+ *  → `bypassPermissions` when bypass is available else `acceptEdits`, `yes-resume-auto-mode` → `auto`,
+ *  `yes-default-keep-context` (and the empty-plan Yes, L501004) → `default`. It replaces a BOOLEAN
+ *  `acceptEdits` (Wave T t10 / qa3-17): the boolean could only say "accept edits or not", so the dialog
+ *  had to offer the narrowest label upstream has and grant that whatever the session could actually do. */
+export type PlanGrantMode = "default" | "acceptEdits" | "bypassPermissions" | "auto";
+
 /** Everything a human (or system teardown) can answer a parked decision with. The PermissionDecision
  *  family is the `permission` family AND the universal system deny — teardown settles every kind with
  *  {kind:"deny"}, and the gate composes the kind-specific message. */
 export type DecisionOutcome =
   | PermissionDecision
   | { kind: "question_answer"; answers: Record<string, string>; response?: string }  // response = free-text "Other" (probe 65E)
-  /** `updatedPermissions`: approving a plan may also grant the rules the plan needs (Task 9) — same
+  /** `mode`: WHAT THIS APPROVAL GRANTS (see PlanGrantMode) — authoritative, and the only channel the
+   *  session upgrade travels on. `updatedPermissions` deliberately stays out of it: upstream sends
+   *  `Bnl(mode)` = `[{type:"setMode", …}]` beside the mode, but both appliers already act on this field,
+   *  so emitting the rule too would upgrade twice (the no-double-upgrade rule, PlanDialog.tsx).
+   *  `updatedPermissions`: approving a plan may also grant the rules the plan needs (Task 9) — same
    *  verbatim echo as allow_with_updates, on the same SDK allow arm.
    *  `plan`: the plan text AS THE HUMAN LEFT IT. Present only when they edited it in `$EDITOR` from the
    *  dialog (F6 T9 / DG34) — upstream's `u = planEditedLocally ? { plan: currentPlan } : {}` (`lYf`
    *  L500722/500737), which rides `updatedInput` on the same allow arm. Absent means "unchanged", and the
    *  gate then forwards the engine's own input untouched. */
-  | { kind: "plan_approve"; acceptEdits: boolean; updatedPermissions?: PermissionUpdateLike[]; plan?: string }
+  | { kind: "plan_approve"; mode: PlanGrantMode; updatedPermissions?: PermissionUpdateLike[]; plan?: string }
   | { kind: "plan_reject"; feedback?: string };
 
 /** What the broker is asked to decide. UI hints (title/displayName/description) are often ABSENT headlessly

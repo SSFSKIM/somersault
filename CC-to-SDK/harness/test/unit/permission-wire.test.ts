@@ -49,9 +49,22 @@ describe("host/ops.ts — the answer op's structured arm", () => {
   });
 
   it("accepts plan_approve carrying updatedPermissions (Task 9's plan-side grant)", () => {
-    const p = answer({ kind: "plan_approve", acceptEdits: true, updatedPermissions: [SUGGESTION] }) as any;
+    const p = answer({ kind: "plan_approve", mode: "acceptEdits", updatedPermissions: [SUGGESTION] }) as any;
     expect(p.answer.updatedPermissions).toEqual([SUGGESTION]);
-    expect((answer({ kind: "plan_approve", acceptEdits: false }) as any).answer.updatedPermissions).toBeUndefined();
+    expect((answer({ kind: "plan_approve", mode: "default" }) as any).answer.updatedPermissions).toBeUndefined();
+  });
+
+  // Wave T Task 10, THE ROUND-TRIP THAT TYPECHECK CANNOT DO: zod schemas are values, so swapping the
+  // TypeScript field from `acceptEdits: boolean` to `mode` and leaving this schema alone compiles clean
+  // and rejects every real payload at runtime. Parse the new shape, and prove the old one is gone.
+  it("plan_approve travels as the granted MODE, and the retired boolean no longer parses", () => {
+    for (const mode of ["default", "acceptEdits", "bypassPermissions", "auto"]) {
+      expect((answer({ kind: "plan_approve", mode }) as any).answer).toEqual({ kind: "plan_approve", mode });
+    }
+    expect((answer({ kind: "plan_approve", mode: "auto", plan: "# edited" }) as any).answer.plan).toBe("# edited");
+    expect(() => answer({ kind: "plan_approve", acceptEdits: true })).toThrow();   // the pre-T10 payload
+    expect(() => answer({ kind: "plan_approve" })).toThrow();                      // mode is required
+    expect(() => answer({ kind: "plan_approve", mode: "dontAsk" })).toThrow();     // not a plan grant
   });
 
   it("still parses the FLAT legacy 3-way decision (an old ccx attach client)", () => {
@@ -93,8 +106,8 @@ describe("host/host.ts — KIND_ANSWERS", () => {
   it("a plan park accepts plan_approve carrying updatedPermissions", async () => {
     const host = hostFor(); await host.start();
     const decision = host.broker().request({ toolName: "ExitPlanMode", input: {}, toolUseID: "p1", kind: "plan", signal: new AbortController().signal });
-    expect(host.answer("p1", { kind: "plan_approve", acceptEdits: true, updatedPermissions: [SUGGESTION] }, "me")).toEqual({ ok: true });
-    await expect(decision).resolves.toEqual({ kind: "plan_approve", acceptEdits: true, updatedPermissions: [SUGGESTION] });
+    expect(host.answer("p1", { kind: "plan_approve", mode: "acceptEdits", updatedPermissions: [SUGGESTION] }, "me")).toEqual({ ok: true });
+    await expect(decision).resolves.toEqual({ kind: "plan_approve", mode: "acceptEdits", updatedPermissions: [SUGGESTION] });
     await host.stop();
   });
 });

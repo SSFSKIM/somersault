@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,15 +13,17 @@ const tmpFleet = () => mkdtempSync(join(tmpdir(), "ccx-mode-sync-"));
 function fakeSession(over: Record<string, unknown> = {}) {
   let cb: ((m: unknown) => void) | undefined;
   const setPermissionModeCalls: string[] = [];
+  const calls: string[] = [];                     // both setters in ONE array: the auto swap's ORDER is the contract
   const fake = {
     submit: async (_p: string, on: (m: unknown) => void) => { on({ type: "assistant" }); return { result: {} }; },
     sessionId: "sid-1",
     dispose: async () => {},
     onFrame: (c: (m: unknown) => void) => { cb = c; return () => { cb = undefined; }; },
-    setPermissionMode: async (m: string) => { setPermissionModeCalls.push(m); },
+    setPermissionMode: async (m: string) => { setPermissionModeCalls.push(m); calls.push(`mode:${m}`); },
+    setModel: async (m?: string) => { calls.push(`model:${m}`); },
     ...over,
   };
-  return { fake, drive: (m: unknown) => cb?.(m), setPermissionModeCalls };
+  return { fake, drive: (m: unknown) => cb?.(m), setPermissionModeCalls, calls };
 }
 
 const hostFor = (session: unknown, config: Record<string, unknown> = {}) =>
@@ -84,18 +86,18 @@ describe("host mode sync (one source of truth, last-write-wins)", () => {
     const decision = host.broker().request({
       toolName: "ExitPlanMode", input: {}, toolUseID: "p1", kind: "plan", signal: new AbortController().signal,
     });
-    host.answer("p1", { kind: "plan_approve", acceptEdits: true }, "test");
+    host.answer("p1", { kind: "plan_approve", mode: "acceptEdits" }, "test");
     await decision;
     // The answer alone must NOT have called setPermissionMode yet.
     expect(setPermissionModeCalls).toEqual([]);
-    expect((host as any).planUpgradePending).toBe(true);
+    expect((host as any).planUpgradeMode).toBe("acceptEdits");
     // Now drive the CLI's own post-approval status frame.
     drive({ type: "system", subtype: "status", status: null, permissionMode: "default" });
     // applyPlanUpgrade is async (await session.setPermissionMode) — give it a tick to settle.
     await new Promise((r) => setTimeout(r, 0));
     expect(setPermissionModeCalls).toEqual(["acceptEdits"]);
     expect(host.status().permissionMode).toBe("acceptEdits");
-    expect((host as any).planUpgradePending).toBe(false);
+    expect((host as any).planUpgradeMode).toBeUndefined();
     const stateEvents = seen.filter((e) => e.kind === "state") as Extract<HostEvent, { kind: "state" }>[];
     expect(stateEvents.some((e) => e.status.permissionMode === "acceptEdits")).toBe(true);
     await host.stop();
@@ -106,11 +108,85 @@ describe("host mode sync (one source of truth, last-write-wins)", () => {
     const host = hostFor(fake);
     await host.start();
     // Simulate a plan already approved with acceptEdits, but no status frame ever arrives.
-    (host as any).planUpgradePending = true;
+    (host as any).planUpgradeMode = "acceptEdits";
     await host.runTask("go");
     expect(setPermissionModeCalls).toEqual(["acceptEdits"]);
     expect(host.status().permissionMode).toBe("acceptEdits");
-    expect((host as any).planUpgradePending).toBe(false);
+    expect((host as any).planUpgradeMode).toBeUndefined();
+    await host.stop();
+  });
+
+  // ── Wave T Task 10: the applier grants what the decision NAMED, and never lies about it ──────────────
+  it("the applier sets the mode the decision carried, not a hard-coded acceptEdits", async () => {
+    const { fake, drive, setPermissionModeCalls } = fakeSession();
+    const host = hostFor(fake, { model: "claude-sonnet-5" });                    // already auto-capable
+    await host.start();
+    const decision = host.broker().request({ toolName: "ExitPlanMode", input: {}, toolUseID: "p1", kind: "plan", signal: new AbortController().signal });
+    host.answer("p1", { kind: "plan_approve", mode: "auto" }, "test");
+    await decision;
+    drive({ type: "system", subtype: "status", status: null, permissionMode: "default" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(setPermissionModeCalls).toEqual(["auto"]);
+    expect(host.status().permissionMode).toBe("auto");
+    await host.stop();
+  });
+
+  // `default` is what the ENGINE flips to by itself ten milliseconds after the allow (probe 97), so the
+  // manually-approve arm arms nothing — exactly as the old acceptEdits:false answer did.
+  it("a `default` grant arms no upgrade at all", async () => {
+    const { fake, drive, setPermissionModeCalls } = fakeSession();
+    const host = hostFor(fake);
+    await host.start();
+    const decision = host.broker().request({ toolName: "ExitPlanMode", input: {}, toolUseID: "p1", kind: "plan", signal: new AbortController().signal });
+    host.answer("p1", { kind: "plan_approve", mode: "default" }, "test");
+    await decision;
+    expect((host as any).planUpgradeMode).toBeUndefined();
+    drive({ type: "system", subtype: "status", status: null, permissionMode: "default" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(setPermissionModeCalls).toEqual([]);
+    await host.stop();
+  });
+
+  // The lying-chip guard (qa3-02's class). `auto` is MODEL-gated: on an unsupported model the engine
+  // silently falls back to `default`, so granting it without swapping the model first writes a mode the
+  // engine is not in — which is precisely what useChat.applyMode swaps to avoid.
+  it("granting `auto` on a model that cannot run it swaps the model FIRST", async () => {
+    const { fake, drive, calls } = fakeSession();
+    const host = hostFor(fake, { model: "claude-haiku-4-5" });
+    await host.start();
+    (host as any).planUpgradeMode = "auto";
+    drive({ type: "system", subtype: "status", status: null, permissionMode: "default" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual(["model:claude-sonnet-5", "mode:auto"]);
+    expect(host.status().permissionMode).toBe("auto");
+    await host.stop();
+  });
+
+  it("granting `auto` on a model that already supports it swaps nothing", async () => {
+    const { fake, drive, calls } = fakeSession();
+    const host = hostFor(fake, { model: "claude-opus-5" });
+    await host.start();
+    (host as any).planUpgradeMode = "auto";
+    drive({ type: "system", subtype: "status", status: null, permissionMode: "default" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual(["mode:auto"]);
+    await host.stop();
+  });
+
+  it("a REJECTED plan-upgrade setter leaves the chip on the engine's real mode and REPORTS it", async () => {
+    const { fake, drive } = fakeSession({ setPermissionMode: async () => { throw new Error("nope"); } });
+    const host = hostFor(fake);
+    await host.start();
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      (host as any).planUpgradeMode = "acceptEdits";
+      drive({ type: "system", subtype: "status", status: null, permissionMode: "default" });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(host.status().permissionMode).toBe("default");                     // NOT the mode we failed to get
+      expect(err).toHaveBeenCalledTimes(1);
+      expect(String(err.mock.calls[0]![0])).toContain("acceptEdits");
+      expect(String(err.mock.calls[0]![0])).toContain("nope");
+    } finally { err.mockRestore(); }
     await host.stop();
   });
 
@@ -149,9 +225,9 @@ describe("host mode sync (one source of truth, last-write-wins)", () => {
     };
     const host = hostFor(fake);
     await host.start();
-    (host as any).planUpgradePending = true;
+    (host as any).planUpgradeMode = "acceptEdits";
     await expect(host.runTask("go")).rejects.toThrow("turn failed");
-    expect((host as any).planUpgradePending).toBe(false);
+    expect((host as any).planUpgradeMode).toBeUndefined();
     await host.stop();
   });
 });

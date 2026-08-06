@@ -34,7 +34,7 @@ describe("gate outcome mapping", () => {
 
   it("plan_approve → allow with input unchanged (the CLI flips the mode itself, probe 66)", async () => {
     const input = { plan: "# The plan" };
-    const r = await gateWith({ kind: "plan_approve", acceptEdits: true })("ExitPlanMode", input, opts);
+    const r = await gateWith({ kind: "plan_approve", mode: "acceptEdits" })("ExitPlanMode", input, opts);
     expect(r).toEqual({ behavior: "allow", updatedInput: input });
   });
 
@@ -108,9 +108,9 @@ describe("gate outcome mapping", () => {
 
   it("plan_approve echoes updatedPermissions when present and omits the key entirely when absent", async () => {
     const updatedPermissions = [{ type: "setMode", mode: "acceptEdits", destination: "session" }];
-    expect(await gateWith({ kind: "plan_approve", acceptEdits: true, updatedPermissions })("ExitPlanMode", { plan: "p" }, opts))
+    expect(await gateWith({ kind: "plan_approve", mode: "acceptEdits", updatedPermissions })("ExitPlanMode", { plan: "p" }, opts))
       .toEqual({ behavior: "allow", updatedInput: { plan: "p" }, updatedPermissions });
-    const plain = await gateWith({ kind: "plan_approve", acceptEdits: true })("ExitPlanMode", { plan: "p" }, opts) as any;
+    const plain = await gateWith({ kind: "plan_approve", mode: "acceptEdits" })("ExitPlanMode", { plan: "p" }, opts) as any;
     expect("updatedPermissions" in plain).toBe(false);
   });
 
@@ -119,12 +119,12 @@ describe("gate outcome mapping", () => {
   // ours merges so an unrelated argument survives the edit.
   it("plan_approve carrying an edited plan overrides only that key, and an absent one changes nothing", async () => {
     const input = { plan: "# The plan", extra: 1 };
-    expect(await gateWith({ kind: "plan_approve", acceptEdits: false, plan: "# Edited" })("ExitPlanMode", input, opts))
+    expect(await gateWith({ kind: "plan_approve", mode: "default", plan: "# Edited" })("ExitPlanMode", input, opts))
       .toEqual({ behavior: "allow", updatedInput: { plan: "# Edited", extra: 1 } });
-    expect(await gateWith({ kind: "plan_approve", acceptEdits: false })("ExitPlanMode", input, opts))
+    expect(await gateWith({ kind: "plan_approve", mode: "default" })("ExitPlanMode", input, opts))
       .toEqual({ behavior: "allow", updatedInput: input });
     // an EMPTY edited plan is still an edit — the human deleted it on purpose, and "" is not "absent"
-    expect((await gateWith({ kind: "plan_approve", acceptEdits: false, plan: "" })("ExitPlanMode", input, opts) as any).updatedInput.plan).toBe("");
+    expect((await gateWith({ kind: "plan_approve", mode: "default", plan: "" })("ExitPlanMode", input, opts) as any).updatedInput.plan).toBe("");
   });
 
   it("a pre-aborted signal still denies with the kind-specific copy, ahead of any widened arm", async () => {
