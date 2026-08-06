@@ -39,7 +39,7 @@ const decisionOutcomeParams = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("question_answer"), answers: z.record(z.string(), z.string()), response: z.string().optional() }),
   // The granted mode, not a boolean (Wave T t10) — the same enum host/ops.ts pins, kept in lockstep by
   // hand because zod schemas are values and no compiler check spans the two wires.
-  z.object({ kind: z.literal("plan_approve"), mode: z.enum(["default", "acceptEdits", "bypassPermissions", "auto"]), updatedPermissions: z.array(permissionUpdateParams).optional(), plan: z.string().optional() }),
+  z.object({ kind: z.literal("plan_approve"), mode: z.enum(["default", "acceptEdits", "bypassPermissions", "auto"]), updatedPermissions: z.array(permissionUpdateParams).optional(), plan: z.string().optional(), feedback: z.string().optional() }),
   z.object({ kind: z.literal("plan_reject"), feedback: z.string().optional() }),
 ]);
 const decisionRespondParams = z.object({ threadId: z.string().min(1), toolUseId: z.string().min(1), answer: decisionOutcomeParams, abortTurn: z.boolean().optional() });

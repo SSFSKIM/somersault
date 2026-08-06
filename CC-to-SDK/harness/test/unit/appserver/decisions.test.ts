@@ -118,6 +118,31 @@ describe("appserver decisions (Task 7)", () => {
     expect(await decision).toEqual({ kind: "plan_approve", mode: "auto" });     // …and a legal one still lands
   });
 
+  // Wave T t11 (d): the approver's typed sentence is a NEW optional field on the same hand-duplicated arm.
+  // typecheck spans neither schema, so the only thing standing between the dialog and a silently stripped
+  // sentence is this round trip through the real decision/respond dispatch.
+  it("a plan_approve carries the approver's feedback through decision/respond", async () => {
+    let broker: any;
+    const srv = new AppServer({}, { sessionFactory: (cfg: any) => { broker = cfg.permissionBroker; return fakeSession(); } });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+    send(connA, { id: 90, method: "thread/subscribe", params: { threadId } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const decision = broker.request({ toolName: "ExitPlanMode", input: { plan: "# ship it" }, toolUseID: "toolu_fb", kind: "plan", signal: new AbortController().signal });
+    await new Promise((r) => setTimeout(r, 0));
+    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_fb", answer: { kind: "plan_approve", mode: "acceptEdits", feedback: "keep it small" } } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(await decision).toEqual({ kind: "plan_approve", mode: "acceptEdits", feedback: "keep it small" });
+    // Other watchers see what the approver said, which is the whole of what this field can reach today.
+    const resolved = parsed(a.lines).find((f) => f.method === "decision/resolved");
+    expect(resolved.params.answer).toEqual({ kind: "plan_approve", mode: "acceptEdits", feedback: "keep it small" });
+  });
+
   it("unattended:'deny' with zero watchers denies immediately", async () => {
     // hasWatchers = record.subscribers.size > 0 (Task 9): connA never subscribes to this thread, so it
     // is not a watcher even while still connected. Closing it too is just belt-and-suspenders for the

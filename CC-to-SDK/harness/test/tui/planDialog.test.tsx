@@ -14,8 +14,9 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
+import { join } from "node:path";
 import {
-  PlanDialog, planOptions, planGrant, SHIFT_TAB_HINT, SAVED_FLASH_MS, SCROLL_HINT,
+  PlanDialog, planOptions, planGrant, SHIFT_TAB_HINT, SAVED_FLASH_MS, SCROLL_HINT, DASHED_BORDER,
   EMPTY_PLAN_TITLE, EMPTY_PLAN_BODY, optionBoxRows, planWindow, planRegionRows,
 } from "../../src/tui/PlanDialog.js";
 import { editorDisplayName } from "../../src/tui/externalEditor.js";
@@ -189,7 +190,11 @@ describe("<PlanDialog> — shift+tab (`tYf` L501054-060)", () => {
     expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "acceptEdits" });
   });
 
-  it("still approves WHILE the keep-planning row is being typed into (the row's description names it)", async () => {
+  // `Inl` (L500936) builds EVERY outcome with `acceptFeedback: eYf || undefined`, the TRIMMED keep-planning
+  // text, whatever arm is being submitted. shift+tab is the only reachable approve-with-text path here: while
+  // an input row holds the cursor, selectKeys.ts registers `select:cancel` and nothing else (L396672-396701),
+  // so no movement key can carry the typed sentence off to a Yes row.
+  it("still approves WHILE the keep-planning row is being typed into, CARRYING the typed text", async () => {
     const decisions: unknown[] = [];
     const { stdin, lastFrame } = mount({ onDecision: (o: unknown) => decisions.push(o) });
     await waitFor(() => frame(lastFrame).includes("Build it"));
@@ -197,7 +202,88 @@ describe("<PlanDialog> — shift+tab (`tYf` L501054-060)", () => {
     stdin.write("looks fine"); await waitFor(() => frame(lastFrame).includes("looks fine"));
     stdin.write(SHIFT_TAB);
     await waitFor(() => decisions.length === 1);
+    expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "acceptEdits", feedback: "looks fine" });
+  });
+
+  it("trims what it carries, and carries NO feedback key when the row holds only whitespace", async () => {
+    const decisions: unknown[] = [];
+    const { stdin, lastFrame } = mount({ onDecision: (o: unknown) => decisions.push(o) });
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    stdin.write("3"); await tick();
+    stdin.write("   "); await tick();
+    stdin.write(SHIFT_TAB);
+    await waitFor(() => decisions.length === 1);
     expect(decisions[0]).toEqual({ kind: "plan_approve", mode: "acceptEdits" });
+    expect(decisions[0]).not.toHaveProperty("feedback");
+
+    stdin.write("  keep it small  "); await waitFor(() => frame(lastFrame).includes("keep it small"));
+    stdin.write(SHIFT_TAB);
+    await waitFor(() => decisions.length === 2);
+    expect(decisions[1]).toEqual({ kind: "plan_approve", mode: "acceptEdits", feedback: "keep it small" });
+  });
+
+  // The DIVERGENCE, pinned at the wire rather than in prose: the SDK's allow arm has no message channel
+  // (sdk.d.ts PermissionResult), so this text reaches ccx's own decision record and stops there. If a future
+  // SDK grows one, this is the test that says where the value already is.
+  it("carries the text on ccx's decision only — the hint never promises the model will read it", async () => {
+    expect(SHIFT_TAB_HINT).toBe("shift+tab to approve");
+    expect(SHIFT_TAB_HINT).not.toContain("feedback");
+  });
+});
+
+describe("<PlanDialog> — the plan body's dashed rules (`SM` L424994-425003, mounted as `EDr` L501096)", () => {
+  it("transcribes upstream's own box style — stock cli-boxes has no `dashed`", () => {
+    // `luy.dashed`, L179535: an entry upstream's ink FORK registers. Ink 5 takes a BoxStyle object in place
+    // of a registry name, which is the seam that lets the glyphs be copied rather than approximated.
+    expect(DASHED_BORDER).toEqual({ top: "╌", bottom: "╌", left: "╎", right: "╎", topLeft: " ", topRight: " ", bottomLeft: " ", bottomRight: " " });
+  });
+
+  it("fences the plan between two dashed rules, with the left and right edges off", async () => {
+    const { lastFrame } = mount();
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    const rows = frame(lastFrame).split("\n"), isRule = (r: string) => r.includes("╌╌╌");
+    expect(rows.filter(isRule)).toHaveLength(2);                              // one above the plan, one below
+    const top = rows.findIndex(isRule), bottom = rows.map(isRule).lastIndexOf(true);
+    expect(rows.findIndex((r) => r.includes("Build it"))).toBeGreaterThan(top);
+    expect(rows.findIndex((r) => r.includes("step two"))).toBeLessThan(bottom);
+    // `borderLeft:!1, borderRight:!1` — the vertical glyph must never appear.
+    expect(frame(lastFrame)).not.toContain("╎");
+    // The rules sit INSIDE the frame, under its title, not around the whole dialog.
+    expect(rows.findIndex((r) => r.includes("Here is Claude's plan:"))).toBeLessThan(top);
+  });
+
+  it("costs the plan region exactly the two rows it paints", () => {
+    const opts = planOptions({ autoAvailable: false, bypassAvailable: false });
+    // chrome = frame marginTop + rule + title + body marginTop + "Here is Claude's plan:" + the two dashed
+    // rules + the marginBottom under them + upstream's four rows of slack = 12, plus a consent line when one
+    // exists. Pinned as arithmetic so a rule added to the body can never be paid for out of the plan's rows.
+    expect(planRegionRows(40, opts, true, false)).toBe(40 - optionBoxRows(opts, true) - 12);
+    expect(planRegionRows(40, opts, true, true)).toBe(40 - optionBoxRows(opts, true) - 13);
+  });
+});
+
+describe("<PlanDialog> — the plan file path in the ctrl+g footer (`Onl` L501126)", () => {
+  it("appends the SHORTENED planFilePath the wire already carries (probe 97 A2)", async () => {
+    const path = join(process.cwd(), "docs", "plans", "ship-it.md");
+    const { lastFrame } = mount({ req: { input: { plan: PLAN, planFilePath: path } } });
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    expect(frame(lastFrame)).toContain("ctrl+g to edit in vim · docs/plans/ship-it.md");
+    expect(frame(lastFrame)).not.toContain(path);                             // never the absolute form
+  });
+
+  it("prints the bare chord when the request carries no path", async () => {
+    const { lastFrame } = mount();
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    expect(frame(lastFrame)).toContain("ctrl+g to edit in vim");
+    expect(frame(lastFrame)).not.toContain(" · ");
+  });
+
+  it("hides the whole row — path included — when there is no editor", async () => {
+    const path = join(process.cwd(), "docs", "plans", "ship-it.md");
+    const { lastFrame } = mount({ editorName: null, req: { input: { plan: PLAN, planFilePath: path } } });
+    await waitFor(() => frame(lastFrame).includes("Build it"));
+    expect(frame(lastFrame)).not.toContain("ctrl+g");
+    expect(frame(lastFrame)).not.toContain("ship-it.md");
   });
 });
 

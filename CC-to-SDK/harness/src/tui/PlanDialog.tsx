@@ -27,14 +27,26 @@
 //     "no" submit is a legal reject carrying `contentBlocks` (`lYf` L500736). Our `Select` has no image
 //     surface (Select.tsx's own recorded divergence), so the images clause of `lYf`'s guard is transcribed
 //     here and not built: for us `hasImages` is always false.
-//  3. NO FEEDBACK ON APPROVE. Upstream's shift+tab approves and carries the typed text as `acceptFeedback`
-//     — but that field rides an in-process host callback (`handleUserAllow(..., {feedback})`, L279316), NOT
-//     the permission result it sends to the tool (`M({behavior:"allow", updatedInput, updatedPermissions})`
-//     on the same line). The SDK's `PermissionResult` allow arm has no message channel at all
-//     (updatedInput / updatedPermissions / toolUseID / decisionClassification), so the text has nowhere to
-//     go. shift+tab is built — the approve half is fully reachable — and the row's description is trimmed
-//     from upstream's "shift+tab to approve with this feedback" to `SHIFT_TAB_HINT` below, because
-//     advertising a channel that drops the user's sentence is the one thing F0's honesty rule forbids.
+//  3. THE APPROVE FEEDBACK REACHES CCX, NEVER THE MODEL. Upstream's shift+tab approves carrying the typed
+//     text as `acceptFeedback`, and that field HAS a destination: `handleUserAllow` hands it to `buildAllow`
+//     (L272001/272008), which puts it on the permission result, and the tool-result builder then pushes it
+//     into the tool_result CONTENT as a second `{type:"text"}` block (L298586-589) — so the model reads the
+//     user's sentence in the very message that tells it the plan was approved. None of that is reachable
+//     from a `canUseTool`: the SDK's `PermissionResult` allow arm is exactly `{behavior, updatedInput?,
+//     updatedPermissions?, toolUseID?, decisionClassification?}` (sdk.d.ts L2113-2119) — no message field —
+//     and the tool result is assembled inside the engine, where a client has no hook. The three near-misses
+//     were checked and rejected: `updatedInput.plan` is NOT a spare channel (ExitPlanMode WRITES that string
+//     to the plan file, L229928, and echoes it under "## Approved Plan:", L229999, so appended feedback
+//     would corrupt the saved plan and read to the model as plan content); an extra `updatedInput` key is
+//     read by nothing (L229927 takes `plan` alone); and a follow-up user message is a QUEUED TURN
+//     (session.ts's `enqueueTurn`) that would land only after the model had executed the entire plan.
+//     SO THE TEXT TRAVELS AS FAR AS CCX'S OWN DECISION AND STOPS. `plan_approve` carries `feedback`, which
+//     the host, the app-server's `decision/resolved` fan-out and any attached client can see; the gate
+//     deliberately does not put it on the allow arm, because there is no arm to put it on. The row's
+//     description stays trimmed to `SHIFT_TAB_HINT` below rather than restored to upstream's "shift+tab to
+//     approve with this feedback": that wording promises the MODEL will read it, and advertising a channel
+//     that drops the user's sentence is the one thing F0's honesty rule forbids — and the one thing this
+//     wave has already had to retract once (W-T22).
 //  4. THE OPTION LIST IS THE REACHABLE SUBSET (DG30, partial). `sYf`'s clear-context family and the
 //     Ultraplan row gate on host state a client cannot see — a remote-session flag, a context-usage
 //     percentage — and each of them ends in a `{behavior:"deny"}` plus an app-state hand-off (L500960-969)
@@ -53,7 +65,8 @@
 // hazard — the dialog is modal and composer-replacing (T5), typing-suppression holds the dialog back while
 // a draft is live, and the draft is preserved across the dialog. What is left is a Select-driven list where
 // Enter has a visible target, which is upstream's own contract and the same one every other F6 dialog got.
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { homedir } from "node:os";
 import { Box, Text } from "ink";
 import { DialogFrame } from "./dialogs/DialogFrame.js";
 import { consentReasonLine } from "./dialogs/consentReason.js";
@@ -66,6 +79,9 @@ import { renderMarkdown } from "./markdown.js";
 // (not just `{text, dim?, color?}`), and one renderer keeps the dialog's styling from drifting from the
 // transcript's. `gutter` is never set on markdown output, so the shared branch is simply inert here.
 import { Line } from "./Transcript.js";
+// `wd()` (L36791-36799), already extracted as this repo's one display-path rule — the same function upstream
+// calls on the plan file path in the ctrl+g footer (`wd(fWt)`, L501126), so the footer needs no rule of its own.
+import { displayPath } from "./paths.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
 import { isAutoSupportedModel } from "../config/autoModel.js";
 import type { DecisionOutcome, PlanGrantMode } from "../permissions/types.js";
@@ -87,6 +103,13 @@ export const SAVED_FLASH_MS = 5000;
 export const SHIFT_TAB_HINT = "shift+tab to approve";
 /** Divergence 1 above: the invented reading path, named in the clip marker so it is never a secret key. */
 export const SCROLL_HINT = "ctrl+u/ctrl+d scroll";
+/** `luy.dashed` (L179535), the box style upstream's ink FORK registers and stock `cli-boxes` does not have —
+ *  its eight glyphs transcribed, corners included (they are spaces upstream, and with the left/right edges off
+ *  they never print anyway). Ink 5 accepts a `BoxStyle` OBJECT wherever it accepts a registry name, which is
+ *  the seam that lets `SM`'s rules be copied rather than approximated with a `single` border. */
+export const DASHED_BORDER = Object.freeze({
+  top: "╌", bottom: "╌", left: "╎", right: "╎", topLeft: " ", topRight: " ", bottomLeft: " ", bottomRight: " ",
+});
 
 /** The EMPTY-PLAN dialog (`Gnl` L501048-079) — a different frame, not an empty body. */
 export const EMPTY_PLAN_TITLE = "Exit plan mode?";
@@ -148,11 +171,13 @@ export function optionBoxRows(options: readonly SelectOption[], hasEditor: boole
   return 1 + 1 + 1 + options.length + options.filter((o) => o.description).length + (hasEditor ? 2 : 0);
 }
 /** Rows the frame spends on chrome before a single plan line prints: the frame's `marginTop`, its rule, its
- *  title, the body's `marginTop`, "Here is Claude's plan:", the `marginBottom` under the plan, and the consent
- *  line when there is one — plus upstream's own four rows of slack. The CLIP MARKER is deliberately not in
- *  here: it costs a row only when something is actually hidden, which `planWindow` decides. */
+ *  title, the body's `marginTop`, "Here is Claude's plan:", `SM`'s TWO dashed rules around the plan, the
+ *  `marginBottom` under them, and the consent line when there is one — plus upstream's own four rows of slack.
+ *  The CLIP MARKER is deliberately not in here: it costs a row only when something is actually hidden, which
+ *  `planWindow` decides. The two rules are counted rather than absorbed into the slack: they are painted
+ *  unconditionally, so a plan sized against a budget that ignored them overflows the terminal by exactly two. */
 export function planRegionRows(rows: number, options: readonly SelectOption[], hasEditor: boolean, hasReason: boolean): number {
-  const chrome = 1 + 1 + 1 + 1 + 1 + 1 + (hasReason ? 1 : 0) + 4;
+  const chrome = 1 + 1 + 1 + 1 + 1 + 2 + 1 + (hasReason ? 1 : 0) + 4;
   return Math.max(3, rows - optionBoxRows(options, hasEditor) - chrome);
 }
 /** How many plan lines actually print. A plan that FITS gets the whole region; one that does not gives a row
@@ -203,7 +228,17 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
   const [edited, setEdited, editedRef] = useRefState(false);
   const [saved, setSaved] = useRefState(false);                                  // `yDr`, the `Plan saved!` flash
   const [scrollTop, setScrollTop] = useState(0);                                 // divergence 1: our reading path
+  // `U7f`/`eYf` (L500936): the keep-planning row's text, held HERE because `Inl` builds every outcome — the
+  // approve arms included — with `acceptFeedback: eYf || undefined`, whatever row is being submitted. A plain
+  // ref, not `useRefState`: nothing renders it, and the Select owns the text it paints. `onInputChange` (the
+  // Select's t5 hook) is what makes the value observable without the Select having to hand it to an approve.
+  const feedbackRef = useRef("");
   const name = editorName === undefined ? editorDisplayName() : editorName;
+  /** `fWt` (L501126): the absolute path the CLI already wrote the plan to, shortened by upstream's own `wd()`.
+   *  Probe 97 A2 — the input keys are exactly `["plan","planFilePath"]` and gate.ts forwards `input` verbatim,
+   *  so this needs no plumbing; absent leaves the footer as the bare chord. */
+  const planPath = typeof (req.input as { planFilePath?: unknown }).planFilePath === "string"
+    ? displayPath((req.input as { planFilePath: string }).planFilePath, process.cwd(), homedir()) : undefined;
   const reason = consentReasonLine(req.decisionReason);
   const providerSuspend = useSuspendInput();           // unconditional: the prop only OVERRIDES it
   const suspend = suspendInput ?? providerSuspend;
@@ -238,9 +273,14 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
    *  so emitting the rule too would upgrade twice. The mode is the channel; no setMode rides along.
    *  Wave T t10 turned that field from a boolean into the granted mode itself: a boolean could only carry
    *  the narrowest of upstream's three arms, so the dialog printed that arm's label whatever the session
-   *  could actually grant (qa3-17). */
-  const approve = (mode: PlanGrantMode) =>
-    onDecision({ kind: "plan_approve", mode, ...(editedRef.current ? { plan: planRef.current } : {}) });
+   *  could actually grant (qa3-17).
+   *  `feedback` is divergence 3's reachable half: upstream's `acceptFeedback`, carried on OUR decision (the
+   *  host, `decision/resolved` and every attached client see it) and deliberately not on the SDK's allow arm,
+   *  which has no field for it. Trimmed and omitted when empty, exactly as `oMn = eYf || void 0` (L500936). */
+  const approve = (mode: PlanGrantMode) => {
+    const feedback = feedbackRef.current.trim();
+    onDecision({ kind: "plan_approve", mode, ...(feedback ? { feedback } : {}), ...(editedRef.current ? { plan: planRef.current } : {}) });
+  };
 
   const pick = (value: string, text?: string) => {
     if (value === "no") {
@@ -328,7 +368,11 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
       <DialogFrame title={PLAN_TITLE} color="planMode" innerPaddingX={0} subagentType={req.subagentType}>
         <Box flexDirection="column" marginTop={1}>
           <Box paddingX={1} flexDirection="column"><Text>{PLAN_BODY_TITLE}</Text></Box>
-          <Box flexDirection="column" marginBottom={1}>
+          {/* `EDr` (L501096) wraps the plan in `SM` (L424994-425003): dashed rules top and bottom, left and
+              right edges off, in the `subtle` role, `paddingX:1` and `marginBottom:1`. The two rules are what
+              separate the plan from the title above it and the consent line below without a second frame. */}
+          <Box flexDirection="column" borderStyle={DASHED_BORDER} borderColor={role("subtle")}
+            borderLeft={false} borderRight={false} overflow="hidden" paddingX={1} marginBottom={1}>
             {lines.slice(top, top + window).map((l, i) => <Line key={top + i} l={l} />)}
             {/* One marker row, kept whether or not there is anything BELOW, so scrolling never reflows the
                 region's height under the reader's eyes. */}
@@ -344,13 +388,17 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
         borderLeft={false} borderRight={false} borderBottom={false} paddingX={1} flexShrink={0}>
         <Text dimColor>{PLAN_PROMPT}</Text>
         <Box marginTop={1}>
-          <Select options={options} onChange={pick} onCancel={cancel} context="SelectDecision" />
+          <Select options={options} onChange={pick} onCancel={cancel} context="SelectDecision"
+            onInputChange={(_v, text) => { feedbackRef.current = text; }} />
         </Box>
         {name !== null
           ? (
             <Box marginTop={1}>
               <Text>
-                <Text dimColor>ctrl+g to edit in {name}</Text>
+                {/* `Onl` L501126: `[<chord>, fWt && ` · ${wd(fWt)}`]` inside ONE dimmed span. Our chord wording
+                    stays `ctrl+g to edit in {name}` (upstream's is `edit in {name}`); re-spelling hints is a
+                    later wave's, and only the path is this task's. */}
+                <Text dimColor>ctrl+g to edit in {name}{planPath ? ` · ${planPath}` : ""}</Text>
                 {saved ? <><Text dimColor>{" · "}</Text><Text color={role("success")}>{TICK} {PLAN_SAVED}</Text></> : null}
               </Text>
             </Box>

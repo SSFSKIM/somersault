@@ -67,6 +67,16 @@ describe("host/ops.ts — the answer op's structured arm", () => {
     expect(() => answer({ kind: "plan_approve", mode: "dontAsk" })).toThrow();     // not a plan grant
   });
 
+  // Wave T t11 (d), the SAME round-trip for the same reason: `feedback` is a new optional field on the
+  // plan_approve arm, and a zod schema that never learned about it would strip the human's sentence between
+  // the dialog and the host without a single type error.
+  it("plan_approve carries the approver's feedback across the wire", () => {
+    expect((answer({ kind: "plan_approve", mode: "acceptEdits", feedback: "keep it small" }) as any).answer)
+      .toEqual({ kind: "plan_approve", mode: "acceptEdits", feedback: "keep it small" });
+    expect((answer({ kind: "plan_approve", mode: "default" }) as any).answer.feedback).toBeUndefined();
+    expect(() => answer({ kind: "plan_approve", mode: "default", feedback: 7 })).toThrow();
+  });
+
   it("still parses the FLAT legacy 3-way decision (an old ccx attach client)", () => {
     for (const decision of ["allow_once", "allow_always", "deny"]) {
       expect((hostOp.parse({ op: "answer", toolUseID: "t1", by: "me", decision }) as any).decision).toBe(decision);

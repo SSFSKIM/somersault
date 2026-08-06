@@ -38,6 +38,16 @@ describe("gate outcome mapping", () => {
     expect(r).toEqual({ behavior: "allow", updatedInput: input });
   });
 
+  // Wave T t11 (d): the approver's typed sentence rides the DECISION but must never reach the allow arm —
+  // sdk.d.ts's PermissionResult has no field for it, and the SDK would drop an invented one in silence, so a
+  // gate that "helpfully" merged it into updatedInput would corrupt the plan ExitPlanMode writes to disk.
+  it("plan_approve's feedback stays ccx-local — it never appears on the allow arm", async () => {
+    const input = { plan: "# The plan", planFilePath: "/tmp/p.md" };
+    const r = await gateWith({ kind: "plan_approve", mode: "acceptEdits", feedback: "keep it small" })("ExitPlanMode", input, opts);
+    expect(r).toEqual({ behavior: "allow", updatedInput: input });
+    expect(JSON.stringify(r)).not.toContain("keep it small");
+  });
+
   it("plan_reject → deny carrying the feedback verbatim; empty feedback gets the default copy", async () => {
     const r1 = await gateWith({ kind: "plan_reject", feedback: "also plan a README" })("ExitPlanMode", {}, opts);
     expect(r1).toEqual({ behavior: "deny", message: "also plan a README", interrupt: undefined });

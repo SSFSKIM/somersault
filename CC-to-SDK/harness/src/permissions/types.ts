@@ -56,8 +56,15 @@ export type DecisionOutcome =
    *  `plan`: the plan text AS THE HUMAN LEFT IT. Present only when they edited it in `$EDITOR` from the
    *  dialog (F6 T9 / DG34) — upstream's `u = planEditedLocally ? { plan: currentPlan } : {}` (`lYf`
    *  L500722/500737), which rides `updatedInput` on the same allow arm. Absent means "unchanged", and the
-   *  gate then forwards the engine's own input untouched. */
-  | { kind: "plan_approve"; mode: PlanGrantMode; updatedPermissions?: PermissionUpdateLike[]; plan?: string }
+   *  gate then forwards the engine's own input untouched.
+   *  `feedback`: what the approver typed into the keep-planning row before approving anyway — upstream's
+   *  `acceptFeedback` (`Inl` L500936), which there becomes a second `{type:"text"}` block appended to the
+   *  TOOL RESULT the model reads (L298586-589). THAT DESTINATION IS UNREACHABLE FROM A `canUseTool`: the
+   *  allow arm carries no message field and the tool result is built inside the engine. So this field is
+   *  ccx-local by construction — the host, `decision/resolved` and every attached client see what the
+   *  approver said, and `gate.ts` deliberately does not forward it. Absent when the row was empty.
+   *  PlanDialog.tsx's divergence 3 records the three near-miss channels that were checked and rejected. */
+  | { kind: "plan_approve"; mode: PlanGrantMode; updatedPermissions?: PermissionUpdateLike[]; plan?: string; feedback?: string }
   | { kind: "plan_reject"; feedback?: string };
 
 /** What the broker is asked to decide. UI hints (title/displayName/description) are often ABSENT headlessly

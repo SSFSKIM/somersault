@@ -17,7 +17,11 @@ export type CanUseTool = (toolName: string, input: Record<string, unknown>, opti
 
 /** Which dialog a tool call needs. AskUserQuestion is ALWAYS routed (probe 65: it consults canUseTool in
  *  every mode, no ask rules needed); ExitPlanMode arrives under plan mode (probe 66). Everything else is
- *  the classic 3-way permission. */
+ *  the classic 3-way permission.
+ *  THE TWO LITERALS ARE THE WHOLE SIGNAL. Probe 97 A3: of the ten fields on a consult's options bag, an
+ *  ExitPlanMode call defines four and none of them discriminates, so a rename upstream would silently
+ *  demote every plan approval to the generic 3-way dialog with nothing throwing. Pinned in
+ *  test/unit/gate-plan-kind.test.ts. */
 export function routeDecisionKind(toolName: string): DecisionKind {
   return toolName === "AskUserQuestion" ? "question" : toolName === "ExitPlanMode" ? "plan" : "permission";
 }
@@ -66,6 +70,10 @@ export function createPermissionGate(broker: PermissionBroker): CanUseTool {
     // is what the approve consumes. Upstream REPLACES the whole input with `{plan}` there and sends `{}` when
     // untouched (`lYf` L500722); we merge instead, so a future ExitPlanMode argument we do not know about
     // survives an edit rather than being silently dropped.
+    // `d.feedback` is DROPPED HERE ON PURPOSE and this is the honest place to say so: upstream appends it to
+    // the tool_result content (L298586-589), a place no permission result can reach, and the allow arm above
+    // has no message field. Folding it into `plan` would corrupt the file ExitPlanMode writes from that string
+    // (L229928); a spare `updatedInput` key is read by nothing. It stays a ccx-local decision record.
     if (d.kind === "plan_approve") return { behavior: "allow", updatedInput: d.plan !== undefined ? { ...input, plan: d.plan } : input, ...(d.updatedPermissions ? { updatedPermissions: d.updatedPermissions } : {}) };
     // The real "don't ask again": hand the engine's own suggestion back untouched. Deliberately does NOT
     // also add to `allowed` — the rule replaces that in-memory Set rather than shadowing it.
