@@ -2,6 +2,7 @@
 // ChatApp over a remote adapter; owning the HOST is the caller's job (loopback owns one, attach does not).
 import React from "react";
 import { render } from "ink";
+import stringWidth from "string-width";
 import { remoteChatSession } from "../client/chatAdapter.js";
 import type { ChatSession } from "../session/chatSession.js";
 import { ChatApp } from "./ChatApp.js";
@@ -35,13 +36,46 @@ export interface ChatClientOpts {
 export interface ResumeSafeStdout {
   stdout: NodeJS.WriteStream;
   repaint(runInkWrite: () => void): void;
+  /** The last live frame Ink painted, erase prefix stripped, or undefined before the first one (W-R t2). */
+  lastFrame(): string | undefined;
+}
+
+/** Ink's erase prefix: `ansiEscapes.eraseLines(n)` is a run of `\x1b[2K` / `\x1b[1A` closed by `\x1b[G`. It is
+ *  terminal bookkeeping, not frame content — and `eraseLines(0)` is the empty string, which is why the first frame
+ *  of a session (and any frame right after a `log.clear()`) arrives with no prefix at all. */
+const INK_ERASE_PREFIX = /^(?:\x1b\[2K|\x1b\[1A|\x1b\[G)+/;
+
+/** How many PHYSICAL terminal rows `frame` occupies at `width` — the reflowed height, which is what a resize
+ *  changes and what Ink's own `previousLineCount` (logical lines, at the OLD width) gets wrong. Counts the frame's
+ *  own lines only: Ink writes `str + "\n"` and records `split("\n").length`, i.e. logical lines + 1, so callers add
+ *  that trailing term themselves — deliberately, so the convention stays visible at the point of use (W-R t4). */
+export function physicalRows(frame: string, width: number): number {
+  let rows = 0;
+  for (const line of frame.replace(/\n$/, "").split("\n")) rows += Math.max(1, Math.ceil(stringWidth(line) / width));
+  return rows;
 }
 
 export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeStdout {
   let suppressNextWrite = false;
+  let frame: string | undefined;                 // the last live frame, as painted
+  let justErased = false;                        // previous write was erase-only → the next bare write is <Static>
   const targetWrite = stdout.write.bind(stdout) as (...args: any[]) => boolean;
+  // Four kinds of write reach here and only one of them is the live frame. FRAME writes carry the erase prefix (or
+  // none, at first paint) and content: record what remains. ERASE-ONLY writes (`Instance.clear()`) leave nothing
+  // after the strip — the tree is unchanged, so keep the frame we have. STATIC writes are committed scrollback;
+  // ink.js emits them as `log.clear()` → `write(staticOutput)` → `log(output)`, so the bare write immediately after
+  // an erase-only one is the scrollback and the one after it is the real frame. SUPPRESSED writes never reached the
+  // terminal, so they never painted anything.
+  const record = (chunk: unknown): void => {
+    if (typeof chunk !== "string") return;
+    const prefix = chunk.match(INK_ERASE_PREFIX)?.[0] ?? "";
+    const body = chunk.slice(prefix.length);
+    if (body === "") { justErased = true; return; }
+    if (prefix === "" && justErased) { justErased = false; return; }
+    justErased = false; frame = body;
+  };
   const write = ((...args: any[]): boolean => {
-    if (!suppressNextWrite) return targetWrite(...args);
+    if (!suppressNextWrite) { record(args[0]); return targetWrite(...args); }
     suppressNextWrite = false;
     const callback = args.find((arg) => typeof arg === "function") as (() => void) | undefined;
     if (callback) queueMicrotask(callback);
@@ -57,6 +91,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
 
   return {
     stdout: stream,
+    lastFrame() { return frame; },
     repaint(runInkWrite) {
       suppressNextWrite = true;
       try { runInkWrite(); } finally { suppressNextWrite = false; }
