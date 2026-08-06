@@ -108,6 +108,11 @@ adds on top of it; the note is never trusted past this section.
   introspects modes *at that moment* (a conditional enable would be invisible to an idle-state check), and
   greps the bundle for mouse-enable emissions (`\x1b[?1000/1002/1003/1006h`). Until it lands, the mouse
   axis stays open, not closed.
+  **RESOLVED 2026-08-06 — both are right, about different renderers (§12 item 17).** Click-to-expand is
+  real and live-reproduced, in upstream's **fullscreen** renderer only; the fleet measured the **inline**
+  renderer, where its reading is correct. The conditional-enable instinct above was the right one — the
+  condition is the rendering mode, not the presence of a fold. The bundle-grep half would never have
+  worked: the escapes are **composed at runtime from integers**, so the literal `?1000h` appears nowhere.
 
 ### §5.3 Missing / partial
 Carried per-epic in §6; the triage's §2 tables are the full inventory. One traceability catch made while
@@ -271,49 +276,134 @@ fixture; the generic don't-ask-again row's copy matches the rule it actually wri
 
 ---
 
-### Stream R · Repaint & geometry — "one frame primitive owns every reset" (8 findings + 1 promoted + 1 probe)
+### Stream R · Repaint & geometry — "the renderer's caches must be voidable" (8 findings + 1 promoted + 1 probe)
 
-#### EP-R0 · MOUSE-1 probe (owner testimony vs qa2-02) — P0, first
-Re-probe click-to-expand per §5.2: bundle grep for mouse-enable emissions; tmux mode introspection *with a
-folded tool row on screen*; live click. Deliverable is a verdict written into §12, not code. If the owner's
-observation reproduces, a new epic is cut at Wave R spec time; if not, the axis closes with evidence the
-owner can check against their terminal (and we ask them for a screen recording — §11).
+> **Re-cut by the grounding round, 2026-08-06.** The stream's original thesis — *one frame primitive owns
+> every reset* — did not survive: the primitive it was to be extracted from does not exist, and the four
+> findings turn out to sit on **three different stale caches** inside Ink (the erase line count, the
+> `lastOutput` dedupe, and the full-screen branch that bypasses log-update entirely). The shared capability
+> is real but is stated correctly as *ccx cannot void the render stack's caches and force a full,
+> correctly-sized repaint*. Net effect on scope: **EP-R0 closed with no code**, **EP-R3 withdrawn as not a
+> defect**, `qa2-06` merged into EP-R1, and EP-R2's dependency on EP-R1 retracted. Two epics grew
+> (EP-R1 gained a gating spike; EP-R5 gained two palettes and a dependency decision). Evidence: §12
+> items 11–19.
+
+#### EP-R0 · MOUSE-1 probe (owner testimony vs qa2-02) — **CLOSED 2026-08-06, no code**
+Verdict in §12 item 17. Click-to-expand is real and live-reproduced, but it belongs to upstream's
+**fullscreen renderer** — SGR mouse reporting welded to the alternate screen, advertised in upstream's own
+switch notice at L453184 alongside click-to-position-cursor and copy-on-select. The owner runs that mode;
+the fleet's isolated profile ran inline, where its all-zeros reading is correct. **No new Wave R epic is
+cut**: ccx has no alternate-screen mode at all, so this is "missing the fullscreen renderer", which is a
+roadmap question (§11 FULLSCREEN-1), not a repaint defect. No screen recording needed.
 
 #### EP-R1 · Width-change clear-and-repaint (qa2-08, qa2-01, qa2-09, qa2-10a) — P0
 1. **Context:** QA-2: 15/15 width-matrix cells fail; stale rules accumulate the entire resize history;
    mid-stream resize multiplies the spinner ×3; claude passes 15/15. Height-only resizes are always clean
    (triage §5.6) — the defect is pinned to the width path.
-2. **Decisions:** `[DECIDED-AUTO]` generalize the proven-good path: the ctrl+o pager's close path already
-   clears-and-repaints correctly (`qa2-11` evidence). One primitive, invoked from every frame-invalidating
-   trigger. Alternative — per-site patches — rejected: C1b (`/clear`) shows the same missing primitive
-   from another trigger; per-site fixes would multiply.
-3. **Current state:** `[BUG]` — no SIGWINCH-driven clear; Ink repaints in place at the new width over
-   stale rows.
-4. **Work items:** (new) shared clear-and-full-repaint primitive; (modify) width-change handler invokes
-   it (streaming and idle); (modify) picker/dialog widths re-derive on resize (qa2-10a).
+2. **Decisions:** the original `[DECIDED-AUTO]` is **RETRACTED** (§12 items 13, 19) — the pager close path
+   is `onClose={() => setTranscriptOpen(false)}` and nothing more, so there was no proven-good path to
+   generalize. Replacing it: **`[DECIDED]` fix the two real causes, and copy upstream's *principle* rather
+   than its bytes.** Upstream never consults the previous frame's geometry, so its erase cannot be short
+   (§12 item 15). A verbatim port is rejected: upstream's renderer owns the whole viewport and repaints
+   every cell from its own buffer, while ccx's visible screen is partly Ink `<Static>` that Ink will not
+   re-emit — erasing the viewport and homing would orphan the transcript. Ink's own escape hatch
+   (`clearTerminal + fullStaticOutput + output`) is also rejected: it carries `ESC[3J`, which destroys the
+   scrollback the transcript lives in, and re-emitting static history is O(session) per resize.
+3. **Current state:** `[BUG]`, and it is **two** independent defects, not one.
+   (a) **Nothing in `harness/src/` subscribes to resize at all**; Ink's own handler re-runs Yoga layout and
+   re-serializes the existing tree without re-rendering React, so width-derived strings such as the
+   composer's `RULE.repeat(width)` freeze at the launch width. (b) Ink erases with a **logical** line count
+   (`log-update.js`) while a width change makes the emulator re-wrap the painted frame into a different
+   number of **physical** rows, so the erase falls short and the remainder survives and accumulates.
+   `qa2-09`'s "self-heals at end of turn" is refuted (§12 item 14), and `qa2-06` merges in here (§12
+   item 19) — it reproduces only after a width change and is un-erased dynamic output, not `<Static>`.
+4. **Work items:** **(spike, first)** measure emulator reflow behaviour and pick the erase strategy — see
+   Dependencies; (new) a resize subscription that makes terminal size real React state, threaded to
+   `ChatApp.tsx:140/143`; (new) frame-geometry tracking via the **existing** `ResumeSafeStdout` proxy
+   (`chatMain.tsx:40-65`), which already intercepts every byte Ink writes; (new) the erase itself, emitted
+   through that proxy's TTY-gated write shape, `deps`-overridable for tests; (modify) picker/dialog widths
+   re-derive on resize (`qa2-10a`). **Explicitly not**: bumping `staticEpoch` (remounting `<Static>`
+   replays the whole scrollback, and a resize does not change the transcript) and reusing
+   `useChat.ts:336`'s `\x1b[2J\x1b[3J\x1b[H` payload (the `3J` wipes scrollback).
 5. **Acceptance:** the QA-2 width matrix re-run passes every cell — one composer block, zero stale rules,
-   both directions, including mid-stream; the `/model` picker never leaves a stale narrow copy.
-6. **Dependencies:** the primitive lands first; EP-R2 consumes it.
+   both directions, including mid-stream and after an interrupt; the `/model` picker never leaves a stale
+   narrow copy; a submit after a width change leaves no placeholder above the prompt (`qa2-06`).
+   **The matrix MUST be run under tmux or a real terminal, never under `capture-frames.py`** — pyte
+   truncates instead of reflowing and therefore cannot reproduce this defect at all (§12 item 16). There is
+   no resize regression test in the repo today; adding one under a reflowing emulator is part of this epic.
+6. **Dependencies:** **a spike gates the implementation.** The computed-physical-row erase
+   (`Σ max(1, ceil(displayWidth(line)/newWidth))`) is only valid if the emulator reflows. Measured so far:
+   **tmux reflows, pyte does not**; at least one real terminal is still unmeasured. The spike also has a
+   confirmed second requirement — a resize can push frame rows off the top of the viewport, so **the erase
+   count must be clamped to the rows still on screen**. Promote or discard the strategy on that evidence.
+   **EP-R2 no longer depends on this epic** (§12 item 19).
 
-#### EP-R2 · Reset repaint: `/clear` blank pane (qa5-01) — P0
-`/clear` currently leaves a fully blank pane until the next keystroke (process alive). Work: the clear
-handler rebuilds state **and** invokes EP-R1's primitive. Acceptance: `/clear` immediately renders banner +
-composer + footer with zero keystrokes. Depends on EP-R1.
+#### EP-R2 · Reset repaint: `/clear` blank pane (qa5-01) — P0, **independent of EP-R1**
+`/clear` leaves a fully blank pane until the next keystroke (process alive). **The filed diagnosis is
+wrong and so was the dependency edge** (§12 item 19). ccx's own code is correct — `useChat.ts:336` already
+emits the erase and homes the cursor. The repaint is never written because Ink's `Instance.clear()`
+(`ink.js:213`) resets log-update's counters but **not `this.lastOutput`**, so the post-clear frame is
+byte-identical to the pre-erase one and the dedupe at `ink.js:132` skips the write. It is byte-identical
+because the transcript lives in `<Static>`, leaving the dynamic frame unchanged by a clear; and the
+`hasStaticOutput` escape at `ink.js:103` is closed by the same event, since wiping `<Static>` makes
+`staticOutput === '\n'`, which that guard treats as empty. **So a clear-only primitive does not fix this** —
+the blocker is a cache EP-R1 never touches. Work: invalidate Ink's `lastOutput` dedupe across a reset,
+by whatever means the implementation proves (the `ResumeSafeStdout` proxy sees every write and is the
+likeliest seam). Acceptance: `/clear` immediately renders banner + composer + footer with zero keystrokes,
+and — matching upstream inline — **the `❯ /clear` echo survives** and the scrollback above is not wiped
+(upstream omits `ESC[3J`; ccx currently sends it, a recorded divergence to fix here).
 
-#### EP-R3 · Bottom-anchored composer (qa2-12) — P1
-Upstream pins the prompt block to the bottom of the pane; ccx sits at the top with up to 30 blank rows
-below on short transcripts. Layout change in the ChatApp frame; watch the Ink frame-height law (F6 lesson:
-a dynamic frame taller than the viewport leaks copies). Acceptance: on a fresh session the composer renders
-at the pane bottom; long transcripts unchanged.
+#### EP-R3 · Bottom-anchored composer (qa2-12) — **WITHDRAWN, not a defect**
+§12 item 12. Measured at 100×40 with the screen pre-filled with markers so unwritten rows are
+distinguishable from painted ones: ccx and upstream-**default** place the composer within one row of each
+other, and **neither pads anything below it**. The "up to 30 blank rows" were unwritten pane rows, an
+artifact of reading the screen with `tmux capture-pane`, which cannot tell a painted blank from an
+untouched cell. Upstream bottom-anchors only in its **fullscreen** renderer (`cZo` L455844, fullscreen
+branch L455888); its default branch (L455996) is a bare fragment with no height and no anchor — which is
+structurally what ccx already does. Building the anchor would also have been actively harmful: a
+bottom-anchored layout is by definition a full-height frame, which puts ccx permanently on the
+`outputHeight >= rows` branch (`ink.js:121`) that bypasses log-update and desynchronizes its bookkeeping
+(§12 item 19) — it would have made EP-R1 untestable. **Reclassified from defect to unimplemented mode**
+and folded into §11 FULLSCREEN-1.
 
-#### EP-R4 · Scrollback hygiene (qa2-11 torn borders, qa2-06 committed placeholder) — P2 batch
-Pager close leaves torn modal-border fragments in scrollback; the pre-turn placeholder is committed above
-the submitted prompt. Acceptance: after open/close and after a submit, scrollback contains neither artifact.
+#### EP-R4 · Pager-close debris (qa2-11) — P2, **`qa2-06` moved to EP-R1**
+Closing the ctrl+o pager leaves torn modal-border fragments. **Cause found** (§12 item 19): raw pty shows
+**zero bytes** for 8 s after Escape, then an erase of 7 lines for a frame that occupied ~36. The pager
+frame is taller than the pane, so Ink takes the full-screen branch at `ink.js:121` and writes **straight to
+stdout, bypassing log-update**, leaving `previousOutput`/`previousLineCount` stale for everything that
+follows. This is the concrete mechanism behind the programme's recorded "a frame taller than the viewport
+leaks copies" hazard, and it means the branch does not merely cost a redraw — it **desynchronizes the
+renderer's bookkeeping**, which is a standing hazard for any future full-height surface.
+`qa2-06` (committed placeholder) is **removed from this epic**: the filed repro does not reproduce, it
+fires only after a width change, and it is un-erased dynamic output from EP-R1's cause.
+Acceptance: after opening and closing the pager, the scrollback contains no border fragments, and a
+subsequent resize erases correctly (proving the bookkeeping was resynchronized, not merely papered over).
+Upstream divergence recorded, not chased: its ctrl+o swaps the whole screen rather than overlaying.
 
 #### EP-R5 · Diff-body syntax highlighting (qa2-03, promoted from the unwaved bucket) — P1
-Edit/Update diff bodies render flat; claude tokenizes each diff line. The highlighter exists (fenced code);
-apply per diff row with the diff gutter colors composing over it. Acceptance: an Edit tool row shows
-syntax-colored tokens inside added/removed/context lines, matching the QA-2 fixture frames.
+Confirmed as an observation; **the fix shape on file is wrong in three ways** (§12 item 18).
+1. **Removed lines must stay flat.** L419813: `E = y === "-" ? [[cWo(o), _]] : i2p(s, _, o)` — upstream
+   tokenizes added and context lines only. ccx's flat `-` row is already correct; highlighting it would be
+   a regression. The original acceptance criterion ("tokens inside added/**removed**/context lines") is
+   therefore wrong and is corrected here.
+2. **The highlighter does not exist for this surface.** `harness/src/tui/highlight.ts` is a clone of
+   upstream's *markdown fenced-code* map `DhH` (L420495) — four chalk colours, ten languages, written
+   zero-dep by an explicit recorded trade for a LOW row. The diff path is real highlight.js behind a
+   24-scope truecolor map. ccx also ported `H2p` (L419987), upstream's *fallback* renderer for when
+   highlighting is **off** (gated by `CLAUDE_CODE_SYNTAX_HIGHLIGHT`, `uAr()` L419858).
+3. **Three palettes, not one.** L419855 carries `K$p` (Monokai/dark), `Y$p` (light, entirely different
+   values), and `jmH` (256-colour fallback via palette indices). Language detection is not
+   extension-only — `X$p` (L419856) maps bare filenames (`Dockerfile`, `Makefile`, `Rakefile`, `Gemfile`,
+   `CMakeLists`). ccx's band colours cannot be judged wrong until compared **per theme**.
+**Composition is band-under-token:** the diff owns the background only (`ZmH`, L419733) — pinned live on a
+word-diff row where one string token kept its foreground while the background flipped and flipped back.
+**Work:** take the `highlight.js` dependency (§11 HLJS-1, controller-recommended); port the three scope
+maps and the filename map; make wrapping segment-aware (`diffRender.ts:152` `plainRows` currently wraps a
+plain string and emits one segment); invert the word-diff arm so tokens come first and the background
+overlays. `Segment` (`render.ts:18`) already carries `color` and `bg` independently, so the overlay itself
+is a spread. **Acceptance:** an Edit tool row shows token-level colours inside **added and context** lines
+and a **single flat run on removed** lines; a word-diff boundary changes only the background; the palette
+matches upstream per theme; a `Dockerfile` edit is detected as dockerfile.
 
 ---
 
@@ -429,8 +519,8 @@ never disagree in the same frame.
 |---|---|
 | EP-T1 | The P1 harm: destructive commands unconsulted |
 | EP-T2, EP-T3, EP-T4 | Promised affordances that lie; invisible failure |
-| EP-R0 | Open contradiction with owner testimony — cheapest decisive probe |
-| EP-R1, EP-R2 | The other P1 + its sibling trigger |
+| ~~EP-R0~~ | **Closed 2026-08-06 with no code** — settled by the grounding round (§12 item 17) |
+| EP-R1, EP-R2 | The other P1 + a sibling trigger with a *separate* cause (grounding corrected the edge) |
 | EP-S1, EP-S2 | Display lies about model state; commands dead on the main path |
 | EP-C1, EP-C7 | Architecture prerequisite; highest-frequency P2 keys |
 
@@ -440,12 +530,17 @@ which are opportunistic.
 ## §8 Dependency & parallelism map
 
 - **Wave order is strict** (owner): T → R → S → C. Within a wave, epics parallelize per SDD except:
-  EP-T1 → EP-T3/EP-T5 (mode semantics first); EP-R1 → EP-R2 (primitive first); EP-C1 → EP-C4/C6/C8
-  (footer architecture first).
+  EP-T1 → EP-T3/EP-T5 (mode semantics first); EP-C1 → EP-C4/C6/C8 (footer architecture first).
+  **`EP-R1 → EP-R2` is RETRACTED** (§12 item 19): they fix different caches — EP-R1 the erase count,
+  EP-R2 Ink's `lastOutput` dedupe — and a clear-only primitive leaves `/clear` broken. They parallelize.
+- **New Wave R edge: a spike gates EP-R1's implementation** — the erase strategy depends on emulator
+  reflow behaviour, measured so far as tmux yes / pyte no. Deliverable is a strategy verdict, not code.
 - Shared-surface ownership: the dialog registry (EP-T2/T3/T6) is one owner or sequenced tasks; the
-  keymap table (EP-C7, EP-S4's paging keys) likewise.
+  keymap table (EP-C7, EP-S4's paging keys) likewise. **EP-R1, EP-R2 and EP-R4 all touch Ink's render
+  bookkeeping** — EP-R4's cause (the full-screen branch bypassing log-update) is the same subsystem, so
+  sequence them under one owner rather than parallelizing blindly.
 - Probes precede specs where §6 says probe-first: EP-T4 (SDK transport failure), EP-T3 (plan-kind wire),
-  EP-R0 (mouse), EP-C5 (suggestion source).
+  EP-C5 (suggestion source). ~~EP-R0 (mouse)~~ — landed 2026-08-06.
 
 ## §9 Progress *(living)*
 
@@ -473,8 +568,25 @@ which are opportunistic.
   free-type unverified slash commands into the canon binary (the `/history`→`/design-sync` incident).
 - **D7 [DECIDED-AUTO]** Build bypass mode (EP-T5) rather than omit it — fidelity canon; the consent gate
   is the safety mechanism.
-- **D8 [DECIDED-AUTO]** MOUSE-1 is a probe, not a build: neither the owner's testimony nor `qa2-02` is
-  trusted until the re-probe lands (§5.2).
+- **D8 [DECIDED-AUTO, LANDED 2026-08-06]** MOUSE-1 was a probe, not a build: neither the owner's testimony
+  nor `qa2-02` was trusted until the re-probe landed (§5.2). **Outcome: both were right about different
+  renderers** (§12 item 17). The decision to withhold trust from both sides is retained as precedent — the
+  reconciling fact (a whole second rendering mode) was reachable only by running the program, and would
+  have been missed by adjudicating either testimony against the bundle alone.
+- **D10 [DECIDED, Wave R grounding]** When owner testimony and fleet measurement conflict, **check what
+  configuration each side was running before deciding who is wrong.** Wave R's two largest overturns
+  (`qa2-12` withdrawn, MOUSE-1 reconciled) both came from the same root: the fleet's isolated profile and
+  the owner's real profile put Claude Code in **different rendering modes**, so the two sides were
+  describing different programs. The fleet's isolation discipline is correct and stays — but an isolated
+  run measures the *default* configuration, which is not necessarily the one anybody actually uses.
+  Rejected alternative: treat owner testimony as lower-grade evidence than instrumented measurement. It
+  would have closed both questions wrongly.
+- **D11 [DECIDED, Wave R grounding]** **No single instrument is trusted for frame evidence.**
+  `capture-frames.py` (pyte) truncates instead of reflowing, so it cannot see resize defects at all;
+  `tmux capture-pane` cannot distinguish a painted blank row from an unwritten one, which manufactured
+  `qa2-12`. Every frame claim names its instrument, and any claim about repaint or blank space is made
+  under at least two (§12 items 12, 16). Rejected alternative: standardize on one instrument for
+  comparability — it would trade a known blind spot for an invisible one.
 - **D9 [DECIDED-AUTO, Wave T grounding]** Grounding runs BEFORE each wave's feature spec, as three
   parallel workers: bundle transcription, ccx current-state pinning, live probes. Six of Wave T's
   premises were overturned by it (§12) — including one epic that would have chased a nonexistent bug.
@@ -728,6 +840,51 @@ surface under test. Probes needing a clean session must set `settingSources: []`
     diff path's theme behaviour is an open question, not an assumption. Version drift is otherwise nil:
     every RGB matches a 2.1.220 constant, and `strings -a` on the 223 binary still carries
     `Monokai Extended`, `addDecoration`, `deleteWord`.
+    **Caution resolved, and it grows the epic (controller, L419855-419856).** Opening that line shows
+    **three** maps side by side, not one: `K$p` is the Monokai/dark map the live measurement caught
+    (`keyword` rgb(249,38,114), `string` rgb(230,219,116)); `Y$p` is a **light** map with entirely
+    different values (`keyword` rgb(167,29,93), `string` rgb(24,54,145)); and `jmH` is a **256-colour
+    fallback** built from palette indices (`Z3(13)`, `Z3(14)`, `Z3(12)`…) for terminals without truecolor.
+    So unlike the fenced-code map, **the diff highlighter IS theme-dependent, and it also degrades for
+    non-truecolor terminals** — EP-R5 must ship three palettes, not one, and ccx's band colours cannot be
+    judged wrong until the comparison is made per theme. Two further requirements surface on the same
+    lines: `X$p` (L419856) maps bare **filenames** to languages (`Dockerfile`, `Makefile`, `Rakefile`,
+    `Gemfile`, `CMakeLists`), so language detection is not extension-only; and `uAr()` (L419858) reads
+    `CLAUDE_CODE_SYNTAX_HIGHLIGHT`, i.e. highlighting is **gated**, which is exactly why the fallback
+    renderer `H2p` that ccx already ported exists. All of this strengthens HLJS-1's recommendation: the
+    scope is a faithful three-palette hljs port, and hand-extending a four-colour lexer to reach it is not
+    a smaller job than taking the dependency.
+19. **The reset cluster: all three confirmed, all three diagnoses on file wrong, and EP-R2 does not
+    depend on EP-R1 the way the spec assumed.**
+    **`qa5-01` (`/clear` blank pane).** The erase happens and the cursor is homed correctly — ccx's own
+    code is fine (`useChat.ts:336` already emits `\x1b[2J\x1b[3J\x1b[H`). **The repaint is never written**,
+    because Ink's `Instance.clear()` (`ink.js:213`) resets log-update's counters but **not
+    `this.lastOutput`**, so the post-clear frame is byte-identical to the pre-erase one and the dedupe at
+    `ink.js:132` (`if (!hasStaticOutput && output !== this.lastOutput)`) skips the write. It is
+    byte-identical precisely because the transcript lives in `<Static>` — the dynamic frame (composer,
+    status bar) is unchanged by a clear. The `hasStaticOutput` escape is closed by the same event: wiping
+    `<Static>` makes `staticOutput === '\n'`, which the guard at `ink.js:103` treats as empty.
+    **Therefore a clear-only primitive fixes `qa2-08` but leaves `qa5-01` broken** — ccx already erases;
+    the blocker is Ink's dedupe. **EP-R2 needs its own remedy and cannot be a consumer of EP-R1's.**
+    **`qa2-11` (pager border debris).** Raw pty shows **zero bytes** for 8 s after Escape, then an erase
+    of 7 lines for a frame that occupied ~36. Cause: the pager frame is taller than the pane, so Ink takes
+    the full-screen branch at `ink.js:121` and writes **straight to stdout, bypassing log-update entirely**,
+    leaving `previousOutput`/`previousLineCount` stale. This is the concrete mechanism behind the
+    programme's recorded "a frame taller than the viewport leaks copies" hazard — that branch does not just
+    cost a redraw, it **desynchronizes the renderer's bookkeeping** for everything that follows.
+    **`qa2-06` (committed placeholder).** The filed repro does **not** reproduce (clean across nine submits
+    with a scrolled transcript). It reproduces **only after a width change**, and it is neither `<Static>`
+    nor an echo: it is un-erased dynamic composer output, from the same logical-vs-physical count as
+    item 11. **It merges into EP-R1 and should not be a separate P4 item.**
+    **Upstream, for contrast:** `/clear` emits no escape of its own — the renderer owns it, through one
+    forced-repaint primitive (`forceRedraw` → `forceFullReset` → `TJr(next, "clear"|"resize"|"offscreen")`).
+    Live inline claude repaints the whole block with zero keystrokes and keeps the `❯ /clear` echo. Two
+    divergences to record: upstream inline erases only the viewport (**no `3J`** — ccx wipes scrollback),
+    and ctrl+o swaps the whole screen rather than overlaying.
+    **The shared-primitive question, answered properly:** yes, one capability underlies all four findings —
+    *ccx cannot void the render stack's caches and force a full, correctly-sized repaint* — but the spec's
+    stated rationale for it was false (there is no good pager path to generalize) and its dependency edge
+    was backwards. Ship EP-R1 as "erase on resize"; EP-R2 is a separate fix for a separate cache.
 
 ## §13 Tracking map
 
