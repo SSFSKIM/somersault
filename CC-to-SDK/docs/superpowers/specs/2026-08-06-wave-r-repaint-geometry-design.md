@@ -118,10 +118,16 @@ leaving row positions untouched.
 **Still to measure:** at least one real terminal (the owner's, ideally), and the behaviour of a line that
 is *exactly* the pane width, where an off-by-one in wrap accounting hides.
 
-**A second requirement the spike already produced, which no code reading would have surfaced:** when
-content reflows taller, the viewport **scrolls**, pushing the top of the frame off screen. So an erase
-count computed from frame geometry **must be clamped to the rows still on screen**; erasing the raw count
-walks past the viewport top and damages what is above it.
+**A second requirement the spike produced** — *and then corrected, see below*: when content reflows taller,
+the viewport **scrolls**, pushing the top of the frame off screen, so an erase count computed from frame
+geometry appeared to need clamping to the rows still on screen.
+
+> **CORRECTED by SP-R0's own measurement.** The clamp is **not** what makes the erase safe. Unclamped 14
+> and clamped 11 produced byte-identical screens, history size included: cursor-up (`ESC[1A`) **saturates
+> at the top margin and cannot reach the scrollback**, so an over-erase can never walk past the viewport
+> top. It can still destroy *visible* rows — the spike measured six live transcript rows lost — so the
+> protection that matters is computing the right count, not bounding a wrong one. Keep the clamp as a
+> cheap one-line guard against a miscalculation; do not present it as the safety mechanism.
 
 ### The reframing that came out of measuring (controller, and it changes the spike)
 
@@ -176,6 +182,31 @@ real transcript above the frame and repeated renders, not a single synthetic pai
 `qa2-08` against the real `ccx` binary first, and only then evaluate strategies against that reproduction.**
 A synthetic harness that cannot show the bug cannot certify a fix — which is the same trap as the pyte
 instrument (W-R2), arriving from a different direction.
+
+### SP-R0 — LANDED 2026-08-06. Reproduced, characterised, strategy chosen.
+
+Full verdict: `$CLAUDE_JOB_DIR/tmp/wave-r-sp-r0-verdict.md`. Strategy decision is W-R6.
+
+**Reproduced on the first attempt** against the real binary, from a fresh session with **no transcript**:
+120×40 → 80×40 shows two composer blocks and three residue rows. Raw pty bytes settle two things a screen
+capture cannot — Ink **does** re-render on `SIGWINCH` and soft-wraps the still-120-character rule itself
+(defect (i) confirmed), and its erase is `eraseLines(7)` where the reflowed frame occupies **10** rows.
+
+**Conditions the defect requires** — narrower than anyone assumed:
+1. a width **shrink** (grow produces 0 residue),
+2. at least one emitted frame line longer than the new width,
+3. at least one row of content **above** the frame on screen.
+
+Nothing else. Not a transcript, not a full pane, not scrollback.
+
+**Residue is exactly** `min(rowsAboveFrame, physicalRows(prev @ newWidth) − logicalLines(prev))` —
+measured 3 per shrink, additive across widths, never cleaned.
+
+**That formula also explains the controller's negative result completely**, which is the satisfying part:
+the synthetic probe painted its frame at the **top** of an empty pane, where `rowsAboveFrame` is 0, so the
+residue fell off the viewport before any erase ran. The probe was not badly built; it was missing
+condition 3, and the formula predicts its exact behaviour. A diagnosis that explains its own earlier
+counter-evidence is worth more than one that merely fits the bug.
 
 **Recording:** the verdict goes into this spec's `## Surprises & Discoveries` and the chosen strategy into
 the `## Decision Log` as W-R6, before EP-R1's first line of implementation.
@@ -429,7 +460,28 @@ A9, A10, A11.
   beside the Agent SDK's bundled ~270 MB CLI binary. *Rejected alternative:* extend `highlight.ts`. It
   costs the **same** structural work (segment-aware wrapping, word-diff inversion) and still misses the
   palettes and ~373 of ~383 languages — structurally right and visibly wrong.
-- **W-R6 [PENDING SP-R0]** The erase strategy. Written here before EP-R1's first line of implementation.
+- **W-R6 [DECIDED, SP-R0 landed 2026-08-06]** **Ship strategy (a) — erase `physicalRows(previousFrame,
+  newWidth) + 1` — gated by strategy (c) used as a *reflow oracle* rather than as a replacement.**
+  Evidence: replaying `ccx`'s real frame bytes across a real resize, (a) left a perfectly clean screen.
+  *Rejected:* **(b)** erase-viewport-and-repaint also worked but **provably duplicates scrollback on every
+  resize** (the duplicate rows were captured), and for `ccx` it means re-emitting the whole session because
+  Ink will not re-emit `<Static>`. *Repaired rather than rejected:* **(c)**. Its refutation holds only for
+  the cursor **row**; the cursor **column** is not pinned and moves 121 → 41 across a 120→80 reflow —
+  exactly `((121−1) mod 80) + 1` — whereas pyte destroys the cell instead. That is a working reflow oracle
+  at the cost of one DSR round-trip, and it needs no new stdin reader: `keys/parse.ts:133-134` already
+  routes an unmapped CSI final byte to `ignored("unknown-sequence")`, and `CSI_LETTER` (`parse.ts:46`) has
+  no `R`, so a DSR reply is already swallowed safely (controller-verified).
+  **The gate is required because the errors are asymmetric**: under-erasing is today's cosmetic residue,
+  while over-erasing **destroyed six live transcript rows** in the spike's own test. Never correct
+  optimistically.
+- **W-R7 [DECIDED, from an incident]** **Subagents do not drive GUI applications on the owner's machine.**
+  Measuring Apple Terminal's reflow policy by scripting `Terminal.app` left a modal sheet on a window,
+  which blocked that application's entire AppleEvent queue — including the calls needed to dismiss it.
+  Recovery required a human click. The cost/benefit is plainly wrong: a datum worth one line of a spec put
+  the owner's primary terminal into a state only they could clear. Terminal-behaviour facts that need a
+  real GUI terminal are gathered by **handing the owner a 30-second script to run**, never by driving the
+  app. *Rejected alternative:* force-quitting to recover — it would have killed the owner's own long-lived
+  shells (the process had been up 3 days 22 hours).
 
 ## Open questions
 
@@ -438,7 +490,8 @@ A9, A10, A11.
 | **HLJS-1** — override W-R5 and stay zero-dep? Proceeding on the recommendation unless told otherwise | Owner (override only) | Spec review |
 | **FULLSCREEN-1** — does upstream's fullscreen renderer become a roadmap item, and at what priority? Out of scope for Wave R either way. It is a promoted opt-in, not a silent rollout (parent §12 item 17a) | Owner, with a controller recommendation | Wave R close-out |
 | **MOUSE-1 residual (b)** — which row does the owner click: the collapsed `Ran N shell commands` summary, or something reading `+N lines (ctrl+o to expand)`? Never observed as a click target across twelve polls. Does not block anything | Owner | Whenever convenient |
-| **SP-R0** — does any real terminal truncate rather than reflow? If so the wave changes size and the owner is told before implementation | Controller (spike) | Before EP-R1 |
+| ~~**SP-R0** — does any real terminal truncate rather than reflow?~~ **LANDED 2026-08-06.** Reproduced, characterised, strategy chosen (W-R6). The wave does not change size | — | closed 2026-08-06 |
+| **APPLE-TERM-1** — does Apple Terminal reflow on narrow? The only measurement the spike could not take, and the owner's own terminal. **W-R6's design does not depend on the answer** (the DSR oracle detects the policy at runtime), so this is confirmation, not a gate. Needs a 30-second manual run of the spike's `dsr2.py` in a Terminal window | Owner (30 seconds, whenever convenient) | Not blocking |
 
 ## Surprises & Discoveries
 
@@ -457,6 +510,18 @@ changed this document:
    of reflowing. A regression test written with the standard tool would have passed before the fix, after
    a wrong fix, and with no fix at all — and there is no resize test in the repo today, so the highest
    priority defect in the sprint has zero coverage and the obvious way to add it is blind.
+4. **The defect's real precondition is one nobody had named**, and it retroactively vindicated a failed
+   probe. `qa2-08` needs *content above the frame*; with the frame at the top of an empty pane the residue
+   scrolls off before the erase runs. The controller's synthetic probe had been written off as "could not
+   reproduce"; the residue formula from SP-R0 predicts its behaviour exactly. **A probe that fails is
+   evidence about its conditions, not only about the hypothesis** — and the diagnosis that explains the
+   earlier counter-evidence is the one to trust.
+5. **A measurement cost the owner a manual recovery, and the lesson is a standing rule (W-R7).** Trying to
+   read Apple Terminal's reflow policy by scripting `Terminal.app` left a modal sheet that blocked the
+   application's whole AppleEvent queue — including the calls that would dismiss it. Nothing was lost and
+   isolation held (real `prefs.json` mtime unchanged), but clearing it needed a human click on a terminal
+   that had been running for nearly four days. The agent was right not to force-quit. The rule that
+   follows: **never drive a GUI application on the owner's machine** — hand them a script instead.
 
 ## Outcomes & Retrospective
 
