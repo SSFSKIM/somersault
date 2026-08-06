@@ -1526,16 +1526,34 @@ export function useChat(
       else {
         const target = resolveAutoModel(model);
         if (model !== target) {
-          await session.setModel(target).catch(() => {});
+          // Same rule as the mode below (and as host.ts's applyPlanUpgrade): the MODEL truth moves only once
+          // the engine took the swap, and a refused swap is reported rather than announced as done. The old
+          // `.catch(() => {})` painted the new model and claimed the switch either way, so a failed swap left
+          // the chip on a model the session isn't running while auto quietly fell back to default.
+          let swapped = true;
+          try { await session.setModel(target); }
+          catch (e) { swapped = false; if (!disposed.current) append([{ text: `✗ auto — model swap to ${target} failed (${(e as Error)?.message ?? e}); ${model} doesn't support auto, so the engine may fall back to default`, color: role("error") }]); }
           if (disposed.current) return;
-          setModel(target);
-          append([{ text: `↻ auto — switched model to ${target} (${model} doesn't support auto)`, dim: true }]);
+          if (swapped) {
+            setModel(target);
+            append([{ text: `↻ auto — switched model to ${target} (${model} doesn't support auto)`, dim: true }]);
+          }
         }
       }
     }
     await new Promise<void>((r) => setTimeout(r, 0));
     if (disposed.current) return;
-    await session.setPermissionMode(next).catch(() => {});
+    // THE MODE TRUTH MOVES ONLY ON SUCCESS — same rule and same ordering as host.ts's applyPlanUpgrade.
+    // `allowDangerouslySkipPermissions` is set from the LAUNCH mode only (resolveOptions.ts), and the engine
+    // enforces that one layer down (bundle L562709: "…because the session was not launched with
+    // --dangerously-skip-permissions"; L562714 does the same for the model-gated `auto`). The old
+    // `.catch(() => {})` here swallowed that refusal and the next line painted the chip anyway — a status bar
+    // showing bypass in red while the engine sat in the previous mode. Report it and stay put instead.
+    try { await session.setPermissionMode(next); }
+    catch (e) {
+      if (!disposed.current) append([{ text: `✗ ${next} refused by the engine (${(e as Error)?.message ?? e}) — staying in ${mode}`, color: role("error") }]);
+      return;
+    }
     if (!disposed.current) setMode(next);
   }
   function cycleMode() { void applyMode(ladderNext(mode)); }
