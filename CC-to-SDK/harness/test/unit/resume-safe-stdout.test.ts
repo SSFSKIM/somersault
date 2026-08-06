@@ -76,6 +76,30 @@ describe("ResumeSafeStdout.lastFrame", () => {
     expect(out.lastFrame()).toBe("live frame\n");
     expect(terminal.chunks.join("")).toBe(eraseLines(2) + "live frame\n");
   });
+
+  // Kind 5 — Ink's TALL-FRAME path (ink.js:121-124): when outputHeight >= stdout.rows it writes ONE chunk of
+  // clearTerminal + fullStaticOutput + output, i.e. the whole accumulated scrollback of the session followed by
+  // the frame. Nothing in the bytes marks where the scrollback ends and the frame begins, so adopting the chunk
+  // would make lastFrame() the entire session and physicalRows() a count over it — task 4 would then erase the
+  // live transcript. The ctrl+o pager opens taller than the pane every time, so this is a routine path.
+  it("never records Ink's tall-frame clearTerminal chunk as a frame", () => {
+    const { terminal, out } = proxy();
+    out.stdout.write(eraseLines(2) + "live frame\n");
+    const history = Array.from({ length: 40 }, (_, i) => `committed transcript row ${i}`).join("\n") + "\n";
+    const tall = "\x1b[2J\x1b[3J\x1b[H" + history + "pager frame line a\npager frame line b\n";
+    out.stdout.write(tall);
+    expect(out.lastFrame()).toBe("live frame\n");                  // the previous frame is RETAINED, not replaced
+    expect(physicalRows(out.lastFrame()!, 80)).toBe(1);            // …so the height stays small, not 40-odd rows
+    expect(terminal.chunks.join("")).toBe(eraseLines(2) + "live frame\n" + tall);   // bytes still reach the terminal
+  });
+
+  // The same chunk on a virgin proxy leaves us with NO frame rather than a bogus one: undefined is the honest
+  // answer, and task 4's caller already handles it (there is nothing to erase until a real frame lands).
+  it("leaves lastFrame undefined when a tall-frame chunk is the first write", () => {
+    const { out } = proxy();
+    out.stdout.write("\x1b[2J\x1b[3J\x1b[H" + "scrollback\n".repeat(30) + "frame\n");
+    expect(out.lastFrame()).toBeUndefined();
+  });
 });
 
 describe("physicalRows", () => {

@@ -60,14 +60,21 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   let frame: string | undefined;                 // the last live frame, as painted
   let justErased = false;                        // previous write was erase-only → the next bare write is <Static>
   const targetWrite = stdout.write.bind(stdout) as (...args: any[]) => boolean;
-  // Four kinds of write reach here and only one of them is the live frame. FRAME writes carry the erase prefix (or
+  // Five kinds of write reach here and only one of them is the live frame. FRAME writes carry the erase prefix (or
   // none, at first paint) and content: record what remains. ERASE-ONLY writes (`Instance.clear()`) leave nothing
   // after the strip — the tree is unchanged, so keep the frame we have. STATIC writes are committed scrollback;
   // ink.js emits them as `log.clear()` → `write(staticOutput)` → `log(output)`, so the bare write immediately after
   // an erase-only one is the scrollback and the one after it is the real frame. SUPPRESSED writes never reached the
-  // terminal, so they never painted anything.
+  // terminal, so they never painted anything. TALL-FRAME writes are ink.js:121-124 — when `outputHeight >=
+  // stdout.rows` Ink writes ONE chunk of `ansiEscapes.clearTerminal + this.fullStaticOutput + output`, i.e. the
+  // session's entire accumulated scrollback with the frame glued on the end. Nothing in the bytes marks the seam
+  // between them, so it is never recorded: adopting it would make `physicalRows` a count over the whole session and
+  // task 4's erase would eat the live transcript. Keeping the stale frame under-erases instead (cosmetic residue);
+  // EP-R4 resynchronizes after this branch. `clearTerminal` is `\x1b[2J\x1b[3J\x1b[H` (and `\x1b[2J\x1b[0f` on old
+  // Windows) — both open with `\x1b[2J`, which no other write Ink makes ever does.
   const record = (chunk: unknown): void => {
     if (typeof chunk !== "string") return;
+    if (chunk.startsWith("\x1b[2J")) { justErased = false; return; }
     const prefix = chunk.match(INK_ERASE_PREFIX)?.[0] ?? "";
     const body = chunk.slice(prefix.length);
     if (body === "") { justErased = true; return; }
