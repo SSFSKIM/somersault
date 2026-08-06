@@ -640,6 +640,23 @@ surface under test. Probes needing a clean session must set `settingSources: []`
     rendering is made from this round. The unblock recipe is a seeded `$HOME/.claude.json` carrying
     `hasCompletedOnboarding` plus a per-project `hasTrustDialogAccepted` / `hasCompletedProjectOnboarding`
     entry, with `ESC[?1049h` in the pty bytes as the proof the mode is actually on.
+16. **Our own frame instrument cannot see the wave's P0 defect** (controller-measured, two commands).
+    The width defect exists because the emulator re-wraps already-painted output when the pane narrows.
+    Measured with one 111-character line in a 120-column pane taken to 80 columns:
+    - **tmux reflows** — the line becomes two physical rows (`ceil(111/80)`), and the content growing by
+      one row **pushed the top row off the viewport into scrollback**.
+    - **pyte does NOT reflow** — it truncates, discarding the overflow and leaving every row in place.
+    Since `scripts/capture-frames.py` is built on pyte, **it structurally cannot reproduce `qa2-08`**: a
+    regression test written against the standard instrument would pass before the fix, after a wrong fix,
+    and with no fix at all. **EP-R1's acceptance must be measured under tmux or a real terminal, and that
+    belongs in the acceptance criteria, not in a comment.** The two instruments have opposite blind spots —
+    pyte hides reflow defects, `tmux capture-pane` cannot distinguish a painted blank row from an unwritten
+    one (item 12) — so neither may be used alone. Any existing frame fixture claiming resize coverage is
+    suspect and must be re-checked.
+    The tmux measurement also adds a requirement no code reading would have surfaced: because a resize can
+    push frame rows off the top of the viewport, **an erase count computed from the frame's geometry must
+    be clamped to the rows still on screen**, or the erase walks past the viewport top and damages what is
+    above it.
 
 ## §13 Tracking map
 
