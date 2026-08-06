@@ -62,6 +62,8 @@ import type { PastedMap } from "./editor.js";
 // echo `bashBorder`. Read per emission so a mid-session /theme change colors the next line correctly.
 const role = (name: "error" | "bashBorder") => resolveThemeColor(themeTokens()[name]);
 const nonEmptyString = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+/** Wave T Task 13: silence, in a live turn, after which the indicator says so (see the watchdog below). */
+const STALL_MS = 10_000;
 
 // ChatSession is promoted to ../session/chatSession.ts (spec A2b §2) so the lib Session and the remote
 // adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
@@ -187,6 +189,28 @@ export function useChat(
   const [retryStatus, setRetryStatus] = useState<RetryStatus | undefined>(undefined);
   const retryRef = useRef<RetryStatus | undefined>(undefined);
   const clearRetry = () => { if (retryRef.current) { retryRef.current = undefined; setRetryStatus(undefined); } };
+  // Wave T Task 13: the STALLED watchdog — the half of the outage surface no frame can announce. Probe 96
+  // measured ~75 s of silence on a blackholed endpoint BEFORE the first api_retry frame exists (vs ~20 ms on
+  // a refused one), so without this the first 75 s of a real outage still look like a healthy turn. Canon's
+  // own detector (`Ss`, L358806-22) is the same shape — one `setTimeout` re-armed from a last-frame stamp,
+  // NOT a polling clock — so the message arm stays a stamp write and the timer does the comparing. Threshold
+  // 10 s: canon's `SWs` is 20 s measured from inside the fetch, ours is measured from the turn clock and has
+  // no earlier evidence to wait for. A guess never outranks a real api_retry frame (the `retryRef` check).
+  const lastMsgAt = useRef(0);
+  const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const disarmStall = () => { if (stallTimer.current) { clearTimeout(stallTimer.current); stallTimer.current = null; } };
+  const armStall = () => {
+    disarmStall();
+    stallTimer.current = setTimeout(() => {
+      stallTimer.current = null;
+      if (Date.now() - lastMsgAt.current < STALL_MS) { armStall(); return; }   // a frame landed after we armed — re-arm for the remainder
+      if (retryRef.current) return;                                            // already saying something truer; the next frame re-arms us
+      const stalled: RetryStatus = { kind: "stalled" };
+      retryRef.current = stalled; setRetryStatus(stalled);
+    }, Math.max(0, STALL_MS - (Date.now() - lastMsgAt.current)));
+    stallTimer.current.unref?.();
+  };
+  useEffect(() => () => disarmStall(), []);
   const docEpoch = useRef(0);              // bumped at every terminal boundary (rewind / clear / real session swap)
   const localSeq = useRef(0);              // monotonic within one epoch — two equal-looking /help runs stay distinct
   const followGen = useRef(0);             // one per follow subscription: a REDELIVERED idle replay reuses its gap identity
@@ -464,10 +488,17 @@ export function useChat(
         // The SAME injected clock the projection uses: the thinking clock's arrival stamps and the `now`
         // the fold row is rendered against must not come from two different sources (a frame-capture
         // fixture pins one of them, and a live-reading LiveTurn would make its output unreproducible).
-        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]); clearRetry();
+        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]); clearRetry(); lastMsgAt.current = Date.now(); armStall();
       }
       else if (ev.kind === "message") {
         const data = ev.data as any;
+        // Wave T Task 13: ANY frame is proof the pipe is alive, api_retry included — canon stamps `mr.lastAt`
+        // per chunk the same way. A stamp write, never a timer rebuild: this arm runs per stream_event delta
+        // (thousands per turn) and re-arming a timeout on each would be the cost Task 12's ref guard avoids.
+        // The re-arm covers the two ways the watchdog stops: it fired, and a follow replay that reached us
+        // before any turn start. Outside a live turn it stays disarmed — nothing would paint the row anyway.
+        lastMsgAt.current = Date.now();
+        if (liveTurnRef.current && !stallTimer.current) armStall();
         // Wave T Task 12 (probe 96). The SDK emits one `system/api_retry` frame per attempt, and it is
         // LIVE-TURN chrome, not history: a ten-attempt ladder is ONE replaced spinner row, not ten notices.
         // Hence the early return — the frame must not reach `systemNoticeLines` (which already paints
@@ -571,7 +602,7 @@ export function useChat(
         // A call still open at turn end is an ORPHAN (interrupted, denied, or a result that never came):
         // the turn is over, so nothing is running — end the blink epoch instead of leaving a "running" row.
         clearLiveOpen();
-        setStreaming([]); setBusy(false); clearRetry(); void refreshCtx(); void refreshUsage(); drainNext();
+        setStreaming([]); setBusy(false); clearRetry(); disarmStall(); void refreshCtx(); void refreshUsage(); drainNext();
       }
       else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);
       else if (ev.kind === "task") {
@@ -590,7 +621,7 @@ export function useChat(
       else if (ev.kind === "rewound") void rebuildAfterRewind();   // ANOTHER client rewound: rebuild from disk (no prefill — not our prompt)
       else if (ev.kind === "state") {
         idleFollowReplay.current = false;                          // the trailing frame of a follow replay ends the idle-ingestion mode
-        if (ev.status.status === "idle") { clearLiveOpen(); clearRetry(); }   // the host says nothing is running — no call of ours can still be live, and no retry of ours is still pending
+        if (ev.status.status === "idle") { clearLiveOpen(); clearRetry(); disarmStall(); }   // the host says nothing is running — no call of ours can still be live, no retry of ours is still pending, and nothing is left to go silent on us
         if (ev.status.permissionMode && ev.status.permissionMode !== modeRef.current) setMode(ev.status.permissionMode);
       }
     });

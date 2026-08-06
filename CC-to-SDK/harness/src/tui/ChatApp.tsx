@@ -58,6 +58,7 @@ import { SessionPicker } from "./SessionPicker.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { TaskPanel } from "./TaskPanel.js";
 import { TurnSpinner } from "./TurnSpinner.js";
+import { RetryRow } from "./RetryRow.js";
 import { BgTasksPanel } from "./BgTasksPanel.js";
 import { RewindPicker } from "./RewindPicker.js";
 import { ShortcutsOverlay } from "./ShortcutsOverlay.js";
@@ -339,7 +340,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     <Box flexDirection="column">
       <Transcript key={state.staticEpoch} staticItems={state.staticItems} pendingItems={pagerUp ? EMPTY_ITEMS : state.pendingItems} streaming={pagerUp ? EMPTY_LINES : state.streaming} />
       {todosOpen && !pagerUp ? <TaskPanel tasks={state.tasks} columns={terminalColumns()} rows={terminalRows()} /> : null}
-      {state.busy && !pagerUp ? <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} /> : null}
+      {/* Wave T Task 13 — the live-turn indicator is ONE slot. Canon `qyn` (L407973) takes the whole slot
+          over while a retry status exists, so the row REPLACES the spinner rather than sitting beside it:
+          a spinner still pulsing next to "Retrying in 4s" is exactly the "nothing is wrong" reading the QA
+          fleet's 72-second outage produced. */}
+      {state.busy && !pagerUp
+        ? (state.retryStatus ? <RetryRow status={state.retryStatus} /> : <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} />)
+        : null}
       {/* F4 Task 8 — upstream `wqo` (pack §7.7, bundle L426002–426022): a queued prompt is the ORDINARY
           prompt echo wrapped in `<Box paddingX={$jp}>` with `$jp = 2`, and nothing else. It carries no
           prefix, no clip and no dimming (the `subtle` flip at L426034 lives inside the brief-layout branch,
