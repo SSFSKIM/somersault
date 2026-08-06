@@ -64,7 +64,8 @@ describe("<FilePermission> — the frame and the question (`UMy` L228435, `Tem` 
     // The BOLD half is the basename alone — the full path already rode the subtitle.
     expect(v.frame()).toContain("\x1b[1mapp.ts\x1b[22m");
     expect(f).not.toContain("Do you want to make this edit to /repo/src/app.ts?");
-    expect(f).toContain("esc cancel · tab amend");   // the footer advertises the amend row (T4)
+    expect(f).toContain("esc cancel");               // the footer, on the opening Yes row (T4)
+    expect(f).not.toContain("tab amend");            // …which Tab cannot amend — only the No row can (external review)
     // The pre-F6 generic body is gone for this kind.
     expect(f).not.toContain("Allow Claude to use");
   });

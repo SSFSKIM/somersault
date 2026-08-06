@@ -28,7 +28,7 @@ import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { LiveTurn } from "./liveTurn.js";
-import { retryStatusFrom, type RetryStatus } from "./retryStatus.js";
+import { retryStatusFrom, provesApiAnswered, type RetryStatus } from "./retryStatus.js";
 import { FoldPendingState } from "./foldPendingState.js";
 import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgress.js";
 import { TaskList, type TaskItem } from "./taskList.js";
@@ -507,13 +507,18 @@ export function useChat(
         // off a different clock than the one it is compared against would tick wrong.
         const retry = retryStatusFrom(data, Date.now());
         if (retry) { retryRef.current = retry; setRetryStatus(retry); return; }
-        // Wave T Task 13: every OTHER frame IS proof the API answered, so it retires the turn-start stall
-        // watchdog for the rest of the turn — every later gap belongs to a tool that is simply running.
-        disarmStall();
-        // NOTHING announces "the retry succeeded" (probe 96: no cancel/success event, and `max_retries` is a
-        // ceiling a 401 gave up short of) — so the teardown is every OTHER frame, the first `stream_event`
-        // delta of the recovered answer included. Turn end, turn start and an idle host clear it too.
-        clearRetry();
+        // Wave T Task 13, corrected by the external review: only a frame that PROVES the API answered may
+        // retire the turn-start stall watchdog (`provesApiAnswered`, retryStatus.ts — model output, its
+        // deltas, tool/subagent progress, the terminal frame). The shipped rule was "every frame that is not
+        // api_retry", and the CLI's own `system/init` — local, ~3.3 s into every turn (probe 99) — therefore
+        // disarmed the 10 s timer roughly 70 s before a blackholed endpoint's first api_retry frame (probe
+        // 96): the stalled row never appeared in the one outage it was built for. Past the first proving
+        // frame the watchdog stays retired for the rest of the turn, so a long healthy tool run still cannot
+        // trip it. The retry countdown's teardown is the SAME question — nothing announces "the retry
+        // succeeded" (probe 96: no cancel/success event, and `max_retries` is a ceiling a 401 gave up short
+        // of), so the recovered answer's own first frame is what clears it, not a local frame that happened
+        // to arrive mid-ladder. Turn end, turn start and an idle host clear it too.
+        if (provesApiAnswered(data)) { disarmStall(); clearRetry(); }
         // A `stream_event` is a PARTIAL, and it changes NOTHING outside the live turn: `appendSdk` rejects
         // partials outright, the bg harvest and the task list read only complete assistant/user frames, and
         // so do `stampAgentCalls`/`syncLiveOpen`. So the retained document cannot move here — and with

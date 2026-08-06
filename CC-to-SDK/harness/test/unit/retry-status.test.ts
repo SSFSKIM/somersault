@@ -3,7 +3,7 @@
 // prose table (`rZp`, L437178-437190) and the snake_case → camelCase wire mapping. Rendering is Task 13's;
 // this file is recognition only.
 import { describe, it, expect } from "vitest";
-import { retryStatusFrom } from "../../src/tui/retryStatus.js";
+import { retryStatusFrom, provesApiAnswered } from "../../src/tui/retryStatus.js";
 
 // The exact wire shape probe 96 observed, field for field.
 const retryFrame = (over: Record<string, unknown> = {}) => ({
@@ -66,5 +66,50 @@ describe("retryStatusFrom: the api_retry frame becomes a live retry status", () 
     expect(retryStatusFrom(undefined, 0)).toBeUndefined();
     expect(retryStatusFrom(null, 0)).toBeUndefined();
     expect(retryStatusFrom("api_retry", 0)).toBeUndefined();
+  });
+});
+
+// ── provesApiAnswered — Task 13-fix (external review) ────────────────────────────────────────────────
+// The watchdog's teardown condition, moved out of `useChat` and made a set instead of a negation. The bug it
+// closes: `system/init` is the CLI's LOCAL startup frame (probe 99 — every turn, ~3.3 s in, carrying the
+// session's permissionMode) and the old rule "anything that is not api_retry" let it disarm a 10 s watchdog
+// roughly 70 s before a blackholed endpoint's first api_retry frame (probe 96). `retry-row.test.tsx` pins the
+// consequence end to end; this pins the classification frame by frame.
+describe("provesApiAnswered: which frames are evidence the API answered", () => {
+  it("takes model output, its deltas, tool/agent progress and the terminal frame", () => {
+    for (const f of [
+      { type: "assistant", message: { content: [{ type: "text", text: "hi" }] } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }] } },
+      { type: "stream_event", event: { type: "content_block_delta" } },
+      { type: "tool_progress", tool_use_id: "t1", tool_name: "Bash", elapsed_time_seconds: 30 },
+      { type: "tool_use_summary" },
+      { type: "result", subtype: "success", is_error: false },
+      { type: "system", subtype: "thinking_tokens", estimated_tokens: 120, estimated_tokens_delta: 12 },
+      { type: "system", subtype: "task_progress", task_id: "a" },
+      { type: "system", subtype: "model_refusal_fallback", content: "no" },
+    ]) expect(provesApiAnswered(f)).toBe(true);
+  });
+
+  it("refuses the CLI's own local frames — init above all, and every other system bookkeeping subtype", () => {
+    for (const f of [
+      { type: "system", subtype: "init", permissionMode: "default", model: "claude-sonnet-4-5" },
+      { type: "system", subtype: "status", permissionMode: "plan" },
+      { type: "system", subtype: "compact_boundary", compact_metadata: {} },
+      { type: "system", subtype: "hook_started", hook_name: "PreToolUse" },
+      { type: "system", subtype: "session_state_changed" },
+      { type: "system", subtype: "commands_changed" },
+      { type: "system", subtype: "files_persisted" },
+      { type: "system", subtype: "api_retry", attempt: 1 },     // failure, not health — the caller returns before asking
+      { type: "system" },
+    ]) expect(provesApiAnswered(f)).toBe(false);
+  });
+
+  it("refuses a `user` frame: the SDK replays our own prompt as one, and a real tool_result always trails an assistant frame", () => {
+    expect(provesApiAnswered({ type: "user", message: { role: "user", content: [{ type: "text", text: "do it" }] } })).toBe(false);
+    expect(provesApiAnswered({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1" }] } })).toBe(false);
+  });
+
+  it("refuses anything that is not a frame at all", () => {
+    for (const f of [undefined, null, "assistant", 7, {}, { type: 42 }]) expect(provesApiAnswered(f)).toBe(false);
   });
 });

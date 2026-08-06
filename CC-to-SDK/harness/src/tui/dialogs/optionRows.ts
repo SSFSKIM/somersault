@@ -59,6 +59,14 @@ export function yesNoRows(mode: FeedbackMode = NO_FEEDBACK, middle: SelectOption
 // first and cancels the dialog second, so a human who typed half a sentence and hit Esc gets their row
 // back rather than losing the whole prompt.
 
+/** Which rows Tab can actually turn into a feedback row, asked of the row that HAS the cursor. The `no` row
+ *  alone: the SDK's allow arm carries no message field (T3), so every body drops Tab on Yes, and a
+ *  "don't ask again" row has no feedback shape at all. TWO readers, deliberately — each body's
+ *  `onInputModeToggle` (what Tab does) and its `ConsultFooter` (whether Tab is advertised). They were
+ *  allowed to disagree once, and the footer promised `tab amend` on rows that ignore the key; one predicate
+ *  is what stops that recurring. */
+export const isAmendableRow = (focusedValue: string): boolean => focusedValue === "no";
+
 /** Tab on the row named by `value`. Any other row is not toggleable, and returns the state untouched. */
 export function toggleFeedbackMode(mode: FeedbackMode, value: string): FeedbackMode {
   if (value === "yes") return { ...mode, yes: !mode.yes };

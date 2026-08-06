@@ -145,6 +145,33 @@ describe("ChatApp: the row replaces the spinner", () => {
     } finally { unmount(); }
   });
 
+  // EXTERNAL REVIEW, the false NEGATIVE the fix above introduced. The shipped rule was "every frame that is
+  // not api_retry retires the watchdog", and `system/init` is the CLI's OWN startup frame — local, carrying
+  // the session's permissionMode, seen by probe 99 on every turn ~3.3 s in, before any model output exists.
+  // On a blackholed endpoint probe 96 measured ~75 s of silence before the FIRST api_retry frame, so init
+  // landed inside the 10 s window every single time and the stalled row never appeared in the one outage
+  // this whole mechanism was built to surface. This test and the `tool_use` guard above pull in opposite
+  // directions on purpose: retiring on too little re-creates the false alarm, retiring on too much re-creates
+  // this silence. Both must stay green.
+  it("the CLI's own system/init frame does NOT retire the watchdog — a dead upstream still paints stalled", async () => {
+    const fake = fakeRemote();
+    const { lastFrame, unmount } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
+    await tick();
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); });
+      await waitForFakeTimers(() => line(lastFrame).includes("esc to interrupt"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_300); });      // probe 99's arrival time
+      await act(async () => {
+        fake.pushEvent({ kind: "message", data: { type: "system", subtype: "init", session_id: "s", uuid: "u1", permissionMode: "default", model: "claude-sonnet-4-5" } });
+      });
+      expect(line(lastFrame)).not.toContain("Waiting for API response");        // not yet — the timer is still armed
+      await act(async () => { await vi.advanceTimersByTimeAsync(12_000); });     // …and nothing else ever arrives
+      expect(line(lastFrame)).toContain("✻ Waiting for API response · check your network");
+      expect(line(lastFrame)).not.toContain("esc to interrupt");
+    } finally { unmount(); }
+  });
+
   it("a frame landing after the stalled row tears it down and gives the spinner back", async () => {
     const fake = fakeRemote();
     const { lastFrame, unmount } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);

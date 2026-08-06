@@ -41,14 +41,14 @@ describe("ctrl+e in the Bash consult (`ZMn` L505015-52)", () => {
   it("renders the explanation, the reasoning and the risk row, and flips the footer verb to hide", async () => {
     const t = fake(async () => GOOD);
     const v = await mount(t);
-    expect(v.text()).toContain("esc cancel · tab amend · ctrl+e explain");
+    expect(v.text()).toContain("esc cancel · ctrl+e explain");
     v.stdin.write(CTRL_E);
     await waitFor(() => v.text().includes(GOOD.explanation));
     const f = v.text();
     expect(f).toContain(GOOD.reasoning);
     expect(f).toContain("Low risk:");
     expect(f).toContain(GOOD.risk);
-    expect(f).toContain("esc cancel · tab amend · ctrl+e hide");
+    expect(f).toContain("esc cancel · ctrl+e hide");
     expect(t.calls).toHaveLength(1);
     expect(t.calls[0]!.prompt).toContain("npm run build");     // the generator's prompt, not the raw command
   });
@@ -71,7 +71,7 @@ describe("ctrl+e in the Bash consult (`ZMn` L505015-52)", () => {
     v.stdin.write(CTRL_E);
     await waitFor(() => !v.text().includes(GOOD.explanation));
     expect(v.text()).toContain("Build the bundle");            // the description row is back
-    expect(v.text()).toContain("esc cancel · tab amend · ctrl+e explain");
+    expect(v.text()).toContain("esc cancel · ctrl+e explain");
     v.stdin.write(CTRL_E);
     await waitFor(() => v.text().includes(GOOD.explanation));
     expect(t.calls).toHaveLength(1);                           // the promise is kept, not re-issued
@@ -92,7 +92,7 @@ describe("ctrl+e in the Bash consult (`ZMn` L505015-52)", () => {
     const v = await mount(fake(async () => { throw new Error("upstream 529"); }));
     v.stdin.write(CTRL_E);
     await waitFor(() => v.text().includes("Explanation unavailable"));
-    expect(v.text()).toContain("esc cancel · tab amend · ctrl+e hide");
+    expect(v.text()).toContain("esc cancel · ctrl+e hide");
   });
 
   it("says `Explanation unavailable` when the transport answers with a malformed object", async () => {
@@ -127,7 +127,8 @@ describe("ctrl+e in the Bash consult (`ZMn` L505015-52)", () => {
 describe("the disabled arm — no explainer wired (`Kdi()` false, L504907-09)", () => {
   it("advertises no ctrl+e hint and does nothing when the key is pressed", async () => {
     const v = await mount(undefined, { description: "Build the bundle" });
-    expect(v.text()).toContain("esc cancel · tab amend");
+    expect(v.text()).toContain("esc cancel");
+    expect(v.text()).not.toContain("tab amend");            // the Yes row has no feedback channel (external review)
     expect(v.text()).not.toContain("ctrl+e");
     v.stdin.write(CTRL_E);
     await tick(); await tick();

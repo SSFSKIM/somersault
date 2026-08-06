@@ -34,7 +34,7 @@ import { Line } from "../Line.js";
 import { renderDiff } from "../diffRender.js";
 import { resolvePatch } from "../diffSource.js";
 import { KNOWN_LANGS, highlightCode } from "../highlight.js";
-import { collapseOnFocusChange, escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
+import { collapseOnFocusChange, escapeFeedbackMode, isAmendableRow, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
 import { useBindingLookup, useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import { formatBindingLower } from "../keys/hints.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "../theme.js";
@@ -248,11 +248,11 @@ export function FilePermission({ req, onDecision, filePath, sedEdit, cwd = proce
           // Leaving an EMPTY feedback row puts the plain row back (L505162-169); one holding text stays open.
           onFocus={(value) => { setFocus(value); setFeedback((m) => collapseOnFocusChange(m, value, feedbackText.current.trim() === "")); }}
           onInputChange={(value, text) => { if (value === "no") feedbackText.current = text; }}
-          onInputModeToggle={(value) => { if (value === "no") setFeedback(toggleFeedbackMode(feedback, value)); }}
+          onInputModeToggle={(value) => { if (isAmendableRow(value)) setFeedback(toggleFeedbackMode(feedback, value)); }}
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
       </Box>
-      <Box paddingX={1}><ConsultFooter inputMode={inputFocused} /></Box>
+      <Box paddingX={1}><ConsultFooter amendable={isAmendableRow(focus)} inputMode={inputFocused} /></Box>
     </DialogFrame>
   );
 }

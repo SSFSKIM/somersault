@@ -110,7 +110,8 @@ describe("<SkillPermission> (`oll` L506582-710)", () => {
     expect(f).toContain("Claude may use instructions, code, or files from this Skill.");
     expect(f).toContain("Start creative work");
     expect(f).toContain("Do you want to proceed?");
-    expect(f).toContain("esc cancel · tab amend");   // the footer advertises the amend row (T4)
+    expect(f).toContain("esc cancel");               // the footer, on the opening Yes row (T4)
+    expect(f).not.toContain("tab amend");            // …which Tab cannot amend — only the No row can (external review)
   });
 
   it("a two-word skill gets BOTH don't-ask-again rows — they are independent gates, not alternatives", async () => {
@@ -154,7 +155,8 @@ describe("<MonitorPermission> (`Ral` L506006-093)", () => {
     expect(f).toContain("Monitor");
     expect(f).toContain("Poll github/notifications every 15s");
     expect(f).toContain("Watch for review requests");
-    expect(f).toContain("esc cancel · tab amend");   // the footer advertises the amend row (T4)
+    expect(f).toContain("esc cancel");               // the footer, on the opening Yes row (T4)
+    expect(f).not.toContain("tab amend");            // …which Tab cannot amend — only the No row can (external review)
   });
 
   it("renders the WebSocket arm with its normalised URL and the subprotocol list", async () => {
@@ -201,7 +203,8 @@ describe("<GenericPermission> (`Gal` L506118-260)", () => {
     expect(f).toContain("Tool use");
     expect(f).toContain("mcp__notes__append(f.ts) (MCP)");
     expect(f).toContain("Do you want to proceed?");
-    expect(f).toContain("esc cancel · tab amend");   // the footer advertises the amend row (T4)
+    expect(f).toContain("esc cancel");               // the footer, on the opening Yes row (T4)
+    expect(f).not.toContain("tab amend");            // …which Tab cannot amend — only the No row can (external review)
     // the pre-F6 reconstruction is gone with the old body
     expect(f).not.toContain("Allow Claude to use");
   });

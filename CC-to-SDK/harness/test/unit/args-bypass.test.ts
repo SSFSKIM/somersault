@@ -145,6 +145,100 @@ describe("--bg with bypassPermissions (upstream L451420-21)", () => {
   });
 });
 
+// ── `--detachable` + bypass with NO TERMINAL (external review). The consent gate exempts a run with no TTY
+// because there is nowhere to draw the dialog, and for `-p`/`--bg` that is the whole story — they leave no
+// interactive host behind. `--detachable` does: it spawns a persistent REPL host that survives the terminal
+// it was launched from and that every later `ccx attach` joins in whatever mode it was started in. Run from
+// a script or a CI step it therefore skipped BOTH the consent gate AND the ordinary "foreground ccx needs a
+// terminal" refusal (the --detachable arm returns before that line), and a fully-autonomous bypass agent came
+// up unasked. Same mechanism and same words as the --bg refusal above, with the flag's own name in front.
+const DETACHABLE_REFUSAL = "ccx: --detachable with bypassPermissions requires accepting the disclaimer first. Run `ccx --dangerously-skip-permissions` once interactively.";
+
+describe("--detachable with bypassPermissions and no TTY", () => {
+  it("is refused — both spellings, before anything is spawned", async () => {
+    for (const argv of [["--detachable", "--dangerously-skip-permissions", "hi"], ["--detachable", "--permission-mode", "bypassPermissions", "hi"]]) {
+      const d = gateDeps({ isTTY: () => false });   // spawnDetached/prepareAttach THROW by name if it slips through
+      const { code, err } = await runCapturingErr(argv, d);
+      expect(code).toBe(2);
+      expect(err).toEqual([DETACHABLE_REFUSAL]);
+      expect(d.shown).toHaveLength(0);              // and no dialog is attempted at a terminal it hasn't got
+    }
+  });
+  it("is allowed once the acceptance is recorded — exactly like --bg", async () => {
+    const d = gateDeps({ isTTY: () => false, prefs: { skipDangerousModePermissionPrompt: true } });
+    const spawned: string[] = [];
+    d.spawnDetached = () => { spawned.push("x"); return { short: "00000000", banner: "b" }; };
+    d.prepareAttach = async () => ({ short: "00000000", socketPath: "/tmp/x.sock", cwd: "/tmp", initialEntries: [] }) as any;
+    d.probeSocket = async () => {};
+    d.runChatClient = async () => {};
+    const { code, err } = await runCapturingErr(["--detachable", "--dangerously-skip-permissions", "hi"], d);
+    expect(code).toBe(0);
+    expect(err).toEqual([]);
+    expect(spawned).toHaveLength(1);
+  });
+  it("leaves a --detachable run WITH a terminal to the consent dialog, which is where it belongs", async () => {
+    const d = gateDeps();                            // isTTY: true
+    d.spawnDetached = () => ({ short: "00000000", banner: "b" });
+    d.prepareAttach = async () => ({ short: "00000000", socketPath: "/tmp/x.sock", cwd: "/tmp", initialEntries: [] }) as any;
+    d.probeSocket = async () => {};
+    const { code, err } = await runCapturingErr(["--detachable", "--dangerously-skip-permissions", "hi"], d);
+    expect(code).toBe(0);
+    expect(err).toEqual([]);
+    expect(d.shown).toHaveLength(1);
+  });
+  it("leaves every other no-TTY --detachable run alone", async () => {
+    for (const argv of [["--detachable", "hi"], ["--detachable", "--permission-mode", "acceptEdits", "hi"]]) {
+      const d = gateDeps({ isTTY: () => false });
+      d.spawnDetached = () => ({ short: "00000000", banner: "b" });
+      d.prepareAttach = async () => ({ short: "00000000", socketPath: "/tmp/x.sock", cwd: "/tmp", initialEntries: [] }) as any;
+      d.probeSocket = async () => {};
+      d.runChatClient = async () => {};
+      const { code, err } = await runCapturingErr(argv, d);
+      expect(code).toBe(0);
+      expect(err).toEqual([]);
+    }
+  });
+});
+
+// ── Declining costs nothing that has to be unwound (external review). The gate's own comment promises it and
+// `--worktree` broke it: `ensureWorktree` ran with the other launch preparation, ABOVE the gate, so
+// `ccx --worktree feature-x --dangerously-skip-permissions` cut a branch and a directory and only then asked
+// — and a decline (the dialog exits the process from inside) left both behind for the operator to clean up by
+// hand. The consent now sits above the creation. The empty-name check stays where it was: a bad argument must
+// still be refused before a human is asked anything.
+describe("the consent gate runs BEFORE --worktree touches the disk", () => {
+  it("asks first, and creates the worktree only after the disclaimer is accepted", async () => {
+    const order: string[] = [];
+    const d = gateDeps();
+    d.showBypassConsent = async () => { order.push("consent"); d.shown.push(1); };
+    d.ensureWorktree = async () => { order.push("worktree"); return "/repo/.claude/worktrees/feature-x"; };
+    d.makeHost = () => ({ start: async () => { order.push("host"); }, stop: async () => {} }) as any;
+    expect(await main(["--worktree", "feature-x", "--dangerously-skip-permissions"], d)).toBe(0);
+    expect(order).toEqual(["consent", "worktree", "host"]);
+  });
+  it("a DECLINE leaves no worktree behind — the dialog never returns, and nothing was cut before it", async () => {
+    // The real gate exits the process from inside on a decline (main.ts's seam contract), which a unit test
+    // may not do: the stand-in never resolves, which is the same thing from main()'s point of view — every
+    // line after the gate is unreachable. `ensureWorktree` throws by name if it is one of them.
+    const d = gateDeps();
+    let asked = false;
+    d.showBypassConsent = () => { asked = true; return new Promise<void>(() => {}); };
+    const settled = await Promise.race([
+      main(["--worktree", "feature-x", "--dangerously-skip-permissions"], d).then(() => "returned"),
+      new Promise((r) => setTimeout(() => r("parked"), 20)),
+    ]);
+    expect(asked).toBe(true);
+    expect(settled).toBe("parked");                  // and ensureWorktree — which throws by name — never ran
+  });
+  it("still refuses a PRESENT but empty --worktree before asking anything", async () => {
+    const d = gateDeps();
+    const { code, err } = await runCapturingErr(["--worktree", "", "--dangerously-skip-permissions"], d);
+    expect(code).toBe(2);
+    expect(err).toEqual(["ccx: --worktree requires a name"]);
+    expect(d.shown).toHaveLength(0);
+  });
+});
+
 // ── The React-free guarantee, checked STRUCTURALLY. The first version of this guard was line-shaped
 // (`/^import\s/` per line, specifier read off the same line), which a perfectly ordinary multi-line import
 // walks straight past —

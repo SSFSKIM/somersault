@@ -50,7 +50,8 @@ describe("<BashPermission> — the body (`dZf` L505286)", () => {
     expect(f).toContain("npm run build");
     expect(f).toContain("Build the bundle");
     expect(f).toContain("Do you want to proceed?");
-    expect(f).toContain("esc cancel · tab amend");   // the footer advertises the amend row (T4)
+    expect(f).toContain("esc cancel");               // the footer, on the opening Yes row (T4)
+    expect(f).not.toContain("tab amend");            // …which Tab cannot amend — only the No row can (external review)
     // The old body's reconstruction dies here: no "Allow Claude to use", no `$ ` prefix.
     expect(f).not.toContain("Allow Claude to use");
     expect(f).not.toContain("$ npm run build");
@@ -190,17 +191,26 @@ describe("<BashPermission> — feedback mode (Tab on No)", () => {
   // `consult-footer.test.tsx` pins the component and the mount-state assertions above pin `inputMode={false}`,
   // but nothing pinned the wiring — dropping `inputMode={inputFocused}` from all five bodies at once left the
   // whole TUI suite green. Collecting EVERY footer-shaped line also pins that there is exactly one of them.
-  it("drops the `tab amend` hint from the footer once the No row IS the text field", async () => {
+  //
+  // EXTERNAL REVIEW, the other half of `aZf`'s condition: the hint is ALSO gated on the focused row being one
+  // Tab can amend, and only the No row is (the test right below this one is the proof that Tab on Yes does
+  // nothing). The dialog opens on Yes, so it opens with NO amend hint — advertising one there promised a
+  // channel the row cannot deliver, in the one prompt where a false affordance is least affordable.
+  it("advertises `tab amend` only on the No row, and drops it again once that row IS the text field", async () => {
     const v = await mount(req("ls"));
     const footer = () => plain(v.frame()).split("\n").filter((l) => l.includes("esc cancel")).map((l) => l.trim());
-    expect(footer()).toEqual(["esc cancel · tab amend"]);
+    expect(footer()).toEqual(["esc cancel"]);                     // opening row is Yes: Tab does nothing there
     v.stdin.write("\x1b[B"); await tick();                        // focus No
+    expect(footer()).toEqual(["esc cancel · tab amend"]);         // …the one row that answers Tab
     v.stdin.write("\t"); await tick();                            // …and turn it into a field
     expect(plain(v.frame())).toContain("and tell Claude what to do differently");
     expect(footer()).toEqual(["esc cancel"]);
     // and the hint comes back with the row: Esc leaves input mode, the plain row returns, so does the hint.
     v.stdin.write("\x1b"); await tick();
     expect(footer()).toEqual(["esc cancel · tab amend"]);
+    // …and moving back UP to a row Tab ignores takes it away again.
+    v.stdin.write("\x1b[A"); await tick();
+    expect(footer()).toEqual(["esc cancel"]);
     expect(v.got).toEqual([]);
   });
 

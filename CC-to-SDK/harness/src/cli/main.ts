@@ -148,12 +148,28 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
       // acceptance; ours says `ccx` where upstream says `claude`, so the instruction is followable here.
       // Placed with the other fatal argument errors — BEFORE --worktree prepares anything — so a refusal
       // costs nothing that has to be unwound.
-      if (refuseBgBypass(inv, deps)) return fail("--bg with bypassPermissions requires accepting the disclaimer first. Run `ccx --dangerously-skip-permissions` once interactively.", 2);
+      const unconsented = unconsentedBypassLaunch(inv, deps);
+      if (unconsented) return fail(`${unconsented} with bypassPermissions requires accepting the disclaimer first. Run \`ccx --dangerously-skip-permissions\` once interactively.`, 2);
+      // PRESENT and empty is not the same as absent: `--worktree "$WT"` with WT unset arrives here as "",
+      // which the old truthiness guard read as "no worktree asked for" — the run landed in the shared
+      // checkout and exited 0 with a banner, isolation requested and silently not delivered. The NAME check
+      // is an argument error and stays with the others, above the consent gate; the worktree itself is
+      // created below it (see there).
+      if (inv.worktree !== undefined && !inv.worktree.trim()) return fail("--worktree requires a name", 2);
+      // Wave-T T15 (qa3-14): bypass permissions is the one mode that stops asking before it acts, and until
+      // now ccx entered it with no warning at all. Placed HERE — after the argument checks, before the spawn
+      // and before any session exists — so a refusal costs nothing that has to be unwound. The gate keys on
+      // the RESOLVED mode, so `--dangerously-skip-permissions` and `--permission-mode bypassPermissions` are
+      // one condition and neither spelling can slip past it. It covers every launch that renders a REPL,
+      // `--detachable` included; `-p` and `--bg` are deliberately outside it, matching upstream's own
+      // placement (L554501-04 sits in the interactive startup) — a headless run has no terminal to consent in.
+      // ABOVE the worktree creation, external review: `--worktree <new-name> --dangerously-skip-permissions`
+      // used to cut the branch and the directory FIRST and ask second, so declining left a worktree on disk
+      // that the operator had to unwind by hand — the exact cost this comment promises a refusal never has.
+      // Nothing in the gate depends on the worktree: `resolvedPermissionMode` reads `config.permissionMode`
+      // and nothing else (resolveOptions.ts), so moving it up changes what it decides not at all.
+      if (needsBypassConsent(inv, deps)) await deps.showBypassConsent();
       if (inv.worktree !== undefined) {
-        // PRESENT and empty is not the same as absent: `--worktree "$WT"` with WT unset arrives here as "",
-        // which the old truthiness guard read as "no worktree asked for" — the run landed in the shared
-        // checkout and exited 0 with a banner, isolation requested and silently not delivered.
-        if (!inv.worktree.trim()) return fail("--worktree requires a name", 2);
         // Two consumers of the resolved path, both required: config.cwd is what the (bg-spawned or
         // in-process) session runs in, worktreePath is what the roster row records for `ccx rm`. Above
         // the fg/bg split (unlike A1) because a FOREGROUND run needs its own cwd exactly as much as a
@@ -162,14 +178,6 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
         catch (e) { return fail(`could not prepare worktree ${inv.worktree}: ${msg(e)}`, 1); }
         inv.config.cwd = inv.worktreePath;
       }
-      // Wave-T T15 (qa3-14): bypass permissions is the one mode that stops asking before it acts, and until
-      // now ccx entered it with no warning at all. Placed HERE — after the argument checks, before the spawn
-      // and before any session exists — so a refusal costs nothing that has to be unwound. The gate keys on
-      // the RESOLVED mode, so `--dangerously-skip-permissions` and `--permission-mode bypassPermissions` are
-      // one condition and neither spelling can slip past it. It covers every launch that renders a REPL,
-      // `--detachable` included; `-p` and `--bg` are deliberately outside it, matching upstream's own
-      // placement (L554501-04 sits in the interactive startup) — a headless run has no terminal to consent in.
-      if (needsBypassConsent(inv, deps)) await deps.showBypassConsent();
       if (inv.bg) { console.log(deps.spawnDetached(inv).banner); return 0; }
       // --detachable is an ATTACHED session that survives its terminal: spawn it exactly like --bg
       // (fully detached, kind:"interactive"), then attach to it ourselves — the prompt stays with US,
@@ -207,11 +215,24 @@ function needsBypassConsent(inv: CcxInvocation, deps: MainDeps): boolean {
   return !hasAcceptedBypass(deps.loadPrefs());
 }
 
-/** T15-fix's `--bg` refusal (upstream L451420-21). Reads the mode WITHOUT the foreground `?? "default"`
- *  rule above: a background run keeps the DEFAULTS mode deliberately (EP-T1), so the question here is only
- *  ever "did this invocation ask for bypass", which both spellings answer through `inv.config`. */
-function refuseBgBypass(inv: CcxInvocation, deps: MainDeps): boolean {
-  return Boolean(inv.bg) && resolvedPermissionMode(inv.config) === "bypassPermissions" && !hasAcceptedBypass(deps.loadPrefs());
+/** T15-fix's `--bg` refusal (upstream L451420-21) and, from the external review, its `--detachable` twin.
+ *  Returns the FLAG to name in the refusal, or null when the launch is fine. Reads the mode WITHOUT the
+ *  foreground `?? "default"` rule above: a background run keeps the DEFAULTS mode deliberately (EP-T1), so
+ *  the question here is only ever "did this invocation ask for bypass", which both spellings answer through
+ *  `inv.config`.
+ *
+ *  Why `--detachable` joins `--bg` here, and only without a terminal: `needsBypassConsent`'s `!isTTY()`
+ *  exemption is right for `-p` and `--bg` — a headless run has no terminal to consent in and leaves no
+ *  interactive host behind — but `--detachable` is the one launch that has neither a terminal to ask at NOR
+ *  a short life: it spawns a persistent, fully-autonomous bypass host that survives the terminal it came
+ *  from, and every later `ccx attach` inherits that mode. Unconsented, it was skipping BOTH the gate and the
+ *  ordinary non-TTY refusal below (which the `--detachable` arm returns before ever reaching). With a
+ *  terminal nothing changes: the consent dialog runs exactly as it did. */
+function unconsentedBypassLaunch(inv: CcxInvocation, deps: MainDeps): "--bg" | "--detachable" | null {
+  if (resolvedPermissionMode(inv.config) !== "bypassPermissions" || hasAcceptedBypass(deps.loadPrefs())) return null;
+  if (inv.bg) return "--bg";
+  if (inv.detachable && !deps.isTTY()) return "--detachable";
+  return null;
 }
 
 /** Retry classification: `fromSpawn` (the --detachable auto-attach) retries BOTH not-yet-resolvable (the

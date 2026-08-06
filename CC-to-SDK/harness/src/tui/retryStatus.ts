@@ -53,3 +53,43 @@ export function retryStatusFrom(frame: unknown, now: number): RetryStatus | unde
   const label = showDetail ? errorProse(f.error_status) : "API error";
   return { kind: "retrying", attempt, maxRetries, deadline: now + num(f.retry_delay_ms), label };
 }
+
+// ── Which frames PROVE the API answered (Task 13-fix, external review) ───────────────────────────────
+// Task 13 shipped the rule "every frame that is not `api_retry` proves the API answered", and it was false
+// in the one outage the watchdog exists for. `system/init` is the CLI's OWN startup frame: probe 99 saw it
+// on every turn, ~3.3 s in, carrying the session's `permissionMode` and nothing the model produced. On a
+// blackholed endpoint — probe 96 measured ~75 s of connect timeout BEFORE the first `api_retry` frame
+// exists — that local frame disarmed the 10 s watchdog and the stalled row never appeared at all.
+// So the question is not "is this frame api_retry" but "could this frame exist if the API had not answered",
+// and the answer is a SET, not a negation: the CLI emits a lot of local bookkeeping (`init`, `status`,
+// `hook_*`, `session_state_changed`, `commands_changed`, `files_persisted`, `compact_boundary`, …) all of it
+// under `type:"system"`, and none of it is evidence about the API.
+/** Top-level frame types that only exist downstream of an API response: model output (`assistant`), its
+ *  partial deltas (`stream_event`), the turn's terminal frame (`result`), and the two mid-tool progress
+ *  frames, which can only follow a `tool_use` the model asked for. */
+const API_PROOF_TYPES: ReadonlySet<string> = new Set(["assistant", "stream_event", "result", "tool_progress", "tool_use_summary"]);
+/** The `type:"system"` subtypes that ARE API evidence, against a default of "a system frame is local".
+ *  `thinking_tokens` is the load-bearing one: sdk.d.ts describes it as digested from `thinking_delta`
+ *  during redacted thinking, "where the API otherwise streams only pings" — a long thinking phase can
+ *  therefore be the ONLY thing on the wire, and treating it as local would re-invent the false alarm the
+ *  turn-start anchor was introduced to kill. The refusal pair is an ANSWER the model gave (a refusal is a
+ *  response); the `task_*` quartet is subagent progress, i.e. tool progress under another name. */
+const API_PROOF_SYSTEM_SUBTYPES: ReadonlySet<string> = new Set(["thinking_tokens", "model_refusal_fallback",
+  "model_refusal_no_fallback", "task_started", "task_updated", "task_progress", "task_notification"]);
+
+/** Does this frame prove the API answered during THIS turn? Used for both live-turn outage surfaces: it
+ *  retires the stall watchdog and it tears the retry countdown down (probe 96: nothing announces "the retry
+ *  succeeded", so the teardown has to be the recovered answer's own first frame).
+ *
+ *  `user` is deliberately NOT in the set even though a tool_result arrives as one. The SDK replays user
+ *  messages back onto the wire (`SDKUserMessageReplay`, and our own submitted prompt), so a `user` frame can
+ *  be a local echo that proves nothing — and the genuine case, a tool_result, can only follow the
+ *  `assistant` tool_use frame that already retired the timer. Excluding it costs no evidence and closes the
+ *  same hole `system/init` opened. `api_retry` is absent by construction: it is evidence of FAILURE, and the
+ *  caller returns on it before ever asking this. */
+export function provesApiAnswered(frame: unknown): boolean {
+  const f = frame as { type?: unknown; subtype?: unknown } | null | undefined;
+  if (!f || typeof f !== "object" || typeof f.type !== "string") return false;
+  if (f.type === "system") return typeof f.subtype === "string" && API_PROOF_SYSTEM_SUBTYPES.has(f.subtype);
+  return API_PROOF_TYPES.has(f.type);
+}

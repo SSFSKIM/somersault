@@ -25,7 +25,7 @@ import { Select } from "../select/Select.js";
 import { consentReasonLine } from "./consentReason.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
 import { clipLines, genericDecision, genericOptions, isMcpToolName, renderedToolUse } from "./smallDialogOptions.js";
-import { collapseOnFocusChange, escapeFeedbackMode, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
+import { collapseOnFocusChange, escapeFeedbackMode, isAmendableRow, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
 
@@ -80,11 +80,11 @@ export function GenericPermission({ req, onDecision, cwd = process.cwd() }: {
           // Leaving an EMPTY feedback row puts the plain row back (L505162-169); one holding text stays open.
           onFocus={(value) => { setFocus(value); setFeedback((m) => collapseOnFocusChange(m, value, feedbackText.current.trim() === "")); }}
           onInputChange={(value, text) => { if (value === "no") feedbackText.current = text; }}
-          onInputModeToggle={(value) => { if (value === "no") setFeedback(toggleFeedbackMode(feedback, value)); }}
+          onInputModeToggle={(value) => { if (isAmendableRow(value)) setFeedback(toggleFeedbackMode(feedback, value)); }}
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
       </Box>
-      <ConsultFooter inputMode={inputFocused} />
+      <ConsultFooter amendable={isAmendableRow(focus)} inputMode={inputFocused} />
     </DialogFrame>
   );
 }
