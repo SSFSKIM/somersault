@@ -539,7 +539,12 @@ changed this document:
    actually goes through `throttle(this.log, undefined, {leading:true, trailing:true})` (`ink.js:45`), so a
    second resize inside the throttle window defers Ink's half to the trailing edge while ours runs anyway,
    against a cursor Ink has not moved. The review reproduced the resulting residue against the real binary;
-   the throttle is the strongly-indicated mechanism, not a confirmed one. **The general lesson is bigger
+   the controller then confirmed the mechanism in Ink's own source. Two independent facts break the
+   contract, and **both say the same thing: we cannot predict Ink's write from a `SIGWINCH`.**
+   `ink.js:83` `resized()` calls `onRender()` directly, but `onRender` (`:133`) hands off to
+   `throttledLog`, so a burst produces one immediate write and one deferred to a trailing timer. And
+   `log-update.js`'s `render` returns early when `output === previousOutput`, so Ink may write **nothing at
+   all**. **The general lesson is bigger
    than the bug:** an acceptance matrix that drives one `tmux resize-window` per cell with a capture
    between is not testing the workload a person produces by dragging a window edge, which is a *burst* of
    `SIGWINCH`. Stepped resizes and drags are different workloads, and this correction passed the first
