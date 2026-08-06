@@ -59,7 +59,7 @@ describe("useChat — a refused permission-mode change", () => {
     r.unmount();
   });
 
-  // `auto` is model-gated and carries its OWN refusal one layer down (cli.pretty.js:562714, "Cannot set
+  // `auto` is model-gated and carries its OWN refusal one layer down (cli.pretty.js:562713, "Cannot set
   // permission mode to auto"). The model swap happens first and independently, so a refused `auto` must
   // still leave the chip put — the swapped model is not undone, but the mode never becomes a lie.
   it("a refused auto leaves the chip on the previous mode too", async () => {

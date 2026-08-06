@@ -128,10 +128,10 @@ describe("<FilePermission> — the body is a real inline diff (`wem` L505860, F4
   });
 });
 
-// `ial` L505694 mounts its WHOLE body — the overwrite diff and the create code block alike — inside `SM`
+// `ial` L505692 mounts its WHOLE body — the overwrite diff and the create code block alike — inside `SM`
 // (L424994-425003), the dashed-rule box, at `paddingX:1`. That box is what tells a reader where the proposed
 // content starts and stops when nothing else frames it: the create arm has no `+`/`-` gutter to do the job.
-describe("<FilePermission> — the write body's dashed rules (`ial` L505694 → `SM` L424994-425003)", () => {
+describe("<FilePermission> — the write body's dashed rules (`ial` L505692 → `SM` L424994-425003)", () => {
   const isRule = (r: string) => r.includes("╌╌╌");
 
   it("fences a CREATE's content between two dashed rules, with the left and right edges off", async () => {
@@ -145,7 +145,7 @@ describe("<FilePermission> — the write body's dashed rules (`ial` L505694 → 
     expect(f).not.toContain("╎");
   });
 
-  it("keeps the create arm UNNUMBERED — `EM` at its default `startLine:1` renders no gutter (L423755-767)", async () => {
+  it("keeps the create arm UNNUMBERED — `EM` at its default `startLine:1` renders no gutter (L423766-769)", async () => {
     const f = plain((await mount({ toolName: "Write", input: { file_path: "/repo/new.ts", content: "const x = 1\nconst y = 2\n" } })).frame());
     const row = f.split("\n").find((r) => r.includes("const x = 1"))!;
     // The numbered gutter is the OVERWRITE arm's (`lre` L420073); a create carries the bare source line.

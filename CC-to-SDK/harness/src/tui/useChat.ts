@@ -1546,9 +1546,13 @@ export function useChat(
     // THE MODE TRUTH MOVES ONLY ON SUCCESS — same rule and same ordering as host.ts's applyPlanUpgrade.
     // `allowDangerouslySkipPermissions` is set from the LAUNCH mode only (resolveOptions.ts), and the engine
     // enforces that one layer down (bundle L562709: "…because the session was not launched with
-    // --dangerously-skip-permissions"; L562714 does the same for the model-gated `auto`). The old
+    // --dangerously-skip-permissions"; L562713 does the same for the model-gated `auto`). The old
     // `.catch(() => {})` here swallowed that refusal and the next line painted the chip anyway — a status bar
     // showing bypass in red while the engine sat in the previous mode. Report it and stay put instead.
+    // The refusal ROW below is HARNESS-AUTHORED and has to be: all three copies of that refusal in the bundle
+    // (L372121-127, L486915-921, L562707-713) are ENGINE-side and only hand back `ok:!1` + an `error` string —
+    // upstream's own TUI flips the mode in-process and never renders a refusal at all, so there is no canon
+    // client-side string to match here. Don't go hunting for one.
     try { await session.setPermissionMode(next); }
     catch (e) {
       if (!disposed.current) append([{ text: `✗ ${next} refused by the engine (${(e as Error)?.message ?? e}) — staying in ${mode}`, color: role("error") }]);
