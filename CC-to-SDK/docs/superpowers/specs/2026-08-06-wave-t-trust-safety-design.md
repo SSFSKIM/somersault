@@ -728,6 +728,28 @@ flag lives in ccx prefs or a new marker file (recommendation: prefs). Two gated 
 Seeded from the grounding round — see the parent spec §12 for the six overturned premises. Wave-local
 additions during execution go here.
 
+- **Canon is now version-pinned to what actually runs** (Task 9 review). `node_modules/@anthropic-ai/
+  claude-agent-sdk/manifest.json` declares `"version": "2.1.220"`, commit `4073f595` — the CLI the SDK
+  spawns is *the same build* as `~/claude-code-bundle/2.1.220/cli.pretty.js`. The program has been treating
+  the bundle as canonical on the assumption it matches the runtime; that assumption is now evidence.
+  Corollary for every future wave: a bundle-derived claim about what the engine *writes* is settled, while a
+  claim about what the SDK *forwards over the stream* still needs a live probe — the CLI binary itself is a
+  bun filesystem archive and is not greppable.
+- **The interrupt row is a sanctioned double-paint divergence, not fidelity** (Task 9 review). On
+  Esc-during-tool upstream paints `Interrupted · What should Claude do instead?` **twice** — once from
+  `HVo`'s `F7` branch (L429119) and once from `ERe` exit 9 (L426473). ccx paints it once, because F3
+  deliberately suppresses the tool form. Recorded so a future fidelity audit does not "fix" the count back
+  to two: the divergence is chosen, and W-T19 is the decision.
+- **The third sentinel's prefix match is load-bearing, not defensive** (Task 9 review). Upstream's `Mpt`
+  (L373032) appends a statsig-gated suffix (`tengu_amber_prism`) to the sentinel, so `===` genuinely breaks
+  when the flag is on. This is why the match is `startsWith` while its two siblings stay exact.
+- **A latent status mis-mapping, left unfixed and out of scope** (Task 9 review). `toolResult.ts` maps
+  `"User rejected tool use"` to the `interrupted` status, but upstream routes that content (`Dpt`) to the
+  tool-use-*rejected* component `mVo` (L429120), not to `BP`. ccx already has the natural target — a
+  `rejected` status with `REJECTED_TEXT = "Tool use rejected"` (`toolRenderer.tsx:92`, `:182`). Verified
+  that Task 9's change cannot make it worse: `Dpt` and `F7` share only "The user doesn't want to " before
+  diverging, so the new prefix test can never fire on rejection content. Candidate for a later wave.
+
 ## Outcomes & Retrospective
 
 Pending — written at wave close.
