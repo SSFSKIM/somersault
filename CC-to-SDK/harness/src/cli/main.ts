@@ -18,6 +18,10 @@ import { parseThinkArg, thinkingConfigFrom } from "../tui/thinkLevels.js";
 // Value import, and safe: prefs.ts is plain fs + the theme table, no React (main.ts stays React-free).
 import { loadPrefs as realLoadPrefs } from "../tui/prefs.js";
 import type { CcxPrefs } from "../tui/prefs.js";
+// Value import, and safe for the same reason, deliberately: bypassAccepted.ts holds ONLY the acceptance
+// predicate and has no runtime imports at all, which is why the canon reader could be split out of the
+// `.tsx` dialog and shared with this file instead of re-implemented here as a raw prefs read.
+import { hasAcceptedBypass } from "../tui/bypassAccepted.js";
 import { prepareAttach as realPrepareAttach } from "./attach.js";
 import { socketAnswers as realSocketAnswers } from "../fleet/liveness.js";
 // type-only: main.ts stays React-free. The ink import happens only inside the DEFAULT runChatClient,
@@ -136,6 +140,15 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
     }
     case "run": {
       if (inv.detachable && inv.bg) return fail("--detachable and --bg are mutually exclusive", 2);
+      // T15-fix. `--bg` has no terminal to consent in, which is why the consent DIALOG skips it — but that
+      // reasoning only justifies not ASKING, not entering bypass unasked: a detached, never-prompting agent
+      // would have run in the one mode that stops checking, with no consent ever recorded, and every later
+      // `ccx attach` onto it would inherit that. Upstream refuses the same combination in the same shape
+      // (L451420-21, `z6H`'s --bg validator) and points the operator at the interactive run that records the
+      // acceptance; ours says `ccx` where upstream says `claude`, so the instruction is followable here.
+      // Placed with the other fatal argument errors — BEFORE --worktree prepares anything — so a refusal
+      // costs nothing that has to be unwound.
+      if (refuseBgBypass(inv, deps)) return fail("--bg with bypassPermissions requires accepting the disclaimer first. Run `ccx --dangerously-skip-permissions` once interactively.", 2);
       if (inv.worktree !== undefined) {
         // PRESENT and empty is not the same as absent: `--worktree "$WT"` with WT unset arrives here as "",
         // which the old truthiness guard read as "no worktree asked for" — the run landed in the shared
@@ -189,8 +202,16 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
 function needsBypassConsent(inv: CcxInvocation, deps: MainDeps): boolean {
   if (inv.bg || inv.print || !deps.isTTY()) return false;
   if (resolvedPermissionMode({ ...inv.config, permissionMode: inv.config.permissionMode ?? "default" }) !== "bypassPermissions") return false;
-  // `M8()` (bundle L43492): once accepted, never asked again.
-  return deps.loadPrefs().skipDangerousModePermissionPrompt !== true;
+  // `M8()` (bundle L43492): once accepted, never asked again. THE canon reader (bypassAccepted.ts), not a
+  // second raw read of the same flag — this and the dialog's own gate must never disagree.
+  return !hasAcceptedBypass(deps.loadPrefs());
+}
+
+/** T15-fix's `--bg` refusal (upstream L451420-21). Reads the mode WITHOUT the foreground `?? "default"`
+ *  rule above: a background run keeps the DEFAULTS mode deliberately (EP-T1), so the question here is only
+ *  ever "did this invocation ask for bypass", which both spellings answer through `inv.config`. */
+function refuseBgBypass(inv: CcxInvocation, deps: MainDeps): boolean {
+  return Boolean(inv.bg) && resolvedPermissionMode(inv.config) === "bypassPermissions" && !hasAcceptedBypass(deps.loadPrefs());
 }
 
 /** Retry classification: `fromSpawn` (the --detachable auto-attach) retries BOTH not-yet-resolvable (the
