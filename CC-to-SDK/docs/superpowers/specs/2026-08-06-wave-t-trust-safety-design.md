@@ -57,8 +57,12 @@ QA finding's own repro. `[BEHAVIOR]` markers are what a reviewer observes, not w
    shows the ctrl+g hint followed by ` · <plan file path>` with the path the SDK supplied. **ccx keeps its
    existing `ctrl+g to edit in <editor>` wording** — upstream's is `edit in <editor>` (L501126), and
    re-spelling every hint is Wave C's chrome work, not this wave's (plan review I11).
-9. **A9 (plan feedback)** An empty `Enter` on `No, keep planning` does nothing; typed feedback reaches the
-   model and the plan modal closes.
+9. **A9 (plan feedback) — AMENDED at close-out, see W-T21.** An empty `Enter` on `No, keep planning`
+   **denies**, matching upstream's `xnl` (L500994); typed feedback reaches the model and the plan modal
+   closes. The original criterion ("an empty `Enter` does nothing") was withdrawn — ccx already matched
+   canon and F6 had pinned it deliberately, so the wave declined to build the no-op. This is the one
+   criterion whose wording the mid-execution retraction failed to reach; the shipped behavior was correct
+   throughout.
 10. **A10 (qa6-05, P2)** With the API endpoint unreachable, the spinner row is replaced within ~2 s of the
     first retry event by `✻ API error · Retrying in <duration> · attempt n/max`, the duration counts down
     once per second, and a stalled variant appears before any retry evidence arrives. **No transcript row
@@ -758,6 +762,39 @@ Pending — written at wave close.
 
 ## Revision Notes
 
+- **v2 (2026-08-06) — close-out delta.** The final verification pass (task 18) walked A1–A19 and found
+  **17 proven by test, 1 needing a live TTY (A1), 1 surface-shipped-wiring-deferred (A6), 1 not met as
+  written (A9)**. Gates: `typecheck` clean, `test:unit` 1453 passed, `test:tui` 2735 passed / 9 skipped,
+  and `npm run build` — never run during the wave, run at close-out — clean with all four public `.d.ts`
+  files resolving. Eight deltas were already recorded as decisions (W-T13, W-T14, W-T16, W-T18, W-T19,
+  W-T21, W-T22, probe 99). These nine were not, and are recorded now:
+  1. **A9's wording was never amended** when W-T21 retracted its premise mid-execution. The shipped
+     behavior was correct throughout; only the criterion drifted. Amended above.
+  2. **A4 is written wider than what shipped** — the consult footer landed in five of six dialog bodies
+     (`FetchPermission` stays footerless by transcription, W-T18), and the `ctrl+e` explain hint is
+     **Bash-only**, not on every consult.
+  3. **A6's production wiring was deliberately deferred.** The explain surface, prompt, schema and DI
+     transport all shipped; nothing calls a live model yet. Recorded only in code at
+     `BashPermission.tsx:26-33`, whereas W-T13 reads as though Path C would be wired this wave.
+  4. **EP-T5 grew an item with no acceptance criterion**: `ccx --bg` into bypass is now refused unless the
+     disclaimer was already accepted interactively, transcribed from upstream L451420-21. It was found by
+     review, not by the spec.
+  5. **EP-T6's dashed rules shipped both wider and narrower than specified** — wider because canon's `SM`
+     receives the already-resolved ternary (`ial` L505692), so the box frames the overwrite diff as well as
+     the create block; narrower because the Edit arm (`Qsl` L505550) is left unfenced despite canon, pinned
+     by a test asserting the current absence so a follow-up must flip it visibly.
+  6. **A18 shipped without upstream's "with this feedback" clause.** The row description stays trimmed
+     because the feedback is undeliverable to the model (W-T13's sibling finding, W-T22's class): on the
+     REPL path nothing surfaces the approver's text at all. Known gap, recorded once at PlanDialog's
+     divergence 3.
+  7. **The retry label maps `error_status` onto canon's connection prose** (`rZp`, L437178-437190) rather
+     than the spec's "formatted error" — because the wire's `error` field is a slug set (`unknown`,
+     `overloaded`, …) that appears nowhere in canon's UI, and probe 96's own outage sample is `"unknown"`.
+  8. **A13's canon-pin comment lives in the source; A15's lives in the test.** Both are pinned; the
+     placement is inconsistent.
+  9. **The turn classifier gained a `>= 400` threshold on `api_error_status`** not described in W-T5,
+     adopted from this repo's own correlation probes (94, 94b) after review found the unthresholded form
+     would make `runStructured` throw on a valid run.
 - v1 (2026-08-06): authored from the parent umbrella spec plus the three grounding reports.
 - v1.1 (2026-08-06): W-T12 — `api_retry` already reaches the REPL; EP-T4 needs no wire work.
 - v1.2 (2026-08-06): **independent spec review folded in** (report:

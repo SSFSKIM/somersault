@@ -147,9 +147,10 @@ describe("host mode sync (one source of truth, last-write-wins)", () => {
     await host.stop();
   });
 
-  // The lying-chip guard (qa3-02's class). `auto` is MODEL-gated: on an unsupported model the engine
-  // silently falls back to `default`, so granting it without swapping the model first writes a mode the
-  // engine is not in — which is precisely what useChat.applyMode swaps to avoid.
+  // `auto` is MODEL-gated, so granting it without swapping the model first cannot work. Probe 99 measured
+  // what actually happens on the RUNTIME setter: the engine REFUSES ("auto mode unavailable for this
+  // model") rather than falling back to `default` in silence, so the swap is what makes the grant SUCCEED
+  // — not, as this comment used to claim, what prevents a lying chip. Same ordering as useChat.applyMode.
   it("granting `auto` on a model that cannot run it swaps the model FIRST", async () => {
     const { fake, drive, calls } = fakeSession();
     const host = hostFor(fake, { model: "claude-haiku-4-5" });
