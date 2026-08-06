@@ -620,6 +620,26 @@ surface under test. Probes needing a clean session must set `settingSources: []`
     saw four `esc to interrupt` rows carrying three different elapsed times in one frame, and after
     interrupting, **every stale spinner row persisted verbatim**. The mid-stream case is worse than filed,
     not better.
+15. **Upstream's resize contract, confirmed on the wire, and the design principle behind it.** The bundle
+    reading in item 13 was then verified against recorded pty bytes: the first bytes after each `SIGWINCH`
+    are `ESC[H` + (`ESC[2K` `ESC[1B`) × N + `ESC[H`, then a full repaint, where **N is the NEW viewport
+    height every time** — 24, 24, 40 across a 120×40 → 80×24 → 100×24 → 120×40 sequence. No `2J`, no `3J`.
+    **The principle: upstream never consults the previous frame's geometry, so its erase cannot be short.**
+    That is the whole difference from Ink, which erases a remembered count. Both sides were proven to be in
+    **inline** mode by byte census (zero `ESC[?1049h` in either stream), so the fleet's "claude passes
+    15/15" stands and Wave R's target is unambiguously the inline mode. Also measured: **ccx emits zero
+    `ESC[H` of any kind — it never positions the cursor absolutely at all.**
+    Two candidate seams in ccx were checked and **both rejected for reuse**: `useChat.ts:336` does write
+    `\x1b[2J\x1b[3J\x1b[H`, but `3J` wipes the scrollback where ccx's committed transcript lives via Ink
+    `<Static>` — reuse its *shape* (a TTY-gated direct stdout write, overridable through `deps`) with an
+    erase-viewport payload instead; and bumping `ChatApp.tsx:342`'s `staticEpoch` would be actively harmful,
+    since remounting `<Static>` replays the entire scrollback, and a resize does not change the transcript.
+    **Stated limitation, not papered over:** upstream's *fullscreen* resize behaviour remains unmeasured —
+    an isolated HOME strands 2.1.223 on the pre-REPL onboarding screens, so the gate's consumer never
+    mounts. Wave R does not need it (the mode ccx must match is inline), but no claim about fullscreen
+    rendering is made from this round. The unblock recipe is a seeded `$HOME/.claude.json` carrying
+    `hasCompletedOnboarding` plus a per-project `hasTrustDialogAccepted` / `hasCompletedProjectOnboarding`
+    entry, with `ESC[?1049h` in the pty bytes as the proof the mode is actually on.
 
 ## §13 Tracking map
 
