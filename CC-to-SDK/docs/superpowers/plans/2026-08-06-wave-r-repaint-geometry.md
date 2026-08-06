@@ -232,11 +232,20 @@ repeated above — use it verbatim).
 > return `"unknown"` and the correction would never fire. Worse, the new width is not known until the
 > resize has already happened, so the cursor cannot be parked in advance for *that* resize.
 >
-> **Answer this first, with a measurement, not an argument:** can Task 4 obtain a `colBefore` greater than
-> the new width at resize time? Candidate answers to test — (a) park the cursor at a far-right column after
-> each frame write so a later resize has an anchor; (b) calibrate on the first shrink and correct from the
-> second onward (accepting visible residue on the first, which users will hit); (c) a different oracle
-> entirely. **If none works, STOP and report** — the wave needs a different detection strategy and that is
+> **The answerable domain narrowed twice more after Task 3's review.** A truncating terminal that clamps
+> the cursor to the new right margin answers `newWidth`, and the reflow arithmetic also yields `newWidth`
+> whenever `colBefore` is an exact multiple of it — so `120 → 60` with the cursor at 120 was a false
+> `"reflow"` on an ordinary half-width drag. Multiples are now refused too, as are all non-shrinks. A
+> usable probe therefore needs `colBefore > newWidth` **and** `colBefore % newWidth !== 0` **and** a
+> genuine narrowing.
+>
+> **Answer this first, with a measurement, not an argument:** can Task 4 obtain a `colBefore` in that
+> domain at resize time? Candidate answers to test — (a) **park the cursor deliberately**: after each frame
+> write, move it to a chosen column near the right edge, and pick that column to avoid the multiple case —
+> since we choose it, an ambiguous pairing can be re-parked one column over and re-probed. Ink hides the
+> cursor (`cliCursor.hide()`), so this should not be visible; **verify that**. (b) calibrate on the first
+> shrink and correct from the second onward, accepting visible residue on the first, which users will hit.
+> (c) a different oracle entirely. **If none works, STOP and report** — the wave needs a different detection strategy and that is
 > the controller's call, not a thing to work around. Do not proceed to a design where the correction
 > silently never fires; a fix that no-ops in production while its tests pass is worse than no fix.
 >
