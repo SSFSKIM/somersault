@@ -36,6 +36,7 @@ import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { rewindFailureHeading } from "./rewindModel.js";
+import { truncateAtAnchor } from "./rewindRebuild.js";
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
@@ -346,6 +347,12 @@ export function useChat(
   const clearViewportFn = deps.clearViewport ?? (() => { clearViewport(inkStdout); });
   const ranInitial = useRef(false);
   const ranInitialPrompt = useRef(false);
+  // Set for the whole window in which THIS client's own rewind is in flight, so the host's `rewound`
+  // broadcast — which every follower receives, the confirming client included — does not trigger a
+  // second rebuild on top of confirmRewind's own. A boolean, not the anchor uuid: nothing on the wire is
+  // needed to answer "was this mine", and the window is bounded by the same try/finally that owns
+  // `rewinding`.
+  const selfRewind = useRef(false);
 
   // ── Projection reconciliation ────────────────────────────────────────────────────────────────────────
   /** Generic by `RenderItem.id`: filter out what is already published, append every unseen finalized item
@@ -635,7 +642,10 @@ export function useChat(
         // after its result reach an Agent row that has already settled.
         reconcile();
       }
-      else if (ev.kind === "rewound") void rebuildAfterRewind();   // ANOTHER client rewound: rebuild from disk (no prefill — not our prompt)
+      // ANOTHER client rewound: rebuild from disk, cut at the anchor the host resumed at (no prefill —
+      // not our prompt). Our OWN rewind's broadcast is skipped: confirmRewind already awaits its own
+      // rebuild, and running a second one on top of it re-reads disk and re-mints the composer prefill.
+      else if (ev.kind === "rewound") { if (!selfRewind.current) void rebuildAfterRewind({ prevUuid: ev.prevUuid }); }
       else if (ev.kind === "state") {
         idleFollowReplay.current = false;                          // the trailing frame of a follow replay ends the idle-ingestion mode
         if (ev.status.status === "idle") { clearLiveOpen(); clearRetry(); disarmStall(); }   // the host says nothing is running — no call of ours can still be live, no retry of ours is still pending, and nothing is left to go silent on us
@@ -1272,13 +1282,14 @@ export function useChat(
    *  the client that confirmed the rewind and by every other follower reacting to the host's `rewound`
    *  broadcast — a follower passes no prefill, because someone else's rewound prompt does not belong in
    *  this user's composer. Idempotent: re-reading disk and re-rendering is harmless if it runs twice. */
-  async function rebuildAfterRewind(prefill?: string) {
-    // Live-feedback fix (2026-08-06), two halves of "rewind just printed the divider":
-    //  · The read RACES the swap. The engine swap mints a session id asynchronously (the fresh engine's
-    //    init frame delivers it; the rewound broadcast carries it when known), and the new file's first
-    //    flush lags the swap settling — a single immediate read landed on a stale id or an unflushed
-    //    file and took the empty-divider arm. So: poll briefly, re-reading `session.sessionId` each
-    //    attempt (the adapter may learn the new id mid-poll), and accept the first non-empty replay.
+  async function rebuildAfterRewind(opts: { prevUuid?: string | null; prefill?: string } = {}) {
+    // Two halves, both measured:
+    //  · The READ RACES THE SWAP, and the race cannot be won by waiting. The engine swap mints a session
+    //    id asynchronously and the new file's first flush lags the swap settling, so the poll below still
+    //    earns its keep for "is there anything to read yet". But polling can never produce the TRIMMED
+    //    view: the row that moves the reader's leaf onto the new branch is written by the NEXT turn, so
+    //    a poll waiting for it would exhaust its window and render the stale frame anyway. The rows are
+    //    cut here instead, at the anchor the host itself resumed at (rewindRebuild.ts).
     //  · Ink's app.clear() (replaceDocument's bridge) cannot erase rows already scrolled OUT of the
     //    viewport, so the pre-rewind conversation survived above and the rebuild below read as "nothing
     //    re-rendered". So rewind does the real wipe (2J/3J/H — screen AND scrollback), immediately before
@@ -1293,18 +1304,19 @@ export function useChat(
       id = session.sessionId ?? id;
       if (!id) continue;
       try { msgs = await getSessionMessages(id); } catch { msgs = []; }
-      if (msgs.length) break;
+      if (msgs.length) break;                       // the poll waits for rows to EXIST — nothing more
     }
     if (disposed.current) return;
+    const rows = truncateAtAnchor(msgs, opts.prevUuid);
     clearScreen();
     // A rewind is a deliberate session transition: the fresh document derives ONLY the restored persisted
     // messages. (Ctrl-O never uses this path.)
-    if (msgs.length) replaceDocument(replayDocument(msgs, { id, label: "⏪ rewound", width: columnsFn() }));
+    if (rows.length) replaceDocument(replayDocument(rows, { id, label: "⏪ rewound", width: columnsFn() }));
     else { const fresh = new TranscriptDocument(); fresh.appendLocal({ kind: "rewind-divider", lines: [{ text: "⏪ rewound", dim: true }] }, "rewind:empty"); replaceDocument(fresh); }
-    lastAssistant.current = lastAssistantText(msgs);        // /copy follows what is on screen
+    lastAssistant.current = lastAssistantText(rows);        // /copy follows what is on screen
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
-    if (prefill !== undefined) setComposerPrefill({ text: prefill, token: Date.now() });
+    if (opts.prefill !== undefined) setComposerPrefill({ text: opts.prefill, token: Date.now() });
   }
 
   function rewindDryRun(uuid: string): Promise<RewindDryRun> {
@@ -1321,17 +1333,18 @@ export function useChat(
     // cleared from the editor, forwarded, and rejected by the host as busy — silently losing what the
     // user typed. `rewinding` keeps the composer off-screen until the operation settles.
     setRewinding(true);
+    selfRewind.current = true;
     void (async () => {
       try {
         await session.rewind(anchor, scope);
         if (disposed.current) return;
         if (scope === "code") { notice(`⏪ code restored to before "${anchor.text.slice(0, 40)}"`); return; }
-        await rebuildAfterRewind(anchor.text);
+        await rebuildAfterRewind({ prevUuid: anchor.prevUuid, prefill: anchor.text });
       // Upstream's own failure copy (`ce`, bundle L487142-154), chosen by the scope that was asked for —
       // see rewindFailureHeading for why the arm cannot be chosen by which half actually threw, and for the
       // one arm of upstream's four that has no channel to reach us at all.
       } catch (e) { append([{ text: rewindFailureHeading(scope), color: role("error") }, { text: (e as Error).message, color: role("error") }]); }
-      finally { if (!disposed.current) setRewinding(false); }
+      finally { selfRewind.current = false; if (!disposed.current) setRewinding(false); }
     })();
   }
 

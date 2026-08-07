@@ -27,7 +27,11 @@ export type HostEvent =
   // enough — its handler only syncs permissionMode, so other attached clients would keep rendering the
   // pre-rewind transcript, and /copy would keep offering text the host no longer knows about, while
   // their next prompt runs against the truncated conversation.
-  | { kind: "rewound"; sessionId?: string }
+  // `prevUuid` is the uuid the host handed `resumeSessionAt` — the last row the restored conversation
+  // keeps. A follower needs it to cut its own rebuild at the same place the confirming client does
+  // (EP-S1); without it a second attached client renders the pre-rewind chain. Optional because a host
+  // built before this field existed emits none, and the client's fallback is "show the rows unchanged".
+  | { kind: "rewound"; sessionId?: string; prevUuid?: string }
   | { kind: "turn"; phase: "start" | "end"; seq?: number; error?: string; truncated?: boolean };
 
 export type HostFrame = ({ t: "event" } & HostEvent) | ({ t?: undefined } & Record<string, unknown>);

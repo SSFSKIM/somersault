@@ -635,7 +635,7 @@ export class SessionHost {
         if (this.bgTasks.length) this.emit({ kind: "task", data: { type: "task_notification", status: "stopped", task_id: "rewind", summary: "background tasks ended by rewind" } });
         await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid as string });
         // Broadcast so EVERY attached client rebuilds, not just the one that confirmed (see wire.ts).
-        this.emit({ kind: "rewound", sessionId: this.session?.sessionId ?? sid });
+        this.emit({ kind: "rewound", sessionId: this.session?.sessionId ?? sid, ...(anchor.prevUuid ? { prevUuid: anchor.prevUuid } : {}) });
       }
     } finally {
       this.swapInFlight = false;

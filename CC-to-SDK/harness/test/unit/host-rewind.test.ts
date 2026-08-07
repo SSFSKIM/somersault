@@ -111,6 +111,16 @@ describe("rewind", () => {
     expect(events.some((e) => e.kind === "task" && /ended by rewind/.test(e.data?.summary ?? ""))).toBe(true);
     expect(events.some((e) => e.kind === "tasks_changed" && e.tasks.length === 0)).toBe(true);
   });
+  // EP-S1: a FOLLOWER's rebuild reads disk at the same instant the confirming client's does, and gets the
+  // same pre-rewind chain back. It needs the anchor to cut at, and the broadcast is its only channel.
+  it("the rewound broadcast carries the anchor's prevUuid, so a FOLLOWER can cut its own rebuild", async () => {
+    const { host } = makeHost();
+    const events: any[] = [];
+    host.follow((ev) => events.push(ev));
+    await host.rewind({ uuid: "uB", prevUuid: "a1" }, "conversation");
+    const rewound = events.find((e) => e.kind === "rewound");
+    expect(rewound).toMatchObject({ prevUuid: "a1" });
+  });
   it("resumeSession still swaps at runtime mode (regression: the swap is now shared)", async () => {
     const { host, opened } = makeHost();
     await host.resumeSession("other-sid");

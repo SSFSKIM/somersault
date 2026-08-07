@@ -301,4 +301,53 @@ describe("useChat: rewind flow", () => {
     await waitFor(() => frame(lastFrame).includes("fresh view"));
     expect(wipes).toBe(1);                                        // the 2J/3J/H wipe — rewind's alone since W-R t7 gave /clear the viewport-only one
   });
+
+  // EP-S1 (Wave S, the wave's spine). The rebuild READ RACES THE SWAP and the race cannot be won by
+  // waiting: the row that moves the reader's leaf onto the new branch is written by the NEXT turn, so at
+  // rebuild time `getSessionMessages` still resolves the PRE-rewind chain and hands back the very turns the
+  // rewind discarded. The rows are cut at the anchor the host itself resumed at instead.
+  it("13. renders only the restored conversation when the reader still returns the pre-rewind chain (A1)", async () => {
+    // The reader returns what it returns AT REBUILD TIME: the pre-rewind chain. This is the measured
+    // condition, not a hypothetical.
+    const readerRows = [
+      { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "ONE" }] }, timestamp: "2026-08-07T08:00:00.000Z" },
+      { type: "assistant", uuid: "a1", message: { content: [{ type: "text", text: "one-reply" }] } },
+      { type: "user", uuid: "u2", message: { content: [{ type: "text", text: "TWO" }] }, timestamp: "2026-08-07T08:01:00.000Z" },
+      { type: "assistant", uuid: "a2", message: { content: [{ type: "text", text: "two-reply" }] } },
+    ];
+    const session = fakeRewindSession({ rewind: async () => {} });
+    const deps = { getSessionMessages: async () => readerRows };
+    const api: Parameters<typeof RewindHost>[0]["api"] = {};
+    function H() { const c = useChat(() => session, {}, deps); api.confirmRewind = (c as any).confirmRewind; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.confirmRewind!({ uuid: "u2", prevUuid: "a1", text: "TWO", index: 2 }, "conversation");
+    await waitFor(() => frame(lastFrame).includes("ONE"));
+    expect(frame(lastFrame)).toContain("one-reply");
+    expect(frame(lastFrame)).not.toContain("TWO");
+    expect(frame(lastFrame)).not.toContain("two-reply");
+  });
+
+  it("14. rebuilds ONCE when this client is the one that confirmed", async () => {
+    // The host broadcasts `rewound` to every follower INCLUDING the confirming client, which already
+    // rebuilds from confirmRewind's own await. Two rebuilds were harmless while the rebuild was a
+    // fire-and-forget read; they are not harmless now that it truncates and sets composer prefill.
+    let reads = 0;
+    let session!: ReturnType<typeof fakeRewindSession>;
+    session = fakeRewindSession({ rewind: async () => { session.pushEvent({ kind: "rewound", sessionId: "sess-1", prevUuid: "a1" } as any); } });
+    const readerRows = [
+      { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "ONE" }] }, timestamp: "2026-08-07T08:00:00.000Z" },
+      { type: "assistant", uuid: "a1", message: { content: [{ type: "text", text: "one-reply" }] } },
+      { type: "user", uuid: "u2", message: { content: [{ type: "text", text: "TWO" }] }, timestamp: "2026-08-07T08:01:00.000Z" },
+    ];
+    const deps = { getSessionMessages: async () => { reads++; return readerRows; } };
+    const api: Parameters<typeof RewindHost>[0]["api"] = {};
+    function H() { const c = useChat(() => session, {}, deps); api.confirmRewind = (c as any).confirmRewind; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.confirmRewind!({ uuid: "u2", prevUuid: "a1", text: "TWO", index: 2 }, "conversation");
+    await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
+    await new Promise((r) => setTimeout(r, 40));   // long enough for a stray broadcast-driven second read to land
+    expect(reads).toBe(1);
+  });
 });
