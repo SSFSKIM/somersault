@@ -51,11 +51,15 @@ on its first try gets the same scrutiny as one that fails.
    omits the line entirely — `commands.ts:158` — so the observable is presence, not a needle); `/rename`
    and `/tag` report success rather than refusing; `/export` writes a file; `/files`, `/stats` and the
    Settings Stats tab render session-scoped content.
-4. **A4 (EP-S3)** The rewind confirm panel offers the **four implementable options** in upstream's
-   order and wording — `Restore code and conversation`, `Restore conversation`, `Restore code`,
-   `Never mind` — with the three-way head gated as upstream gates it, and each explanatory line matching
-   its own option. *(The two `Summarize` options are excluded and deferred: they need a ranged
-   compaction the SDK does not expose, which `rewindModel.ts:197,216` already records as out of scope.)*
+4. **A4 (EP-S3) — a GUARD, not a gate.** The rewind confirm panel offers the **four implementable
+   options** in upstream's order and wording — `Restore code and conversation`, `Restore conversation`,
+   `Restore code`, `Never mind` — with the three-way head gated as upstream gates it, and each explanatory
+   line matching its own option. *(The two `Summarize` options are excluded and deferred: they need a
+   ranged compaction the SDK does not expose, which `rewindModel.ts:197,216` already records as out of
+   scope.)* **This already passes at HEAD** — F6 T10 transcribed the whole panel into
+   `rewindModel.ts:186-245`, wired at `RewindPicker.tsx:263-281`. It is kept as a regression guard so a
+   later refactor cannot silently drop the option set; it gates nothing, and the second criterion that
+   turned out to be unfailable (see A2).
 4b. **A4b (EP-S3b)** Restoring to the session's **first** message offers a conversation restore and
    yields an empty conversation. This is a host + engine-lifecycle change, not a panel change:
    `host/host.ts:621` refuses it outright, and `resumeSessionAt` takes a message UUID with no value
@@ -143,7 +147,7 @@ wrong after a clean turn. **One emit beside the roster stamp at `host.ts:270`.**
 
 ---
 
-## EP-S3 · Rewind confirm panel — P1
+## EP-S3 · Rewind confirm panel — ALREADY BUILT, verified at plan time
 
 Upstream's six options in fixed order (L487069-487072), the three-way head gated on file checkpointing
 **and** a dry-run diff reporting ≥1 changed file. Copy trap: `Restore code`'s explanatory line reads
@@ -153,7 +157,14 @@ Upstream's six options in fixed order (L487069-487072), the three-way head gated
 ranged compaction the SDK does not expose (`session.compact()` takes no range), which `rewindModel.ts`
 already records at `:197` and `:216`. The panel ships **four**; summarize is deferred.
 
-**Acceptance:** A4.
+**All of the above is already implemented**, and writing the plan is what found that: `rewindModel.ts`
+carries the option set (`:186-209`), the gating (`:165-168`), the head's clause rule (`:183`) and both
+explanation lines (`:216-245`), and `RewindPicker.tsx:263-281` wires them. F6 T10 built it. **So this epic
+has no work items** — its acceptance becomes a regression guard (A4) and its one genuine residual, the
+`prevUuid` gate on the conversation option, is EP-S3b's, because that gate is honest until the host can
+serve the case behind it.
+
+**Acceptance:** A4, as a guard.
 
 ## EP-S3b · Rewind to the first message — P1, split out at spec review
 
@@ -163,6 +174,12 @@ prompt — code-only rewind is available"*), and the only trimming primitive und
 takes a **message UUID** (`sdk.d.ts:1815`) with no value meaning "before the first". Restoring to an empty
 conversation therefore needs a different primitive — most plausibly `clearSession()` — which is an engine
 lifecycle decision, not an option-list one.
+
+**It also owns the one line EP-S3 leaves behind.** `RewindPicker.tsx:263` computes
+`conversation = anchor.prevUuid != null`, which is why the first message offers only `Never mind`. That
+gate is *correct* while the host refuses the operation, so it moves in the same change as the host
+capability and not before — removing either half alone produces a panel that lies or a host that is asked
+for something it will reject.
 
 **Acceptance:** A4b.
 
@@ -351,6 +368,13 @@ Seeded from the grounding round; parent §12 item 20 carries the full evidence.
    Permissions, which turned out to be the epic's real body.
 5. **The worst anchor drift of the sprint: ~90,000 lines.** EP-S7's cited progress-bar line holds an
    unrelated SDK-message translator.
+6. **A THIRD criterion turned out to be unfailable, and the plan is what found it.** A2 was caught by the
+   spec review; A4 survived both the grounding round and that review and was still describing work that
+   F6 T10 had already shipped — the whole confirm panel, option set, gating and explanation lines. Both
+   times the cause was the same: an epic was written from what the *bundle* contains rather than from what
+   *ccx* already contains, and the two were only compared when someone had to name the files to edit.
+   Planning is the first pass that forces that comparison, which is an argument for planning against the
+   code rather than against the spec's prose.
 
 ## Outcomes & Retrospective
 
@@ -373,6 +397,14 @@ Pending — written at finish.
   **Three dropped items restored:** the double rebuild, the rewind window-size constant, and
   `qa4-07(ii)`'s message count. **ANCHORS-1 flagged as an unverified premise** to re-measure before it
   costs anything.
+- **v3 (2026-08-07, plan authoring)** — writing the implementation plan is a hostile read of the spec, and
+  it found one more thing the spec asserted without checking: **EP-S3 is already built.** The rewind
+  confirm panel's option set, ordering, three-way gate, head clause and both explanation lines were all
+  transcribed by F6 T10 into `rewindModel.ts` and wired in `RewindPicker.tsx`. EP-S3 is now marked as
+  built with no work items, **A4 is re-cast as a regression guard** rather than a gate (the third
+  criterion in this wave that could not fail), and the one residual — the `prevUuid` gate on the
+  conversation option — moved into **EP-S3b**, which is where the host change that makes removing it
+  honest already lives. Surprise 6 records what the pattern was.
 
 ## Deferred (out of this wave)
 
