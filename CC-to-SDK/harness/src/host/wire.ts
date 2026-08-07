@@ -31,7 +31,11 @@ export type HostEvent =
   // keeps. A follower needs it to cut its own rebuild at the same place the confirming client does
   // (EP-S1); without it a second attached client renders the pre-rewind chain. Optional because a host
   // built before this field existed emits none, and the client's fallback is "show the rows unchanged".
-  | { kind: "rewound"; sessionId?: string; prevUuid?: string }
+  // `cleared` is the OTHER outcome, and it must be a POSITIVE signal rather than the absence of a prevUuid
+  // (W-S8): a restore to the session's FIRST message swaps to a fresh, empty conversation on a NEW session
+  // id, and a follower whose cached id has not flipped yet would read the OLD file — still holding every
+  // discarded turn — and, with no anchor to cut at, render all of it back. It never travels with `prevUuid`.
+  | { kind: "rewound"; sessionId?: string; prevUuid?: string; cleared?: true }
   | { kind: "turn"; phase: "start" | "end"; seq?: number; error?: string; truncated?: boolean };
 
 export type HostFrame = ({ t: "event" } & HostEvent) | ({ t?: undefined } & Record<string, unknown>);

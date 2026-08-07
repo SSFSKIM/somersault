@@ -345,6 +345,35 @@ describe("useChat: rewind flow", () => {
     expect(f.split("TWO")).toHaveLength(2);                       // EXACTLY once — the prefill, never the transcript
   });
 
+  // W-S8. A restore to the session's FIRST message CLEARS the conversation: the host swaps to a fresh engine
+  // on a NEW session id, so the correct transcript is EMPTY — but the file this client's cached id still
+  // points at holds every turn the rewind discarded, and `prevUuid` is null, so there is nothing to cut at.
+  // The fixture is deliberately the honest one: a NON-empty old file is the entire hazard, and a `[]` reader
+  // would render empty with or without the fix.
+  it("15. renders the empty conversation immediately after a first-message restore, off a NON-empty old file", async () => {
+    const readerRows = [
+      { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "ONE" }] }, timestamp: "2026-08-08T08:00:00.000Z" },
+      { type: "assistant", uuid: "a1", message: { content: [{ type: "text", text: "one-reply" }] } },
+      { type: "user", uuid: "u2", message: { content: [{ type: "text", text: "TWO" }] }, timestamp: "2026-08-08T08:01:00.000Z" },
+    ];
+    let reads = 0;
+    const session = fakeRewindSession({ rewind: async () => {} });
+    const deps = { getSessionMessages: async () => { reads++; return readerRows; } };
+    const api: Parameters<typeof RewindHost>[0]["api"] = {};
+    function H() { const c = useChat(() => session, {}, deps); api.confirmRewind = (c as any).confirmRewind; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    const t0 = Date.now();
+    api.confirmRewind!({ uuid: "u1", prevUuid: null, text: "ONE", index: 0 }, "conversation");
+    await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
+    // Without the `cleared` arm, truncateAtAnchor(rows, null) returns every row (null is falsy) and the
+    // discarded conversation re-renders. Timing alone would not catch that — these assertions do.
+    expect(frame(lastFrame)).not.toContain("TWO");
+    expect(frame(lastFrame)).not.toContain("one-reply");
+    expect(reads).toBe(0);                                         // no disk read at all: the old file is a trap, not a source
+    expect(Date.now() - t0).toBeLessThan(200);                     // and it did not sit out the poll's ~3s
+  });
+
   it("14. rebuilds ONCE when this client is the one that confirmed", async () => {
     // The host broadcasts `rewound` to every follower INCLUDING the confirming client, which already
     // rebuilds from confirmRewind's own await. Two rebuilds were harmless while the rebuild was a

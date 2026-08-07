@@ -645,7 +645,7 @@ export function useChat(
       // ANOTHER client rewound: rebuild from disk, cut at the anchor the host resumed at (no prefill —
       // not our prompt). Our OWN rewind's broadcast is skipped: confirmRewind already awaits its own
       // rebuild, and running a second one on top of it re-reads disk and re-mints the composer prefill.
-      else if (ev.kind === "rewound") { if (!selfRewind.current) void rebuildAfterRewind({ prevUuid: ev.prevUuid }); }
+      else if (ev.kind === "rewound") { if (!selfRewind.current) void rebuildAfterRewind({ prevUuid: ev.prevUuid, cleared: ev.cleared }); }
       else if (ev.kind === "state") {
         idleFollowReplay.current = false;                          // the trailing frame of a follow replay ends the idle-ingestion mode
         if (ev.status.status === "idle") { clearLiveOpen(); clearRetry(); disarmStall(); }   // the host says nothing is running — no call of ours can still be live, no retry of ours is still pending, and nothing is left to go silent on us
@@ -1285,7 +1285,7 @@ export function useChat(
    *  run re-reads disk, re-cuts, and re-mints the composer prefill, so the confirming client must not
    *  also act on its own `rewound` broadcast. (This line used to say re-running was harmless. It was true
    *  while the rebuild was a fire-and-forget read; it stopped being true when the rebuild gained the cut.) */
-  async function rebuildAfterRewind(opts: { prevUuid?: string | null; prefill?: string } = {}) {
+  async function rebuildAfterRewind(opts: { prevUuid?: string | null; prefill?: string; cleared?: boolean } = {}) {
     // Two halves, both measured:
     //  · The READ RACES THE SWAP, and the race cannot be won by waiting. The engine swap mints a session
     //    id asynchronously and the new file's first flush lags the swap settling, so the poll below still
@@ -1302,7 +1302,19 @@ export function useChat(
     const retry = deps.rewindReplayRetry ?? { attempts: 8, delayMs: 375 };   // ≈3s worst case; injectable so tests never sit it out
     let id = session.sessionId;
     let msgs: any[] = [];
-    for (let attempt = 0; attempt < retry.attempts; attempt++) {
+    // HOW MANY TIMES TO ASK DISK, and the two W-S8 arms that are not "the default eight":
+    //  · `cleared` — a restore to the session's FIRST message. The host swapped to a fresh, EMPTY
+    //    conversation on a NEW session id, so there is nothing to read: the only file our (possibly stale)
+    //    cached id names is the OLD one, still holding every discarded turn, and with `prevUuid` null there
+    //    is no anchor to cut it at — `truncateAtAnchor(rows, null)` hands back every row. So zero reads, and
+    //    the empty-document arm below runs directly off the flag. A POSITIVE signal, never the absence of an
+    //    anchor: the confirming client derives it (confirmRewind), a follower reads it off the wire.
+    //  · `prevUuid === null` with no flag — a host too old to send one. Correct answer is still an empty
+    //    conversation, so ONE read and no poll: waiting ~3s for rows that must never arrive makes a
+    //    successful operation read as a hang. `!== null`, not falsy: `undefined` means "anchor unknown"
+    //    (a follower on a pre-EP-S1 host), where rows ARE expected and the poll must run in full.
+    const attempts = opts.cleared ? 0 : opts.prevUuid !== null ? retry.attempts : 1;
+    for (let attempt = 0; attempt < attempts; attempt++) {
       if (attempt > 0) { await new Promise((r) => setTimeout(r, retry.delayMs)); if (disposed.current) return; }
       id = session.sessionId ?? id;
       if (!id) continue;
@@ -1342,7 +1354,9 @@ export function useChat(
         await session.rewind(anchor, scope);
         if (disposed.current) return;
         if (scope === "code") { notice(`⏪ code restored to before "${anchor.text.slice(0, 40)}"`); return; }
-        await rebuildAfterRewind({ prevUuid: anchor.prevUuid, prefill: anchor.text });
+        // `cleared` is DERIVED here, not received: `selfRewind` exists precisely so the host's `rewound`
+        // broadcast — the only thing that carries the field — never drives this client's rebuild (W-S8).
+        await rebuildAfterRewind({ prevUuid: anchor.prevUuid, prefill: anchor.text, cleared: !anchor.prevUuid });
       // Upstream's own failure copy (`ce`, bundle L487142-154), chosen by the scope that was asked for —
       // see rewindFailureHeading for why the arm cannot be chosen by which half actually threw, and for the
       // one arm of upstream's four that has no channel to reach us at all.

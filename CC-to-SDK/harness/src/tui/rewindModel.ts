@@ -192,13 +192,15 @@ export const RESTORE_LABELS: Record<RestoreOption, string> = {
   nevermind: "Never mind",
 };
 
-/** `Y` (L487069-072) — WITH our second gate. Upstream builds `[both, conversation, code]` when code restore
- *  is possible and `[conversation]` when it is not; the summarize pair between there and `Never mind` is
- *  DG41 and out of scope. Our `RewindAnchor` carries a second capability upstream's message does not: a null
- *  `prevUuid` (the first prompt, or the first after a compaction boundary) means there is no row to resume
- *  AT, so a conversation restore is impossible (probe 68c, chatSession.ts:48-51). It is expressed the way
- *  upstream expresses its own impossible option — by ABSENCE — rather than as a disabled row with a reason,
- *  because a list whose shape says what is possible needs no second vocabulary for it. */
+/** `Y` (L487069-072). Upstream builds `[both, conversation, code]` when code restore is possible and
+ *  `[conversation]` when it is not; the summarize pair between there and `Never mind` is DG41 and out of
+ *  scope. The picker used to pass a SECOND gate here — a null `prevUuid` (the first prompt, or the first
+ *  after a compaction boundary) has no row to resume AT, so a conversation restore was impossible. W-S8
+ *  removed that degradation at its source: the host now CLEARS the conversation where it cannot fork it
+ *  (host.ts's `clearing` branch), so the picker passes `conversation: true` for every anchor. The parameter
+ *  stays, because it is the shape of the question and other callers may still answer `false`; so does the
+ *  rule it encodes — an impossible option is expressed by ABSENCE, the way upstream expresses its own,
+ *  rather than as a disabled row with a reason. */
 export function restoreOptions({ code, conversation }: { code: boolean; conversation: boolean }): RestoreOption[] {
   return [
     ...(code && conversation ? (["both"] as const) : []),
@@ -207,8 +209,8 @@ export function restoreOptions({ code, conversation }: { code: boolean; conversa
     "nevermind",
   ];
 }
-/** `defaultFocusValue: Re ? "both" : "conversation"` (L487190), degraded through the prevUuid gate above:
- *  with no conversation anchor, `both` does not exist and neither does `conversation`. */
+/** `defaultFocusValue: Re ? "both" : "conversation"` (L487190), with the same `conversation:false` tail
+ *  `restoreOptions` keeps: focus must land on an option that EXISTS, whatever the caller says is possible. */
 export function defaultRestoreOption({ code, conversation }: { code: boolean; conversation: boolean }): RestoreOption {
   return code && conversation ? "both" : conversation ? "conversation" : code ? "code" : "nevermind";
 }

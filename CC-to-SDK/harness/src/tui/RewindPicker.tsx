@@ -198,7 +198,11 @@ export function RewindPicker({ anchors, onDryRun, onConfirm, onClose, rows = pro
   /** Selecting an anchor: open on a LANDED summary, or hold the list until one lands (upstream's `oe`). */
   const open = (anchor: RewindAnchor) => {
     const have = summaries.get(anchor.uuid);
-    if (have !== undefined) { setSelected({ anchor, dry: have }); setFocusedOption(defaultRestoreOption({ code: canRestoreCode(have), conversation: anchor.prevUuid != null })); return; }
+    // `conversation: true` for the same reason as the render site below — the host can now clear where it
+    // cannot fork, so no anchor is unrestorable. This seeds `focusedOption`, which is what the explanation
+    // line reads: leaving it on the old prevUuid gate would put the state on `nevermind` while the pointer
+    // rested on `Restore conversation`, so the panel would contradict its own pointer.
+    if (have !== undefined) { setSelected({ anchor, dry: have }); setFocusedOption(defaultRestoreOption({ code: canRestoreCode(have), conversation: true })); return; }
     // A held list invites a second Enter precisely because it looks unresponsive — without this guard each
     // one issues ANOTHER out-of-band dry run (a multi-second engine call) for the same anchor (t10 re-review).
     if (pending?.uuid === anchor.uuid) return;
@@ -208,7 +212,7 @@ export function RewindPicker({ anchors, onDryRun, onConfirm, onClose, rows = pro
       if (!mounted.current || pendingToken.current !== token) return;
       setPending(null);
       setSelected({ anchor, dry });
-      setFocusedOption(defaultRestoreOption({ code: canRestoreCode(dry), conversation: anchor.prevUuid != null }));
+      setFocusedOption(defaultRestoreOption({ code: canRestoreCode(dry), conversation: true }));   // as above
     });
   };
 
@@ -260,7 +264,11 @@ export function RewindPicker({ anchors, onDryRun, onConfirm, onClose, rows = pro
 
   // Every line below reads the FROZEN snapshot (`selected.dry`), never the live map — see the state doc.
   const { anchor, dry } = selected;
-  const code = canRestoreCode(dry), conversation = anchor.prevUuid != null;
+  // A conversation restore is now possible for EVERY anchor, the first prompt included: the host clears the
+  // conversation where it cannot fork it (host.ts's `clearing` branch, W-S8). The old `anchor.prevUuid !=
+  // null` gate was honest while the host refused that case, and removing one without the other is what
+  // would make the option list lie.
+  const code = canRestoreCode(dry), conversation = true;
   const options = restoreOptions({ code, conversation });
   const explainCode = codeExplanation(focusedOption, dry);
   const when = anchor.timestamp ? formatRelativeTime(new Date(anchor.timestamp)) : undefined;

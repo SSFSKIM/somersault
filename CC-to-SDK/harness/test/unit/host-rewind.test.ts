@@ -9,7 +9,9 @@ import { hostSocketPath } from "../../src/fleet/paths.js";
 const user = (text: string, uuid: string) => ({ type: "user", uuid, message: { role: "user", content: text } });
 const assistant = (uuid: string) => ({ type: "assistant", uuid, message: { role: "assistant", content: [{ type: "text", text: "ok" }] } });
 
-function makeHost(overrides: Record<string, unknown> = {}, opts: Record<string, unknown> = {}) {
+/** `onOpen` fires from INSIDE the injected `openSession`, which is the one moment a swap is genuinely in
+ *  flight — the only place a busy-window assertion can sample something a no-op would not also satisfy. */
+function makeHost(overrides: Record<string, unknown> = {}, opts: Record<string, unknown> = {}, onOpen?: (h: SessionHost) => void) {
   const calls: string[] = [];
   const opened: Record<string, unknown>[] = [];
   const session = {
@@ -24,7 +26,7 @@ function makeHost(overrides: Record<string, unknown> = {}, opts: Record<string, 
   const getMessages = vi.fn(async () => [user("A", "uA"), assistant("aA"), user("B", "uB")]);
   const host = new SessionHost(
     { short: "h1", name: "h1", cwd: "/tmp", kind: "interactive", detached: true, config: {}, ...opts } as any,
-    { openSession: (c: any) => { opened.push(c); return session as any; }, getMessages, disposeGraceMs: 20 } as any,
+    { openSession: (c: any) => { opened.push(c); onOpen?.(host); return session as any; }, getMessages, disposeGraceMs: 20 } as any,
   );
   // start() binds a real socket; tests drive the methods directly instead — mirror host-session.test.ts
   (host as any).session = session; (host as any).mode = "acceptEdits";
@@ -79,16 +81,59 @@ describe("rewind", () => {
     await expect(host.rewind({ uuid: "uB", prevUuid: "aA" }, "both")).rejects.toThrow(/not enabled/);
     expect(rewind).toHaveBeenCalledTimes(1);   // dry only
   });
-  it("refuses conversation scopes with a null prevUuid — and never touches files (validate before side effects)", async () => {
-    const { host, session } = makeHost();
-    await expect(host.rewind({ uuid: "uA", prevUuid: null }, "both")).rejects.toThrow(/code-only/);
-    expect(session.rewind).not.toHaveBeenCalled();
+  // W-S8 INVERTS THIS. It used to read "refuses conversation scopes with a null prevUuid — and never touches
+  // files (validate before side effects)" and assert `rejects.toThrow(/code-only/)`. That was honest only
+  // while the host had no way to express "before the first prompt"; it now clears instead of refusing, so a
+  // `both` scope does BOTH halves. The ordering the old name was really guarding — file restore on the LIVE
+  // engine before the swap replaces it — is what the `calls`/`opened` pair still pins.
+  it("scope both with a null prevUuid restores the files AND clears the conversation, in that order", async () => {
+    const { host, session, calls, opened } = makeHost();
+    await host.rewind({ uuid: "uA", prevUuid: null }, "both");
+    expect(session.rewind).toHaveBeenCalled();
+    expect(calls).toEqual(["rewind:uA:dry", "rewind:uA:real"]);
+    expect(opened).toHaveLength(1);
+    expect((opened[0] as any).resumeAt).toBeUndefined();
   });
   it("scope code with a null prevUuid still succeeds and performs the file restore (the intended degradation)", async () => {
     const { host, calls, opened } = makeHost();
     await host.rewind({ uuid: "uA", prevUuid: null }, "code");
     expect(calls).toEqual(["rewind:uA:dry", "rewind:uA:real"]);
     expect(opened).toHaveLength(0);
+  });
+  it("restores to the session's FIRST message by swapping to a fresh conversation (A4b)", async () => {
+    // resumeSessionAt takes a message UUID and has no value meaning "before the first", so a fork is not
+    // the primitive here — an empty conversation is. Both keys must be EXPLICITLY undefined: engineConfig
+    // spreads the LAUNCH config first (host.ts:356), so a host born from `ccx --resume <sid>` still carries
+    // `resume` — which is why the launch config below carries one. A bare `swapEngine({})` passes a weaker
+    // version of this test and reopens the very conversation the user asked to drop.
+    const { host, opened } = makeHost({}, { config: { resume: "launch-sid" } });
+    await host.rewind({ uuid: "uB", prevUuid: null }, "conversation");
+    expect(opened).toHaveLength(1);
+    expect((opened[0] as any).resume).toBeUndefined();
+    expect((opened[0] as any).resumeAt).toBeUndefined();
+  });
+  it("keeps the busy window closed across the whole first-message restore", async () => {
+    // The reason this does NOT call the host's own clearSession(): that method opens and closes
+    // swapInFlight itself (host.ts:449-453), so nesting it inside rewind's window would let the inner
+    // finally reopen the busy gate mid-swap. Sampled from INSIDE the injected openSession — that is the
+    // one moment the swap is genuinely in flight.
+    const seen: boolean[] = [];
+    const { host } = makeHost({}, {}, (h) => seen.push(h.busy()));
+    await host.rewind({ uuid: "uB", prevUuid: null }, "conversation");
+    expect(seen).toEqual([true]);
+  });
+  it("broadcasts rewound with `cleared` and no prevUuid after a first-message restore", async () => {
+    // POSITIVE, not the absence of prevUuid: the swap minted a NEW session id, and a follower whose cached
+    // id has not flipped yet would otherwise read the OLD (non-empty) file and re-render the conversation
+    // the user just discarded — truncateAtAnchor(rows, undefined) returns every row.
+    const { host } = makeHost();
+    const events: any[] = [];
+    host.follow((ev) => events.push(ev));
+    await host.rewind({ uuid: "uB", prevUuid: null }, "conversation");
+    const ev = events.find((e: any) => e.kind === "rewound");
+    expect(ev).toBeDefined();
+    expect(ev.cleared).toBe(true);
+    expect(ev.prevUuid).toBeUndefined();
   });
   it("refuses while a turn is in flight", async () => {
     const { host } = makeHost();

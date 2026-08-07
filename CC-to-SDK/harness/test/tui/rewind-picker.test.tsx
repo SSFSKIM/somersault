@@ -16,6 +16,7 @@ import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { RewindPicker } from "../../src/tui/RewindPicker.js";
+import { conversationExplanation } from "../../src/tui/rewindModel.js";
 import type { RewindAnchor, RewindDryRun } from "../../src/session/chatSession.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
@@ -264,6 +265,45 @@ describe("<RewindPicker> — the confirmation panel", () => {
     await waitFor(() => frame(r.lastFrame).includes("Confirm you want to restore"));
     return r;
   };
+  /** The same, but on the OLDEST row — `uA`, whose `prevUuid` is null (the session's first prompt). Home
+   *  rather than `k`, which is how the pre-Wave-S null-prevUuid test below already reached it. */
+  const openConfirmFirst = async (dry: (uuid: string) => Promise<RewindDryRun>) => {
+    const r = render(<RewindPicker {...props} anchors={ANCHORS} onDryRun={dry} />);
+    await waitFor(() => frame(r.lastFrame).includes("(current)"));
+    await tick();
+    r.stdin.write("\x1b[H");                                           // Home → the OLDEST row (uA, prevUuid null)
+    await waitFor(() => (plain(frame(r.lastFrame)).split("\n").find((l) => l.includes("❯")) ?? "").includes("first prompt"));
+    r.stdin.write("\r");
+    await waitFor(() => frame(r.lastFrame).includes("Confirm you want to restore"));
+    return r;
+  };
+
+  // A4, kept as a GUARD. These passed on the build that existed when Wave S was planned; they are here so a
+  // later refactor cannot quietly drop upstream's option set (L487069-072). Nothing was "fixed" to make them
+  // pass — passing on arrival is the expected result, and is recorded as such.
+  it("offers the four implementable options in upstream's order and wording (A4)", async () => {
+    // dry run reporting one changed file → the three-way head is on
+    const { lastFrame } = await openConfirm(ANCHORS, async () => ({ canRewind: true, filesChanged: ["a.ts"], insertions: 1, deletions: 0 }));
+    const f = plain(frame(lastFrame));
+    const at = (s: string) => f.indexOf(s);
+    expect(at("Restore code and conversation")).toBeGreaterThan(-1);
+    expect(at("Restore conversation")).toBeGreaterThan(at("Restore code and conversation"));
+    expect(at("Restore code")).toBeGreaterThan(-1);
+    expect(at("Never mind")).toBeGreaterThan(at("Restore conversation"));
+  });
+
+  it("drops the code options when the dry run names no changed file (A4)", async () => {
+    const { lastFrame } = await openConfirm(ANCHORS, async () => ({ canRewind: true, filesChanged: [] }));
+    const f = plain(frame(lastFrame));
+    expect(f).toContain("Restore conversation");
+    expect(f).not.toContain("Restore code and conversation");
+  });
+
+  it("pairs each option with its own explanatory line — the two are trivially swapped (A4)", () => {
+    expect(conversationExplanation("code")).toBe("The conversation will be unchanged.");
+    expect(conversationExplanation("conversation")).toBe("The conversation will be forked.");
+    expect(conversationExplanation("both")).toBe("The conversation will be forked.");
+  });
 
   it("prompt, message box, relative time and the four options — with `both` focused when code restore is possible", async () => {
     const { lastFrame } = await openConfirm(ANCHORS, async () => clean);
@@ -312,18 +352,32 @@ describe("<RewindPicker> — the confirmation panel", () => {
     expect(f.split("\n").find((l) => l.includes("❯"))).toContain("Restore conversation");
   });
 
-  it("a null-prevUuid anchor cannot restore the conversation: only the code option is offered, and it is focused", async () => {
-    const r = render(<RewindPicker {...props} anchors={ANCHORS} onDryRun={async () => clean} />);
-    await waitFor(() => frame(r.lastFrame).includes("(current)"));
-    await tick();
-    r.stdin.write("\x1b[H");                                           // Home → the OLDEST row (uA, prevUuid null)
-    await waitFor(() => (plain(frame(r.lastFrame)).split("\n").find((l) => l.includes("❯")) ?? "").includes("first prompt"));
-    r.stdin.write("\r");
-    await waitFor(() => frame(r.lastFrame).includes("Confirm you want to restore"));
-    const f = plain(frame(r.lastFrame));
+  // W-S8 INVERTS THIS TOO. It used to read "a null-prevUuid anchor cannot restore the conversation: only the
+  // code option is offered, and it is focused" — correct while the host refused that case, and a lie the
+  // moment it learned to clear instead of fork. Rewritten rather than deleted: this is the only coverage of
+  // the first-prompt anchor shape.
+  it("a null-prevUuid anchor CAN restore the conversation now — the full option set, with `both` focused", async () => {
+    const { lastFrame } = await openConfirmFirst(async () => clean);
+    const f = plain(frame(lastFrame));
+    expect(f).toContain("Restore code and conversation");
+    expect(f).toContain("Restore conversation");
     expect(f).toContain("Restore code");
-    expect(f).not.toContain("Restore conversation");
-    expect(f).toContain("The conversation will be unchanged.");
+    expect(f.split("\n").find((l) => l.includes("❯"))).toContain("Restore code and conversation");
+  });
+
+  it("offers a conversation restore for the first message (A4b)", async () => {
+    const { lastFrame } = await openConfirmFirst(async () => ({ canRewind: false }));
+    const f = plain(frame(lastFrame));
+    expect(f).toContain("Restore conversation");
+    expect(f).toContain("Never mind");
+  });
+
+  // The pointer and the explanation line are computed from DIFFERENT state (`defaultFocusValue` at the render
+  // site, `focusedOption` seeded by `open()`), so changing one predicate and not the other ships a panel that
+  // contradicts itself. This is the pin for that, not for the option list.
+  it("focuses a restorable option and explains THAT option, for a first-message anchor (A4b)", async () => {
+    const { lastFrame } = await openConfirmFirst(async () => ({ canRewind: false }));
+    expect(plain(frame(lastFrame))).toContain("The conversation will be forked.");        // not "…will be unchanged."
   });
 
   it("choosing an option confirms with that scope; Never mind and Esc both go BACK to the list, never out", async () => {

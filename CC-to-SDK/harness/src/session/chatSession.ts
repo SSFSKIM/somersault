@@ -52,7 +52,9 @@ export interface SessionEvents {
 /** Esc-Esc rewind surface (host path only, like DecisionFeed). Two anchors per row (probe 68c):
  *  `uuid` (the selected prompt) drives rewindFiles; `prevUuid` (the nearest preceding REAL row)
  *  drives resumeSessionAt, because resumeSessionAt KEEPS its anchor and drops only what follows.
- *  prevUuid null = first prompt (or first-after-compact) → code-only restore. */
+ *  prevUuid null = first prompt (or first-after-compact): there is no row to resume AT, so the host
+ *  CLEARS the conversation instead of forking it (W-S8, host.ts's `clearing` branch) — every scope stays
+ *  available, and the resulting `rewound` broadcast carries `cleared` rather than an anchor. */
 export type RewindScope = "both" | "conversation" | "code";
 /** `timestamp` is the persisted row's own ISO string (every `type:"user"` row on disk carries one), carried
  *  so the F6 T10 confirmation panel can print upstream's `(<relative time>)` under the message it is about to

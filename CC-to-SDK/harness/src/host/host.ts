@@ -608,12 +608,12 @@ export class SessionHost {
     catch (e) { return { canRewind: false, error: (e as Error).message }; }
   }
 
-  /** Esc-Esc rewind. VALIDATION FIRST, THEN SIDE EFFECTS: the null-prevUuid refusal below runs before the
-   *  file-restore block even though it only governs the LATER conversation-swap step — a `both`-scope
-   *  rewind whose anchor has no prevUuid (the first prompt, or the first prompt after a compaction
-   *  boundary) must be refused before the real, filesystem-mutating file rewind runs, or the caller sees
-   *  a rejection implying nothing happened while the working tree was already reverted with no matching
-   *  conversation swap. ORDER IS OTHERWISE LOAD-BEARING: file restore runs on the LIVE engine first
+  /** Esc-Esc rewind. VALIDATION FIRST, THEN SIDE EFFECTS still governs the guards above: every reason this
+   *  can refuse is decided before the real, filesystem-mutating file rewind runs, or the caller sees a
+   *  rejection implying nothing happened while the working tree was already reverted with no matching
+   *  conversation swap. W-S8 removed the one refusal that used to live here — a null prevUuid (the first
+   *  prompt, or the first after a compaction boundary) is now CLEARED rather than refused; see the
+   *  `clearing` line below. ORDER IS OTHERWISE LOAD-BEARING: file restore runs on the LIVE engine first
    *  (probe 68d: rewindFiles needs the open transport), THEN the conversation swap replaces the engine.
    *  The dry-run guard exists because with checkpointing off the real call THROWS where dryRun merely
    *  reports (probe 68d) — never reach the throwing call with a known-bad state. Live background tasks
@@ -623,9 +623,13 @@ export class SessionHost {
     if (this.parked.list().length) throw new Error("a decision is pending — answer it first");
     const sid = this.session?.sessionId;
     if (!sid) throw new Error("no session to rewind");
-    // A code-only rewind is legitimate for a null-prevUuid anchor — that is the intended degradation —
-    // so this is gated on `scope !== "code"`, same as the conversation-swap step it protects.
-    if (scope !== "code" && !anchor.prevUuid) throw new Error("no conversation anchor before the first prompt — code-only rewind is available");
+    // A null-prevUuid CONVERSATION restore is no longer a refusal (W-S8). `resumeSessionAt` takes a message
+    // UUID and has no value meaning "before the first" (sdk.d.ts:1815), so the fork primitive genuinely
+    // cannot express it — but the OUTCOME the user asked for is an empty conversation, which is what the
+    // swap seam produces with both keys undefined. Deliberately NOT this.clearSession(), which wraps that
+    // same swap in its own swapInFlight window: nesting it here would let its finally reopen the busy gate
+    // mid-operation. Gated on `scope !== "code"` like the conversation-swap step it describes.
+    const clearing = scope !== "code" && !anchor.prevUuid;
     // Spans the dry run, the real file restore, AND the engine swap — the whole window server.ts's
     // `prompt` gate must see as busy (see the field doc above). `finally` guarantees it clears even on a
     // throw from the dry run, the real restore, or the swap itself.
@@ -640,9 +644,14 @@ export class SessionHost {
       }
       if (scope !== "code") {
         if (this.bgTasks.length) this.emit({ kind: "task", data: { type: "task_notification", status: "stopped", task_id: "rewind", summary: "background tasks ended by rewind" } });
-        await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid as string });
+        if (clearing) await this.swapEngine({ resume: undefined, resumeAt: undefined });
+        else await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid as string });
         // Broadcast so EVERY attached client rebuilds, not just the one that confirmed (see wire.ts).
-        this.emit({ kind: "rewound", sessionId: this.session?.sessionId ?? sid, ...(anchor.prevUuid ? { prevUuid: anchor.prevUuid } : {}) });
+        // `cleared` is POSITIVE, not the absence of prevUuid: the swap above minted a NEW session, and a
+        // client whose cached id has not flipped yet would otherwise read the OLD file, find it non-empty,
+        // and re-render the very conversation the user just discarded.
+        this.emit({ kind: "rewound", sessionId: this.session?.sessionId ?? sid,
+                    ...(clearing ? { cleared: true } as const : anchor.prevUuid ? { prevUuid: anchor.prevUuid } : {}) });
       }
     } finally {
       this.swapInFlight = false;
