@@ -432,27 +432,74 @@ matches upstream per theme; a `Dockerfile` edit is detected as dockerfile.
    transcript shows only ONE.
 6. **Dependencies:** none. Wave S lead.
 
-#### EP-S2 · Foreground session handle (qa5-03, qa5-04) — P0
-`/rename` and `/tag` answer "no session yet" after completed turns; Esc-Esc has no anchors after `/clear` —
-handlers read a fleet/detachable handle the foreground REPL never populates. Work: one identity source for
-foreground and detachable paths. Acceptance: after any completed turn, `/rename` works; after `/clear` +
-one turn, rewind anchors exist.
+#### EP-S2 · Foreground session handle (qa5-03) — P0
+**Re-cut 2026-08-07 by grounding.** `qa5-03` is `[BUG]`, confirmed keylessly, and its blast radius is
+**nine surfaces, not two**: `/session`, `/rename`, `/tag`, `/export`, `/files`, `/stats`, `/status`'s
+Session line, the Settings Stats tab, and `resumeInto`'s same-session test. Mechanism: `runTask` emits no
+`state` event (`host/host.ts:255-301`), and `state` is the only thing that populates the client's cached
+session id (`client/chatAdapter.ts:48`), so a clean turn never delivers it. **The fix is one emit beside
+the roster stamp at `host.ts:270`.**
+**`qa5-04` is `[MISREAD]` and leaves this epic.** `rewindAnchors` is a host-side op that never reads the
+client's cached id, so qa5-03 cannot cause it. What emptied the picker in that repro was the trailing
+`/compact`: compaction rewrites the persisted transcript to a single continuation-summary row, which the
+anchor classifier correctly treats as a phantom. The old acceptance ("anchors exist after `/clear` + one
+turn") **already passes at HEAD and never tested the reported behaviour.** A genuine
+anchors-after-compaction divergence remains underneath it — it is a design question about where anchors
+come from and is recorded in the Wave S spec's open questions, not ridden on this one-line fix.
+Acceptance: after any completed turn, `/rename` works and `/status` shows a session id.
 
 #### EP-S3 · Rewind confirm panel, full option set (qa4-09, qa5-06) — P1
-Two rows today; upstream offers both Summarize variants (L487071) plus the code-aware three-way head
-(L487070, `The code will be unchanged.` L487222). Acceptance: no-code-change rewind shows 4 options;
-with code changes, the Restore code variants appear.
+Anchors verified exact. Upstream's set is **six** options in fixed order (L487069-487072): `both`
+`Restore code and conversation` · `conversation` `Restore conversation` · `code` `Restore code` ·
+`summarize` `Summarize from here` · `summarize_up_to` `Summarize up to here` · `nevermind` `Never mind`.
+The three-way head is gated on **file checkpointing enabled AND the dry-run diff reporting ≥1 changed
+file**. Copy trap recorded by the transcriber: the `Restore code` option's explanatory line reads
+`The conversation will be unchanged.` — the code-side and conversation-side lines are independent and
+trivially swapped.
+**Absorbs an unfiled defect the controller's keyed repro found (§12 item 20): ccx cannot rewind to its
+own first message.** That anchor has no `prevUuid`, so `defaultRestoreOption` computes
+`conversation: false` and the confirm panel renders with **no restore option at all** — one row reading
+`1. Never mind`. Acceptance: no-code-change rewind shows the conversation + both summarize options;
+with code changes the Restore-code variants appear; **and the first anchor offers a conversation
+restore.**
 
 #### EP-S4 · List windowing primitive (qa4-10, qa2-10b, standing paging remainder) — P1
-`(more above)`/`(more below)` windowing (L396412/L396420) applied to the rewind picker and `/model` at
-small geometries; `pageup/pagedown/home/end` bound in Settings/Permissions contexts (four lines in
-`bindings.ts` per `tui-ux.md:1045`). Acceptance: 60×15 pickers clip with indicators; paging keys move
-Settings/Permissions lists.
+**Re-cut 2026-08-07: two of the five surfaces are already done and the epic's body moved.** `qa4-10` is
+`[MISREAD]` — the rewind picker's windowing and `moreAbove`/`moreBelow` counters exist
+(`RewindPicker.tsx:239,253`); at the QA geometry the window was 9 rows for 4 options, so nothing
+overflowed. Only the window-SIZE constant diverges (ccx derives it from terminal height; upstream's is
+much smaller). SessionPicker is correct and matches upstream's `(n of m)` header form. `qa2-10b` is
+`[PARTIAL]` — Wave R t5 fixed the clipping; the `… +N models` counter is still computed off a fixed
+10-row window instead of the rendered one (measured: 14 models at 60×15 shows 3, hides 11, says "+4").
+`Select` already publishes the real window via `onViewChange` — the rewind picker consumes it and is
+right, `/model` does not and is wrong.
+**Two corrections from the bundle.** `(more above)`/`(more below)` at L396412/L396420 are **aria-labels,
+never visible text**; upstream ships **two incompatible list substrates**, and the one the rewind picker
+uses renders visible `↑ N more above` / `↓ N more below` (L487190/L487193). Upstream binds `home`/`end`
+in only one substrate, gives Permissions `pageup`/`pagedown` only, and gives the Settings list no paging
+at all — so "four lines in `bindings.ts`" is not the parity target. The doc citation drifted:
+`tui-ux.md:1045` → **`:1083`**.
+**Unfiled and larger than the filed items: Settings and Permissions have no windowing at all** and
+declare no size props, so Wave R t5's threading never reached them; Permissions' rule lists are
+unbounded. Binding paging keys onto an unwindowed list reproduces the "resolves but moves nothing"
+defect F2 exists to remove — the handlers do not exist either. Cheapest coherent move is to migrate both
+lists onto `Select`, which brings the window and all eight keys at once.
+Acceptance: the `/model` counter reflects the rendered window at 60×15; Settings and Permissions clip
+with indicators and their paging keys move the selection.
 
 #### EP-S5 · Cost & context truth (qa5-10, qa5-02) — P1
-`/cost` counts cache tokens (currently orders-of-magnitude under); footer context %% resets on `/clear`.
-Acceptance: `/cost` after a cached-heavy turn is within rounding of the SDK's usage totals; footer shows
-fresh context immediately post-clear.
+Both `[BUG]`, both small, and both diagnoses need one correction each. **`/cost`: the dollar total is
+already correct** — it comes from the engine with cache included, which is why QA captured a plausible
+`$0.0117` beside an absurd `2 in · 5 out`. Only the TOKEN line and per-model rows are wrong: ccx's mirror
+type (`commands.ts:127`) declares 3 of `ModelUsage`'s 10 fields, dropping both cache counters plus
+`total_api_duration_ms` / `total_lines_added` / `total_lines_removed` — all on the wire, all in the
+upstream `/cost` output QA captured. One type widening, not four features. **Context %: it goes STALE,
+it does not reset.** `ctxPct` is written only at turn-end (`useChat.ts:622,677`); `/clear` never touches
+it, so the chip keeps the pre-clear value. Wave R t7 rebuilt `/clear`'s repaint and deliberately did not
+touch this state. Fix is one `void refreshCtx()` in the clear arm — note upstream shows **no** context
+chip post-clear at all, so the spec chooses between refreshing and hiding.
+Acceptance: `/cost` token lines include cache reads and creations; the context chip is truthful
+immediately after `/clear`.
 
 #### EP-S6 · Resume ergonomics (qa5-14, qa5-13, qa4-06, qa4-08, qa4-07) — P1
 `--resume` accepts the 8-char short id ccx itself prints; `--continue` exists; `/resume` gains upstream's
@@ -462,13 +509,34 @@ ccx prints and passing it to `--resume` resumes that session; `ccx --continue` r
 preview matches the session's actual content.
 
 #### EP-S7 · Compaction surfaces (qa5-07, qa5-08) — P2
-Busy state during `/compact` (upstream: 40-cell progress bar, L407347/L497331) and the spinner line
-replaced by `⎿ Compacted (ctrl+o to see full summary)` (L314675). Acceptance: `/compact` shows progress
-while running and leaves only the result line after.
+**The epic's premise was unmeetable as written and is corrected here.** The SDK exposes **no progress or
+percentage field for compaction anywhere** — only `status:"compacting"` → `status:null` plus
+`pre_tokens`/`post_tokens`/`duration_ms` on the boundary message. Upstream's bar cannot be reading a real
+percentage either: transcribed, it is `1 - e^(-seconds/90)` capped at 95%, 40 cells of `▰`/`▱` — pure
+theatre. **Do not write an acceptance criterion asserting a true percentage.**
+`qa5-07` is `[BUG]` and was never a spinner: both the in-progress line and the result are permanent
+`append()` rows on one line (`useChat.ts:781`), and nothing removes the first. `qa5-08` is `[NOT-BUILT]`
+but **the wire already carries the lifecycle** — the `status:"compacting"` frame travels SDK → session
+read loop → host → UDS → `useChat`, where `systemNoticeLines` deliberately drops it (`species.ts:597`).
+So the busy state is a consumption change, not plumbing. Anchor drift: the progress bar is **not** at
+L497331 (an unrelated SDK-message translator) but at L407403-407448 + L407989 — ~90,000 lines, the
+sprint's worst. The result line is a composed, **persisted** message whose gutter is `"  ⎿  "` (two
+spaces each side), not the single-space form filed. Note `session.compact()` has no cancel path.
+Acceptance: `/compact` enters a busy state on `status:"compacting"` and leaves it at the boundary; the
+in-progress row is replaced by the result row rather than joined by it.
 
 #### EP-S8 · Lifecycle confirmations (qa4-04) — P2
-`Switch model?` cache-invalidation confirm (L447014/L447033) when changing model mid-conversation.
-Acceptance: `/model` switch mid-session shows the confirm; accepting switches, declining keeps.
+`[NOT-BUILT]`, confirmed: no confirm of any kind on either Enter or `s` (`ModelPicker.tsx:52-62,67,85`).
+Upstream's gate is narrower than "mid-conversation": it fires only when session **output** tokens > 0,
+not already acked at that count, the resolved model id differs, and the difference is not merely the
+`[1m]` context-window suffix; accepting stamps an ack so the prompt does not repeat until more output
+accrues, declining stamps nothing. The cache rationale is carried in the copy verbatim.
+**Ordering trap to design around:** the "set as default" prefs write happens inside the picker
+(`ModelPicker.tsx:60`) *before* `onPick`, so a confirm gated at `useChat.pickModel` would leave the pref
+written after a decline. Move the write behind the confirm or restore it on decline. The
+mid-conversation predicate already exists as `state.hasMessages`.
+Acceptance: a qualifying `/model` switch shows the confirm; accepting switches and does not re-prompt at
+the same output count; declining leaves both the model and the stored default unchanged.
 
 ---
 
