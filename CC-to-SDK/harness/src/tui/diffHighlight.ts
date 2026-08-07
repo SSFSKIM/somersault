@@ -11,7 +11,7 @@
 //   `K$p`        L419855 — 24 scopes, Monokai Extended (the dark palette)
 //   `Y$p`        L419855 — 24 scopes, GitHub (the light palette); entirely different values, same keys
 //   `jmH`        L419855 — 12 scopes, the 256-colour fallback
-//   `GmH`        L419855 — the 17 declaration keywords that re-scope `keyword` → `_storage`
+//   `GmH`        L419855 — the 16 declaration keywords that re-scope `keyword` → `_storage`
 //   `X$p`        L419856 — five bare filenames → a language
 //   `qmH`        L419571 — the scope → colour lookup, including the GmH irregularity and the dotted fallback
 //   `o2p`        L419578 — the token-tree walk, and its scope INHERITANCE into unscoped children
@@ -45,7 +45,10 @@ const GITHUB = new Map<string, string>([["keyword", cd(167, 29, 93)], ["_storage
 const ANSI256 = new Map<string, string>([["keyword", Z3(13)], ["_storage", Z3(14)], ["built_in", Z3(14)], ["type", Z3(14)], ["literal", Z3(12)], ["number", Z3(12)], ["string", Z3(10)], ["title", Z3(11)], ["title.function", Z3(11)], ["title.class", Z3(11)], ["comment", Z3(8)], ["meta", Z3(8)]]);
 
 export type DiffPalette = "dark" | "light" | "ansi256";
-const SCOPES: Record<DiffPalette, ReadonlyMap<string, string>> = { dark: MONOKAI, light: GITHUB, ansi256: ANSI256 };
+/** Exported so `test/unit/diff-highlight.test.ts` can assert the three maps WHOLESALE against a fixture of
+ *  the transcription. Reaching every cell through a real hljs sample is impossible (several scopes no
+ *  grammar in the sample set emits), so an unpinned cell would otherwise be free to rot silently. */
+export const DIFF_SCOPES: Record<DiffPalette, ReadonlyMap<string, string>> = { dark: MONOKAI, light: GITHUB, ansi256: ANSI256 };
 
 /** `t2p`'s `foreground` term (L419493/419497/419502): the colour upstream forces onto every UNSCOPED span.
  *  Exported as data rather than applied here — see `highlightDiffLine` for why the segments come out
@@ -54,11 +57,11 @@ const SCOPES: Record<DiffPalette, ReadonlyMap<string, string>> = { dark: MONOKAI
 export const DIFF_FOREGROUND: Record<DiffPalette, string> = { dark: cd(248, 248, 242), light: cd(51, 51, 51), ansi256: Z3(7) };
 
 /** `GmH` L419855. hljs emits `const`/`function`/`class`/… with scope `keyword`, the same as `return` or
- *  `if`; upstream re-scopes exactly these seventeen to `_storage` so declarations read differently from
+ *  `if`; upstream re-scopes exactly these sixteen to `_storage` so declarations read differently from
  *  control flow. It is the one irregular arm of the scope lookup. */
-const STORAGE_KEYWORDS = new Set(["const", "let", "var", "function", "class", "type", "interface", "enum", "namespace", "module", "def", "fn", "func", "struct", "trait", "impl"]);
+export const STORAGE_KEYWORDS = new Set(["const", "let", "var", "function", "class", "type", "interface", "enum", "namespace", "module", "def", "fn", "func", "struct", "trait", "impl"]);
 /** `X$p` L419856 — five bare filenames, probed on the basename AND on its stem. */
-const FILENAME_LANGS = new Map<string, string>([["Dockerfile", "dockerfile"], ["Makefile", "makefile"], ["Rakefile", "ruby"], ["Gemfile", "ruby"], ["CMakeLists", "cmake"]]);
+export const FILENAME_LANGS = new Map<string, string>([["Dockerfile", "dockerfile"], ["Makefile", "makefile"], ["Rakefile", "ruby"], ["Gemfile", "ruby"], ["CMakeLists", "cmake"]]);
 
 /** `Wi(e, t)` L15182 — everything before the first occurrence, or the whole string. */
 const before = (value: string, sep: string) => { const at = value.indexOf(sep); return at === -1 ? value : value.slice(0, at); };
@@ -79,25 +82,45 @@ const before = (value: string, sep: string) => { const at = value.indexOf(sep); 
 //      those 60 ms on every session's startup path including sessions that never render a diff. Behind the
 //      singleton they land once, on the first highlighted diff row.
 // `createRequire` rather than `await import(...)` because `highlightDiffLine` is synchronous by contract.
+// The load itself is TOTAL: a missing or corrupt `highlight.js` resolves to `undefined` (memoized, so a
+// broken install is not re-required once per diff row) and every caller then takes the same unstyled arm a
+// rejected language takes. This module sits on the PAINT path — `detectLanguage` throwing where
+// `highlightDiffLine` degrades would turn one bad dependency into a dead frame instead of a dull one.
+type Hljs = typeof import("highlight.js").default;
 const nodeRequire = createRequire(import.meta.url);
-let cached: typeof import("highlight.js").default | undefined;
-function hljs(): typeof import("highlight.js").default {
-  return (cached ??= nodeRequire("highlight.js") as typeof import("highlight.js").default);
+const realLoad = (): Hljs => nodeRequire("highlight.js") as Hljs;
+let load = realLoad, cached: Hljs | undefined, loadFailed = false;
+function hljs(): Hljs | undefined {
+  if (cached !== undefined || loadFailed) return cached;
+  try { cached = load(); } catch { loadFailed = true; }
+  return cached;
 }
+/** The loader seam (house style: `reflowOracle.ts`'s `resetReflowProbingForTest`). Swapping the loader has
+ *  to drop BOTH memos built off the old one — the singleton and the alias inversion. No argument restores
+ *  the real `require`. */
+export function setHljsLoaderForTest(next?: () => Hljs): void { load = next ?? realLoad; cached = undefined; loadFailed = false; canonicalByDefinition = undefined; }
 
 /** hljs's alias table IS `lur` (L222493) — that map was extracted from this very package — so upstream's
  *  `ITs` alias→canonical resolution is available without copying 191 rows: `getLanguage` returns the SAME
  *  definition object for an alias and for its canonical name, so one identity map over `listLanguages()`
  *  inverts the whole table. Built once, on first use. */
 let canonicalByDefinition: Map<unknown, string> | undefined;
+/** …with TWELVE exceptions. `lur` (L222493) is a SUPERSET of the alias table `highlight.js@11.11.1` ships:
+ *  these twelve rows resolve upstream and return `undefined` from `getLanguage` here, so a `.php5` or a
+ *  `.mysql` diff would come out unhighlighted while the SAME name gets a language label on the fenced-code
+ *  path (F4's `UPSTREAM_LANGS` already carries all twelve). Mapped to the canonical grammar `lur` points
+ *  each at, so the two paths agree. */
+const EXTRA_ALIASES = new Map<string, string>([["mysql", "sql"], ["oracle", "sql"], ["freepascal", "delphi"], ["lazarus", "delphi"], ["lpr", "delphi"], ["lfm", "delphi"], ["php3", "php"], ["php4", "php"], ["php5", "php"], ["php6", "php"], ["php7", "php"], ["php8", "php"]]);
 function canonicalLanguage(name: string): string | undefined {
-  const api = hljs(), lower = name.toLowerCase(), definition = api.getLanguage(lower);
+  const api = hljs();
+  if (api === undefined) return undefined;
+  const lower = name.toLowerCase(), resolved = EXTRA_ALIASES.get(lower) ?? lower, definition = api.getLanguage(resolved);
   if (!definition) return undefined;
   if (canonicalByDefinition === undefined) {
     canonicalByDefinition = new Map();
     for (const registered of api.listLanguages()) { const d = api.getLanguage(registered); if (d && !canonicalByDefinition.has(d)) canonicalByDefinition.set(d, registered); }
   }
-  return canonicalByDefinition.get(definition) ?? lower;
+  return canonicalByDefinition.get(definition) ?? resolved;
 }
 
 /** `n2p` L419530, minus its third arm. Upstream also sniffs CONTENT — a `#!` shebang, a `<?php`/`<?xml`
@@ -170,13 +193,14 @@ export function highlightDiffLine(code: string, lang: string | undefined, palett
   if (lang === undefined || lang === "") return plain;
   let result;
   // `getLanguage` first: upstream only ever reaches `i2p` with an `sre`-resolved name, so an unregistered
-  // one is OUR arm, not its. hljs answers it by `console.error`-ing and returning an unhighlighted result —
-  // a log line straight into a live TUI frame — so the membership test has to come before the call. The
-  // try/catch behind it stays as the total-function guard for a grammar that throws mid-parse.
-  try { if (!hljs().getLanguage(lang)) return plain; result = hljs().highlight(code + "\n", { language: lang, ignoreIllegals: true }); } catch { return plain; }
+  // one is OUR arm, not its. hljs answers it by `console.error`-ing AND THEN throwing — the try/catch below
+  // would swallow the throw, but the log line is already on stdout, straight into a live TUI frame — so the
+  // membership test has to come before the call. The try/catch behind it stays as the total-function guard
+  // for a grammar that throws mid-parse.
+  try { const api = hljs(); if (api === undefined || !api.getLanguage(lang)) return plain; result = api.highlight(code + "\n", { language: lang, ignoreIllegals: true }); } catch { return plain; }
   if (!isTokenTree(result._emitter)) return plain;
   const out: Segment[] = [];
-  walk(result._emitter.rootNode, undefined, SCOPES[palette], out);
+  walk(result._emitter.rootNode, undefined, DIFF_SCOPES[palette], out);
   const last = out[out.length - 1];
   if (last !== undefined && last.text.endsWith("\n")) {
     if (last.text === "\n") out.pop();
