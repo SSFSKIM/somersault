@@ -128,7 +128,7 @@ describe("the tall-frame chunk resynchronizes the proxy's geometry", () => {
   // The counter ChatApp reads. It is a COUNT and not a flag on purpose: the recovery must not fire on the commit
   // whose own frame took the branch (that would wipe the pager the user just opened), and "did this commit bump
   // it" is the only question that separates the two — every tall render writes, because ink.js:118 has no dedupe.
-  it("counts tall writes and forgets them only when the caller says the screen is back in sync", () => {
+  it("counts tall writes and forgets them the moment a recorded frame write re-establishes the screen", () => {
     const { out } = proxyOn(120, 40);
     expect(out.tallWrites()).toBe(0);
     out.stdout.write(CLEAR_TERMINAL + HISTORY + PAGER);
@@ -136,8 +136,27 @@ describe("the tall-frame chunk resynchronizes the proxy's geometry", () => {
     out.stdout.write(CLEAR_TERMINAL + HISTORY + PAGER);
     expect(out.tallWrites()).toBe(2);
     out.stdout.write(eraseLines(2) + "an ordinary frame\n");
-    expect(out.tallWrites()).toBe(2);                                   // a frame write does NOT resynchronize it
+    expect(out.tallWrites()).toBe(0);                                   // …and it went through log-update, so the count stands down
+    out.stdout.write(CLEAR_TERMINAL + HISTORY + PAGER);
     out.screenResynced();
+    expect(out.tallWrites()).toBe(0);                                   // the caller's own acknowledgement still clears it
+  });
+
+  // …and ONLY a recorded frame write does. The three writes that reach the proxy without going through log-update
+  // leave the dedupe hazard exactly where it was, so none of them may stand the count down: the erase-only write
+  // (`log.clear()` / `Instance.clear()`), the <Static> scrollback chunk that follows it, and a foreign
+  // escapes-only write (the keymap's DECSET pair, suspend's cursor show/hide) that is nobody's frame.
+  it("is not cleared by an erase-only write, a <Static> chunk, or a foreign escape sequence", () => {
+    const { out } = proxyOn(120, 40);
+    out.stdout.write(CLEAR_TERMINAL + HISTORY + PAGER);
+    expect(out.tallWrites()).toBe(1);
+    out.stdout.write(eraseLines(3));                                    // erase-only — log.clear()
+    expect(out.tallWrites()).toBe(1);
+    out.stdout.write(HISTORY);                                          // the <Static> chunk right behind it
+    expect(out.tallWrites()).toBe(1);
+    out.stdout.write("\x1b[?2004h");                                    // the keymap's bracketed-paste enable
+    expect(out.tallWrites()).toBe(1);
+    out.stdout.write("the frame that closes the triple\n");             // …and the frame does clear it
     expect(out.tallWrites()).toBe(0);
   });
 });
@@ -198,6 +217,20 @@ describe("closing the pager, end to end through the real proxy", () => {
     expect(payload.endsWith(COMPOSER + "\n" + parkSequence(parkColumn(60)))).toBe(true);
     expect(out.lastFrame()).toBe(COMPOSER + "\n");               // the proxy knows what is painted again…
     expect(out.parkedColumn()).toBe(parkColumn(60));             // …and the cursor is parked on it for the oracle
+    expect(out.tallWrites()).toBe(0);
+  });
+
+  // THE OTHER SIDE OF THE GATE (t8 review). The zero-byte close above is only possible while log-update's
+  // `previousOutput` still holds the pre-pager frame. Let ONE ordinary frame through in between — anything that
+  // repaints while the tall surface is up or after it comes down — and log-update has re-established itself, the
+  // close cannot dedupe to nothing, and the count is already 0 when ChatApp looks. Under the first version of
+  // this counter it would still have read 1 and fired a viewport wipe over live rows.
+  it("stands the count down when an ordinary frame lands between the tall write and the close", () => {
+    const { out, ink } = open();
+    expect(out.tallWrites()).toBe(1);
+    ink.onRender(COMPOSER + " ⟳", 5);                            // an ordinary render — log-update writes it
+    expect(out.tallWrites()).toBe(0);
+    ink.onRender(COMPOSER, 5);                                   // the close
     expect(out.tallWrites()).toBe(0);
   });
 

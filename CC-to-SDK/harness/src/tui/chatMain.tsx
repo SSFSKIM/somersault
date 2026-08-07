@@ -44,11 +44,18 @@ export interface ResumeSafeStdout {
   /** W-R t8: how many of Ink's tall-frame chunks (`ink.js:118-122`) have gone out since the screen was last
    *  known to be in sync — 0 meaning log-update's counters still describe what is painted. A COUNT and not a
    *  flag because the recovery must not fire on the very commit whose own frame took the branch, and "did this
-   *  commit bump it" is the only question that separates the two. */
+   *  commit bump it" is the only question that separates the two.
+   *    IT REPORTS CURRENT STATE, NOT HISTORY (t8 review). A RECORDED FRAME WRITE stands it back down by itself:
+   *  that write went through log-update, so `previousOutput`/`previousLineCount` describe the screen again and
+   *  the zero-byte-close dedupe the recovery exists for cannot happen from here. The first version cleared only
+   *  on `screenResynced()`, which made this "a tall chunk was EVER written since the last pager close" — the `?`
+   *  overlay, `/help`, `/model` and the launch frame itself were all measured bumping it at 50x8 — and ChatApp's
+   *  repaint then fired on a screen it had not prepared and destroyed six live transcript rows. */
   tallWrites(): number;
-  /** …and the caller's acknowledgement that it has repainted the viewport from a known state, which is the one
-   *  thing that puts the count back to 0. A later ordinary frame write does NOT: its erase prefix is measured
-   *  off the same stale `previousLineCount`, so it lands on the wrong rows and the screen stays desynchronized. */
+  /** …and the caller's acknowledgement that it has repainted the viewport from a known state, which also puts
+   *  the count back to 0. Nearly redundant in the real path now (the forced repaint rides `writeToStdout`, whose
+   *  third call IS a recorded frame write), kept because the acknowledgement is the caller's to make: a repaint
+   *  that declined to write (no tty) must leave the count standing, and only the caller knows which it did. */
   screenResynced(): void;
   /** W-R t4b: the resize correction, applied to the write that would otherwise create residue. Called for every
    *  frame write that carries an erase prefix and has a recorded frame in front of it; whatever it returns is
@@ -115,6 +122,22 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   // the tall surface comes down; the proxy cannot, because Ink makes NO write to correct (measured live at 60x15:
   // closing the pager emits zero bytes — the post-close frame is byte-identical to the pre-pager one and
   // `log-update.js:13` swallows it).
+  //   AND A RECORDED FRAME WRITE PUTS THE COUNT BACK TO 0 (t8 review). The count has to answer "is the screen in
+  // that state NOW", not "was it ever". It first cleared only on `screenResynced()`, which made it a history
+  // flag: any tall surface bumps it — the `?` overlay, `/help` (twice), `/model` and the launch frame were all
+  // measured taking the branch at 50x8 — and nothing but a pager close ever cleared it, so the next pager close
+  // fired a viewport wipe over a screen it had not prepared. The reviewer's A/B on the shipped binary destroyed
+  // six of six live transcript rows that way (`?` cycled at 60x15, resize to 120x40, three `! echo` markers,
+  // ctrl+o — not tall at that size — Escape); with the wipe removed, six of six survived. That same repro was
+  // re-run against this line as an A/B (tmux session `wr-t8-fix-crit`): with the clearing removed, 0 of 6 marker
+  // rows survived the pager cycle, on screen or in scrollback; with it in, 6 of 6, both. A frame write is the
+  // exact answer, because it is exactly what removes the hazard the wipe exists for: it went through log-update,
+  // so `previousOutput`/`previousLineCount` describe the screen again and a later close cannot dedupe to zero
+  // bytes. THE ACCEPTED TRADE: if an ordinary frame lands between a tall write and the pager close, the close
+  // now skips the repaint and any pager rows the new frame's erase did not reach stay on screen. That is the
+  // UNDER-erase direction — bounded by the frame's own height, cosmetic, and cleared by the next full repaint —
+  // and it is the side to be wrong on. The over-erase direction eats committed transcript that is not in
+  // scrollback yet, which is the defect above.
   //   AND THE `ESC[3J` COMES OUT. `clearTerminal` is `\x1b[2J\x1b[3J\x1b[H` (and `\x1b[2J\x1b[0f` on old Windows)
   // — both open with `\x1b[2J`, which no other write Ink makes ever does. `\x1b[2J` blanks the screen Ink is
   // about to paint on, which is all this branch needs; `\x1b[3J` additionally erases the terminal's SCROLLBACK,
@@ -126,6 +149,21 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   // rows above the frame without scrolling them anywhere, so the replay is the only thing that puts the visible
   // transcript back into history. Suppressing it would need the seam we just said the bytes do not carry, and
   // would trade a duplicated transcript for a destroyed one.
+  //   WHAT THAT RESIDUAL COSTS, MEASURED (t8 review — the earlier wording understated it). Keeping the replay
+  // while `\x1b[3J` no longer wipes history means every tall render APPENDS ONE COMPLETE COPY of the session's
+  // accumulated static output to scrollback: counted live in the review, a pane went 88 → 172 → 256 → 340 across three
+  // tall renders, and since `fullStaticOutput` only ever grows (ink.js:24, appended at :106/:117, reset only in
+  // the constructor at :57) each copy is bigger than the last. At tmux's default `history-limit` of 2000, a
+  // 500-line transcript plus four tall renders evicts every real scrollback line the user had. Pre-strip the
+  // same sequence destroyed history outright, so this is strictly the better failure — but it is a failure, and
+  // the pager re-takes the branch on EVERY keystroke inside it, so it compounds per scroll.
+  //   THE CANON CONTEXT FOR BOTH HALVES. Upstream 2.1.220 has NO tall-frame branch at all — no `fullStaticOutput`
+  // and no log-update anywhere in the bundle. Its only main-screen full repaint is the IN-PLACE viewport erase
+  // `yJr` (L176988, selected at L177121: `s += a.altScreen ? Rms() : yJr(a.viewportRows)`), which blanks the
+  // viewport row by row and never touches history; the `2J`+`3J` arm (`Rms`, L176982) is ALT-SCREEN-ONLY. So the
+  // strip moves ccx toward canon (no main-screen scrollback erase) while the duplication moves it away (canon
+  // replays nothing, because it never cleared the rows in the first place). The real fix is upstream of both:
+  // Ink's clear path resetting `fullStaticOutput`, or `<Static>` not accumulating across a static-epoch bump.
   // BOTH NON-FRAME BRANCHES ALSO FORGET THE PARK (W-R t4 review). `parkedCol` claims the cursor is sitting in a
   // row of our own padding; a `\x1b[2J…\x1b[H` or an `eraseLines` run moves it somewhere else entirely, and the
   // proxy is the only thing that knows. Measured on the tall-frame branch: `parkedColumn()` reported 117 while the
@@ -171,7 +209,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
         parkedCol, widthAtPaint, width: stdout.columns ?? 0, rows: stdout.rows ?? 0 });
       if (seq) rewritten = prefix + seq + body;
     }
-    justErased = false; frame = body; widthAtPaint = stdout.columns ?? 0;
+    justErased = false; frame = body; widthAtPaint = stdout.columns ?? 0; tall = 0;   // …and the screen is back in sync (see above)
     return true;
   };
   // W-R t4: PARK THE CURSOR ON EVERY FRAME. `probeReflow` can only answer when the cursor is past the new right

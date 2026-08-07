@@ -17,6 +17,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
+import { createResumeSafeStdout } from "../../src/tui/chatMain.js";
+import { eraseRows } from "../../src/tui/resizeRepaint.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
 
@@ -40,6 +42,18 @@ function fakeProxy() {
     state,
     output: { repaint: (run: () => void) => run(), tallWrites: () => state.tall, screenResynced: () => { state.tall = 0; state.resynced += 1; } },
   };
+}
+
+/** …and the REAL proxy over a stub terminal, for the two cases whose whole subject is WHEN the count stands and
+ *  when it falls (t8 review). Faking it there would make the test assert its own fake: the rule under test — a
+ *  recorded frame write puts `tallWrites()` back to 0 — is production code in `createResumeSafeStdout`, so these
+ *  cases drive it with the actual byte sequences instead of assigning to a counter. Ink's own writes never reach
+ *  it here (`ink-testing-library` renders to its own stub), which is why the writes are made by hand. */
+function realProxy() {
+  const screen = { isTTY: true, columns: 120, rows: 40, chunks: [] as string[], write(c: string) { this.chunks.push(c); return true; } };
+  const out = createResumeSafeStdout(screen as unknown as NodeJS.WriteStream);
+  const tallChunk = (body: string) => "\x1b[2J\x1b[3J\x1b[H" + "committed transcript\n" + body;
+  return { screen, out, tallChunk, frameWrite: () => out.stdout.write(eraseRows(2) + "an ordinary frame\n") };
 }
 
 describe("closing a surface that took Ink's tall-frame branch resets the viewport", () => {
@@ -99,6 +113,54 @@ describe("closing a surface that took Ink's tall-frame branch resets the viewpor
     r.stdin.write("\x0f");
     await waitFor(() => !frame(r.lastFrame).includes("Transcript"));
     expect(resync).toHaveBeenCalledTimes(1);
+    r.unmount();
+  });
+
+  // THE CRITICAL CASE FROM THE t8 REVIEW, and the reason the gate reads current state rather than history. The
+  // pager is not the only surface that reaches the pane height: the `?` overlay, `/help`, `/model` and the launch
+  // frame itself were all measured taking ink.js:118 at 50x8. Under the first version of this gate every one of
+  // them left the count standing until the NEXT pager close, and that close then wiped a viewport it had not
+  // prepared — the reviewer's live A/B destroyed 6 of 6 transcript rows this way (`?` opened and closed at 60x15,
+  // resize to 120x40, three `! echo` markers, ctrl+o — not tall at that size — Escape). A frame write is the
+  // whole answer: it went through log-update, so the zero-byte-close dedupe the repaint exists for is gone.
+  it("never fires when a NON-pager surface raised the count and an ordinary frame write has landed since", async () => {
+    const proxy = realProxy();
+    const resync = vi.fn(() => true);
+    const r = renderWithKeymap(<ChatApp makeSession={() => fakeRemote() as unknown as ChatSession} client={{ kind: "loopback" }}
+      cwd={process.cwd()} resumeOutput={proxy.out} resyncViewport={resync} />);
+    await waitFor(() => frame(r.lastFrame).includes("❯ "));
+    proxy.out.stdout.write(proxy.tallChunk("│ ? shortcuts overlay"));   // the `?` overlay goes tall — NOT the pager
+    proxy.out.stdout.write(proxy.tallChunk("│ ? shortcuts overlay"));
+    expect(proxy.out.tallWrites()).toBe(2);
+    proxy.frameWrite();                                                 // …and then an ordinary frame repaints
+    expect(proxy.out.tallWrites()).toBe(0);
+    r.stdin.write("\x0f");                                              // now the pager cycles, at a size where it never goes tall
+    await waitFor(() => frame(r.lastFrame).includes("Transcript"));
+    r.stdin.write("\x0f");
+    await waitFor(() => !frame(r.lastFrame).includes("Transcript"));
+    expect(resync).not.toHaveBeenCalled();
+    r.unmount();
+  });
+
+  // …and the positive control on the SAME real proxy, so the case above cannot pass by breaking the wiring. The
+  // genuine pager close: a tall chunk, no frame write behind it (Ink writes nothing on close — the post-close
+  // frame is byte-identical to the pre-pager one and log-update.js:13 swallows it), so the count stands and the
+  // repaint is the only thing that can recover the screen.
+  it("still fires when the tall write is the last thing that reached the terminal", async () => {
+    const proxy = realProxy();
+    const resync = vi.fn(() => true);
+    const r = renderWithKeymap(<ChatApp makeSession={() => fakeRemote() as unknown as ChatSession} client={{ kind: "loopback" }}
+      cwd={process.cwd()} resumeOutput={proxy.out} resyncViewport={resync} />);
+    await waitFor(() => frame(r.lastFrame).includes("❯ "));
+    proxy.frameWrite();                                                 // a clean screen to start from
+    r.stdin.write("\x0f");
+    await waitFor(() => frame(r.lastFrame).includes("Transcript"));
+    proxy.out.stdout.write(proxy.tallChunk("│ pager row"));             // the pager's own frame takes ink.js:118
+    expect(resync).not.toHaveBeenCalled();                              // …and is NOT wiped while it is up
+    r.stdin.write("\x0f");
+    await waitFor(() => !frame(r.lastFrame).includes("Transcript"));
+    expect(resync).toHaveBeenCalledTimes(1);
+    expect(proxy.out.tallWrites()).toBe(0);                             // the repaint's ack (and its own frame write) clear it
     r.unmount();
   });
 

@@ -336,6 +336,16 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // out from under the user mid-scroll; a test that re-rendered without a tall write collected exactly that. The
   // pager is the one surface that deliberately sizes itself to the screen, so it is the one this keys on, and a
   // tall dialog left desynchronized until the next pager cycle is a named residual rather than a silent bet.
+  //   AND THE FIRST CONDITION ONLY BECAME A FACT WHEN THE COUNTER DID (t8 review). It shipped once as a HISTORY
+  // flag — cleared by nothing but a pager close — so any tall surface at all (the `?` overlay, `/help`, `/model`,
+  // the launch frame; all measured at 50x8) armed it, and the next pager close wiped a screen it had not
+  // prepared: six of six live transcript rows destroyed in the reviewer's A/B, none of them in scrollback. The
+  // proxy now stands the count down on any RECORDED FRAME WRITE, which is precisely the event that removes the
+  // dedupe hazard this repaint exists for, so `tallWrites() > 0` here means "the tall chunk is still the last
+  // thing that reached the terminal" — current state, which is what this gate always claimed to read.
+  //   ON MOUNT this runs like any other pass, and reads the same fact: nonzero only if the BOOT frame itself took
+  // the branch and nothing has painted since, which is exactly the state the wipe is for (and, measured, leaves
+  // nothing to over-erase — the boot frame's own bytes are all that is on the screen).
   useEffect(() => {
     const output = resumeOutputRef.current;
     if (transcriptOpen || !(output?.tallWrites?.() ?? 0)) return;
