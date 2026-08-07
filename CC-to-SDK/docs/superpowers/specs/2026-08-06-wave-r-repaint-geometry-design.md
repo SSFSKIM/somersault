@@ -518,7 +518,7 @@ A9, A10, A11.
 | Item | Owner | Deadline |
 |---|---|---|
 | **HLJS-1** — override W-R5 and stay zero-dep? Proceeding on the recommendation unless told otherwise | Owner (override only) | Spec review |
-| **FULLSCREEN-1** — does upstream's fullscreen renderer become a roadmap item, and at what priority? Out of scope for Wave R either way. It is a promoted opt-in, not a silent rollout (parent §12 item 17a) | Owner, with a controller recommendation | Wave R close-out |
+| ~~**FULLSCREEN-1**~~ **DECIDED 2026-08-07 (owner):** the fullscreen renderer becomes its own wave on the roadmap, after the QA-sprint waves (S, C) close. Alternate screen, app-owned scrollable viewport, and the three mouse affordances (incl. click-to-expand, the question that opened EP-R0). Recorded in the parent spec §11 | — | closed 2026-08-07 |
 | **MOUSE-1 residual (b)** — which row does the owner click: the collapsed `Ran N shell commands` summary, or something reading `+N lines (ctrl+o to expand)`? Never observed as a click target across twelve polls. Does not block anything | Owner | Whenever convenient |
 | ~~**SP-R0** — does any real terminal truncate rather than reflow?~~ **LANDED 2026-08-06.** Reproduced, characterised, strategy chosen (W-R6). The wave does not change size | — | closed 2026-08-06 |
 | **APPLE-TERM-1** — does Apple Terminal reflow on narrow? The only measurement the spike could not take, and the owner's own terminal. **W-R6's design does not depend on the answer** (the DSR oracle detects the policy at runtime), so this is confirmation, not a gate. Needs a 30-second manual run of the spike's `dsr2.py` in a Terminal window | Owner (30 seconds, whenever convenient) | Not blocking |
