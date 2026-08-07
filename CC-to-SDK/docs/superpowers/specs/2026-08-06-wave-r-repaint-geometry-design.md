@@ -599,6 +599,26 @@ changed this document:
    only). Both windows under-erase; neither can lose content. Closing (a) means accumulating the
    shortfall of pre-verdict writes and discharging it when the verdict lands — a design change deferred
    as a wave close-out decision, not folded into Task 4b.
+10. **The whole tall-frame hazard class is Ink-only — upstream has no such branch.** Task 8's review
+    searched the bundle: no `fullStaticOutput`, no log-update; upstream's only main-screen full repaint
+    is the in-place viewport erase `yJr` (L177121) and the destructive `2J+3J` arm is alt-screen-only.
+    Its ctrl+o transcript is an ordinary tall *inline* frame (L549384-92; the alt-screen wrapper gates on
+    the fullscreen predicate `ds()`), so ccx's inline pager shape is NOT a divergence — but every
+    tall-frame pathology we handle is a property of Ink's renderer, not of the product being cloned.
+11. **"A flag was raised" is not "the condition holds" — the second data-loss near-miss of the wave.**
+    Task 8's pager-close recovery gated on `tallWrites() > 0`, which records that a tall chunk was EVER
+    written, not that the screen currently holds one. Any tall surface armed it (the `?` overlay,
+    `/help`, `/model`, the launch frame at 50×8) and only a pager close cleared it — so the recovery
+    fired on screens it did not prepare and destroyed six live transcript rows (measured A/B; with the
+    effect removed, all six survive). Fix: a recorded frame write clears the counter, making the gate
+    current state. Same lesson shape as W-R9: both defects came from acting on a *signal about the past*
+    instead of *the state of the present*.
+12. **Stripping `3J` from Ink's tall chunk trades destruction for duplication — both sides now named.**
+    Scrollback survives (40→40 markers), but each tall render appends one complete copy of the
+    accumulated static output to history (88→172→256→340 across three renders; at tmux's default
+    history-limit 2000, a 500-line transcript plus four tall renders evicts every real line). The
+    `fullStaticOutput` replay also resurrects `/clear`ed transcript (SECRETTRANSCRIPT ×2) — load-bearing,
+    unfixable at the proxy (only Ink's clear path could reset it), NAMED RESIDUAL of the wave.
 
 ## Outcomes & Retrospective
 
