@@ -8,6 +8,8 @@
 //                           on the same line numbers
 //   `shH`  L419906–419943 — remove-run/add-run pairing, k-th to k-th
 //   `lhH`  L419947–419986 — the word diff and its `ohH = 0.4` bail (L420030)
+//   `i2p`  L419592        — the SYNTAX TOKENS inside a row (EP-R5, Wave R t11), selected per row at L419813:
+//                           `y === "-" ? [[cWo(o), _]] : i2p(s, _, o)` — removed rows stay one flat pair
 //
 // THE CAP IS GONE. F1's `toolDiffLines` capped a body at 24 rows and appended `… N more lines`; upstream caps
 // nothing — a diff renders whole, and the only elision it has are the three early returns in `fbn` (previewHint,
@@ -28,6 +30,7 @@
 import { diffWords } from "diff";
 import stringWidth from "string-width";
 import wrapAnsi from "wrap-ansi";
+import { detectLanguage, highlightDiffLine, selectPalette, type DiffPalette } from "./diffHighlight.js";
 import type { DiffHunk, DiffLineRow, ResolvedPatch } from "./diffSource.js";
 import type { RenderLine, Segment } from "./render.js";
 import { resolveThemeColor, themeGeneration, themeTokens, type ThemeTokens } from "./theme.js";
@@ -98,6 +101,38 @@ function numbering(rows: readonly DiffLineRow[], seed: number): number[] {
  *  `p3(code, E, "wrap")` resolves to. `hard` is what keeps a single unbroken token from overflowing the band. */
 const wrapRows = (text: string, width: number): string[] => wrapAnsi(text, width, { trim: false, hard: true }).split("\n");
 
+/** The half-open `[start, end)` slice of a segment list, in CHARACTERS of the joined text. Style rides along
+ *  by spread, so a token split across two rows keeps its colour on both halves. */
+function sliceSegments(segments: readonly Segment[], start: number, end: number): Segment[] {
+  const out: Segment[] = [];
+  let at = 0;
+  for (const segment of segments) {
+    const from = Math.max(start, at), to = Math.min(end, at + segment.text.length);
+    if (to > from) out.push({ ...segment, text: segment.text.slice(from - at, to - at) });
+    at += segment.text.length;
+  }
+  return out;
+}
+/** `wrapRows` made segment-aware — Task 11's half of upstream's `a2p` (L419674), which wraps the row's
+ *  style/text PAIRS rather than a string. The wrap itself is delegated to the string path above and then
+ *  re-sliced, deliberately: `a2p` is a hard character wrap and this clone has always word-wrapped through
+ *  `wrap-ansi` (pinned by the `H2p` wrap tests), so re-implementing the walk over segments would have
+ *  changed WHERE rows break as a side effect of colouring them. The one thing `wrap-ansi` does that makes
+ *  this a re-slice rather than a partition is SWALLOW the whitespace it breaks on, so each piece is looked
+ *  up by stepping the cursor over whitespace only — never over content, which is why a piece can never be
+ *  matched against the wrong occurrence of itself. */
+function wrapSegments(segments: readonly Segment[], width: number): Segment[][] {
+  const source = segments.map((s) => s.text).join("");
+  const rows: Segment[][] = [];
+  let at = 0;
+  for (const piece of wrapRows(source, width)) {
+    while (at < source.length && !source.startsWith(piece, at) && /\s/.test(source[at]!)) at++;
+    rows.push(sliceSegments(segments, at, at + piece.length));
+    at += piece.length;
+  }
+  return rows;
+}
+
 interface Gutter { /** width of the number cell itself, upstream's `u` */ pad: number; /** the approximate-mode `~`, or "" */ prefix: string; }
 /** `x` on L419999: the number right-aligned in its cell, then ONE space. A continuation row blanks the WHOLE
  *  cell — the `~` included, since it annotates a line number and there is no line number on that row. */
@@ -112,17 +147,14 @@ const bandOf = (kind: DiffLineRow["kind"], tokens: ThemeTokens): string | undefi
  *  truthy), so a band never inherits ink's default foreground. */
 const banded = (text: string, band: string | undefined, fg: string, extra?: { dim: true }): Segment => ({ text, color: fg, ...(band === undefined ? {} : { bg: band }), ...extra });
 
-// `filePath` from here down is EP-R5's language seam and nothing else yet (Wave R t10). It is `patch.filePath`
-// carried unchanged from `resolvePatch` to the two row renderers, which is where upstream's `i2p` (L419592)
-// highlights a body: `t2p` picks a scope map, `n2p` turns the path into a language. Threaded ahead of the
-// tokenizer rather than with it because the plumbing is what A11 was blocked on — `ResolvedPatch` had no path at
-// all, so no Edit row could ever be detected — and it is deliberately UNREAD until t11 wires `detectLanguage`
-// and `highlightDiffLine` into `plainRows`/`wordDiffRows`. Rows painted today are byte-identical to t9's.
+// `lang`/`palette` from here down are EP-R5's highlighting seam: `patch.filePath` resolved ONCE per body by
+// `detectLanguage` (upstream's `n2p`, L419530) and the scope map `t2p` (L419465) picks. They reach `plainRows`
+// only — the word-diff arm still splits by band before it colours, and inverting that is Task 12's whole job.
 
 /** Upstream `lhH` (L419944). `null` is its bail — a changed fraction above `ohH`, which falls back to the
  *  whole-line banding in `H2p`. (Its other bail arm is the whole-diff `dim` flag: upstream sets that only for
  *  the condensed styles this clone does not model, so nothing here can be dim and the arm is unreachable.) */
-function wordDiffRows(kind: "add" | "remove", text: string, partner: string, number: number, width: number, g: Gutter, tokens: ThemeTokens, filePath: string | undefined): RenderLine[] | null {
+function wordDiffRows(kind: "add" | "remove", text: string, partner: string, number: number, width: number, g: Gutter, tokens: ThemeTokens): RenderLine[] | null {
   const oldText = kind === "remove" ? text : partner, newText = kind === "remove" ? partner : text;
   const parts = diffWords(oldText, newText, { ignoreCase: false });
   const changed = parts.filter((p) => p.added === true || p.removed === true).reduce((sum, p) => sum + p.value.length, 0);
@@ -155,54 +187,74 @@ function wordDiffRows(kind: "add" | "remove", text: string, partner: string, num
 }
 
 /** Upstream `H2p`'s per-row body (L419996–420001): wrap at `width - gutter - 3`, emit the number cell + marker
- *  as its own span, then the content plus a right fill that runs the band out to the full width. */
-function plainRows(kind: DiffLineRow["kind"], text: string, number: number, width: number, g: Gutter, tokens: ThemeTokens, filePath: string | undefined): RenderLine[] {
+ *  as its own span, then the content plus a right fill that runs the band out to the full width — and, since
+ *  Task 11, the content is TOKENS rather than one string. L419813 is the whole selection rule, verbatim:
+ *    `E = y === "-" ? [[cWo(o), _]] : i2p(s, _, o)`
+ *  a removed row is ONE flat style/text pair and everything else goes through the highlighter. That asymmetry
+ *  is upstream's, not an omission: a deleted line is being shown as deleted, not as code you can still read.
+ *  Composition is BAND UNDER TOKEN — `Segment` carries `color` and `bg` independently, so the band is applied
+ *  by spread over whatever foreground the token brought, and an unscoped token falls through to the row's
+ *  forced `text` foreground exactly as it did before there were tokens at all.
+ *  The right FILL is its own span (upstream's own shape — `a2p` L419718 pushes `[i, Pm(" ", t - a)]` as a
+ *  separate pair): with a tokenized row there is no longer a "the content span" to pad, and letting the last
+ *  token's colour claim the padding would put `string`-yellow on the rest of the line. */
+function plainRows(kind: DiffLineRow["kind"], text: string, number: number, width: number, g: Gutter, tokens: ThemeTokens, lang: string | undefined, palette: DiffPalette): RenderLine[] {
   const marker = markerOf(kind), band = bandOf(kind, tokens), fg = resolveThemeColor(tokens.text);
   const limit = Math.max(1, width - (g.prefix.length + g.pad) - 1 - 2);
-  return wrapRows(text, limit).map((piece, index) => {
+  const content = kind === "remove" ? [{ text }] : highlightDiffLine(text, lang, palette);
+  return wrapSegments(content, limit).map((pieces, index) => {
     const cell = numberCell(g, index === 0 ? number : undefined);
-    const fill = Math.max(0, width - (cell.length + 1 + stringWidth(piece)));
+    const used = pieces.reduce((sum, s) => sum + stringWidth(s.text), 0);
+    const fill = Math.max(0, width - (cell.length + 1 + used));
     // The two spans' `dimColor` expressions DIFFER, and that difference is the pack's correction to the
     // census: `n || p === "nochange"` on the gutter, bare `n` on the content. With `n` false throughout,
-    // that means a context row's number is dim and its text is not.
-    return row(banded(cell + marker, band, fg, kind === "context" ? { dim: true } : undefined), banded(piece + " ".repeat(fill), band, fg));
+    // that means a context row's number is dim and its text is not — including its tokens.
+    return row(banded(cell + marker, band, fg, kind === "context" ? { dim: true } : undefined),
+      ...pieces.map((s) => banded(s.text, band, s.color ?? fg)), ...(fill === 0 ? [] : [banded(" ".repeat(fill), band, fg)]));
   });
 }
 
-function renderHunk(hunk: DiffHunk, width: number, numberingMode: ResolvedPatch["numbering"], tokens: ThemeTokens, filePath: string | undefined): RenderLine[] {
+function renderHunk(hunk: DiffHunk, width: number, numberingMode: ResolvedPatch["numbering"], tokens: ThemeTokens, lang: string | undefined, palette: DiffPalette): RenderLine[] {
   const numbers = numbering(hunk.rows, hunk.oldStart ?? 1), partners = pairRuns(hunk.rows);
   const max = numbers.reduce((a, b) => Math.max(a, b), 0);
   const g: Gutter = { pad: Math.max(String(max).length + 1, 0), prefix: numberingMode === "approximate" ? "~" : "" };
   return hunk.rows.flatMap((line, index) => {
     const partner = partners[index];
     if (partner !== undefined && line.kind !== "context") {
-      const worded = wordDiffRows(line.kind, line.text, partner.text, numbers[index]!, width, g, tokens, filePath);
+      const worded = wordDiffRows(line.kind, line.text, partner.text, numbers[index]!, width, g, tokens);
       if (worded !== null) return worded;
     }
-    return plainRows(line.kind, line.text, numbers[index]!, width, g, tokens, filePath);
+    return plainRows(line.kind, line.text, numbers[index]!, width, g, tokens, lang, palette);
   });
 }
 
-/** Memoized on the PATCH OBJECT × width × theme generation, for exactly the reason `resolvePatch` is memoized on
+/** Memoized on the PATCH OBJECT × width × theme generation × palette, for exactly the reason `resolvePatch` is memoized on
  *  the retained call input: tool rows are uncached, and `useChat` re-projects the whole transient region on a
  *  600 ms cursor blink — so an unmemoized renderer would re-run `diffWords` over every paired line of every Edit
  *  on screen about twice a second. `resolvePatch` hands back the SAME `ResolvedPatch` object across projections
- *  (it caches on the call input), which is what makes the identity key work. The two variables that can change
- *  a rendered row without changing the patch are the width and the palette, so both ride in the key —
- *  `themeGeneration` rather than the token values because a `setTheme()` bumps no document revision. */
-const rendered = new WeakMap<ResolvedPatch, { width: number; theme: number; rows: RenderLine[] }>();
+ *  (it caches on the call input), which is what makes the identity key work. The variables that can change
+ *  a rendered row without changing the patch are the width, the theme and the syntax palette, so all three ride
+ *  in the key — `themeGeneration` rather than the token values because a `setTheme()` bumps no document
+ *  revision. Since Task 11 this memo is also what keeps hljs off the frame budget: it parses every added and
+ *  context line of the body, and a miss re-parses all of them. */
+const rendered = new WeakMap<ResolvedPatch, { width: number; theme: number; palette: DiffPalette; rows: RenderLine[] }>();
 
 /** The whole body. `width` is the diff's own column budget (the seam passes `columns - DIFF_BODY_INSET`);
  *  theme tokens are read PER CALL so a `/theme` switch — including the picker's live preview — repaints the
  *  very next frame. Hunks are joined by upstream's dim literal `"..."` (`K3e`, three ASCII periods, not U+2026);
- *  a hunk that carries no rows contributes no separator, since a lone `...` would claim a gap that is not there. */
-export function renderDiff(patch: ResolvedPatch, width: number): RenderLine[] {
+ *  a hunk that carries no rows contributes no separator, since a lone `...` would claim a gap that is not there.
+ *  `palette` defaults to `selectPalette()`, which reads the SAME live theme these tokens come from (plus
+ *  `COLORTERM`); it is a parameter only so a unit test can pin one map without reaching into the environment. */
+export function renderDiff(patch: ResolvedPatch, width: number, palette: DiffPalette = selectPalette()): RenderLine[] {
   const columns = Math.max(1, Math.floor(width)), theme = themeGeneration();
   const cached = rendered.get(patch);
-  if (cached !== undefined && cached.width === columns && cached.theme === theme) return cached.rows;
+  if (cached !== undefined && cached.width === columns && cached.theme === theme && cached.palette === palette) return cached.rows;
   const tokens = themeTokens();
-  const bodies = patch.hunks.map((hunk) => renderHunk(hunk, columns, patch.numbering, tokens, patch.filePath)).filter((rows) => rows.length > 0);
+  // ONE language resolution per body, not one per row: `detectLanguage` walks hljs's registry and is what
+  // triggers the lazy ~60 ms package load, and every row of a patch shares the patch's one path.
+  const lang = patch.filePath === undefined ? undefined : detectLanguage(patch.filePath);
+  const bodies = patch.hunks.map((hunk) => renderHunk(hunk, columns, patch.numbering, tokens, lang, palette)).filter((rows) => rows.length > 0);
   const rows = bodies.flatMap((body, index) => (index === 0 ? body : [{ text: "...", dim: true } as RenderLine, ...body]));
-  rendered.set(patch, { width: columns, theme, rows });
+  rendered.set(patch, { width: columns, theme, palette, rows });
   return rows;
 }

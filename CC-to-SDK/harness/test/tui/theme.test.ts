@@ -44,11 +44,18 @@ describe("theme.ts", () => {
   it("clones TH2's regex grammar and resolves every accepted non-hex form for Ink", () => {
     for (const value of ["rgb(0, 1, 255)", "rgb(256,0,0)", "rgb(999,999,999)", "#abc", "#A1b2C3", "ansi256(0)", "ansi256(256)", "ansi256(999)", "ansi:red", "ansi:whiteBright"]) expect(isThemeColor(value)).toBe(true);
     for (const value of ["rgb(1000,0,0)", "rgb(-1,0,0)", "rgb(1,2)", "#abcd", "ansi256(1000)", "ansi:orange", "red"]) expect(isThemeColor(value)).toBe(false);
-    expect(ANSI_COLOR_NAMES.size).toBe(16); expect(resolveThemeColor("ansi:whiteBright")).toBe("whiteBright"); expect(resolveThemeColor("rgb(1, 2, 3)")).toBe("#010203"); expect(resolveThemeColor("ansi256(196)")).toBe("#ff0000"); expect(resolveThemeColor("#aabbcc")).toBe("#aabbcc");
+    expect(ANSI_COLOR_NAMES.size).toBe(16); expect(resolveThemeColor("ansi:whiteBright")).toBe("whiteBright"); expect(resolveThemeColor("rgb(1, 2, 3)")).toBe("#010203"); expect(resolveThemeColor("ansi256(196)")).toBe("ansi256(196)"); expect(resolveThemeColor("#aabbcc")).toBe("#aabbcc");
   });
-  it("resolves the ansi256 base-16 table and grayscale ramp, not only the color cube", () => {
-    expect(resolveThemeColor("ansi256(0)")).toBe("#000000"); expect(resolveThemeColor("ansi256(9)")).toBe("#ff0000");
-    expect(resolveThemeColor("ansi256(15)")).toBe("#ffffff"); expect(resolveThemeColor("ansi256(232)")).toBe("#080808"); expect(resolveThemeColor("ansi256(255)")).toBe("#eeeeee");
+  // REPLACES "resolves the ansi256 base-16 table and grayscale ramp" (Wave R t11). That test pinned a
+  // flattening to hex that was a defect: `ansi256(n)` asks for the TERMINAL's palette entry n, Ink accepts
+  // the form natively (`ink/build/colorize.js:23` → chalk's `ansi256`), and the hex route re-quantises — on a
+  // 256-colour terminal, which is precisely where the diff renderer's `jmH` map is selected, chalk turns
+  // `#ff00ff` (index 13's RGB) into index 201. Pass-through emits `\x1b[38;5;13m`, which is upstream's own
+  // `z$p` (L419459) output. The clamp survives because TH2 accepts out-of-range indices that chalk does not.
+  it("passes ansi256 indices THROUGH rather than flattening them to hex, clamping an out-of-range one", () => {
+    for (const index of [0, 9, 15, 196, 232, 255]) expect(resolveThemeColor(`ansi256(${index})`)).toBe(`ansi256(${index})`);
+    expect(resolveThemeColor("ansi256(999)")).toBe("ansi256(255)");
+    expect(resolveThemeColor(resolveThemeColor("ansi256(13)"))).toBe("ansi256(13)");   // still idempotent at the Line boundary
   });
   // Consumers that CACHE a render read per-call theme values (toolRenderer's anchored-stream memo) need a
   // cheap "did the theme move" signal, since a setTheme() touches no document and bumps no revision.

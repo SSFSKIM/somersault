@@ -198,10 +198,14 @@ describe("resolvePatch — the file path rides on the patch", () => {
     const patch = resolvePatch({ input: { file_path: "/x/Dockerfile", old_string: "FROM a", new_string: "FROM b" }, sidecar: undefined, readFile: () => undefined })!;
     expect(patch.filePath).toBe("/x/Dockerfile");
   });
-  it("carries the recognized sidecar's OWN filePath through the sidecar rung", () => {
-    const sidecar = { filePath: "/work/Makefile", oldString: "a", newString: "b", structuredPatch: [{ oldStart: 3, oldLines: 1, newStart: 3, newLines: 1, lines: ["-a", "+b"] }] };
-    const patch = resolvePatch({ input: { file_path: "/work/Makefile" }, sidecar, readFile: throwingRead })!;
-    expect(patch.filePath).toBe("/work/Makefile");
+  // Pinned with DIVERGENT paths, which is the only way the precedence is observable at all: the result's own
+  // `filePath` is the answer and the input's is never consulted. They agree in every real call (the sidecar
+  // echoes the input), so a test where both read `/work/Makefile` would pass with the rule inverted — and the
+  // rule decides which LANGUAGE the body is highlighted as, `.ts` or `.py`.
+  it("takes the recognized sidecar's OWN filePath, not the input's, when the two disagree", () => {
+    const sidecar = { filePath: "/b/y.py", oldString: "a", newString: "b", structuredPatch: [{ oldStart: 3, oldLines: 1, newStart: 3, newLines: 1, lines: ["-a", "+b"] }] };
+    const patch = resolvePatch({ input: { file_path: "/a/x.ts" }, sidecar, readFile: throwingRead })!;
+    expect(patch.filePath).toBe("/b/y.py");
   });
   it("survives the memo: the SAME patch object comes back on the second projection, path intact", () => {
     const input = { file_path: "/x/Dockerfile", old_string: "FROM a", new_string: "FROM b" };  // one retained call, two renders

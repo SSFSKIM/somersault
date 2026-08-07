@@ -5,9 +5,12 @@
 // with its `ohH = 0.4` bail (L420030). The pack corrects two census readings this file pins directly: only a
 // context row's NUMBER GUTTER is dimmed (its content is not), and the word-diff path wraps ONE COLUMN WIDER
 // than the plain path. There is NO line cap anywhere — the 24-row cap died with `toolDiffLines`.
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import hljsReal from "highlight.js";
 import { diffHeader, renderDiff } from "../../src/tui/diffRender.js";
+import { DIFF_SCOPES, setHljsLoaderForTest, type DiffPalette } from "../../src/tui/diffHighlight.js";
 import type { DiffLineRow, ResolvedPatch } from "../../src/tui/diffSource.js";
+import type { RenderLine, Segment } from "../../src/tui/render.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 
 const TEXT = () => resolveThemeColor(themeTokens().text);
@@ -64,12 +67,17 @@ describe("renderDiff — numbering (`chH`, L420004)", () => {
   });
 });
 
+// THE RIGHT FILL IS ITS OWN SPAN (Wave R Task 11). It always was upstream — `a2p` L419718 pushes it as a
+// separate style/text pair, `s.push([i, Pm(" ", t - a)])`, carrying the ROW foreground and the band — and it
+// had to become one here the moment the content stopped being a single string: a tokenized row ends on
+// whatever colour its last token had, and letting the padding inherit that would hand 40 columns of the row
+// to `string`-yellow. Nothing on screen moves: the fill is spaces, and its band and width are unchanged.
 describe("renderDiff — bands and dimming (`H2p`, L419987–420003)", () => {
   it("paints add/remove rows with the theme's diff bands, right-padded to the FULL width — every span carrying the FORCED `text` foreground (L420000: the `is()[0]` term is always truthy, so a band never inherits ink's default)", () => {
     const out = renderDiff(patchOf([{ oldStart: 1, rows: [r("add", "hi")] }]), 20);
     expect(out).toEqual([{
       text: " 1 +hi              ",
-      segments: [{ text: " 1 +", color: TEXT(), bg: ADDED() }, { text: "hi              ", color: TEXT(), bg: ADDED() }],
+      segments: [{ text: " 1 +", color: TEXT(), bg: ADDED() }, { text: "hi", color: TEXT(), bg: ADDED() }, { text: "              ", color: TEXT(), bg: ADDED() }],
     }]);
     expect(out[0]!.text).toHaveLength(20);
   });
@@ -77,7 +85,7 @@ describe("renderDiff — bands and dimming (`H2p`, L419987–420003)", () => {
     const out = renderDiff(patchOf([{ oldStart: 5, rows: [r("context", "ctx")] }]), 20);
     expect(out).toEqual([{
       text: " 5  ctx             ",
-      segments: [{ text: " 5  ", color: TEXT(), dim: true }, { text: "ctx             ", color: TEXT() }],
+      segments: [{ text: " 5  ", color: TEXT(), dim: true }, { text: "ctx", color: TEXT() }, { text: "             ", color: TEXT() }],
     }]);
   });
 });
@@ -139,6 +147,105 @@ describe("renderDiff — memoized per patch, not per repaint", () => {
     expect(renderDiff(patch, 40)).toBe(renderDiff(patch, 40));
     expect(renderDiff(patch, 30)).not.toBe(renderDiff(patch, 40));
     expect(renderDiff(patch, 30)[0]!.text).toHaveLength(30);
+  });
+});
+
+// ── EP-R5 (Wave R Task 11): the tokens inside the row ─────────────────────────────────────────────────
+// L419813, verbatim: `E = y === "-" ? [[cWo(o), _]] : i2p(s, _, o)`. A REMOVED row is one flat style/text
+// pair; every other row goes through the highlighter. THE PALETTE IS PASSED EXPLICITLY in every test here:
+// `selectPalette()` reads `COLORTERM` off the real environment, so a default-argument assertion would pin
+// Monokai on a truecolor developer terminal and the palette-index map in CI.
+const scope = (palette: DiffPalette, name: string) => DIFF_SCOPES[palette].get(name)!;
+const tsPatch = (kind: DiffLineRow["kind"], text: string): ResolvedPatch => ({ ...patchOf([{ oldStart: 1, rows: [r(kind, text)] }]), filePath: "/w/a.ts" });
+const contentOf = (line: RenderLine): Segment[] => line.segments!.slice(1);
+
+describe("renderDiff — syntax highlighting (`i2p` L419592, selected at L419813)", () => {
+  it("tokenizes an ADDED row: many spans, differing foregrounds, ONE constant band, still full width", () => {
+    const out = renderDiff(tsPatch("add", 'const x = "hi";'), 60, "dark");
+    expect(out).toHaveLength(1);
+    const line = out[0]!, content = contentOf(line);
+    expect(line.segments![0]!.text).toBe(" 1 +");
+    expect(content.map((s) => s.text).join("")).toBe('const x = "hi";'.padEnd(56));   // the row still reads as the row
+    expect(line.text).toHaveLength(60);
+    // `const` is `GmH`'s re-scope to `_storage`, the string keeps `string`, and the punctuation between them
+    // falls through to the row foreground — three different colours where t10 painted one.
+    expect(content.find((s) => s.text === "const")!.color).toBe(scope("dark", "_storage"));
+    expect(content.find((s) => s.text === '"hi"')!.color).toBe(scope("dark", "string"));
+    expect(content.find((s) => s.text === ";")!.color).toBe(TEXT());
+    expect(new Set(content.map((s) => s.color)).size).toBeGreaterThan(1);
+    expect(new Set(line.segments!.map((s) => s.bg))).toEqual(new Set([ADDED()]));      // the band is one strip
+  });
+  it("leaves a REMOVED row FLAT — one content span plus the fill, never a token (the `-` arm of L419813)", () => {
+    const out = renderDiff(tsPatch("remove", 'const x = "hi";'), 60, "dark");
+    expect(out[0]!.segments).toEqual([
+      { text: " 1 -", color: TEXT(), bg: REMOVED() },
+      { text: 'const x = "hi";', color: TEXT(), bg: REMOVED() },
+      { text: " ".repeat(41), color: TEXT(), bg: REMOVED() },
+    ]);
+    expect(contentOf(out[0]!).filter((s) => s.text.trim() !== "")).toHaveLength(1);
+  });
+  it("tokenizes a CONTEXT row while keeping the gutter/content dim asymmetry — the number cell is dim, the tokens are not", () => {
+    const out = renderDiff(tsPatch("context", "  return total + 1;"), 60, "dark");
+    const line = out[0]!, content = contentOf(line);
+    expect(line.segments![0]).toEqual({ text: " 1  ", color: TEXT(), dim: true });
+    expect(content.find((s) => s.text === "return")!.color).toBe(scope("dark", "keyword"));
+    expect(content.find((s) => s.text === "1")!.color).toBe(scope("dark", "number"));
+    expect(content.every((s) => s.dim === undefined)).toBe(true);
+    expect(content.every((s) => s.bg === undefined)).toBe(true);                       // a context row has no band
+  });
+  // A11. Task 10 threaded `patch.filePath` and left it unread; this is the assertion that it is now read —
+  // a bare `Dockerfile` has no extension, so it can only be highlighted through `X$p`'s filename map.
+  it("detects the language from a BARE FILENAME: an edit to `Dockerfile` is highlighted as dockerfile (`X$p` L419856)", () => {
+    const patch: ResolvedPatch = { ...patchOf([{ oldStart: 1, rows: [r("add", "FROM node:20-alpine")] }]), filePath: "/srv/Dockerfile" };
+    const content = contentOf(renderDiff(patch, 60, "dark")[0]!);
+    expect(content.find((s) => s.text === "FROM")!.color).toBe(scope("dark", "keyword"));
+    expect(content.find((s) => s.text === "20")!.color).toBe(scope("dark", "number"));
+  });
+  it("paints nothing but the row foreground when the path names no language, and when there is no path at all", () => {
+    const unknown: ResolvedPatch = { ...patchOf([{ oldStart: 1, rows: [r("add", "FROM node:20-alpine")] }]), filePath: "/srv/notes.qqqq" };
+    expect(contentOf(renderDiff(unknown, 60, "dark")[0]!).every((s) => s.color === TEXT())).toBe(true);
+    const pathless = patchOf([{ oldStart: 1, rows: [r("add", 'const x = "hi";')] }]);
+    expect(contentOf(renderDiff(pathless, 60, "dark")[0]!).every((s) => s.color === TEXT())).toBe(true);
+  });
+  // A10. The three maps are pinned wholesale in `diff-highlight.test.ts`; what this pins is that the palette
+  // reaches the ROW — that a light theme repaints the same token and a non-truecolor terminal degrades to a
+  // palette INDEX rather than to no colour at all.
+  it("carries the palette all the way to the row: dark, light and the 256-colour fallback each paint the same token differently (`K$p`/`Y$p`/`jmH`, L419855)", () => {
+    const keywordOf = (palette: DiffPalette) => contentOf(renderDiff(tsPatch("add", 'const x = "hi";'), 60, palette)[0]!).find((s) => s.text === "const")!.color;
+    expect(keywordOf("dark")).toBe(scope("dark", "_storage"));
+    expect(keywordOf("light")).toBe(scope("light", "_storage"));
+    expect(keywordOf("dark")).not.toBe(keywordOf("light"));
+    expect(keywordOf("ansi256")).toMatch(/^ansi256\(\d+\)$/);                          // an index, not a quantised hex
+  });
+  it("carries tokens across a WRAP, keeps every wrapped row banded to the full width, and loses no text", () => {
+    const source = 'const alpha = "one"; const beta = "two";';
+    const out = renderDiff({ ...patchOf([{ oldStart: 1, rows: [r("add", source)] }]), filePath: "/w/a.ts" }, 26, "dark");
+    expect(out.length).toBeGreaterThan(1);
+    for (const line of out) { expect(line.text).toHaveLength(26); for (const s of line.segments!) expect(s.bg).toBe(ADDED()); }
+    // Both keywords survive the re-slice, on whichever rows they landed…
+    expect(out.flatMap((l) => contentOf(l)).filter((s) => s.color === scope("dark", "_storage")).map((s) => s.text)).toEqual(["const", "const"]);
+    // …and the rows still rejoin to the source: wrapping may only move the break whitespace, never eat a token.
+    expect(out.map((l) => l.text.slice(4).trimEnd()).join(" ")).toBe(source);
+  });
+});
+
+// Tokenizing is by far the most expensive thing on this path — hljs parses every added and context line —
+// and `useChat` re-projects the whole transient region on a 600 ms cursor blink. The patch-identity memo is
+// what keeps that off the frame budget, so this pins that the memo actually covers the tokenizer, not just
+// the row arithmetic. (Counting the loader's own `highlight` calls, not row identity: identity alone would
+// stay green if a future refactor tokenized eagerly and then cached.)
+describe("renderDiff — the highlighter runs once per patch, not once per frame", () => {
+  afterEach(() => setHljsLoaderForTest());
+  it("does not re-tokenize a repeat render, and does re-tokenize when the width moves", () => {
+    let calls = 0;
+    setHljsLoaderForTest(() => ({ ...hljsReal, highlight: ((...args: Parameters<typeof hljsReal.highlight>) => { calls++; return hljsReal.highlight(...args); }) as typeof hljsReal.highlight }));
+    const patch: ResolvedPatch = { ...patchOf([{ oldStart: 1, rows: [r("add", "const x = 1;"), r("context", "const y = 2;")] }]), filePath: "/w/a.ts" };
+    renderDiff(patch, 40, "dark");
+    expect(calls).toBe(2);                                                             // one per non-`-` row
+    renderDiff(patch, 40, "dark");
+    expect(calls).toBe(2);                                                             // the frame after: nothing
+    renderDiff(patch, 30, "dark");
+    expect(calls).toBe(4);                                                             // a resize is a real recompute
   });
 });
 

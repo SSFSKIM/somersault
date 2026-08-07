@@ -44,15 +44,18 @@ const rowsFrom = (lines: readonly string[]): DiffLineRow[] =>
  *  Positions are all-or-nothing. A recognized patch whose hunks do not ALL carry a usable `oldStart` is still a
  *  faithful diff, but it is no longer an absolutely-numbered one, and it says so — it does not fall through to the
  *  disk rung, because a recognized patch already describes the edit better than a re-read of a newer file could. */
-function sidecarPatch(sidecar: Record<string, unknown>, counts: { added: number; removed: number }, inputPath: string | undefined): ResolvedPatch | undefined {
+function sidecarPatch(sidecar: Record<string, unknown>, counts: { added: number; removed: number }): ResolvedPatch | undefined {
   const raw = (sidecar.structuredPatch as unknown[]).filter(isRecord);
   if (raw.length === 0) return undefined;                                     // recognized, but describes no change: no diff to show
   const hunks = raw.map((h): DiffHunk => ({ oldStart: lineNumber(h.oldStart), rows: rowsFrom(h.lines as string[]) }));
   const positioned = hunks.every((h) => h.oldStart !== undefined);
-  // The RESULT's own `filePath` leads (both shape guards already proved it a string): it is the path the tool
-  // reports having written, where the input's is only the path it was asked to write. The input is the fallback
-  // for the same reason the counts are taken from the result — one recognized call, one answer.
-  return { hunks: positioned ? hunks : hunks.map((h) => ({ ...h, oldStart: undefined })), numbering: positioned ? "absolute" : "approximate", ...counts, filePath: str(sidecar.filePath) ?? inputPath };
+  // The RESULT's own `filePath` is the ONLY answer, and it always exists: reaching this rung at all means
+  // `editShape` or `writeShape` accepted, and both require `typeof filePath === "string"`. It is also the
+  // right one — the path the tool reports having written, where the input's is the path it was asked to
+  // write — which is the same result-is-authoritative rule the counts follow. (A `?? inputPath` fallback
+  // stood here through t10; the guards make it dead code, so it is gone rather than left implying that a
+  // sidecar can arrive pathless.) `str` stays for the narrowing, not for the guard.
+  return { hunks: positioned ? hunks : hunks.map((h) => ({ ...h, oldStart: undefined })), numbering: positioned ? "absolute" : "approximate", ...counts, filePath: str(sidecar.filePath) };
 }
 
 /** The anchor: the 0-based line offset at which the edited span sits in the file on disk, or `undefined` when
@@ -147,7 +150,7 @@ function resolve(input: Record<string, unknown>, sidecar: unknown, readFile: (p:
   const recognized = editShape(sidecar) ?? (written?.type === "update" ? written : undefined);
   const counts = recognized === undefined ? undefined : patchLineCounts(recognized);
   const inputPath = str(input.file_path);
-  if (counts !== undefined && recognized !== undefined) return sidecarPatch(recognized, counts, inputPath);
+  if (counts !== undefined && recognized !== undefined) return sidecarPatch(recognized, counts);
   const oldText = str(input.old_string), newText = str(input.new_string);
   if (oldText === undefined || newText === undefined) return undefined;
   return derivedPatch(oldText, newText, inputPath, readFile);

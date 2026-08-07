@@ -235,7 +235,14 @@ describe("F4 acceptance #3 — the Edit ladder, end to end", () => {
     const wordAdd = resolveThemeColor(themeTokens().diffAddedWord), wordRemove = resolveThemeColor(themeTokens().diffRemovedWord);
     const fg = resolveThemeColor(themeTokens().text);
     expect(rows.every((l) => l.text.length === DIFF_WIDTH)).toBe(true);        // the band runs to the full budget
-    expect(rows.every((l) => l.segments!.every((s) => s.color === fg))).toBe(true);
+    // THE FORCED FOREGROUND is now the FALLBACK, not the only value (Wave R t11 / A9): every span still gets
+    // it where nothing else claims one — the number cell, the right fill, and any token hljs left unscoped —
+    // but an added or context line is tokenized, so `const` on the two unpaired adds comes out in the active
+    // syntax palette. The removed row is the one that must stay entirely flat (`-` arm of L419813), and the
+    // paired add row is still band-split rather than tokenized until t12 inverts that arm.
+    expect(rows.every((l) => l.segments![0]!.color === fg)).toBe(true);        // the number cell, always
+    expect(rows[0]!.segments!.every((s) => s.color === fg)).toBe(true);        // the removed row, entirely
+    for (const line of rows.slice(2)) expect(line.segments!.some((s) => s.color !== fg)).toBe(true);
     expect(rows[0]!.segments!.every((s) => s.bg === removed || s.bg === wordRemove)).toBe(true);
     for (const line of rows.slice(1)) expect(line.segments!.every((s) => s.bg === added || s.bg === wordAdd)).toBe(true);
 

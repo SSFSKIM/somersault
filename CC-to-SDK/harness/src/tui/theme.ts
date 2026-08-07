@@ -8,8 +8,9 @@
 // headlessly — recorded divergence); the two ANSI-only themes stay out of scope.
 //
 // Token VALUES use upstream's own color grammar (TH2): `rgb(r,g,b)` / `#rgb` / `#rrggbb` / `ansi256(n)` /
-// `ansi:<name>`. Ink does not accept the last two, so nothing hands a raw token to Ink — resolveThemeColor()
-// translates a token into an Ink-safe color and every consumer applies it at the moment of use.
+// `ansi:<name>`. Ink accepts hex and `ansi256(n)` but not `rgb()` or `ansi:<name>`, so nothing hands a raw
+// token to Ink — resolveThemeColor() translates a token into an Ink-safe color and every consumer applies it
+// at the moment of use.
 // `Transcript.Line` re-applies it as the final safety boundary for preformatted RenderLine producers
 // (the resolver is idempotent on hex/plain names, so double application is safe).
 //
@@ -138,11 +139,18 @@ export function isThemeColor(value: unknown): value is ThemeColor {
 }
 const byte = (value: string) => Math.min(255, Number(value));
 const hex = (red: number, green: number, blue: number) => `#${red.toString(16).padStart(2, "0")}${green.toString(16).padStart(2, "0")}${blue.toString(16).padStart(2, "0")}`;
-const ANSI256_BASE = [[0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0], [0, 0, 128], [128, 0, 128], [0, 128, 128], [192, 192, 192], [128, 128, 128], [255, 0, 0], [0, 255, 0], [255, 255, 0], [0, 0, 255], [255, 0, 255], [0, 255, 255], [255, 255, 255]] as const;
-function ansi256Hex(value: string): string { const index = byte(value); if (index < 16) { const base = ANSI256_BASE[index]!; return hex(base[0], base[1], base[2]); } if (index < 232) { const n = index - 16, levels = [0, 95, 135, 175, 215, 255]; return hex(levels[Math.floor(n / 36)]!, levels[Math.floor(n / 6) % 6]!, levels[n % 6]!); } const gray = 8 + (index - 232) * 10; return hex(gray, gray, gray); }
-/** One token → a color Ink accepts. rgb()/ansi256() become hex, `ansi:<name>` becomes the bare Ink color
- *  name, hex and anything else pass through — so it is idempotent and safe to re-apply at the boundary. */
-export function resolveThemeColor(value: ThemeColor): string { const rgb = rgbMatch(value); if (rgb) return hex(byte(rgb[1]!), byte(rgb[2]!), byte(rgb[3]!)); const ansi256 = ansi256Match(value); if (ansi256) return ansi256Hex(ansi256[1]!); return value.startsWith("ansi:") ? value.slice(5) : value; }
+/** One token → a color Ink accepts. rgb() becomes hex, `ansi:<name>` becomes the bare Ink color name,
+ *  `ansi256(n)` PASSES THROUGH (clamped), hex and anything else pass through — so it is idempotent and safe
+ *  to re-apply at the boundary.
+ *  `ansi256(n)` used to be flattened to hex here, and that was wrong (Wave R t11, settling t9's open note):
+ *  a palette INDEX is not a colour, it is a request for the terminal's own entry n, which is the entire point
+ *  of upstream's `Z3`/`z$p` (L419441/L419459 — emitted as a bare `\x1b[38;5;n m`) and of the 256-colour diff
+ *  scope map `jmH` that rides on it. Ink resolves the form itself (`ink/build/colorize.js:23` → chalk's
+ *  `ansi256`), and MEASURED against this repo's chalk: pass-through emits `\x1b[38;5;13m` at every chalk
+ *  level, while the hex route emits `\x1b[38;5;201m` at level 2 — a DIFFERENT palette entry, and level 2 is
+ *  exactly the 256-colour terminal `jmH` exists for — and `\x1b[37m` at level 1. Clamping stays because TH2
+ *  accepts an out-of-range `ansi256(999)`, which chalk would turn into an invalid SGR. */
+export function resolveThemeColor(value: ThemeColor): string { const rgb = rgbMatch(value); if (rgb) return hex(byte(rgb[1]!), byte(rgb[2]!), byte(rgb[3]!)); const ansi256 = ansi256Match(value); if (ansi256) return `ansi256(${byte(ansi256[1]!)})`; return value.startsWith("ansi:") ? value.slice(5) : value; }
 /** TH4: upstream's is-light predicate (`lpo(e) { return e.startsWith("light") }`), used for contrast calls. */
 export const isLightTheme = (id: ThemeId) => id.startsWith("light");
 
