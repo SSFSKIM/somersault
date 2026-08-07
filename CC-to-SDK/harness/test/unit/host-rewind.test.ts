@@ -87,6 +87,9 @@ describe("rewind", () => {
   // above the file-restore block with this test and the `scope both` test at the top of this describe both
   // staying green. The ordering (file restore on the LIVE engine first — probe 68d needs the open transport)
   // is UNPINNED here, a pre-existing gap inherited from that older test's idiom rather than one W-S8 opened.
+  // If you do reorder host.rewind, the failure you WILL see is `TypeError: releaseDry is not a function` from
+  // the throwing-rewind test below — that is its hanging-dry-run scaffolding collapsing, not an ordering
+  // assertion catching you. Nothing in this file actually checks that the restore precedes the swap.
   it("scope both with a null prevUuid restores the files AND clears the conversation", async () => {
     const { host, calls, opened } = makeHost();
     await host.rewind({ uuid: "uA", prevUuid: null }, "both");
