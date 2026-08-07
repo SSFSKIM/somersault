@@ -242,6 +242,7 @@ describe("F4 acceptance #3 — the Edit ladder, end to end", () => {
     // paired add row is still band-split rather than tokenized until t12 inverts that arm.
     expect(rows.every((l) => l.segments![0]!.color === fg)).toBe(true);        // the number cell, always
     expect(rows[0]!.segments!.every((s) => s.color === fg)).toBe(true);        // the removed row, entirely
+    expect(rows[1]!.segments!.every((s) => s.color === fg)).toBe(true);        // the word-diff add row, entirely — until t12 tokenizes it
     for (const line of rows.slice(2)) expect(line.segments!.some((s) => s.color !== fg)).toBe(true);
     expect(rows[0]!.segments!.every((s) => s.bg === removed || s.bg === wordRemove)).toBe(true);
     for (const line of rows.slice(1)) expect(line.segments!.every((s) => s.bg === added || s.bg === wordAdd)).toBe(true);

@@ -117,17 +117,41 @@ function sliceSegments(segments: readonly Segment[], start: number, end: number)
  *  style/text PAIRS rather than a string. The wrap itself is delegated to the string path above and then
  *  re-sliced, deliberately: `a2p` is a hard character wrap and this clone has always word-wrapped through
  *  `wrap-ansi` (pinned by the `H2p` wrap tests), so re-implementing the walk over segments would have
- *  changed WHERE rows break as a side effect of colouring them. The one thing `wrap-ansi` does that makes
- *  this a re-slice rather than a partition is SWALLOW the whitespace it breaks on, so each piece is looked
- *  up by stepping the cursor over whitespace only — never over content, which is why a piece can never be
- *  matched against the wrong occurrence of itself. */
+ *  changed WHERE rows break as a side effect of colouring them.
+ *
+ *  A re-slice only works while every piece is a SUBSTRING of the joined source, and `wrap-ansi` breaks that
+ *  in two distinct ways — both of which are handled here, because "the row lost characters" is the one
+ *  failure a colouring change must never be able to cause:
+ *
+ *  1. IT NORMALIZES. `wrapAnsi` calls `String(string).normalize()` before it splits
+ *     (`node_modules/wrap-ansi/index.js:215-221`), so with NFD source — `e`+U+0301 out of a JSON file, a
+ *     macOS filename, anything pasted from Finder — the pieces come back NFC and `startsWith` misses at
+ *     every offset. The old code then either walked the cursor off the leading indentation (the whitespace
+ *     skip) or sliced by the wrong length (one dropped trailing character per combining mark). So the wrap
+ *     runs over text we have normalized OURSELVES, per segment, and the slice reads those same normalized
+ *     segments. Per segment rather than over the join so that colour boundaries survive untouched.
+ *  2. IT CAN REWRITE. A literal `\x1b` byte inside the source (a diff of a file that contains one) is read
+ *     as the start of an ANSI escape, and at narrow widths the pieces stop being a partition of the source
+ *     altogether. There is no alignment that fixes that, so the loop carries a FALLBACK: a piece that is
+ *     still not found emits itself as one unstyled span, which `plainRows` bands and gives the row's forced
+ *     foreground. That restores the intended bound — a rewrite `wrap-ansi` performs can MIS-COLOUR a row,
+ *     never lose or duplicate its text, because the text on every row comes from the piece itself.
+ *
+ *  The two layers are ordered, not redundant: the fallback alone would keep an NFD row's TEXT whole but paint
+ *  the whole line one flat colour, and normalizing is what keeps it tokenized.
+ *
+ *  In the ordinary case neither arm fires: the only thing `wrap-ansi` does to NFC text without escapes is
+ *  swallow the whitespace it breaks on, which the cursor steps over — never over content, so a piece can
+ *  never be matched against the wrong occurrence of itself. */
 function wrapSegments(segments: readonly Segment[], width: number): Segment[][] {
-  const source = segments.map((s) => s.text).join("");
+  const normalized = segments.map((s) => ({ ...s, text: s.text.normalize() }));
+  const source = normalized.map((s) => s.text).join("");
   const rows: Segment[][] = [];
   let at = 0;
   for (const piece of wrapRows(source, width)) {
     while (at < source.length && !source.startsWith(piece, at) && /\s/.test(source[at]!)) at++;
-    rows.push(sliceSegments(segments, at, at + piece.length));
+    if (!source.startsWith(piece, at)) { rows.push([{ text: piece }]); at = Math.min(source.length, at + piece.length); continue; }
+    rows.push(sliceSegments(normalized, at, at + piece.length));
     at += piece.length;
   }
   return rows;
@@ -182,7 +206,9 @@ function wordDiffRows(kind: "add" | "remove", text: string, partner: string, num
   return groups.map(({ content, contentWidth }, index) => {
     const cell = numberCell(g, index === 0 ? number : undefined);
     const fill = Math.max(0, width - (cell.length + marker.length + contentWidth));
-    return row(banded(cell + marker, band, fg), ...content, banded(" ".repeat(fill), band, fg));
+    // Omitted at zero rather than pushed empty, matching `plainRows`: a zero-width span paints nothing and
+    // only shows up as noise in an exact-segment assertion.
+    return row(banded(cell + marker, band, fg), ...content, ...(fill === 0 ? [] : [banded(" ".repeat(fill), band, fg)]));
   });
 }
 

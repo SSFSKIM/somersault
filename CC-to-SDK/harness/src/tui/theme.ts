@@ -8,9 +8,10 @@
 // headlessly — recorded divergence); the two ANSI-only themes stay out of scope.
 //
 // Token VALUES use upstream's own color grammar (TH2): `rgb(r,g,b)` / `#rgb` / `#rrggbb` / `ansi256(n)` /
-// `ansi:<name>`. Ink accepts hex and `ansi256(n)` but not `rgb()` or `ansi:<name>`, so nothing hands a raw
-// token to Ink — resolveThemeColor() translates a token into an Ink-safe color and every consumer applies it
-// at the moment of use.
+// `ansi:<name>`. Ink handles hex, `ansi256(n)` AND `rgb(r,g,b)` (`ink/build/colorize.js` matches an rgbRegex
+// alongside the hex and ansi256 forms); `ansi:<name>` is the one form it does not accept. Nothing hands a raw
+// token to Ink regardless — resolveThemeColor() translates a token into an Ink-safe color and every consumer
+// applies it at the moment of use.
 // `Transcript.Line` re-applies it as the final safety boundary for preformatted RenderLine producers
 // (the resolver is idempotent on hex/plain names, so double application is safe).
 //

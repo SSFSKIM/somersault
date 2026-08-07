@@ -148,6 +148,18 @@ describe("renderDiff — memoized per patch, not per repaint", () => {
     expect(renderDiff(patch, 30)).not.toBe(renderDiff(patch, 40));
     expect(renderDiff(patch, 30)[0]!.text).toHaveLength(30);
   });
+  // The PALETTE term of the key, pinned separately because nothing else can reach it: every other test in this
+  // file mints a fresh patch object per call, so the memo never even hits and the term could be deleted with
+  // the whole suite still green. Rendering ONE object under two palettes is the only shape that catches it.
+  it("keys the memo on the PALETTE as well as the width — the same patch object under two palettes gets two colourings", () => {
+    const tokenized: ResolvedPatch = { ...patchOf([{ oldStart: 1, rows: [r("add", 'const x = "hi";')] }]), filePath: "/w/a.ts" };
+    const keywordOf = (rows: RenderLine[]) => contentOf(rows[0]!).find((s) => s.text === "const")!.color;
+    const dark = renderDiff(tokenized, 60, "dark"), light = renderDiff(tokenized, 60, "light");
+    expect(keywordOf(dark)).toBe(scope("dark", "_storage"));
+    expect(keywordOf(light)).toBe(scope("light", "_storage"));                         // a memo missing the palette term serves the dark rows here
+    expect(keywordOf(dark)).not.toBe(keywordOf(light));
+    expect(renderDiff(tokenized, 60, "light")).toBe(light);                            // …and the palette that IS cached is still served from the memo
+  });
 });
 
 // ── EP-R5 (Wave R Task 11): the tokens inside the row ─────────────────────────────────────────────────
@@ -217,6 +229,15 @@ describe("renderDiff — syntax highlighting (`i2p` L419592, selected at L419813
     expect(keywordOf("dark")).not.toBe(keywordOf("light"));
     expect(keywordOf("ansi256")).toMatch(/^ansi256\(\d+\)$/);                          // an index, not a quantised hex
   });
+  // M4. The fill is a separate span precisely so the padding cannot inherit the last token's colour, so the
+  // test has to end the row ON a coloured token — with a trailing `;` the last token falls through to the row
+  // foreground anyway and a fill that inherited it would look identical.
+  it("FORCES the right fill to the row foreground rather than letting it inherit the last token's colour (`a2p` L419718's separate pair)", () => {
+    const segments = renderDiff(tsPatch("add", 'const x = "hi"'), 60, "dark")[0]!.segments!;
+    const fill = segments[segments.length - 1]!, lastToken = segments[segments.length - 2]!;
+    expect(lastToken.color).toBe(scope("dark", "string"));                             // the content really does end coloured
+    expect(fill).toEqual({ text: " ".repeat(42), color: TEXT(), bg: ADDED() });         // …and the 42 columns after it do not
+  });
   it("carries tokens across a WRAP, keeps every wrapped row banded to the full width, and loses no text", () => {
     const source = 'const alpha = "one"; const beta = "two";';
     const out = renderDiff({ ...patchOf([{ oldStart: 1, rows: [r("add", source)] }]), filePath: "/w/a.ts" }, 26, "dark");
@@ -226,6 +247,76 @@ describe("renderDiff — syntax highlighting (`i2p` L419592, selected at L419813
     expect(out.flatMap((l) => contentOf(l)).filter((s) => s.color === scope("dark", "_storage")).map((s) => s.text)).toEqual(["const", "const"]);
     // …and the rows still rejoin to the source: wrapping may only move the break whitespace, never eat a token.
     expect(out.map((l) => l.text.slice(4).trimEnd()).join(" ")).toBe(source);
+  });
+});
+
+// ── The wrap can never lose text (Wave R t11 review: C1 + I2) ────────────────────────────────────────
+// `wrapSegments` re-slices `wrap-ansi`'s pieces back out of the joined source, which is only sound while a
+// piece is a SUBSTRING of that source — and `wrap-ansi` breaks that in two different ways:
+//   1. it NFC-normalizes its input (`node_modules/wrap-ansi/index.js:215-221`, `String(string).normalize()`),
+//      so NFD source — `e` + U+0301 out of a JSON file or anything pasted off macOS — comes back composed;
+//   2. a literal `\x1b` byte in the source is read as the start of an escape and, at narrow widths, the
+//      pieces stop being a partition of the source at all.
+// Before the fix, (1) walked the cursor clean off the leading indentation and dropped one trailing character
+// per combining mark, and (2) duplicated text. Both are now bounded to a MIS-COLOURED row: the wrap runs over
+// text we normalized ourselves, and a piece that still cannot be located emits itself as one unstyled span.
+describe("renderDiff — a wrapped row can never lose text", () => {
+  const jsonPatch = (text: string): ResolvedPatch => ({ ...patchOf([{ oldStart: 1, rows: [r("add", text)] }]), filePath: "/w/a.json" });
+  /** the row's CONTENT, i.e. everything after the number cell — the right fill included. */
+  const bodyOf = (out: readonly RenderLine[]): string[] => out.map((l) => contentOf(l).map((s) => s.text).join(""));
+  /** every non-whitespace character of the rows, in order. This is the ONE comparison a wrap may never change:
+   *  it is allowed to swallow the whitespace it breaks on and to add padding, and nothing else. */
+  const ink = (s: string): string => s.replace(/\s+/gu, "");
+  /** the SGR sequences `wrap-ansi` re-opens per piece are its own bookkeeping, not the row's content. */
+  const visible = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
+
+  it("keeps NFD source whole — the leading indentation the old skip-loop ate, and every combining mark", () => {
+    const nfc = '  "greeting": "café au lait",', source = nfc.normalize("NFD");
+    expect(source).not.toBe(nfc);                                                      // the input really is decomposed
+    const out = renderDiff(jsonPatch(source), 80, "dark");
+    expect(out).toHaveLength(1);                                                       // 80 columns: no wrapping is even involved
+    expect(bodyOf(out)[0]!.trimEnd()).toBe(nfc);                                       // byte-equal to the NFC source, fill aside
+    expect(bodyOf(out)[0]!.startsWith('  "greeting"')).toBe(true);                     // …indentation and all
+    // …and it got there by ALIGNING, not by being rescued: the fallback would have emitted the whole line as
+    // one unstyled span, so a still-tokenized row is what distinguishes the two layers of the repair.
+    expect(contentOf(out[0]!).find((s) => s.text === '"café au lait"')!.color).toBe(scope("dark", "string"));
+  });
+  it("keeps THREE combining marks whole — the old slice dropped one trailing character per mark", () => {
+    const nfc = '  "x": "café été";', source = nfc.normalize("NFD");
+    expect(source.length - nfc.length).toBe(3);
+    const out = renderDiff(jsonPatch(source), 80, "dark");
+    expect(bodyOf(out)[0]!.trimEnd()).toBe(nfc);                                       // `e";` used to fall off the end
+    expect(contentOf(out[0]!).find((s) => s.text === '"café été"')!.color).toBe(scope("dark", "string"));
+  });
+  // A source line that CONTAINS ANSI escapes (a diff of a log, a fixture, anything with a `\x1b` byte in it).
+  // `wrap-ansi` re-opens and re-closes the SGR state on every piece it emits, so the pieces carry bytes the
+  // source never had and the re-slice runs off the end of it: the old code paid for that by putting THIRTEEN
+  // visible columns on a seven-column row and then emitting four blank rows for the text it had already spent.
+  // The fallback ends that — a row is the piece, so it can be the wrong COLOUR but never the wrong text.
+  it("keeps a row inside its width when the source itself contains ANSI escapes — a mis-coloured row is allowed, an overflowing or blank one is not", () => {
+    const source = "\x1b[31mred\x1b[0m text here";
+    for (const width of [4, 7]) {
+      // The row a correct wrap can produce is at most the 4-column `" 1 +"` cell plus `H2p`'s content limit —
+      // which equals `width` except at a width so narrow the cell alone overflows it (the `Math.max(1, …)`
+      // clamp in `plainRows`, pre-existing and not what this test is about).
+      const cap = Math.max(width, 4 + Math.max(1, width - 5));
+      const out = renderDiff({ ...patchOf([{ oldStart: 1, rows: [r("add", source)] }]), filePath: "/w/a.ts" }, width, "dark");
+      for (const line of out) expect(visible(line.text).length).toBeLessThanOrEqual(cap);     // 13 columns on a 7-wide row, before
+      expect(ink(visible(bodyOf(out).join("")))).toBe(ink(visible(source)));                  // and every character still there, in order
+      for (const line of out) for (const s of contentOf(line)) expect(s.bg).toBe(ADDED());    // still one banded strip
+    }
+  });
+  it("loses nothing in ANY of them, composed or decomposed, at every width from one-character rows up", () => {
+    for (const nfc of ['  "greeting": "café au lait",', '  "x": "café été";', "a\x1bbb ccc ddd", "\x1b[31mred\x1b[0m text here"])
+      for (const source of [nfc, nfc.normalize("NFD")])
+        for (const width of [4, 7, 12, 26, 80])
+          expect(ink(visible(bodyOf(renderDiff(jsonPatch(source), width, "dark")).join("")))).toBe(ink(visible(nfc)));
+  });
+  it("leaves a REMOVED row flat through the normalization — one content span, NFC, nothing dropped", () => {
+    const nfc = "const café = 1;";
+    const out = renderDiff({ ...patchOf([{ oldStart: 1, rows: [r("remove", nfc.normalize("NFD"))] }]), filePath: "/w/a.ts" }, 60, "dark");
+    expect(contentOf(out[0]!).filter((s) => s.text.trim() !== "")).toHaveLength(1);
+    expect(bodyOf(out)[0]!.trimEnd()).toBe(nfc);
   });
 });
 
