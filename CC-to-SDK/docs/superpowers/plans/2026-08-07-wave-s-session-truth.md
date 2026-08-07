@@ -81,6 +81,9 @@ reviewer dispatch.
     code — fix the test, and if it cannot be made to fail, say so explicitly in your report rather than
     shipping it. Several snippets below are known-tautological (they fail today only via an import error);
     they are flagged where I know of them, but assume there are more.
+    **Never verify a red gate with `vitest run <directory> -t "<name>"`.** If the filter matches nothing,
+    vitest exits 0 and prints only skip counts — indistinguishable, at a glance, from a test that ran and
+    failed. Always name the test FILE. Two commands in earlier drafts of this plan had exactly this bug.
 
 ---
 
@@ -563,8 +566,11 @@ No copy changes — the fix is that the id now exists.
 
 - [ ] **Step 6: Run it**
 
-Run: `npx vitest run test/unit -t "session row"`
+Run: `npx vitest run test/tui/commands.test.ts -t "session row"`
 Expected: PASS (this one passes before the host change too — it is a guard on the formatter, not the fix).
+**Note the path:** `formatStatus` and `formatCost` are `commands.ts` formatters but their tests live under
+`test/tui/`, not `test/unit/`. An earlier draft said `test/unit`, which matches nothing and prints a wall
+of "skipped" that reads like a satisfied gate.
 
 - [ ] **Step 7: Full gates**
 
