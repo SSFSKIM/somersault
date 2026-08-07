@@ -361,6 +361,18 @@ Pending — written at finish.
 - **v1 (2026-08-07)** — authored after the three-worker grounding round and one controller-run keyed
   repro. Born landed: every decision above was settled by evidence before this document existed, and
   Stream S was re-cut in the parent spec first.
+- **v2 (2026-08-07, spec review)** — the review returned "the plan cannot be written from this spec",
+  and it was right. **W-S1 inverted** after the controller re-measured through the real SDK reader
+  against the real rewound session: the reader already resolves the branch and strips `parentUuid`, so
+  the defect is timing and the fix is the truncation v1 had rejected. EP-S1 rewritten and given the
+  double-rebuild de-duplication. **EP-S3b and the EP-S4 migration split out** as separate units (one
+  reaches the host and the engine lifecycle; the other is two dialogs, not one line). **A2 replaced** —
+  the original already passed at HEAD and could not fail. **A3, A4, A5, A6, A8, A13 re-worded** to be
+  observable and to record deliberate divergences (W-S11). **W-S5's justification withdrawn** — upstream
+  has no persistent context chip at all, so "matching upstream" was never what the change achieved.
+  **Three dropped items restored:** the double rebuild, the rewind window-size constant, and
+  `qa4-07(ii)`'s message count. **ANCHORS-1 flagged as an unverified premise** to re-measure before it
+  costs anything.
 
 ## Deferred (out of this wave)
 
