@@ -391,6 +391,22 @@ Seeded from the grounding round; parent §12 item 20 carries the full evidence.
    `pre_tokens`, `post_tokens`, `cumulative_dropped_tokens` and `duration_ms` (a manual compaction of
    ~18k tokens took 11.9 s and dropped ~16.7k).
 
+8. **The rewind panel's "forked" wording was never ours to fix, and the option-suppression was the real
+   divergence** (controller, during Task 3's implementation; `cli.pretty.js` L487190-208). Task 3's
+   implementer flagged what looked like a new inaccuracy: after teaching the host to clear, the panel
+   offers **Restore conversation** on the session's first message and still prints *"The conversation will
+   be forked."* — but that path empties the conversation rather than forking it. Reading the bundle
+   inverted the finding. Upstream builds its option list as `Y(!!Re)` where `Re` is code-restorability
+   alone, with **no anchor-shape gate anywhere**, and picks `defaultFocusValue: Re ? "both" :
+   "conversation"` the same way; its explanation function `J4f` has exactly five arms (`summarize`,
+   `summarize_up_to`, `both`/`conversation`, `code`/`nevermind`) and **no "emptied" arm to clone**. So
+   upstream offers the option on the first message and prints "forked" for it too. What diverged was our
+   own `prevUuid != null` gate, which suppressed an option upstream always offered — a divergence forced
+   by `host.rewind`'s refusal, not chosen. Task 3 removes it. **Decision: keep the copy, invent nothing.**
+   Adding a sixth arm upstream does not have would be the divergence, not the fix. This is the second time
+   in this wave that a "defect we introduced" turned out to be a divergence we were *removing*; both were
+   only visible by opening the bundle rather than reasoning about the diff.
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
