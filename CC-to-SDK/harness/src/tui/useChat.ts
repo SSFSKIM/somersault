@@ -1281,7 +1281,10 @@ export function useChat(
   /** Rebuild the transcript from the PERSISTED session after a conversation rewind truncated it. Shared by
    *  the client that confirmed the rewind and by every other follower reacting to the host's `rewound`
    *  broadcast — a follower passes no prefill, because someone else's rewound prompt does not belong in
-   *  this user's composer. Idempotent: re-reading disk and re-rendering is harmless if it runs twice. */
+   *  this user's composer. NO LONGER IDEMPOTENT, and the `selfRewind` ref exists because of it: a second
+   *  run re-reads disk, re-cuts, and re-mints the composer prefill, so the confirming client must not
+   *  also act on its own `rewound` broadcast. (This line used to say re-running was harmless. It was true
+   *  while the rebuild was a fire-and-forget read; it stopped being true when the rebuild gained the cut.) */
   async function rebuildAfterRewind(opts: { prevUuid?: string | null; prefill?: string } = {}) {
     // Two halves, both measured:
     //  · The READ RACES THE SWAP, and the race cannot be won by waiting. The engine swap mints a session

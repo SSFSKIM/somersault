@@ -21,10 +21,18 @@
  *  rather than fewer — the side the pre-fix code was already on, and the only safe side when the input is
  *  ambiguous:
  *   · no `prevUuid` — a rewind we did not initiate whose anchor never reached us;
- *   · `prevUuid` not among `rows` — the reader has already resolved onto the POST-rewind branch, where
- *     the anchor's successors are the user's new turns and cutting would delete them.
- *  The second fallback is also what makes the compaction hazard unreachable: this function can only
- *  remove rows the reader returned, never reach one it dropped. */
+ *   · `prevUuid` not among `rows` — the anchor is one the reader DROPPED. Measured case (probe 68e): a
+ *     pre-compaction anchor, which `getSessionMessages` does not return at all once a boundary has been
+ *     written. Cutting is impossible there and showing what the reader gave us is the honest answer.
+ *  So this function can only ever REMOVE rows the reader returned; it has no way to reach one the reader
+ *  dropped, which is exactly what a hand-rolled parentUuid walk would do (W-S1(c)).
+ *
+ *  WHAT THE SECOND FALLBACK DOES **NOT** COVER, corrected after the t1 review claimed otherwise in an
+ *  earlier draft of this comment: it does not protect a reader that has already resolved onto the
+ *  POST-rewind branch. There `prevUuid` IS present — it is the last preserved row — so the cut runs and
+ *  would drop any turns taken since. That is unreachable today (post-rewind the file is non-empty on the
+ *  first read, so the poll never lingers long enough for a new turn to land mid-rebuild, and the
+ *  confirming client is held behind the `rewinding` modal), but it is a real edge, not a guarded one. */
 export function truncateAtAnchor<T extends { uuid?: unknown }>(rows: readonly T[], prevUuid?: string | null): T[] {
   if (!prevUuid) return [...rows];
   const at = rows.findIndex((r) => r?.uuid === prevUuid);
