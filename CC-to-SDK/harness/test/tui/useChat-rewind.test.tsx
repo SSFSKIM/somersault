@@ -307,25 +307,42 @@ describe("useChat: rewind flow", () => {
   // rebuild time `getSessionMessages` still resolves the PRE-rewind chain and hands back the very turns the
   // rewind discarded. The rows are cut at the anchor the host itself resumed at instead.
   it("13. renders only the restored conversation when the reader still returns the pre-rewind chain (A1)", async () => {
-    // The reader returns what it returns AT REBUILD TIME: the pre-rewind chain. This is the measured
-    // condition, not a hypothetical.
+    // The reader returns what it returns AT REBUILD TIME: the pre-rewind chain, all THREE turns, because
+    // the row that moves the leaf onto the new branch is not written until the next turn. This is the
+    // measured condition, not a hypothetical. Rewinding to before the SECOND prompt must leave the first
+    // turn on screen and nothing after it.
     const readerRows = [
       { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "ONE" }] }, timestamp: "2026-08-07T08:00:00.000Z" },
-      { type: "assistant", uuid: "a1", message: { content: [{ type: "text", text: "one-reply" }] } },
+      { type: "assistant", uuid: "a1", message: { content: [{ type: "text", text: "one" }] } },
       { type: "user", uuid: "u2", message: { content: [{ type: "text", text: "TWO" }] }, timestamp: "2026-08-07T08:01:00.000Z" },
-      { type: "assistant", uuid: "a2", message: { content: [{ type: "text", text: "two-reply" }] } },
+      { type: "assistant", uuid: "a2", message: { content: [{ type: "text", text: "two" }] } },
+      { type: "user", uuid: "u3", message: { content: [{ type: "text", text: "THREE" }] }, timestamp: "2026-08-07T08:02:00.000Z" },
+      { type: "assistant", uuid: "a3", message: { content: [{ type: "text", text: "three" }] } },
     ];
     const session = fakeRewindSession({ rewind: async () => {} });
     const deps = { getSessionMessages: async () => readerRows };
     const api: Parameters<typeof RewindHost>[0]["api"] = {};
-    function H() { const c = useChat(() => session, {}, deps); api.confirmRewind = (c as any).confirmRewind; return <Text>{allText(c)}</Text>; }
+    // The prefill is rendered on purpose: `TWO` reaches the screen BY DESIGN as the composer prefill (CC's
+    // edit-and-resend loop), so a bare `not.toContain("TWO")` would pass or fail for the wrong reason. The
+    // honest discriminators are the discarded ASSISTANT replies and the third prompt — nothing can put
+    // those on screen except the transcript.
+    function H() {
+      const c = useChat(() => session, {}, deps);
+      api.confirmRewind = (c as any).confirmRewind;
+      const s = c.state as any;
+      return <Text>prefill:{s.composerPrefill ? s.composerPrefill.text : "-"} {allText(c)}</Text>;
+    }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.confirmRewind!({ uuid: "u2", prevUuid: "a1", text: "TWO", index: 2 }, "conversation");
     await waitFor(() => frame(lastFrame).includes("ONE"));
-    expect(frame(lastFrame)).toContain("one-reply");
-    expect(frame(lastFrame)).not.toContain("TWO");
-    expect(frame(lastFrame)).not.toContain("two-reply");
+    const f = frame(lastFrame);
+    expect(f).toContain("ONE");
+    expect(f).toContain("one");                                   // the surviving assistant reply
+    expect(f).not.toContain("two");                               // the discarded reply
+    expect(f).not.toContain("THREE");
+    expect(f).not.toContain("three");
+    expect(f.split("TWO")).toHaveLength(2);                       // EXACTLY once — the prefill, never the transcript
   });
 
   it("14. rebuilds ONCE when this client is the one that confirmed", async () => {

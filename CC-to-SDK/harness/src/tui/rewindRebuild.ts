@@ -2,13 +2,11 @@
 //
 // THE DISTINCTION THIS MODULE EXISTS FOR (Wave S, W-S1; conflating the two is what made three earlier
 // fixes wrong). The persisted session FILE is append-only JSONL holding every branch ever written.
-// `getSessionMessages` returns a RESOLVED conversation chain — leaf-selected, parent-uuid-walked,
-// compaction-relinked via compactMetadata.preservedMessages — and it STRIPS the parent-uuid field from
-// the rows it hands back (measured on a real rewound session, 2026-08-07: the returned keys are type,
-// uuid, session_id, message, parent_tool_use_id, parent_agent_id, timestamp). So nothing here walks a
-// parent chain: the SDK already did, better than we could, and the field is not even present to walk.
-// (The field is written hyphenated on purpose: test/unit/rewind-rebuild.test.ts guards this module with a
-// blunt substring match for the identifier, and that test is where the hazard is spelled out in full.)
+// `getSessionMessages` returns a RESOLVED conversation chain — leaf-selected, parentUuid-walked,
+// compaction-relinked via compactMetadata.preservedMessages — and it STRIPS parentUuid from the rows it
+// hands back (measured on a real rewound session, 2026-08-07: the returned keys are type, uuid,
+// session_id, message, parent_tool_use_id, parent_agent_id, timestamp). So nothing here walks a parent
+// chain: the SDK already did, better than we could, and the field is not even present to walk.
 //
 // WHY A CUT IS NEEDED AT ALL. `rebuildAfterRewind` runs the instant the engine swap settles, and at that
 // moment the row that MOVES the leaf onto the new branch has not been written — the row appended then is

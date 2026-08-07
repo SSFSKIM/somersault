@@ -46,8 +46,14 @@ describe("truncateAtAnchor", () => {
   // rows would both fail (the field is absent) and, if someone re-parsed the raw JSONL to get it back,
   // resurrect pre-boundary turns the model no longer holds. If this test fails, read W-S1 before "fixing"
   // it — three earlier attempts at this defect went the other way.
+  //
+  // COMMENTS ARE STRIPPED FIRST, and only comments: rewindRebuild.ts's header NAMES the field three times
+  // in the course of explaining why nothing may read it, and that documentation is the whole point of the
+  // module. A mention in prose is not a read. Verified to still go red by temporarily adding a real
+  // `m.parentUuid` read to rewindRebuild.ts (2026-08-08).
+  const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
   it("no rewind-replay code reads parentUuid", async () => {
     for (const f of ["src/tui/rewindRebuild.ts", "src/tui/useChat.ts", "src/sessions/rows.ts"])
-      expect(await readFile(new URL(`../../${f}`, import.meta.url), "utf8")).not.toMatch(/parentUuid/);
+      expect(stripComments(await readFile(new URL(`../../${f}`, import.meta.url), "utf8"))).not.toMatch(/parentUuid/);
   });
 });
