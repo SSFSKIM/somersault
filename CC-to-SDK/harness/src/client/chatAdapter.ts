@@ -50,7 +50,13 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
       // rewound broadcast is the one frame guaranteed to carry it — the state emit inside swapEngine often
       // fires before the fresh engine's init frame has delivered an id at all. Without this, a client's
       // post-rewind transcript rebuild reads disk under the OLD id.
-      else if (ev.kind === "rewound") { if (ev.sessionId) sessionId = ev.sessionId; }
+      // …and FORGET it on the cleared arm (W-S8 review, Important 1), for the same reason clearSession()
+      // below forgets it: a first-message restore swaps to a fresh engine that has no id until its first
+      // init frame, so `this.session?.sessionId ?? sid` puts the DISCARDED conversation's id on the wire.
+      // Overwriting with it would leave /export writing the discarded transcript and /rename and /tag
+      // mutating the abandoned session's metadata. A later state (or rewound) event with a real id
+      // repopulates. `cleared` is the positive signal; it never travels with a fresh id to adopt.
+      else if (ev.kind === "rewound") { if (ev.cleared) sessionId = undefined; else if (ev.sessionId) sessionId = ev.sessionId; }
       else if (ev.kind === "turn" && ev.phase === "end" && ev.seq !== undefined) {
         if (turnWaiter && ev.seq === turnWaiter.seq) { const w = turnWaiter; turnWaiter = undefined; ev.error ? w.reject(new Error(ev.error)) : w.resolve(); }
         else endedTurns.set(ev.seq, ev.error);      // ended before its waiter existed — submit() consults this

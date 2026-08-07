@@ -236,6 +236,36 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
     }
   });
 
+  // The SAME hazard as 6b, on the other route that swaps to a fresh engine. A first-message rewind clears the
+  // conversation instead of forking it (W-S8), and the broadcast still carries `sessionId` — the host reads
+  // `this.session?.sessionId ?? sid`, and a just-swapped engine has no id until its first system/init frame,
+  // so the value on the wire is the id of the conversation the user just DISCARDED. Left alone, `route`'s
+  // truthy-id overwrite re-affirms it and /export writes the discarded transcript while /rename and /tag
+  // mutate the abandoned session's metadata. `cleared` is the positive signal that the right answer is "no
+  // id", exactly as clearSession() above forgets it outright; a later state (or rewound) frame repopulates.
+  it("6c. a `cleared` rewound broadcast FORGETS the cached id, rather than re-affirming the discarded one", async () => {
+    const env = { CCX_FLEET_ROOT: tmpFleet() } as NodeJS.ProcessEnv;
+    const fresh = { ...drivable(""), sessionId: undefined as string | undefined, setPermissionMode: async () => {} };
+    const engines: unknown[] = [drivable("sid-discarded"), fresh];
+    const host = new SessionHost(
+      { short: "ffffffff", name: "adapter", cwd: process.cwd(), kind: "bg", detached: true, config: {} as never, env },
+      { openSession: () => engines.shift() as HostSession, procStartOf: async () => "start" });
+    await host.start();
+    const adapter = remoteChatSession(hostSocketPath(process.pid, env));
+    try {
+      await adapter.whenReady();
+      expect(adapter.sessionId).toBe("sid-discarded");
+      await host.rewind({ uuid: "u1", prevUuid: null }, "conversation");   // the first-message restore: clears, does not fork
+      await vi.waitFor(() => expect(adapter.sessionId).toBeUndefined());   // NOT still "sid-discarded"
+      fresh.sessionId = "sid-fresh";                                       // the fresh engine earns its id on its first turn
+      await adapter.setPermissionMode("default");                          // …and the next state frame carries it
+      await vi.waitFor(() => expect(adapter.sessionId).toBe("sid-fresh"));
+    } finally {
+      adapter.detach();
+      await stopQuietly(host);
+    }
+  });
+
   it("7. dispose() detaches without stopping the host: it keeps running and a parked permission stays parked", async () => {
     const { host, path } = await startHost();
     const adapter = remoteChatSession(path);
