@@ -588,7 +588,7 @@ per-option explanation lines — **is already implemented** in `src/tui/rewindMo
 passes on the current build, keep it as a guard and invent no fix (this is the same Step-2 rule Wave R's
 Task 6 followed). If it fails, stop and report — that is a real finding.
 
-The genuine defect is the one residual: `RewindPicker.tsx:263` computes `conversation = anchor.prevUuid != null`,
+The genuine defect is the one residual: `RewindPicker.tsx:264` computes `conversation = anchor.prevUuid != null`,
 so a rewind to the session's **first** message offers only `Never mind`. That gate is honest today —
 `host.rewind` refuses the operation at `host/host.ts:621` (*"no conversation anchor before the first
 prompt — code-only rewind is available"*) because the only trimming primitive underneath,
@@ -762,7 +762,7 @@ and in the conversation branch:
 
 - [ ] **Step 6: Open the option to the first message**
 
-In `harness/src/tui/RewindPicker.tsx:263`:
+In `harness/src/tui/RewindPicker.tsx:264` (`:263` is the destructure above it):
 
 ```tsx
   // A conversation restore is now possible for EVERY anchor, the first prompt included: the host clears
@@ -1000,7 +1000,7 @@ no size props and no indicators. **W-S3 governs: migrate onto `Select` rather th
 onto an unwindowed list** — binding keys to a list that never clips reproduces exactly the
 "resolves but moves nothing" defect F2 exists to remove, and the handlers do not exist either. Migrating
 gets the whole `Select` context for free: `pageup`/`pagedown`/`home`/`end` are already bound to
-`select:pageUp`/`pageDown`/`first`/`last` (`keys/bindings.ts:192`), `selectKeys.ts:48-49` implements them,
+`select:pageUp`/`pageDown`/`first`/`last` (`keys/bindings.ts:166`), `selectKeys.ts:48-49` implements them,
 and `Select.tsx:234` already passes `page: visible` so a page is one window.
 
 **Divergence to record (W-S11):** upstream's Settings list has the counted indicators
@@ -1725,8 +1725,8 @@ neither "resumes" nor "unknown id".
   ```
 - Consumes: `listSessions(opts)` from `src/sessions/reader.js`; `resolveTarget(target, env)` from
   `src/cli/lifecycle.js:23` (returns a `RosterRow`, throws when the short id names nothing).
-- Consumes: `InitialResume` from the TUI (`{ kind: "id"; id: string } | { kind: "continue" }` — read
-  `src/tui/chatMain.tsx:24` for the exact union before wiring).
+- Consumes: `InitialResume` (`{ kind: "id"; id: string } | { kind: "continue" }`) — declared at
+  `src/tui/commands.ts:210`, not `chatMain.tsx:24`; confirm the union before wiring.
 
 - [ ] **Step 1: Write the failing resolver test**
 
@@ -2062,7 +2062,11 @@ a user-typed `/compact`, and the plan traced why:
   family, and `status` frames carrying a `permissionMode` **string** (`:521`). A `system/status` with
   `status: "compacting"` and no `permissionMode` matches no branch.
 
-`session.ts:262` — the line the spec cites — proves only that the SDK **emits** the frame. So: consume the
+`session.ts:262` — the line the spec cites — proves only that the SDK **emits** the frame. (Two more
+citation corrections while you are in there: the spec's `species.ts:597` is inside a *doc comment*;
+`systemNoticeLines` itself is at `:634` and its generic `typeof content !== "string"` exit — the one that
+swallows every structured system frame — is at `:653`. And `useChat.ts`'s `compact_boundary` branch is at
+`:557`, not `:556`.) So: consume the
 wire lifecycle for the automatic path, **and set the busy state locally at `useChat.ts:781`** for the
 `/compact` path, where the client already knows a compaction is starting because it started it. Do not
 spend the task trying to route `/compact`'s frames through the host; that is a wire change this epic (a
@@ -2174,7 +2178,7 @@ it("tears the in-progress affordance down, leaving only the result row (A13)", a
 
 Consume `system/status` with `status === "compacting"` in the system-frame arm to set
 `compacting = { startedAt: nowFn() }`, and clear it in the existing `compact_boundary` branch (which
-already runs at `:556`). Replace the permanent `append()` at `:781` with that same ephemeral state — the
+already runs at `:557`). Replace the permanent `append()` at `:781` with that same ephemeral state — the
 `✦ compacted N → M` line stays a real appended row, because upstream persists its `Compacted …` message
 too. Render the verb, the bar and the trailing `NN%` from the spinner surface, gated on `compacting`.
 
