@@ -629,7 +629,38 @@ changed this document:
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Shipped 2026-08-07, all thirteen tasks, A1–A12 met at HEAD `6346f0c40a`.** EP-R1 (resize as React
+state, the DSR reflow oracle, the frame-write-time erase correction, dialog width threading, the QA-2
+matrix in real CI, mid-turn resize verified keyed), EP-R2 (`/clear` repaints without a keystroke and
+keeps scrollback), EP-R4 (pager-close recovery, state-gated; `3J` stripped from Ink's tall chunk),
+EP-R5 (highlight.js with byte-exact palette transcription, path plumbing, tokenized added/context
+rows, band-under-token word diffs). Gates: unit 1592, tui 2797/9-skipped, matrix 7/7 keyless + 8/8
+keyed, build clean. External codex review returned three findings; all three closed same-day.
+
+**What the wave actually taught:**
+
+- **The design survived only because measurement kept overruling reasoning.** Four load-bearing
+  premises died on contact with instruments: the park had to PAD (tmux clamps cursors to used cells);
+  SIGWINCH does not imply an Ink write (throttle + dedupe, W-R9); `/clear`'s echo cannot survive
+  (viewport-inclusive erase); the parking column arithmetic broke the exact-half drag. Each was
+  caught by an implementer or reviewer measuring before building — the discipline, not the design,
+  is what shipped.
+- **One lesson recurred four times: act on the state of the present, never a signal about the past.**
+  The signal-time erase (W-R9), the tall-counter recovery (Surprise 11), the mount-time recovery fire
+  (external P1), and the stale-sample async erase (Task 4's review) were all the same defect wearing
+  different clothes. Wave S should treat any flag that is set in one place and consumed in another as
+  a suspect until the consumption re-checks reality.
+- **Over-erase incidents in review, zero in shipped code.** Three would-have-shipped data-loss defects
+  (13-rows-over-7 stale-width erase; 6 transcript rows to the history-gated recovery; 6 rows to the
+  brief's own synchronous erase count) were all caught by reviewers who re-derived arithmetic from
+  `node_modules` sources instead of trusting comments. The asymmetry rule earned its keep.
+- **Five named residuals, all under-erase, none content-loss:** the session's-first fine drag
+  (pre-verdict window), `<Static>`-flush erases, the `fullStaticOutput` replay (resurrects `/clear`ed
+  rows — Ink-internal, unfixable at the proxy), one static copy per tall render into history, and the
+  short-pane stranded row above the viewport. All carry measured evidence in Surprises 9–13.
+- **Two agent incidents cost the owner real state** (Terminal.app's AppleEvent queue, W-R7; the tmux
+  server kill, W-R8). Both rules are now stated as prohibitions in every dispatch, and the external
+  review caught our own script carrying the W-R8 shape (fixed: per-run names, register-after-create).
 
 ## Revision Notes
 
