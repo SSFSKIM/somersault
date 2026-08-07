@@ -64,6 +64,14 @@ describe("formatters", () => {
     expect(withUsage).toContain("5h 43% · 7d 12%");
     expect(formatStatus(base).map((l) => l.text).join("\n")).not.toContain("usage");
   });
+  // A GUARD, not evidence for EP-S2 — it passes before and after the host fix, because the formatter was
+  // never the broken half. It exists so nobody deletes the `if (s.sessionId)` gate the fix now feeds:
+  // the row must appear the moment an id exists, and stay absent while it does not.
+  it("status: prints the session row once an id exists, and omits it entirely before (EP-S2 guard)", () => {
+    const withId = formatStatus({ mode: "default", thinkLevel: "default", sessionId: "0d7a7a9d-1111-2222-3333-444455556666" }).map((l) => l.text).join("\n");
+    expect(withId).toContain("session    0d7a7a9d");
+    expect(formatStatus({ mode: "default", thinkLevel: "default" }).map((l) => l.text).join("\n")).not.toContain("session");
+  });
   it("cost/status are in the command table", () => {
     expect(COMMANDS.some((c) => c.name === "cost")).toBe(true);
     expect(COMMANDS.some((c) => c.name === "status")).toBe(true);

@@ -267,7 +267,14 @@ export class SessionHost {
     // which a concurrent `ccx rm` has its unlink undone.
     let stamped = false;
     const onMessage = (m: unknown) => {
-      if (!stamped && this.session?.sessionId) { stamped = true; this.writeSessionId(); }
+      // Stamp the roster AND tell every follower in the same breath, for the same reason: this is the
+      // instant the engine's id exists. The roster write was already here; the emit was not, and `state`
+      // is the ONLY frame that populates the client adapter's cached session id (client/chatAdapter.ts).
+      // Without it nine surfaces — /status's session row, /rename, /tag, /export, /files, /stats and the
+      // Settings Stats tab — reported "no session yet" after any number of completed turns (EP-S2). A
+      // turn that happens to change permission mode published the id by accident (onSessionFrame's
+      // status-frame arm emits `state`); a clean turn published nothing.
+      if (!stamped && this.session?.sessionId) { stamped = true; this.writeSessionId(); this.emit({ kind: "state", status: this.status() }); }
       // stream_event partials fan out LIVE only. With the interactive engine now streaming partials
       // (F3 t3), a turn carries thousands of token-delta frames; through the 500-message TurnBuffer
       // they would evict the turn's REAL frames, so a mid-turn attach replayed stale partials plus

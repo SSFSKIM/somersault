@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TurnBuffer } from "../../src/host/follow.js";
-import { SessionHost } from "../../src/host/host.js";
+import { SessionHost, type HostSession } from "../../src/host/host.js";
 import type { HostEvent } from "../../src/host/wire.js";
 const tmpFleet = () => mkdtempSync(join(tmpdir(), "ccx-follow-"));
 
@@ -63,7 +63,29 @@ function fakeSession() {
   };
 }
 
-const hostFor = (session: ReturnType<typeof fakeSession>, env: NodeJS.ProcessEnv) =>
+/** The engine shape fakeSession CANNOT express: no session id at all until the first frame of the first
+ *  turn dispatches — the id rides the init frame, and the real Session sets `.sessionId` just before
+ *  handing that frame on. A fixture that hardcodes the id at construction (fakeSession does, `sid-1`)
+ *  makes EP-S2 invisible: follow() spreads whatever id the session already has into its synchronous
+ *  subscribe-time `state` frame, so "a state frame carried an id" is true before runTask ever runs. */
+const LATE_ID = "0d7a7a9d-1111-2222-3333-444455556666";
+function lateIdSession() {
+  let deliver: (m: unknown) => void = () => {};
+  let finish: () => void = () => {};
+  const s = {
+    sessionId: undefined as string | undefined,
+    submit(_p: string, onMessage: (m: unknown) => void) {
+      deliver = (m) => { s.sessionId = LATE_ID; onMessage(m); };
+      return new Promise<unknown>((r) => { finish = () => r(undefined); });
+    },
+    dispose: async () => {},
+    emit: (m: unknown) => deliver(m),
+    finish: () => finish(),
+  };
+  return s;
+}
+
+const hostFor = (session: HostSession & { emit: (m: unknown) => void; finish: () => void }, env: NodeJS.ProcessEnv) =>
   new SessionHost(
     { short: "aaaaaaaa", name: "t", cwd: "/tmp", kind: "bg", detached: true, config: {} as never, env },
     { openSession: () => session, procStartOf: async () => "start" },
@@ -220,5 +242,26 @@ describe("SessionHost.follow", () => {
     const late: HostEvent[] = []; host.follow((e) => late.push(e));
     expect(late.filter((e) => e.kind === "message")).toHaveLength(0);
     s.finish(); await t2; await host.stop();
+  });
+
+  // EP-S2. `state` is the ONLY frame that populates the client adapter's cached session id
+  // (client/chatAdapter.ts), and nine surfaces read that cache — /status's session row, /rename, /tag,
+  // /export, /files, /stats, the Settings Stats tab. The host learned the id mid-turn (it stamped the
+  // roster with it) and told nobody, so after any number of completed turns those surfaces still said
+  // "no session yet". Two traps make a careless version of this test pass while broken: follow()'s
+  // subscribe-time `state` frame already carries whatever id the session has (so the fixture's id must
+  // start undefined), and onSessionFrame emits `state` for any `system/status` frame carrying a
+  // permissionMode (so this turn must carry none). `status: "busy"` pins that the frame arrives while
+  // the turn is still open, not at turn end.
+  it("publishes the engine's session id to followers mid-turn, on a turn that changes no permission mode (EP-S2)", async () => {
+    const s = lateIdSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();
+    const seen: HostEvent[] = []; host.follow((e) => seen.push(e));
+    const ids = () => seen.filter((e) => e.kind === "state").map((e) => (e as any).status.sessionId);
+    expect(ids()).toEqual([undefined]);                        // the subscribe-time frame is not evidence
+    const turn = host.runTask("hi");
+    s.emit({ type: "assistant", n: 1 });                       // the id materializes as this frame dispatches
+    expect(seen.some((e) => e.kind === "state" && (e as any).status.sessionId === LATE_ID && (e as any).status.status === "busy")).toBe(true);
+    s.finish(); await turn; await host.stop();
   });
 });
