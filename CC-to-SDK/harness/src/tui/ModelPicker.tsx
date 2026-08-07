@@ -47,7 +47,12 @@ export function ModelPicker({ models, current, sessionModel, onPick, onCancel, s
   // REPORTED, not the one its own render closed over.
   const [, setFocus, focusRef] = useRefState<string>(current ?? models[0]?.value ?? "");
   const visible = modelVisibleCount(models.length);
-  const overflow = modelOverflowCount(models.length);
+  // The window `Select` LAST RENDERED — it clamps `visible` again by terminal height (`clampVisible`), so on a
+  // short pane the ten-row cap is not what is on screen and the counter must not quote it. State, not a ref:
+  // the counter is rendered output and has to repaint when the window moves. `onViewChange` fires from an
+  // effect, after a paint (Select.tsx's own contract note), so setting state from it is safe.
+  const [view, setView] = React.useState<{ start: number; end: number } | undefined>(undefined);
+  const overflow = modelOverflowCount(models.length, view);
 
   const choose = (value: string, saveDefault: boolean) => {
     const m = models.find((o) => o.value === value);
@@ -82,11 +87,13 @@ export function ModelPicker({ models, current, sessionModel, onPick, onCancel, s
           visibleOptionCount={visible} defaultValue={current} defaultFocusValue={current}
           {...(rows !== undefined ? { rows } : {})} {...(columns !== undefined ? { columns } : {})}
           onFocus={setFocus}
+          onViewChange={(v) => setView({ start: v.start, end: v.end })}
           onChange={(value) => choose(value, true)}
           onCancel={onCancel}
         />
         {/* `hva` L441132: the counter is the CALLER's row, indented three columns, and it counts the rows the
-            ten-row window left off. `Select` deliberately prints nothing of the kind. */}
+            window left off — the RENDERED one (W-S11), not upstream's fixed cap. `Select` prints nothing of
+            the kind itself; it only reports what it drew. */}
         {overflow > 0 ? <Box paddingLeft={3}><Text dimColor>{formatOverflowCount(overflow, MODEL_UNIT)}</Text></Box> : null}
       </Box>
       <Text dimColor>{MODEL_FOOTER}</Text>

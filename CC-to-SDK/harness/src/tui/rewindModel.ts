@@ -43,15 +43,44 @@ export const REWIND_SUMMARY_WINDOW = 10;
 
 /** `g` (L487056) — `p ? 3 : 2`, with `p` true by construction (mapping 1 above). */
 export const REWIND_ROW_HEIGHT = 3;
-/** The `12` inlined at L487056 (`Math.floor((m - 12) / g)`): what the frame, prompt, indicators and footer
- *  cost before a single row is drawn. Upstream also declares it as `y = 12` and then never reads that. */
-export const REWIND_CHROME_ROWS = 12;
+/** The floor upstream keeps (`Math.max(2, …)`, L487056) — two rows is the least that still reads as a list. */
+export const REWIND_MIN_ROWS = 2;
+/** What the frame, prompt, indicators and footer cost before a single row is drawn — RE-DERIVED in Wave S t4
+ *  from `RewindPicker`'s own frame, NOT inherited. Upstream inlines 12 at L487056, but it halves `rows` first
+ *  under `ds()` (its split-view predicate); we have no split view, so importing the 12 alone measured nothing
+ *  of ours — it produced 9 visible rows at a geometry where upstream's own frame shows 2.
+ *
+ *  The count, against `RewindFrame` + the list body (`RewindPicker.tsx:99-107, 239-259`):
+ *    1-2  the `borderStyle="round"` box's top and bottom rules
+ *    3    the bold `Rewind` title
+ *    4    the children box's `marginTop={1}` blank
+ *    5    `REWIND_PROMPT`
+ *    6    `↑ N more above`
+ *    7    `↓ N more below`
+ *    8    the footer box's `marginTop={1}` blank
+ *    9    the footer itself
+ *
+ *  TWO JUDGEMENT CALLS, both deliberate:
+ *   · ROWS 6 AND 7 ARE CONDITIONAL — neither indicator is drawn at its own end of the list — and they are
+ *     reserved anyway. They toggle as a consequence of SCROLLING, which is the very act this budget governs:
+ *     a budget that dropped them would grow the window at the top of the list and shrink it again on the
+ *     first step down, resizing the list under the cursor mid-scroll. A constant budget costs at most one
+ *     row of slack at the ends and is the only one that holds still.
+ *   · `REWIND_CHECKING` (row `RewindPicker.tsx:258`) is a TENTH conditional row and is NOT reserved. Unlike
+ *     the indicators it does not toggle with the cursor: it appears only after Enter, while an out-of-band
+ *     dry run is in flight, and the next state is either the confirmation panel (a different frame, its own
+ *     chrome) or Escape, which removes it. So the cost of not reserving it is one row of transient overflow
+ *     during a wait the user is already stalled on, while the cost of reserving it is a permanently shorter
+ *     list at every height for every user. Reserving space for the slow path at the expense of the fast one
+ *     is the wrong trade.
+ *
+ *  Not modelled: `REWIND_PROMPT` wraps to two lines below ~55 columns. This budget is height-only, as
+ *  upstream's is; a width-aware one would need the wrap count and has no caller asking for it. */
+export const REWIND_CHROME_ROWS = 9;
 
-/** `_` (L487056): `Math.max(2, Math.floor((rows - 12) / rowHeight))`. Upstream halves `rows` first when
- *  `ds()` (its "is the transcript in split view" predicate) — we have no split view, so that branch is
- *  recorded and not ported. */
+/** `_` (L487056): `Math.max(2, Math.floor((rows - chrome) / rowHeight))`, with OUR chrome above. */
 export function rewindVisibleRows(rows: number, rowHeight: number = REWIND_ROW_HEIGHT): number {
-  return Math.max(2, Math.floor((rows - REWIND_CHROME_ROWS) / rowHeight));
+  return Math.max(REWIND_MIN_ROWS, Math.floor((rows - REWIND_CHROME_ROWS) / rowHeight));
 }
 
 // ── The list ───────────────────────────────────────────────────────────────────────────────────────────

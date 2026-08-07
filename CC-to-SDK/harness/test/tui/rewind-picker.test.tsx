@@ -16,7 +16,7 @@ import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { RewindPicker } from "../../src/tui/RewindPicker.js";
-import { conversationExplanation } from "../../src/tui/rewindModel.js";
+import { conversationExplanation, REWIND_CHROME_ROWS, REWIND_MIN_ROWS, rewindVisibleRows } from "../../src/tui/rewindModel.js";
 import type { RewindAnchor, RewindDryRun } from "../../src/session/chatSession.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
@@ -40,6 +40,22 @@ const ANCHORS: RewindAnchor[] = [
 const never = () => new Promise<RewindDryRun>(() => {});
 const clean: RewindDryRun = { canRewind: true, filesChanged: ["/repo/src/a.ts", "/repo/src/b.ts"], insertions: 3, deletions: 1 };
 const props = { onDryRun: never, onConfirm: () => {}, onClose: () => {}, rows: 40, columns: 80 };
+
+// WAVE S T4. The window budget used to be upstream's inlined `12`, which measures upstream's frame under a
+// halving (`ds()`, its split-view predicate) we do not have — so it measured nothing of ours. Re-derived
+// against the frame `RewindFrame` + the list body actually draw, and pinned DIRECTLY: a test that only
+// asserted `rewindVisibleRows(15) === 2` and `rewindVisibleRows(40) > 2` is satisfied by every constant from
+// 7 to 31, the wrong 12 included, so it would pin nothing at all.
+describe("rewindVisibleRows — the budget is our own chrome, counted", () => {
+  it("sizes its window from the chrome RewindPicker actually draws", () => {
+    expect(REWIND_CHROME_ROWS).toBe(9);            // border ×2 · title · blank · prompt · ↑ · ↓ · blank · footer
+    expect(REWIND_MIN_ROWS).toBe(2);               // upstream's `Math.max(2, …)` floor (L487056)
+    expect(rewindVisibleRows(21)).toBe(4);         // 4 at C=9, 3 at the old C=12 — THE discriminator
+    expect(rewindVisibleRows(30)).toBe(7);         // 7 vs 6 — a second height where the two constants differ
+    expect(rewindVisibleRows(15)).toBe(2);         // and the floor still holds where the pane is too short
+    expect(rewindVisibleRows(4)).toBe(2);
+  });
+});
 
 describe("<RewindPicker> — the frame and the list", () => {
   it("renders the Rewind frame, upstream's list prompt and the enter/esc footer", async () => {
@@ -444,15 +460,16 @@ describe("<RewindPicker> — navigation is the shared list's", () => {
   });
 
   it("the scroll counters are caller-rendered from the list's own window", async () => {
-    // rows:22 → visible = max(2, floor((22-12)/3)) = 3 of 13 options, so both counters are live.
+    // rows:22 → visible = max(2, floor((22-9)/3)) = 4 of 13 options, so both counters are live. The counts
+    // moved from 10 to 9 with the Wave S t4 re-derivation of `REWIND_CHROME_ROWS`: one more row fits.
     const { stdin, lastFrame } = render(<RewindPicker {...props} anchors={many} onDryRun={never} rows={22} />);
     await waitFor(() => frame(lastFrame).includes("(current)"));
-    expect(plain(frame(lastFrame))).toContain("↑ 10 more above");
+    expect(plain(frame(lastFrame))).toContain("↑ 9 more above");
     expect(plain(frame(lastFrame))).not.toContain("more below");
     await tick();
     stdin.write("\x1b[H");                                             // Home → the top of the list
     await waitFor(() => plain(frame(lastFrame)).includes("more below"));
-    expect(plain(frame(lastFrame))).toContain("↓ 10 more below");
+    expect(plain(frame(lastFrame))).toContain("↓ 9 more below");
     expect(plain(frame(lastFrame))).not.toContain("more above");
   });
 

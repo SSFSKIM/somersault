@@ -196,8 +196,9 @@ describe("a dialog on screen when the terminal resizes follows the new size", ()
     let rows = 40;
     const resize = fakeResize();
     const deps = { columns: () => 200, getSessionMessages: async () => [] as any[] };
-    // Eight anchors plus the synthetic `(current)` row: `rewindVisibleRows` is max(2, floor((rows−12)/3)),
-    // so 40 shows nine and 14 shows two — the catalog is never what decides.
+    // Eight anchors plus the synthetic `(current)` row: `rewindVisibleRows` is max(2, floor((rows−9)/3)) —
+    // the chrome constant re-derived from our own frame in Wave S t4 — so 40 has room for ten (the nine
+    // options are all it has) and 14 shows two. The catalog is never what decides.
     const anchors: RewindAnchor[] = Array.from({ length: 8 }, (_, i) => ({ uuid: `u${i}`, prevUuid: null, text: `rewind prompt ${i}`, index: i }));
     const session = rewindRemote(anchors);
     const r = renderWithKeymap(<ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} onResize={resize.onResize} />);

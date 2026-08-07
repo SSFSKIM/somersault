@@ -96,6 +96,31 @@ describe("ModelPicker — the list (L441127-441132)", () => {
     expect(formatOverflowCount(1, "model")).toBe("… +1 model");           // `Et` pluralization (L107148)
   });
 
+  // WAVE S T4 (A5), a DELIBERATE DIVERGENCE (W-S11). The two assertions above are upstream's arithmetic and
+  // stay as the pre-migration pin; these are ours. Upstream's `… +N models` is always `length - min(10, length)`
+  // and its list has no scroll gutter at all, so at a pane too short for ten rows it names a number about
+  // nothing. `Select` clamps its own window by terminal height (`clampVisible`) and publishes what it drew
+  // through `onViewChange`, so the counter can simply follow it.
+  it("counts what the RENDERED window left off, not the fixed cap (A5)", () => {
+    expect(modelOverflowCount(14, { start: 0, end: 4 })).toBe(10);       // a window is a window, wherever it sits
+    expect(modelOverflowCount(14, { start: 6, end: 10 })).toBe(10);
+    expect(modelOverflowCount(14, { start: 0, end: 14 })).toBe(0);
+    expect(modelOverflowCount(14)).toBe(4);                              // no window → upstream's fixed-cap answer
+  });
+
+  it("renders the counter from the window the Select actually reported (A5)", async () => {
+    // rows:15 → `clampVisible(10, 15, 1)` = min(10, max(1, floor((15-8)/1))) = SEVEN rows on screen, not ten.
+    const r = render(
+      <ModelPicker models={many} onPick={() => {}} onCancel={() => {}} savePrefs={() => {}} rows={15} columns={100} />,
+    );
+    await waitFor(() => frame(r.lastFrame).includes("Model 0"));
+    const f = plain(frame(r.lastFrame));
+    const shown = f.split("\n").filter((l) => /Model \d/.test(l)).length;
+    expect(shown).toBe(7);                                               // the pane's answer, not the cap's
+    expect(f).toContain(formatOverflowCount(many.length - shown, "model"));
+    expect(f).not.toContain(formatOverflowCount(4, "model"));            // the fixed cap's answer, wrong for this pane
+  });
+
   it("prints no counter at all when everything fits (bM returns null at count <= 0, L421395)", async () => {
     const r = mount();
     await waitFor(() => frame(r.lastFrame).includes("Opus 5"));

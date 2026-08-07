@@ -15,11 +15,21 @@ export const MODEL_SUBTITLE = "Switch between Claude models. Your pick becomes t
 export const sessionOnlyLine = (name: string): string =>
   `Currently using ${name} for this session only. Selecting a model will undo this.`;
 
-/** `Math.min(10, tMe.length)` (L440969). */
+/** `Math.min(10, tMe.length)` (L440969) — upstream's fixed cap, and ours only as the FALLBACK below. The
+ *  parameter is the CATALOG SIZE, not a terminal height; it was called `rows` until Wave S t4 and that name
+ *  was the whole confusion (the picker's genuine `rows` prop is the pane, and it lives in `ModelPicker.tsx`). */
 export const MODEL_VISIBLE_MAX = 10;
-export const modelVisibleCount = (rows: number): number => Math.min(MODEL_VISIBLE_MAX, rows);
-/** `rva = Math.max(0, tMe.length - tva)` (L440969) — what the `… +N models` counter counts. */
-export const modelOverflowCount = (rows: number): number => Math.max(0, rows - modelVisibleCount(rows));
+export const modelVisibleCount = (total: number): number => Math.min(MODEL_VISIBLE_MAX, total);
+/** `rva = Math.max(0, tMe.length - tva)` (L440969) — what the `… +N models` counter counts.
+ *
+ *  DELIBERATE DIVERGENCE (W-S11), added in Wave S t4. Upstream computes this off the fixed ten-row cap above
+ *  and its `/model` list carries no scroll gutter at all, so on a pane too short for ten rows upstream's
+ *  `… +N models` names a number unrelated to what is on screen. Ours follows the window `Select` ACTUALLY
+ *  rendered — `Select` clamps its own `visibleOptionCount` by terminal height (`clampVisible`) and reports
+ *  the result through `onViewChange`, the same channel the rewind picker's `↑ N more above` already reads.
+ *  Passing no window keeps the upstream arithmetic, which is what the pre-migration tests pin. */
+export const modelOverflowCount = (total: number, view?: { start: number; end: number }): number =>
+  view ? Math.max(0, total - Math.max(0, view.end - view.start)) : Math.max(0, total - modelVisibleCount(total));
 /** `bM`'s `unit` at L441132. */
 export const MODEL_UNIT = "model";
 
