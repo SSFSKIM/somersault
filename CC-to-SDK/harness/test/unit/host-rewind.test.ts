@@ -9,9 +9,7 @@ import { hostSocketPath } from "../../src/fleet/paths.js";
 const user = (text: string, uuid: string) => ({ type: "user", uuid, message: { role: "user", content: text } });
 const assistant = (uuid: string) => ({ type: "assistant", uuid, message: { role: "assistant", content: [{ type: "text", text: "ok" }] } });
 
-/** `onOpen` fires from INSIDE the injected `openSession`, which is the one moment a swap is genuinely in
- *  flight — the only place a busy-window assertion can sample something a no-op would not also satisfy. */
-function makeHost(overrides: Record<string, unknown> = {}, opts: Record<string, unknown> = {}, onOpen?: (h: SessionHost) => void) {
+function makeHost(overrides: Record<string, unknown> = {}, opts: Record<string, unknown> = {}) {
   const calls: string[] = [];
   const opened: Record<string, unknown>[] = [];
   const session = {
@@ -26,7 +24,7 @@ function makeHost(overrides: Record<string, unknown> = {}, opts: Record<string, 
   const getMessages = vi.fn(async () => [user("A", "uA"), assistant("aA"), user("B", "uB")]);
   const host = new SessionHost(
     { short: "h1", name: "h1", cwd: "/tmp", kind: "interactive", detached: true, config: {}, ...opts } as any,
-    { openSession: (c: any) => { opened.push(c); onOpen?.(host); return session as any; }, getMessages, disposeGraceMs: 20 } as any,
+    { openSession: (c: any) => { opened.push(c); return session as any; }, getMessages, disposeGraceMs: 20 } as any,
   );
   // start() binds a real socket; tests drive the methods directly instead — mirror host-session.test.ts
   (host as any).session = session; (host as any).mode = "acceptEdits";
@@ -84,12 +82,14 @@ describe("rewind", () => {
   // W-S8 INVERTS THIS. It used to read "refuses conversation scopes with a null prevUuid — and never touches
   // files (validate before side effects)" and assert `rejects.toThrow(/code-only/)`. That was honest only
   // while the host had no way to express "before the first prompt"; it now clears instead of refusing, so a
-  // `both` scope does BOTH halves. The ordering the old name was really guarding — file restore on the LIVE
-  // engine before the swap replaces it — is what the `calls`/`opened` pair still pins.
-  it("scope both with a null prevUuid restores the files AND clears the conversation, in that order", async () => {
-    const { host, session, calls, opened } = makeHost();
+  // `both` scope does BOTH halves. What this pins is that both halves RAN — not their order: `calls` and
+  // `opened` are independent arrays with nothing interleaving them, and the review moved the swap block
+  // above the file-restore block with this test and the `scope both` test at the top of this describe both
+  // staying green. The ordering (file restore on the LIVE engine first — probe 68d needs the open transport)
+  // is UNPINNED here, a pre-existing gap inherited from that older test's idiom rather than one W-S8 opened.
+  it("scope both with a null prevUuid restores the files AND clears the conversation", async () => {
+    const { host, calls, opened } = makeHost();
     await host.rewind({ uuid: "uA", prevUuid: null }, "both");
-    expect(session.rewind).toHaveBeenCalled();
     expect(calls).toEqual(["rewind:uA:dry", "rewind:uA:real"]);
     expect(opened).toHaveLength(1);
     expect((opened[0] as any).resumeAt).toBeUndefined();
@@ -114,11 +114,16 @@ describe("rewind", () => {
   });
   it("keeps the busy window closed across the whole first-message restore", async () => {
     // The reason this does NOT call the host's own clearSession(): that method opens and closes
-    // swapInFlight itself (host.ts:449-453), so nesting it inside rewind's window would let the inner
-    // finally reopen the busy gate mid-swap. Sampled from INSIDE the injected openSession — that is the
-    // one moment the swap is genuinely in flight.
+    // swapInFlight itself, so nesting it inside rewind's window would let the inner finally reopen the busy
+    // gate mid-swap. WHERE THIS SAMPLES IS THE WHOLE TEST. The obvious place — inside the injected
+    // openSession — cannot tell the two shapes apart, because that call sits inside the INNER window too:
+    // the review replaced the swap with `await this.clearSession()` and every test here still passed. The
+    // discriminating instant is the `rewound` broadcast, emitted after the swap resolves and before rewind's
+    // own finally: shipped code is still busy there, the nested-clearSession shape has already been reopened
+    // by the inner finally and reads false.
     const seen: boolean[] = [];
-    const { host } = makeHost({}, {}, (h) => seen.push(h.busy()));
+    const { host } = makeHost();
+    host.follow((ev) => { if (ev.kind === "rewound") seen.push(host.busy()); });
     await host.rewind({ uuid: "uB", prevUuid: null }, "conversation");
     expect(seen).toEqual([true]);
   });

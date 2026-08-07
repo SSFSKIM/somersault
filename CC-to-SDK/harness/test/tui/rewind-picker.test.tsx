@@ -373,8 +373,14 @@ describe("<RewindPicker> — the confirmation panel", () => {
   });
 
   // The pointer and the explanation line are computed from DIFFERENT state (`defaultFocusValue` at the render
-  // site, `focusedOption` seeded by `open()`), so changing one predicate and not the other ships a panel that
-  // contradicts itself. This is the pin for that, not for the option list.
+  // site, `focusedOption` which `open()` also seeds), so the predicate was changed at all three sites. WHAT
+  // THIS PINS IS THE RENDER SITE ALONE — and the two `open()` seeds are not independently pinnable here, for
+  // an architectural reason: Select reports its focused row from a mount effect (Select.tsx's
+  // `useEffect(() => reportFocus(current?.value))`), and `current` is derived from `defaultFocusValue`, so
+  // `onFocus` overwrites whatever `open()` seeded within the same commit. Reverting either seed — or both —
+  // leaves the whole tui suite green. Changing all three remains right for consistency: a seed that
+  // disagrees with the render site is a self-contradicting frame waiting for the day the effect stops
+  // running first. Not the pin for the option LIST either; the two A4b tests above own that.
   it("focuses a restorable option and explains THAT option, for a first-message anchor (A4b)", async () => {
     const { lastFrame } = await openConfirmFirst(async () => ({ canRewind: false }));
     expect(plain(frame(lastFrame))).toContain("The conversation will be forked.");        // not "…will be unchanged."
