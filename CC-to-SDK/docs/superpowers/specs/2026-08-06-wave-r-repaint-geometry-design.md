@@ -651,3 +651,13 @@ Pending — written at finish.
   whether and when.
 - **ctrl+o screen-swap semantics** — upstream swaps the whole screen rather than overlaying. Recorded as
   a divergence during EP-R4 grounding; not chased here.
+- **Port upstream's word-diff tokenizer (`Q$p` + `diffArrays`, L419608/L419652) to replace `diffWords`**
+  — Task 12's review measured that jsdiff's `diffWords` normalizes whitespace runs to the NEW side, so
+  the remove-side word band lands on the wrong characters whenever indentation changed (`tax` banded as
+  `x;`). Pre-existing since F4; Task 12 made it strictly less harmful (text is now authoritative — only
+  the highlight is off, where previously the removed line rendered with the new side's indentation,
+  i.e. wrong file content on screen). Upstream's own tokenizer emits whitespace runs as tokens, so both
+  sides reconstruct exactly; porting it also makes the `ohH = 0.4` bail fraction exact.
+- **Pre-verdict shortfall accumulation** (Surprises 9a) — discharge the residue of frame writes made
+  before the reflow verdict lands; would close the session's-first-fine-drag window. Wave close-out
+  decision.
