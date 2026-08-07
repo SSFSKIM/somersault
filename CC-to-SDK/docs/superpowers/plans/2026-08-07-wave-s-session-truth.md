@@ -2059,19 +2059,22 @@ cd harness && npm run typecheck && npm run test:unit && npm run test:tui && npm 
 ```
 Record every count.
 
-- [ ] **Step 2: Re-measure ANCHORS-1 before it costs anything**
+- [ ] **Step 2: ANCHORS-1 — already measured and closed; re-run only as a regression check**
 
-The premise — "after a `/compact`, rewind anchors vanish" — traces to probe 68b, which the grounding round
-never re-ran, and the spec reviewer's own compaction fixture returned four rows including two real prompt
-rows, i.e. anchors would survive. `sdk.d.ts:2965` documents `preservedMessages` as superseding the older
-`preserved_segment` scheme, exactly the kind of change that flips this.
+Done at plan time, keyed, by `probes/probes/68e-anchors-after-compaction.ts`. Result: a manual `/compact`
+took a four-anchor session to **one** anchor with zero survivors, so the premise on file is correct and
+the spec review's contrary fixture was wrong — **and it is not a defect.** The reader returns the
+compacted view, so the pre-boundary prompts are not in its output at all, which is honest: the model no
+longer holds those turns. Nothing is built for it (spec Surprise 7).
+
+Re-run it only if the SDK version has moved since:
 
 ```bash
-cd CC-to-SDK && set -a; . ./.env; set +a
-npx tsx probes/probes/68b-*.ts        # or a fresh probe if 68b no longer matches the SDK's shape
+cd CC-to-SDK && export HOME=/tmp/ws-anchors-$$ && mkdir -p "$HOME" && export CCX_FLEET_ROOT="$HOME/fleet"
+set -a; . ./.env; set +a
+cd probes && npx tsx probes/68e-anchors-after-compaction.ts
 ```
-Record the measured answer in the spec's Open questions table. **Do not build anything for ANCHORS-1
-either way** — the owner decides after the measurement.
+Expected tail: `VERDICT: pre-boundary anchors are GONE; only post-boundary prompts remain.`
 
 - [ ] **Step 3: Keyless acceptance cells**
 
@@ -2153,4 +2156,4 @@ gaps.
 | Persisting client-side slash entries into the session store | Touches replay, rewind anchors and `/export` together | W-S7 / SLASH-PERSIST-1, deferred to Wave C spec time |
 | The `/resume` preview rendered through the real transcript renderer | ccx's fixed tail is a recorded deliberate design; changing it is a priced feature, not a correction | spec Deferred |
 | Interruptible `/compact` | `session.compact()` is a capped-timeout op over the UDS with no cancel path; a cancel is a wire change | spec Deferred |
-| Anything for ANCHORS-1 | Its premise is unverified and possibly stale; Task 13 Step 2 measures it and the owner decides | spec Open questions |
+| Anything for ANCHORS-1 | **Measured and closed at plan time** (probe 68e): anchors genuinely do not survive a compaction, and that is honest — the model no longer holds those turns, so offering to rewind to one would be an offer to restore a conversation nobody has | spec Surprise 7; Task 13 Step 2 |

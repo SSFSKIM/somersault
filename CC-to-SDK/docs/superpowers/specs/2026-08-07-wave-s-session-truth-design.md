@@ -341,7 +341,7 @@ a confirm gated at `pickModel` leaves the pref written after a decline.
 
 | Item | Owner | Deadline |
 |---|---|---|
-| **ANCHORS-1** — after a `/compact`, do rewind anchors vanish? `qa5-04`'s real residue. **Premise unverified and possibly stale (spec review):** it traces to probe 68b, which the grounding round did not re-run, and the reviewer's own compaction fixture returned four rows including two real prompt rows — i.e. anchors would survive. `sdk.d.ts:2965` documents `preservedMessages` as superseding the older `preserved_segment` scheme, exactly the kind of change that flips this. **Re-measure before spending anything on the question** | Controller measures, then owner decides | Wave S close-out |
+| ~~**ANCHORS-1**~~ — **CLOSED 2026-08-07 by measurement, no owner decision needed.** Probe 68e (`probes/probes/68e-anchors-after-compaction.ts`, run keyed): four pre-boundary anchors → **one** post-boundary anchor, zero survivors. The premise on file is **correct**, and the spec review's contrary fixture was wrong. **But it is not a defect** — see Surprise 7. No work follows from it | — | Closed |
 | **SLASH-PERSIST-1** (W-S7) — persist client-side slash entries into the session store? Buys upstream's resume preview and message count; touches replay, rewind anchors and `/export` | Owner | Wave C spec time |
 | **CTRL-B-1** — upstream's `Ctrl+B` (all branches) widen control has no backing in `listSessions`. Build a branch filter, or record the divergence permanently? Controller recommends recording it | Owner (override only) | Wave S execution |
 
@@ -375,6 +375,21 @@ Seeded from the grounding round; parent §12 item 20 carries the full evidence.
    *ccx* already contains, and the two were only compared when someone had to name the files to edit.
    Planning is the first pass that forces that comparison, which is an argument for planning against the
    code rather than against the spec's prose.
+7. **ANCHORS-1 turned out to be the system telling the truth, and the wave's spine depends on it.**
+   Measured live (probe 68e): a manual `/compact` takes a four-anchor session to **one** anchor, and not
+   one of the four survives. `getSessionMessages` returns the compacted view — a `compact_summary` row,
+   the preserved tail, and the post-boundary turns — so the pre-boundary prompts are not in the reader's
+   output at all. **That is correct, not broken:** the model no longer holds those turns, so offering to
+   rewind to one would be an offer to restore a conversation nobody has. `qa5-04`'s residue is therefore
+   not a defect and nothing follows from it.
+   **It is also the strongest evidence yet for W-S1's third reason.** A hand-rolled `parentUuid` walk over
+   the raw JSONL would resurrect exactly these four discarded anchors and replay their turns — the precise
+   lie this wave exists to remove — while the SDK reader, which relinks through
+   `compact_metadata.preserved_messages`, does not. Criterion A2 is the guard for it.
+   One runtime correction to `sdk.d.ts:2965` while we were there: `preserved_segment` has **not** been
+   superseded in practice. The live boundary frame carries **both** keys, alongside `trigger`,
+   `pre_tokens`, `post_tokens`, `cumulative_dropped_tokens` and `duration_ms` (a manual compaction of
+   ~18k tokens took 11.9 s and dropped ~16.7k).
 
 ## Outcomes & Retrospective
 
@@ -405,10 +420,15 @@ Pending — written at finish.
   criterion in this wave that could not fail), and the one residual — the `prevUuid` gate on the
   conversation option — moved into **EP-S3b**, which is where the host change that makes removing it
   honest already lives. Surprise 6 records what the pattern was.
+  **ANCHORS-1 also closed** the same day, by running probe 68e keyed rather than by deciding: the premise
+  on file is correct (four anchors → one across a manual compaction, zero survivors), the spec review's
+  contrary fixture was wrong, and no work follows because the behaviour is honest. Surprise 7 carries the
+  measurement and the runtime correction to `sdk.d.ts:2965` it turned up.
 
 ## Deferred (out of this wave)
 
-- **SLASH-PERSIST-1** (W-S7) and **ANCHORS-1** — both above.
+- **SLASH-PERSIST-1** (W-S7) — above. *(ANCHORS-1 was deferred here in v2; it is now closed by
+  measurement, with no work following from it — see Surprise 7.)*
 - **The `/resume` preview pane rendered through the real transcript renderer** — upstream's shape; ccx's
   fixed tail is a recorded deliberate design, and changing it is a priced feature, not a correction.
 - **`Ctrl+B` (all branches)** pending CTRL-B-1.
