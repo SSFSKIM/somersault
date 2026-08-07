@@ -45,38 +45,75 @@ export const REWIND_SUMMARY_WINDOW = 10;
 export const REWIND_ROW_HEIGHT = 3;
 /** The floor upstream keeps (`Math.max(2, …)`, L487056) — two rows is the least that still reads as a list. */
 export const REWIND_MIN_ROWS = 2;
-/** What the frame, prompt, indicators and footer cost before a single row is drawn — RE-DERIVED in Wave S t4
- *  from `RewindPicker`'s own frame, NOT inherited. Upstream inlines 12 at L487056, but it halves `rows` first
- *  under `ds()` (its split-view predicate); we have no split view, so importing the 12 alone measured nothing
- *  of ours — it produced 9 visible rows at a geometry where upstream's own frame shows 2.
+/** What the PANE must keep free before a single row is drawn — re-derived in Wave S t4 from `RewindPicker`'s
+ *  own frame, and corrected in t4's fix round, which found that derivation subtracted from the wrong thing.
  *
- *  The count, against `RewindFrame` + the list body (`RewindPicker.tsx:99-107, 239-259`):
- *    1-2  the `borderStyle="round"` box's top and bottom rules
- *    3    the bold `Rewind` title
- *    4    the children box's `marginTop={1}` blank
- *    5    `REWIND_PROMPT`
- *    6    `↑ N more above`
- *    7    `↓ N more below`
- *    8    the footer box's `marginTop={1}` blank
- *    9    the footer itself
+ *  THIS IS 12 AND UPSTREAM'S IS ALSO 12, AND THE MATCH IS A COINCIDENCE — do not "simplify" it back to
+ *  "upstream's inlined constant", which is what the pre-t4 comment claimed and what t4 correctly refuted.
+ *  Upstream inlines 12 at L487056 but applies it to a row count IT HAS ALREADY HALVED under `ds()`, its
+ *  split-view predicate; we have no split view, so importing that 12 measured nothing of ours — it produced
+ *  9 visible rows at a geometry where upstream's own frame shows 2. Ours is 9 + 1 + 1 + 1, each term counted
+ *  below against our own tree, and nothing but arithmetic accident makes the totals agree.
  *
- *  TWO JUDGEMENT CALLS, both deliberate:
- *   · ROWS 6 AND 7 ARE CONDITIONAL — neither indicator is drawn at its own end of the list — and they are
- *     reserved anyway. They toggle as a consequence of SCROLLING, which is the very act this budget governs:
- *     a budget that dropped them would grow the window at the top of the list and shrink it again on the
- *     first step down, resizing the list under the cursor mid-scroll. A constant budget costs at most one
- *     row of slack at the ends and is the only one that holds still.
- *   · `REWIND_CHECKING` (row `RewindPicker.tsx:258`) is a TENTH conditional row and is NOT reserved. Unlike
- *     the indicators it does not toggle with the cursor: it appears only after Enter, while an out-of-band
- *     dry run is in flight, and the next state is either the confirmation panel (a different frame, its own
- *     chrome) or Escape, which removes it. So the cost of not reserving it is one row of transient overflow
- *     during a wait the user is already stalled on, while the cost of reserving it is a permanently shorter
- *     list at every height for every user. Reserving space for the slow path at the expense of the fast one
- *     is the wrong trade.
+ *  THE DIALOG DOES NOT OWN THE PANE. `rows` here is the WHOLE terminal height, and `ChatApp` draws
+ *  `ChatStatusBar` one line below the picker, unconditionally (ChatApp.tsx:606). A budget counted from
+ *  `RewindFrame` alone — t4's nine — therefore composes into a frame that REACHES the pane; measured on the
+ *  real `ChatApp`, at two of every three heights at the bottom of the list and at every height once the
+ *  checking row is up.
  *
- *  Not modelled: `REWIND_PROMPT` wraps to two lines below ~55 columns. This budget is height-only, as
- *  upstream's is; a width-aware one would need the wrap count and has no caller asking for it. */
-export const REWIND_CHROME_ROWS = 9;
+ *  AND REACHING THE PANE IS NOT ONE CLIPPED LINE. Ink 5.2.1 (`ink.js:121`) branches on
+ *  `outputHeight >= this.options.stdout.rows` and writes `clearTerminal + fullStaticOutput + output`: a
+ *  full-terminal wipe plus a re-dump of the whole accumulated static transcript, ON EVERY RENDER — which for
+ *  a list means on every cursor move. The threshold is `>=`, so "exactly fits the pane" already trips it.
+ *
+ *  9 + 1 + 1 + 1, each term measured:
+ *   · 9 — the DIALOG'S OWN chrome, against `RewindFrame` + the list body (`RewindPicker.tsx:99-107, 239-259`):
+ *       1-2  the `borderStyle="round"` box's top and bottom rules
+ *       3    the bold `Rewind` title
+ *       4    the children box's `marginTop={1}` blank
+ *       5    `REWIND_PROMPT`
+ *       6    `↑ N more above`
+ *       7    `↓ N more below`
+ *       8    the footer box's `marginTop={1}` blank
+ *       9    the footer itself
+ *   · +1 — `ChatStatusBar`, the row the dialog is always composed above.
+ *   · +1 — the `>=` above: the pane must end up STRICTLY taller than the frame, not equal to it. This is the
+ *     only genuine headroom in the budget; the status-bar row never was any (an earlier comment counted it
+ *     as slack, which is how the overflow got through).
+ *   · +1 — `REWIND_CHECKING` (`RewindPicker.tsx:258`), the tenth conditional row (see below).
+ *
+ *  Composed, the tallest reachable frame is `3·visible + 11` (mid-list, both indicators drawn, checking row
+ *  up) against a `visible` of `floor((rows − 12) / 3)`, i.e. at most `rows − 1` — and exactly `rows − 1`
+ *  whenever `(rows − 12) % 3 == 0`. There is no spare row here: all four terms are load-bearing. Pinned
+ *  directly, on the composed `ChatApp` frame rather than on this arithmetic, by rewind-picker.test.tsx's
+ *  "never renders a frame that reaches the pane". Below 18 rows the `REWIND_MIN_ROWS` floor outvotes this
+ *  budget and the frame overflows whatever it says — a deliberate readability floor, and the reason that
+ *  test's range starts at 18.
+ *
+ *  TWO CONDITIONAL GROUPS ARE RESERVED ANYWAY, both deliberate:
+ *   · ROWS 6 AND 7 — neither indicator is drawn at its own end of the list. They toggle as a consequence of
+ *     SCROLLING, which is the very act this budget governs: a budget that dropped them would grow the window
+ *     at the top of the list and shrink it again on the first step down, resizing the list under the cursor
+ *     mid-scroll. A constant budget costs at most one row of slack at the ends and is the only one that holds
+ *     still.
+ *   · `REWIND_CHECKING` — t4 reserved nothing for it, on the reasoning that a permanent row is too high a
+ *     price for a transient wait that "cannot resize the window under a moving cursor". The trade was real;
+ *     the price was not. With the status bar counted, the frame plus the checking row is at or above the pane
+ *     at EVERY height, and the cost is the clear-terminal path above rather than one clipped line. Nor is the
+ *     wait a frozen screen: the `Select` STAYS MOUNTED and its keys stay live while the row shows (the list
+ *     and the row render together, `RewindPicker.tsx:244-258`), so the cursor does keep moving under it — and
+ *     every one of those keystrokes would fire the wipe.
+ *
+ *  NOT MODELLED, AND NOW MEASURED: this budget is height-only, as upstream's is, so it does not see WRAP.
+ *  `REWIND_PROMPT` is 57 columns and the frame's inner width is `columns − 4`, so it takes a second line at
+ *  60 columns and below and a third at ~40 and below; `REWIND_FOOTER` is 33 and takes a second at 36 and
+ *  below. Each wrapped line eats one row of a budget whose slack is exactly one — measured on the composed
+ *  `ChatApp`, the tallest state reaches the pane at 44-60 columns for one height in three (21, 24, 27 …) and
+ *  at every height at 36 columns. That gap predates this constant and closing it is a different change: a
+ *  width-aware budget needs `columns` threaded into `rewindVisibleRows` and a wrap count for two literals,
+ *  which no caller asks for today. It is recorded here rather than left as a footnote because the fix round
+ *  established what overflow now costs — the clear-terminal path above, not a clipped line. */
+export const REWIND_CHROME_ROWS = 12;
 
 /** `_` (L487056): `Math.max(2, Math.floor((rows - chrome) / rowHeight))`, with OUR chrome above. */
 export function rewindVisibleRows(rows: number, rowHeight: number = REWIND_ROW_HEIGHT): number {

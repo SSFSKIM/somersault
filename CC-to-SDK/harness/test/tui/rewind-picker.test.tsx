@@ -12,11 +12,17 @@
 //     and default focus;
 //   · that navigation is Select's (j/k, ctrl+n/p, PageUp/PageDown, Home/End) and that the retargeted KB14
 //     jump aliases still reach it through the `MessageSelector` scope above.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import React from "react";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { RewindPicker } from "../../src/tui/RewindPicker.js";
-import { conversationExplanation, REWIND_CHROME_ROWS, REWIND_MIN_ROWS, rewindVisibleRows } from "../../src/tui/rewindModel.js";
+import { ChatApp } from "../../src/tui/ChatApp.js";
+import { fakeRemote } from "./helpers/fakeRemote.js";
+import type { ChatSession } from "../../src/tui/useChat.js";
+import { conversationExplanation, REWIND_CHECKING, REWIND_CHROME_ROWS, REWIND_MIN_ROWS, rewindVisibleRows } from "../../src/tui/rewindModel.js";
 import type { RewindAnchor, RewindDryRun } from "../../src/session/chatSession.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
@@ -41,20 +47,118 @@ const never = () => new Promise<RewindDryRun>(() => {});
 const clean: RewindDryRun = { canRewind: true, filesChanged: ["/repo/src/a.ts", "/repo/src/b.ts"], insertions: 3, deletions: 1 };
 const props = { onDryRun: never, onConfirm: () => {}, onClose: () => {}, rows: 40, columns: 80 };
 
-// WAVE S T4. The window budget used to be upstream's inlined `12`, which measures upstream's frame under a
-// halving (`ds()`, its split-view predicate) we do not have — so it measured nothing of ours. Re-derived
-// against the frame `RewindFrame` + the list body actually draw, and pinned DIRECTLY: a test that only
-// asserted `rewindVisibleRows(15) === 2` and `rewindVisibleRows(40) > 2` is satisfied by every constant from
-// 7 to 31, the wrong 12 included, so it would pin nothing at all.
+// WAVE S T4 + ITS FIX ROUND. The budget is counted, not inherited: it happens to equal upstream's inlined 12,
+// but upstream applies that to a row count already halved under `ds()` (its split-view predicate) and we have
+// no split view — see `REWIND_CHROME_ROWS` for the 9 + 1 + 1 + 1 our own tree measures. Pinned DIRECTLY,
+// because a test that only asserted `rewindVisibleRows(15) === 2` and `rewindVisibleRows(40) > 2` is
+// satisfied by every constant from 7 to 31 and pins nothing at all.
+//
+// THIS BLOCK IS ONLY THE LOWER BOUND — that the window is not needlessly SMALL. The upper bound, that the
+// composed frame never reaches the pane, is the invariant block below; between them the constant is bracketed
+// on both sides. The three heights here discriminate 12 from each of its neighbours: at 21, C=13 gives 2 and
+// C=9 gives 4; at 23, C=11 gives 4.
 describe("rewindVisibleRows — the budget is our own chrome, counted", () => {
-  it("sizes its window from the chrome RewindPicker actually draws", () => {
-    expect(REWIND_CHROME_ROWS).toBe(9);            // border ×2 · title · blank · prompt · ↑ · ↓ · blank · footer
+  it("sizes its window from the chrome the composed frame actually costs", () => {
+    expect(REWIND_CHROME_ROWS).toBe(12);           // 9 dialog chrome + ChatStatusBar + the `>=` row + REWIND_CHECKING
     expect(REWIND_MIN_ROWS).toBe(2);               // upstream's `Math.max(2, …)` floor (L487056)
-    expect(rewindVisibleRows(21)).toBe(4);         // 4 at C=9, 3 at the old C=12 — THE discriminator
-    expect(rewindVisibleRows(30)).toBe(7);         // 7 vs 6 — a second height where the two constants differ
+    expect(rewindVisibleRows(21)).toBe(3);         // floor((21−12)/3) — 4 at t4's C=9, 2 at C=13
+    expect(rewindVisibleRows(23)).toBe(3);         // floor((23−12)/3) — 4 at C=11, so 11 is excluded too
+    expect(rewindVisibleRows(30)).toBe(6);         // floor((30−12)/3) — 7 at C=9
     expect(rewindVisibleRows(15)).toBe(2);         // and the floor still holds where the pane is too short
     expect(rewindVisibleRows(4)).toBe(2);
   });
+});
+
+// WAVE S T4, FIX ROUND — THE PROPERTY, of which the constant above is only the current satisfaction. The t4
+// re-derivation measured the dialog against the wrong denominator: `RewindPicker` does not own the pane.
+// `ChatApp` renders `ChatStatusBar` one line below it, unconditionally, and hands the dialog the WHOLE
+// terminal height — so a budget counted from `RewindFrame` alone composes into a frame that reaches the pane.
+//
+// Ink does not clip that. `node_modules/ink/build/ink.js:121` (5.2.1) branches on
+// `outputHeight >= this.options.stdout.rows` and writes `clearTerminal + fullStaticOutput + output` — a
+// full-terminal wipe and a re-dump of the entire accumulated static transcript, ON EVERY RENDER, which for a
+// list means on every cursor move. And the threshold is `>=`: a frame that exactly fills the pane trips it.
+// So the invariant is STRICTLY BELOW, and it is asserted on the composed `ChatApp` frame, never on the dialog.
+//
+// HOW THE HEIGHT IS READ. `ink-testing-library` renders with `debug: true`, whose branch writes
+// `fullStaticOutput + output`; the fixture's transcript is empty, so the static half is empty and the frame's
+// line count IS the `outputHeight` Ink compares. (If a future `<Static>` banner appears, this test counts it
+// too and fails — the safe direction.)
+//
+// FOUR STATES, because the frame's height is not one number: the two scroll indicators are conditional, and
+// `REWIND_CHECKING` is a further conditional row. The tallest reachable state is mid-list (both indicators)
+// with the checking row up, and it measures `3·visible + 11`.
+//
+// THE RANGE STARTS AT 18. Below that `REWIND_MIN_ROWS` — a readability floor, not the budget — pins the list
+// at two options and the frame overflows whatever the chrome constant says; 18 is the first height at which
+// the budget is what decides. The heights below span all three residues of `(rows − 12) % 3`, which is what
+// makes this discriminating: at `REWIND_CHROME_ROWS = 9` two of three residues overflow at the bottom of the
+// list and ALL THREE overflow with the checking row up.
+describe("<ChatApp> with the rewind picker open never renders a frame that reaches the pane", () => {
+  let fleetRoot = "", priorFleetRoot: string | undefined;
+  beforeAll(() => { priorFleetRoot = process.env.CCX_FLEET_ROOT; fleetRoot = mkdtempSync(join(tmpdir(), "ccx-rwf-")); process.env.CCX_FLEET_ROOT = fleetRoot; });
+  afterAll(() => { if (priorFleetRoot === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = priorFleetRoot; rmSync(fleetRoot, { recursive: true, force: true }); });
+
+  /** Fourteen anchors + the synthetic `(current)` row: more options than any height in the range can show, so
+   *  the window — not the catalog — is what sizes the list, and both indicators are reachable everywhere. */
+  const MANY: RewindAnchor[] = Array.from({ length: 14 }, (_, i) => ({ uuid: `w${i}`, prevUuid: null, text: `rewind prompt ${i}`, index: i }));
+  /** `never` for the dry runs is deliberate twice over: every row keeps its blank second line (so the row
+   *  height is the constant 3 the budget assumes), and Enter parks on `REWIND_CHECKING` instead of opening the
+   *  confirmation panel — which is how the checking row is held on screen at all. */
+  const rewindRemote = () => ({ ...fakeRemote(), rewindAnchors: async () => MANY, rewindDryRun: never, rewind: async () => {} });
+
+  /** Esc-Esc on an empty composer — the only route to this picker (escape.test.tsx's recipe). */
+  async function openPicker(rows: number) {
+    const deps = { columns: () => 100, getSessionMessages: async () => [] as never[] };
+    const session = rewindRemote();
+    const r = render(<ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} />);
+    Object.defineProperty(r.stdout, "rows", { configurable: true, get: () => rows });
+    await waitFor(() => frame(r.lastFrame).includes("❯ "));
+    await tick();
+    r.stdin.write("\x1b"); await waitFor(() => frame(r.lastFrame).includes("Press Esc again to rewind"));
+    r.stdin.write("\x1b"); await waitFor(() => frame(r.lastFrame).includes("Restore the code and/or conversation"));
+    await tick();
+    return r;
+  }
+  const frameHeight = (r: { lastFrame: () => string | undefined }) => frame(r.lastFrame).split("\n").length;
+  const indicators = (r: { lastFrame: () => string | undefined }) => {
+    const f = plain(frame(r.lastFrame));
+    return `${f.includes("more above") ? "↑" : "-"}${f.includes("more below") ? "↓" : "-"}`;
+  };
+  /** Enter on the focused ANCHOR row (never `(current)`, which closes the picker) with a dry run that never
+   *  lands: the list stays mounted and scrollable underneath, and the checking row is the only addition. */
+  async function startChecking(r: { stdin: { write: (s: string) => void }; lastFrame: () => string | undefined }) {
+    r.stdin.write("\r");
+    await waitFor(() => plain(frame(r.lastFrame)).includes(REWIND_CHECKING));
+    await tick();
+  }
+
+  for (const rows of [18, 19, 20, 21, 22, 23, 24, 25, 26, 30, 33, 40]) {
+    it(`stays under ${rows} rows at the bottom of the list, mid-list with both indicators, and while checking`, async () => {
+      // A · bottom of the list, where the picker opens: `(current)` focused, only `↑ N more above` drawn.
+      const a = await openPicker(rows);
+      expect(indicators(a)).toBe("↑-");
+      expect(frameHeight(a)).toBeLessThan(rows);
+      // B · one row up off the synthetic row, then Enter — the checking row over the bottom of the list.
+      a.stdin.write("k"); await tick(); await tick();
+      await startChecking(a);
+      expect(frameHeight(a)).toBeLessThan(rows);
+      a.unmount();
+
+      // C · mid-list: Home, then step down until BOTH indicators are live. Asserted, not assumed — a walk that
+      // never reached the both-indicators state would leave the tallest geometry untested.
+      const b = await openPicker(rows);
+      b.stdin.write("\x1b[H"); await tick(); await tick();
+      for (let n = 0; n < MANY.length && indicators(b) !== "↑↓"; n++) { b.stdin.write("j"); await tick(); await tick(); }
+      expect(indicators(b)).toBe("↑↓");
+      expect(frameHeight(b)).toBeLessThan(rows);
+      // D · the tallest state there is: both indicators AND the checking row.
+      await startChecking(b);
+      expect(indicators(b)).toBe("↑↓");
+      expect(frameHeight(b)).toBeLessThan(rows);
+      b.unmount();
+    }, 20000);
+  }
 });
 
 describe("<RewindPicker> — the frame and the list", () => {
@@ -460,16 +564,18 @@ describe("<RewindPicker> — navigation is the shared list's", () => {
   });
 
   it("the scroll counters are caller-rendered from the list's own window", async () => {
-    // rows:22 → visible = max(2, floor((22-9)/3)) = 4 of 13 options, so both counters are live. The counts
-    // moved from 10 to 9 with the Wave S t4 re-derivation of `REWIND_CHROME_ROWS`: one more row fits.
+    // rows:22 → visible = max(2, floor((22-12)/3)) = 3 of 13 options (12 anchors + the synthetic row), so
+    // both counters are live and each hides 13 − 3 = 10. The count tracks `REWIND_CHROME_ROWS`: it was 10
+    // before Wave S t4, 9 while t4's C=9 stood, and 10 again now the composed frame is what the budget is
+    // measured against — recomputed here, not restored from history.
     const { stdin, lastFrame } = render(<RewindPicker {...props} anchors={many} onDryRun={never} rows={22} />);
     await waitFor(() => frame(lastFrame).includes("(current)"));
-    expect(plain(frame(lastFrame))).toContain("↑ 9 more above");
+    expect(plain(frame(lastFrame))).toContain("↑ 10 more above");
     expect(plain(frame(lastFrame))).not.toContain("more below");
     await tick();
     stdin.write("\x1b[H");                                             // Home → the top of the list
     await waitFor(() => plain(frame(lastFrame)).includes("more below"));
-    expect(plain(frame(lastFrame))).toContain("↓ 9 more below");
+    expect(plain(frame(lastFrame))).toContain("↓ 10 more below");
     expect(plain(frame(lastFrame))).not.toContain("more above");
   });
 
