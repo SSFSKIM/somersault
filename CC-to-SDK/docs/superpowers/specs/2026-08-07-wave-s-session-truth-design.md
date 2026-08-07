@@ -15,11 +15,19 @@ replays turns the model no longer holds, a session that reports "no session yet"
 turns, a context percentage left over from before `/clear`, a token count off by orders of magnitude, a
 session id printed by the product that the product's own `--resume` will not accept.
 
-The grounding round changed the wave's centre of gravity. The P0 as filed — "rewind replays the trimmed
-transcript" — reproduces, but its cause is not what anyone wrote down: **the rewind is correct, and the
-persisted session is a tree.** Three separate proposed fixes (the parent spec's `[DECIDED-AUTO]`, the
-grounding worker's cheaper alternative, and the original QA diagnosis) all assumed a list. That
-correction is the wave's spine; the rest is a set of small, well-bounded truth repairs.
+The grounding round and the spec review together moved the P0 twice. As filed — "rewind replays the
+trimmed transcript" — it reproduces, but its cause is not what anyone wrote down. **The rewind is
+correct, the persisted file is a tree that only grows, and the SDK's reader already resolves that tree
+for us.** What is actually broken is *timing*: at the moment `ccx` rebuilds, the row that moves the
+branch does not exist yet, so the reader can only return the pre-rewind chain. The fix is a few lines in
+one function, and the wave's spine is smaller than v1 of this document claimed. The rest is a set of
+well-bounded truth repairs.
+
+**One distinction is load-bearing everywhere below, and conflating it caused v1's error: the session
+FILE and the reader's OUTPUT are different objects.** The file is append-only JSONL holding every branch
+ever written. `getSessionMessages` returns a resolved *conversation chain* — leaf-selected, `parentUuid`
+walked, compaction-relinked — with `parentUuid` stripped from the rows it hands back. Statements about
+one are not statements about the other.
 
 ## Acceptance (the wave gate)
 
@@ -33,23 +41,40 @@ uses for its cursor. Never wait on copy that also appears in the permanent foote
 on its first try gets the same scrutiny as one that fails.
 
 1. **A1 (qa5-05/qa4-11, P0)** After restoring the conversation to the point before the second of three
-   prompts, the replayed transcript shows **only the first turn**. Verified against the model itself: a
-   follow-up asking what it was told to reply lists only the surviving word.
-2. **A2** After **two** successive rewinds creating sibling branches, the replay shows the live branch
-   only — no row from an abandoned branch appears.
-3. **A3 (qa5-03, P0)** After any one completed turn, `/status` shows a session id and `/rename`,
-   `/tag`, `/export`, `/files`, `/stats` and the Settings Stats tab all operate on it. None answers
-   "no session yet".
-4. **A4 (EP-S3 + §12 item 20)** The rewind confirm panel offers upstream's option set in upstream's
-   order, gated as upstream gates it; **and rewinding to the session's first message offers a
-   conversation restore** rather than only `Never mind`.
+   prompts, the replayed transcript shows **only the first turn — with no further input**, i.e. at the
+   moment the rebuild settles, not after a follow-up turn. Verified against the model itself.
+2. **A2 (compaction safety)** A rewind performed on an already-compacted session replays the
+   post-boundary conversation only and never resurrects a pre-boundary turn. *(Replaces the original
+   A2 — "two sibling branches replay the live one" — which **already passes at HEAD**, because the SDK
+   reader resolves branches before ccx sees a row. A criterion that cannot fail is not a gate; W-S1.)*
+3. **A3 (qa5-03, P0)** After any one completed turn: `/status` **prints a session line** (today it
+   omits the line entirely — `commands.ts:158` — so the observable is presence, not a needle); `/rename`
+   and `/tag` report success rather than refusing; `/export` writes a file; `/files`, `/stats` and the
+   Settings Stats tab render session-scoped content.
+4. **A4 (EP-S3)** The rewind confirm panel offers the **four implementable options** in upstream's
+   order and wording — `Restore code and conversation`, `Restore conversation`, `Restore code`,
+   `Never mind` — with the three-way head gated as upstream gates it, and each explanatory line matching
+   its own option. *(The two `Summarize` options are excluded and deferred: they need a ranged
+   compaction the SDK does not expose, which `rewindModel.ts:197,216` already records as out of scope.)*
+4b. **A4b (EP-S3b)** Restoring to the session's **first** message offers a conversation restore and
+   yields an empty conversation. This is a host + engine-lifecycle change, not a panel change:
+   `host/host.ts:621` refuses it outright, and `resumeSessionAt` takes a message UUID with no value
+   meaning "before the first".
 5. **A5 (qa2-10b)** At 60×15 with 14 models, `/model`'s overflow counter reports the number of rows
-   actually hidden by the rendered window, and an above-indicator appears when the window has scrolled.
-6. **A6 (EP-S4, unfiled)** Settings and Permissions clip at small geometries with upstream's
-   `↑ N more above` / `↓ N more below` indicators, and their paging keys move the selection.
+   actually hidden by the **rendered** window. **Deliberate divergence (W-S11):** upstream computes
+   `… +N models` off a fixed 10-row cap (L440969) and its `/model` list has no scroll gutter at all, so
+   ccx is deliberately the more truthful of the two. The `↑` indicator half **already passes**
+   (`Select.tsx:277,283`) and is not a gate.
+6. **A6 (EP-S4, unfiled)** Settings and Permissions clip at small geometries with `↑ N more above` /
+   `↓ N more below` indicators, and their paging keys move the selection. **Also W-S11:** upstream's
+   Settings has the counted indicators but binds no paging keys; upstream's Permissions has paging keys
+   but no indicators and no `home`/`end`. ccx gives both surfaces both.
 7. **A7 (qa5-10)** `/cost` after a cache-heavy turn reports cache-read and cache-creation tokens, and
    the API-duration and lines-changed rows, matching the SDK's own usage totals.
-8. **A8 (qa5-02)** Immediately after `/clear`, the status bar shows no stale context percentage.
+8. **A8 (qa5-02)** Immediately after `/clear` the status bar shows no context percentage, **and** a
+   freshly measured one appears when the first post-clear turn ends. *(Both halves required: the chip is
+   gated on `ctxPct != null` (`ChatStatusBar.tsx:41`), so the negative half alone passes on a build that
+   never sets it — or whose status bar does not render at all.)*
 9. **A9 (qa5-14)** A session id **as `ccx` itself prints it** — from the `/status` line or the
    detachable banner — passed to `--resume`, resumes that session; an id that resolves to nothing fails
    loudly instead of opening a fresh REPL.
@@ -58,36 +83,47 @@ on its first try gets the same scrutiny as one that fails.
 12. **A12 (qa4-06)** The `/resume` picker offers upstream's `Ctrl+A` and `Ctrl+W` widen controls with
     upstream's toggle copy, and they change the result set.
 13. **A13 (qa5-07/qa5-08)** `/compact` enters a busy state while it runs and leaves it at the boundary;
-    the in-progress row is **replaced** by the result row, not joined by it.
+    the in-progress affordance is **torn down** and the transcript is left carrying the result row only.
+    *(Wording matters: upstream replaces nothing — spinner, hint and bar are ephemeral render state
+    discarded at `compact_end`, while `Compacted …` is a separately persisted message. "Replaced" would
+    send an implementer building a transient-row contract upstream does not have.)*
 14. **A14 (qa4-04)** A qualifying `/model` switch shows upstream's confirm; accepting switches and does
     not re-prompt at the same output count; declining leaves the model **and the stored default**
     unchanged.
 
 ---
 
-## EP-S1 · The transcript is a tree — P0, the wave's spine
+## EP-S1 · The rebuild reads too early — P0, the wave's spine
 
 ### Current state, measured rather than argued
 
-Controller-run keyed repro, isolated HOME, 2026-08-07 (parent §12 item 20). Three turns, restore to the
-point before the second, no further input:
+Controller-run keyed repro, isolated HOME, 2026-08-07 (parent §12 item 20), then re-measured through the
+real SDK reader against that same real session file:
 
-- **The rewind is correct at the data layer.** The next user row's `parentUuid` points at the assistant
-  row of the *first* turn. The fork lands exactly where it should; the model's context is genuinely
-  trimmed.
-- **The persisted file is append-only and is never truncated.** 19 rows before the rewind → 20 once it
-  settles → 24 after one follow-up turn, same file throughout.
-- **The replay is flat.** `rebuildAfterRewind` (`useChat.ts:1288-1303`) hands `getSessionMessages`' row
-  list to `replayDocument`, so all three turns render above a `⏪ rewound here · live` marker.
-  **`parentUuid` appears nowhere in `src/`.**
+- **The rewind is correct at the data layer.** The post-rewind user row's `parentUuid` points at the
+  assistant row of the *first* turn. The fork lands exactly where it should.
+- **The persisted FILE is append-only.** 19 rows before the rewind → 20 once it settles → 24 after one
+  follow-up turn, same file throughout.
+- **The reader already resolves the branch — verified on the real rewound session, not a fixture.**
+  `getSessionMessages` returned **4 rows: the live branch only** (`ONE` prompt, `ONE` reply, then the
+  post-rewind rows); `TWO` and `THREE` were correctly absent. `parentUuid` is **stripped** from the rows
+  it returns (`type, uuid, session_id, message, parent_tool_use_id, parent_agent_id, timestamp`).
+- **So the defect is timing.** At `rebuildAfterRewind`'s read the fork row does not exist yet — the
+  20th row added at that moment is a `last-prompt` row, which is neither user nor assistant and
+  therefore does not move the leaf. The reader has no choice but to return the pre-rewind chain. The
+  fork row is written by the *next* turn (the measured 24).
 
 ### Work items
 
-- **(new)** Branch resolution in `sessions/rows.ts`: given the persisted rows, return the path from the
-  newest leaf back to the root by `parentUuid`. Phantom kinds keep their existing treatment.
-- **(modify)** `rebuildAfterRewind` replays the branch, not the file. The retry loop's purpose changes
-  from "wait for a rewrite that never comes" to "wait for the rows to exist at all".
-- **(new)** Regression: a fixture with two sibling branches replays only the live one.
+- **(modify)** `rebuildAfterRewind` (`useChat.ts:1275-1303`) derives the trimmed view itself instead of
+  waiting for one: take the reader's already-branch-resolved rows and **truncate them at the anchor's
+  `prevUuid`** (inclusive), which `resumeSessionAt` is guaranteed to keep. Race-free, and correct
+  whether or not the file has moved on.
+- **(modify)** The retry loop stops meaning "wait for a rewrite". It waits only for rows to exist.
+- **(modify)** De-duplicate the double rebuild: `useChat.ts:638` runs `rebuildAfterRewind()` on **every**
+  `rewound` broadcast including the confirming client's own, which already calls it at `:1329`.
+  Harmless while the rebuild was a fire-and-forget read; not harmless once it gates on content.
+- **(new)** Regression: a rewind on a **compacted** session (A2), and the no-follow-up-turn case (A1).
 
 ### Acceptance
 
@@ -113,11 +149,22 @@ Upstream's six options in fixed order (L487069-487072), the three-way head gated
 **and** a dry-run diff reporting ≥1 changed file. Copy trap: `Restore code`'s explanatory line reads
 `The conversation will be unchanged.` — the two lines are independent and trivially swapped.
 
-Absorbs the unfiled first-anchor defect: no `prevUuid` ⇒ `defaultRestoreOption` computes
-`conversation: false` ⇒ the panel offers only `1. Never mind`. Restoring to before the first message is
-a legitimate operation (it yields an empty conversation) and must be offered.
+**Two of upstream's six options are excluded.** `Summarize from here` / `Summarize up to here` need a
+ranged compaction the SDK does not expose (`session.compact()` takes no range), which `rewindModel.ts`
+already records at `:197` and `:216`. The panel ships **four**; summarize is deferred.
 
 **Acceptance:** A4.
+
+## EP-S3b · Rewind to the first message — P1, split out at spec review
+
+The unfiled defect from §12 item 20 is **not** a panel change and does not belong in EP-S3. `host.rewind`
+refuses it before any UI is involved (`host/host.ts:621`: *"no conversation anchor before the first
+prompt — code-only rewind is available"*), and the only trimming primitive underneath, `resumeSessionAt`,
+takes a **message UUID** (`sdk.d.ts:1815`) with no value meaning "before the first". Restoring to an empty
+conversation therefore needs a different primitive — most plausibly `clearSession()` — which is an engine
+lifecycle decision, not an option-list one.
+
+**Acceptance:** A4b.
 
 ---
 
@@ -132,6 +179,17 @@ lists are unbounded.
 **W-S3 governs the shape:** migrate both onto `Select` rather than hand-rolling handlers. Binding paging
 keys onto an unwindowed list reproduces the "resolves but moves nothing" defect F2 exists to remove — and
 the handlers do not exist either.
+
+**This is two units of work and the plan must slice it accordingly (spec review).** The `/model` counter
+is roughly one line — adopt `Select`'s `onViewChange`, which the rewind picker already consumes. The
+migration is not: `SettingsDialog` is ~209 lines with embedded theme and output-style sub-views and a
+`/`-search over rows; `PermissionsDialog` is ~340 lines, tabbed, with per-row activation and its own key
+registration. Both carry existing snapshot coverage that will move.
+
+**Also restored to scope (spec review):** the rewind picker's window-size constant. `rewindVisibleRows`
+(`rewindModel.ts:53`) transcribes upstream's `max(2, floor((m-12)/g))` **without** upstream's
+`m = ds() ? floor(f/2) : f` halving — which is why grounding measured 9 visible rows where upstream's own
+frame at the same geometry shows 2.
 
 **Acceptance:** A5, A6.
 
@@ -162,8 +220,18 @@ the detachable banner's is a randomly minted fleet roster id. Both must resolve,
 loudly instead of silently opening a fresh REPL.
 
 The slash-entries-in-preview half of `qa4-07` is **out of scope** (W-S7) — it is a persistence change.
+**Its sibling is not, and v1 dropped it (spec review):** `qa4-07(ii)`, the preview's message count, is
+separately fixable — the count is the raw row count while the pane drops tool-result-only rows, so the
+number and the pane disagree in both directions, and the bundle hands over upstream's exact predicate
+(`Pqs`/`$$_`/`B$_`, L369021-369043).
 
-**Acceptance:** A9, A10, A11, A12.
+**A trap for A9 (spec review):** `RosterRow.sessionId` is optional (`fleet/roster.ts:9`) and is stamped
+only once the engine's id materializes mid-turn, so a banner short id for a session that never completed
+a turn resolves to nothing. That is a **third** outcome — neither "resumes" nor "wrong id" — and the
+failure copy must distinguish it.
+
+**Acceptance:** A9, A10, A11, A12, and the count half of A-preview (folded into A9's task, pinned by
+unit test rather than a frame).
 
 ---
 
@@ -196,27 +264,43 @@ a confirm gated at `pickModel` leaves the pref written after a decline.
 
 ## Decision Log
 
-- **W-S1 [DECIDED, from measurement]** **EP-S1 replays the branch, by walking `parentUuid` from the
-  newest leaf.** *Rejected:* the parent spec's `[DECIDED-AUTO]` "poll until the file's tail matches the
-  rewind anchor" — the file is append-only and its tail never becomes the anchor, so the poll can only
-  exhaust its window and then render the same stale frame three seconds later. *Rejected:* slicing the
-  flat rows at `prevUuid` — correct for one rewind, wrong after two, because sibling branches interleave
-  in file order and only the parent chain disambiguates. *Rejected:* a host-supplied post-rewind
-  snapshot — it would work, but it adds a wire message to fix a defect that is purely client-side
-  arithmetic over data the client already has.
+- **W-S1 [DECIDED, from measurement — INVERTED at spec review; v1 of this decision was wrong]**
+  **EP-S1 truncates the reader's already-branch-resolved rows at the anchor's `prevUuid`.**
+  *Rejected:* the parent spec's `[DECIDED-AUTO]` "poll until the file's tail matches the rewind anchor" —
+  the file is append-only and its tail never becomes the anchor.
+  *Rejected, and this was v1's choice:* walking `parentUuid` ourselves from the newest leaf. Three
+  independent reasons, each sufficient. (a) **The SDK already does it** — verified on the real rewound
+  session: `getSessionMessages` returned the live branch only. (b) **We cannot do it** — `parentUuid` is
+  stripped from the returned rows, so implementing it means abandoning the SDK reader and hand-parsing
+  JSONL, a new capability rather than a function in `rows.ts`. (c) **It would be strictly worse** — the
+  reader carries compaction-specific relinking driven by `compactMetadata.preservedMessages`
+  (`sdk.d.ts:2965`); a naive walker ignores it and replays pre-boundary turns the model no longer holds,
+  which is the exact lie this wave exists to remove. That hazard is now criterion A2.
+  *Rejected:* gating the poll on the fork row appearing — it appears only when the next turn is written,
+  so the poll would exhaust its window and render the stale frame anyway.
+  *Rejected:* a host-supplied post-rewind snapshot — it would work, but it adds a wire message to fix a
+  defect that is client-side arithmetic over data the client already holds.
 - **W-S2 [DECIDED]** `qa5-04` leaves EP-S2 as a `[MISREAD]`; the anchors-after-compaction behaviour it
   actually exposed becomes an open question rather than riding on a one-line identity fix.
 - **W-S3 [DECIDED]** Settings and Permissions **migrate onto `Select`** rather than gaining hand-rolled
   paging handlers. *Rejected:* four bindings plus four handlers — it leaves both lists unwindowed, so the
   keys would page a list that never clips.
 - **W-S4 [DECIDED]** Port upstream's compaction bar **including its fake progress curve**, and say so in
-  the code. *Rejected:* omitting the bar (the wave's goal is fidelity to the installed build, and the
-  formula is transcribed and cheap). *Rejected:* driving a bar from `pre_tokens`/`post_tokens` — those
-  arrive only at the boundary, i.e. when the bar would be finished.
-- **W-S5 [DECIDED]** After `/clear` the context chip is **hidden until the first turn ends**, matching
-  upstream. *Rejected:* refreshing it immediately — also honest, and one call, but it invents a surface
-  upstream does not show, and this wave's whole thesis is that the screen should not claim more than it
-  knows.
+  the code: `min(95, round((1 - e^(-seconds/90)) * 100))` (`JCp`, L407448), held monotonic. The width is
+  `min(40, columns - 2 - 6)` with the bar **suppressed below 8 cells**, glyphs `▰`/`▱` falling back to
+  `█`/`░` on ink-bleed terminals (L408060) — 40 is a maximum, not a fixed count.
+  *Rejected:* omitting the bar (the wave's goal is fidelity to the installed build, and the formula is
+  transcribed and cheap). *Rejected:* driving a bar from `pre_tokens`/`post_tokens` — those arrive only
+  at the boundary, i.e. when the bar would already be finished.
+- **W-S5 [DECIDED; justification corrected at spec review]** After `/clear` the context chip is
+  **hidden until the first turn ends**. *Rejected:* refreshing it immediately — also honest, one call,
+  but it keeps a surface on screen that has nothing true to say yet.
+  **The v1 rationale ("matching upstream") was wrong and is withdrawn:** upstream has no persistent
+  context chip at all. Its indicator returns `null` unless the context level is not "ok" (L488912-922)
+  and surfaces as a transient warning (`Context low (N% remaining) · Run /compact to compact & continue`,
+  L489324). So ccx still shows a chip upstream never shows, both before and after this change. Keeping
+  or dropping ccx's inline context percentage entirely is already parked for Wave C (parent §16); this
+  decision only stops it lying in the meantime.
 - **W-S6 [DECIDED]** `--resume` resolves **both** id forms ccx prints (UUID prefix via `listSessions`,
   roster short id via `lifecycle.ts`'s existing lookup) and **fails loudly** on no match. *Rejected:*
   accepting only full UUIDs (upstream's own rule) — upstream never prints a short id, and ours does; the
@@ -225,6 +309,13 @@ a confirm gated at `pickModel` leaves the pref written after a decline.
   preview and count is **out of Wave S**. It touches replay, rewind anchors and `/export` together.
 - **W-S8 [DECIDED]** Restoring to before the session's first message is a supported operation.
 - **W-S9 [DECIDED]** The model-switch confirm gates **before** the prefs write, not after.
+- **W-S11 [DECIDED]** Where upstream's own list affordances are inconsistent, ccx is **consistently
+  more truthful, and the divergence is recorded rather than silently taken**: `/model`'s counter follows
+  the rendered window (upstream uses a fixed 10-row cap and no gutter); Settings and Permissions both
+  get indicators **and** paging keys (upstream gives Settings only the first and Permissions only the
+  second). *Rejected:* transcribing upstream's inconsistency — three surfaces behaving three ways is a
+  defect the clone would be importing, and W-S5's "do not invent surfaces" applies to inventing
+  *information*, not to making an existing surface accurate.
 - **W-S10 [DECIDED, from an incident]** The repro-instrument rule in Acceptance above, earned from five
   instrument bugs in one script (§12 item 20), every one of which produced a confident wrong answer
   rather than an error.
@@ -233,7 +324,7 @@ a confirm gated at `pickModel` leaves the pref written after a decline.
 
 | Item | Owner | Deadline |
 |---|---|---|
-| **ANCHORS-1** — after a `/compact`, the persisted transcript collapses to one continuation-summary row, so rewind anchors vanish. Upstream keeps rewind targets across compaction. Where should anchors come from — the persisted rows (today), or a separate durable anchor log? Design question, not a bug fix; `qa5-04`'s real residue | Owner, with a controller recommendation | Wave S close-out |
+| **ANCHORS-1** — after a `/compact`, do rewind anchors vanish? `qa5-04`'s real residue. **Premise unverified and possibly stale (spec review):** it traces to probe 68b, which the grounding round did not re-run, and the reviewer's own compaction fixture returned four rows including two real prompt rows — i.e. anchors would survive. `sdk.d.ts:2965` documents `preservedMessages` as superseding the older `preserved_segment` scheme, exactly the kind of change that flips this. **Re-measure before spending anything on the question** | Controller measures, then owner decides | Wave S close-out |
 | **SLASH-PERSIST-1** (W-S7) — persist client-side slash entries into the session store? Buys upstream's resume preview and message count; touches replay, rewind anchors and `/export` | Owner | Wave C spec time |
 | **CTRL-B-1** — upstream's `Ctrl+B` (all branches) widen control has no backing in `listSessions`. Build a branch filter, or record the divergence permanently? Controller recommends recording it | Owner (override only) | Wave S execution |
 
@@ -241,8 +332,15 @@ a confirm gated at `pickModel` leaves the pref written after a decline.
 
 Seeded from the grounding round; parent §12 item 20 carries the full evidence.
 
-1. **The wave's P0 was correct code with a lying display**, and three independent proposed fixes all
-   assumed a list because nobody had looked at `parentUuid`. The word appears nowhere in `src/`.
+0. **The spec's own spine was wrong, and the spec review caught it before a line was planned.** v1 said
+   the fix was to walk `parentUuid` ourselves. Verified on the real rewound session: the SDK reader
+   already returns the live branch only, and strips `parentUuid` from what it hands back — so the
+   proposed work item was simultaneously redundant, unimplementable where it was placed, and (through
+   compaction relinking) actively harmful. **Four proposed fixes for this one defect have now been
+   wrong**, each by a different party, and every one of them was refuted by running something rather
+   than by reasoning harder. The surviving fix is the one the grounding worker proposed and v1 rejected.
+1. **The wave's P0 was correct code with a lying display**, and every wrong fix shared one root error:
+   conflating the append-only session FILE with the reader's resolved OUTPUT.
 2. **Five instrument bugs in one repro script**, each producing a confident wrong answer. The sharpest:
    the transcript renders prompts with the same `❯` glyph the picker uses for its cursor, so a needle
    matched scrollback and reported "cursor on ONE after 0 Ups" while it sat on `(current)`.
