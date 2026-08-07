@@ -541,10 +541,20 @@ prompt — code-only rewind is available"*) because the only trimming primitive 
 `resumeSessionAt`, takes a **message UUID** (`sdk.d.ts:1815`) with no value meaning "before the first". So
 this is a host and engine-lifecycle change, not an option-list one (W-S8).
 
-**The primitive to use is `clearSession()`.** Restoring to before the first prompt yields an empty
-conversation on the same session — which is what `clearSession()` produces — rather than a fork at a row
-that does not exist. Verify the method's presence on the session object before wiring it; if it is absent
-from the installed SDK, report BLOCKED with the evidence rather than substituting a different primitive.
+**The primitive, located and checked before this plan shipped — do not re-derive it.** `clearSession()` is
+**not** an SDK method; `sdk.d.ts` declares no such member, and the only rewind-adjacent option it declares
+is `resumeSessionAt` (`:1815`). What exists is the **host's own** `HostSession.clearSession()` at
+`host/host.ts:449`, and its body is exactly the right shape: `swapEngine({ resume: undefined, resumeAt:
+undefined })` — a fresh conversation through the same swap seam `resume` and `rewind` already use, with an
+explicit `resume: undefined` because `engineConfig` spreads the launch config first.
+
+**But do not call `clearSession()` from inside `rewind()`.** It opens and closes `swapInFlight` itself
+(`:451-453`), so nesting it inside `rewind`'s own `swapInFlight` window would have the inner `finally`
+clear the flag while the outer operation is still running — reopening the busy gate mid-swap, which is the
+exact window `rewind`'s field doc says must stay closed. Call `swapEngine({ resume: undefined, resumeAt:
+undefined })` **directly**, mirroring the `swapEngine({ resume: sid, resumeAt: anchor.prevUuid })` call it
+replaces. There is then no capability to feature-test and no BLOCKED path: `swapEngine` is always
+available where `rewind` runs.
 
 **Files:**
 - Modify: `harness/src/host/host.ts` — `rewind` (≈612–640)
@@ -555,8 +565,10 @@ from the installed SDK, report BLOCKED with the evidence rather than substitutin
 **Interfaces:**
 - Consumes: `truncateAtAnchor` (Task 1) — unchanged; a first-message restore passes `prevUuid: null`, so
   the cut is a no-op and the empty-document arm of `rebuildAfterRewind` renders.
-- Consumes: `HostSession.clearSession?: () => Promise<void>` — feature-test it the way the host
-  feature-tests every other optional member (`need(v, name)` at `host.ts`'s `control`).
+- Consumes: `this.swapEngine({ resume: undefined, resumeAt: undefined })` — the host's own private swap
+  seam, already called twice inside `rewind`'s sibling paths. **Not** `this.session.clearSession`, which
+  does not exist, and **not** `this.clearSession()`, which would nest a second `swapInFlight` window
+  inside `rewind`'s.
 
 - [ ] **Step 1: Write the A4 guard test and expect it to PASS**
 
@@ -600,18 +612,22 @@ implement around it.
 Add to `harness/test/unit/host-rewind.test.ts`:
 
 ```ts
-it("restores to the session's FIRST message by clearing the conversation (A4b)", async () => {
+it("restores to the session's FIRST message by swapping to a fresh conversation (A4b)", async () => {
   // resumeSessionAt takes a message UUID and has no value meaning "before the first", so a fork is not
-  // the primitive here — an empty conversation on the same session is.
+  // the primitive here — an empty conversation is. Both keys must be explicitly undefined: engineConfig
+  // spreads the LAUNCH config first, so a host born from `ccx --resume <sid>` still carries `resume`.
   await host.rewind({ uuid: "u1", prevUuid: null }, "conversation");
-  expect(fakeSession.clearSessionCalls).toBe(1);
-  expect(fakeSession.swapCalls).toBe(0);
+  expect(swapCalls).toEqual([{ resume: undefined, resumeAt: undefined }]);
 });
 
-it("still refuses a first-message CONVERSATION restore when the engine cannot clear", async () => {
-  fakeSession.clearSession = undefined;
-  await expect(host.rewind({ uuid: "u1", prevUuid: null }, "conversation"))
-    .rejects.toThrow(/clearSession unsupported/);
+it("keeps the busy window closed across the whole first-message restore", async () => {
+  // The reason this does NOT call the host's own clearSession(): that method opens and closes
+  // swapInFlight itself (host.ts:451-453), so nesting it inside rewind's window would let the inner
+  // finally reopen the busy gate mid-swap.
+  const seen: boolean[] = [];
+  swapEngineSpy = async () => { seen.push(host.isBusy()); };
+  await host.rewind({ uuid: "u1", prevUuid: null }, "conversation");
+  expect(seen).toEqual([true]);
 });
 
 it("broadcasts rewound with no prevUuid after a first-message restore", async () => {
@@ -647,11 +663,10 @@ comment block's ordering argument verbatim — it is still load-bearing — and 
     // VALIDATION FIRST, THEN SIDE EFFECTS is unchanged; what changed is that a null-prevUuid CONVERSATION
     // restore is no longer a refusal (W-S8). `resumeSessionAt` takes a message UUID and has no value
     // meaning "before the first" (sdk.d.ts:1815), so the fork primitive genuinely cannot express it — but
-    // the OUTCOME the user asked for is an empty conversation on this session, which `clearSession()` is
-    // exactly. Feature-tested, like every other optional member: an engine without it refuses by name
-    // rather than throwing a bare TypeError.
+    // the OUTCOME the user asked for is an empty conversation, which is what the swap seam produces with
+    // both keys undefined. Deliberately NOT this.clearSession(), which wraps that same swap in its own
+    // swapInFlight window: nesting it here would let its finally reopen the busy gate mid-operation.
     const clearing = scope !== "code" && !anchor.prevUuid;
-    if (clearing && !this.session?.clearSession) throw new Error("clearSession unsupported by this host — code-only rewind is available");
 ```
 
 and in the conversation branch:
@@ -659,7 +674,7 @@ and in the conversation branch:
 ```ts
       if (scope !== "code") {
         if (this.bgTasks.length) this.emit({ kind: "task", data: { type: "task_notification", status: "stopped", task_id: "rewind", summary: "background tasks ended by rewind" } });
-        if (clearing) await this.session!.clearSession!();
+        if (clearing) await this.swapEngine({ resume: undefined, resumeAt: undefined });
         else await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid as string });
         // Broadcast so EVERY attached client rebuilds, not just the one that confirmed (see wire.ts).
         // No prevUuid on the cleared path — there is no row to cut at, and the client's fallback for an
@@ -686,20 +701,52 @@ degradation was removed in Wave S when the host learned to clear, keeping the fu
 (`{ code, conversation }`) — callers other than the picker may still pass `conversation: false`, and the
 absence-not-disabled-row rule stands.
 
-- [ ] **Step 7: Run to verify they pass**
+- [ ] **Step 7: Do not make the empty outcome wait three seconds**
 
-Run: `npx vitest run test/unit/host-rewind.test.ts test/tui/rewind-picker.test.tsx`
-Expected: PASS, including the Step-1 guards which must still be green.
+Task 1's poll retries 8 times at 375 ms — ≈3 s — waiting for the reader to return **any** rows. After a
+first-message restore the correct answer is *no rows*, so the poll would burn its whole window and only
+then render the `⏪ rewound` divider. An empty conversation that takes three seconds to appear reads as a
+hang, which is the same class of defect the pre-notice at `useChat.ts:781` exists to prevent elsewhere.
 
-- [ ] **Step 8: Full gates**
+Add the failing test to `harness/test/tui/useChat-rewind.test.tsx`:
+
+```tsx
+it("renders the empty conversation immediately after a first-message restore", async () => {
+  readerRows = [];
+  const t0 = Date.now();
+  await result.current.confirmRewind({ uuid: "u1", prevUuid: null, text: "ONE", index: 0 }, "conversation");
+  expect(Date.now() - t0).toBeLessThan(200);        // not the poll's ~3s
+  expect(rendered()).toContain("⏪ rewound");
+});
+```
+
+Then gate the poll in `rebuildAfterRewind`:
+
+```ts
+    // A null anchor means "restore to before the first prompt", whose correct result is an EMPTY
+    // conversation — so there is nothing for the poll to wait for and waiting three seconds for it makes
+    // a successful operation read as a hang. Every other rewind still polls: there, rows are expected.
+    const expectRows = opts.prevUuid !== null;
+    for (let attempt = 0; attempt < (expectRows ? retry.attempts : 1); attempt++) {
+```
+
+Note the predicate is `!== null`, not falsy: `undefined` means "anchor unknown" (a follower on a host too
+old to send one), where rows ARE still expected and the poll must run.
+
+- [ ] **Step 8: Run to verify they pass**
+
+Run: `npx vitest run test/unit/host-rewind.test.ts test/tui/rewind-picker.test.tsx test/tui/useChat-rewind.test.tsx`
+Expected: PASS, including the Step-1 guards and Task 1's tests, which must all still be green.
+
+- [ ] **Step 9: Full gates**
 
 Run: `npm run typecheck && npm run test:unit && npm run test:tui`
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add harness/src/host/host.ts harness/src/tui/RewindPicker.tsx harness/src/tui/rewindModel.ts harness/test/unit/host-rewind.test.ts harness/test/tui/rewind-picker.test.tsx
-git commit -m "f5(waveS-t3): restore to the first message by clearing the conversation; A4's option set verified at HEAD and pinned as a guard"
+git add harness/src/host/host.ts harness/src/tui/RewindPicker.tsx harness/src/tui/rewindModel.ts harness/src/tui/useChat.ts harness/test/unit/host-rewind.test.ts harness/test/tui/rewind-picker.test.tsx harness/test/tui/useChat-rewind.test.tsx
+git commit -m "f5(waveS-t3): restore to the first message by swapping to a fresh conversation; A4's option set verified at HEAD and pinned as a guard"
 ```
 
 ---
