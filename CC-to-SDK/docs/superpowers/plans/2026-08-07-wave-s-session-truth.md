@@ -594,7 +594,7 @@ per-option explanation lines — **is already implemented** in `src/tui/rewindMo
 passes on the current build, keep it as a guard and invent no fix (this is the same Step-2 rule Wave R's
 Task 6 followed). If it fails, stop and report — that is a real finding.
 
-The genuine defect is the one residual: `RewindPicker.tsx:264` computes `conversation = anchor.prevUuid != null`,
+The genuine defect is the one residual: `RewindPicker.tsx` computes `conversation = anchor.prevUuid != null`,
 so a rewind to the session's **first** message offers only `Never mind`. That gate is honest today —
 `host.rewind` refuses the operation at `host/host.ts:621` (*"no conversation anchor before the first
 prompt — code-only rewind is available"*) because the only trimming primitive underneath,
@@ -626,7 +626,8 @@ discover:
   read and the old file is non-empty. **So the cleared case carries an explicit signal, never the absence
   of one.** Add `cleared?: true` to the `rewound` wire variant (beside Task 1's `prevUuid`), emit it on
   this path, and have `rebuildAfterRewind` take the empty-document arm directly on it — no disk read, no
-  poll, no cut. That also subsumes the poll-skip in Step 7 below, which becomes the follower's case only.
+  poll, no cut. Step 7's poll-skip is then a second, weaker guard, not a substitute: it makes the empty
+  outcome fast, and only the flag makes it correct.
 
 **Two existing tests invert and the plan must not leave you to discover that mid-suite.**
 `harness/test/tui/rewind-picker.test.tsx:315` is *"a null-prevUuid anchor cannot restore the conversation:
@@ -635,13 +636,44 @@ and `toContain("The conversation will be unchanged.")`. Both are correct **today
 under this task. Rewrite that test to assert the new truth (a conversation restore IS offered for a
 null-prevUuid anchor) rather than deleting it; it is the only coverage of that anchor shape.
 
+**THE `conversation` PREDICATE LIVES AT THREE SITES, NOT ONE — controller-verified before dispatch.** An
+earlier draft of this task named only the render site, which would have shipped a panel whose pointer and
+whose explanation line disagreed. All three compute `anchor.prevUuid != null` and all three must change:
+- `RewindPicker.tsx:201` — `open()`, when a dry-run summary has ALREADY landed;
+- `RewindPicker.tsx:211` — `open()`, when the out-of-band dry run resolves;
+- `RewindPicker.tsx:263` — the render, which feeds BOTH `restoreOptions` (`:264`) and the `Select`'s own
+  `defaultFocusValue` (`:282`).
+
+Sites `:201`/`:211` set the `focusedOption` **state**, and that state is what `conversationExplanation`
+reads at `:275`. Change `:263` alone and a first-message anchor with no code changes gets
+`defaultRestoreOption({code:false, conversation:false})` → `"nevermind"` in state, so the panel prints
+*"The conversation will be unchanged."* while the pointer sits on **Restore conversation**. The pure-function
+guard in Step 1 would not catch it — it tests `conversationExplanation`, not the wiring.
+
+**THE CONFIRMING CLIENT NEVER RECEIVES `cleared` — it must derive it.** `confirmRewind` sets
+`selfRewind.current = true` precisely so the host's `rewound` broadcast does NOT drive a second rebuild
+(Task 1), and then calls `rebuildAfterRewind({ prevUuid: anchor.prevUuid, prefill: anchor.text })` directly
+at `useChat.ts:1345`. So the wire field added below reaches **followers only**. On the confirming client
+`prevUuid` is `null`, `truncateAtAnchor` returns the rows unchanged (`null` is falsy — `rewindRebuild.ts:37`),
+the old file is non-empty, and the discarded conversation renders. Pass the flag from the call site, where
+both values are in hand:
+
+```ts
+        await rebuildAfterRewind({ prevUuid: anchor.prevUuid, prefill: anchor.text, cleared: scope !== "code" && !anchor.prevUuid });
+```
+
+and on the follower arm at `useChat.ts:648`, `{ prevUuid: ev.prevUuid, cleared: ev.cleared }`. The poll-skip
+in Step 7 makes the empty outcome FAST; only this flag makes it CORRECT.
+
 **Files:**
-- Modify: `harness/src/host/host.ts` — `rewind` (≈612–640)
+- Modify: `harness/src/host/host.ts` — `rewind` (≈611–650)
 - Modify: `harness/src/host/wire.ts` — the `rewound` variant, adding `cleared?: true`
-- Modify: `harness/src/tui/useChat.ts` — `rebuildAfterRewind`'s cleared arm
-- Modify: `harness/src/tui/RewindPicker.tsx:263` (the `conversation` predicate)
+- Modify: `harness/src/tui/useChat.ts` — `rebuildAfterRewind`'s `cleared` arm and poll gate; both call
+  sites (`:648` follower, `:1345` confirming client)
+- Modify: `harness/src/tui/RewindPicker.tsx:201`, `:211`, `:263` (all three `conversation` predicates)
 - Modify: `harness/src/tui/rewindModel.ts:195-214` (the doc comments describing the prevUuid gate)
-- Test: `harness/test/tui/rewind-picker.test.tsx`, `harness/test/unit/host-rewind.test.ts`
+- Test: `harness/test/tui/rewind-picker.test.tsx`, `harness/test/unit/host-rewind.test.ts`,
+  `harness/test/tui/useChat-rewind.test.tsx`
 
 **Interfaces:**
 - Consumes: `truncateAtAnchor` (Task 1) — unchanged; a first-message restore passes `prevUuid: null`, so
@@ -690,24 +722,33 @@ implement around it.
 
 - [ ] **Step 3: Write the failing test for the first-message restore (A4b)**
 
-Add to `harness/test/unit/host-rewind.test.ts`:
+Add to `harness/test/unit/host-rewind.test.ts`. **This file's fixture is `makeHost(overrides, opts)`,
+returning `{ host, session, calls, opened, getMessages }` — there is no `swapCalls`, no `swapEngineSpy`,
+and the busy accessor is `host.busy()`, not `isBusy()`. `opened` is the array of configs handed to the
+injected `openSession`, which is how every existing swap assertion in this file reads (see `:60`, `:128`).**
 
 ```ts
 it("restores to the session's FIRST message by swapping to a fresh conversation (A4b)", async () => {
   // resumeSessionAt takes a message UUID and has no value meaning "before the first", so a fork is not
-  // the primitive here — an empty conversation is. Both keys must be explicitly undefined: engineConfig
-  // spreads the LAUNCH config first, so a host born from `ccx --resume <sid>` still carries `resume`.
-  await host.rewind({ uuid: "u1", prevUuid: null }, "conversation");
-  expect(swapCalls).toEqual([{ resume: undefined, resumeAt: undefined }]);
+  // the primitive here — an empty conversation is. Both keys must be EXPLICITLY undefined: engineConfig
+  // spreads the LAUNCH config first (host.ts:356), so a host born from `ccx --resume <sid>` still carries
+  // `resume` — which is why the launch config below carries one. A bare `swapEngine({})` passes a weaker
+  // version of this test and reopens the very conversation the user asked to drop.
+  const { host, opened } = makeHost({}, { config: { resume: "launch-sid" } });
+  await host.rewind({ uuid: "uB", prevUuid: null }, "conversation");
+  expect(opened).toHaveLength(1);
+  expect((opened[0] as any).resume).toBeUndefined();
+  expect((opened[0] as any).resumeAt).toBeUndefined();
 });
 
 it("keeps the busy window closed across the whole first-message restore", async () => {
   // The reason this does NOT call the host's own clearSession(): that method opens and closes
-  // swapInFlight itself (host.ts:451-453), so nesting it inside rewind's window would let the inner
-  // finally reopen the busy gate mid-swap.
+  // swapInFlight itself (host.ts:447-449), so nesting it inside rewind's window would let the inner
+  // finally reopen the busy gate mid-swap. Sampled from INSIDE the injected openSession — that is the
+  // one moment the swap is genuinely in flight.
   const seen: boolean[] = [];
-  swapEngineSpy = async () => { seen.push(host.isBusy()); };
-  await host.rewind({ uuid: "u1", prevUuid: null }, "conversation");
+  const { host } = makeHost({}, {}, (h: any) => seen.push(h.busy()));   // however this file lets you hook openSession
+  await host.rewind({ uuid: "uB", prevUuid: null }, "conversation");
   expect(seen).toEqual([true]);
 });
 
@@ -768,7 +809,8 @@ and in the conversation branch:
 
 - [ ] **Step 6: Open the option to the first message**
 
-In `harness/src/tui/RewindPicker.tsx:264` (`:263` is the destructure above it):
+**All three sites** named in the preamble — `:201`, `:211`, `:263`. At the render site (`:263`; `:262` is
+the destructure above it, `:264` the `restoreOptions` call below it):
 
 ```tsx
   // A conversation restore is now possible for EVERY anchor, the first prompt included: the host clears
@@ -776,6 +818,25 @@ In `harness/src/tui/RewindPicker.tsx:264` (`:263` is the destructure above it):
   // `anchor.prevUuid != null` gate was honest while the host refused that case, and removing one without
   // the other is what would make the option list lie.
   const code = canRestoreCode(dry), conversation = true;
+```
+
+and at both `open()` sites, where the same predicate feeds `defaultRestoreOption` — leaving these behind
+puts `focusedOption` on `"nevermind"` while the pointer rests on **Restore conversation**, so the panel's
+explanation line (`:275`) contradicts its own pointer:
+
+```tsx
+    // conversation: true for the same reason as the render site — the host can now clear where it cannot
+    // fork, so no anchor is unrestorable.
+    setFocusedOption(defaultRestoreOption({ code: canRestoreCode(have), conversation: true }));
+```
+
+Pin that agreement with a test rather than trusting the edit:
+
+```tsx
+it("focuses a restorable option and explains THAT option, for a first-message anchor (A4b)", async () => {
+  const frame = await openConfirmPanel({ dry: { canRewind: false }, prevUuid: null });
+  expect(frame).toContain("The conversation will be forked.");        // not "…will be unchanged."
+});
 ```
 
 Update the doc comment on `restoreOptions` in `harness/src/tui/rewindModel.ts:195-201`: strike the
@@ -791,22 +852,34 @@ first-message restore the correct answer is *no rows*, so the poll would burn it
 then render the `⏪ rewound` divider. An empty conversation that takes three seconds to appear reads as a
 hang, which is the same class of defect the pre-notice at `useChat.ts:781` exists to prevent elsewhere.
 
-With Step 5's `cleared` flag in place the confirming client short-circuits on the flag itself and never
-polls. This step covers the remaining case: a **follower** that received `cleared` must also take the
-empty arm directly. Gate on `cleared` first; the `prevUuid !== null` check below is then belt to that
-brace, for a host too old to send either field.
+Both clients short-circuit on the `cleared` flag — the follower reads it off the wire, the confirming
+client derives it locally at `useChat.ts:1345` (see the preamble; `selfRewind` means the broadcast never
+reaches it). Take the empty-document arm on the flag: no read, no poll, no cut. The `prevUuid !== null`
+poll gate below is then belt to that brace, for a host too old to send either field.
 
-Add the failing test to `harness/test/tui/useChat-rewind.test.tsx`:
+**THE FIXTURE MUST BE THE HONEST ONE: A NON-EMPTY OLD FILE.** An earlier draft of this step set
+`readerRows = []`, which passes with or without the `cleared` arm — the empty document renders either
+way and the test proves nothing (Global Constraint 15). The old session file **is** non-empty; that is the
+entire hazard. So seed the reader with the conversation the rewind discards, and assert it is gone:
 
 ```tsx
-it("renders the empty conversation immediately after a first-message restore", async () => {
-  readerRows = [];
+it("renders the empty conversation immediately after a first-message restore, off a NON-empty old file", async () => {
+  // The old file still holds the whole conversation and the client's cached id may still point at it.
+  // Without the `cleared` arm, truncateAtAnchor(rows, null) returns every row (null is falsy) and the
+  // discarded conversation re-renders. Timing alone would not catch that — the assertion below does.
+  readerRows = [user("ONE", "u1"), assistant("a1"), user("TWO", "u2")];
   const t0 = Date.now();
-  await result.current.confirmRewind({ uuid: "u1", prevUuid: null, text: "ONE", index: 0 }, "conversation");
-  expect(Date.now() - t0).toBeLessThan(200);        // not the poll's ~3s
+  await confirmRewind({ uuid: "u1", prevUuid: null, text: "ONE", index: 0 }, "conversation");
+  expect(rendered()).not.toContain("TWO");           // the discarded conversation is GONE
   expect(rendered()).toContain("⏪ rewound");
+  expect(Date.now() - t0).toBeLessThan(200);         // and it did not sit out the poll's ~3s
 });
 ```
+
+Verify this test goes red for the RIGHT reason before implementing: against unmodified code it must fail on
+the `not.toContain("TWO")` line, not on the timing bound. If it fails on timing first, reorder as written
+above and re-run — a timing-only failure would go green from the poll gate alone, leaving the correctness
+bug shipped.
 
 Then gate the poll in `rebuildAfterRewind`:
 
