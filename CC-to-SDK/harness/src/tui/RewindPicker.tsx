@@ -242,7 +242,7 @@ export function RewindPicker({ anchors, onDryRun, onConfirm, onClose, rows = pro
             <Text>{REWIND_PROMPT}</Text>
             {view.start > 0 ? <Box paddingLeft={1}><Text dimColor>{moreAbove(view.start)}</Text></Box> : null}
             <Select
-              options={options} hideIndexes rowHeight={REWIND_ROW_HEIGHT} visibleOptionCount={rewindVisibleRows(rows)}
+              options={options} hideIndexes rowHeight={REWIND_ROW_HEIGHT} visibleOptionCount={rewindVisibleRows(rows, columns)}
               rows={rows} columns={columns} defaultFocusValue={listFocus} focusColor="permission"
               onFocus={setListFocus}
               onViewChange={(v) => { setView(v); if (v.focus < ordered.length) ensure(newestIndexOf(v.focus)); }}

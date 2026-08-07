@@ -22,7 +22,7 @@ import { RewindPicker } from "../../src/tui/RewindPicker.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
-import { conversationExplanation, REWIND_CHECKING, REWIND_CHROME_ROWS, REWIND_MIN_ROWS, rewindVisibleRows } from "../../src/tui/rewindModel.js";
+import { conversationExplanation, REWIND_CHECKING, REWIND_CHROME_ROWS, REWIND_MIN_ROWS, REWIND_ROW_HEIGHT, rewindVisibleRows, rewindWrapRows } from "../../src/tui/rewindModel.js";
 import type { RewindAnchor, RewindDryRun } from "../../src/session/chatSession.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
@@ -67,6 +67,26 @@ describe("rewindVisibleRows — the budget is our own chrome, counted", () => {
     expect(rewindVisibleRows(15)).toBe(2);         // and the floor still holds where the pane is too short
     expect(rewindVisibleRows(4)).toBe(2);
   });
+
+  // WAVE S T4, WRAP ROUND. The height half above counts ONE row per chrome line; two of those lines are
+  // literals that WRAP at a narrow terminal, and each extra line eats the budget's single row of slack. The
+  // three bands are word-wrap's, not division's, and they are pinned against a rendered frame by the block
+  // below this one — these cases only pin that the arithmetic then reaches `rewindVisibleRows`.
+  it("adds the rows the prompt and footer actually wrap to, and only when the caller knows the width", () => {
+    expect(rewindWrapRows(100)).toBe(0);           // `REWIND_PROMPT` is 57 columns, the inner width is columns − 4
+    expect(rewindWrapRows(61)).toBe(0);            // 57 inner — the last width where the prompt is one line
+    expect(rewindWrapRows(60)).toBe(1);            // 56 inner — the prompt takes a second
+    expect(rewindWrapRows(37)).toBe(1);            // 33 inner — exactly the footer's width, so still just the prompt
+    expect(rewindWrapRows(36)).toBe(3);            // 32 inner — the prompt takes a THIRD and the footer a second
+    // Omitting `columns` is the old height-only budget, unchanged — no existing call site changes meaning.
+    expect(rewindVisibleRows(22)).toBe(3);
+    expect(rewindVisibleRows(22, 80)).toBe(3);     // wrap 0: a comfortable width is the same budget
+    expect(rewindVisibleRows(22, 50)).toBe(3);     // wrap 1: floor((22−13)/3)
+    expect(rewindVisibleRows(22, 36)).toBe(2);     // wrap 3: floor((22−15)/3)
+    expect(rewindVisibleRows(25, 50)).toBe(4);     // floor((25−13)/3)
+    expect(rewindVisibleRows(25, 36)).toBe(3);     // floor((25−15)/3)
+    expect(rewindVisibleRows(15, 36)).toBe(2);     // the readability floor still outvotes both halves
+  });
 });
 
 // WAVE S T4, FIX ROUND — THE PROPERTY, of which the constant above is only the current satisfaction. The t4
@@ -87,13 +107,22 @@ describe("rewindVisibleRows — the budget is our own chrome, counted", () => {
 //
 // FOUR STATES, because the frame's height is not one number: the two scroll indicators are conditional, and
 // `REWIND_CHECKING` is a further conditional row. The tallest reachable state is mid-list (both indicators)
-// with the checking row up, and it measures `3·visible + 11`.
+// with the checking row up, and it measures `3·visible + 11 + rewindWrapRows(columns)`.
 //
-// THE RANGE STARTS AT 18. Below that `REWIND_MIN_ROWS` — a readability floor, not the budget — pins the list
-// at two options and the frame overflows whatever the chrome constant says; 18 is the first height at which
-// the budget is what decides. The heights below span all three residues of `(rows − 12) % 3`, which is what
-// makes this discriminating: at `REWIND_CHROME_ROWS = 9` two of three residues overflow at the bottom of the
-// list and ALL THREE overflow with the checking row up.
+// AND IT IS A MATRIX, NOT A SWEEP OF HEIGHTS — the WRAP ROUND's whole point. A height-only budget is a frame
+// budget only at a width where nothing wraps; the same defect lives on the other axis, and a block that only
+// ever ran at 100 columns proved nothing about it. Measured before the fix, with `rewindVisibleRows(rows)`
+// blind to the width: 36 columns reached the pane at EVERY height in this range, and 37-60 reached it at one
+// height in three (21, 24, 30, 33 — the residues where `(rows − 12) % 3 == 0`). Widths 61 and up were, and
+// remain, clear. The eight widths here are the two wrap-band EDGES (61/60 and 37/36, where the count steps
+// 0→1 and 1→3), the band the previous round measured failing (44, 50, 60), and two comfortable widths, of
+// which 100 reproduces the height-only block this matrix grew out of.
+//
+// THE SHORT CORNER IS SKIPPED, and the skip moves with the width. Below `REWIND_CHROME_ROWS + wrap +
+// 3·REWIND_MIN_ROWS` rows the readability floor — not the budget — pins the list at two options and the frame
+// overflows whatever the budget says: 18 rows at a comfortable width, 19 from 37 to 60 columns, 21 at 36 and
+// below. That is `REWIND_MIN_ROWS`'s deliberate cost, unchanged by this round; `minBudgetedRows` is the one
+// place it is written down.
 describe("<ChatApp> with the rewind picker open never renders a frame that reaches the pane", () => {
   let fleetRoot = "", priorFleetRoot: string | undefined;
   beforeAll(() => { priorFleetRoot = process.env.CCX_FLEET_ROOT; fleetRoot = mkdtempSync(join(tmpdir(), "ccx-rwf-")); process.env.CCX_FLEET_ROOT = fleetRoot; });
@@ -107,16 +136,26 @@ describe("<ChatApp> with the rewind picker open never renders a frame that reach
    *  confirmation panel — which is how the checking row is held on screen at all. */
   const rewindRemote = () => ({ ...fakeRemote(), rewindAnchors: async () => MANY, rewindDryRun: never, rewind: async () => {} });
 
-  /** Esc-Esc on an empty composer — the only route to this picker (escape.test.tsx's recipe). */
-  async function openPicker(rows: number) {
-    const deps = { columns: () => 100, getSessionMessages: async () => [] as never[] };
+  /** Esc-Esc on an empty composer — the only route to this picker (escape.test.tsx's recipe).
+   *
+   *  BOTH DIMENSIONS ARE STUBBED IN TWO PLACES, and both are needed. `deps.columns` is what `ChatApp` reads
+   *  and hands the dialog as a prop; `stdout.columns` is what INK reads — `ink.js:93` sets the yoga root
+   *  width from it on every layout, exactly as `ink.js:121` compares `outputHeight` against `stdout.rows`.
+   *  Stub only the prop and the frame is still laid out 100 columns wide, nothing wraps, and the matrix
+   *  measures the same cell eight times over.
+   *
+   *  The prompt is waited on by its FIRST wrapped line, because at 36 columns the rest of it is two rows
+   *  further down. */
+  async function openPicker(rows: number, columns: number) {
+    const deps = { columns: () => columns, getSessionMessages: async () => [] as never[] };
     const session = rewindRemote();
     const r = render(<ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} />);
     Object.defineProperty(r.stdout, "rows", { configurable: true, get: () => rows });
+    Object.defineProperty(r.stdout, "columns", { configurable: true, get: () => columns });
     await waitFor(() => frame(r.lastFrame).includes("❯ "));
     await tick();
     r.stdin.write("\x1b"); await waitFor(() => frame(r.lastFrame).includes("Press Esc again to rewind"));
-    r.stdin.write("\x1b"); await waitFor(() => frame(r.lastFrame).includes("Restore the code and/or conversation"));
+    r.stdin.write("\x1b"); await waitFor(() => plain(frame(r.lastFrame)).includes("Restore the code and/or"));
     await tick();
     return r;
   }
@@ -133,32 +172,70 @@ describe("<ChatApp> with the rewind picker open never renders a frame that reach
     await tick();
   }
 
-  for (const rows of [18, 19, 20, 21, 22, 23, 24, 25, 26, 30, 33, 40]) {
-    it(`stays under ${rows} rows at the bottom of the list, mid-list with both indicators, and while checking`, async () => {
-      // A · bottom of the list, where the picker opens: `(current)` focused, only `↑ N more above` drawn.
-      const a = await openPicker(rows);
-      expect(indicators(a)).toBe("↑-");
-      expect(frameHeight(a)).toBeLessThan(rows);
-      // B · one row up off the synthetic row, then Enter — the checking row over the bottom of the list.
-      a.stdin.write("k"); await tick(); await tick();
-      await startChecking(a);
-      expect(frameHeight(a)).toBeLessThan(rows);
-      a.unmount();
+  /** The lowest height at which the BUDGET, and not `REWIND_MIN_ROWS`, is what decides the window. It moves
+   *  with the width because the wrap allowance is chrome the floor also has to clear. */
+  const minBudgetedRows = (columns: number) => REWIND_CHROME_ROWS + rewindWrapRows(columns) + REWIND_ROW_HEIGHT * REWIND_MIN_ROWS;
 
-      // C · mid-list: Home, then step down until BOTH indicators are live. Asserted, not assumed — a walk that
-      // never reached the both-indicators state would leave the tallest geometry untested.
-      const b = await openPicker(rows);
-      b.stdin.write("\x1b[H"); await tick(); await tick();
-      for (let n = 0; n < MANY.length && indicators(b) !== "↑↓"; n++) { b.stdin.write("j"); await tick(); await tick(); }
-      expect(indicators(b)).toBe("↑↓");
-      expect(frameHeight(b)).toBeLessThan(rows);
-      // D · the tallest state there is: both indicators AND the checking row.
-      await startChecking(b);
-      expect(indicators(b)).toBe("↑↓");
-      expect(frameHeight(b)).toBeLessThan(rows);
-      b.unmount();
-    }, 20000);
+  for (const columns of [36, 37, 44, 50, 60, 61, 80, 100]) {
+    for (const rows of [18, 19, 20, 21, 22, 23, 24, 25, 26, 30, 33, 40].filter((r) => r >= minBudgetedRows(columns))) {
+      it(`stays under ${rows}×${columns} at the bottom of the list, mid-list with both indicators, and while checking`, async () => {
+        // A · bottom of the list, where the picker opens: `(current)` focused, only `↑ N more above` drawn.
+        const a = await openPicker(rows, columns);
+        expect(indicators(a)).toBe("↑-");
+        expect(frameHeight(a)).toBeLessThan(rows);
+        // B · one row up off the synthetic row, then Enter — the checking row over the bottom of the list.
+        a.stdin.write("k"); await tick(); await tick();
+        await startChecking(a);
+        expect(frameHeight(a)).toBeLessThan(rows);
+        a.unmount();
+
+        // C · mid-list: Home, then step down until BOTH indicators are live. Asserted, not assumed — a walk
+        // that never reached the both-indicators state would leave the tallest geometry untested.
+        const b = await openPicker(rows, columns);
+        b.stdin.write("\x1b[H"); await tick(); await tick();
+        for (let n = 0; n < MANY.length && indicators(b) !== "↑↓"; n++) { b.stdin.write("j"); await tick(); await tick(); }
+        expect(indicators(b)).toBe("↑↓");
+        expect(frameHeight(b)).toBeLessThan(rows);
+        // D · the tallest state there is: both indicators AND the checking row.
+        await startChecking(b);
+        expect(indicators(b)).toBe("↑↓");
+        expect(frameHeight(b)).toBeLessThan(rows);
+        b.unmount();
+      }, 20000);
+    }
   }
+
+  // THE WRAP COUNT ITSELF, against a real frame rather than against our reading of `wrap-ansi`. The matrix
+  // above proves the composed frame fits; this proves the NUMBER the budget subtracts is the number of rows
+  // the renderer actually spends, which is the claim a `Math.ceil(width / inner)` would get wrong at most
+  // widths (57 over an inner 32 is three lines, not two — word wrap breaks at `and/or`, not at column 32).
+  //
+  // The subtraction is what makes it a measurement. Two anchors plus `(current)` is three options, and at 40
+  // rows every width in range shows all three, so neither indicator is drawn and the list block is a fixed
+  // 3·3 rows. The ONLY thing left that the width can change is how many rows the prompt and footer take —
+  // so `height(columns) − height(100)` IS `rewindWrapRows(columns)`, with nothing else in the difference.
+  //
+  // `stdout.columns` is stubbed after the mount (that is when the instance exists) and a keypress forces the
+  // repaint that re-lays-out at the new width — Ink reads the width per layout, not per mount.
+  it("rewindWrapRows equals the rows the RENDERED frame spends on the prompt and footer", async () => {
+    const heightAt = async (columns: number) => {
+      const r = render(<RewindPicker {...props} anchors={ANCHORS} rows={40} columns={columns} />);
+      Object.defineProperty(r.stdout, "columns", { configurable: true, get: () => columns });
+      await waitFor(() => frame(r.lastFrame).includes("(current)"));
+      await tick();
+      r.stdin.write("k");                                                    // focus moves off `(current)` → repaint
+      await waitFor(() => plain(frame(r.lastFrame)).split("\n").some((l) => l.includes("❯") && l.includes("second prompt")));
+      const h = frame(r.lastFrame).split("\n").length;
+      expect(plain(frame(r.lastFrame))).not.toContain("more above");         // the whole catalog is on screen
+      expect(plain(frame(r.lastFrame))).not.toContain("more below");         // …so nothing but wrap differs
+      r.unmount();
+      return h;
+    };
+    const base = await heightAt(100);
+    for (const columns of [80, 61, 60, 50, 44, 37, 36]) {
+      expect([columns, await heightAt(columns) - base]).toEqual([columns, rewindWrapRows(columns)]);
+    }
+  }, 20000);
 });
 
 describe("<RewindPicker> — the frame and the list", () => {

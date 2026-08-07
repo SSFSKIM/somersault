@@ -20,6 +20,7 @@
 //     `diffStatsOf` below is that one line, written once so the picker cannot spell it two ways.
 import { basename } from "node:path";
 import stringWidth from "string-width";
+import wrapAnsi from "wrap-ansi";
 import type { RewindDryRun, RewindScope } from "../session/chatSession.js";
 import { NO_CONTENT, TAG_BASH_INPUT, TAG_COMMAND_ARGS, TAG_COMMAND_NAME, tagInner } from "./species.js";
 import { truncateLabel } from "./select/selectModel.js";
@@ -82,13 +83,14 @@ export const REWIND_MIN_ROWS = 2;
  *     as slack, which is how the overflow got through).
  *   · +1 — `REWIND_CHECKING` (`RewindPicker.tsx:258`), the tenth conditional row (see below).
  *
- *  Composed, the tallest reachable frame is `3·visible + 11` (mid-list, both indicators drawn, checking row
- *  up) against a `visible` of `floor((rows − 12) / 3)`, i.e. at most `rows − 1` — and exactly `rows − 1`
- *  whenever `(rows − 12) % 3 == 0`. There is no spare row here: all four terms are load-bearing. Pinned
- *  directly, on the composed `ChatApp` frame rather than on this arithmetic, by rewind-picker.test.tsx's
- *  "never renders a frame that reaches the pane". Below 18 rows the `REWIND_MIN_ROWS` floor outvotes this
- *  budget and the frame overflows whatever it says — a deliberate readability floor, and the reason that
- *  test's range starts at 18.
+ *  Composed, the tallest reachable frame is `3·visible + 11 + wrap` (mid-list, both indicators drawn,
+ *  checking row up) against a `visible` of `floor((rows − 12 − wrap) / 3)`, i.e. at most `rows − 1` — and
+ *  exactly `rows − 1` whenever `(rows − 12 − wrap) % 3 == 0`. There is no spare row here: all four terms are
+ *  load-bearing. Pinned directly, on the composed `ChatApp` frame rather than on this arithmetic, by
+ *  rewind-picker.test.tsx's "never renders a frame that reaches the pane" matrix. Below `12 + wrap + 6` rows
+ *  the `REWIND_MIN_ROWS` floor outvotes this budget and the frame overflows whatever it says — a deliberate
+ *  readability floor, and the reason that matrix skips the short corner (18 rows wide, 19 from 37 to 60
+ *  columns, 21 at 36 and below).
  *
  *  TWO CONDITIONAL GROUPS ARE RESERVED ANYWAY, both deliberate:
  *   · ROWS 6 AND 7 — neither indicator is drawn at its own end of the list. They toggle as a consequence of
@@ -104,20 +106,58 @@ export const REWIND_MIN_ROWS = 2;
  *     and the row render together, `RewindPicker.tsx:244-258`), so the cursor does keep moving under it — and
  *     every one of those keystrokes would fire the wipe.
  *
- *  NOT MODELLED, AND NOW MEASURED: this budget is height-only, as upstream's is, so it does not see WRAP.
- *  `REWIND_PROMPT` is 57 columns and the frame's inner width is `columns − 4`, so it takes a second line at
- *  60 columns and below and a third at ~40 and below; `REWIND_FOOTER` is 33 and takes a second at 36 and
- *  below. Each wrapped line eats one row of a budget whose slack is exactly one — measured on the composed
- *  `ChatApp`, the tallest state reaches the pane at 44-60 columns for one height in three (21, 24, 27 …) and
- *  at every height at 36 columns. That gap predates this constant and closing it is a different change: a
- *  width-aware budget needs `columns` threaded into `rewindVisibleRows` and a wrap count for two literals,
- *  which no caller asks for today. It is recorded here rather than left as a footnote because the fix round
- *  established what overflow now costs — the clear-terminal path above, not a clipped line. */
+ *  THIS CONSTANT IS THE HEIGHT HALF ONLY — it counts ONE row per chrome line, which is what a line costs at
+ *  a comfortable width. Two of those lines are literals long enough to WRAP at a narrow one, and each wrapped
+ *  line eats the single row of slack above. `rewindWrapRows` below counts them from the actual width and
+ *  `rewindVisibleRows` adds the two together; the constant stays width-free so the terms above keep meaning
+ *  what they say. Upstream's own budget models no wrap either, and that is not an argument for ours not to:
+ *  upstream's number matches upstream's composed frame, and the whole finding of Wave S t4 was that a number
+ *  whose derivation does not describe OUR frame measures nothing of ours. */
 export const REWIND_CHROME_ROWS = 12;
 
-/** `_` (L487056): `Math.max(2, Math.floor((rows - chrome) / rowHeight))`, with OUR chrome above. */
-export function rewindVisibleRows(rows: number, rowHeight: number = REWIND_ROW_HEIGHT): number {
-  return Math.max(REWIND_MIN_ROWS, Math.floor((rows - REWIND_CHROME_ROWS) / rowHeight));
+/** The dialog's horizontal cost: `borderStyle="round"`'s two rules plus `paddingX={1}`'s two columns
+ *  (`RewindFrame`, RewindPicker.tsx:101). Everything inside the frame therefore wraps at `columns − 4`. */
+export const REWIND_FRAME_INSET = 4;
+/** Ink's `wrap` mode verbatim: `node_modules/ink/build/wrap-text.js` calls
+ *  `wrapAnsi(text, maxWidth, { trim: false, hard: true })`, i.e. WORD wrap with a hard break only for a token
+ *  that cannot fit at all. `Math.ceil(width / inner)` is a DIFFERENT function and disagrees with the renderer
+ *  at most widths — the 57-column prompt over an inner 32 is three rendered lines, not two. */
+const wrapLines = (text: string, width: number): number =>
+  wrapAnsi(text, Math.max(1, width), { trim: false, hard: true }).split("\n").length;
+
+/** The EXTRA rows the two wrappable chrome literals cost at `columns`, over the one apiece
+ *  `REWIND_CHROME_ROWS` already counts. Zero at a comfortable width, which is why the height-only budget
+ *  looked complete and was not: measured on the composed `ChatApp` frame, the tallest state reached the pane
+ *  at one height in three across 44-60 columns and at EVERY height at 36 — the clear-terminal path above, on
+ *  every cursor move, for anyone in a split pane.
+ *
+ *  Three bands, each verified against a rendered frame by rewind-picker.test.tsx's wrap block rather than
+ *  against this arithmetic: 0 at 61 columns and up (both literals fit); 1 from 37 to 60, where `REWIND_PROMPT`
+ *  (57 columns) takes a second line; 3 at 36 and below, where the prompt takes a third AND `REWIND_FOOTER`
+ *  (33 columns) takes a second. The band edges are word-wrap's, not division's — 37 is where an inner 33
+ *  exactly fits the footer and lets the prompt's second line hold `conversation to the point before…`.
+ *
+ *  THE LIST ROWS ARE DELIBERATELY NOT HERE. `AnchorLine` clips to `columns − REWIND_ROW_PADDING_RIGHT`, six
+ *  columns inside the inner width (four even for the bash form, which prefixes `! `), so no anchor row can
+ *  wrap however long its prompt is — the clip, not this budget, is what holds it to one line. `SummaryLine`
+ *  is data — a wide-enough `N files changed +i -d` could wrap at 36 columns — and a budget cannot model data;
+ *  that residual belongs to the row renderer, not to this. */
+export function rewindWrapRows(columns: number): number {
+  const inner = columns - REWIND_FRAME_INSET;
+  return wrapLines(REWIND_PROMPT, inner) - 1 + wrapLines(REWIND_FOOTER, inner) - 1;
+}
+
+/** `_` (L487056): `Math.max(2, Math.floor((rows - chrome) / rowHeight))`, with OUR chrome — the constant above
+ *  plus the width's wrap cost.
+ *
+ *  `columns` IS OPTIONAL AND SECOND. Optional because omitting it is the honest height-only budget every
+ *  existing caller had, so no call site silently changes meaning; second because `rows, columns` is how every
+ *  other geometry-taking surface in this tree spells the pair (`RewindPicker`, `Select`, `HelpDialog`), and
+ *  because `rowHeight` — upstream's `g`, kept for the shape of the formula — has never been passed by anyone.
+ *  A caller that has the width should always pass it: `RewindPicker` already holds both. */
+export function rewindVisibleRows(rows: number, columns?: number, rowHeight: number = REWIND_ROW_HEIGHT): number {
+  const chrome = REWIND_CHROME_ROWS + (columns === undefined ? 0 : rewindWrapRows(columns));
+  return Math.max(REWIND_MIN_ROWS, Math.floor((rows - chrome) / rowHeight));
 }
 
 // ── The list ───────────────────────────────────────────────────────────────────────────────────────────
