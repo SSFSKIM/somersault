@@ -63,6 +63,24 @@ reviewer dispatch.
     in backticks with a bundle line reference (`L…`), reproduce it exactly.
 13. **Record deliberate divergences in the code (W-S11)**, as a comment naming what upstream does and why
     ccx differs. A divergence that is not written down becomes a future "bug" someone re-fixes backwards.
+14. **THE TEST SNIPPETS IN THIS PLAN ARE ILLUSTRATIVE OF THE ASSERTION, NOT OF THE FIXTURE.** This is the
+    plan's known weak point and an independent review found it in nine tasks. Every snippet below states
+    *what must be proven*; none of them is guaranteed to name a helper, fixture, variable or export that
+    exists. **Before writing any test, open the test file the task names and use its own idiom, its own
+    helpers and its own fixture names.** Where a snippet and the file disagree, **the file wins** — and
+    say so in your report. Two repo-wide facts the snippets get wrong often enough to state once:
+    - There is **no `renderHook` and no `result.current`** in this repo, and no `@testing-library/react`.
+      `test/tui/` renders a wrapper component through `ink-testing-library` and asserts on `lastFrame()`.
+    - There are **no snapshot files at all** (`find test -name "*.snap"` is empty). Any instruction below
+      to "review the changed snapshots" is wrong. What actually breaks when a dialog's rows change is
+      **plain frame-text assertions** — there are 22 of them matching `❯ <row label>` across
+      `test/tui/keys-migration-dialogs.test.tsx` and `test/tui/chat.test.tsx`. Grep for them before you
+      change a row body.
+15. **A test that passes before your change proves nothing.** Run every new test against the unmodified
+    code first and confirm it is RED for the reason you intend. If it is green, the test is wrong, not the
+    code — fix the test, and if it cannot be made to fail, say so explicitly in your report rather than
+    shipping it. Several snippets below are known-tautological (they fail today only via an import error);
+    they are flagged where I know of them, but assume there are more.
 
 ---
 
@@ -433,12 +451,39 @@ git commit -m "f5(waveS-t1): cut the post-rewind rebuild at the anchor — the S
 
 ## Task 2: EP-S2 — one session identity (P0)
 
-**Why.** `runTask` emits no `state` event, and `state` is the only thing that populates the client's cached
-session id (`client/chatAdapter.ts:48`). Nine surfaces read that id and all nine are wrong after a clean
-turn: `/status` omits its session line, `/rename` and `/tag` refuse with "no session yet — send a first
-prompt" (`useChat.ts:881,887,895`), `/export` writes nothing, and `/files`, `/stats` and the Settings Stats
-tab render empty. The host already stamps the roster the moment the engine's id materializes — that is the
-exact instant the client should learn it too.
+**Why, stated more precisely than the spec does.** `state` is the only thing that populates the client's
+cached session id (`client/chatAdapter.ts:48`). Nine surfaces read that id: `/status` omits its session
+line, `/rename` and `/tag` refuse with "no session yet — send a first prompt" (`useChat.ts:881,887,895`),
+`/export` writes nothing, and `/files`, `/stats` and the Settings Stats tab render empty.
+
+**`runTask` is not quite silent today, and the narrower claim is the true one (plan review).** `host.ts:526`
+already emits `state` for any `system/status` frame carrying a `permissionMode`, so a turn that changes
+permission mode already publishes the id by accident. **The defect is a clean turn with no mode change.**
+Your test has to reproduce that, not merely "a turn happened".
+
+**This task's original tests could not fail, and that is why it is written out at length here.** Both were
+tautological — one of them, the `/status` formatter test, the plan itself conceded. `SessionHost.follow()`
+delivers a `state` frame **synchronously at subscribe time** (`host.ts:488`) and `status()` (`:724`)
+spreads `sessionId` whenever the session has one, while `host-follow.test.ts`'s fake session hardcodes
+`sessionId: "sid-1"` at construction (`:56`). So "some state event carries a sessionId" is true before
+`runTask` is ever called. That fixture's `submit` also only settles on an explicit `s.finish()` (`:57-62`),
+so a bare `await host.runTask(...)` hangs.
+
+**What the test must do instead.** Build a fake session whose `sessionId` starts **`undefined`** and
+materializes only when the first message is dispatched — that is the real engine's behaviour (the id
+arrives in the init frame mid-turn). Then:
+- subscribe **after** construction and discard the synchronous subscribe-time frame, or assert on frames
+  that arrive strictly after `runTask` begins;
+- drive a turn that emits **no** `system/status` frame with a `permissionMode`, so `host.ts:526` cannot
+  supply the emit for you;
+- assert that a `state` frame carrying the now-materialized id reaches the follower **before the turn
+  ends**, not merely at some point.
+
+Run it against unmodified `host.ts` and confirm it is RED. If the existing fixture cannot express a
+late-materializing id, **write a new one in this test file** — Global Constraint 14 supersedes the earlier
+instruction to reuse it. If after honest effort no keyless test can distinguish fixed from broken, say so
+in your report and record that A3 rests on Task 13's keyed live cell alone; do not ship a green test that
+proves nothing.
 
 **Files:**
 - Modify: `harness/src/host/host.ts` — the `stamped` block inside `runTask` (≈line 268–271)
@@ -451,23 +496,31 @@ exact instant the client should learn it too.
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `harness/test/unit/host-follow.test.ts` (read the file first and reuse its host + follower fixture):
+In `harness/test/unit/host-follow.test.ts`. The shape below is the ASSERTION, not the fixture — see the
+paragraph above and Global Constraint 14:
 
 ```ts
-it("publishes the engine's session id to followers as soon as it materializes (EP-S2)", async () => {
-  const events: any[] = [];
-  host.follow((e: any) => events.push(e));
-  await host.runTask("hello");
-  const withId = events.filter((e) => e.kind === "state" && e.status.sessionId);
-  expect(withId.length).toBeGreaterThan(0);
-  expect(withId[0].status.sessionId).toBe(FAKE_SESSION_ID);
+it("publishes the engine's session id mid-turn, on a turn that changes no permission mode (EP-S2)", async () => {
+  const s = lateIdSession();               // sessionId undefined until the first message is dispatched
+  const host = makeHost(s);
+  const after: any[] = [];
+  const off = host.follow(() => {});       // the subscribe-time state frame is not evidence — discard it
+  off();
+  host.follow((e: any) => after.push(e));
+  const turn = host.runTask("hello");
+  s.deliver({ type: "system", subtype: "init", session_id: LATE_ID });   // no permissionMode anywhere
+  await waitFor(() => expect(after.some((e) => e.kind === "state" && e.status.sessionId === LATE_ID)).toBe(true));
+  s.finish();                              // this fixture's submit settles only here
+  await turn;
 });
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `npx vitest run test/unit/host-follow.test.ts -t "materializes"`
-Expected: FAIL — no `state` event carries a `sessionId`.
+Run: `npx vitest run test/unit/host-follow.test.ts -t "mid-turn"`
+Expected: FAIL — the follower sees no `state` frame carrying the id while the turn is open. **If it
+passes, stop**: either your fixture's id is set at construction (the trap described above) or your turn
+emitted a `permissionMode` frame and `host.ts:526` published it for you. Fix the fixture, not the code.
 
 - [ ] **Step 3: Emit the state beside the roster stamp**
 
@@ -490,10 +543,11 @@ In `harness/src/host/host.ts`, inside `runTask`'s `onMessage`:
 Run: `npx vitest run test/unit/host-follow.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Pin the `/status` line's presence**
+- [ ] **Step 5: Pin the `/status` line's presence — a GUARD, and it is tautological by construction**
 
-Add to `harness/test/unit/commands-aliases.test.ts` (or the existing test file that covers `formatStatus` —
-grep for `formatStatus` first and add to whichever file already exercises it):
+This one passes before and after; it exists so nobody deletes the gate. **It is not evidence that Task 2
+works** — Step 1 is. Add it to whichever file already imports `formatStatus` (grep first; it is **not**
+`commands-aliases.test.ts`, which never imports it):
 
 ```ts
 it("prints a session row once an id exists, and omits it before (A3)", () => {
@@ -519,7 +573,7 @@ Run: `npm run typecheck && npm run test:unit && npm run test:tui`
 - [ ] **Step 8: Commit**
 
 ```bash
-git add harness/src/host/host.ts harness/test/unit/host-follow.test.ts harness/test/unit/commands-aliases.test.ts
+git add harness/src/host/host.ts harness/test/
 git commit -m "f5(waveS-t2): publish the engine session id to followers when it materializes — nine surfaces stop reporting 'no session yet'"
 ```
 
@@ -556,8 +610,29 @@ undefined })` **directly**, mirroring the `swapEngine({ resume: sid, resumeAt: a
 replaces. There is then no capability to feature-test and no BLOCKED path: `swapEngine` is always
 available where `rewind` runs.
 
+**And it mints a NEW session id — it does not empty the existing one.** The spec's phrasing ("an empty
+conversation on this session") is wrong; the plan review caught it. Two consequences to handle rather than
+discover:
+- the `rewound` broadcast's `sessionId` will be the **new** id, which is what the client should read;
+- but the client's cached id may not have flipped by the time it rebuilds, and Task 1's fallback for an
+  absent `prevUuid` is *"render the reader's rows unchanged."* Together those re-render the entire
+  conversation the user just discarded, off the OLD file — the retry loop breaks on the first non-empty
+  read and the old file is non-empty. **So the cleared case carries an explicit signal, never the absence
+  of one.** Add `cleared?: true` to the `rewound` wire variant (beside Task 1's `prevUuid`), emit it on
+  this path, and have `rebuildAfterRewind` take the empty-document arm directly on it — no disk read, no
+  poll, no cut. That also subsumes the poll-skip in Step 7 below, which becomes the follower's case only.
+
+**Two existing tests invert and the plan must not leave you to discover that mid-suite.**
+`harness/test/tui/rewind-picker.test.tsx:315` is *"a null-prevUuid anchor cannot restore the conversation:
+only the code option is offered, and it is focused"* — it asserts `not.toContain("Restore conversation")`
+and `toContain("The conversation will be unchanged.")`. Both are correct **today** and both become wrong
+under this task. Rewrite that test to assert the new truth (a conversation restore IS offered for a
+null-prevUuid anchor) rather than deleting it; it is the only coverage of that anchor shape.
+
 **Files:**
 - Modify: `harness/src/host/host.ts` — `rewind` (≈612–640)
+- Modify: `harness/src/host/wire.ts` — the `rewound` variant, adding `cleared?: true`
+- Modify: `harness/src/tui/useChat.ts` — `rebuildAfterRewind`'s cleared arm
 - Modify: `harness/src/tui/RewindPicker.tsx:263` (the `conversation` predicate)
 - Modify: `harness/src/tui/rewindModel.ts:195-214` (the doc comments describing the prevUuid gate)
 - Test: `harness/test/tui/rewind-picker.test.tsx`, `harness/test/unit/host-rewind.test.ts`
@@ -677,9 +752,11 @@ and in the conversation branch:
         if (clearing) await this.swapEngine({ resume: undefined, resumeAt: undefined });
         else await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid as string });
         // Broadcast so EVERY attached client rebuilds, not just the one that confirmed (see wire.ts).
-        // No prevUuid on the cleared path — there is no row to cut at, and the client's fallback for an
-        // absent anchor is "render what the reader returns", which after a clear is nothing.
-        this.emit({ kind: "rewound", sessionId: this.session?.sessionId ?? sid, ...(anchor.prevUuid ? { prevUuid: anchor.prevUuid } : {}) });
+        // `cleared` is POSITIVE, not the absence of prevUuid: the swap above minted a NEW session, and a
+        // client whose cached id has not flipped yet would otherwise read the OLD file, find it non-empty,
+        // and re-render the very conversation the user just discarded.
+        this.emit({ kind: "rewound", sessionId: this.session?.sessionId ?? sid,
+                    ...(clearing ? { cleared: true } as const : anchor.prevUuid ? { prevUuid: anchor.prevUuid } : {}) });
       }
 ```
 
@@ -707,6 +784,11 @@ Task 1's poll retries 8 times at 375 ms — ≈3 s — waiting for the reader to
 first-message restore the correct answer is *no rows*, so the poll would burn its whole window and only
 then render the `⏪ rewound` divider. An empty conversation that takes three seconds to appear reads as a
 hang, which is the same class of defect the pre-notice at `useChat.ts:781` exists to prevent elsewhere.
+
+With Step 5's `cleared` flag in place the confirming client short-circuits on the flag itself and never
+polls. This step covers the remaining case: a **follower** that received `cleared` must also take the
+empty arm directly. Gate on `cleared` first; the `prevUuid !== null` check below is then belt to that
+brace, for a host too old to send either field.
 
 Add the failing test to `harness/test/tui/useChat-rewind.test.tsx`:
 
@@ -807,10 +889,25 @@ Add to `harness/test/tui/rewind-picker.test.tsx`:
 it("sizes its window from the chrome it actually draws", () => {
   // The constant is re-derived, not inherited: upstream halves `rows` first under its split-view
   // predicate, which we do not have, so the 12 alone was measuring nothing of ours.
-  expect(rewindVisibleRows(15)).toBe(REWIND_MIN_ROWS);
-  expect(rewindVisibleRows(40)).toBeGreaterThan(REWIND_MIN_ROWS);
+  expect(REWIND_CHROME_ROWS).toBe(9);          // the derived value, asserted DIRECTLY
+  expect(rewindVisibleRows(21)).toBe(4);       // 4 at C=9, 3 at the old C=12 — this is the discriminator
+  expect(rewindVisibleRows(15)).toBe(2);
 });
 ```
+
+**Do not write the loose version of this test.** The obvious pair — `rewindVisibleRows(15) === 2` and
+`rewindVisibleRows(40) > 2` — is satisfied by **any** constant from 7 to 31, the current 12 included, so
+adding the `REWIND_MIN_ROWS` export alone turns it green with no change to the constant at all. It pins
+nothing. Assert the constant directly and include a height where the old and new values differ.
+
+**And the plan's own enumeration undercounts by one (plan review).** `RewindPicker` draws **nine** rows of
+chrome: border ×2, title, a `marginTop={1}` blank, the prompt, both indicator rows, the footer's
+`marginTop={1}` blank, and the footer (`RewindPicker.tsx:99-107,235-255`). The earlier draft named only one
+of the two blanks. Re-count it yourself against the component and correct me if nine is still wrong — but
+whatever number you derive, assert it directly as above.
+
+Note also that `resize-dialogs.test.tsx:199` hardcodes the OLD formula in a comment. It stays green, but
+update the comment so it does not go stale.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -871,7 +968,7 @@ export const REWIND_MIN_ROWS = 2;
  *  first under `ds()` (its split-view predicate); we have no split view, so importing the 12 alone
  *  measured nothing of ours and produced 9 visible rows where upstream's frame at the same geometry shows
  *  2. Enumerate every row you counted here. */
-export const REWIND_CHROME_ROWS = /* the number you derived */;
+export const REWIND_CHROME_ROWS = 9;   // border ×2 · title · marginTop blank · prompt · both indicator rows · footer's marginTop blank · footer
 export function rewindVisibleRows(rows: number, rowHeight: number = REWIND_ROW_HEIGHT): number {
   return Math.max(REWIND_MIN_ROWS, Math.floor((rows - REWIND_CHROME_ROWS) / rowHeight));
 }
@@ -1055,12 +1152,28 @@ import type { SelectView } from "./select/selectModel.js";
 Add the chrome budget beside the footers:
 
 ```tsx
-/** What this dialog draws above and below the list: border ×2, the `Settings` title, the tab strip, the
- *  blank spacer, the two indicator rows, the blank before the footer, and the footer. Enumerated rather
- *  than tuned so a later frame change has one number to update. */
+/** What this dialog draws above and below the list: border ×2, the `Settings` title, the tab strip, two
+ *  blank spacers, the footer, and the two new indicator rows. Enumerated rather than tuned so a later
+ *  frame change has one number to update.
+ *
+ *  NOTE the clamp interaction: `Select`'s own `clampVisible` (selectModel.ts:18,28) already reserves 8
+ *  rows, and takes the `min()` of the two — so this number does not solely govern the window. It is the
+ *  ceiling this dialog contributes, not the whole budget. */
 export const SETTINGS_CHROME_ROWS = 9;
-export const settingsVisibleRows = (rows: number): number => Math.max(1, rows - SETTINGS_CHROME_ROWS);
+/** THE DEFAULT IS LOAD-BEARING, do not drop it. `rows` is an optional prop and every existing test renders
+ *  this dialog with no size props at all (keys-migration-dialogs.test.tsx:553), as does ChatApp
+ *  (`:554,560`). Without it `settingsVisibleRows(undefined)` is NaN, which threads through clampVisible
+ *  and windowBounds to `{start: NaN, end: 1}` and `options.slice(NaN, 1)` — a list permanently stuck at
+ *  ONE row with navigation broken. `Select` defaults its own `rows` the same way (Select.tsx:146). */
+export const settingsVisibleRows = (rows: number = process.stdout.rows ?? 24): number =>
+  Math.max(1, rows - SETTINGS_CHROME_ROWS);
 ```
+
+**Thread the props too, or accept the default deliberately.** `ChatApp.tsx:554,560` renders this dialog
+with no size props today. Either add the threading (copy `ChatApp.tsx:521`'s `RewindPicker` pattern, which
+uses `terminalRows()`/`terminalColumns()` at `:188-189`) or leave it and let the default carry — but say
+which you chose and why in your report. The A6 test renders the dialog directly with explicit `rows`, so
+it passes either way; only the real REPL notices.
 
 Replace the `idx` state with an id-keyed focus, and add the window:
 
@@ -1070,8 +1183,14 @@ Replace the `idx` state with an id-keyed focus, and add the window:
   const [view, setView] = useState<SelectView | undefined>(undefined);
 ```
 
-Every prior read of `rows[idx]` becomes `rows.find((r) => r.id === focusId) ?? rows[0]`. In `acceptRow`,
-take the row from the value `Select` hands back instead:
+Every prior read of `rows[idx]` becomes `rows.find((r) => r.id === focusId) ?? rows[0]`. **One of those is
+inside the search handler and the plan's "keep the search arm byte-identical" instruction is wrong about
+it (plan review):** `onSearchKey` at `SettingsDialog.tsx:123` calls `setIdx(i)` when Enter picks a filtered
+row, and must become `setFocusId(picked.id)` — which is simpler, since it no longer needs the
+`rows.findIndex` lookup on the line above. Everything else in that handler and in the search RENDER stays
+byte-identical; that one line is the exception.
+
+In `acceptRow`, take the row from the value `Select` hands back instead:
 
 ```tsx
   const acceptRow = (id: string) => {
@@ -1113,9 +1232,13 @@ Render the Config tab's browse arm through `Select`, and keep the search arm byt
               <Select
                 options={rows.map((r) => ({
                   value: r.id, label: r.label,
-                  node: () => (
+                  // `focused` is used, not ignored: the focused row is ACCENT today (SettingsDialog.tsx:189)
+                  // and dropping that would leave the pointer gutter as the only focus affordance.
+                  // The `❯ `/`  ` prefix is NOT reproduced here — Select draws it in its own gutter
+                  // (Select.tsx:282), and repeating it renders `❯ ❯ Theme`.
+                  node: (focused: boolean) => (
                     <Box flexDirection="column">
-                      <Text>{r.label}  {r.value}{r.hint ? <Text dimColor>   {r.hint}</Text> : null}</Text>
+                      <Text color={focused ? ACCENT : undefined}>{r.label}  {r.value}{r.hint ? <Text dimColor>   {r.hint}</Text> : null}</Text>
                       {r.id === "thinking" && thinkingTouched ? <Text dimColor>    {THINKING_WARNING}</Text> : null}
                     </Box>
                   ),
@@ -1148,8 +1271,13 @@ Expected: PASS, 3 tests.
 - [ ] **Step 9: Full gates**
 
 Run: `npm run typecheck && npm run test:unit && npm run test:tui`
-Expected: green. The existing Settings snapshot coverage will move — review each changed snapshot and
-accept it only if the change is the windowing you intended.
+Expected: green. **There are no snapshots in this repo** (an earlier draft said otherwise). What breaks
+instead is plain frame text: `grep -rn '❯ Theme\|❯ Model\|❯ Output style' test/` finds the assertions that
+depend on this dialog's row rendering. They stay green **only if** the `node` body omits the pointer
+prefix, which is why the code above omits it. Also check
+`harness/test/tui/f6-acceptance.test.tsx:320-328`, which documents in prose that Settings has "no
+`pageup`/`pagedown`/`home`/`end` at all" — that narrowing is exactly what this task removes, so update the
+test and its comment.
 
 - [ ] **Step 10: Commit**
 
@@ -1162,10 +1290,21 @@ git commit -m "f5(waveS-t5): Settings' Config list migrates onto Select — real
 
 ## Task 6: EP-S4c — Permissions windowing (P1)
 
-**Why this is its own task.** `PermissionsDialog` is ~340 lines, tabbed, with per-row activation, six
+**Dispatch this as TWO implementer rounds with a review between them** (plan review: this is the one task
+big enough to split, and it carries five separate defects found in a single pass). Both halves land in the
+same file, so they are one task, but each half has a testable boundary:
+
+- **6a — row identity.** Give every `Item` a stable string value, replace the index cursor with a
+  value cursor, retarget `activate` and the footer's `selectedItem`, and lift the row bodies into a
+  `renderItem(it)` that omits the pointer prefix. **No `Select` yet, no windowing** — the existing
+  hand-rolled list renders `renderItem` and the existing tests must stay green. This half is where the
+  22 frame-text assertions get their chance to fail loudly and early.
+- **6b — windowing.** Mount the `Select`, add the indicators and the chrome budget, drop the movement
+  handlers.
+
+**Why this is not Task 5 again.** `PermissionsDialog` is ~340 lines, tabbed, with per-row activation, six
 sub-views, an embedded `AddDirDialog`, and its own key registration at `:229-239`. Its rule lists are
-genuinely unbounded — one per `allow`/`ask`/`deny` tab, plus the workspace directory list. It shares the
-`Select` migration shape with Task 5 but nothing else.
+genuinely unbounded — one per `allow`/`ask`/`deny` tab, plus the workspace directory list.
 
 **Divergence to record (W-S11):** upstream's Permissions rule list uses the classic `jr` Select, so
 `pageup`/`pagedown` work there but `home`/`end` do not (there is no `home`/`end` handling in `jr` at all),
@@ -1254,13 +1393,12 @@ function itemValue(it: Item): string {
     case "addDir":  return "\0addDir";
     case "rule":    return `rule:${it.row.rule}`;
     case "dir":     return `dir:${it.d.path}`;
-    case "denial":  return `denial:${it.e.toolUseID ?? it.e.command ?? ""}`;
+    // `DenialEntry` is `{ display, by, at }` (permissionsModel.ts:84) — there is no toolUseID and no
+    // command, and no SINGLE field is unique. This is the composite the existing React key already uses.
+    case "denial":  return `denial:${it.e.at}-${it.e.display}`;
   }
 }
 ```
-
-Read `permissionsModel.ts`'s `DenialEntry` before writing the last arm and use whichever field is actually
-unique there; if none is, fall back to the array index and say so in a comment.
 
 Replace `idx` with a value-keyed focus and add the window:
 
@@ -1269,6 +1407,14 @@ Replace `idx` with a value-keyed focus and add the window:
   const [view, setView] = useState<SelectView | undefined>(undefined);
   useEffect(() => { setFocusValue(undefined); setView(undefined); }, [activeTab]);   // a cursor from one tab must not carry into another's list
 ```
+
+**That effect alone does NOT reset the cursor, and the plan review caught it.** `Select` reads
+`defaultFocusValue` **only in its `useState` initializers** (`Select.tsx:160-167`), and a tab change does
+not remount it — so its internal `view.focus` survives, and Allow-tab-row-20 → a short tab → back lands on
+row 20 again with no keypress. The existing `setIdx(0)` effect (`PermissionsDialog.tsx:140`) works today
+precisely because the index lived in this component. **Put `key={activeTab}` on the `<Select>`** so a tab
+change remounts it; the effect above then only clears this component's own mirrors. Write a test for it:
+page down on a long tab, switch tabs and back, assert the cursor is on the first row.
 
 `activate` takes the value:
 
@@ -1301,10 +1447,19 @@ Add the chrome budget and render the list through `Select` with `node` rows, wra
 row bodies unchanged:
 
 ```tsx
-/** Border ×2, the `Permissions` title, the tab strip, the intro line, the blank spacer, the two indicator
- *  rows and the footer. Enumerated so a frame change has one number to update. */
-export const PERMISSIONS_CHROME_ROWS = 9;
-export const permissionsVisibleRows = (rows: number): number => Math.max(1, rows - PERMISSIONS_CHROME_ROWS);
+/** ELEVEN, not nine — an earlier draft named one blank spacer and the frame draws three
+ *  (PermissionsDialog.tsx:311, :314, :336). Border ×2 · title · tab strip · blank · intro · blank · blank
+ *  · footer = 9, plus the two new indicator rows = 11. Re-count it against the component yourself and
+ *  correct this if the frame has moved.
+ *
+ *  As in Task 5, `Select`'s own clampVisible already reserves 8 rows and takes the min() of the two — this
+ *  is the ceiling this dialog contributes, not the whole budget. */
+export const PERMISSIONS_CHROME_ROWS = 11;
+/** The default is load-bearing for the same reason Task 5's is: `rows` is optional, existing tests and
+ *  ChatApp render this dialog with no size props, and `permissionsVisibleRows(undefined)` would be NaN —
+ *  which threads through to a list permanently stuck at one row. */
+export const permissionsVisibleRows = (rows: number = process.stdout.rows ?? 24): number =>
+  Math.max(1, rows - PERMISSIONS_CHROME_ROWS);
 ```
 
 ```tsx
@@ -1325,9 +1480,27 @@ export const permissionsVisibleRows = (rows: number): number => Math.max(1, rows
         ? <Text dimColor>{moreBelow(overflowRows(view, items.length).below)}</Text> : null}
 ```
 
-`itemLabel(it)` is the plain-string fallback `Select` uses for measurement; `renderItem(it)` is the
-existing per-kind row body lifted out of the current `.map()` verbatim. Thread `rows` / `columns` props
-from `ChatApp` exactly as Task 5 does.
+`itemLabel(it)` is the plain-string fallback `Select` uses for measurement. `renderItem(it)` is the
+existing per-kind row body — **lifted, but NOT verbatim.** Two corrections, both from the plan review:
+
+1. **Drop the `{selected ? "❯ " : "  "}` prefix.** Every current row body opens with it
+   (`PermissionsDialog.tsx:317,318,320,325,331`) and `Select` draws that pointer in its own gutter
+   (`Select.tsx:282`) — lifted as-is you get `❯ ❯ Add a new rule…`. `selected` is not even in scope; the
+   node signature is `(focused: boolean) => ReactNode` (`Select.tsx:64`). This is load-bearing beyond
+   cosmetics: `grep -rn '❯ Add a new rule\|❯ Bash(\|❯ WebFetch' test/` finds assertions across
+   `test/tui/keys-migration-dialogs.test.tsx` and `test/tui/chat.test.tsx` that stay green **only** if the
+   prefix is dropped. Task 5's node body drops it for the same reason.
+2. **Use the `focused` argument** wherever the old body used `selected` for colour, so the focused row
+   keeps the affordance it has today.
+
+**The footer still needs a cursor (plan review).** `PermissionsDialog.tsx:150-151` derives `selectedItem`
+from `clampedIdx` and `:337` uses it to choose `MANAGED_DIR_FOOTER`. Once `idx` is gone, re-derive it from
+`focusValue`: `const selectedItem = items.find((i) => itemValue(i) === focusValue) ?? items[0]`. Keep the
+`?? items[0]` — `focusValue` is `undefined` until `Select`'s mount-time `onFocus` fires, and the footer
+renders before that.
+
+Thread `rows` / `columns` props from `ChatApp` exactly as Task 5 does, or accept the default deliberately
+and say which you chose.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -1337,7 +1510,10 @@ Expected: PASS, 4 tests.
 - [ ] **Step 5: Full gates**
 
 Run: `npm run typecheck && npm run test:unit && npm run test:tui`
-Expected: green. Existing Permissions snapshots will move — inspect each one.
+Expected: green. **There are no snapshots** — what breaks is the frame-text assertions named above. Also
+update `harness/test/tui/f6-acceptance.test.tsx:320-328`, which documents in prose that Permissions has
+"no `pageup`/`pagedown`/`home`/`end` at all" and points at the parity doc's F6 divergence table; this task
+invalidates both, so fix the test and refresh that table row in `docs/parity/`.
 
 - [ ] **Step 6: Commit**
 
@@ -1357,8 +1533,10 @@ also recovers API duration and lines changed, both already on the wire and both 
 
 **Files:**
 - Modify: `harness/src/tui/commands.ts:125-147` (`SessionUsage`, `sum`, `formatCost`)
-- Test: `harness/test/unit/commands-aliases.test.ts` or the existing `/cost` test file (grep for
-  `formatCost` and extend the file that already covers it)
+- Test: **`harness/test/tui/commands.test.ts`** — `formatCost` is covered there at `:42,49`.
+  **Not** `test/unit/commands-aliases.test.ts`, which never imports it; the earlier draft's
+  `npx vitest run test/unit -t "cache tokens"` selects nothing at all and prints "1592 skipped", which
+  reads like a satisfied red gate while proving nothing (plan review).
 
 **Interfaces:**
 - Produces: widened `SessionUsage.session.model_usage` entry type carrying at least
@@ -1371,8 +1549,12 @@ also recovers API duration and lines changed, both already on the wire and both 
 - [ ] **Step 1: Confirm the field names against the SDK, not this plan**
 
 Run: `grep -n "total_lines_added\|total_api_duration_ms\|SDKControlGetUsageResponse" -A 25 node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts | head -60`
-Record the exact names in your report and use those. If a field this task asks for does not exist, say so
-and drop that row rather than inventing it.
+
+Every name this task asks for was checked and **exists with that exact spelling** — `ModelUsage` at
+`sdk.d.ts:1265-1282`, and `total_api_duration_ms` (`:3192`), `total_lines_added` (`:3194`),
+`total_lines_removed` (`:3195`). Confirm rather than trust, and report any drift. (Correction to the
+epic's own wording: the formatter reads **three** fields today, not two — `inputTokens`/`outputTokens` at
+`commands.ts:141` and `costUSD` at `:145`.)
 
 - [ ] **Step 2: Write the failing test**
 
@@ -1389,7 +1571,8 @@ it("reports cache tokens, API duration and lines changed (A7)", () => {
       } },
     },
   }).map((l) => l.text).join("\n");
-  expect(out).toContain("5.0k");          // cache read, through tokenCount
+  expect(out).toContain("5k");            // cache read, through tokenCount — `5k`, NOT `5.0k`:
+                                          // commands.ts:91 is `${Math.round(n/100)/10}k`, so 5000 → "5k"
   expect(out).toContain("900");           // cache creation
   expect(out).toMatch(/api|API/);         // the API-duration row
   expect(out).toMatch(/lines/);           // the lines-changed row
@@ -1403,7 +1586,7 @@ it("omits a row the SDK did not populate rather than printing a zero", () => {
 
 - [ ] **Step 3: Run to verify it fails**
 
-Run: `npx vitest run test/unit -t "cache tokens"`
+Run: `npx vitest run test/tui/commands.test.ts -t "cache tokens"`
 Expected: FAIL.
 
 - [ ] **Step 4: Widen the type and the formatter**
@@ -1415,14 +1598,14 @@ a zero the harness invented is the same class of lie this wave is removing.
 
 - [ ] **Step 5: Run to verify it passes**
 
-Run: `npx vitest run test/unit -t "cache tokens"`
+Run: `npx vitest run test/tui/commands.test.ts -t "cache tokens"`
 Expected: PASS.
 
 - [ ] **Step 6: Full gates and commit**
 
 ```bash
 npm run typecheck && npm run test:unit && npm run test:tui
-git add harness/src/tui/commands.ts harness/test/unit/
+git add harness/src/tui/commands.ts harness/test/tui/commands.test.ts
 git commit -m "f5(waveS-t7): /cost reports the seven ModelUsage fields it was dropping, plus API duration and lines changed"
 ```
 
@@ -1616,17 +1799,24 @@ Expected: PASS, 6 tests.
 
 Add to `harness/test/unit/cli-args.test.ts`:
 
+The parser export is **`parseCcx`** (`harness/src/cli/args.ts:72`), already imported by
+`test/unit/cli-args.test.ts:5` — not `parseArgs`, which does not exist:
+
 ```ts
 it("parses -c / --continue (A10)", () => {
-  expect(parseArgs(["-c"]).continue).toBe(true);
-  expect(parseArgs(["--continue"]).continue).toBe(true);
-  expect(parseArgs([]).continue).toBe(false);
-});
-
-it("refuses --continue together with --resume", () => {
-  expect(() => parseArgs(["--continue", "--resume", "abc"])).toThrow(/--continue/);
+  expect(parseCcx(["-c"]).continue).toBe(true);
+  expect(parseCcx(["--continue"]).continue).toBe(true);
+  expect(parseCcx([]).continue).toBe(false);
 });
 ```
+
+**Do NOT write a parser-level `--continue` + `--resume` refusal, and do not test for one here.** An earlier
+draft asked for both a throw from the parser and a refusal "where the other cross-flag refusals live" —
+those contradict, and the parser side is the wrong one. `args.ts:101-104` documents exactly why grammar-level
+cross-flag rules are forbidden: a detached child re-parses its OWN argv, so a parser constraint would kill
+every `--detachable` child at startup. The refusal belongs in `main.ts` beside its siblings (`:109`,
+`:142`, `:270`), and its test belongs wherever those are tested. Note also the asymmetry to keep in mind
+while wiring: `--resume` lands at `a.config.resume` (`args.ts:112`) while `continue` is top-level.
 
 - [ ] **Step 6: Run to verify it fails**
 
@@ -1644,7 +1834,8 @@ In `harness/src/cli/args.ts`, beside `-r/--resume`:
 ```
 
 Add `continue: false` to the invocation's defaults and `continue: boolean` to `CcxInvocation`. Refuse the
-combination with `--resume` where the other cross-flag refusals live (do not add a second refusal site).
+combination with `--resume` in `main.ts`, beside its siblings at `:109`, `:142`, `:270` — **not** in the
+parser (see above).
 
 In `harness/src/cli/main.ts`, resolve `--resume` through `resolveResumeArg` before building
 `initialResume`, and map the three outcomes:
@@ -1720,6 +1911,12 @@ slash-entries half of `qa4-07` is **out of scope** (W-S7, deferred).
   can re-fetch under widened scope
 - Modify: `harness/src/sessions/reader.ts` if the scope options need widening (they may not — `cwd` is
   already optional and `includeWorktrees` already exists)
+- **Modify: `harness/src/tui/keys/bindings.ts` — omitted from the earlier draft and NOT optional.**
+  `ctrl+a` and `ctrl+w` are bound in no context today (`:153-161` binds only `space`, `ctrl+r` and
+  `escape` in `SessionPicker`), and neither action is in `VALID_ACTIONS` (`:263`). Edit `DEFAULT_BINDINGS`
+  and `VALID_ACTIONS` **together** — `test/tui/keys-bindings.test.ts:79-82` is a bidirectional
+  set-equality pin and fails if you touch only one. There is no fallback route: `SessionPicker.tsx:172,177`
+  both guard on `!key.ctrl`, so a raw `\x01` is silently dropped.
 - Test: `harness/test/tui/session-picker.test.tsx` (new or existing), `harness/test/unit/sessions-reader.test.ts`
 
 **Interfaces:**
@@ -1758,10 +1955,21 @@ it("hides Ctrl+W when no worktree is detected", () => {
 
 it("counts only the rows the preview pane actually renders (qa4-07 ii)", () => {
   const rows = [userPrompt("hi"), assistantText("hello"), toolResultOnly(), userPrompt("again")];
-  expect(previewMessageCount(rows)).toBe(3);
-  expect(previewMessageCount(rows)).toBe(renderedPreviewRows(rows).length);   // the two must agree BY CONSTRUCTION
+  expect(previewMessageCount(rows)).toBe(3);          // the tool-result-only row is not a message
+});
+
+it("count and pane apply the SAME predicate", () => {
+  // NOT "the count equals the pane's row count" — `previewLines` ends `return out.slice(-PREVIEW_ROWS)`
+  // with PREVIEW_ROWS = 12, so for any transcript longer than 12 rows the total and the windowed tail
+  // MUST differ. What has to be shared is the predicate, and this is how you pin that.
+  const rows = manyMixedRows(40);
+  expect(previewMessageCount(rows)).toBe(rows.filter(isPreviewMessage).length);
+  expect(previewLines(rows).length).toBeLessThanOrEqual(PREVIEW_ROWS);
 });
 ```
+
+The defect is real and exactly where the epic says: `SessionPicker.tsx:111` sets `count: msgs.length`
+while the pane drops tool-result-only rows.
 
 ```tsx
 it("changes the result set when the project scope widens (A12)", async () => {
@@ -1815,8 +2023,9 @@ existing loader with `{ ...(scope.allProjects ? {} : { cwd }), includeWorktrees:
 Print the outcome line from `closePicker` in `useChat.ts` via the existing `notice(...)`.
 
 For (iii), port the predicate and make the count and the pane read the **same** function — the defect is
-that they disagree, so a fix that leaves two independent implementations has not fixed it. The fourth
-assertion in Step 1 is what pins that.
+that they disagree, so a fix that leaves two independent implementations has not fixed it. Export the
+predicate itself (`isPreviewMessage`) so a test can apply it independently; the count and the pane both
+consume it, and the pane additionally windows to `PREVIEW_ROWS`.
 
 - [ ] **Step 4: Run to verify they pass**
 
@@ -1840,24 +2049,42 @@ git commit -m "f5(waveS-t10): /resume gains its cancel line, two backed widen co
 fidelity under W-S4 and **labelled as such in the code**. Do not drive it from `pre_tokens`/`post_tokens`:
 those arrive only at the boundary, i.e. when the bar would already be finished.
 
-**What is broken today.** (1) The compaction lifecycle already reaches `useChat` — `session/session.ts:262`
-shows the wire carries `system/status` with `status === "compacting"` alongside `compact_boundary` — and is
-deliberately dropped by `systemNoticeLines` (`species.ts:597`, whose generic `typeof content !== "string"`
-exit swallows every structured system frame). Consuming it for a busy state is a consumption change, not a
-wire change. (2) The in-progress affordance is a permanent `append()` at `useChat.ts:781` that nothing
-removes, so the transcript keeps `✻ compacting…` forever beside the `✦ compacted N → M` result.
+**What is broken today — and the epic's premise is FALSE for the path that matters (plan review).** The
+spec says the lifecycle "already reaches `useChat`… a consumption change, not a wire change." That holds
+for **automatic mid-turn compaction**, which flows through `submit` → `runTask`. It does **not** hold for
+a user-typed `/compact`, and the plan traced why:
+
+- `session/session.ts:146-153` — `compact()` installs its own **private** `onMessage` that collects the
+  status and boundary frames into a local array. Nothing escapes it.
+- `host/host.ts:322` — the host's `compact` op calls `s.compact()` directly, bypassing `runTask`, which is
+  the only place raw frames become client `message` events (`:269-278`).
+- `host/host.ts:505-532` — the always-on frame tap emits only for `background_tasks_changed`, the `task_*`
+  family, and `status` frames carrying a `permissionMode` **string** (`:521`). A `system/status` with
+  `status: "compacting"` and no `permissionMode` matches no branch.
+
+`session.ts:262` — the line the spec cites — proves only that the SDK **emits** the frame. So: consume the
+wire lifecycle for the automatic path, **and set the busy state locally at `useChat.ts:781`** for the
+`/compact` path, where the client already knows a compaction is starting because it started it. Do not
+spend the task trying to route `/compact`'s frames through the host; that is a wire change this epic (a
+P2) does not justify. Record the split in a comment.
+
+Second defect, unchanged: the in-progress affordance is a permanent `append()` at `useChat.ts:781` that
+nothing removes, so the transcript keeps `✻ compacting…` forever beside the `✦ compacted N → M` result.
 
 **A13's wording matters.** Upstream *replaces* nothing: the spinner, hint and bar are ephemeral render
 state discarded at `compact_end` (`a()` at L407334 clears all four fields at once), while `Compacted …` is
 a separately persisted message. Build ephemeral render state, not a transient-row contract.
 
 **Exact upstream geometry (L407977-978, L408060):**
-- ratio: `min(95, round((1 - exp(-seconds/90)) * 100))`, held **monotonic** by `Math.max(previous, …)`
+- ratio: `min(95, round((1 - exp(-seconds/90)) * 100))`, held **monotonic** by `Math.max(previous, …)`.
+  **It is a PERCENTAGE (0–95), not a 0–1 fraction** — so `barCells` fills `round(ratio / 100 * width)`.
+  Upstream's own `clamp01` sits on its 0–1 `ratio` prop, one layer further in; an earlier draft of this
+  plan spliced the two and would have filled the whole bar at 50% (plan review)
 - width: `min(40, columns - 2 - 6)`; **suppressed entirely when the computed width is under 8**
 - `marginLeft: 2`; the trailing dim `NN%` sits after the bar with `gap: 1`
 - glyphs: fill `▰` U+25B0, empty `▱` U+25B1; on ink-bleed terminals `█` U+2588 / `░` U+2591
-- fill: `filled = round(clamp01(ratio) * width)`, remainder empty — **whole cells only**, no sub-cell
-  interpolation in the pill variant
+- fill: `filled = round(clamp(ratio, 0, 100) / 100 * width)`, remainder empty — **whole cells only**, no
+  sub-cell interpolation in the pill variant
 - spinner verb: `Compacting conversation` (rendered with a trailing `…`)
 
 **Files:**
@@ -2012,9 +2239,10 @@ cannot race it. A confirm gated at `pickModel` therefore leaves the pref **writt
   export function needsModelConfirm(a: { next: string; current?: string; sessionModel?: string; outputTokens: number; ackedAt?: number }): boolean;
   export function stripContextSuffix(id: string): string;  // /\[(1|2)m\]/gi → ""
   ```
-- Consumes: `resolveModelAlias` (already imported by `useChat.ts` — grep for it) and the session's
-  cumulative output tokens. Read where `usage()`'s `model_usage` is already summed (Task 7's `sum(models,
-  "outputTokens")` in `commands.ts`) and reuse it rather than adding a second accumulator.
+- Consumes: `resolveModelAlias` (`config/models.ts:26` — synchronous and pure, already imported by
+  `useChat.ts:55`; it needs no injection) and the session's cumulative output tokens. Reuse
+  `commands.ts:130`'s `sum(models, "outputTokens")` rather than adding a second accumulator — **it is
+  module-private today, so export it** as part of this task.
 
 - [ ] **Step 1: Write the failing gate tests**
 
@@ -2050,26 +2278,36 @@ it("carries upstream's copy verbatim", () => {
 
 - [ ] **Step 4: Run to verify they pass**
 
-- [ ] **Step 5: Write the failing ordering test**
+- [ ] **Step 5: Add the props the confirm needs, then write the failing ordering test**
+
+**`ModelPicker` has neither of the inputs the gate needs.** Its props today are
+`{ models, current, sessionModel, onPick, onCancel, savePrefs, rows, columns }`
+(`ModelPicker.tsx:31-44`) — no `outputTokens`, no `ackedAt`. Add both, and **decide where the ack lives**:
+it cannot live in the picker, because the picker unmounts on pick (`useChat.ts:1064`), so
+"does not re-prompt at the same output count" is only satisfiable if `useChat` owns the ack and threads it
+back in. Say so in your report; that ownership is the task's one real design decision.
+
+**Two fixture traps, both of which make the obvious test fail for the wrong reason (plan review):**
+- `test/tui/model-picker.test.tsx:26-30` defines `MODELS` as **tier aliases** (`opus`, `sonnet`, `haiku`),
+  not resolved ids. So `current="claude-sonnet-5"` plus picking `sonnet` makes `needsModelConfirm` **false**
+  by rule 3 — no confirm appears, `savePrefs` fires, and the assertion fails without testing anything.
+  Either set `current` to an alias the fixture actually contains, or resolve aliases inside
+  `needsModelConfirm` (which is what the real path does) and give the test a genuinely different model.
+- `ModelPicker.tsx:60` writes `savePrefs({ model: m.value })` — the **raw alias**. Alias resolution happens
+  downstream at `useChat.ts:1067`. So `toHaveBeenCalledWith({ model: "claude-opus-5" })` can never hold;
+  assert the alias the fixture uses.
 
 ```tsx
 it("does not write the default-model pref when the confirm is declined (W-S9)", async () => {
-  const { stdin } = render(<ModelPicker models={models} current="claude-sonnet-5" outputTokens={500} {...props} />);
-  await tick();
-  stdin.write("\x1b[B"); await tick();               // onto another model
-  stdin.write("\r");     await tick();               // Enter → confirm, NOT the switch
-  expect(savePrefs).not.toHaveBeenCalled();
-  stdin.write("\x1b");   await tick();               // decline
+  // props/fixture per the two traps above — this is the assertion, not the fixture
+  await pressUntilConfirmShows();
+  expect(savePrefs).not.toHaveBeenCalled();          // the pref must not be written BEFORE the confirm
+  await decline();
   expect(savePrefs).not.toHaveBeenCalled();
   expect(onPick).not.toHaveBeenCalled();
 });
 
-it("switches and stamps the ack when the confirm is accepted", async () => {
-  /* …as above, then accept… */
-  expect(savePrefs).toHaveBeenCalledWith({ model: "claude-opus-5" });
-  expect(onPick).toHaveBeenCalled();
-});
-
+it("switches and writes the pref when the confirm is accepted", async () => { /* … */ });
 it("does not re-prompt at the same output count after accepting", async () => { /* … */ });
 ```
 
@@ -2131,7 +2369,7 @@ Expected tail: `VERDICT: pre-boundary anchors are GONE; only post-boundary promp
 | A4 | `npx vitest run test/tui/rewind-picker.test.tsx` | the three A4 guards pass |
 | A5 | `npx vitest run test/tui/model-picker.test.tsx` | counter follows the rendered window |
 | A6 | `npx vitest run test/tui/settings-dialog.test.tsx test/tui/permissions-dialog.test.tsx` | indicators + paging on both |
-| A7 | `npx vitest run test/unit -t "cache tokens"` | pass |
+| A7 | `npx vitest run test/tui/commands.test.ts -t "cache tokens"` | pass |
 | A11/A12 | `npx vitest run test/tui/session-picker.test.tsx` | pass |
 | A13 | `npx vitest run test/unit/compaction-bar.test.ts` | the five curve reference points pass |
 | A14 | `npx vitest run test/unit/model-confirm.test.ts` | all four gate conditions pass |
