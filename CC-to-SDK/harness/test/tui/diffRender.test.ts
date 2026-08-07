@@ -288,6 +288,59 @@ describe("renderDiff — a word-diff row puts the band UNDER the token (`ZmH` L4
     expect(line.text).toBe(' 3 -const msg = "hello world";'.padEnd(60));
     expect(contentOf(line).filter((s) => s.bg === REMOVED_WORD()).map((s) => s.text)).toEqual(["world"]);
   });
+  // TWO DISJOINT RANGES, because ONE range can never see the cursor advance. `ZmH`'s walk moves to the next
+  // range on `cursor >= range.end` — the half-open end — and with a single range that comparison is
+  // unobservable: the walk has nowhere to advance TO, so `>` and `>=` render the same row. With two, an
+  // off-by-one strands the cursor on the first range and the SECOND changed word silently loses its band.
+  // The remove side is pinned WHOLE because it is flat, so its spans ARE the cuts — which is what makes the
+  // run BETWEEN the two ranges and the run AFTER the last one assertable at all.
+  it("carries the cursor from one changed word to the NEXT, and puts the runs BETWEEN and AFTER them back on the row band", () => {
+    const two: ResolvedPatch = { ...patchOf([{ oldStart: 3, rows: [r("remove", "  const total = compute(alpha, beta, gamma);"), r("add", "  const total = compute(delta, beta, omega);")] }]), filePath: "/w/a.ts" };
+    const out = renderDiff(two, 60, "dark");
+    expect(contentOf(out[0]!).map((s) => [s.text, s.bg])).toEqual([
+      ["  const total = compute(", REMOVED()], ["alpha", REMOVED_WORD()], [", beta, ", REMOVED()],
+      ["gamma", REMOVED_WORD()], [");", REMOVED()], [" ".repeat(12), REMOVED()],
+    ]);
+    // …and on the tokenized add side BOTH words still land — the second one is the one an off-by-one drops.
+    expect(contentOf(out[1]!).filter((s) => s.bg === ADDED_WORD()).map((s) => s.text)).toEqual(["delta", "omega"]);
+  });
+});
+
+// ── A word-diff row wraps WHOLE, not part by part (Wave R t12 review: I2) ────────────────────────────
+// Upstream's order is overlay THEN wrap: `ZmH` (L419733) hands `a2p` (L419674) one style/text pair list for
+// the row and `a2p` breaks it at the WIDTH, carrying the pair's style across the split. The shape t12
+// replaced wrapped each diff PART on its own and force-broke at every part boundary, so the break landed on
+// a token boundary instead and a two-row line came out as one row per changed word. Nothing else in this
+// file could see that: every other word-diff case fits on a single row, so restoring the old wrap left all
+// 48 of them green. These two pin the break itself — where it falls, and what survives it.
+describe("renderDiff — the word-diff row wraps at the WIDTH (`a2p` L419674), not at the changed word", () => {
+  it("breaks at the width boundary: the same 29-character line is exactly TWO rows, changed word mid-row", () => {
+    // Width 20, a 2-wide number cell → `lhH`'s `width - gutter - 2` = 16 columns of content. `aaaa bbbb XXXX`
+    // is 14 and `dddd` would take it to 19, so the break is after `cccc`/`XXXX` — with the changed word
+    // sitting INSIDE row 1 rather than starting one. Per-part wrapping breaks before AND after it instead,
+    // shattering each side into three rows.
+    const out = renderDiff(patchOf([{ oldStart: 3, rows: [r("remove", "aaaa bbbb cccc dddd eeee ffff"), r("add", "aaaa bbbb XXXX dddd eeee ffff")] }]), 20);
+    expect(out.map((l) => l.text)).toEqual([
+      " 3 -aaaa bbbb cccc  ",
+      "   -dddd eeee ffff  ",
+      " 3 +aaaa bbbb XXXX  ",
+      "   +dddd eeee ffff  ",
+    ]);
+    expect(out.map((l) => l.segments!.filter((s) => s.bg === ADDED_WORD() || s.bg === REMOVED_WORD()).map((s) => s.text)))
+      .toEqual([["cccc"], [], ["XXXX"], []]);                                            // and the band is on the word, not the row
+  });
+  it("carries the WORD BAND onto the continuation row when the break falls INSIDE a changed word", () => {
+    // 16 changed characters at the head of a 43-character line — over `lhH`'s 14-column content limit at
+    // width 18, so `wrap-ansi`'s hard break cuts the changed word itself, and under `ohH` (32/86 = 0.37) so
+    // the pair really does word-diff. `a2p` carries the pair's style across the split, so the 14 columns on
+    // row 1 AND the 2 that spill onto row 2 are both the changed word: one word, two rows, one band.
+    const out = renderDiff(patchOf([{ oldStart: 3, rows: [r("remove", "mmmmmmmmmmmmmmmm bb cc dd ee ff gg hh ii jj"), r("add", "nnnnnnnnnnnnnnnn bb cc dd ee ff gg hh ii jj")] }]), 18);
+    const added = out.filter((l) => l.text[3] === "+");
+    expect(added.slice(0, 2).map((l) => l.text)).toEqual([" 3 +nnnnnnnnnnnnnn", "   +nn bb cc dd ee"]);
+    expect(added[0]!.segments!.filter((s) => s.bg === ADDED_WORD()).map((s) => s.text)).toEqual(["nnnnnnnnnnnnnn"]);
+    expect(added[1]!.segments!.filter((s) => s.bg === ADDED_WORD()).map((s) => s.text)).toEqual(["nn"]);   // the band survives the split
+    expect(added[1]!.segments!.filter((s) => s.bg === ADDED()).map((s) => s.text)).toContain(" bb cc dd ee");
+  });
 });
 
 // ── The wrap can never lose text (Wave R t11 review: C1 + I2) ────────────────────────────────────────

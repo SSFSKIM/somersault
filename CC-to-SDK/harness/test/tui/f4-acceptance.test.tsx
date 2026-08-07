@@ -23,6 +23,7 @@ import { renderMessage, userEchoLines, type RenderLine } from "../../src/tui/ren
 import { renderMarkdown } from "../../src/tui/markdown.js";
 import { resolvePatch } from "../../src/tui/diffSource.js";
 import { diffHeader, renderDiff } from "../../src/tui/diffRender.js";
+import { DIFF_SCOPES, selectPalette } from "../../src/tui/diffHighlight.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import { projectCompact, projectDetail, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
@@ -187,14 +188,19 @@ const EDIT_FILE_LINES = [
   'import { catalog } from "./data.js";',
   "",
   "export function computeTotalAmount(items) {",
-  "  const subtotal = items.reduce((sum, item) => sum + item.price, 0);",
+  // The trailing comment is load-bearing, not decoration: `comment` is one of the twelve scopes the
+  // 256-colour map `jmH` (L419855) actually carries, and `params` — the token the `(sum` → `(acc` boundary
+  // cuts — is NOT. Renaming the accumulator renames it in its own comment too, which puts a second cut
+  // inside a token whose foreground is non-default in ALL THREE palettes, so the boundary assertion below
+  // bites on a 256-colour terminal (COLORTERM unset, i.e. CI) exactly as it does on a truecolor one.
+  "  const subtotal = items.reduce((sum, item) => sum + item.price, 0); // sum over the cart",
   "  return subtotal;",
   "}",
 ];
 const EDIT_FILE = EDIT_FILE_LINES.join("\n") + "\n";
 const OLD_STRING = EDIT_FILE_LINES[3]!;
 const NEW_STRING = [
-  "  const subtotal = items.reduce((acc, item) => acc + item.price, 0);",
+  "  const subtotal = items.reduce((acc, item) => acc + item.price, 0); // acc over the cart",
   "  const tax = subtotal * 0.2;",
   "  const total = subtotal + tax;",
 ].join("\n");
@@ -249,20 +255,32 @@ describe("F4 acceptance #3 — the Edit ladder, end to end", () => {
 
     // WORD-LEVEL HIGHLIGHTING INSIDE A CHANGED LINE. `shH` (L419906) pairs the 1st remove with the 1st add,
     // and `lhH` (L419944) speckles only the changed words because the changed fraction is under `ohH = 0.4`.
-    // Both `sum`→`acc` substitutions carry the WORD band; the untouched run around them keeps the row band.
-    expect(rows[0]!.segments!.filter((s) => s.bg === wordRemove).map((s) => s.text)).toEqual(["sum", "sum"]);
-    expect(rows[1]!.segments!.filter((s) => s.bg === wordAdd).map((s) => s.text)).toEqual(["acc", "acc"]);
+    // All three `sum`→`acc` substitutions carry the WORD band — the two in the code and the one in the
+    // comment; the untouched run around each keeps the row band.
+    expect(rows[0]!.segments!.filter((s) => s.bg === wordRemove).map((s) => s.text)).toEqual(["sum", "sum", "sum"]);
+    expect(rows[1]!.segments!.filter((s) => s.bg === wordAdd).map((s) => s.text)).toEqual(["acc", "acc", "acc"]);
     expect(rows[0]!.segments!.some((s) => s.bg === removed && s.text.includes("const subtotal"))).toBe(true);
     // …AND THE BAND SITS UNDER THE TOKEN (A9's third clause, `ZmH` L419733 / its literal L419757
     // `{ ...c, background: y ? o : n }`). hljs reads `acc, item` as ONE `params` token and the changed word
     // `acc` ends inside it, so the boundary CUTS the token: two spans, one foreground between them, and only
-    // the background flipping from the word band back to the row band. Colour-identity rather than a named
-    // scope because this row renders under the live `selectPalette()`, whose 256-colour map has no `params`.
+    // the background flipping from the word band back to the row band.
     const addSegments = rows[1]!.segments!, cut = addSegments.findIndex((s) => s.text === "acc");
     expect(addSegments[cut]!.bg).toBe(wordAdd);
     expect(addSegments[cut + 1]!.text).toBe(", item");
     expect(addSegments[cut + 1]!.bg).toBe(added);
     expect(addSegments[cut + 1]!.color).toBe(addSegments[cut]!.color);
+    // The SAME clause where colour-identity is not vacuous. This row renders under the live
+    // `selectPalette()`, which is `ansi256` unless COLORTERM says truecolor — and `jmH` has no `params`, so
+    // the pair above is fg-vs-fg on a 256-colour terminal and an overlay that recoloured at the boundary
+    // would sail through it. The trailing comment is the fix: `comment` IS in `jmH` (`Z3(8)`), so the
+    // `// … acc …` cut carries a NON-default foreground in every palette, across the boundary, both sides.
+    const tail = addSegments.findIndex((s) => s.text === " over the "), inComment = addSegments[tail - 1]!;
+    expect(inComment.text).toBe("acc");
+    expect(inComment.bg).toBe(wordAdd);
+    expect(addSegments[tail]!.bg).toBe(added);                                 // …only the band moves…
+    expect(addSegments[tail]!.color).toBe(inComment.color);                    // …the comment colour does not…
+    expect(inComment.color).not.toBe(fg);                                      // …and it is a real token colour
+    expect(inComment.color).toBe(DIFF_SCOPES[selectPalette()].get("comment"));
     // The two unpaired surplus adds have no partner, so they stay whole-line banded — no word colour at all.
     for (const line of rows.slice(2)) expect(line.segments!.some((s) => s.bg === wordAdd)).toBe(false);
   });
