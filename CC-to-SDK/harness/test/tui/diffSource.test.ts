@@ -187,6 +187,35 @@ describe("resolvePatch — nothing diffable", () => {
   });
 });
 
+// EP-R5 part 2 (Wave R t10). The renderer's language detection (`diffHighlight.detectLanguage`) takes a PATH,
+// and `renderDiff(patch, width)` is handed nothing but the patch — so the path has to ride ON the patch or no
+// diff body can ever be highlighted (acceptance A11: a `Dockerfile` edit highlights as dockerfile). It is
+// populated INSIDE the resolver, not stapled on afterwards by a caller: the memo hands the same object back on
+// every projection, and a `{...patch, filePath}` at the call site would both lose it on a cache hit and mint a
+// fresh object per repaint, defeating `renderDiff`'s own patch-identity memo.
+describe("resolvePatch — the file path rides on the patch", () => {
+  it("carries the input's file_path through the derived rung", () => {
+    const patch = resolvePatch({ input: { file_path: "/x/Dockerfile", old_string: "FROM a", new_string: "FROM b" }, sidecar: undefined, readFile: () => undefined })!;
+    expect(patch.filePath).toBe("/x/Dockerfile");
+  });
+  it("carries the recognized sidecar's OWN filePath through the sidecar rung", () => {
+    const sidecar = { filePath: "/work/Makefile", oldString: "a", newString: "b", structuredPatch: [{ oldStart: 3, oldLines: 1, newStart: 3, newLines: 1, lines: ["-a", "+b"] }] };
+    const patch = resolvePatch({ input: { file_path: "/work/Makefile" }, sidecar, readFile: throwingRead })!;
+    expect(patch.filePath).toBe("/work/Makefile");
+  });
+  it("survives the memo: the SAME patch object comes back on the second projection, path intact", () => {
+    const input = { file_path: "/x/Dockerfile", old_string: "FROM a", new_string: "FROM b" };  // one retained call, two renders
+    const first = resolvePatch({ input, sidecar: undefined, readFile: () => undefined })!;
+    const second = resolvePatch({ input, sidecar: undefined, readFile: () => undefined })!;
+    expect(second).toBe(first);
+    expect(second.filePath).toBe("/x/Dockerfile");
+  });
+  it("leaves the path undefined when the retained call carries none (a pathless flat Edit)", () => {
+    const patch = resolvePatch({ input: { old_string: "alpha", new_string: "ALPHA" }, sidecar: undefined, readFile: () => undefined })!;
+    expect(patch.filePath).toBeUndefined();
+  });
+});
+
 describe("resolvePatch — memoized per event, not per repaint", () => {
   it("resolves ONCE across five projections of the same retained call", () => {
     const readFile = vi.fn(() => "one\ntwo\nalpha\nbeta\ngamma\n");

@@ -112,10 +112,17 @@ const bandOf = (kind: DiffLineRow["kind"], tokens: ThemeTokens): string | undefi
  *  truthy), so a band never inherits ink's default foreground. */
 const banded = (text: string, band: string | undefined, fg: string, extra?: { dim: true }): Segment => ({ text, color: fg, ...(band === undefined ? {} : { bg: band }), ...extra });
 
+// `filePath` from here down is EP-R5's language seam and nothing else yet (Wave R t10). It is `patch.filePath`
+// carried unchanged from `resolvePatch` to the two row renderers, which is where upstream's `i2p` (L419592)
+// highlights a body: `t2p` picks a scope map, `n2p` turns the path into a language. Threaded ahead of the
+// tokenizer rather than with it because the plumbing is what A11 was blocked on — `ResolvedPatch` had no path at
+// all, so no Edit row could ever be detected — and it is deliberately UNREAD until t11 wires `detectLanguage`
+// and `highlightDiffLine` into `plainRows`/`wordDiffRows`. Rows painted today are byte-identical to t9's.
+
 /** Upstream `lhH` (L419944). `null` is its bail — a changed fraction above `ohH`, which falls back to the
  *  whole-line banding in `H2p`. (Its other bail arm is the whole-diff `dim` flag: upstream sets that only for
  *  the condensed styles this clone does not model, so nothing here can be dim and the arm is unreachable.) */
-function wordDiffRows(kind: "add" | "remove", text: string, partner: string, number: number, width: number, g: Gutter, tokens: ThemeTokens): RenderLine[] | null {
+function wordDiffRows(kind: "add" | "remove", text: string, partner: string, number: number, width: number, g: Gutter, tokens: ThemeTokens, filePath: string | undefined): RenderLine[] | null {
   const oldText = kind === "remove" ? text : partner, newText = kind === "remove" ? partner : text;
   const parts = diffWords(oldText, newText, { ignoreCase: false });
   const changed = parts.filter((p) => p.added === true || p.removed === true).reduce((sum, p) => sum + p.value.length, 0);
@@ -149,7 +156,7 @@ function wordDiffRows(kind: "add" | "remove", text: string, partner: string, num
 
 /** Upstream `H2p`'s per-row body (L419996–420001): wrap at `width - gutter - 3`, emit the number cell + marker
  *  as its own span, then the content plus a right fill that runs the band out to the full width. */
-function plainRows(kind: DiffLineRow["kind"], text: string, number: number, width: number, g: Gutter, tokens: ThemeTokens): RenderLine[] {
+function plainRows(kind: DiffLineRow["kind"], text: string, number: number, width: number, g: Gutter, tokens: ThemeTokens, filePath: string | undefined): RenderLine[] {
   const marker = markerOf(kind), band = bandOf(kind, tokens), fg = resolveThemeColor(tokens.text);
   const limit = Math.max(1, width - (g.prefix.length + g.pad) - 1 - 2);
   return wrapRows(text, limit).map((piece, index) => {
@@ -162,17 +169,17 @@ function plainRows(kind: DiffLineRow["kind"], text: string, number: number, widt
   });
 }
 
-function renderHunk(hunk: DiffHunk, width: number, numberingMode: ResolvedPatch["numbering"], tokens: ThemeTokens): RenderLine[] {
+function renderHunk(hunk: DiffHunk, width: number, numberingMode: ResolvedPatch["numbering"], tokens: ThemeTokens, filePath: string | undefined): RenderLine[] {
   const numbers = numbering(hunk.rows, hunk.oldStart ?? 1), partners = pairRuns(hunk.rows);
   const max = numbers.reduce((a, b) => Math.max(a, b), 0);
   const g: Gutter = { pad: Math.max(String(max).length + 1, 0), prefix: numberingMode === "approximate" ? "~" : "" };
   return hunk.rows.flatMap((line, index) => {
     const partner = partners[index];
     if (partner !== undefined && line.kind !== "context") {
-      const worded = wordDiffRows(line.kind, line.text, partner.text, numbers[index]!, width, g, tokens);
+      const worded = wordDiffRows(line.kind, line.text, partner.text, numbers[index]!, width, g, tokens, filePath);
       if (worded !== null) return worded;
     }
-    return plainRows(line.kind, line.text, numbers[index]!, width, g, tokens);
+    return plainRows(line.kind, line.text, numbers[index]!, width, g, tokens, filePath);
   });
 }
 
@@ -194,7 +201,7 @@ export function renderDiff(patch: ResolvedPatch, width: number): RenderLine[] {
   const cached = rendered.get(patch);
   if (cached !== undefined && cached.width === columns && cached.theme === theme) return cached.rows;
   const tokens = themeTokens();
-  const bodies = patch.hunks.map((hunk) => renderHunk(hunk, columns, patch.numbering, tokens)).filter((rows) => rows.length > 0);
+  const bodies = patch.hunks.map((hunk) => renderHunk(hunk, columns, patch.numbering, tokens, patch.filePath)).filter((rows) => rows.length > 0);
   const rows = bodies.flatMap((body, index) => (index === 0 ? body : [{ text: "...", dim: true } as RenderLine, ...body]));
   rendered.set(patch, { width: columns, theme, rows });
   return rows;

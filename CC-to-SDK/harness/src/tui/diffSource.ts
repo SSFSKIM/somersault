@@ -14,7 +14,13 @@ import { editShape, patchLineCounts, writeShape } from "./toolResult.js";
 
 export interface DiffLineRow { kind: "add" | "remove" | "context"; text: string; }
 export interface DiffHunk { oldStart: number | undefined; rows: DiffLineRow[]; }
-export interface ResolvedPatch { hunks: DiffHunk[]; numbering: "absolute" | "approximate"; added: number; removed: number; }
+/** `filePath` is the diff's LANGUAGE seam (EP-R5): `diffRender` highlights a body by extension/filename, and it
+ *  receives nothing but the patch — so the path the edit was made against has to ride here or no body can ever be
+ *  detected. Optional because rung 2 reaches a pathless flat Edit (a synthetic input, a Bash-shaped call), and
+ *  populated INSIDE the resolver rather than by a caller: the memo hands the same object out on every projection,
+ *  so a `{...patch, filePath}` at the call site would drop it on a cache hit AND mint a new object per repaint,
+ *  which is exactly the identity `renderDiff`'s own memo keys on. */
+export interface ResolvedPatch { hunks: DiffHunk[]; numbering: "absolute" | "approximate"; added: number; removed: number; filePath?: string; }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -38,12 +44,15 @@ const rowsFrom = (lines: readonly string[]): DiffLineRow[] =>
  *  Positions are all-or-nothing. A recognized patch whose hunks do not ALL carry a usable `oldStart` is still a
  *  faithful diff, but it is no longer an absolutely-numbered one, and it says so — it does not fall through to the
  *  disk rung, because a recognized patch already describes the edit better than a re-read of a newer file could. */
-function sidecarPatch(sidecar: Record<string, unknown>, counts: { added: number; removed: number }): ResolvedPatch | undefined {
+function sidecarPatch(sidecar: Record<string, unknown>, counts: { added: number; removed: number }, inputPath: string | undefined): ResolvedPatch | undefined {
   const raw = (sidecar.structuredPatch as unknown[]).filter(isRecord);
   if (raw.length === 0) return undefined;                                     // recognized, but describes no change: no diff to show
   const hunks = raw.map((h): DiffHunk => ({ oldStart: lineNumber(h.oldStart), rows: rowsFrom(h.lines as string[]) }));
   const positioned = hunks.every((h) => h.oldStart !== undefined);
-  return { hunks: positioned ? hunks : hunks.map((h) => ({ ...h, oldStart: undefined })), numbering: positioned ? "absolute" : "approximate", ...counts };
+  // The RESULT's own `filePath` leads (both shape guards already proved it a string): it is the path the tool
+  // reports having written, where the input's is only the path it was asked to write. The input is the fallback
+  // for the same reason the counts are taken from the result — one recognized call, one answer.
+  return { hunks: positioned ? hunks : hunks.map((h) => ({ ...h, oldStart: undefined })), numbering: positioned ? "absolute" : "approximate", ...counts, filePath: str(sidecar.filePath) ?? inputPath };
 }
 
 /** The anchor: the 0-based line offset at which the edited span sits in the file on disk, or `undefined` when
@@ -96,7 +105,7 @@ function derivedPatch(oldText: string, newText: string, filePath: string | undef
   const hunks = raw.map((h): DiffHunk => ({ oldStart: anchor === undefined ? undefined : anchor + h.oldStart, rows: rowsFrom(h.lines) }));
   let added = 0, removed = 0;
   for (const row of hunks.flatMap((h) => h.rows)) { if (row.kind === "add") added++; else if (row.kind === "remove") removed++; }
-  return { hunks, numbering: anchor === undefined ? "approximate" : "absolute", added, removed };
+  return { hunks, numbering: anchor === undefined ? "approximate" : "absolute", added, removed, filePath };
 }
 
 const readFromDisk = (path: string): string | undefined => { try { return readFileSync(path, "utf8"); } catch { return undefined; } };
@@ -137,8 +146,9 @@ function resolve(input: Record<string, unknown>, sidecar: unknown, readFile: (p:
   const written = writeShape(sidecar);
   const recognized = editShape(sidecar) ?? (written?.type === "update" ? written : undefined);
   const counts = recognized === undefined ? undefined : patchLineCounts(recognized);
-  if (counts !== undefined && recognized !== undefined) return sidecarPatch(recognized, counts);
+  const inputPath = str(input.file_path);
+  if (counts !== undefined && recognized !== undefined) return sidecarPatch(recognized, counts, inputPath);
   const oldText = str(input.old_string), newText = str(input.new_string);
   if (oldText === undefined || newText === undefined) return undefined;
-  return derivedPatch(oldText, newText, str(input.file_path), readFile);
+  return derivedPatch(oldText, newText, inputPath, readFile);
 }
