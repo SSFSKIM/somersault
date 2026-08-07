@@ -150,6 +150,70 @@ describe("ResumeSafeStdout.lastFrame", () => {
     out.stdout.write("\x1b[2J\x1b[3J\x1b[H" + "scrollback\n".repeat(30) + "frame\n");
     expect(out.lastFrame()).toBeUndefined();
   });
+
+  // Kind 6 — INK'S RESTORE, which is byte-shaped exactly like kind 3 and is its opposite (external whole-branch
+  // review). `writeToStderr` (ink.js:157-171) is log.clear() → stderr.write(data) → log(this.lastOutput), and
+  // `patchConsole` (render.js's default, not disabled by this app) sends every console.error through it. The
+  // middle write goes to the SEPARATE stderr stream, so unlike the writeToStdout burst pinned above NOTHING
+  // visible breaks the latch, and the third write — bare (log.clear() zeroed previousLineCount) and
+  // newline-terminated (log-update.js:12) — reads as <Static> scrollback. It is not: it is the frame the clear
+  // just dropped, painted again. Skipping it leaves lastFrame() undefined and the cursor unparked, and the next
+  // shrink then declines its correction.
+  it("records Ink's writeToStderr restore instead of mistaking it for <Static>, and re-parks on it", () => {
+    const { out } = proxy(80, 24);
+    out.stdout.write(eraseLines(2) + "composer frame\n");            // log(output) — the frame Ink will restore
+    expect(out.lastFrame()).toBe("composer frame\n");
+    out.stdout.write(eraseLines(2));                                 // log.clear() — frame off the screen, latch armed
+    expect(out.lastFrame()).toBeUndefined();
+    expect(out.parkedColumn()).toBe(0);
+    // stderr.write(data) happens HERE and the proxy never sees it — that is the whole trap.
+    out.stdout.write("composer frame\n");                            // log(this.lastOutput) — bare, and IDENTICAL
+    expect(out.lastFrame()).toBe("composer frame\n");
+    expect(out.parkedColumn()).toBe(parkColumn(80));
+  });
+
+  // The sabotage in the other direction, on the same seam: a genuine <Static> flush is still skipped. The
+  // discriminator is the BYTES — committed transcript is not the frame that was just dropped — so a restore
+  // check that fired on "bare write after an erase" would adopt the whole scrollback chunk here.
+  it("still skips a <Static> write that differs from the frame the erase dropped", () => {
+    const { out } = proxy(80, 24);
+    out.stdout.write(eraseLines(2) + "composer frame\n");
+    out.stdout.write(eraseLines(2));                                 // log.clear()
+    out.stdout.write("committed transcript row\n");                  // staticOutput — NOT the dropped frame
+    expect(out.lastFrame()).toBeUndefined();
+    expect(out.parkedColumn()).toBe(0);
+    out.stdout.write("composer frame\n");                            // log(output) — the real frame, recorded
+    expect(out.lastFrame()).toBe("composer frame\n");
+  });
+
+  // …and the same restore reached through repaint(), where TWO erase-only writes arrive back to back: the
+  // suppressed log.clear() never reaches record(), then writeToStdout("") writes the erase, an EMPTY data chunk
+  // and the restore. The second erase-only write must not clear the memory of the frame the first dropped —
+  // it dropped nothing itself, and the frame is still owed back.
+  it("records the restore across a run of erase-only writes (the repaint seam)", () => {
+    const { out } = proxy(80, 24);
+    out.stdout.write(eraseLines(2) + "composer frame\n");
+    out.stdout.write(eraseLines(2));                                 // log.clear()
+    out.stdout.write("");                                            // write("") — a zero-length data chunk
+    out.stdout.write("composer frame\n");                            // log(this.lastOutput)
+    expect(out.lastFrame()).toBe("composer frame\n");
+  });
+
+  // THE MEMORY IS THE TALL BRANCH'S TOO, AND IT HAS TO STAY EMPTY THERE. `\x1b[2J…` drops the recorded frame
+  // without any erase-only write, so a clear→bare pair behind it has no dropped frame to match: the bare write
+  // stays <Static>, `lastFrame()` stays undefined and the count stays armed for the pager close it describes.
+  // (An actual restore cannot coexist with a standing count — a dropped frame implies a recorded frame write,
+  // which zeroes it — so this is the only reachable interaction between the two, and it is "no interaction".)
+  it("keeps no restore memory across the tall-frame branch", () => {
+    const { out } = proxy(80, 24);
+    out.stdout.write(eraseLines(2) + "composer frame\n");
+    out.stdout.write("\x1b[2J\x1b[3J\x1b[H" + "scrollback\n".repeat(30) + "composer frame\n");
+    expect(out.tallWrites()).toBe(1);
+    out.stdout.write(eraseLines(0));                                 // a clear AFTER the tall write drops nothing
+    out.stdout.write("composer frame\n");                            // …so even these exact bytes stay <Static>
+    expect(out.lastFrame()).toBeUndefined();
+    expect(out.tallWrites()).toBe(1);
+  });
 });
 
 describe("physicalRows", () => {

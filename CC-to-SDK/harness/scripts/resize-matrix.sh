@@ -35,9 +35,11 @@
 # fail. Nothing here ever reads `../.env` or prints either variable. The remaining live cell of the wave's
 # matrix (the two-turn cell) is still controller-run and deliberately not here.
 #
-# TEARDOWN (W-R8). Only the sessions this script named are killed, one `kill-session -t <name>` each. NEVER
+# TEARDOWN (W-R8). Only the sessions THIS RUN CREATED are killed, one `kill-session -t <name>` each. NEVER
 # `kill-server`, `kill-session -a`, or any other all-sessions form: the owner keeps long-lived sessions on the
-# same tmux daemon and a Wave R agent already destroyed two of them that way.
+# same tmux daemon and a Wave R agent already destroyed two of them that way. "This run created" is enforced
+# twice over — every session name carries the run's pid, and `kill_cell` kills nothing that is not in
+# `SESSIONS`, which a name joins only after `tmux new-session` has succeeded (see `RUN_ID` below).
 #
 # Usage:  bash scripts/resize-matrix.sh [--no-build]      (or: npm run test:resize-matrix)
 # Exit:   0 = every cell passed (or tmux is absent and the run SKIPPED), 1 = at least one cell failed.
@@ -77,6 +79,16 @@ CARET="❯"                                  # U+276F, the composer prompt
 
 pass_count=0; fail_count=0; failed_cells=""
 SESSIONS=""                                # every session name we created, for teardown
+# …AND THE NAMES ARE PER-RUN, WHICH IS THE OTHER HALF OF THE SAME RULE (external whole-branch review). With a
+# FIXED name (`wr-t5-c1`) two things go wrong at once and they compound: `tmux new-session -d -s wr-t5-c1`
+# FAILS with "duplicate session" if that name is already taken — by a developer's own session, or by a second
+# matrix run — and every caller's failure path then calls `kill_cell`, which killed the name unconditionally.
+# So the failure caused by someone else's session was answered by DESTROYING it: the W-R8 incident class this
+# script's header exists to warn about, reintroduced by the recovery path. The pid suffix makes the collision
+# unreachable (a live run holds its own pid, so no concurrent run can repeat it), and `kill_cell` now refuses
+# any name this run did not successfully register — belt and braces, because only the second of those is a
+# guarantee about what we kill rather than about what we are called.
+RUN_ID="$$"
 cleanup() {
   for s in $SESSIONS; do tmux kill-session -t "$s" 2>/dev/null; done   # BY NAME. never -a, never kill-server
   [ -n "${MATRIX_ROOT:-}" ] && rm -rf "$MATRIX_ROOT"
@@ -251,7 +263,14 @@ resize_to() {                               # resize_to <session> <cols> <rows> 
   [ "$got" = "${x}x${y}" ] || { echo "      FAIL pane is $got, asked for ${x}x${y}"; return 1; }
   settle_frame "$s" "$x" "$label"
 }
-kill_cell() { tmux kill-session -t "$1" 2>/dev/null; SESSIONS=$(echo "$SESSIONS" | sed "s/ $1//"); }
+# ONLY WHAT THIS RUN CREATED. `launch` registers a name AFTER `tmux new-session` succeeds, so a name missing
+# from SESSIONS is either one we never created or one somebody else owns — and every caller reaches here on
+# the failure path, where "somebody else owns it" is exactly the reason for the failure. Killing it there is
+# the W-R8 incident, so it is not done: the name is simply dropped.
+kill_cell() {
+  case " $SESSIONS " in *" $1 "*) tmux kill-session -t "$1" 2>/dev/null ;; esac
+  SESSIONS=$(echo "$SESSIONS" | sed "s/ $1//")
+}
 
 record() {                                  # record <cell-name> <status 0|1>
   if [ "$2" = 0 ]; then pass_count=$((pass_count+1)); echo "  PASS $1"
@@ -262,7 +281,7 @@ record() {                                  # record <cell-name> <status 0|1>
 run_cell() {                                # run_cell <name> <w0>x<h0> [<w>x<h> …]
   local name="$1"; shift
   local first="$1"; shift
-  local s="wr-t5-$name" w0="${first%x*}" h0="${first#*x}" rc=0
+  local s="wr-t5-$name-$RUN_ID" w0="${first%x*}" h0="${first#*x}" rc=0
   echo "  cell $name: $first$(for st in "$@"; do printf ' -> %s' "$st"; done)"
   launch "$s" "$w0" "$h0" || { record "$name" 1; kill_cell "$s"; return; }
   stage_content "$s" || { record "$name" 1; kill_cell "$s"; return; }
@@ -293,7 +312,7 @@ run_cell() {                                # run_cell <name> <w0>x<h0> [<w>x<h>
 # measured: with `frameWriteCorrection` stubbed to `""` a one-shrink a5 stays green. 120→100 warms the
 # verdict, 100→80 is the shrink under test, and the cell now goes red for a stub of EITHER corrector.
 run_a5_cell() {
-  local s="wr-t5-a5" rc=0 cap="$MATRIX_ROOT/cap"
+  local s="wr-t5-a5-$RUN_ID" rc=0 cap="$MATRIX_ROOT/cap"
   echo "  cell a5: launch 120x40 (placeholder painted) -> 100x40 -> shrink 80x24 -> submit -> no stranded placeholder"
   launch "$s" 120 40 || { record "a5" 1; kill_cell "$s"; return; }
   settle_frame "$s" 120 "a5 start 120x40" || rc=1
@@ -410,7 +429,7 @@ tmux_has_session_env() {
 # stream, which is a different acceptance entirely.
 A3_PROMPT='Write eight long paragraphs of flowing prose, roughly 800 words in total, about why redrawing a terminal user interface after a window resize is difficult. No lists, no headings, no code, no tools.'
 run_a3_cell() {
-  local s="wr-t6-a3" rc=0 cap="$MATRIX_ROOT/cap-a3" fwd="" i=0 wide=0
+  local s="wr-t6-a3-$RUN_ID" rc=0 cap="$MATRIX_ROOT/cap-a3" fwd="" i=0 wide=0
   if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then fwd=CLAUDE_CODE_OAUTH_TOKEN          # subscription-billed; preferred
   elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then fwd=ANTHROPIC_API_KEY
   else

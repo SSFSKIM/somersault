@@ -343,12 +343,27 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // proxy now stands the count down on any RECORDED FRAME WRITE, which is precisely the event that removes the
   // dedupe hazard this repaint exists for, so `tallWrites() > 0` here means "the tall chunk is still the last
   // thing that reached the terminal" — current state, which is what this gate always claimed to read.
-  //   ON MOUNT this runs like any other pass, and reads the same fact: nonzero only if the BOOT frame itself took
-  // the branch and nothing has painted since, which is exactly the state the wipe is for (and, measured, leaves
-  // nothing to over-erase — the boot frame's own bytes are all that is on the screen).
+  //   …AND THE CLOSE HAS TO BE A TRANSITION, NOT A STATE (external whole-branch review). `transcriptOpen ===
+  // false` is also true on the FIRST PASS, so the version that read it as a state fired the wipe at MOUNT
+  // whenever the boot frame took the branch — and in a pane short enough that every frame goes tall (50x8 is
+  // the measured one) no recorded frame write ever stands the count down, so the gate is armed for the whole
+  // launch. Nothing there is recoverable BY this repaint: the damage it exists for is the zero-byte pager
+  // close, and no pager has been opened yet. What the mount fire can only do is cost — at best a second copy
+  // of a screen-tall frame appended to scrollback by the forced repaint, and, whenever a `<Static>` flush has
+  // landed in the viewport since the tall write without a recorded frame write behind it (log-update drops the
+  // frame that follows it when the bytes repeat — `log-update.js:13`), the same over-erase of live transcript
+  // rows the t8 review measured on the history-flag version. Both directions of that trade were already
+  // settled above; a fire with nothing to recover is simply the losing side of it with no upside at all.
+  //   So the ref below carries the previous value and the recovery runs on true→false only. This is the wave's
+  // history-vs-state lesson for the third time (spec Surprises 11): the count answers "is the screen in that
+  // state now", and the pager answers "did the tall surface just come DOWN" — that one is an edge, and an edge
+  // cannot be read off a level.
+  const transcriptWasOpen = useRef(false);
   useEffect(() => {
+    const closed = transcriptWasOpen.current && !transcriptOpen;
+    transcriptWasOpen.current = transcriptOpen;
     const output = resumeOutputRef.current;
-    if (transcriptOpen || !(output?.tallWrites?.() ?? 0)) return;
+    if (!closed || !(output?.tallWrites?.() ?? 0)) return;
     if ((resyncViewport ?? (() => clearViewport({ stdout, write })))()) output!.screenResynced?.();
   }, [transcriptOpen]);   // eslint-disable-line react-hooks/exhaustive-deps
   // Ctrl-O opens the pager (the PAGER owns closing it — Transcript's own ctrl+o → transcript:exit, task 7);

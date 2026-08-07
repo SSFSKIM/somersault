@@ -92,6 +92,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   let frame: string | undefined;                 // the last live frame, as painted
   let widthAtPaint = 0;                          // W-R t4b: …and the terminal width it was painted at
   let justErased = false;                        // previous write was erase-only → the next bare write is <Static>
+  let dropped: string | undefined;               // …and the frame that erase threw away, for the restore check below
   let parkedCol = 0;                             // W-R t4: where the cursor sits between frames, 0 if nowhere
   let tall = 0;                                  // W-R t8: tall-frame chunks written since the screen was last in sync
   let corrector: ((info: FrameWriteInfo) => string) | undefined;   // W-R t4b: the resize correction, set by runChatClient
@@ -173,16 +174,33 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   // terminal); the exit unpark erases whatever row the cursor is genuinely on; and a following escapes-only write
   // would re-park, padding a row Ink is about to repaint from. Zero means "not parked", which is the truth after
   // either write.
+  // AND ONE WRITE THAT LOOKS EXACTLY LIKE <Static> AND IS NOT: INK'S OWN RESTORE (external whole-branch review).
+  // `writeToStderr` (`ink.js:157`-`:171`) is `log.clear()` → `stderr.write(data)` → `log(this.lastOutput)`, and
+  // `patchConsole` (render.js's default, which this app does not turn off) routes every `console.error` through
+  // it. Only the first and third of those touch stdout: the middle write goes to the SEPARATE stderr stream and
+  // the proxy never sees it — which is the whole difference from `writeToStdout`, whose visible middle write is
+  // what drops the latch there (see the `justErased` note below). So the restore arrives with the latch still up,
+  // with NO erase prefix (`log.clear()` just set `previousLineCount = 0`, and `eraseLines(0)` is the empty string)
+  // and newline-terminated (`log-update.js:12` appends it) — byte-shaped exactly like a <Static> flush, and skipped
+  // as one. The frame the `log.clear()` dropped then never comes back: `lastFrame()` stays undefined, the cursor
+  // stays unparked, and the next shrink skips its correction (the under-erase direction — stale rows, no loss).
+  //   THE ONE THING THAT SEPARATES THEM IS THE BYTES. A restore re-writes `Instance.lastOutput`, which is the same
+  // string the dropped frame was recorded from, so it is byte-identical to it; a <Static> chunk is committed
+  // transcript and is not. `dropped` remembers exactly one frame — the one an erase-only write threw away — and any
+  // write that is not the restore clears it, so <Static> classification is otherwise untouched. A run of erase-only
+  // writes does NOT clear it (`frame` is already undefined by the second, so there is nothing to overwrite it with):
+  // that run is Ink's own `repaint()` seam, where the suppressed `log.clear()` is followed by a second erase-only
+  // write before the restore, and the frame it dropped is the one still owed back.
   const record = (chunk: unknown): boolean => {
     if (typeof chunk !== "string") return false;
     if (chunk.startsWith("\x1b[2J")) {
-      justErased = false; parkedCol = 0; frame = undefined; widthAtPaint = 0; tall += 1;
+      justErased = false; dropped = undefined; parkedCol = 0; frame = undefined; widthAtPaint = 0; tall += 1;
       if (chunk.startsWith(CLEAR_SCROLLBACK_HEAD)) rewritten = "\x1b[2J" + chunk.slice(CLEAR_SCROLLBACK_HEAD.length);
       return false;
     }
     const prefix = chunk.match(INK_ERASE_PREFIX)?.[0] ?? "";
     const body = chunk.slice(prefix.length);
-    if (body === "") { justErased = true; frame = undefined; parkedCol = 0; return false; }
+    if (body === "") { justErased = true; if (frame !== undefined) dropped = frame; frame = undefined; parkedCol = 0; return false; }
     // Ink's log() writes `str + "\n"` and its <Static> chunk ends the same way, so a body that does NOT end in a
     // newline is nobody's frame — it is another consumer of this same stdout (W-R t4: the keymap's DECSET writes,
     // suspend's cursor show/hide). Recording those used to clobber `lastFrame()` with a bare escape sequence, and
@@ -193,8 +211,13 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
     // own `writeToStdout` (`ink.js:140`-`:155`) is `log.clear()` → `write(data)` → `log(this.lastOutput)`.
     // Leaving the latch up there made that forced frame read as <Static> scrollback: not recorded, and the
     // cursor left unparked until the next keystroke, which is exactly when the reflow oracle needs it most.
-    if (!body.endsWith("\n")) { justErased = false; return false; }
-    if (prefix === "" && justErased) { justErased = false; return false; }
+    if (!body.endsWith("\n")) { justErased = false; dropped = undefined; return false; }
+    // …unless it is the restore, in which case those exact bytes ARE back on the screen and the record has to say
+    // so: log-update wrote it, so `previousOutput`/`previousLineCount` describe the pane again (`tall = 0` below is
+    // the same fact a frame write asserts), and the park has to go back on the frame it was taken off.
+    const restore = prefix === "" && justErased && dropped !== undefined && body === dropped;
+    if (prefix === "" && justErased && !restore) { justErased = false; dropped = undefined; return false; }
+    dropped = undefined;
     // W-R t4b: THE RESIZE CORRECTION IS APPLIED HERE, BECAUSE THIS IS WHERE THE RESIDUE IS CREATED. Ink's prefix
     // erases the previous frame's LOGICAL line count; if that frame has since re-wrapped taller, the rows it no
     // longer covers stay on screen and this body paints below them. Everything the correction needs is exact at

@@ -164,6 +164,32 @@ describe("closing a surface that took Ink's tall-frame branch resets the viewpor
     r.unmount();
   });
 
+  // THE MOUNT PASS, which the external whole-branch review caught firing on a level rather than an edge. The
+  // effect's dependency is `transcriptOpen`, so its FIRST run is the mount — where `transcriptOpen === false` is
+  // true for the trivial reason that nothing has been opened. A client that launches into a pane short enough
+  // that its boot frame takes ink.js:118 (50x8 is the measured one) therefore mounted with the gate already
+  // armed, and in that pane no ordinary frame write ever stands the count back down. There is nothing for the
+  // repaint to recover — the damage it exists for is the zero-byte pager CLOSE — so every one of its costs is
+  // paid for nothing. `tall` is raised BEFORE render here, which is the resumed-short-pane ordering: the proxy
+  // counts the boot chunk during the commit, the passive effect reads it straight after.
+  it("never fires on mount, however the count stands, until a pager has actually been open", async () => {
+    const proxy = fakeProxy();
+    proxy.state.tall = 1;                                        // the boot frame itself took the tall branch
+    const resync = vi.fn(() => true);
+    const r = renderWithKeymap(<ChatApp makeSession={() => fakeRemote() as unknown as ChatSession} client={{ kind: "loopback" }}
+      cwd={process.cwd()} resumeOutput={proxy.output} resyncViewport={resync} />);
+    await waitFor(() => frame(r.lastFrame).includes("❯ "));
+    r.stdin.write("x"); await tick(); await tick();              // …and it stays quiet across ordinary re-renders
+    expect(resync).not.toHaveBeenCalled();
+    expect(proxy.state.tall).toBe(1);                            // nothing was acknowledged, because nothing ran
+    r.stdin.write("\x0f");                                       // and the genuine cycle still works from there
+    await waitFor(() => frame(r.lastFrame).includes("Transcript"));
+    r.stdin.write("\x0f");
+    await waitFor(() => !frame(r.lastFrame).includes("Transcript"));
+    expect(resync).toHaveBeenCalledTimes(1);
+    r.unmount();
+  });
+
   // A caller that could not write (no tty — `clearViewport` returns false there) has not resynchronized anything,
   // so the count must stand rather than be cleared on its behalf.
   it("leaves the count standing when the reset declines to write", async () => {
