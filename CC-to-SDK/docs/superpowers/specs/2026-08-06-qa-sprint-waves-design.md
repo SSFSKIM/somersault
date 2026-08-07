@@ -413,10 +413,19 @@ matches upstream per theme; a `Dockerfile` edit is detected as dockerfile.
 1. **Context:** two agents independently: post-rewind replay shows turns the model provably no longer has
    (both probed the model; `/export` writes the trimmed file). The F6 live-fix poll accepts the OLD
    session file — non-empty ≠ correct.
-2. **Decisions:** `[DECIDED-AUTO]` the rebuild must key on *content correctness*, not file existence —
-   e.g. verify the replayed tail matches the rewind anchor (the trimmed file's last uuid ≤ anchor), or
-   read via a host-supplied post-rewind snapshot instead of racing the disk.
-3. **Current state:** `[BUG]` in `useChat.rebuildAfterRewind`'s poll acceptance.
+2. **Decisions:** ~~`[DECIDED-AUTO]` the rebuild must key on *content correctness* … verify the replayed
+   tail matches the rewind anchor~~ **RETRACTED 2026-08-07 by live measurement (§12 item 20).** The
+   persisted session file is **append-only and never truncated** (19 → 20 → 24 rows across a rewind and a
+   follow-up turn), so its tail never becomes the anchor and a correctness-gated poll can only ever
+   exhaust its window. **`[DECIDED]` the transcript is a TREE, and the replay must walk it:** rebuild the
+   branch by following `parentUuid` from the newest leaf back to the root. Slicing the flat rows at
+   `prevUuid` is rejected too — it holds for one rewind, but two rewinds leave sibling branches interleaved
+   in file order, which only the parent chain disambiguates.
+3. **Current state:** `[BUG]`, but **not** where it was filed. The rewind is *correct at the data layer* —
+   the post-rewind user row's `parentUuid` points at the assistant row of the turn before the anchor, i.e.
+   the fork lands exactly right. The defect is entirely in the replay: `rebuildAfterRewind`
+   (`useChat.ts:1288-1303`) hands `getSessionMessages`' flat row list to `replayDocument`, and
+   **`parentUuid` appears nowhere in `src/`**. The poll's non-empty acceptance is a symptom, not the cause.
 4. **Work items:** (modify) rebuild acceptance criterion; (new) regression: replay row count equals the
    trimmed transcript's.
 5. **Acceptance:** the exact ONE/TWO/THREE repro from `qa5-05`: after rewinding to ONE, the replayed
@@ -893,6 +902,39 @@ surface under test. Probes needing a clean session must set `settingSources: []`
     *ccx cannot void the render stack's caches and force a full, correctly-sized repaint* — but the spec's
     stated rationale for it was false (there is no good pager path to generalize) and its dependency edge
     was backwards. Ship EP-R1 as "erase on resize"; EP-R2 is a separate fix for a separate cache.
+
+20. **EP-S1's defect is real, but the session transcript is a TREE and every proposed fix so far assumed a
+    list.** Controller-measured live (keyed, isolated HOME, 2026-08-07). The rewind executes *correctly at
+    the data layer*: after restoring to the point before `TWO`, the next user row's `parentUuid` points at
+    the assistant row of `ONE` (`parent=2b996d94`), i.e. the conversation forked exactly where it should.
+    What is wrong is only the **replay**: `rebuildAfterRewind` calls `getSessionMessages(id)` and hands the
+    flat row list to `replayDocument` (`useChat.ts:1288-1303`), so all three turns render above a
+    `⏪ rewound here · live` marker. **`parentUuid` appears nowhere in `src/`** — nothing walks the branch.
+    **The persisted file is append-only and is NEVER truncated:** measured 19 rows before the rewind → 20
+    immediately after it settles → 24 after one follow-up turn, same file throughout. That kills two fixes:
+    the spec's `[DECIDED-AUTO]` ("poll until the file's tail matches the rewind anchor") can never succeed,
+    because the tail never becomes the anchor; and the grounding worker's cheaper alternative (slice the
+    rows at `prevUuid`) is still list-thinking — it holds for one rewind, but two rewinds leave sibling
+    branches interleaved in file order, which only the parent chain disambiguates. **The fix is to replay
+    the branch: walk `parentUuid` from the newest leaf back to the root.** Rewriting EP-S1 accordingly.
+    **Second finding, unfiled by anyone: ccx cannot rewind to its own first message.** That anchor has no
+    `prevUuid`, `defaultRestoreOption` therefore computes `conversation: false`, and the confirm panel
+    renders with **no restore option at all** — a single row reading `1. Never mind` under the lines
+    `The conversation will be unchanged.` / `The code will be unchanged.` Frame kept at
+    `waveS-04-first-anchor-unrestorable.txt`. It belongs to EP-S3 (the confirm panel's option set).
+    **Instrument lesson, and it is the sharpest of the sprint — FIVE bugs in one 180-line repro script,
+    every one of which produced a confident wrong answer rather than an error.** (a) The turn-wait needle
+    matched the prompt's own echo, so the script submitted `THREE` while `TWO` was still in flight.
+    (b) The picker needle `ewind` matched the *footer's* permanent `Esc rewind · ? help`, so `waitfor`
+    returned before the dialog existed. (c) Keys sent during the dialog's open transition are swallowed, so
+    blind `Up Up` left the cursor on `(current)`, whose Enter is a no-op that looks like a successful
+    rewind. (d) The transcript renders every submitted prompt with the **same `❯` glyph** the picker uses
+    for its cursor, so a `❯ <label>` needle matched scrollback and reported "cursor on ONE after 0 Ups"
+    while it was still on `(current)` — the needle must carry the dialog's `│ ` border. (e) The rewind
+    pre-fills the composer, so a later `type_line` concatenated onto it (`Reply with exactly: TWO/export …`)
+    and the failed `/export` looked exactly like `qa5-03`'s session-handle defect. **Every ccx TUI repro
+    must assert on dialog-scoped needles and verify state after each keystroke**; a run that "reproduces"
+    on the first try deserves the same suspicion as one that fails.
 
 ## §13 Tracking map
 
