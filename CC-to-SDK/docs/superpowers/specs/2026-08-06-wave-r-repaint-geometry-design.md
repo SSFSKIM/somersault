@@ -619,6 +619,13 @@ changed this document:
     history-limit 2000, a 500-line transcript plus four tall renders evicts every real line). The
     `fullStaticOutput` replay also resurrects `/clear`ed transcript (SECRETTRANSCRIPT ×2) — load-bearing,
     unfixable at the proxy (only Ink's clear path could reset it), NAMED RESIDUAL of the wave.
+13. **A shrink on a short pane can strand one stale rule row *above* the viewport top, where no erase
+    can reach it** (Task 13 verification, isolated with a pager-free control — deterministic on a
+    15-row pane, absent on a 40-row one). SP-R0's own measurement explains it: cursor-up saturates at
+    the top margin, so a row that lands above the viewport is beyond every correction; a later height
+    increase merely reveals what was already there. No content loss, invisible until the pane grows,
+    same under-erase family as Surprise 9 — the wave's fifth named residual, not a gate failure (A1 as
+    worded holds: the viewport is clean at the shrink itself).
 
 ## Outcomes & Retrospective
 
