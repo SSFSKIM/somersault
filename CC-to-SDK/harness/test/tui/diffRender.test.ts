@@ -250,6 +250,46 @@ describe("renderDiff — syntax highlighting (`i2p` L419592, selected at L419813
   });
 });
 
+// ── EP-R5 (Wave R Task 12): on a word-diff row the BAND GOES UNDER THE TOKEN ─────────────────────────
+// Upstream picks the row's spans at L419813 — tokens for `+`/` `, one flat pair for `-` — and only THEN
+// runs `ZmH` (L419733) over them, whose literal (L419757) is
+//     `l.push([{ ...c, background: y ? o : n }, A])`
+// the token's style spread WHOLE, with the background alone chosen by word-diff membership (`o` = the word
+// band, `n` = the row band). So a syntactic token that straddles a word boundary is cut in two and both
+// halves keep the token's foreground; only the background flips. Until t12 this arm split by band FIRST and
+// painted each band span the row foreground, which threw the token away.
+describe("renderDiff — a word-diff row puts the band UNDER the token (`ZmH` L419733, literal L419757)", () => {
+  // 10 changed characters over 52 — comfortably under `ohH = 0.4`, so the pair really does word-diff.
+  const straddle = (): ResolvedPatch => ({ ...patchOf([{ oldStart: 3, rows: [r("remove", 'const msg = "hello world";'), r("add", 'const msg = "hello there";')] }]), filePath: "/w/a.ts" });
+  // A9's third clause, verbatim: "a word-diff boundary that changes only the background colour while the
+  // token's foreground stays constant". The string literal `"hello there"` is ONE hljs token spanning the
+  // changed word, so the boundary falls INSIDE it — the shape band-split-first cannot represent.
+  it("keeps ONE foreground across a word-diff boundary and flips ONLY the background", () => {
+    const content = contentOf(renderDiff(straddle(), 60, "dark")[1]!);
+    const at = content.findIndex((s) => s.text === '"hello ');
+    const inString = content.slice(at, at + 3);
+    expect(inString.map((s) => s.text)).toEqual(['"hello ', "there", '"']);             // one token, cut by the boundary
+    expect(new Set(inString.map((s) => s.color))).toEqual(new Set([scope("dark", "string")]));
+    expect(inString.map((s) => s.bg)).toEqual([ADDED(), ADDED_WORD(), ADDED()]);        // …only the band moves
+  });
+  it("tokenizes the REST of the word-diff add row too, and still reads as the row at full width", () => {
+    const line = renderDiff(straddle(), 60, "dark")[1]!;
+    expect(contentOf(line).find((s) => s.text === "const")!.color).toBe(scope("dark", "_storage"));
+    expect(line.text).toBe(' 3 +const msg = "hello there";'.padEnd(60));
+    expect(line.segments![0]).toEqual({ text: " 3 +", color: TEXT(), bg: ADDED() });
+    expect(line.segments![line.segments!.length - 1]).toEqual({ text: " ".repeat(30), color: TEXT(), bg: ADDED() });
+  });
+  // L419813's `-` arm is picked BEFORE `ZmH` and knows nothing about the pairing, so the remove side of a
+  // word-diff PAIR is flat for exactly the reason a plain removed row is: `E = y === "-" ? [[cWo(o), _]]`.
+  // `ZmH` then cuts that one flat pair at the word boundaries — many spans, one foreground, two backgrounds.
+  it("leaves the REMOVE side of the pair FLAT — cut by the boundary, never tokenized", () => {
+    const line = renderDiff(straddle(), 60, "dark")[0]!;
+    expect(contentOf(line).every((s) => s.color === TEXT())).toBe(true);                // no token colour anywhere
+    expect(line.text).toBe(' 3 -const msg = "hello world";'.padEnd(60));
+    expect(contentOf(line).filter((s) => s.bg === REMOVED_WORD()).map((s) => s.text)).toEqual(["world"]);
+  });
+});
+
 // ── The wrap can never lose text (Wave R t11 review: C1 + I2) ────────────────────────────────────────
 // `wrapSegments` re-slices `wrap-ansi`'s pieces back out of the joined source, which is only sound while a
 // piece is a SUBSTRING of that source — and `wrap-ansi` breaks that in two different ways:

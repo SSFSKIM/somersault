@@ -10,6 +10,8 @@
 //   `lhH`  L419947–419986 — the word diff and its `ohH = 0.4` bail (L420030)
 //   `i2p`  L419592        — the SYNTAX TOKENS inside a row (EP-R5, Wave R t11), selected per row at L419813:
 //                           `y === "-" ? [[cWo(o), _]] : i2p(s, _, o)` — removed rows stay one flat pair
+//   `ZmH`  L419733        — the word-diff BACKGROUND overlaid on those tokens (EP-R5, Wave R t12), literal
+//                           at L419757: `{ ...c, background: y ? o : n }` — band under token, both sides
 //
 // THE CAP IS GONE. F1's `toolDiffLines` capped a body at 24 rows and appended `… N more lines`; upstream caps
 // nothing — a diff renders whole, and the only elision it has are the three early returns in `fbn` (previewHint,
@@ -172,13 +174,48 @@ const bandOf = (kind: DiffLineRow["kind"], tokens: ThemeTokens): string | undefi
 const banded = (text: string, band: string | undefined, fg: string, extra?: { dim: true }): Segment => ({ text, color: fg, ...(band === undefined ? {} : { bg: band }), ...extra });
 
 // `lang`/`palette` from here down are EP-R5's highlighting seam: `patch.filePath` resolved ONCE per body by
-// `detectLanguage` (upstream's `n2p`, L419530) and the scope map `t2p` (L419465) picks. They reach `plainRows`
-// only — the word-diff arm still splits by band before it colours, and inverting that is Task 12's whole job.
+// `detectLanguage` (upstream's `n2p`, L419530) and the scope map `t2p` (L419465) picks. BOTH row arms read
+// them: L419813 chooses a row's spans — tokens for `+`/` `, one flat pair for `-` — BEFORE `ZmH` (L419733)
+// ever sees the word ranges, so the word diff is downstream of the tokenizer on both sides of a pair.
+
+/** Upstream `ZmH` (L419733), the composition Task 12 exists to get right: the word diff owns the BACKGROUND
+ *  ONLY. Its literal (L419757) is `l.push([{ ...c, background: y ? o : n }, A])` — the token's own style `c`
+ *  spread whole, with `background` alone chosen by whether this slice sits inside a changed range (`o`, the
+ *  word band) or outside it (`n`, the row band). So a syntactic token that straddles a word boundary is CUT
+ *  and both halves keep the token's foreground; the band-split-first shape this replaces could only paint
+ *  whole band spans one flat colour, which threw the token away at every boundary.
+ *
+ *  `ranges` are half-open `[start, end)` character offsets into the joined segment text, sorted and disjoint
+ *  — which is what lets the walk carry `i` forward across segments exactly as `ZmH` does. A segment that
+ *  reaches past the last range, or a row with no ranges at all, falls out through the trailing push with the
+ *  ordinary band, so the row text is a total function of the input segments no matter what the ranges say. */
+function overlayWordBands(segments: readonly Segment[], ranges: readonly { start: number; end: number }[], band: string | undefined, wordBand: string, fg: string): Segment[] {
+  const out: Segment[] = [];
+  let at = 0, i = 0;
+  for (const segment of segments) {
+    const stop = at + segment.text.length;
+    let rest = segment.text, cursor = at;
+    while (i < ranges.length && ranges[i]!.end <= cursor) i++;
+    while (rest.length > 0 && i < ranges.length) {
+      const range = ranges[i]!, inside = cursor >= range.start && cursor < range.end;
+      const upto = inside ? Math.min(range.end, stop) : (range.start > cursor && range.start < stop ? range.start : stop);
+      out.push(banded(rest.slice(0, upto - cursor), inside ? wordBand : band, segment.color ?? fg));
+      rest = rest.slice(upto - cursor); cursor = upto;
+      if (cursor >= range.end) i++;
+    }
+    if (rest.length > 0) out.push(banded(rest, band, segment.color ?? fg));
+    at = stop;
+  }
+  return out;
+}
 
 /** Upstream `lhH` (L419944). `null` is its bail — a changed fraction above `ohH`, which falls back to the
  *  whole-line banding in `H2p`. (Its other bail arm is the whole-diff `dim` flag: upstream sets that only for
- *  the condensed styles this clone does not model, so nothing here can be dim and the arm is unreachable.) */
-function wordDiffRows(kind: "add" | "remove", text: string, partner: string, number: number, width: number, g: Gutter, tokens: ThemeTokens): RenderLine[] | null {
+ *  the condensed styles this clone does not model, so nothing here can be dim and the arm is unreachable.)
+ *  The row is built in upstream's order — tokenize (L419813), overlay the word bands (`ZmH`), THEN wrap
+ *  (`a2p`) — so the changed-word ranges are offsets into the row's own text and the wrap is the same
+ *  segment-aware one `plainRows` uses, NFC safety net and all. */
+function wordDiffRows(kind: "add" | "remove", text: string, partner: string, number: number, width: number, g: Gutter, tokens: ThemeTokens, lang: string | undefined, palette: DiffPalette): RenderLine[] | null {
   const oldText = kind === "remove" ? text : partner, newText = kind === "remove" ? partner : text;
   const parts = diffWords(oldText, newText, { ignoreCase: false });
   const changed = parts.filter((p) => p.added === true || p.removed === true).reduce((sum, p) => sum + p.value.length, 0);
@@ -187,28 +224,31 @@ function wordDiffRows(kind: "add" | "remove", text: string, partner: string, num
   const wordBand = resolveThemeColor(kind === "add" ? tokens.diffAddedWord : tokens.diffRemovedWord);
   // `_ = y.length` = 1, so this is `width - gutter - 2` — ONE column wider than the plain path below.
   const limit = Math.max(1, width - (g.prefix.length + g.pad) - 1 - marker.length);
-  const groups: { content: Segment[]; contentWidth: number }[] = [];
-  let current: Segment[] = [], used = 0;
+  // Upstream's `YmH` (L419652) shape: walk the parts that belong to THIS row — an `added` part belongs only
+  // to the add row and a `removed` part only to the remove row, a common part to both — and record where the
+  // own ones land. Offsets, not spans: the row's text comes from `text` itself, so a part list that does not
+  // rejoin to it can misplace a band but can never change a character.
+  const ranges: { start: number; end: number }[] = [];
+  let offset = 0;
   for (const part of parts) {
-    // An `added` part belongs only to the add row and a `removed` part only to the remove row; a common part
-    // belongs to both and rides the ordinary band (upstream nests it inside the row's background `<Text>`,
-    // which our flat segment list has to spell out).
     const own = kind === "add" ? part.added === true : part.removed === true;
     if (!own && (kind === "add" ? part.removed === true : part.added === true)) continue;
-    for (const [index, piece] of wrapRows(part.value, limit).entries()) {
-      if (piece === "") continue;
-      if ((index > 0 || used + stringWidth(piece) > limit) && current.length > 0) { groups.push({ content: current, contentWidth: used }); current = []; used = 0; }
-      current.push(banded(piece, own ? wordBand : band, fg));
-      used += stringWidth(piece);
-    }
+    if (own) ranges.push({ start: offset, end: offset + part.value.length });
+    offset += part.value.length;
   }
-  if (current.length > 0) groups.push({ content: current, contentWidth: used });
-  return groups.map(({ content, contentWidth }, index) => {
+  // L419813 verbatim, and it is picked before `ZmH` — so the REMOVE side of a word-diff PAIR is flat for
+  // exactly the reason a plain removed row is, and `ZmH` then cuts that one flat pair at the boundaries.
+  const content = kind === "remove" ? [{ text }] : highlightDiffLine(text, lang, palette);
+  return wrapSegments(overlayWordBands(content, ranges, band, wordBand, fg), limit).map((pieces, index) => {
     const cell = numberCell(g, index === 0 ? number : undefined);
-    const fill = Math.max(0, width - (cell.length + marker.length + contentWidth));
+    const used = pieces.reduce((sum, s) => sum + stringWidth(s.text), 0);
+    const fill = Math.max(0, width - (cell.length + marker.length + used));
+    // `s.bg ?? band` rather than `band`: an overlaid span already carries the word band where it earned one,
+    // and `wrapSegments`' un-locatable-piece fallback emits an unstyled span that has to be re-banded here.
     // Omitted at zero rather than pushed empty, matching `plainRows`: a zero-width span paints nothing and
     // only shows up as noise in an exact-segment assertion.
-    return row(banded(cell + marker, band, fg), ...content, ...(fill === 0 ? [] : [banded(" ".repeat(fill), band, fg)]));
+    return row(banded(cell + marker, band, fg), ...pieces.map((s) => banded(s.text, s.bg ?? band, s.color ?? fg)),
+      ...(fill === 0 ? [] : [banded(" ".repeat(fill), band, fg)]));
   });
 }
 
@@ -247,7 +287,7 @@ function renderHunk(hunk: DiffHunk, width: number, numberingMode: ResolvedPatch[
   return hunk.rows.flatMap((line, index) => {
     const partner = partners[index];
     if (partner !== undefined && line.kind !== "context") {
-      const worded = wordDiffRows(line.kind, line.text, partner.text, numbers[index]!, width, g, tokens);
+      const worded = wordDiffRows(line.kind, line.text, partner.text, numbers[index]!, width, g, tokens, lang, palette);
       if (worded !== null) return worded;
     }
     return plainRows(line.kind, line.text, numbers[index]!, width, g, tokens, lang, palette);

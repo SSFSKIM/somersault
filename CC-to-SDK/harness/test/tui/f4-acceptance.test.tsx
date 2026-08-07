@@ -237,13 +237,13 @@ describe("F4 acceptance #3 — the Edit ladder, end to end", () => {
     expect(rows.every((l) => l.text.length === DIFF_WIDTH)).toBe(true);        // the band runs to the full budget
     // THE FORCED FOREGROUND is now the FALLBACK, not the only value (Wave R t11 / A9): every span still gets
     // it where nothing else claims one — the number cell, the right fill, and any token hljs left unscoped —
-    // but an added or context line is tokenized, so `const` on the two unpaired adds comes out in the active
-    // syntax palette. The removed row is the one that must stay entirely flat (`-` arm of L419813), and the
-    // paired add row is still band-split rather than tokenized until t12 inverts that arm.
+    // but an added or context line is tokenized, so `const` comes out in the active syntax palette. The
+    // removed row is the one that must stay entirely flat (`-` arm of L419813, picked before `ZmH` ever sees
+    // the word ranges, so the remove SIDE OF A PAIR is flat too). Since t12 the paired ADD row is tokenized
+    // like any other add row — the word diff is overlaid on those tokens, not split ahead of them.
     expect(rows.every((l) => l.segments![0]!.color === fg)).toBe(true);        // the number cell, always
     expect(rows[0]!.segments!.every((s) => s.color === fg)).toBe(true);        // the removed row, entirely
-    expect(rows[1]!.segments!.every((s) => s.color === fg)).toBe(true);        // the word-diff add row, entirely — until t12 tokenizes it
-    for (const line of rows.slice(2)) expect(line.segments!.some((s) => s.color !== fg)).toBe(true);
+    for (const line of rows.slice(1)) expect(line.segments!.some((s) => s.color !== fg)).toBe(true);
     expect(rows[0]!.segments!.every((s) => s.bg === removed || s.bg === wordRemove)).toBe(true);
     for (const line of rows.slice(1)) expect(line.segments!.every((s) => s.bg === added || s.bg === wordAdd)).toBe(true);
 
@@ -253,6 +253,16 @@ describe("F4 acceptance #3 — the Edit ladder, end to end", () => {
     expect(rows[0]!.segments!.filter((s) => s.bg === wordRemove).map((s) => s.text)).toEqual(["sum", "sum"]);
     expect(rows[1]!.segments!.filter((s) => s.bg === wordAdd).map((s) => s.text)).toEqual(["acc", "acc"]);
     expect(rows[0]!.segments!.some((s) => s.bg === removed && s.text.includes("const subtotal"))).toBe(true);
+    // …AND THE BAND SITS UNDER THE TOKEN (A9's third clause, `ZmH` L419733 / its literal L419757
+    // `{ ...c, background: y ? o : n }`). hljs reads `acc, item` as ONE `params` token and the changed word
+    // `acc` ends inside it, so the boundary CUTS the token: two spans, one foreground between them, and only
+    // the background flipping from the word band back to the row band. Colour-identity rather than a named
+    // scope because this row renders under the live `selectPalette()`, whose 256-colour map has no `params`.
+    const addSegments = rows[1]!.segments!, cut = addSegments.findIndex((s) => s.text === "acc");
+    expect(addSegments[cut]!.bg).toBe(wordAdd);
+    expect(addSegments[cut + 1]!.text).toBe(", item");
+    expect(addSegments[cut + 1]!.bg).toBe(added);
+    expect(addSegments[cut + 1]!.color).toBe(addSegments[cut]!.color);
     // The two unpaired surplus adds have no partner, so they stay whole-line banded — no word colour at all.
     for (const line of rows.slice(2)) expect(line.segments!.some((s) => s.bg === wordAdd)).toBe(false);
   });
