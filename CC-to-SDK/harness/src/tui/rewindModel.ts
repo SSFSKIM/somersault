@@ -57,10 +57,10 @@ export const REWIND_MIN_ROWS = 2;
  *  below against our own tree, and nothing but arithmetic accident makes the totals agree.
  *
  *  THE DIALOG DOES NOT OWN THE PANE. `rows` here is the WHOLE terminal height, and `ChatApp` draws
- *  `ChatStatusBar` one line below the picker, unconditionally (ChatApp.tsx:606). A budget counted from
- *  `RewindFrame` alone — t4's nine — therefore composes into a frame that REACHES the pane; measured on the
- *  real `ChatApp`, at two of every three heights at the bottom of the list and at every height once the
- *  checking row is up.
+ *  `ChatStatusBar` one line below the picker, unconditionally (`<ChatStatusBar>`, the last row of ChatApp's
+ *  tree). A budget counted from `RewindFrame` alone — t4's nine — therefore composes into a frame that
+ *  REACHES the pane; measured on the real `ChatApp`, at two of every three heights at the bottom of the list
+ *  and at every height once the checking row is up.
  *
  *  AND REACHING THE PANE IS NOT ONE CLIPPED LINE. Ink 5.2.1 (`ink.js:121`) branches on
  *  `outputHeight >= this.options.stdout.rows` and writes `clearTerminal + fullStaticOutput + output`: a
@@ -77,7 +77,13 @@ export const REWIND_MIN_ROWS = 2;
  *       7    `↓ N more below`
  *       8    the footer box's `marginTop={1}` blank
  *       9    the footer itself
- *   · +1 — `ChatStatusBar`, the row the dialog is always composed above.
+ *   · +1 — `ChatStatusBar`. THIS IS NOT AN ENUMERATION OF WHAT SHARES THE PANE, and an earlier wording that
+ *     read like one is how the next round's finding got in: the status bar is the only sibling the budget
+ *     models, because it is the only one that is UNCONDITIONAL. Everything else `ChatApp` can draw beside
+ *     this dialog — the task panel, the turn spinner or retry row, the queue echo, the transcript's
+ *     pending/streaming region, the two armed hints — is handled by `ChatApp`'s `paneOwned` gate, which
+ *     unmounts all of it while a pane-owning surface is up, and none of it is counted here. A budget cannot
+ *     model them anyway: the task panel alone is seven rows against a total slack, below, of one.
  *   · +1 — the `>=` above: the pane must end up STRICTLY taller than the frame, not equal to it. This is the
  *     only genuine headroom in the budget; the status-bar row never was any (an earlier comment counted it
  *     as slack, which is how the overflow got through).
@@ -89,8 +95,8 @@ export const REWIND_MIN_ROWS = 2;
  *  load-bearing. Pinned directly, on the composed `ChatApp` frame rather than on this arithmetic, by
  *  rewind-picker.test.tsx's "never renders a frame that reaches the pane" matrix. Below `12 + wrap + 6` rows
  *  the `REWIND_MIN_ROWS` floor outvotes this budget and the frame overflows whatever it says — a deliberate
- *  readability floor, and the reason that matrix skips the short corner (18 rows wide, 19 from 37 to 60
- *  columns, 21 at 36 and below).
+ *  readability floor, and the reason that matrix starts each width at `minBudgetedRows(columns)` (18 rows at
+ *  a comfortable width, 19 in the one-wrap band, 21 at 36 columns and below).
  *
  *  TWO CONDITIONAL GROUPS ARE RESERVED ANYWAY, both deliberate:
  *   · ROWS 6 AND 7 — neither indicator is drawn at its own end of the list. They toggle as a consequence of
@@ -137,11 +143,21 @@ const wrapLines = (text: string, width: number): number =>
  *  (33 columns) takes a second. The band edges are word-wrap's, not division's — 37 is where an inner 33
  *  exactly fits the footer and lets the prompt's second line hold `conversation to the point before…`.
  *
- *  THE LIST ROWS ARE DELIBERATELY NOT HERE. `AnchorLine` clips to `columns − REWIND_ROW_PADDING_RIGHT`, six
- *  columns inside the inner width (four even for the bash form, which prefixes `! `), so no anchor row can
- *  wrap however long its prompt is — the clip, not this budget, is what holds it to one line. `SummaryLine`
- *  is data — a wide-enough `N files changed +i -d` could wrap at 36 columns — and a budget cannot model data;
- *  that residual belongs to the row renderer, not to this. */
+ *  THE LIST ROWS ARE DELIBERATELY NOT HERE, AND FOR TWO DIFFERENT REASONS. `AnchorLine` clips to
+ *  `columns − REWIND_ROW_PADDING_RIGHT`, six columns inside the inner width (four even for the bash form,
+ *  which prefixes `! `), so no anchor row can wrap however long its prompt is — the clip, not this budget, is
+ *  what holds it to one line. `SummaryLine` is data, and a wide-enough `<basename> +i -d` DOES wrap at 36
+ *  columns — but that is NOT a geometry hazard and an earlier version of this comment was wrong to call it
+ *  one. `Select.tsx:348` gives every `node` row `height: rowHeight, overflow:"hidden"`, so the list block is a
+ *  fixed `REWIND_ROW_HEIGHT · visible` whatever the rows contain: measured, a `RewindPicker` at 36 columns is
+ *  19 rows with a blank summary, with a two-line one, with a three-line one and with a six-line one alike. No
+ *  budget term here would do anything at all.
+ *
+ *  THE REAL RESIDUAL IS LEGIBILITY, and it is the row renderer's. The row is a flex column of a fixed three
+ *  rows, so once the summary claims all three yoga shrinks the anchor line to ZERO and the row loses its
+ *  prompt text outright — at 36 columns a two-line summary still shows `second prompt` above it, and a
+ *  three-line one shows only the wrapped filename. That is the clip `SummaryLine` still owes, unchanged as a
+ *  recommendation by this correction: clip in the renderer, where the data is. */
 export function rewindWrapRows(columns: number): number {
   const inner = columns - REWIND_FRAME_INSET;
   return wrapLines(REWIND_PROMPT, inner) - 1 + wrapLines(REWIND_FOOTER, inner) - 1;

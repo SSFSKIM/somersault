@@ -111,19 +111,36 @@ describe("rewindVisibleRows — the budget is our own chrome, counted", () => {
 //
 // AND IT IS A MATRIX, NOT A SWEEP OF HEIGHTS — the WRAP ROUND's whole point. A height-only budget is a frame
 // budget only at a width where nothing wraps; the same defect lives on the other axis, and a block that only
-// ever ran at 100 columns proved nothing about it. Measured before the fix, with `rewindVisibleRows(rows)`
-// blind to the width: 36 columns reached the pane at EVERY height in this range, and 37-60 reached it at one
-// height in three (21, 24, 30, 33 — the residues where `(rows − 12) % 3 == 0`). Widths 61 and up were, and
-// remain, clear. The eight widths here are the two wrap-band EDGES (61/60 and 37/36, where the count steps
-// 0→1 and 1→3), the band the previous round measured failing (44, 50, 60), and two comfortable widths, of
-// which 100 reproduces the height-only block this matrix grew out of.
+// ever ran at 100 columns proved nothing about it. Measured before that round, with `rewindVisibleRows(rows)`
+// blind to the width: 36 columns reached the pane at EVERY height in range, and 37-60 reached it at one height
+// in three (the residues where `(rows − 12) % 3 == 0`). Widths 61 and up were, and remain, clear.
 //
-// THE SHORT CORNER IS SKIPPED, and the skip moves with the width. Below `REWIND_CHROME_ROWS + wrap +
-// 3·REWIND_MIN_ROWS` rows the readability floor — not the budget — pins the list at two options and the frame
-// overflows whatever the budget says: 18 rows at a comfortable width, 19 from 37 to 60 columns, 21 at 36 and
-// below. That is `REWIND_MIN_ROWS`'s deliberate cost, unchanged by this round; `minBudgetedRows` is the one
-// place it is written down.
-describe("<ChatApp> with the rewind picker open never renders a frame that reaches the pane", () => {
+// THREE WIDTHS, ONE PER WRAP BAND, and that is the whole width axis (Wave S t4 final round, on the review's
+// own count). Only two things vary across a width sweep here: `rewindWrapRows`, which answers 0, 1 or 3, and
+// the residue of `(rows − 12 − wrap) mod 3`. The earlier eight widths included 37/44/50/60 — all one band —
+// and those four were confirmed to produce BYTE-IDENTICAL failure sets before the wrap fix, i.e. one input
+// repeated four times for 4/8ths of a 6.6 s grid. The band EDGES are not lost with them: `rewindWrapRows`'s
+// own unit assertions pin 61/60 and 37/36 directly, and the rendered-frame subtraction test below proves the
+// number those assertions name is the number the renderer spends. So 36 (wrap 3), 50 (wrap 1), 100 (wrap 0).
+//
+// FOUR HEIGHTS PER WIDTH: the three CONSECUTIVE heights from `minBudgetedRows(columns)` up, which is one full
+// cycle of that residue and therefore includes the `% 3 == 0` height where the budget is exactly `rows − 1`,
+// plus one tall pane where the whole catalog is nearly on screen. The short corner below `minBudgetedRows` is
+// SKIPPED, and the skip moves with the width: under `REWIND_CHROME_ROWS + wrap + 3·REWIND_MIN_ROWS` the
+// readability floor — not the budget — pins the list at two options and the frame overflows whatever the
+// budget says (18 rows at a comfortable width, 21 at 36 columns). That is `REWIND_MIN_ROWS`'s deliberate cost;
+// `minBudgetedRows` is the one place it is written down.
+//
+// AND A TASK-PANEL DIMENSION ON TOP, which is what this round exists for. The matrix used to render with an
+// EMPTY task list, so `ChatApp`'s `<TaskPanel>` returned null and the grid never saw the one sibling that
+// `initialTodosOpen` puts on screen for every session that has tasks. Five tasks is the panel at its tallest:
+// `todoWindowSize` caps the list at five rows, so the panel is a leading blank + its header + the window +
+// (at 18-and-under, where the window is four) one overflow line — seven rows either way, against a budget
+// whose slack is one row by construction. Measured on this fixture at 21×100 before the gate: 20 rows with no
+// tasks, 25 with three, against a pane of 21. Seeding is deliberately the TaskCreate/TaskUpdate wire pair,
+// which `taskList.ts` ingests and the transcript renders NOTHING for — so the static half of the frame stays
+// empty and the line count still IS `outputHeight` (asserted in `openPicker`, not assumed).
+describe("<ChatApp> with the rewind picker open never renders a frame that reaches the pane, at any geometry where the budget — not `REWIND_MIN_ROWS` — decides the window", () => {
   let fleetRoot = "", priorFleetRoot: string | undefined;
   beforeAll(() => { priorFleetRoot = process.env.CCX_FLEET_ROOT; fleetRoot = mkdtempSync(join(tmpdir(), "ccx-rwf-")); process.env.CCX_FLEET_ROOT = fleetRoot; });
   afterAll(() => { if (priorFleetRoot === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = priorFleetRoot; rmSync(fleetRoot, { recursive: true, force: true }); });
@@ -136,23 +153,44 @@ describe("<ChatApp> with the rewind picker open never renders a frame that reach
    *  confirmation panel — which is how the checking row is held on screen at all. */
   const rewindRemote = () => ({ ...fakeRemote(), rewindAnchors: async () => MANY, rewindDryRun: never, rewind: async () => {} });
 
-  /** Esc-Esc on an empty composer — the only route to this picker (escape.test.tsx's recipe).
+  /** The todo panel's own wire pair (`taskList.ts`: TaskCreate's `tool_use`, then the `tool_result` whose text
+   *  carries the id it was given). Wrapped in a turn so `state.busy` returns to false and the Esc-Esc arm
+   *  below is live. */
+  function seedTasks(session: ReturnType<typeof rewindRemote>, n: number) {
+    if (n === 0) return;
+    session.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    for (let i = 0; i < n; i++) {
+      session.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: `tc${i}`, name: "TaskCreate", input: { subject: `todo-item-${i}` } }] } } });
+      session.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: `tc${i}`, content: `Task #${i + 1} created successfully: todo-item-${i}` }] } } });
+    }
+    session.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+  }
+
+  /** Esc-Esc on an empty composer — the only route to this picker (escape.test.tsx's recipe) — over a session
+   *  that has already reported `tasks` todos, so `ChatApp`'s `<TaskPanel>` is live for the whole cell.
    *
    *  BOTH DIMENSIONS ARE STUBBED IN TWO PLACES, and both are needed. `deps.columns` is what `ChatApp` reads
    *  and hands the dialog as a prop; `stdout.columns` is what INK reads — `ink.js:93` sets the yoga root
    *  width from it on every layout, exactly as `ink.js:121` compares `outputHeight` against `stdout.rows`.
    *  Stub only the prop and the frame is still laid out 100 columns wide, nothing wraps, and the matrix
-   *  measures the same cell eight times over.
+   *  measures the same cell three times over.
    *
    *  The prompt is waited on by its FIRST wrapped line, because at 36 columns the rest of it is two rows
    *  further down. */
-  async function openPicker(rows: number, columns: number) {
+  async function openPicker(rows: number, columns: number, tasks = 0) {
     const deps = { columns: () => columns, getSessionMessages: async () => [] as never[] };
     const session = rewindRemote();
     const r = render(<ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} />);
     Object.defineProperty(r.stdout, "rows", { configurable: true, get: () => rows });
     Object.defineProperty(r.stdout, "columns", { configurable: true, get: () => columns });
     await waitFor(() => frame(r.lastFrame).includes("❯ "));
+    seedTasks(session, tasks);
+    if (tasks > 0) {
+      await waitFor(() => plain(frame(r.lastFrame)).includes("todo-item-0"));
+      // The measurement's own precondition, asserted rather than assumed: neither half of the seeding pair
+      // reaches the transcript, so `fullStaticOutput` stays empty and the line count still IS `outputHeight`.
+      expect(plain(frame(r.lastFrame))).not.toContain("TaskCreate");
+    }
     await tick();
     r.stdin.write("\x1b"); await waitFor(() => frame(r.lastFrame).includes("Press Esc again to rewind"));
     r.stdin.write("\x1b"); await waitFor(() => plain(frame(r.lastFrame)).includes("Restore the code and/or"));
@@ -176,32 +214,40 @@ describe("<ChatApp> with the rewind picker open never renders a frame that reach
    *  with the width because the wrap allowance is chrome the floor also has to clear. */
   const minBudgetedRows = (columns: number) => REWIND_CHROME_ROWS + rewindWrapRows(columns) + REWIND_ROW_HEIGHT * REWIND_MIN_ROWS;
 
-  for (const columns of [36, 37, 44, 50, 60, 61, 80, 100]) {
-    for (const rows of [18, 19, 20, 21, 22, 23, 24, 25, 26, 30, 33, 40].filter((r) => r >= minBudgetedRows(columns))) {
-      it(`stays under ${rows}×${columns} at the bottom of the list, mid-list with both indicators, and while checking`, async () => {
-        // A · bottom of the list, where the picker opens: `(current)` focused, only `↑ N more above` drawn.
-        const a = await openPicker(rows, columns);
-        expect(indicators(a)).toBe("↑-");
-        expect(frameHeight(a)).toBeLessThan(rows);
-        // B · one row up off the synthetic row, then Enter — the checking row over the bottom of the list.
-        a.stdin.write("k"); await tick(); await tick();
-        await startChecking(a);
-        expect(frameHeight(a)).toBeLessThan(rows);
-        a.unmount();
+  /** Five, which is the panel's tallest shape at every height in this grid: `todoWindowSize` answers 5 above
+   *  18 rows and 4 at 18, so the panel is either five rows or four plus an overflow line — seven rows with its
+   *  header and its leading blank, either way. */
+  const PANEL_TASKS = 5;
 
-        // C · mid-list: Home, then step down until BOTH indicators are live. Asserted, not assumed — a walk
-        // that never reached the both-indicators state would leave the tallest geometry untested.
-        const b = await openPicker(rows, columns);
-        b.stdin.write("\x1b[H"); await tick(); await tick();
-        for (let n = 0; n < MANY.length && indicators(b) !== "↑↓"; n++) { b.stdin.write("j"); await tick(); await tick(); }
-        expect(indicators(b)).toBe("↑↓");
-        expect(frameHeight(b)).toBeLessThan(rows);
-        // D · the tallest state there is: both indicators AND the checking row.
-        await startChecking(b);
-        expect(indicators(b)).toBe("↑↓");
-        expect(frameHeight(b)).toBeLessThan(rows);
-        b.unmount();
-      }, 20000);
+  for (const columns of [36, 50, 100]) {
+    const floorRows = minBudgetedRows(columns);
+    for (const rows of [floorRows, floorRows + 1, floorRows + 2, 40]) {
+      for (const tasks of [0, PANEL_TASKS]) {
+        it(`stays under ${rows}×${columns} with ${tasks} tasks at the bottom of the list, mid-list with both indicators, and while checking`, async () => {
+          // A · bottom of the list, where the picker opens: `(current)` focused, only `↑ N more above` drawn.
+          const a = await openPicker(rows, columns, tasks);
+          expect(indicators(a)).toBe("↑-");
+          expect(frameHeight(a)).toBeLessThan(rows);
+          // B · one row up off the synthetic row, then Enter — the checking row over the bottom of the list.
+          a.stdin.write("k"); await tick(); await tick();
+          await startChecking(a);
+          expect(frameHeight(a)).toBeLessThan(rows);
+          a.unmount();
+
+          // C · mid-list: Home, then step down until BOTH indicators are live. Asserted, not assumed — a walk
+          // that never reached the both-indicators state would leave the tallest geometry untested.
+          const b = await openPicker(rows, columns, tasks);
+          b.stdin.write("\x1b[H"); await tick(); await tick();
+          for (let n = 0; n < MANY.length && indicators(b) !== "↑↓"; n++) { b.stdin.write("j"); await tick(); await tick(); }
+          expect(indicators(b)).toBe("↑↓");
+          expect(frameHeight(b)).toBeLessThan(rows);
+          // D · the tallest state there is: both indicators AND the checking row.
+          await startChecking(b);
+          expect(indicators(b)).toBe("↑↓");
+          expect(frameHeight(b)).toBeLessThan(rows);
+          b.unmount();
+        }, 20000);
+      }
     }
   }
 

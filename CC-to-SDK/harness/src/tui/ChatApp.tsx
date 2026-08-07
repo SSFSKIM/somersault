@@ -433,16 +433,53 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // live; only the sub-second partial-text preview waits for its block to finalize. The parked decision
   // stays parked host-side — the same accepted oddity as the overlay chain below, revealed fresh through
   // `key={toolUseID}` when the pager closes.
-  const pagerUp = transcriptOpen;
+  //
+  // WAVE S T4, FINAL ROUND — THE SAME PHYSICS, NOW THE WHOLE CLASS. The pager is not the only surface that
+  // spends the pane, and the rewind picker is the proof that a per-dialog BUDGET cannot stand in for this
+  // gate. That budget (`REWIND_CHROME_ROWS`) counts the dialog's own chrome, `ChatStatusBar` and one row for
+  // Ink's `>=`, so its slack is EXACTLY ONE ROW by construction — and the task panel is seven (a header, a
+  // leading blank, up to five windowed rows), which overflows it at every height and every width. Measured on
+  // the real `ChatApp` at 21×100, mid-list with both indicators and the checking row up: 20 rows with no
+  // tasks, 23 with one, 25 with three, against a pane of 21. A `TaskPanel` term in that budget would close one
+  // member and leave the queue echo and the two armed hints — and would have to be written five more times,
+  // once per budget below.
+  //
+  // WHAT IS IN THE CLASS: a surface whose HEIGHT IS A FUNCTION OF `rows`. It has already claimed the pane, so
+  // a sibling beside it is not a near miss but a guaranteed overflow, and no budget it could carry would help.
+  // Six, each read off `ChatApp`'s own frame line count at 18/20/22/24/26/30/40/50 rows:
+  //   · the pager       — `rows − 6` by construction (above);
+  //   · `RewindPicker`  — `rewindVisibleRows(rows, columns)`; 15 → 36 rows as the pane goes 18 → 40;
+  //   · `SessionPicker` — `resumeVisibleRows(rows)`; 15 → 30 as the pane goes 20 → 50;
+  //   · `ModelPicker`   — `Select`'s own `clampVisible(visible, rows, …)`; 17 → 21, i.e. it tracks every pane
+  //                       short enough to matter and stops only at `MODEL_VISIBLE_MAX`;
+  //   · `HelpDialog`    — `browserVisibleRows(rows)`; its browse tab is 20 → 35 over that same range;
+  //   · `PlanDialog`    — `planRegionRows(rows, …)` IS `rows − optionBox − chrome`; 21 → 37.
+  // AND WHAT IS NOT, deliberately: every dialog whose height is a function of its CONTENT — `BgTasksPanel`
+  // (13 rows), `ShortcutsOverlay` (18), `SettingsDialog` (14), `ThemeDialog` (17), `PermissionsDialog` (9),
+  // `AddDirDialog`, `BypassConsent`, and the inline `PermissionDialog`/`QuestionDialog` pair (12) — every one
+  // of them measured CONSTANT across that whole range. Those are a different defect with a different repair: a
+  // fixed-height dialog too tall for a short pane overflows on its OWN (`ShortcutsOverlay` reaches the pane at
+  // 18 rows with no task panel in the tree at all; `HelpDialog`'s general tab does at any pane of 28 or less),
+  // and what that needs is a window, not the removal of its neighbours. Gating them would also cost what this
+  // gate costs, and cost it where it is not worth paying: a decision dialog is drawn in the transcript FLOW
+  // precisely so the turn's own context stays on screen while you answer it, and the task panel and the
+  // spinner are that context.
+  //
+  // A FLAT DISJUNCTION, not a walk of the chain below. Two of these flags can in principle be set at once
+  // (`/settings`'s Model row deliberately opens `modelPicker` over it), and then the gate is on for whichever
+  // of the two renders — which is correct here, because the one that renders in every such pair is itself
+  // pane-owning. The cost of being wrong is one hidden task panel, not an overflow.
+  const paneOwned = transcriptOpen || state.helpOpen || state.rewindPicker.open || state.modelPicker.open || state.picker.open
+    || (inputOwnerRef.current === "decision" && state.pending?.kind === "plan");
   return (
     <Box flexDirection="column">
-      <Transcript key={state.staticEpoch} staticItems={state.staticItems} pendingItems={pagerUp ? EMPTY_ITEMS : state.pendingItems} streaming={pagerUp ? EMPTY_LINES : state.streaming} />
-      {todosOpen && !pagerUp ? <TaskPanel tasks={state.tasks} columns={terminalColumns()} rows={terminalRows()} /> : null}
+      <Transcript key={state.staticEpoch} staticItems={state.staticItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />
+      {todosOpen && !paneOwned ? <TaskPanel tasks={state.tasks} columns={terminalColumns()} rows={terminalRows()} /> : null}
       {/* Wave T Task 13 — the live-turn indicator is ONE slot. Canon `qyn` (L407975, mounted at L407973)
           takes the whole slot over while a retry status exists, so the row REPLACES the spinner rather than
           sitting beside it: a spinner still pulsing next to "Retrying in 4s" is exactly the "nothing is
           wrong" reading the QA fleet's 72-second outage produced. */}
-      {state.busy && !pagerUp
+      {state.busy && !paneOwned
         ? (state.retryStatus ? <RetryRow status={state.retryStatus} /> : <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} />)
         : null}
       {/* F4 Task 8 — upstream `wqo` (pack §7.7, bundle L426002–426022): a queued prompt is the ORDINARY
@@ -452,7 +489,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           counts and dies here. The band is minted at `columns - 2*QUEUE_PAD`, which reproduces upstream's
           queued rule inset exactly: it hands `Sg` a padding of `3 + paddingWidth` = 7 where a normal
           message hands 3, and `paddingWidth` is `paddingX * 2` = 4. */}
-      {state.queue.length > 0 && !pagerUp ? (
+      {state.queue.length > 0 && !paneOwned ? (
         <Box flexDirection="column" paddingX={QUEUE_PAD}>
           {state.queue.flatMap((q, i) => userEchoLines(q.value, { width: queueWidth }).map((l, j) => <Line key={`${i}:${j}`} l={l} />))}
         </Box>
@@ -597,8 +634,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       historyEnv={deps?.env}
                       queuePop={popQueueToComposer} queueHasEditable={state.queue.some(isEditableQueueEntry)}
                       submitCount={state.submitCount} hasMessages={state.hasMessages} queueHintCountedRef={queueHintCountedRef} placeholderMemoRef={placeholderMemoRef} />}
-      {exitArmed ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
-      {escArmed ? <Box paddingX={1}><Text dimColor>Press Esc again to rewind</Text></Box> : null}
+      {/* Wave S t4 final round: the two armed hints are `paneOwned` chrome like everything above — one row
+          each, against a budget whose slack is one row. Under the DEFAULT keymap neither arm can currently be
+          set behind any of the six: measured on the composed app at 40×100, a ctrl+c with the pager, the
+          rewind picker, `/model`, `/resume` or `/help` up produced no exit hint and no change of frame height,
+          and escape is each surface's own cancel. So this gate hides nothing a user can produce today — it is
+          written anyway because `keybindings.json` is a USER file (F2 task 6), so "unreachable" here is a
+          property of the default table rather than of this tree. */}
+      {exitArmed && !paneOwned ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
+      {escArmed && !paneOwned ? <Box paddingX={1}><Text dimColor>Press Esc again to rewind</Text></Box> : null}
       {/* `composerOwnsKeys` is the SAME render-time disjunction the composer's own guard reads, handed to the
           bar as a prop: its mode-chip parenthetical advertises a Chat-context key, so it must vanish the frame
           a dialog or overlay takes the keyboard. A prop and not a registry read, because this value is derived

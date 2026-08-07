@@ -2263,3 +2263,75 @@ describe("<ChatApp> — retained source", () => {
     for (const f of after) expect(plain(f).split(compactRow!)).toHaveLength(2);
   });
 });
+
+// WAVE S T4, FINAL ROUND — `ChatApp`'s `paneOwned` gate, one pin per member. The pager half of it has been
+// pinned since the 2026-08-06 ctrl+o flood ("the task panel HIDES while the pager is up", above); the finding
+// that closed t4 was that FIVE MORE surfaces size themselves from the terminal height the same way, and that
+// the task panel — which `initialTodosOpen` puts on screen for every session that has tasks — was still
+// mounted beside all five. Measured before the gate, on the real `ChatApp` at 21x100 with the rewind picker
+// mid-list: 20 frame rows with no tasks, 25 with three, against a pane of 21, and Ink's `ink.js:121` branch
+// (`outputHeight >= stdout.rows` → `clearTerminal + fullStaticOutput + output`) turns that into a full-screen
+// wipe and a scrollback re-dump on EVERY cursor move.
+//
+// The rewind member is pinned by frame HEIGHT, in rewind-picker.test.tsx's matrix. This block pins the other
+// four by the panel itself, because a height assertion needs a budget to measure against and these four have
+// none in our code: each was sabotage-checked by deleting its own term from the disjunction and confirming
+// that this test — and only this test — went red.
+describe("<ChatApp> — the paneOwned gate hides the task panel behind every pane-sizing dialog", () => {
+  const TODO = /◻\s+todo-item-one/;
+  /** The todo panel's own wire pair (taskList.ts), wrapped in a turn so `state.busy` lands back at false. */
+  const seedTodo = (fake: ReturnType<typeof fakeRemote>) => {
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "Task #1 created successfully: todo-item-one" }] } } });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+  };
+  const MODELS = [{ value: "opus", displayName: "Opus 5" }, { value: "sonnet", displayName: "Sonnet 4.7" }];
+  const SESSIONS = [{ sessionId: "s0", summary: "a saved session", lastModified: 1 }];
+
+  /** Open, assert the panel is GONE, close, assert it is BACK. The close half is what makes the first half
+   *  mean something: a panel missing for an unrelated reason would never come back. */
+  const gateCycle = async (
+    name: string,
+    opts: FakeRemoteOpts,
+    deps: Record<string, unknown>,
+    open: (r: { stdin: { write: (s: string) => void }; lastFrame: () => string | undefined }, fake: ReturnType<typeof fakeRemote>) => Promise<void>,
+    close: (r: { stdin: { write: (s: string) => void }; lastFrame: () => string | undefined }, fake: ReturnType<typeof fakeRemote>) => Promise<void>,
+  ) => {
+    const fake = fakeRemote(opts);
+    const r = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/tmp" deps={deps as never} />);
+    await waitFor(() => frame(r.lastFrame).includes("❯ "));
+    seedTodo(fake);
+    await waitFor(() => TODO.test(frame(r.lastFrame)));
+    await open(r, fake);
+    expect(frame(r.lastFrame), `${name}: the task panel is still mounted beside a pane-sizing dialog`).not.toMatch(TODO);
+    await close(r, fake);
+    await waitFor(() => TODO.test(frame(r.lastFrame)));
+    r.unmount();
+  };
+
+  it("/model — ModelPicker windows through Select's clampVisible(visible, rows, …)", async () => {
+    await gateCycle("/model", { capabilities: () => ({ models: MODELS, commands: [], mcpServers: [] }) }, {},
+      async (r) => { r.stdin.write("/model"); await waitFor(() => frame(r.lastFrame).includes("/model")); r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("Select model")); },
+      async (r) => { r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("Select model")); });
+  });
+
+  it("/resume — SessionPicker windows through resumeVisibleRows(rows)", async () => {
+    await gateCycle("/resume", {}, { listSessions: async () => SESSIONS, getSessionMessages: async () => [] },
+      async (r) => { r.stdin.write("/resume"); await waitFor(() => frame(r.lastFrame).includes("/resume")); r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("Resume session")); },
+      async (r) => { r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("Resume session")); });
+  });
+
+  it("/help — HelpDialog windows its command browser through browserVisibleRows(rows)", async () => {
+    await gateCycle("/help", {}, {},
+      async (r) => { r.stdin.write("/help"); await waitFor(() => frame(r.lastFrame).includes("/help")); r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("For more help:")); },
+      async (r) => { r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("For more help:")); });
+  });
+
+  it("exit-plan-mode — PlanDialog's body IS rows minus its option box minus chrome", async () => {
+    const entry: PendingEntry = { sessionId: "s", toolUseID: "p1", toolName: "ExitPlanMode", kind: "plan", input: { plan: "step one\n\nstep two" }, createdAt: Date.now() } as PendingEntry;
+    await gateCycle("plan", {}, {},
+      async (r, fake) => { fake.parkPermission(entry); await waitFor(() => frame(r.lastFrame).includes("Ready to code?")); },
+      async (r, fake) => { fake.settlePermission("p1", "someone-else", "deny"); await waitFor(() => !frame(r.lastFrame).includes("Ready to code?")); });
+  });
+});
