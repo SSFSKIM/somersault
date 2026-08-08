@@ -14,7 +14,7 @@ import React from "react";
 import { Box } from "ink";
 import { describe, it, expect } from "vitest";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
-import { SettingsDialog, SETTINGS_CHROME_ROWS, settingsVisibleRows } from "../../src/tui/SettingsDialog.js";
+import { SettingsDialog, SETTINGS_CHROME_ROWS, settingsVisibleRows, settingsWrapRows } from "../../src/tui/SettingsDialog.js";
 import { POINTER } from "../../src/tui/select/Select.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
@@ -151,12 +151,12 @@ describe("SettingsDialog — the Config list windows from the height it is given
   });
 
   it("takes its chrome budget from an enumeration, and never returns a window of zero", () => {
-    // 11 = 7 unconditional box rows + 2 (the most of the three conditional rows that can coexist — the
-    // warning hangs off the LAST option, so it and `↓ N more below` are mutually exclusive) + 1 ChatStatusBar
-    // + 1 for Ink's `>=`. It was 12 until the t5 review; each expectation below is recomputed, not adjusted.
-    // The mutual exclusion is real and the 2 is still one short in one state — `↑ N more above` and the
-    // warning CAN coexist — which the row-clip round measured and left as a stated residual with its two
-    // closures priced; see the constant's own docblock. That is a budget question, not this pin's.
+    // 11 = 7 unconditional box rows + 2 (the two COUNTED INDICATOR rows, both reserved unconditionally
+    // because they toggle as a consequence of scrolling) + 1 ChatStatusBar + 1 for Ink's `>=`. It was 12
+    // until the t5 review; each expectation below is recomputed, not adjusted. `THINKING_WARNING` is NOT in
+    // the 2 — the row-clip round measured that it coexists with `↑ N more above`, and the warning-term round
+    // charges it separately and only while the Thinking row has been touched (`settingsWrapRows`, pinned in
+    // the describe below). Every expectation here is the UNTOUCHED session, whose budget is unchanged.
     expect(SETTINGS_CHROME_ROWS).toBe(11);
     expect(settingsVisibleRows(24)).toBe(13);                    // 24 − 11
     expect(settingsVisibleRows(13)).toBe(2);                     // 13 − 11
@@ -216,6 +216,87 @@ describe("SettingsDialog — a Config row is clipped to the width it is given (r
     await waitFor(() => plain(frame(r.lastFrame)).includes("Default (recommended)"));
     expect(plain(frame(r.lastFrame))).toContain("For a specific model I…");
     expect(plain(frame(r.lastFrame))).not.toContain("use /model.");
+    r.unmount();
+  });
+});
+
+// ── WARNING-TERM ROUND — `THINKING_WARNING` IS CHARGED TO THE BUDGET, BUT ONLY ONCE IT CAN RENDER ──────────
+// The row-clip round closed the width half of this window and disclosed a wider one: `SETTINGS_CHROME_ROWS`'s
+// `+2` reserved two conditional rows on the grounds that the warning and `↓ N more below` are mutually
+// exclusive. True, and the wrong pair — `↑ N more above` and the warning coexist, which is the ORDINARY state
+// on a scrolled list, so with the warning up the composed frame reached the pane (measured: 4 clears per
+// ten-press walk at panes 12→15 at 60/70/80 columns, 2 at 12→14 at 100). `settingsWrapRows` charges it.
+//
+// THE CONDITION IS THE POINT, and it is why this is not simply `SETTINGS_CHROME_ROWS = 12`: charging the
+// warning unconditionally costs one row of visible list at panes 13→16 for every session that never touches
+// the Thinking row, which is the trade the t5 review reverted. Reserving on a DISCRETE, once-per-session user
+// action is not the "resizes the list under a moving cursor" hazard the two indicator rows are reserved
+// against — that one turns on scrolling being continuous.
+//
+// THE FIXED-WIDTH PARENT IS LOAD-BEARING here for the same reason as in the row-clip describe above:
+// `ink-testing-library`'s fake stdout reports 100 columns whatever a test passes, so without it the warning
+// never actually wraps at 60 and the two-line charge would be unobservable.
+describe("SettingsDialog — the Thinking warning is charged to the window's budget once it is touched", () => {
+  it("counts the warning's own lines, and finds the wrap boundary where the renderer does", () => {
+    // 85 columns of text behind a four-space indent = 89, against a body of `columns − 6`.
+    expect(settingsWrapRows(200)).toBe(1);
+    expect(settingsWrapRows(100)).toBe(1);
+    expect(settingsWrapRows(95)).toBe(1);                        // inner 89 — the last width it fits on one line
+    expect(settingsWrapRows(94)).toBe(2);                        // …and the first where it takes a second
+    expect(settingsWrapRows(80)).toBe(2);
+    expect(settingsWrapRows(60)).toBe(2);
+  });
+
+  it("charges it to the budget only while the Thinking row has been touched", () => {
+    // UNTOUCHED — byte-for-byte the old budget, at every width. This is the guard on the review's revert:
+    // the common session must not pay a row for a warning it will never draw.
+    expect(settingsVisibleRows(24)).toBe(13);
+    expect(settingsVisibleRows(24, 60)).toBe(13);
+    expect(settingsVisibleRows(24, 100)).toBe(13);
+    expect(settingsVisibleRows(24, 60, false)).toBe(13);
+    // TOUCHED — one row at a width the warning fits, two where it wraps.
+    expect(settingsVisibleRows(24, 100, true)).toBe(12);
+    expect(settingsVisibleRows(24, 95, true)).toBe(12);
+    expect(settingsVisibleRows(24, 94, true)).toBe(11);
+    expect(settingsVisibleRows(24, 60, true)).toBe(11);
+    // …and the floor still holds, which is the residual: below `12 + wrap` no term buys anything.
+    expect(settingsVisibleRows(13, 60, true)).toBe(1);
+    expect(settingsVisibleRows(12, 100, true)).toBe(1);
+    expect(settingsVisibleRows(4, 60, true)).toBe(1);
+  });
+
+  /** The rendered half — the term has to reach `visibleOptionCount`, not just be exported. `end` focuses the
+   *  last row (`Thinking mode`) and Enter toggles it; `thinkLevel` stays "default" throughout, so what flips
+   *  is `thinkingTouched` and not the row's value.
+   *    THE NEEDLE IS THE BARE WORD `Changing`, deliberately. Ink WORD-wraps, so any assertion on a phrase that
+   *  spans a potential wrap point can be satisfied by a wrapped row — the trap that let the row-clip round's
+   *  first assertion pass against sabotaged code. A single token cannot straddle a break. */
+  const at = (cols: number, rows: number) => <Box width={cols}><SettingsDialog {...props()} rows={rows} columns={cols} /></Box>;
+  const toggleThinking = async (r: ReturnType<typeof render>) => {
+    r.stdin.write("\x1b[F");                                     // end → Thinking mode, window at the bottom
+    await waitFor(() => focusedRowLabel(r.lastFrame).startsWith("Thinking mode"));
+    r.stdin.write("\r");
+    await waitFor(() => plain(frame(r.lastFrame)).includes("Changing"));
+  };
+
+  it("gives the list one row less at a width the warning fits on one line", async () => {
+    const r = render(at(100, 15));
+    await waitFor(() => frame(r.lastFrame).includes("Theme"));
+    expect(shownRows(r.lastFrame), "untouched: the plain height-only budget").toBe(settingsVisibleRows(15));
+    expect(settingsVisibleRows(15)).toBe(4);
+    await toggleThinking(r);
+    expect(shownRows(r.lastFrame), "touched: one row of list paid for the warning").toBe(settingsVisibleRows(15, 100, true));
+    expect(settingsVisibleRows(15, 100, true)).toBe(3);
+    r.unmount();
+  });
+
+  it("gives it two rows less where the warning takes a second line", async () => {
+    const r = render(at(60, 15));
+    await waitFor(() => frame(r.lastFrame).includes("Theme"));
+    expect(shownRows(r.lastFrame)).toBe(4);
+    await toggleThinking(r);
+    expect(shownRows(r.lastFrame), "the warning wraps at 60, so it costs two").toBe(settingsVisibleRows(15, 60, true));
+    expect(settingsVisibleRows(15, 60, true)).toBe(2);
     r.unmount();
   });
 });

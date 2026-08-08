@@ -480,7 +480,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //                       ON THE PLAN in exactly the way `ModelPicker` is on the catalog. `planRegionRows` is
   //                       a MAXIMUM, and `planWindow` returns only as many lines as the plan HAS, so a short
   //                       plan is a flat 21 at every pane. Same conclusion, same caveat about fixtures;
-  //   · `SettingsDialog` — `settingsVisibleRows(rows)`; 10 → 13 over panes 12 → 15 and flat 13 above, quoted
+  //   · `SettingsDialog` — `settingsVisibleRows(rows, columns, thinkingTouched)` — the last two only bite once
+  //                       the Thinking row has been toggled (`settingsWrapRows`); the curve quoted here is the
+  //                       untouched session, which is every session that never touches it:
+  //                       10 → 13 over panes 12 → 15 and flat 13 above, quoted
   //                       at ONE cursor state (top of the list) the way the six above each quote one, and read
   //                       off the same non-debug `stdout.write` instrument — this entry is where that
   //                       instrument came from; see `SETTINGS_CHROME_ROWS` for the row it recovers. MOVED HERE BY

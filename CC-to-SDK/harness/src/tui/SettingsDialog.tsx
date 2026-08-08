@@ -52,6 +52,7 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import stringWidth from "string-width";
+import wrapAnsi from "wrap-ansi";
 import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import { useRefState } from "./keys/refState.js";
@@ -148,23 +149,22 @@ function RowBody({ row, width }: { row: SettingsRow; width: number }) {
  *        5    the blank spacer under the strip
  *        6    the blank spacer above the footer
  *        7    `NORMAL_FOOTER`
- *    · +2 — the most the three CONDITIONAL rows can cost AT ONCE, which is two of them and never all three.
- *      They are `↑ N more above`, `↓ N more below`, and `THINKING_WARNING` (`:193`, the row the Thinking-mode
- *      row grows once it is toggled). THE WARNING AND `below` ARE MUTUALLY EXCLUSIVE: the warning hangs off
- *      the LAST option, so the moment it can render the window's end IS the option count and `below` is zero.
- *      There is no cursor position that draws both, and a third reserved row would buy space nothing can ever
- *      occupy. Reserving the two that CAN coexist unconditionally is still right, for the reason the rewind
- *      budget reserves its own pair: the indicators toggle as a consequence of scrolling, and a budget that
- *      dropped them would grow the window at the top of the list and shrink it again on the first step down —
- *      resizing the list under a moving cursor.
- *        THE MUTUAL-EXCLUSION ARGUMENT IS CORRECT AND THE TWO IS STILL NOT ENOUGH, which the row-clip round
- *      measured and this line used to get wrong. `above` and the warning are NOT mutually exclusive, and the
- *      state that draws both — the cursor on the Thinking row of a list scrolled past its top — is the ordinary
- *      one at any pane short enough to window five rows. That state costs `above` (1) + the option (1) + the
- *      warning (1) = three lines where the budget reserved two, so with the warning up the composed frame
- *      REACHES the pane: measured 2 clears per ten cursor moves at panes 12, 13 and 14 at 100 columns, and 4 at
- *      panes 12 through 15 at 60, 70 and 80, where the warning takes a second line as well. See the RESIDUAL
- *      paragraph below — it is left stated rather than fixed, with the two measured closures and their costs.
+ *    · +2 — the two COUNTED INDICATOR rows, `↑ N more above` and `↓ N more below`. BOTH of them and
+ *      UNCONDITIONALLY, even though a window at either end of the list draws only one, for the reason the
+ *      rewind and permissions budgets reserve their own pair: the indicators toggle as a consequence of
+ *      SCROLLING, and a budget that reserved them conditionally would grow the window at the top of the list
+ *      and shrink it again on the first step down — resizing the list under a moving cursor.
+ *        THE THIRD CONDITIONAL ROW IS `THINKING_WARNING` (`:428`/`:445`, the line the Thinking-mode row grows once it
+ *      is toggled) AND IT IS NOT FOLDED INTO THIS 2 — it is charged separately, and only while
+ *      `thinkingTouched`, by `settingsWrapRows` below. This line used to fold it in, on the grounds that the
+ *      warning and `↓ N more below` are MUTUALLY EXCLUSIVE. That exclusion is REAL — the warning hangs off the
+ *      LAST option, so the moment it can render the window's end IS the option count and `below` is zero — but
+ *      IT IS THE WRONG PAIR. `↑ N more above` AND THE WARNING COEXIST, and the state that draws both — the
+ *      cursor on the Thinking row of a list scrolled past its top — is the ORDINARY state on a scrolled list,
+ *      i.e. at any pane short enough to window five rows. It costs `above` (1) + the option (1) + the warning
+ *      (1, or 2 narrow) where the budget reserved two, so with the warning up the composed frame REACHED the
+ *      pane: measured, before the term, 2 clears per ten cursor moves at panes 12 → 14 at 100 columns and 4 at
+ *      panes 12 → 15 at 60, 70 and 80.
  *    · +1 — `ChatStatusBar`, the one sibling this budget models because it is the only UNCONDITIONAL one
  *      (ChatApp's last row). Everything else ChatApp can draw beside this dialog is handled by its `paneOwned`
  *      gate, which Wave S t5 extends to `state.settings.open` precisely because this dialog now sizes itself
@@ -191,48 +191,97 @@ function RowBody({ row, width }: { row: SettingsRow; width: number }) {
  *      (the Model row wrapping; see `SETTINGS_ROW_INSET` above), and zero at 80 and 100. AFTER the clip, ZERO
  *      at every one of the 76 cells swept. That is what this budget can now claim, and the width qualifier is
  *      gone because the clip removed the width dependence rather than the budget absorbing it.
- *    · WARNING UP — still clears, and the clip only narrows it: panes 12 → 15 at 60, 70 and 80 columns and
- *      12 → 14 at 100 (before the clip, 12 → 16 at 60/70, 12 → 15 at 80, 12 → 14 at 100). The RESIDUAL
- *      paragraph below has the two closures and what each costs.
+ *    · WARNING UP — the row clip narrowed it and did not close it (panes 12 → 15 at 60, 70 and 80 columns and
+ *      12 → 14 at 100, against 12 → 16 at 60/70 and 12 → 15 at 80 before the clip). `settingsWrapRows` is what
+ *      closes it; the same sweep re-run with the term is in that function's docblock, and the RESIDUAL
+ *      paragraph on `settingsVisibleRows` names the floor cells it leaves.
  *
- *  IT WAS 12 UNTIL THE t5 REVIEW, by both errors at once: three conditional rows reserved where only two can
- *  ever coexist, and a `lastFrame()` measurement inflated by that static echo. 12 cost one row of visible list
- *  at panes 13 through 16 and bought nothing at any pane.
- *
- *  THE RESIDUAL IS `THINKING_WARNING`, NAMED WITH ITS NUMBERS AND DELIBERATELY NOT FIXED IN THE ROW-CLIP ROUND.
- *  It fires only after the user toggles the Thinking row in THIS dialog session (`thinkingTouched`), and only
- *  while the cursor sits on that row in a list scrolled past its top; both are then permanent for the session.
- *  Two closures were measured on the instrument above, and neither is free:
- *    (a) CLIP THE WARNING the way the row body is clipped, one `clipRowText` call at `settingsRowWidth`. It
- *        makes the residual uniform — panes 12, 13 and 14 at EVERY width instead of 12 → 15 below 94 columns —
- *        and adding `+1` to this constant on top of it leaves ONLY pane 12, which is the window's own floor
- *        (`Math.max(1, …)` saturates there and no budget can help). Measured: 2 clears at 60×12 and 100×12 and
- *        zero at every other cell from 13 to 30. NOT TAKEN, and the measurement is the reason rather than a
- *        preference: the warning is 84 columns and the body at 60 is 54, so the clipped line reads "Changing
- *        thinking mode mid-conversation will incre…" — the instrument's own `latency` probe goes false. A
- *        truncated safety warning at exactly the widths where it fires is a product call, not a geometry one,
- *        and it is the same call `permissionsWrapRows` declines for its footer.
- *    (b) RESERVE THE WARNING INSTEAD — this constant at 12 plus a `permissionsWrapRows`-shaped
- *        `settingsWrapRows(columns)` charging the extra line it takes below 94 columns. Keeps every word of the
- *        warning. Measured as its two endpoints (12 at 100 columns, 13 at 60 and 80): zero from pane 14 up at
- *        60 and 80 and from pane 13 up at 100, leaving the floor again. IT COSTS ONE ROW OF VISIBLE LIST AT
- *        PANES 13 → 16 FOR EVERYONE — including the overwhelmingly common session that never touches the
- *        Thinking row — which is exactly the trade the t5 review reverted when it took this constant from 12
- *        back to 11. Charging it only while `thinkingTouched` avoids that and does not resize the list under a
- *        moving cursor (unlike the indicators, the warning toggles on an explicit user action, once), but that
- *        is a budget change and belongs to whoever owns the next round on this dialog, not to the row clip.
+ *  IT WAS 12 UNTIL THE t5 REVIEW, and it is STILL 11 after the warning term below, deliberately. The review
+ *  took it from 12 back to 11 because 12 spent one row of visible list at panes 13 → 16 on EVERY session,
+ *  including the overwhelmingly common one that never touches the Thinking row. Nothing measured since gives
+ *  that trade back: what the warning costs is charged to the sessions that actually draw it, not to this
+ *  width-free constant. Keep it width-free and keep it unconditional — every term enumerated above is a row
+ *  this dialog draws in every state, which is what lets the enumeration be read and checked line by line.
  *
  *  NOTE THE CLAMP INTERACTION: `Select`'s own `clampVisible` (selectModel.ts:18,28) already reserves 8 rows
  *  and takes the `min()` of the two — so this number does not solely govern the window. It is the ceiling this
  *  dialog contributes, and being the larger of the two it is the one that binds. */
 export const SETTINGS_CHROME_ROWS = 11;
-/** THE DEFAULT IS LOAD-BEARING, do not drop it. `rows` is an optional prop and existing tests render this
- *  dialog with no size props at all (keys-migration-dialogs.test.tsx:553). Without it
+
+/** The warning's own indent, shared by the two render sites and by the measurement below so they cannot
+ *  drift: a term that counted a different string from the one drawn would be a budget that is wrong only at
+ *  the widths nobody sweeps. */
+const WARNING_INDENT = "    ";
+/** Ink's `wrap` mode verbatim (`node_modules/ink/build/wrap-text.js`), the same call `rewindModel.ts` and
+ *  `PermissionsDialog` wrap with: WORD wrap, hard-breaking only a token that cannot fit at all.
+ *  `Math.ceil(width / inner)` is a DIFFERENT function and disagrees with the renderer at most widths — this
+ *  wave has been bitten by that twice; do not "simplify" this to division. */
+const wrapLines = (text: string, width: number): number =>
+  wrapAnsi(text, Math.max(1, width), { trim: false, hard: true }).split("\n").length;
+
+/** WAVE S t5, WARNING-TERM ROUND — the lines `THINKING_WARNING` costs at `columns`, and the reason the
+ *  constant above stops at 11. `permissionsWrapRows`' / `rewindWrapRows`' shape, with one difference: those
+ *  charge the EXTRA lines a chrome literal takes over the one already enumerated, and this charges the
+ *  warning's lines OUTRIGHT, because `SETTINGS_CHROME_ROWS` reserves nothing for it at all (see its `+2`).
+ *
+ *  A TERM IS THE RIGHT INSTRUMENT HERE EVEN THOUGH THE ROW-CLIP ROUND REFUSED ONE FOR A WRAPPED ROW, and the
+ *  distinction is not a preference. A wrapped ROW costs an extra line PER WRAPPED ROW INSIDE THE WINDOW, so
+ *  its shortfall scales with the window and no constant can express it — hence `RowBody`'s clip. The warning
+ *  hangs off exactly ONE option (`thinking`, and there is only one), so whatever the window holds it appears
+ *  at most once per frame. That is a genuine per-frame constant, which is what a term subtracts.
+ *
+ *  WHY THIS ONE IS CONDITIONAL WHEN THE TWO INDICATOR ROWS ABOVE ARE NOT — the two rules read as
+ *  contradictory side by side and both are right. Wave S t4's rule (`REWIND_CHROME_ROWS`, rewindModel.ts:60-99)
+ *  reserves both scroll indicators unconditionally because a budget that shrinks as you scroll RESIZES THE
+ *  WINDOW UNDER A MOVING CURSOR. That argument turns on scrolling being CONTINUOUS: every arrow key can flip
+ *  the term, so the list would breathe under the cursor for the whole life of the dialog. `thinkingTouched`
+ *  is DISCRETE. It flips once, on a deliberate Enter/Space on one specific row, and never flips back for the
+ *  life of this dialog session. The list does resize at that instant — one row shorter, two below 95 columns
+ *  — but that is a visible consequence of an action the user has just taken on that very row, not a surprise
+ *  under an arrow key, and there is no second transition left to surprise them with. A budget that changes on
+ *  a discrete user action is simply not the hazard the t4 rule guards against.
+ *
+ *  THE WARNING IS 85 COLUMNS AND `WARNING_INDENT` IS FOUR, so it needs a body of 89 and takes a SECOND line
+ *  below 95 columns. (The row-clip round's note said 94 — off by one, it counted the string at 84. The
+ *  boundary is pinned by `test/tui/settings-dialog.test.tsx` at 94/95 now rather than by prose.) The width it
+ *  is measured against is `settingsRowWidth`, not the frame inset: the warning is drawn INSIDE the `Select`
+ *  node, past the pointer gutter and the `gap={1}`, so it is the same six columns in as the row body it hangs
+ *  under. `columns` is optional only so that a caller with no width still gets the (conservative, 2-line)
+ *  charge from `settingsRowWidth`'s own default rather than none at all.
+ *
+ *  MEASURED on the instrument `SETTINGS_CHROME_ROWS` describes — non-debug Ink, counting `clearTerminal`
+ *  writes, `CI` deleted, 45 ms per keypress, a fixed-width parent, and the full two-lap ten-press walk — with
+ *  the Thinking row TOGGLED, over panes 12 → 30 at 60, 70, 80 and 100 columns. Before the term: 4 clears per
+ *  walk at panes 12 → 15 at 60, 70 and 80, and 2 at panes 12 → 14 at 100. After it: ZERO at every pane from 14
+ *  up at 60, 70 and 80, and from 13 up at 100 — leaving only the floor cells named in the RESIDUAL below. The
+ *  warning-DOWN sweep is unchanged at zero in all 76 cells, which is the point of the condition. */
+export function settingsWrapRows(columns?: number): number {
+  return wrapLines(`${WARNING_INDENT}${THINKING_WARNING}`, settingsRowWidth(columns));
+}
+
+/** THE DEFAULT ON `rows` IS LOAD-BEARING, do not drop it. `rows` is an optional prop and existing tests render
+ *  this dialog with no size props at all (keys-migration-dialogs.test.tsx:553). Without it
  *  `settingsVisibleRows(undefined)` is NaN, which threads through `clampVisible` and `windowBounds` to
  *  `{start: NaN, end: 1}` and `options.slice(NaN, 1)` — a list permanently stuck at ONE row with navigation
- *  broken. `Select` defaults its own `rows` the same way (Select.tsx:146). */
-export const settingsVisibleRows = (rows: number = process.stdout.rows ?? 24): number =>
-  Math.max(1, rows - SETTINGS_CHROME_ROWS);
+ *  broken. `Select` defaults its own `rows` the same way (Select.tsx:146).
+ *
+ *  `columns` IS SECOND AND `thinkingTouched` THIRD, both optional, exactly as `rewindVisibleRows` orders its
+ *  own pair: `rows, columns` is how every geometry-taking surface in this tree spells the size, and defaulting
+ *  `thinkingTouched` to false is what keeps every existing call site meaning precisely what it meant before —
+ *  the honest height-only budget for the session that never touches the Thinking row.
+ *
+ *  THE RESIDUAL IS THE WINDOW'S OWN FLOOR, and it is arithmetic rather than an omission: `Math.max(1, …)`
+ *  stops delivering the budget once `rows − 11 − wrap` falls below 1, i.e. BELOW a pane of `12 + wrap`.
+ *  Measured with the term in, that is exactly and only what is left — 4 clears per walk at pane 12 and 2 at
+ *  pane 13 at 60, 70 and 80 (wrap 2), and 2 at pane 12 at 100 (wrap 1); zero at every pane from 14 up at the
+ *  three narrow widths and from 13 up at 100. A bigger constant cannot reach them; a frame already down to
+ *  ONE option plus `↑ N more above` plus a two-line warning is as short as this dialog gets. What WOULD close them is the
+ *  closure this round declined: clipping the warning to one line (`clipRowText` at `settingsRowWidth`), which
+ *  at 60 columns leaves "Changing thinking mode mid-conversation will incre…" — a safety warning truncated at
+ *  exactly the widths where it fires, which is a copy decision and not a geometry one, and the same call
+ *  `permissionsWrapRows` declines for its own footer. */
+export const settingsVisibleRows = (rows: number = process.stdout.rows ?? 24, columns?: number, thinkingTouched: boolean = false): number =>
+  Math.max(1, rows - SETTINGS_CHROME_ROWS - (thinkingTouched ? settingsWrapRows(columns) : 0));
 
 export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outputStyle, onDone, applyMode, setThink, applyOutputStyle, fetchStatus, fetchUsage, fetchStats, onOpenModelPicker, savePrefs = realSavePrefs, rows, columns }: {
   tab: string;
@@ -376,7 +425,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
             filtered.map((row) => (
               <Box key={row.id} flexDirection="column">
                 <Text>{"  "}<RowBody row={row} width={settingsRowWidth(columns)} /></Text>
-                {row.id === "thinking" && thinkingTouched ? <Text dimColor>    {THINKING_WARNING}</Text> : null}
+                {row.id === "thinking" && thinkingTouched ? <Text dimColor>{WARNING_INDENT}{THINKING_WARNING}</Text> : null}
               </Box>
             ))
           ) : (
@@ -393,12 +442,14 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
                   node: (focused: boolean) => (
                     <Box flexDirection="column">
                       <Text color={focused ? ACCENT : undefined}><RowBody row={r} width={settingsRowWidth(columns)} /></Text>
-                      {r.id === "thinking" && thinkingTouched ? <Text dimColor>    {THINKING_WARNING}</Text> : null}
+                      {r.id === "thinking" && thinkingTouched ? <Text dimColor>{WARNING_INDENT}{THINKING_WARNING}</Text> : null}
                     </Box>
                   ),
                 }))}
                 hideIndexes
-                visibleOptionCount={settingsVisibleRows(rows)}
+                // The warning is a row of THIS list (it hangs off the `thinking` node), so the budget it is
+                // charged to has to be the one this window is sized from — see `settingsWrapRows`.
+                visibleOptionCount={settingsVisibleRows(rows, columns, thinkingTouched)}
                 defaultFocusValue={focusId}
                 onFocus={setFocusId}
                 onViewChange={setView}
