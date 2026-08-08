@@ -444,7 +444,9 @@ export function useChat(
    *  rebuild, and the host emits no `rewound` broadcast for scope "code"), which is right — it changes no
    *  conversation state, so its measurement still describes what is on screen; and neither does resuming the
    *  SAME session into itself, which appends to the existing document rather than replacing it, for the same
-   *  reason. `/status` reads the same `ctxPct`, so it is fixed by this one reset too.
+   *  reason. `/status` reads the same `ctxPct`, so it is fixed by this one reset too. The one path that drops
+   *  the number WITHOUT coming through here is `/compact` (see its case below): it keeps the conversation and
+   *  shrinks it, which is a stale measurement rather than a misattributed one, and it re-measures on the spot.
    *
    *  HIDDEN until the next turn end measures a real one (`refreshCtx`), rather than refreshed on the spot:
    *  refreshing would also be honest and costs one call, but it puts a surface back on screen that has
@@ -809,7 +811,22 @@ export function useChat(
           break;
         // The pre-notice is not decoration: compact is a full engine summarization pass (30–120s live), and
         // the await below is silent for all of it — without a line landing first, /compact reads as a hang.
-        case "compact": append([{ text: "✻ compacting… (a summarization pass over the whole context — this can take a minute or two)", dim: true }]); append(formatCompact(await session.compact())); break;
+        //
+        // W-S5 (task 8 review): a SUCCEEDED compaction is the one boundary that leaves the percentage
+        // describing this same conversation and still wrong — the context shrank under it, and `refreshCtx`'s
+        // only other caller is turn end, so the chip would overstate until the next turn. Re-measured HERE
+        // rather than derived from the outcome: it carries preTokens/postTokens but no window size, and a
+        // percentage needs the denominator, which only `getContextUsage` reports (deriving one against a
+        // remembered maxTokens would also mix numerators — post_tokens counts the compacted conversation,
+        // totalTokens the whole window). Dropped BEFORE the re-measure, so a re-measure that fails shows
+        // nothing rather than the pre-compact number. NOT the failure path: a compaction that failed changed
+        // no context, so the last measurement still stands and is left alone.
+        case "compact": {
+          append([{ text: "✻ compacting… (a summarization pass over the whole context — this can take a minute or two)", dim: true }]);
+          const outcome = await session.compact(); append(formatCompact(outcome));
+          if (outcome.ok) { setCtxPct(undefined); await refreshCtx(); }
+          break;
+        }
         case "context": append(formatContext(summarizeUsage((await session.getContextUsage()) as RawContextUsage))); break;
         case "cost": append(formatCost((await session.usage()) as SessionUsage)); break;
         case "status": {

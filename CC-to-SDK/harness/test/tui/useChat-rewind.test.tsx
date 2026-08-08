@@ -455,7 +455,11 @@ describe("useChat: rewind flow", () => {
   it("15. a CONVERSATION rewind drops the measured percentage; the next turn end measures a fresh one (A8)", async () => {
     let ctx = { totalTokens: 5, maxTokens: 100 };
     const msgs = [{ type: "user", uuid: "u-keep", message: { content: [{ type: "text", text: "the surviving prompt" }] }, timestamp: "2026-07-28T08:00:00.000Z" }];
-    const session = fakeRewindSession({ rewind: async () => {} }, { getContextUsage: async () => ctx });
+    // Half two waits on the second turn's own REPLY (tagged with its prompt) and then POLLS the percentage as
+    // an assertion of its own, rather than making `waitFor` the assertion: a build that never re-measures
+    // fails with the value it kept, not a bare `waitFor timeout`. The reply renders a microtask before the
+    // measurement does, which is why the poll and not a bare expect closes it.
+    const session = fakeRewindSession({ rewind: async () => {} }, { getContextUsage: async () => ctx, submitMessages: (p) => [{ type: "assistant", message: { content: [{ type: "text", text: `re: ${p}` }] } }] });
     const deps = { getSessionMessages: async () => msgs, clearScreen: () => {} };
     const api: Parameters<typeof RewindHost>[0]["api"] & { run?: (p: string) => void } = {};
     function H() {
@@ -472,7 +476,8 @@ describe("useChat: rewind flow", () => {
     await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
     expect(frame(lastFrame)).toContain("ctx:-");                          // half one
     api.run!("again");
-    await waitFor(() => frame(lastFrame).includes("ctx:42"));             // half two: measured, not restored
+    await waitFor(() => frame(lastFrame).includes("re: again"));          // half two: measured, not restored —
+    await expect.poll(() => frame(lastFrame)).toContain("ctx:42");        // off the new turn's reply, failing with the VALUE
   });
 
   it("16. a CODE-ONLY rewind leaves the percentage alone — the conversation it measured is untouched", async () => {

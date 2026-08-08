@@ -2245,10 +2245,17 @@ describe("useChat: F3 final review", () => {
 // (never a build that simply never had one — each test measures a real 5% first), and the next turn end
 // brings back a DIFFERENT, freshly measured number, so a restored stale value could not pass for it. The
 // reset lives in replaceDocument, which is the boundary all these paths already share.
+//
+// Every half TWO waits on the turn's own REPLY — this builder tags it with the prompt that earned it — and
+// then polls the percentage as an assertion of its own, rather than making `waitFor` the assertion: a build
+// that never re-measures fails with the value it wrongly kept ("expected 'ctx:5 …' to contain 'ctx:42'")
+// instead of a bare `waitFor timeout` that names nothing. The reply alone can't carry the assertion — it
+// renders a microtask BEFORE the measurement refreshCtx triggers lands, so the poll is what closes that gap.
+const reply = (p: string) => [{ type: "assistant", message: { content: [{ type: "text", text: `re: ${p}` }] } }];
 describe("W-S5: the context percentage never outlives the conversation it measured", () => {
   it("/clear hides the measured percentage — /status too — and the next turn end measures a fresh one (A8)", async () => {
     let ctx = { totalTokens: 5, maxTokens: 100 };
-    const fake = fakeRemote({ getContextUsage: async () => ctx });
+    const fake = fakeRemote({ getContextUsage: async () => ctx, submitMessages: reply });
     const api: { run?: (s: string) => void } = {};
     function H() { const c = useChat(() => fake, {}, { clearViewport: () => {} }); api.run = c.submit; return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
@@ -2265,14 +2272,15 @@ describe("W-S5: the context percentage never outlives the conversation it measur
     await waitFor(() => frame(lastFrame).includes("Status"));
     expect(flat(lastFrame)).not.toContain("% used");                    // …and so is the /status row
     api.run!("second");
-    await waitFor(() => frame(lastFrame).includes("ctx:42"));           // half two: MEASURED anew, not restored
+    await waitFor(() => frame(lastFrame).includes("re: second"));       // the second turn's REPLY, then the measurement
+    await expect.poll(() => frame(lastFrame)).toContain("ctx:42");      // it triggers — a retry that fails with the VALUE
   });
 
   it("/resume onto a DIFFERENT session drops the previous session's percentage, and the first turn there measures its own (A8)", async () => {
     // The worst of the three: not a stale number about this conversation, the OTHER one's number rendered
     // against this one. The two fakes report deliberately different usage so the assertion names which.
-    const oldSession = fakeRemote({ getContextUsage: async () => ({ totalTokens: 5, maxTokens: 100 }) });
-    const newSession = fakeRemote({ sessionId: "old1234567890", getContextUsage: async () => ({ totalTokens: 42, maxTokens: 100 }) });
+    const oldSession = fakeRemote({ getContextUsage: async () => ({ totalTokens: 5, maxTokens: 100 }), submitMessages: reply });
+    const newSession = fakeRemote({ sessionId: "old1234567890", getContextUsage: async () => ({ totalTokens: 42, maxTokens: 100 }), submitMessages: reply });
     const makeSession = (resume?: string) => (resume ? newSession : oldSession);
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
     const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
@@ -2293,6 +2301,96 @@ describe("W-S5: the context percentage never outlives the conversation it measur
     await waitFor(() => flat(lastFrame).includes("❯ prior prompt"));    // the swap landed
     expect(frame(lastFrame)).toContain("ctx:-");                        // half one: 5% described the session we left
     api.run!("carry on");
-    await waitFor(() => frame(lastFrame).includes("ctx:42"));           // half two: the RESUMED session's own measurement
+    await waitFor(() => frame(lastFrame).includes("re: carry on"));     // half two: the RESUMED session's own
+    await expect.poll(() => frame(lastFrame)).toContain("ctx:42");      // measurement, off its own turn's reply
+  });
+
+  // The pair to the different-session case above, and to rewind test 16: resuming the SAME session into
+  // itself KEEPS the percentage. It never reaches replaceDocument (the rows are appended to the existing
+  // document), and that is the right answer, not an accident — the conversation is the one that was measured,
+  // so the number is not lying. Like 16, this guards the reset's PLACEMENT: hoist it to the top of
+  // `resumeInto`, above the sameSession branch, and this goes red while the different-session test above
+  // stays green.
+  it("/resume onto the SAME session KEEPS its percentage — nothing about that conversation changed (A8)", async () => {
+    const fake = fakeRemote({ getContextUsage: async () => ({ totalTokens: 5, maxTokens: 100 }), submitMessages: reply });
+    const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    const deps = { listSessions: async () => [{ sessionId: "sess-1", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
+    let pick: ((s: any) => void) | undefined;
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, {}, deps);                          // the same fake back: sessionId "sess-1" either way
+      pick = (c as any).pickSession; api.run = c.submit;
+      return <Text>ctx:{c.state.ctxPct ?? "-"} {c.state.picker.open ? `PICKER:${c.state.picker.sessions.length}` : "NOPICK"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => frame(lastFrame).includes("NOPICK"));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("ctx:5"));
+    api.run!("/resume");
+    await waitFor(() => frame(lastFrame).includes("PICKER:1"));
+    pick!({ sessionId: "sess-1", summary: "prior", lastModified: 1 });
+    await waitFor(() => flat(lastFrame).includes("❯ prior prompt"));    // the disk rows were APPENDED, not swapped in
+    expect(frame(lastFrame)).toContain("ctx:5");                        // …and the measurement of that same conversation stands
+  });
+
+  // W-S5 Minor 3 (task 8 review). The one path where the number still describes THIS conversation and is
+  // still wrong: a compaction shrinks the engine's context under it, and turn end is refreshCtx's only other
+  // caller, so the chip overstated until the next turn ended. Both halves: the pre-compact reading is gone
+  // AND the post-compact one is on screen — 90 → 12, so a kept stale value could not pass for the new one.
+  it("/compact re-measures the percentage the compaction just invalidated (A8)", async () => {
+    let ctx = { totalTokens: 90, maxTokens: 100 };
+    const fake = fakeRemote({
+      getContextUsage: async () => ctx, submitMessages: reply,
+      compact: async () => { ctx = { totalTokens: 12, maxTokens: 100 }; return { ok: true, preTokens: 90000, postTokens: 12000 }; },
+    });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("ctx:90"));           // a real, near-full reading to invalidate
+    api.run!("/compact");
+    await waitFor(() => frame(lastFrame).includes("✦ compacted"));      // the outcome line — again, not the assertion
+    await expect.poll(() => frame(lastFrame)).toContain("ctx:12");
+    expect(frame(lastFrame)).not.toContain("ctx:90");
+  });
+
+  // Why the drop is a separate statement BEFORE the re-measure rather than left to refreshCtx: refreshCtx
+  // swallows its own failures and keeps the old value, so a re-measure that cannot answer would leave the
+  // pre-compact number on a context that no longer has it. Nothing true to say → show nothing.
+  it("/compact whose re-measure fails shows NO percentage rather than the pre-compact one", async () => {
+    let ctx: { totalTokens: number; maxTokens: number } | undefined = { totalTokens: 90, maxTokens: 100 };
+    const fake = fakeRemote({
+      getContextUsage: async () => { if (!ctx) throw new Error("context unavailable"); return ctx; }, submitMessages: reply,
+      compact: async () => { ctx = undefined; return { ok: true, preTokens: 90000, postTokens: 12000 }; },
+    });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("ctx:90"));
+    api.run!("/compact");
+    await waitFor(() => frame(lastFrame).includes("✦ compacted"));
+    await expect.poll(() => frame(lastFrame)).toContain("ctx:-");
+  });
+
+  // The other side of that line: a compaction that FAILED changed no context, so the measurement it was
+  // taken against is still the live one. Dropping it there would hide a number that is still true.
+  it("a FAILED /compact leaves the percentage alone — no context changed", async () => {
+    const fake = fakeRemote({
+      getContextUsage: async () => ({ totalTokens: 90, maxTokens: 100 }), submitMessages: reply,
+      compact: async () => ({ ok: false, result: "failed", error: "nope" }),
+    });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("ctx:90"));
+    api.run!("/compact");
+    await waitFor(() => frame(lastFrame).includes("compact: nope"));
+    await new Promise((r) => setTimeout(r, 30));                        // long enough for a stray drop to land
+    expect(frame(lastFrame)).toContain("ctx:90");
   });
 });
