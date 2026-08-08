@@ -450,6 +450,19 @@ Pending — written at finish.
 - **`Ctrl+B` (all branches)** pending CTRL-B-1.
 - **Interruptible `/compact`** — `session.compact()` is a capped-timeout op over the UDS with no cancel
   path; a cancel is a wire change.
+- **FOLLOWER-CLEAR-1 — `/clear` in one client leaves every other attached client showing the whole old
+  conversation.** Found while reviewing Task 8, as the `/clear` counterpart of the rewind follower question
+  — which came out clean, because `host.rewind` broadcasts `rewound` and both arms of the client's rebuild
+  reach the reset. `host.clearSession()` (`host/host.ts:456-461`) swaps the engine and **broadcasts
+  nothing**, and the client's `state` handler (`tui/useChat.ts:670-673`) reads only idle and permission
+  mode. So a second attached client keeps its transcript, its context percentage, and its `/status` line,
+  all describing a conversation the engine has already discarded.
+  **Deferred for three reasons, none of them that it is small.** It is strictly *larger* than the chip
+  Task 8 fixed — the entire transcript diverges, not one number — so filing it under EP-S5b would
+  understate it. It is pre-existing, not a regression from any Wave S change. And it is unfixable inside
+  `useChat`: the repair is a new wire frame (`cleared`, or a `state` frame that carries the swap), which
+  is a protocol change of the same shape Task 3 made for `rewound` and deserves its own task rather than
+  a fix round. Task 3's `rewound`+`cleared` pair is the working precedent for whoever takes it.
 - **NARROW-CHROME-1 — six geometries where no budget can help, because the fix is a copy decision.**
   After Task 6 clipped the row bodies *and* added a tab-dependent chrome-wrap allowance, `/permissions`
   still draws Ink's full-screen clear in six cells: at 60 columns a pane of 14 in all three cursor states
