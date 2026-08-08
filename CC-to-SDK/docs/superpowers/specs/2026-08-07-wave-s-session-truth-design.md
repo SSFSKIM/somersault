@@ -450,6 +450,21 @@ Pending — written at finish.
 - **`Ctrl+B` (all branches)** pending CTRL-B-1.
 - **Interruptible `/compact`** — `session.compact()` is a capped-timeout op over the UDS with no cancel
   path; a cancel is a wire change.
+- **NARROW-CHROME-1 — six geometries where no budget can help, because the fix is a copy decision.**
+  After Task 6 clipped the row bodies *and* added a tab-dependent chrome-wrap allowance, `/permissions`
+  still draws Ink's full-screen clear in six cells: at 60 columns a pane of 14 in all three cursor states
+  (twelve clears per six cursor moves mid-list) and a pane of 15 on the Workspace tab; and at 70 and 80
+  columns a pane of 14 on Workspace. Everything else is clean — the worst case the task was scoped around,
+  mid-list with both counted indicators up, draws zero clears at every pane from 15 to 30 at all four
+  widths, and at 14 for 70, 80 and 100.
+  **This is the window's floor, not a missing subtraction.** `Math.max(1, …)` stops buying anything once
+  `rows − 13 − wrap` reaches zero, and a frame of one row plus two indicators is the shortest this dialog
+  gets. A bigger constant cannot reach it. What does close it — measured live, all six cells go to zero —
+  is `wrap="truncate"` on the intro and the footer. **That is a copy decision, not a geometry one:** at 60
+  columns the footer loses *"· Esc to cancel"*, and the whole point of transcribing these literals was
+  fidelity to the canonical build. It belongs with the chrome wave's other truncation and windowing calls
+  (the content-sized dialogs that overflow on their own) so the same taste gets applied once, rather than
+  being decided here for one dialog in isolation.
 - **STREAM-OVERFLOW-1 — the live streaming region is unbounded, and it is a bigger instance of the very
   defect Task 4 spent four rounds closing.** Found by the `paneOwned` gate's reviewer while measuring
   something else, and named here rather than left in a review transcript because nothing in the codebase
