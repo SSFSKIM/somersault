@@ -446,30 +446,44 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //
   // WHAT IS IN THE CLASS: a surface whose HEIGHT IS A FUNCTION OF `rows`. It has already claimed the pane, so
   // a sibling beside it is not a near miss but a guaranteed overflow, and no budget it could carry would help.
-  // Seven, each read off `ChatApp`'s own frame line count at 18/20/22/24/26/30/40/50 rows — except the last,
-  // whose curve lives entirely BELOW that sweep and had to be measured from 12 up (see its own note):
-  //   · the pager       — `rows − 6` by construction (above);
-  //   · `RewindPicker`  — `rewindVisibleRows(rows, columns)`; 15 → 36 rows as the pane goes 18 → 40;
-  //   · `SessionPicker` — `resumeVisibleRows(rows)`; 15 → 30 as the pane goes 20 → 50;
-  //   · `ModelPicker`   — `Select`'s own `clampVisible(visible, rows, …)`; 17 → 21, i.e. it tracks every pane
+  // Seven, each swept at 18/20/22/24/26/30/40/50 rows — except the last, whose curve lives entirely BELOW that
+  // sweep and had to be measured from 12 up (see its own note).
+  //   THE INSTRUMENT, and every curve below is traceable to it: `stdout.write` on a NON-DEBUG Ink render, with
+  // log-update's `eraseLines` framing stripped back off, so the number quoted IS the `outputHeight` of
+  // `ink.js:121` — never a `lastFrame()` line count. `ink-testing-library` renders with `debug: true`, and
+  // that branch writes `fullStaticOutput + output` and RETURNS BEFORE the `outputHeight >= stdout.rows` check
+  // (`ink.js:104-109`), so a height read there is `staticLines + outputHeight`. Any dialog reached by TYPING a
+  // slash command has the command echo in its static half — one row — and its curve read that way is one row
+  // too tall at every pane. That is what inflated three of the six below (`SessionPicker`, `ModelPicker`,
+  // `HelpDialog`) until this round; the three reached without an echo (the pager, `RewindPicker`,
+  // `PlanDialog`) measure a static half of ZERO and their numbers were already the right quantity. Re-measure
+  // the same way, or the inflation comes straight back:
+  //   · the pager       — the BOX alone is `rows − 6` by construction (above), but the frame Ink measures is
+  //                       the composed one, which is `rows − 4`: 14 → 46 as the pane goes 18 → 50, over a
+  //                       transcript long enough (60 lines) that the window never outruns the content;
+  //   · `RewindPicker`  — `rewindVisibleRows(rows, columns)`; 15 → 36 rows as the pane goes 18 → 40 (45 at 50).
+  //                       UNCHANGED by the re-measure — its Esc-Esc fixture puts nothing in the static half,
+  //                       which rewind-picker.test.tsx's invariant matrix now verifies rather than assumes;
+  //   · `SessionPicker` — `resumeVisibleRows(rows)`; 14 → 29 as the pane goes 20 → 50;
+  //   · `ModelPicker`   — `Select`'s own `clampVisible(visible, rows, …)`; 15 → 20, i.e. it tracks every pane
   //                       short enough to matter and stops only at `MODEL_VISIBLE_MAX`. THE TRACKING IS
   //                       CATALOG-CONTINGENT, and the unqualified claim this line used to make is not true of
   //                       every catalog: `clampVisible`'s divisor is `perOptionRows`, which is 2 only while
-  //                       some option carries a `description`. Re-measured — with descriptions, 15 → 21 over
-  //                       panes 16 → 28 (the 17 → 21 above is that same curve over the 18 → 50 sweep);
-  //                       WITHOUT them `perOptionRows` is 1 and the frame is a flat 21 at every pane. The
+  //                       some option carries a `description`. Re-measured — with descriptions, 14 → 20 over
+  //                       panes 16 → 28 (the 15 → 20 above is that same curve over the 18 → 50 sweep);
+  //                       WITHOUT them `perOptionRows` is 1 and the frame is a flat 20 at every pane. The
   //                       classification is unchanged, because a real catalog carries descriptions — but a
   //                       description-less FIXTURE measures the floor, not the tracking;
-  //   · `HelpDialog`    — `browserVisibleRows(rows)`; its browse tab is 20 → 35 over that same range;
-  //   · `PlanDialog`    — `planRegionRows(rows, …)` IS `rows − optionBox − chrome`; 21 → 37 — and CONTINGENT
+  //   · `HelpDialog`    — `browserVisibleRows(rows)`; its browse tab is 18 → 34 over that same range;
+  //   · `PlanDialog`    — `planRegionRows(rows, …)` IS `rows − optionBox − chrome`; 21 → 47 over panes 16 → 50
+  //                       with a 60-line plan (21 → 37 is that same curve's 18 → 40 stretch) — and CONTINGENT
   //                       ON THE PLAN in exactly the way `ModelPicker` is on the catalog. `planRegionRows` is
   //                       a MAXIMUM, and `planWindow` returns only as many lines as the plan HAS, so a short
-  //                       plan is a flat 21 at every pane. Re-measured with a 60-line plan: 21 → 47 over panes
-  //                       16 → 50. Same conclusion, same caveat about fixtures;
+  //                       plan is a flat 21 at every pane. Same conclusion, same caveat about fixtures;
   //   · `SettingsDialog` — `settingsVisibleRows(rows)`; 10 → 13 over panes 12 → 15 and flat 13 above, quoted
   //                       at ONE cursor state (top of the list) the way the six above each quote one, and read
-  //                       off `stdout.write` on a non-debug Ink render rather than off a test frame — see
-  //                       `SETTINGS_CHROME_ROWS` for why those two instruments differ by a row. MOVED HERE BY
+  //                       off the same non-debug `stdout.write` instrument — this entry is where that
+  //                       instrument came from; see `SETTINGS_CHROME_ROWS` for the row it recovers. MOVED HERE BY
   //                       WAVE S t5, which windowed its Config list onto `Select`; until that task it read a
   //                       constant and sat in the excluded list below (recorded there as 14).
   //                         THE MEMBERSHIP TEST IS THE DERIVATION, NOT OBSERVED VARIANCE OVER THE SWEEP, and

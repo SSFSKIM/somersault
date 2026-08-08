@@ -104,6 +104,17 @@ describe("rewindVisibleRows — the budget is our own chrome, counted", () => {
 // `fullStaticOutput + output`; the fixture's transcript is empty, so the static half is empty and the frame's
 // line count IS the `outputHeight` Ink compares. (If a future `<Static>` banner appears, this test counts it
 // too and fails — the safe direction.)
+//   AND THAT PREMISE IS MEASURED, not reasoned — it was asserted here for a round before anyone checked it,
+// and it is the load-bearing one for every number in this block. Wave S t5 found the SettingsDialog budget
+// inflated by exactly this effect (`SETTINGS_CHROME_ROWS`, SettingsDialog.tsx) and re-opened the question for
+// every surface that quotes a height. Settled for THIS fixture by running it under both instruments at once:
+// the debug frame's line count against the `output` recovered from `stdout.write` on a NON-debug Ink render,
+// at 21/24/40 rows × 36/50/100 columns with five tasks seeded, in state D below — mid-list, both indicators,
+// the checking row up, the tallest cell the grid reaches. The two agree EXACTLY in all nine (20/23/38 at 36
+// columns, 18/21/39 at 50, 20/23/38 at 100) and the static half measures zero rows in every one. So the
+// heights below are `outputHeight`, the assertions compare the quantity Ink compares, and nothing here needed
+// correcting. A fixture that opened this picker by TYPING a slash command would not have that property: the
+// command echo is a static item, and every height read off `lastFrame()` there is one row too tall.
 //
 // FOUR STATES, because the frame's height is not one number: the two scroll indicators are conditional, and
 // `REWIND_CHECKING` is a further conditional row. The tallest reachable state is mid-list (both indicators)
