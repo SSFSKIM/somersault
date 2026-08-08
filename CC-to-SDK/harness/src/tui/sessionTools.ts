@@ -2,7 +2,8 @@
 // 6's /stats /session). No fs/SDK effects: callers fetch messages and inject writers.
 import type { RenderLine } from "./render.js";
 import { rowKind, promptText } from "../sessions/rows.js";
-import { tokenCount as kk, type SessionUsage } from "./commands.js";
+import { type SessionUsage } from "./commands.js";
+import { formatCompactNumber as kk } from "./format.js";   // W-S t7: `tokenCount` retired for the verbatim `_d` port
 
 const FILE_KEYS = ["file_path", "path", "notebook_path"] as const;
 const toolFile = (b: any): string | undefined => {

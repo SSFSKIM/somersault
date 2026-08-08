@@ -448,7 +448,9 @@ or LOW-priority tail items, never rows tuned to hit the target number.
   (`render`) paths. 4 tests updated.
 - **U4 — `/cost` + `/status`** (`commands.ts` formatters + `useChat` dispatch). `/cost` reads
   `session.usage()` (`SDKControlGetUsageResponse`) → total cost (or "included in your `<plan>` plan" on
-  subscription auth) + in/out tokens + duration + per-model breakdown; `/status` snapshots the live
+  subscription auth) + in/out tokens + duration + per-model breakdown — **that layout was ours, not
+  upstream's, and Wave S (t7) replaced it with a transcription of `Aze`/`E0y`; see the `/cost` row in
+  §"Slash commands" for what it prints now**; `/status` snapshots the live
   local state (model · mode · thinking · context% · cwd · session id). Added `usage()` to the
   `ChatSession` interface. 7 tests.
 - **U5 — `!` bash mode + `#` memory mode + input-mode indicator** (`bash.ts` + `memory.ts` +
@@ -1575,7 +1577,7 @@ live binding to derive. `test/tui/honesty.test.tsx` pins every one of them to an
 |---|---|---|
 | `/clear` `/compact` `/context` `/model` `/resume` `/continue` `/help` `/think` `/yolo` | ✅ | local, dispatched. **Wave T (t15) note, no score change:** `/yolo` no longer flips straight into bypass — first use opens the same consent dialog the launch path uses (§4's row) and later uses respect the persisted acceptance. Upstream has no precedent to inherit here: its gate is launch-only *because* its ladder cannot reach bypass at all, so gating `/yolo` is a ccx-side closure of a ccx-side hole (Recorded additions) |
 | live skill/plugin/user catalog (105) | ✅ | command palette (Increment D) |
-| `/cost` | ✅ | **U4** — `session.usage()` → cost (or "included in <plan>") + tokens + duration + per-model |
+| `/cost` | ✅ | **U4** shipped an INVENTED layout (`Session cost` / total / tokens / duration / per-model) and this row's ✅ predated the clone reframe, so it was scoring our own design against itself. **Wave S (t7) re-cut:** the block is now a transcription of upstream's `Aze` (L217733-217739) and the `E0y` usage block it embeds (L217683-217704) — `Total cost:` / `Total duration (API):` / `Total duration (wall):` / `Total code changes:` all padded to column 23, then `Usage by model:` with `` `${name}:`.padStart(21) `` rows carrying input, output, cache read, cache write, an above-zero-only web-search clause, and the per-model dollar figure; no models at all prints upstream's single `Usage:` line. Money is upstream's `pZu` (two places above fifty cents, four below) and counts are `_d` via `formatCompactNumber`; the durations are the existing verbatim `ra` port, not the spinner's `formatElapsed`, which prints `1m 05s` where upstream prints `1m 5s` and has no hour/day units at all. **One deliberate omission:** upstream appends ` (costs may be inaccurate due to usage of unknown models)` when its pricing table misses a model; the SDK gives us no equivalent signal, so the caveat is absent rather than guessed. **One deliberate divergence:** a zero total under `subscription_type` still prints `included in your <plan> plan` in the transcribed row's value slot — upstream always prints a figure, but on OAuth auth that figure is a fiction. Four `ModelUsage` fields upstream accumulates and never prints (`contextWindow`, `maxOutputTokens`, `canonicalModel`, `provider`) are typed but unprinted; `canonicalModel` is read only as the fold key, which is what `E0y` uses it for |
 | `/status` | ✅ | **U4** — model · mode · thinking · context · cwd · session snapshot |
 | `/vim` | ❌ | LOW (owner-deferred) |
 | honesty routing of catalogued client-side controls | ✅ | **W1** — `agents`/`color`/`config`/`effort`/`extra-usage`/`fast`/`heapdump` print an explicit "why not here" line instead of silently becoming prompt turns; `/review` + `/doctor` stay prompt turns (prompt-type upstream) |

@@ -149,8 +149,10 @@ ccx --cwd /tmp/ccqa --permission-mode default
   `thinking: unknown level "bogus" · try off/low/medium/high/xhigh/max or a number`, 크래시 없음.
 - [ ] `/context` → `ctx N% · used / max · status` 출력.
 - [ ] `/compact` → `✦ compacted X → Y` 출력(컨텍스트가 너무 작으면 흐린 "nothing to compact").
-- [ ] `/cost` → `Session cost` 블록을 출력: 합계(또는 구독 인증이면 "included in your … plan"),
-  입/출 토큰, 소요 시간, 모델별 행.
+- [ ] `/cost` → 업스트림 블록을 출력(모든 값이 같은 열에서 시작): `Total cost:`(구독 인증이면
+  "included in your … plan"), `Total duration (API):`, `Total duration (wall):`,
+  `Total code changes: N lines added, M lines removed`, 그리고 `Usage by model:` 아래에
+  모델마다 오른쪽 정렬된 `<model>:  … input, … output, … cache read, … cache write (…)` 행.
 - [ ] `/status` → model / mode / thinking / context% / cwd / session-id를 한눈에 출력.
 - [ ] `/clear` → 화면상의 트랜스크립트는 지우지만 세션 컨텍스트는 **유지**(앞 턴을 참조하는
   후속 질문을 해 보라 — 여전히 알고 있어야 함).

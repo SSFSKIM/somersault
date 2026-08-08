@@ -40,6 +40,12 @@ const compactFormats = [
 ];
 export const formatCompactNumber = (value: number): string => compactFormats[value >= 1000 ? 1 : 0]!.format(value).toLowerCase();
 
+/** Upstream `pZu` (L217680-217682), the money spelling of `/cost`'s total row and every per-model row:
+ *  `` `$${e > 0.5 ? A0y(e,100).toFixed(2) : e.toFixed(t)}` `` with `A0y(e,t) = Math.round(e*t)/t`. The
+ *  threshold is FIFTY CENTS and it is strict, so `$0.50` itself still takes four places — which is the point
+ *  of the two-branch rule: a session that has spent a third of a cent must not read `$0.00`. */
+export const formatUsd = (usd: number, digits = 4): string => `$${usd > 0.5 ? (Math.round(usd * 100) / 100).toFixed(2) : usd.toFixed(digits)}`;
+
 /** Upstream `Et` (L15084): the ordinary pluralizer — `1` keeps the singular, everything else (including 0)
  *  takes the plural. Read's own rows use explicit `=== 1` ternaries that agree with it; Edit's diff summary
  *  deliberately does NOT (it pluralizes with `> 1`, so `0` reads `lines`), and `$Wo` strips a trailing `s`

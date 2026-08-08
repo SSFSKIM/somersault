@@ -1,7 +1,7 @@
 // The shared upstream formatter ports (`src/tui/format.ts`). These are verbatim ports of NAMED 2.1.220
 // functions, so every case here is a byte pinned against the bundle rather than a taste call.
 import { describe, expect, it } from "vitest";
-import { formatCompactNumber } from "../../src/tui/format.js";
+import { formatCompactNumber, formatUsd } from "../../src/tui/format.js";
 
 describe("formatCompactNumber (upstream `yd`, bundle 229070611)", () => {
   // `yd(e){let t=e>=1000;return fOg(t).format(e).toLowerCase()}` with
@@ -19,5 +19,20 @@ describe("formatCompactNumber (upstream `yd`, bundle 229070611)", () => {
     expect(formatCompactNumber(907)).toBe("907");
     expect(formatCompactNumber(0)).toBe("0");
     expect(formatCompactNumber(999)).toBe("999");
+  });
+});
+
+describe("formatUsd (upstream `pZu`, L217680)", () => {
+  // `pZu(e,t=4){return `$${e>0.5 ? A0y(e,100).toFixed(2) : e.toFixed(t)}`}` with `A0y(e,t)=Math.round(e*t)/t`
+  // — the threshold is FIFTY CENTS, not a dollar, and it is strict (`>`), so `$0.50` itself takes four places.
+  it("rounds to two places above fifty cents", () => {
+    expect(formatUsd(1.2345)).toBe("$1.23");
+    expect(formatUsd(0.505)).toBe("$0.51");
+    expect(formatUsd(12.3456)).toBe("$12.35");
+  });
+  it("keeps four places at or below fifty cents, so a sub-cent session is not rounded to nothing", () => {
+    expect(formatUsd(0.5)).toBe("$0.5000");
+    expect(formatUsd(0.0123)).toBe("$0.0123");
+    expect(formatUsd(0)).toBe("$0.0000");
   });
 });

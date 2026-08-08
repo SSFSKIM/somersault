@@ -3,7 +3,7 @@ import type { CompactOutcome, ContextUsageSummary } from "../index.js";
 import type { RenderLine } from "./render.js";
 import { THINK_LEVELS } from "./thinkLevels.js";
 import type { CommandEntry } from "./commandComplete.js";
-import { formatElapsed } from "./spinner.js";
+import { formatCompactNumber, formatDuration, formatUsd, plural } from "./format.js";
 import type { SettingsRow } from "./settingsRows.js";
 import { THEME_LABELS } from "./theme.js";   // leaf module, no React — safe to import into this pure file
 
@@ -86,9 +86,12 @@ const ALIAS_TO_NAME = new Map(COMMANDS.flatMap((c) => (c.aliases ?? []).map((a) 
  *  command meets the dispatch switch, so every arm keeps matching on canonical names only. */
 export const canonicalCommand = (name: string): string => ALIAS_TO_NAME.get(name) ?? name;
 
-/** 31000→"31k", 18500→"18.5k". Exported because /stats renders the same counts (sessionTools.ts) — two
- *  copies would let /cost and /stats disagree about the same number the first time the rule changes. */
-export const tokenCount = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : `${n}`);
+// `tokenCount` — our hand-rolled `n >= 1000 ? Math.round(n/100)/10 + "k" : n` — was RETIRED in W-S t7. Its
+// own doc comment already forbade a second spelling of a token count, and `format.ts` turned out to hold the
+// first: `formatCompactNumber` is the verbatim port of upstream's `_d` (L107091) that `/cost` and the agent
+// `Done (…)` clause both spell. The two disagreed at and above 1000 (`31k` vs upstream's mandatory `31.0k`)
+// and badly above a million, where ours never rolled over to `m` and printed `1234.6k` for `1.2m`. Every
+// caller here and in `sessionTools.ts` now imports `formatCompactNumber` directly, so there is one name.
 
 // `formatHelp()` — the plain `commands:` listing — was deleted in F6 T15. F6 T14 made `/help` a tabbed
 // DIALOG (`RNa`, L459684) whose Commands tab browses the LIVE catalog, which left the listing with no caller
@@ -115,34 +118,79 @@ export function formatThink(next?: string, current?: string): RenderLine[] {
   return next ? [{ text: `thinking → ${next}` }] : [{ text: `thinking: ${current ?? "default"}`, dim: true }];
 }
 export function formatCompact(o: CompactOutcome): RenderLine[] {
-  return o.ok ? [{ text: `✦ compacted ${tokenCount(o.preTokens ?? 0)} → ${tokenCount(o.postTokens ?? 0)}` }]
+  return o.ok ? [{ text: `✦ compacted ${formatCompactNumber(o.preTokens ?? 0)} → ${formatCompactNumber(o.postTokens ?? 0)}` }]
               : [{ text: `compact: ${o.error ?? "nothing to compact"}`, dim: true }];
 }
 export function formatContext(s: ContextUsageSummary): RenderLine[] {
-  return [{ text: `ctx ${s.percentUsed}% · ${tokenCount(s.tokensUsed)} / ${tokenCount(s.maxTokens)} · ${s.status}`, dim: true }];
+  return [{ text: `ctx ${s.percentUsed}% · ${formatCompactNumber(s.tokensUsed)} / ${formatCompactNumber(s.maxTokens)} · ${s.status}`, dim: true }];
 }
 
-/** The session-cumulative usage shape from Session.usage() (SDKControlGetUsageResponse subset). */
+/** The session-cumulative usage shape from `Session.usage()` — a subset of `SDKControlGetUsageResponse`
+ *  (`sdk.d.ts:3186-3205`), every name below verified against that file's spelling, with the model entry a
+ *  subset of `ModelUsage` (`:1265-1282`). Optional throughout because a partial response must render rather
+ *  than throw; the SDK itself declares all of these required. Four of `ModelUsage`'s ten fields
+ *  (`contextWindow`, `maxOutputTokens`, `canonicalModel`, `provider`) upstream accumulates and never prints
+ *  — they are typed here so a caller passing the raw response type-checks, and only `canonicalModel` is
+ *  read, as the fold key `E0y` uses it for. Printing rows for the others would be an addition beyond
+ *  upstream, not a fidelity repair. */
 export interface SessionUsage {
-  session?: { total_cost_usd?: number; total_duration_ms?: number; model_usage?: Record<string, { inputTokens?: number; outputTokens?: number; costUSD?: number }> };
+  session?: {
+    total_cost_usd?: number; total_api_duration_ms?: number; total_duration_ms?: number;
+    total_lines_added?: number; total_lines_removed?: number;
+    model_usage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number; webSearchRequests?: number; costUSD?: number; contextWindow?: number; maxOutputTokens?: number; canonicalModel?: string; provider?: string }>;
+  };
   subscription_type?: string | null;
 }
-const sum = (ms: Record<string, { inputTokens?: number; outputTokens?: number }>, key: "inputTokens" | "outputTokens"): number =>
-  Object.values(ms).reduce((a, m) => a + (m[key] ?? 0), 0);
+type ModelRow = { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; webSearchRequests: number; costUSD: number };
+/** Upstream's `E0y` folds `model_usage` by CANONICAL model (`lo(rawKey)`) before rendering, so two raw ids
+ *  that price as one model print one row rather than two. The SDK hands that canonical id back on the entry
+ *  itself (`canonicalModel`), so we fold on it instead of re-deriving it from the key. */
+function foldByModel(ms: NonNullable<NonNullable<SessionUsage["session"]>["model_usage"]>): Map<string, ModelRow> {
+  const by = new Map<string, ModelRow>();
+  for (const [name, m] of Object.entries(ms)) {
+    const key = m.canonicalModel ?? name;
+    const r = by.get(key) ?? { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: 0 };
+    r.inputTokens += m.inputTokens ?? 0; r.outputTokens += m.outputTokens ?? 0; r.cacheReadInputTokens += m.cacheReadInputTokens ?? 0;
+    r.cacheCreationInputTokens += m.cacheCreationInputTokens ?? 0; r.webSearchRequests += m.webSearchRequests ?? 0; r.costUSD += m.costUSD ?? 0;
+    by.set(key, r);
+  }
+  return by;
+}
+/** The one column every `/cost` value starts at. Upstream hard-codes the four labels' trailing spaces and
+ *  pads model names to 21 ahead of a body that opens with two more — both land here, so both halves of the
+ *  block read off this constant rather than off two hand-counted literals that can drift apart. */
+const COST_COL = 23;
 
-/** `/cost` — total cost (or "included in <plan>" on subscription auth), tokens, duration, per-model rows. */
+/** `/cost` — a TRANSCRIPTION of upstream's `Aze` (`cli.pretty.js` L217733-217739) and the `E0y` usage block
+ *  it embeds (L217683-217704), replacing the `Session cost`/total/tokens/duration layout this harness had
+ *  invented. Four aligned label rows, then either `Usage by model:` plus a right-aligned row per model or,
+ *  with no models at all, upstream's single `Usage:` line. The whole block is `vt.dim` upstream, hence
+ *  `dim: true` on every line. Two deliberate divergences, both recorded in `docs/parity/tui-ux.md`:
+ *  1. Upstream appends ` (costs may be inaccurate due to usage of unknown models)` to the cost when its
+ *     pricing table misses a model. We have no such signal off the SDK, and inventing one would be worse
+ *     than omitting the caveat, so the clause is absent rather than guessed.
+ *  2. Upstream always prints a dollar figure. On subscription auth that figure is a fiction — the turns bill
+ *     a Pro/Max plan, not a card — so a zero total with a `subscription_type` present prints the plan
+ *     instead. It sits in the transcribed row's VALUE slot, so the layout stays upstream's to the column;
+ *     only the string inside it is ours. Kept from U4 as a real affordance for OAuth users. */
 export function formatCost(u: SessionUsage): RenderLine[] {
-  const s = u.session ?? {}; const models = s.model_usage ?? {};
+  const s = u.session ?? {};
   const cost = s.total_cost_usd ?? 0;
-  const costText = cost > 0 ? `$${cost.toFixed(4)}` : u.subscription_type ? `included in your ${u.subscription_type} plan` : "$0.00";
+  const added = s.total_lines_added ?? 0, removed = s.total_lines_removed ?? 0;
   const out: RenderLine[] = [
-    { text: "Session cost", bold: true },
-    { text: `  total      ${costText}` },
-    { text: `  tokens     ${tokenCount(sum(models, "inputTokens"))} in · ${tokenCount(sum(models, "outputTokens"))} out`, dim: true },
-    { text: `  duration   ${formatElapsed(s.total_duration_ms ?? 0)}`, dim: true },
+    { text: "Total cost:".padEnd(COST_COL) + (cost === 0 && u.subscription_type ? `included in your ${u.subscription_type} plan` : formatUsd(cost)), dim: true },
+    { text: "Total duration (API):".padEnd(COST_COL) + formatDuration(s.total_api_duration_ms ?? 0), dim: true },
+    { text: "Total duration (wall):".padEnd(COST_COL) + formatDuration(s.total_duration_ms ?? 0), dim: true },
+    { text: "Total code changes:".padEnd(COST_COL) + `${added} ${plural(added, "line")} added, ${removed} ${plural(removed, "line")} removed`, dim: true },
   ];
-  for (const [name, m] of Object.entries(models))
-    out.push({ text: `  ${name}  ${tokenCount(m.inputTokens ?? 0)} in · ${tokenCount(m.outputTokens ?? 0)} out${m.costUSD ? ` · $${m.costUSD.toFixed(4)}` : ""}`, dim: true });
+  const models = foldByModel(s.model_usage ?? {});
+  if (models.size === 0) { out.push({ text: "Usage:".padEnd(COST_COL) + "0 input, 0 output, 0 cache read, 0 cache write", dim: true }); return out; }
+  out.push({ text: "Usage by model:", dim: true });
+  for (const [name, m] of models)
+    // The web-search clause appears ONLY above zero — upstream's own "omit what was not used" rule, and the
+    // only conditional clause in the block: the four cache/token counts print their zeros.
+    out.push({ text: `${name}:`.padStart(COST_COL - 2) + `  ${formatCompactNumber(m.inputTokens)} input, ${formatCompactNumber(m.outputTokens)} output, ${formatCompactNumber(m.cacheReadInputTokens)} cache read, ${formatCompactNumber(m.cacheCreationInputTokens)} cache write`
+      + (m.webSearchRequests > 0 ? `, ${formatCompactNumber(m.webSearchRequests)} web search` : "") + ` (${formatUsd(m.costUSD)})`, dim: true });
   return out;
 }
 

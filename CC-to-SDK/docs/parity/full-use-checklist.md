@@ -147,8 +147,10 @@ Type each and confirm the response line (the full current set, from `/help`):
   number`, no crash.
 - [ ] `/context` → prints `ctx N% · used / max · status`.
 - [ ] `/compact` → prints `✦ compacted X → Y` (or a dim "nothing to compact" if context is tiny).
-- [ ] `/cost` → prints a `Session cost` block: total (or "included in your … plan" on subscription
-  auth), tokens in/out, duration, and a per-model row.
+- [ ] `/cost` → prints upstream's block, every value starting at the same column: `Total cost:` (or
+  "included in your … plan" on subscription auth), `Total duration (API):`, `Total duration (wall):`,
+  `Total code changes: N lines added, M lines removed`, then `Usage by model:` and one right-aligned
+  `<model>:  … input, … output, … cache read, … cache write (…)` row per model.
 - [ ] `/status` → prints model / mode / thinking / context% / cwd / session-id in one glance.
 - [ ] `/clear` → wipes the on-screen transcript but **keeps** session context (ask a follow-up that
   references the earlier turn — it should still know).

@@ -24,12 +24,14 @@ describe("formatters", () => {
     expect(formatModel(undefined, "sonnet")).toEqual([{ text: "model: sonnet", dim: true }]);
   });
   it("compact: success shows before→after, failure is dim", () => {
-    expect(formatCompact({ ok: true, preTokens: 31000, postTokens: 6000 })).toEqual([{ text: "✦ compacted 31k → 6k" }]);
+    // `31.0k`, not `31k`: W-S t7 retired our hand-rolled `tokenCount` for `formatCompactNumber`, the verbatim
+    // port of upstream's `_d`, whose `minimumFractionDigits` is 1 at or above 1000 (`format.test.ts` pins it).
+    expect(formatCompact({ ok: true, preTokens: 31000, postTokens: 6000 })).toEqual([{ text: "✦ compacted 31.0k → 6.0k" }]);
     expect(formatCompact({ ok: false, error: "Not enough messages" })[0].dim).toBe(true);
   });
   it("context renders a one-line digest", () => {
     expect(formatContext({ percentUsed: 9, tokensUsed: 18500, maxTokens: 200000, tokensRemaining: 181500, status: "ok" }))
-      .toEqual([{ text: "ctx 9% · 18.5k / 200k · ok", dim: true }]);
+      .toEqual([{ text: "ctx 9% · 18.5k / 200.0k · ok", dim: true }]);
   });
   it("unknown", () => {
     expect(formatUnknown("zzz")).toEqual([{ text: "Unknown command: /zzz · try /help", color: "red" }]);
@@ -38,16 +40,50 @@ describe("formatters", () => {
     expect(formatThink("high")).toEqual([{ text: "thinking → high" }]);
     expect(formatThink(undefined, "default")).toEqual([{ text: "thinking: default", dim: true }]);
   });
-  it("cost: shows total, tokens, duration, per-model breakdown", () => {
-    const lines = formatCost({ session: { total_cost_usd: 0.0123, total_duration_ms: 65000, model_usage: { "claude-opus-4-8": { inputTokens: 1200, outputTokens: 340, costUSD: 0.0123 } } }, subscription_type: null }).map((l) => l.text).join("\n");
-    expect(lines).toContain("$0.0123");
-    expect(lines).toContain("1.2k in · 340 out");
-    expect(lines).toContain("1m 05s");
-    expect(lines).toContain("claude-opus-4-8");
+  // W-S t7. `/cost` is a TRANSCRIPTION of upstream's `Aze` (cli.pretty.js L217733-217739) and the `E0y`
+  // usage block it embeds (L217683-217704) — not the invented `Session cost` / total / tokens / duration
+  // layout it replaced. Every value in the block starts at ONE column (23): the four labels are hard-padded
+  // there and the model names are `` `${name}:`.padStart(21) `` ahead of a body that opens with two spaces.
+  // These assert whole rows rather than substrings on purpose — a row that silently loses its padding still
+  // contains every phrase a `toContain` would look for, so only the full string can catch it.
+  it("cost: transcribes upstream's four label rows and the per-model usage block", () => {
+    const lines = formatCost({ session: {
+      total_cost_usd: 1.2345, total_api_duration_ms: 36_000, total_duration_ms: 374_000,
+      total_lines_added: 1, total_lines_removed: 12,
+      model_usage: { "claude-sonnet-5": { inputTokens: 3600, outputTokens: 914, cacheReadInputTokens: 439_700,
+        cacheCreationInputTokens: 11_400, webSearchRequests: 2, costUSD: 0.2246, contextWindow: 200_000, maxOutputTokens: 64_000 } },
+    }, subscription_type: null });
+    expect(lines.map((l) => l.text)).toEqual([
+      "Total cost:            $1.23",
+      "Total duration (API):  36s",
+      "Total duration (wall): 6m 14s",
+      "Total code changes:    1 line added, 12 lines removed",
+      "Usage by model:",
+      "     claude-sonnet-5:  3.6k input, 914 output, 439.7k cache read, 11.4k cache write, 2 web search ($0.2246)",
+    ]);
+    expect(lines.every((l) => l.dim === true)).toBe(true);   // upstream wraps the whole block in `vt.dim`
   });
-  it("cost: subscription auth shows 'included in your <plan> plan' instead of $0", () => {
-    const lines = formatCost({ session: { total_cost_usd: 0, model_usage: {} }, subscription_type: "max" }).map((l) => l.text).join("\n");
-    expect(lines).toContain("included in your max plan");
+  it("cost: omits the web-search clause when the count is zero, and folds by canonical model", () => {
+    const lines = formatCost({ session: { total_cost_usd: 0.0123, model_usage: {
+      "claude-opus-5-20260101": { inputTokens: 700, outputTokens: 140, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: 0.0100, canonicalModel: "claude-opus-5" },
+      "claude-opus-5":          { inputTokens: 500, outputTokens: 200, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: 0.0023, canonicalModel: "claude-opus-5" },
+    } }, subscription_type: null }).map((l) => l.text);
+    expect(lines.slice(4)).toEqual(["Usage by model:", "       claude-opus-5:  1.2k input, 340 output, 0 cache read, 0 cache write ($0.0123)"]);
+    expect(lines.join("\n")).not.toContain("web search");
+  });
+  it("cost: with no model usage at all prints upstream's single `Usage:` line", () => {
+    expect(formatCost({ session: { total_cost_usd: 0, model_usage: {} }, subscription_type: null }).map((l) => l.text)).toEqual([
+      "Total cost:            $0.0000",
+      "Total duration (API):  0s",
+      "Total duration (wall): 0s",
+      "Total code changes:    0 lines added, 0 lines removed",
+      "Usage:                 0 input, 0 output, 0 cache read, 0 cache write",
+    ]);
+  });
+  it("cost: subscription auth puts the plan in the transcribed row's value slot (deliberate divergence)", () => {
+    const lines = formatCost({ session: { total_cost_usd: 0, model_usage: {} }, subscription_type: "max" }).map((l) => l.text);
+    expect(lines[0]).toBe("Total cost:            included in your max plan");   // the row keeps upstream's padding
+    expect(lines[1]).toBe("Total duration (API):  0s");                          // and the rest of the block is untouched
   });
   it("status: snapshots model · mode · thinking · context · session", () => {
     const lines = formatStatus({ model: "claude-opus-4-8", mode: "acceptEdits", thinkLevel: "high", ctxPct: 42, sessionId: "abcdef1234", cwd: "/x" }).map((l) => l.text).join("\n");
