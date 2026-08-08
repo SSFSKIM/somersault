@@ -1676,6 +1676,59 @@ git commit -m "f5(waveS-t6): Permissions' rule and workspace lists migrate onto 
 
 ## Task 7: EP-S5a — `/cost` reports what the SDK actually returns (P1)
 
+> **RE-CUT BEFORE DISPATCH (controller, from the bundle).** Everything below the divider was written
+> without reading upstream's own `/cost`. I read it (`cli.pretty.js` L217690-217740) and it changes the
+> task from *"add rows to our layout"* to *"transcribe upstream's block"* — plus it reverses one of the
+> old text's stated corrections. **Where the two disagree, this section governs.**
+>
+> **Upstream's `/cost` output, verbatim** (`Aze()`, the whole block wrapped in `vt.dim`):
+> ```
+> Total cost:            <money>
+> Total duration (API):  <elapsed>
+> Total duration (wall): <elapsed>
+> Total code changes:    <n> line[s] added, <m> line[s] removed
+> Usage by model:
+> <right-aligned name:>  <in> input, <out> output, <cr> cache read, <cw> cache write[, <n> web search] (<money>)
+> ```
+> - The four labels are padded so values start at the same column; copy the spacing exactly.
+> - Model rows are `` `${name}:`.padStart(21) `` followed by a body that itself begins with two spaces.
+> - The web-search clause appears **only when the count is > 0** — which is upstream's own version of this
+>   task's "omit what the SDK did not populate" rule, so follow it rather than inventing a second rule.
+> - Singular/plural is real: `1 line added`, `2 lines added`.
+> - With no models at all, upstream prints one line and no per-model block:
+>   `Usage:                 0 input, 0 output, 0 cache read, 0 cache write`.
+> - `costs may be inaccurate due to usage of unknown models` is appended to the cost value when upstream
+>   detects an unpriced model. We have no equivalent signal — **do not invent one**; note the omission.
+>
+> **Two formatters to match, both measured rather than assumed:**
+> - **Money** (`pZu`): `` `$${e > 0.5 ? (Math.round(e*100)/100).toFixed(2) : e.toFixed(4)}` `` — two decimals
+>   above fifty cents, four below. Ours is `toFixed(4)` unconditionally, so `$1.2345` should read `$1.23`.
+> - **Counts** (`_d`): `Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1,
+>   minimumFractionDigits: n >= 1000 ? 1 : 0 }).format(n).toLowerCase()`.
+>
+> **THE OLD TEXT'S "`5k`, NOT `5.0k`" CORRECTION IS BACKWARDS.** Upstream prints **`5.0k`** — the
+> `minimumFractionDigits: 1` branch applies at exactly `>= 1000`, which is the same threshold our
+> `tokenCount` uses. Measured against the real formatter, ours diverges in three places:
+> `1000` → we say `1k`, upstream `1.0k`; `31000` → `31k` vs `31.0k`; and above a million we say
+> `1234.6k` where upstream says `1.2m`. **Fix `tokenCount` itself, once.** Its own doc comment already
+> forbids a second spelling ("two copies would let `/cost` and `/stats` disagree"), and the blast radius is
+> small — five call sites in `src/` (`commands.ts:118,122,141,145`, `sessionTools.ts:5`) and seven
+> assertions in `test/`. Update those assertions to upstream's spelling; do not add a parallel formatter.
+>
+> **Four of the seven "missing" fields are not missing — upstream does not print them.** It accumulates
+> `contextWindow`, `maxOutputTokens`, `canonicalModel` and `provider` in the same record but shows none of
+> them in `/cost`. Adding rows for them would be an **addition beyond upstream**, not a fidelity repair, and
+> would need a W-S11 divergence entry to justify. **Do not add them.** What `/cost` was genuinely missing is
+> `cacheReadInputTokens`, `cacheCreationInputTokens` and `webSearchRequests` (all inside the model row),
+> plus the API-duration and code-changes rows.
+>
+> **Also update `docs/parity/tui-ux.md`.** Its `/cost` row is marked ✅ against our invented layout
+> (`cost + tokens + duration + per-model`). That ✅ predates the clone reframe. Re-state it against the
+> transcription, and record the one deliberate omission (the unknown-model caveat) rather than dropping it
+> silently.
+>
+> ---
+
 **Why.** `ModelUsage` (`sdk.d.ts:1265-1282`) carries ten fields; `commands.ts:130-147` reads two of them.
 The dollar total is already right. Missing: `cacheReadInputTokens`, `cacheCreationInputTokens`,
 `webSearchRequests`, `contextWindow`, `maxOutputTokens`, `canonicalModel`, `provider`. One type widening
