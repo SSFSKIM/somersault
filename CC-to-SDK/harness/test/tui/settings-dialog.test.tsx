@@ -150,10 +150,14 @@ describe("SettingsDialog — the Config list windows from the height it is given
   });
 
   it("takes its chrome budget from an enumeration, and never returns a window of zero", () => {
-    expect(SETTINGS_CHROME_ROWS).toBe(12);
-    expect(settingsVisibleRows(24)).toBe(12);
-    expect(settingsVisibleRows(13)).toBe(1);
-    expect(settingsVisibleRows(12)).toBe(1);                     // the floor, not 0 — a one-row list beats none
+    // 11 = 7 unconditional box rows + 2 (the most of the three conditional rows that can coexist — the
+    // warning hangs off the LAST option, so it and `↓ N more below` are mutually exclusive) + 1 ChatStatusBar
+    // + 1 for Ink's `>=`. It was 12 until the t5 review; each expectation below is recomputed, not adjusted.
+    expect(SETTINGS_CHROME_ROWS).toBe(11);
+    expect(settingsVisibleRows(24)).toBe(13);                    // 24 − 11
+    expect(settingsVisibleRows(13)).toBe(2);                     // 13 − 11
+    expect(settingsVisibleRows(12)).toBe(1);                     // 12 − 11
+    expect(settingsVisibleRows(11)).toBe(1);                     // the floor, not 0 — a one-row list beats none
     expect(settingsVisibleRows(4)).toBe(1);
   });
 });

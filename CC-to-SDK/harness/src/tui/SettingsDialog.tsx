@@ -80,39 +80,58 @@ const READONLY_FOOTER = "Tab/←/→ to switch tabs · Esc to close";
 
 /** WAVE S t5 — the rows this dialog spends on everything that is NOT the list, counted against the composed
  *  `ChatApp` frame rather than against `SettingsDialog` alone. That denominator is Wave S t4's finding
- *  (`REWIND_CHROME_ROWS`, rewindModel.ts:60-99) and it is the whole reason the number is not 9: a budget
- *  counted from the dialog's own box composes into a frame that REACHES the pane, and Ink 5.2.1 answers
- *  `outputHeight >= stdout.rows` (`ink.js:121`) with `clearTerminal + fullStaticOutput + output` — a
- *  full-screen wipe and a whole-transcript re-dump on every render, i.e. on every cursor move.
+ *  (`REWIND_CHROME_ROWS`, rewindModel.ts:60-99) and it is the whole reason the number is not 9 (this dialog's
+ *  own box, and nothing else): a budget counted from the box alone composes into a frame that REACHES the
+ *  pane, and Ink 5.2.1 answers `outputHeight >= stdout.rows` (`ink.js:121`) with
+ *  `clearTerminal + fullStaticOutput + output` — a full-screen wipe and a whole-transcript re-dump on every
+ *  render, i.e. on every cursor move.
  *
- *  9 + 1 + 1 + 1, each term against this file's own render tree (`:171-207`):
- *    · 9 — the dialog's own chrome:
+ *  7 + 2 + 1 + 1, each term against this file's own render tree (`:171-207`):
+ *    · 7 — the dialog's own UNCONDITIONAL chrome:
  *        1-2  the `borderStyle="round"` box's top and bottom rules
  *        3    the bold `Settings` title
  *        4    the `<Tabs>` strip
  *        5    the blank spacer under the strip
- *        6    `↑ N more above`
- *        7    `↓ N more below`
- *        8    the blank spacer above the footer
- *        9    `NORMAL_FOOTER`
- *      Rows 6 and 7 are reserved UNCONDITIONALLY, for the reason the rewind budget reserves its pair: they
- *      toggle as a consequence of scrolling, and a budget that dropped them would grow the window at the top
- *      of the list and shrink it again on the first step down — resizing the list under a moving cursor.
+ *        6    the blank spacer above the footer
+ *        7    `NORMAL_FOOTER`
+ *    · +2 — the most the three CONDITIONAL rows can cost AT ONCE, which is two of them and never all three.
+ *      They are `↑ N more above`, `↓ N more below`, and `THINKING_WARNING` (`:193`, the row the Thinking-mode
+ *      row grows once it is toggled). THE WARNING AND `below` ARE MUTUALLY EXCLUSIVE: the warning hangs off
+ *      the LAST option, so the moment it can render the window's end IS the option count and `below` is zero.
+ *      There is no cursor position that draws both, and a third reserved row would buy space nothing can ever
+ *      occupy. Reserving the two that CAN coexist unconditionally is still right, for the reason the rewind
+ *      budget reserves its own pair: the indicators toggle as a consequence of scrolling, and a budget that
+ *      dropped them would grow the window at the top of the list and shrink it again on the first step down —
+ *      resizing the list under a moving cursor. RESIDUAL, stated rather than fixed: the warning literal is 84
+ *      columns and wraps to two lines below ~90, and this budget is height-only (no `rewindWrapRows`
+ *      equivalent). Not worth one here — the Config catalog is a FIXED FIVE ROWS, so `Math.min` with the row
+ *      count, not this budget, is what decides the window at every pane of 16 or more.
  *    · +1 — `ChatStatusBar`, the one sibling this budget models because it is the only UNCONDITIONAL one
  *      (ChatApp's last row). Everything else ChatApp can draw beside this dialog is handled by its `paneOwned`
  *      gate, which Wave S t5 extends to `state.settings.open` precisely because this dialog now sizes itself
  *      from `rows`. A budget could not model those anyway: the task panel alone is seven rows.
  *    · +1 — the `>=` above: the frame must end up STRICTLY shorter than the pane, not equal to it.
- *    · +1 — `THINKING_WARNING` (`:193`), the conditional row the Thinking-mode row grows once it is toggled.
- *      RESIDUAL, stated rather than fixed: that literal is 84 columns and wraps to two lines below ~90, and
- *      this budget is height-only (no `rewindWrapRows` equivalent). It is not worth one here — the Config
- *      catalog is a FIXED FIVE ROWS, so `Math.min` with the row count, not this budget, is what decides the
- *      window at every pane of 17 or more.
+ *
+ *  MEASURED, AND NOT WITH `lastFrame()`. `ink-testing-library` renders Ink with `debug: true`
+ *  (`node_modules/ink-testing-library/build/index.js:74`), and in debug mode Ink writes
+ *  `fullStaticOutput + output` and RETURNS BEFORE the `outputHeight >= stdout.rows` check (`ink.js:104-109`) —
+ *  so a frame's line count there is `staticLines + outputHeight`, not the quantity Ink compares against the
+ *  pane. Under `ChatApp` the `❯ /config` command echo is a static item, so every height read that way is one
+ *  row too tall. The instrument that settles it instead is `stdout.write` on a REAL (non-debug) Ink render,
+ *  counting `ansiEscapes.clearTerminal` writes: swept panes 10 → 26 at 100 columns in three cursor states
+ *  (top of list; bottom; bottom with the warning up), this budget draws ZERO clears at every pane of 12 or
+ *  more in all three. The worst state at the tightest pane is a frame of 11 against a pane of 12 — the strict
+ *  inequality, with the slack of exactly one the budget is built to leave. Below 12 the window is already at
+ *  its floor of one row and no budget can help.
+ *
+ *  IT WAS 12 UNTIL THE t5 REVIEW, by both errors at once: three conditional rows reserved where only two can
+ *  ever coexist, and a `lastFrame()` measurement inflated by that static echo. 12 cost one row of visible list
+ *  at panes 13 through 16 and bought nothing at any pane.
  *
  *  NOTE THE CLAMP INTERACTION: `Select`'s own `clampVisible` (selectModel.ts:18,28) already reserves 8 rows
  *  and takes the `min()` of the two — so this number does not solely govern the window. It is the ceiling this
  *  dialog contributes, and being the larger of the two it is the one that binds. */
-export const SETTINGS_CHROME_ROWS = 12;
+export const SETTINGS_CHROME_ROWS = 11;
 /** THE DEFAULT IS LOAD-BEARING, do not drop it. `rows` is an optional prop and existing tests render this
  *  dialog with no size props at all (keys-migration-dialogs.test.tsx:553). Without it
  *  `settingsVisibleRows(undefined)` is NaN, which threads through `clampVisible` and `windowBounds` to

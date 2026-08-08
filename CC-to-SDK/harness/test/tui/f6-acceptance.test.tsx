@@ -335,7 +335,8 @@ describe("F6 acceptance #5 — every rewind row carries its file-change summary 
 // `PermissionsDialog` IS STILL SHORT, and stays named here rather than hidden behind a helper that never
 // visits it: it hand-rolls its own cursor, so those four keys remain dead there. That is the remaining
 // shortfall against the criterion's literal wording and it is recorded in the parity doc's F6 divergence
-// table. Settings' half of that entry is now stale and comes out with the next parity refresh.
+// table — which the t5 review refreshed: that entry now names `PermissionsDialog` alone and records Settings'
+// half as closed here (docs/parity/tui-ux.md, the `pageup`/`pagedown`/`home`/`end` row).
 //
 // Each key group gets a FRESH MOUNT rather than a walk from one state to the next, because a surface whose
 // last row is a `type:"input"` row (the plan dialog) deregisters every movement action while that row has the

@@ -466,20 +466,28 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //                       a MAXIMUM, and `planWindow` returns only as many lines as the plan HAS, so a short
   //                       plan is a flat 21 at every pane. Re-measured with a 60-line plan: 21 → 47 over panes
   //                       16 → 50. Same conclusion, same caveat about fixtures;
-  //   · `SettingsDialog` — `settingsVisibleRows(rows)`; 11 → 14 over panes 12 → 17. MOVED HERE BY WAVE S t5,
-  //                       which windowed its Config list onto `Select`; until that task it was a constant 14
-  //                       and sat in the excluded list below. ITS TRACKING IS THE MOST CONTINGENT OF THE
-  //                       THREE, and the contingency is STRUCTURAL rather than fixtural: `buildRows` returns a
-  //                       FIXED FIVE rows (settingsRows.ts), so `min(5, rows − SETTINGS_CHROME_ROWS)`
-  //                       saturates at a pane of 17 and the frame is a flat 14 over the whole 18 → 50 sweep
-  //                       the six above were measured on — which is exactly the number the excluded list used
-  //                       to record for it. So do not read this entry as "it tracks the pane like the others";
-  //                       it tracks only where the pane is short, and nowhere else.
-  //                         IT IS GATED ANYWAY, and the measurement is why. With the five-task panel beside it
-  //                       the composed frame is 18 → 21 rows and REACHES the pane at every height from 12 to
-  //                       20 — nine of the fourteen heights swept at 100 columns, mid-list with both
-  //                       indicators up. That is the wipe, on the surface whose whole job is a moving cursor.
-  //                       No budget buys it back: the panel is seven rows against a slack of one.
+  //   · `SettingsDialog` — `settingsVisibleRows(rows)`; 10 → 13 over panes 12 → 15 and flat 13 above, quoted
+  //                       at ONE cursor state (top of the list) the way the six above each quote one, and read
+  //                       off `stdout.write` on a non-debug Ink render rather than off a test frame — see
+  //                       `SETTINGS_CHROME_ROWS` for why those two instruments differ by a row. MOVED HERE BY
+  //                       WAVE S t5, which windowed its Config list onto `Select`; until that task it read a
+  //                       constant and sat in the excluded list below (recorded there as 14).
+  //                         THE MEMBERSHIP TEST IS THE DERIVATION, NOT OBSERVED VARIANCE OVER THE SWEEP, and
+  //                       this member is the one that forces the distinction into writing. `settingsVisibleRows`
+  //                       makes the list's height literally a function of `rows`, and `ChatApp` threads the real
+  //                       `rows` in, so the derivation is LIVE. It is a SATURATING function — `min(5, rows −
+  //                       SETTINGS_CHROME_ROWS)` flattens at a pane of 16, because `buildRows` returns a FIXED
+  //                       FIVE rows (settingsRows.ts) — so over the 18 → 50 sweep the six above were measured
+  //                       on it is flat, with all of its variance below that sweep. A variance test would evict
+  //                       it for that flatness. A derivation test does not, and the derivation test is the
+  //                       correct one, because the saturation is a property of TODAY'S FIVE-ROW CATALOG and not
+  //                       of the surface: add a sixth row to `buildRows` and Settings tracks the pane across
+  //                       the whole sweep with no change to a line of code here. A criterion that flips
+  //                       membership on a data-file edit is not a criterion — so do not "tighten" this rule to
+  //                       observed variance in a later round; it would evict this dialog and nothing about the
+  //                       dialog would have changed. The rule still separates cleanly at the boundary that
+  //                       matters: `ShortcutsOverlay` (18) and `BypassConsent` (18) are the two nearest it in
+  //                       height on the other side, and nothing in either one reads `rows` at all.
   // AND WHAT IS NOT, deliberately. This list is the OTHER half of a PARTITION of the dialog chain below —
   // every surface in that chain appears in exactly one of the two lists, and a new one has to be placed in
   // one of them. It is every dialog whose height is a function of its CONTENT: `BgTasksPanel` (13 rows),

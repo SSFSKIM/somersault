@@ -2298,10 +2298,13 @@ describe("<ChatApp> — retained source", () => {
 // CONTENT, which is the half of the partition this gate deliberately excludes, and no test above would notice.
 // The `/theme` case is that pin.
 //
-// WAVE S t5 ADDED A SIXTH MEMBER, `/config`, and it is the reason the negative pin above is not paranoia: the
-// dialog that case names as a hypothetical over-fire ("`/theme` or `/settings`", as this comment read before)
-// legitimately crossed the partition one wave later, because t5 windowed its Config list. The membership
-// question is decided by measurement, not by which list a name has always been on.
+// WAVE S t5 ADDED A SEVENTH MEMBER, `/config`. Seventh of the CLASS — the list ChatApp's gate comment counts,
+// which is the count to quote; it is only the SIXTH disjunct in `paneOwned`'s source order and the FIFTH case
+// in this block, and those two numbers are why this one is stated with its noun attached. It is also the
+// reason the negative pin above is not paranoia: the dialog that case names as a hypothetical over-fire
+// ("`/theme` or `/settings`", as this comment read before) legitimately crossed the partition one wave later,
+// because t5 windowed its Config list. Membership is decided by whether the surface's height DERIVES from
+// `rows`, not by which list a name has always been on.
 describe("<ChatApp> — the paneOwned gate hides the task panel behind every pane-sizing dialog", () => {
   const TODO = /◻\s+todo-item-one/;
   /** The todo panel's own wire pair (taskList.ts), wrapped in a turn so `state.busy` lands back at false. */
@@ -2361,11 +2364,11 @@ describe("<ChatApp> — the paneOwned gate hides the task panel behind every pan
   });
 
   /** WAVE S t5 ADDED THIS MEMBER. `/config`'s Config list is windowed now (`settingsVisibleRows`), so the
-   *  dialog sizes itself from `rows` and moved out of the excluded half of ChatApp's partition into this one.
-   *  Measured on this fixture at 100 columns before the term was added: the dialog alone is 11 → 14 rows over
-   *  panes 12 → 17 and flat 14 above, but WITH the five-task panel beside it the composed frame is 18 → 21 and
-   *  REACHES the pane at every height from 12 through 20 — nine of the fourteen heights swept — which is Ink's
-   *  `clearTerminal + fullStaticOutput + output` on every cursor move.
+   *  dialog's height DERIVES from `rows` and it moved out of the excluded half of ChatApp's partition into
+   *  this one. That derivation is the whole criterion — not how much the frame happens to vary over some
+   *  sweep, and not whether it composes over the pane beside a neighbour, which would make membership depend
+   *  on the neighbour's height and on how many tasks a fixture seeds. ChatApp's gate comment carries the
+   *  argument in full, including why the list's saturation at five rows does not evict it.
    *
    *  SABOTAGE-CHECKED like every other member, by writing this case with `|| state.settings.open` absent from
    *  the disjunction: it fails on the open half ("the task panel is still mounted beside a pane-sizing

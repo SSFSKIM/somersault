@@ -27,6 +27,7 @@ import { AddDirDialog } from "../../src/tui/AddDirDialog.js";
 import type { AddDirVerdict } from "../../src/tui/addDir.js";
 import type { BgTaskRow } from "../../src/tui/bgTaskMeta.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
+import { POINTER } from "../../src/tui/select/Select.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { HostEvent } from "../../src/host/wire.js";
 import type { RewindAnchor, RewindDryRun } from "../../src/session/chatSession.js";
@@ -562,13 +563,30 @@ describe("F2 final review — a custom rebind drives the dialogs' semantic ops, 
     stdin.write("z"); await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Model"));
   });
 
+  /** The frame's lines with the box rules and padding taken off, so a whole line can be matched EXACTLY. The
+   *  query echo is its own line and its content is the query — an `includes` for the query text would also hit
+   *  the row bodies ("For custom themes…" contains a `th`), which is how a query assertion goes quiet. */
+  const rowsOf = (f: () => string | undefined) => stripAnsi(frame(f)).split("\n").map((l) => l.replace(/[│╭╮╰╯]/g, "").trim());
+
+  // WAVE S t5 REVIEW — THE QUERY IS `th` NOW, NOT `x`, AND THAT IS THE CASE'S WHOLE LOAD. `x` matches no
+  // Config row, so this dialog rendered its EMPTY-QUERY branch — `No settings match "x"`, zero rows, zero
+  // pointers — and the negative assertion could not fail: there was no `Model` row in the frame to carry a
+  // cursor either way, so it could not tell a cursor that moved from one that did not. (It was vacuous before
+  // t5 as well, by a different route: the old row body gated its pointer on `search === null`. Not a t5
+  // regression, and fixed here because t5 is what put a real `Select` behind the question.) `th` filters to
+  // Theme + Thinking mode, so rows ARE painted and a pointer drawn under an open query WOULD be visible —
+  // checked by mounting the `Select` over the query's arm, which turns this case red and leaves the rest of
+  // the file green. The rebound keys move with the query: `t`/`h` are the characters being typed, so they are
+  // the two the layer binds to semantic ops here.
   it("SettingsDialog: the rebound key is still LITERAL TEXT inside the `/` search query (the mode branch stays physical)", async () => {
-    const { stdin, lastFrame } = render(<SettingsDialog {...settingsProps()} />, { userLayers: settingsLayer({ x: "select:next", z: "select:previous" }) });
+    const { stdin, lastFrame } = render(<SettingsDialog {...settingsProps()} />, { userLayers: settingsLayer({ t: "select:next", h: "select:previous" }) });
     await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Theme"));
     stdin.write("/"); await waitFor(() => frame(lastFrame).includes("Search settings…"));
-    stdin.write("x"); await waitFor(() => frame(lastFrame).includes("Type to filter"));
-    expect(frame(lastFrame), "the query accumulated the character").toContain("x");
-    expect(stripAnsi(frame(lastFrame)), "…and no row cursor moved under it").not.toContain("❯ Model");
+    for (const ch of "th") { stdin.write(ch); await tick(); }
+    await waitFor(() => rowsOf(lastFrame).some((l) => l.startsWith("Thinking mode")));
+    expect(rowsOf(lastFrame), "the query accumulated both rebound characters").toContain("th");
+    // Two rows are on screen and nothing windows them, so ANY pointer in this frame is a live row cursor.
+    expect(stripAnsi(frame(lastFrame)), "…and no row cursor moved under it").not.toContain(POINTER);
   });
 
   it("PermissionsDialog: `x` bound to select:next moves the row cursor", async () => {
