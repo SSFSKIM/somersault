@@ -1093,12 +1093,40 @@ query is open** — render the current static filtered list there, unchanged. Th
 the query closes, which is also what makes `defaultFocusValue` pick up the row the search selected.
 (2) The embedded Theme/Output-style sub-views early-return above everything; leave that untouched.
 
+**A THIRD THING THAT MUST CHANGE, WHICH THIS TASK CREATES AND ONLY THE CONTROLLER CAN SEE.** Task 4 (landed
+after this plan was written) added a `paneOwned` gate in `ChatApp.tsx` that hides the task panel, the
+spinner, the queue echo, the armed hints and the transcript's live region while a **pane-owning** dialog is
+open — one whose height is a function of the terminal's `rows`. It exists because Ink 5.2.1 responds to
+`outputHeight >= stdout.rows` (`ink.js:121`) by writing `clearTerminal + fullStaticOutput + output`: a
+full-screen wipe and whole-transcript re-dump **on every render**. The gate's comment at
+`ChatApp.tsx:468-485` declares its two lists an explicit **partition** of the dialog chain, and it lists
+**`SettingsDialog` (14)** in the *not*-gated half, measured constant across panes 18→50.
+
+**This task makes that measurement false.** A windowed Config list sizes itself from `rows`, so Settings
+moves from the content-sized half into the pane-owning half — and it does so whether or not you thread the
+props, because `settingsVisibleRows`'s default reads `process.stdout.rows`. Land the windowing without the
+gate and you get precisely the defect Task 4 spent four rounds closing, on a new surface: Settings plus a
+task panel over the pane, wiping the screen on every cursor move. So this task must **also**:
+- add `state.settings.open` to the `paneOwned` disjunction (`ChatApp.tsx:491`);
+- move `SettingsDialog` from the excluded list to the gated list in that comment, with your own measured
+  numbers (the format is `· \`Name\` — <what sizes it>; <low> → <high> over panes <a> → <b>`), and state
+  that Wave S t5 is what moved it;
+- and pin it, the way the gate's other members are pinned: an open/close test asserting the task panel is
+  GONE behind `/settings`. Check first whether a test asserts the opposite — the gate's `/theme` case
+  (`chat.test.tsx`) pins that the panel SURVIVES behind a content-sized dialog, and if an equivalent
+  exists for `/settings` it now encodes the old truth and must be rewritten, not deleted.
+
+Verify the gate term red-then-green like any other: with the term absent, the new pin must fail.
+
 **Files:**
 - Create: `harness/src/tui/select/overflow.ts`
 - Modify: `harness/src/tui/rewindModel.ts` (re-export `moreAbove`/`moreBelow` from the new module)
 - Modify: `harness/src/tui/SettingsDialog.tsx`
+- Modify: `harness/src/tui/ChatApp.tsx` — the `paneOwned` disjunction, its partition comment, and the
+  size-prop threading
 - Test: `harness/test/unit/select-overflow.test.ts` (new), `harness/test/tui/settings-dialog.test.tsx`
-  (new — check for an existing Settings component test first and extend it if one exists)
+  (new — note `test/tui/settingsRows.test.ts` already exists but covers the PURE row model, not the
+  component, so it is not the file to extend), `harness/test/tui/chat.test.tsx` (the gate pin)
 
 **Interfaces:**
 - Produces: `moreAbove(n: number): string`, `moreBelow(n: number): string`,
