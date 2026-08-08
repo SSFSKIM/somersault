@@ -5,8 +5,11 @@ import { rowKind, promptText } from "../sessions/rows.js";
 import { type SessionUsage } from "./commands.js";
 // `_d`, not its `va` sibling — deliberate, see the two-forms note in `commands.ts`. `/stats` is an ALIAS of
 // `/usage`/`/cost` upstream (L351877) and this is its cumulative per-model in/out pair, which upstream's own
-// activity panel spells `In: ${_d(l.inputTokens)} · Out: ${_d(l.outputTokens)}` (L444263). Only the
-// context/compaction family takes `va`.
+// activity panel spells `In: ${_d(l.inputTokens)} · Out: ${_d(l.outputTokens)}` (L444263). That counterpart
+// is the whole argument; it is NOT that "only the context/compaction family takes `va`", which this comment
+// used to say and which the W-S t7 recount disproved (both forms are spread across unrelated surfaces).
+// Pinned by `test/tui/sessionTools.test.ts`'s `5.0k`-not-`5k` assertion — swapping this import for
+// `formatTokens` used to pass the entire tui suite, which is how the rule went undefended on its own surface.
 import { formatCompactNumber as kk } from "./format.js";
 
 const FILE_KEYS = ["file_path", "path", "notebook_path"] as const;

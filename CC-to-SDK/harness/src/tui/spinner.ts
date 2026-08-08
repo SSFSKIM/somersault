@@ -65,7 +65,10 @@ export function pickVerb(rand: number = Math.random()): string {
  *       `format.ts`'s `formatDuration`: that is a port of a DIFFERENT function, `ra`, which spells the same
  *       duration `1m 5s` — unpadded and spaced. Three spellings exist upstream; this one owes `$st`.)
  *    2. Missing units. Upstream rolls over at an hour (`1h05m`) and a day (`2d03h`); we stop at minutes, so
- *       a session running 25 hours and 1 second reads `1501m 01s` instead of `1d01h`.
+ *       a session running 25 hours and 1 second reads `1500m 01s` instead of `1d01h`. (The `1501m 01s` this
+ *       example said until the W-S t7 review is 25h **1m** 1s — a figure carried over from an earlier
+ *       report's `90061000` ms row that lost its minute in the rewrite. Both inputs give `1d01h` upstream,
+ *       so only our side of the comparison was wrong; both figures were re-run before this was corrected.)
  *  Whoever next touches the spinner tail should port `$st` whole rather than patching one branch. */
 export function formatElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));

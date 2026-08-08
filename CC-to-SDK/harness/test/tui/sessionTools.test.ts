@@ -73,6 +73,21 @@ describe("formatStats / formatSessionInfo", () => {
     expect(lines).toContain("2");                            // two tool calls in the fixture
     expect(lines).toContain("claude-opus-5");
   });
+  // W-S t7 review. THE per-surface formatter pin, and the one the rest of the wave leans on hardest: `/stats`
+  // is the surface the bundle settles by ALIAS (upstream's /stats is /usage//cost, L351877) rather than by a
+  // verbatim line, so it is the one a future reader is likeliest to "unify" onto `formatTokens`. It takes `_d`
+  // (`formatCompactNumber`, mandatory tenth), per the activity panel's own `In: ${_d(…)} · Out: ${_d(…)}`
+  // (L444263). A ROUND four-figure count is the only shape that discriminates: `_d(5000)` is `5.0k` where
+  // `va(5000)` is `5k`. Every other number in this file's fixtures spells the same under both forms, which is
+  // exactly how the import above went unpinned. See the two-forms note in `commands.ts`.
+  it("stats: token counts keep `_d`'s mandatory tenth (`5.0k`), not `va`'s `5k`", () => {
+    const u = { session: { model_usage: {
+      "claude-opus-5": { inputTokens: 5000, outputTokens: 2000 },
+      "claude-haiku-5": { inputTokens: 3000, outputTokens: 1000 } } } };
+    const lines = formatStats(u as any, []).map((l) => l.text);
+    expect(lines).toContain("  tokens     8.0k in · 3.0k out");
+    expect(lines).toContain("  claude-opus-5  5.0k in · 2.0k out");
+  });
   it("session info shows the full id, title/tag when set, and the resume hint", () => {
     const lines = formatSessionInfo({ id: "abcd1234-5678", cwd: "/w",
       info: { summary: "fix bug", customTitle: "bugfix", tag: "sprint", gitBranch: "main", lastModified: 1753858800000 } })

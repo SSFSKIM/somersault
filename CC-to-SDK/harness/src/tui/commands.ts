@@ -92,7 +92,9 @@ export const canonicalCommand = (name: string): string => ALIAS_TO_NAME.get(name
 //   * `_d` = `formatNumber` (L107091) — ported as `formatCompactNumber`. `minimumFractionDigits` is 1 at or
 //     above 1000, so `31000` reads `31.0k` and the tenth is MANDATORY.
 //   * `va` = `formatTokens` (L107095) — ported as `formatTokens`. Literally `_d(e).replace(".0","")`, so the
-//     same number reads `31k`. Three `_d` call sites survive in 2.1.220; `va` has thirty-odd.
+//     same number reads `31k`. Recounted W-S t7 review: `_d` has 39 call expressions in 2.1.220 and `va` 55,
+//     NOT the "three vs thirty-odd" this note first claimed — see `format.ts` for the method and the sites
+//     the old census missed. The ratio is not what routes a surface; the counterpart below each arm is.
 // Which form a surface takes is upstream's per-surface choice, not a house style we get to unify:
 //   * `/cost` (`formatCost` below) keeps `formatCompactNumber`. Its usage block IS `E0y` (L217696), one of
 //     the three `_d` sites. This is the surface the bundle settles unambiguously.

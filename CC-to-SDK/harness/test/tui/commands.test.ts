@@ -84,6 +84,16 @@ describe("formatters", () => {
       "Usage:                 0 input, 0 output, 0 cache read, 0 cache write",
     ]);
   });
+  // W-S t7 review. `/cost`'s half of the per-surface formatter pin (`/stats`'s lives in sessionTools.test.ts;
+  // `/context` and `/compact` are pinned onto `formatTokens` above). Every count in the transcription tests
+  // carries a real fraction — `3.6k`, `439.7k`, `1.2k` — and BOTH compact forms spell those identically, so
+  // none of them can tell `_d` from `va`. Only a ROUND four-figure count can: `E0y` (L217696) is a `_d` site,
+  // so `5000` must read `5.0k` and never `5k`.
+  it("cost: usage counts keep `_d`'s mandatory tenth (`5.0k`), not `va`'s `5k`", () => {
+    const lines = formatCost({ session: { total_cost_usd: 0.1, model_usage: { "claude-opus-5": {
+      inputTokens: 5000, outputTokens: 2000, cacheReadInputTokens: 90_000, cacheCreationInputTokens: 1000, webSearchRequests: 0, costUSD: 0.1 } } } }).map((l) => l.text);
+    expect(lines[5]).toBe("       claude-opus-5:  5.0k input, 2.0k output, 90.0k cache read, 1.0k cache write ($0.1000)");
+  });
   it("cost: subscription auth puts the plan in the transcribed row's value slot (deliberate divergence)", () => {
     const lines = formatCost({ session: { total_cost_usd: 0, model_usage: {} }, subscription_type: "max" }).map((l) => l.text);
     expect(lines[0]).toBe("Total cost:            included in your max plan");   // the row keeps upstream's padding
