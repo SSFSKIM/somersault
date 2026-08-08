@@ -184,8 +184,9 @@ function rowSegments(it: Item): RowSegment[] {
  *  `workspaceRows` is documented as deciding what a row SAYS, not how wide it is, and is read by
  *  `permissionsModel.test.ts` as a pure width-free formatter — handing it a `columns` would push geometry
  *  into a module that has none and change what every other reader sees; (3) the precedent this follows,
- *  `RewindPicker`'s `AnchorLine`, clips in the COMPONENT with the shared `truncateLabel` primitive and leaves
- *  its own model (`anchorLabel`) width-free. Same division here.
+ *  `RewindPicker`'s `AnchorLine`, clips in the COMPONENT with the shared `clipRowText` (which is
+ *  `truncateLabel` plus the newline arm) and leaves its own model (`anchorLabel`) width-free. Same division
+ *  here.
  *
  *  `PERMISSIONS_ROW_INSET` is what the frame spends left and right of the body: `borderStyle="round"`'s two
  *  rules plus `paddingX={1}`'s two columns (4), and inside that `Select`'s node row spends one column on the
@@ -229,7 +230,9 @@ function itemLabel(it: Item): string {
 
 /** WAVE S t6b — the rows this dialog spends on everything that is NOT the list, counted against the composed
  *  `ChatApp` frame rather than against `PermissionsDialog` alone. Same denominator, and for the same reason, as
- *  `SETTINGS_CHROME_ROWS` (SettingsDialog.tsx:81-133) and Wave S t4's `REWIND_CHROME_ROWS`: a budget counted
+ *  `SETTINGS_CHROME_ROWS` (SettingsDialog.tsx — by SYMBOL and not by line, because the range this used to give
+ *  landed on that docblock the day it was written and the row-clip round's inserted lines have since slid it
+ *  onto a footer constant) and Wave S t4's `REWIND_CHROME_ROWS`: a budget counted
  *  from the box alone composes into a frame that REACHES the pane, and Ink 5.2.1 answers
  *  `outputHeight >= stdout.rows` (`ink.js:121`) with `clearTerminal + fullStaticOutput + output` — a
  *  full-screen wipe and a whole-transcript re-dump on every render, i.e. on every cursor move.
@@ -365,7 +368,9 @@ export function permissionsWrapRows(tab: string, columns: number): number {
   return wrapLines(INTRO[t], inner) - 1 + Math.max(...tabFooters(t).map((f) => wrapLines(f, inner))) - 1;
 }
 
-/** THE DEFAULT IS LOAD-BEARING, do not drop it — `SettingsDialog.tsx:135-139` carries the full argument.
+/** THE DEFAULT IS LOAD-BEARING, do not drop it — `settingsVisibleRows`' own docblock in `SettingsDialog.tsx`
+ *  carries the full argument. Named by SYMBOL for the reason the sibling citation above now gives: the line
+ *  range this used to carry has drifted onto the opening of the wrong docblock entirely.
  *  `rows` is optional and plenty of existing tests render this dialog with no size props at all; without the
  *  default `permissionsVisibleRows(undefined)` is NaN, which threads through `clampVisible` and `windowBounds`
  *  to `options.slice(NaN, 1)` — a list permanently stuck at ONE row with navigation broken.

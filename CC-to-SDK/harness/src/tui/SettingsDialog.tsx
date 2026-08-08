@@ -82,7 +82,8 @@ const SEARCH_FOOTER = "Type to filter · Enter/↓ to select · Esc to clear";
 const READONLY_FOOTER = "Tab/←/→ to switch tabs · Esc to close";
 
 /** WAVE S t5, ROW-CLIP ROUND — THE HORIZONTAL HALF OF THE WINDOW, and the same repair (and the same reasoning)
- *  as `PERMISSIONS_ROW_INSET` (PermissionsDialog.tsx:172-196). `SETTINGS_CHROME_ROWS` reserves ROWS and
+ *  as `PERMISSIONS_ROW_INSET` (PermissionsDialog.tsx — by SYMBOL, the form both files settled on after two of
+ *  these cross-references drifted onto the wrong docblock). `SETTINGS_CHROME_ROWS` reserves ROWS and
  *  `Select`'s window counts OPTIONS, which only adds up while ONE OPTION IS ONE LINE. The Model row breaks it:
  *  `Model` + two spaces + `Default (recommended)` + three spaces + `For a specific model ID, use /model.` is
  *  67 columns, and the body it is drawn into is `columns − 6`, so it takes a second LINE below 73 while still
@@ -121,11 +122,17 @@ export const settingsRowWidth = (columns: number = process.stdout.columns ?? 80)
 
 /** One Config row's body, clipped to `width` and spent left to right across its two spans — the plain
  *  `label  value` head and the dim `   hint` tail, which is what the clip eats into first. `clipRowText`
- *  (rewindModel.ts:263) is the shared grapheme-wise clip `RewindPicker`, `HelpDialog` and `TaskPanel` all use,
- *  and its newline arm ends the row wherever a newline falls — the rest of that string would be a second line
- *  the window never budgeted for, and an engine-reported model id or output-style name is not ours to promise
- *  is single-line. Rendered as a FRAGMENT, not a `<Text>`: both call sites already wrap it in one that carries
- *  the focus colour, and a nested `<Text>` here would change nothing but the tree. */
+ *  (rewindModel.ts:263) is the shared grapheme-wise clip THIS DIALOG AND `RewindPicker` USE — and those are its
+ *  only two call sites. `HelpDialog` and `TaskPanel` clip with `truncateLabel` (selectModel.ts:99), which is the
+ *  primitive `clipRowText` DELEGATES to and which has no newline arm at all; `PermissionsDialog`'s
+ *  `clipSegments` states that division correctly, and this comment credited the wrong one until this round.
+ *  The newline arm cuts the string at its FIRST newline and ellipsises what it lost, because the rest would be
+ *  a second line the window never budgeted for, and an engine-reported model id or output-style name is not
+ *  ours to promise is single-line. It ends that SPAN, not the row: the dim hint is still appended after a
+ *  newline-cut head, so a model value carrying one renders as `Model  gpt…   For a specific model ID, use
+ *  /model.` — still ONE line, which is the invariant the clip exists to hold. Rendered as a FRAGMENT, not a
+ *  `<Text>`: both call sites already wrap it in one that carries the focus colour, and a nested `<Text>` here
+ *  would change nothing but the tree. */
 function RowBody({ row, width }: { row: SettingsRow; width: number }) {
   const head = clipRowText(`${row.label}  ${row.value}`, width);
   const left = width - stringWidth(head);
@@ -141,7 +148,8 @@ function RowBody({ row, width }: { row: SettingsRow; width: number }) {
  *  `clearTerminal + fullStaticOutput + output` — a full-screen wipe and a whole-transcript re-dump on every
  *  render, i.e. on every cursor move.
  *
- *  7 + 2 + 1 + 1, each term against this file's own render tree (`:171-207`):
+ *  7 + 2 + 1 + 1, each term against this file's own render tree (the final `return` below — cited by shape and
+ *  not by line, because `:171-207` is where that tree USED to be and the row-clip round moved it):
  *    · 7 — the dialog's own UNCONDITIONAL chrome:
  *        1-2  the `borderStyle="round"` box's top and bottom rules
  *        3    the bold `Settings` title
@@ -154,8 +162,9 @@ function RowBody({ row, width }: { row: SettingsRow; width: number }) {
  *      rewind and permissions budgets reserve their own pair: the indicators toggle as a consequence of
  *      SCROLLING, and a budget that reserved them conditionally would grow the window at the top of the list
  *      and shrink it again on the first step down — resizing the list under a moving cursor.
- *        THE THIRD CONDITIONAL ROW IS `THINKING_WARNING` (`:428`/`:445`, the line the Thinking-mode row grows once it
- *      is toggled) AND IT IS NOT FOLDED INTO THIS 2 — it is charged separately, and only while
+ *        THE THIRD CONDITIONAL ROW IS `THINKING_WARNING` (the line the Thinking-mode row grows once it is
+ *      toggled, drawn at BOTH render sites below — the `/` search arm's static list and the `Select` node's)
+ *      AND IT IS NOT FOLDED INTO THIS 2 — it is charged separately, and only while
  *      `thinkingTouched`, by `settingsWrapRows` below. This line used to fold it in, on the grounds that the
  *      warning and `↓ N more below` are MUTUALLY EXCLUSIVE. That exclusion is REAL — the warning hangs off the
  *      LAST option, so the moment it can render the window's end IS the option count and `below` is zero — but
@@ -235,11 +244,26 @@ const wrapLines = (text: string, width: number): number =>
  *  reserves both scroll indicators unconditionally because a budget that shrinks as you scroll RESIZES THE
  *  WINDOW UNDER A MOVING CURSOR. That argument turns on scrolling being CONTINUOUS: every arrow key can flip
  *  the term, so the list would breathe under the cursor for the whole life of the dialog. `thinkingTouched`
- *  is DISCRETE. It flips once, on a deliberate Enter/Space on one specific row, and never flips back for the
- *  life of this dialog session. The list does resize at that instant — one row shorter, two below 95 columns
- *  — but that is a visible consequence of an action the user has just taken on that very row, not a surprise
- *  under an arrow key, and there is no second transition left to surprise them with. A budget that changes on
- *  a discrete user action is simply not the hazard the t4 rule guards against.
+ *  is DISCRETE. It flips once, on a deliberate Enter/Space on one specific row, and never flips back FOR THE
+ *  LIFE OF THIS MOUNT.
+ *    MOUNT, NOT "THIS `/config` SESSION" — the stronger claim is the one this paragraph used to make and it is
+ *  FALSE. It survives a Theme/Output-style sub-view and a tab change, but the Model row opens the top-level
+ *  `state.modelPicker`, whose arm ChatApp renders ABOVE this dialog's (see the header): the pick or cancel
+ *  UNMOUNTS and remounts this component, so toggle Thinking → Model row → Enter → Esc returns with the warning
+ *  gone and `thinkingTouched` false, `/config` never having closed. THIS FILE'S OWN HEADER already lists this
+ *  flag among exactly that lost state ("losing it on a Model-row detour is a minor, acceptable UX cost"), so
+ *  the two halves of the file contradicted each other until this round.
+ *    THE CONCLUSION SURVIVES ITS PREMISE, for two reasons worth stating rather than just dropping the claim.
+ *  (1) THE RESIZE IS EXACTLY COMPENSATED. This term and BOTH warning render sites read the SAME single
+ *  `thinkingTouched` boolean, so the window and the warning appear and disappear TOGETHER — there is no state
+ *  in which the budget is charged for a line nothing draws, or a line drawn against a budget that did not
+ *  charge it, and therefore no transition of this flag can strand a frame over the pane. (2) The reset
+ *  coincides with a FULL REMOUNT, which resets `focusId` to `theme` along with everything else — so there is
+ *  no moving cursor left for the list to resize under, which is the hazard by name.
+ *    WHAT IS LEFT IS THE TOGGLE ITSELF, and it is the one the old wording was right about: the list resizes at
+ *  that instant — one row shorter, two below 95 columns — but that is a visible consequence of an action the
+ *  user has just taken on that very row, not a surprise under an arrow key. A budget that changes on a discrete
+ *  user action is simply not the hazard the t4 rule guards against.
  *
  *  THE WARNING IS 85 COLUMNS AND `WARNING_INDENT` IS FOUR, so it needs a body of 89 and takes a SECOND line
  *  below 95 columns. (The row-clip round's note said 94 — off by one, it counted the string at 84. The
@@ -250,7 +274,9 @@ const wrapLines = (text: string, width: number): number =>
  *  charge from `settingsRowWidth`'s own default rather than none at all.
  *
  *  MEASURED on the instrument `SETTINGS_CHROME_ROWS` describes — non-debug Ink, counting `clearTerminal`
- *  writes, `CI` deleted, 45 ms per keypress, a fixed-width parent, and the full two-lap ten-press walk — with
+ *  writes, `CI` deleted before Ink is imported, 45 ms per keypress, a fake stdout reporting the swept width
+ *  (NOT the fixed-width `<Box>` parent: that one is a workaround for `ink-testing-library`'s stuck 100-column
+ *  stdout and belongs to the TESTS, not to this measurement), and the full two-lap ten-press walk — with
  *  the Thinking row TOGGLED, over panes 12 → 30 at 60, 70, 80 and 100 columns. Before the term: 4 clears per
  *  walk at panes 12 → 15 at 60, 70 and 80, and 2 at panes 12 → 14 at 100. After it: ZERO at every pane from 14
  *  up at 60, 70 and 80, and from 13 up at 100 — leaving only the floor cells named in the RESIDUAL below. The
@@ -278,8 +304,13 @@ export function settingsWrapRows(columns?: number): number {
  *  ONE option plus `↑ N more above` plus a two-line warning is as short as this dialog gets. What WOULD close them is the
  *  closure this round declined: clipping the warning to one line (`clipRowText` at `settingsRowWidth`), which
  *  at 60 columns leaves "Changing thinking mode mid-conversation will incre…" — a safety warning truncated at
- *  exactly the widths where it fires, which is a copy decision and not a geometry one, and the same call
- *  `permissionsWrapRows` declines for its own footer. */
+ *  exactly the widths where it fires, which is a copy decision and not a geometry one. `permissionsWrapRows`
+ *  declines the same KIND of closure, and the specifics are worth keeping straight because they are not the
+ *  same call: what that one refuses is an Ink `wrap="truncate"` PROP on TWO chrome literals, its intro and its
+ *  footer — a renderer prop in the render tree, not a `clipRowText` call on one line here. Different
+ *  mechanism, different place, two lines rather than one. What the two share is the reason: in both dialogs
+ *  the cells still clearing are the window's own floor, and the only thing that would close them costs
+ *  user-visible copy, which is a product call neither round is entitled to make on geometry's behalf. */
 export const settingsVisibleRows = (rows: number = process.stdout.rows ?? 24, columns?: number, thinkingTouched: boolean = false): number =>
   Math.max(1, rows - SETTINGS_CHROME_ROWS - (thinkingTouched ? settingsWrapRows(columns) : 0));
 
@@ -312,7 +343,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   // them, and one stdin chunk dispatches several events with no render — a closure read would be one chunk stale.
   const [search, setSearch, searchRef] = useRefState<string | null>(null);   // null = browsing; "" = searching, empty query
   const [sub, setSub, subRef] = useRefState<"none" | "theme" | "outputStyle">("none");
-  const [thinkingTouched, setThinkingTouched] = useState(false);      // THINKING_WARNING shows once toggled, this dialog session
+  const [thinkingTouched, setThinkingTouched] = useState(false);      // THINKING_WARNING shows once toggled, for THIS MOUNT (a Model-row detour remounts — see `settingsWrapRows`)
   const [tabLines, setTabLines] = useState<Partial<Record<Tab, RenderLine[]>>>({});
 
   // Fetch a read-only tab's lines once per entry (not on every render) — Status/Usage/Stats only.
