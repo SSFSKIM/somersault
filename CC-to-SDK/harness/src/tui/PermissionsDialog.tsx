@@ -41,6 +41,7 @@
 // ChatApp's pane-owning class and `state.permissions.open` joined its `paneOwned` gate.
 import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
+import stringWidth from "string-width";
 import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import { useRefState } from "./keys/refState.js";
@@ -54,7 +55,7 @@ import { ACCENT } from "./theme.js";
 import { Tabs } from "./select/Tabs.js";
 import { Select } from "./select/Select.js";
 import { moreAbove, moreBelow, overflowRows } from "./select/overflow.js";
-import type { SelectView } from "./select/selectModel.js";
+import { truncateLabel, type SelectView } from "./select/selectModel.js";
 
 const TABS = ["Recently denied", "Allow", "Ask", "Deny", "Workspace"] as const;
 type Tab = typeof TABS[number];
@@ -148,31 +149,81 @@ function itemValues(items: Item[]): string[] {
     return n === 0 ? base : `${base}\0#${n}`;
   });
 }
-/** One row's BODY, with NO `❯ `/`  ` gutter and no colour — the caller owns both. 6b hands this to `Select`
- *  as a `node`, and `Select` draws the pointer in its own gutter (`Select.tsx:282`), so a body that kept the
- *  prefix would render `❯ ❯ Add a new rule…`. The colour lives on the node's own wrapping `<Text>` (see the
- *  `<Select>` below): `focused` is the argument `Select` passes, and dropping the ACCENT would leave the
- *  pointer as the row's only focus affordance.
+/** One row's BODY as styled spans, with NO `❯ `/`  ` gutter and no colour — the caller owns both. 6b hands
+ *  this to `Select` as a `node`, and `Select` draws the pointer in its own gutter (`Select.tsx:282`), so a
+ *  body that kept the prefix would render `❯ ❯ Add a new rule…`. The colour lives on the node's own wrapping
+ *  `<Text>` (see the `<Select>` below): `focused` is the argument `Select` passes, and dropping the ACCENT
+ *  would leave the pointer as the row's only focus affordance. The DIM half of a two-span row (the `From …`
+ *  provenance, the `by …` attribution, `workspaceRows`' own `(Original working directory)` suffix) is why a
+ *  row is a segment LIST and not one string: the clip below has to be spent across the spans, not on one.
  *  ONE CONSEQUENCE FOR TESTS, and it caught eight pre-existing assertions in this repo: the gutter and the
  *  body are now SEPARATE styled spans, so the raw frame carries `❯`, an SGR reset, then the label. Match
  *  `❯ <label>` against an ANSI-STRIPPED frame, never against the raw bytes. */
-function renderItem(it: Item): React.ReactNode {
-  if (it.kind === "addRule") return "Add a new rule…";
-  if (it.kind === "addDir") return "Add directory…";
-  if (it.kind === "rule") return <>{it.row.rule}  <Text dimColor>From {SOURCE_LABELS[it.row.source] ?? it.row.source}</Text></>;
-  if (it.kind === "dir") return it.line.segments ? it.line.segments.map((s, si) => <Text key={si} dimColor={s.dim}>{s.text}</Text>) : it.line.text;
-  return <>{it.e.display}  <Text dimColor>by {it.e.by}</Text></>;
+type RowSegment = { text: string; dim?: boolean };
+function rowSegments(it: Item): RowSegment[] {
+  if (it.kind === "addRule") return [{ text: "Add a new rule…" }];
+  if (it.kind === "addDir") return [{ text: "Add directory…" }];
+  if (it.kind === "rule") return [{ text: `${it.row.rule}  ` }, { text: `From ${SOURCE_LABELS[it.row.source] ?? it.row.source}`, dim: true }];
+  if (it.kind === "dir") return it.line.segments ?? [{ text: it.line.text }];
+  return [{ text: `${it.e.display}  ` }, { text: `by ${it.e.by}`, dim: true }];
+}
+
+/** WAVE S t6b, REVIEW ROUND — THE HORIZONTAL HALF OF THE WINDOW, and the reason it is a CLIP and not another
+ *  budget term. `PERMISSIONS_CHROME_ROWS` reserves rows, and `Select`'s window counts OPTIONS; a row that
+ *  wraps costs a second LINE while still counting as one option, so the frame grows by however many wrapped
+ *  rows the window happens to hold. That shortfall is not a constant, and a budget term can only subtract a
+ *  constant — measured on the review's own fixture (eight workspace paths long enough to wrap at 80 columns)
+ *  the composed frame reached the pane and Ink drew a full-screen `clearTerminal` on EVERY cursor move at
+ *  EVERY pane from 15 to 24. The invariant the window rests on is ONE OPTION = ONE LINE, so the repair
+ *  belongs where that invariant breaks: the row body.
+ *
+ *  IT LIVES HERE AND NOT IN `permissionsModel.ts`'s `workspaceRows`, deliberately. Three reasons, in order of
+ *  weight: (1) it is not a workspace problem — a rule string, a denial display and a `From <source>` suffix
+ *  wrap for exactly the same reason, and a clip in `workspaceRows` would fix one row kind of four; (2)
+ *  `workspaceRows` is documented as deciding what a row SAYS, not how wide it is, and is read by
+ *  `permissionsModel.test.ts` as a pure width-free formatter — handing it a `columns` would push geometry
+ *  into a module that has none and change what every other reader sees; (3) the precedent this follows,
+ *  `RewindPicker`'s `AnchorLine`, clips in the COMPONENT with the shared `truncateLabel` primitive and leaves
+ *  its own model (`anchorLabel`) width-free. Same division here.
+ *
+ *  `PERMISSIONS_ROW_INSET` is what the frame spends left and right of the body: `borderStyle="round"`'s two
+ *  rules plus `paddingX={1}`'s two columns (4), and inside that `Select`'s node row spends one column on the
+ *  pointer gutter and one on its `gap={1}` (Select.tsx:347-352). Verified against a rendered 80-column frame:
+ *  the body occupies exactly 74 columns. */
+export const PERMISSIONS_ROW_INSET = 6;
+export const permissionsRowWidth = (columns: number = process.stdout.columns ?? 80): number =>
+  Math.max(1, columns - PERMISSIONS_ROW_INSET);
+
+/** The row's segments clipped to `width`, spending the budget left to right. `truncateLabel` is the same
+ *  grapheme-wise `gi` (selectModel.ts:99) that `clipRowText`, `HelpDialog` and `TaskPanel` all clip with, and
+ *  the newline arm is `clipRowText`'s own (rewindModel.ts:263-268): a newline ENDS the row wherever it falls,
+ *  because the rest of that string is a second line the window never budgeted for — and a POSIX path may
+ *  legally carry one, exactly as a settings-file rule string may. */
+function clipSegments(segs: RowSegment[], width: number): RowSegment[] {
+  const out: RowSegment[] = [];
+  let left = width;
+  for (const s of segs) {
+    if (left <= 0 && out.length) break;
+    const nl = s.text.indexOf("\n");
+    const head = nl === -1 ? s.text : s.text.slice(0, nl);
+    const text = nl === -1 ? truncateLabel(head, left)
+      : stringWidth(head) + 1 > left ? truncateLabel(head, left) : `${head}…`;
+    out.push({ ...s, text });
+    left -= stringWidth(text);
+    if (nl !== -1) break;
+  }
+  return out;
+}
+function renderItem(it: Item, width: number): React.ReactNode {
+  return clipSegments(rowSegments(it), width).map((s, si) => <Text key={si} dimColor={s.dim}>{s.text}</Text>);
 }
 /** The same row as ONE plain string — `Select`'s `label`, which a `node` row degrades to for measurement and
  *  for the fallback render. Unused in practice here (no row carries a `description`, so `isTwoColumn` is false
  *  and nothing measures a label column), but it is the contract's own field and a wrong one would surface as a
- *  mis-measured column the day a description appears. */
+ *  mis-measured column the day a description appears. Unclipped on purpose: a label is a MEASUREMENT input,
+ *  and clipping it would hide the row's true width from whatever went on to measure it. */
 function itemLabel(it: Item): string {
-  if (it.kind === "addRule") return "Add a new rule…";
-  if (it.kind === "addDir") return "Add directory…";
-  if (it.kind === "rule") return `${it.row.rule}  From ${SOURCE_LABELS[it.row.source] ?? it.row.source}`;
-  if (it.kind === "dir") return it.line.segments ? it.line.segments.map((s) => s.text).join("") : it.line.text;
-  return `${it.e.display}  by ${it.e.by}`;
+  return rowSegments(it).map((s) => s.text).join("");
 }
 
 /** WAVE S t6b — the rows this dialog spends on everything that is NOT the list, counted against the composed
@@ -211,17 +262,33 @@ function itemLabel(it: Item): string {
  *  `ink-testing-library` renders with `debug: true` and that branch RETURNS BEFORE the `outputHeight >=
  *  stdout.rows` check (`ink.js:104-109`), so a frame's line count there is `staticLines + outputHeight` and any
  *  dialog reached by TYPING a slash command reads one row too tall. The instrument is `stdout.write` on a
- *  NON-DEBUG Ink render, counting `ansiEscapes.clearTerminal` writes. Swept panes 12 → 30 at 100 columns on the
- *  real `ChatApp` behind `/permissions`, in three states (Allow tab at the top of a 30-rule list; Allow at the
- *  bottom, both indicators live; Workspace with eight directories): ZERO clears at every pane of 14 or more in
- *  all three. Below 14 the window is already at its floor of one row and no budget can help.
+ *  NON-DEBUG Ink render, counting `ansiEscapes.clearTerminal` writes, with `CI` deleted from the environment
+ *  first (Ink's `isInCi` branch returns BEFORE the pane check and would silence every clear). Swept panes
+ *  12 → 30 at 100 columns on the real `ChatApp` behind `/permissions`, in three states (Allow tab at the top of
+ *  a 30-rule list; Allow at the bottom, both indicators live; Workspace with eight directories): ZERO clears at
+ *  every pane of 14 or more in all three. Below 14 the window is already at its floor of one row and no budget
+ *  can help.
  *
- *  RESIDUAL, stated rather than fixed — the same one Settings records and it bites slightly harder here. This
- *  budget is HEIGHT-ONLY: the Workspace intro is 88 columns and wraps to two lines below ~92, and a workspace
- *  path longer than the content width wraps its row. Terms 3 and 4 above (`ChatStatusBar` and Ink's `>=`)
- *  absorb one such wrap, which is what the 100-column sweep exercises for the intro; a 15-row pane at 80
- *  columns on the Workspace tab spends both and has no slack left. A `columns` term (rewindWrapRows' shape) is
- *  the fix if that combination ever matters.
+ *  RESIDUAL, MEASURED THIS TIME AND NARROWER THAN THE FIRST ROUND CLAIMED. This budget is HEIGHT-ONLY, and the
+ *  first round's note here was wrong on a fact: it said terms 3 and 4 "absorb one such wrap, which is what the
+ *  100-column sweep exercises for the intro". They do not, and it does not. The Workspace intro is 89 columns
+ *  and the content width is `columns − 4`, so it wraps below 93 and the 100-column sweep exercises NO wrap at
+ *  all — measured, the Workspace frame is 13 rows at 100 columns and 14 at 80 on the same 15-row pane. The
+ *  sweep that exercises the wrap was never run; it is now.
+ *    THE ROW HALF OF THAT RESIDUAL IS FIXED, not stated — see `permissionsRowWidth` above. A wrapped ROW could
+ *  never have been a budget term: `visibleOptionCount` counts OPTIONS and a wrapped row costs an extra LINE, so
+ *  the shortfall scales with how many wrapped rows the window holds and a term can only subtract a constant.
+ *  Clipping the body restores the one-option-one-line invariant at its source. Measured on the review's own
+ *  fixture (eight workspace paths long enough to wrap at 80 columns): clears on EVERY cursor move at EVERY pane
+ *  from 15 to 24 before the clip, ZERO at all ten after it.
+ *    WHAT IS STILL OPEN is the CHROME half — the intro and the footer are the two wrappable literals, and each
+ *  extra line they take is a genuine constant this budget does not reserve. Measured, Workspace tab, short
+ *  paths so no row wraps: at 100 columns zero clears from a pane of 14 up; at 70-80 columns (intro on two
+ *  lines) zero from 15 up and FOUR at 14; at 60 columns (intro on two lines AND `DEFAULT_FOOTER`'s 65 columns
+ *  on two) the mid-list state clears at EVERY pane from 14 to 30 and Workspace at every pane up to 20. That one
+ *  IS a `columns` term of `rewindWrapRows`' exact shape (`wrapLines(intro, columns − 4) − 1 + wrapLines(footer,
+ *  …) − 1`, tab-dependent because both literals are) — deliberately not taken in this round, which was scoped
+ *  to the row clip, and recorded here with the numbers rather than as a hypothetical.
  *
  *  NOTE THE CLAMP INTERACTION, as in Settings: `Select`'s own `clampVisible` (selectModel.ts:18,28) already
  *  reserves 8 rows and takes the `min()` of the two — so this number does not solely govern the window. It is
@@ -271,7 +338,12 @@ export function PermissionsDialog({
   //   THE DELETE-CURSOR BEHAVIOUR IS `Select`'S NOW, and it is the same answer 6a's index fallback gave: focus
   // is stored as an index (Select.tsx:160-163) and `normalize()` clamps it to `count - 1` when `options`
   // shrinks (Select.tsx:172-175), so deleting the row you are standing on leaves the cursor on the row that
-  // took its place rather than at the top of the list. permissions-dialog.test.tsx keeps that pinned.
+  // took its place rather than at the top of the list.
+  //   TWO CASES IN permissions-dialog.test.tsx PIN IT, and they pin DIFFERENT halves — the review round found
+  // this comment crediting the clamp for a case that never reaches it. "leaves the cursor on the row that
+  // replaced the one it just deleted" deletes a MIDDLE row, where index 3 of five is still index 3 of four:
+  // that one proves the index PERSISTS across the rebuild, and mutating `normalize()` leaves it green. Only
+  // "deleting the LAST row" falls out of range, and that case is the clamp's.
   const [focusValue, setFocusValue] = useState<string | undefined>(undefined);
   /** The window `Select` last reported, which is the only place the counted indicators can come from — the
    *  scroll window lives in that component's reducer and a copy recomputed here would drift (Select.tsx:103). */
@@ -497,7 +569,7 @@ export function PermissionsDialog({
               // `focused` is USED, not ignored: the focused row has been ACCENT since W3 t7 and dropping that
               // would leave the pointer gutter as the only affordance. The `❯ `/`  ` prefix is NOT reproduced —
               // `Select` draws it in its own gutter (Select.tsx:282); repeating it renders `❯ ❯ Add a new rule…`.
-              node: (focused: boolean) => <Text color={focused ? ACCENT : undefined}>{renderItem(it)}</Text>,
+              node: (focused: boolean) => <Text color={focused ? ACCENT : undefined}>{renderItem(it, permissionsRowWidth(columns))}</Text>,
             }))}
             hideIndexes
             visibleOptionCount={permissionsVisibleRows(rows)}

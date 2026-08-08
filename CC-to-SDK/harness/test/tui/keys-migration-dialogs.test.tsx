@@ -587,7 +587,11 @@ describe("F2 final review — a custom rebind drives the dialogs' semantic ops, 
     for (const ch of "th") { stdin.write(ch); await tick(); }
     await waitFor(() => rowsOf(lastFrame).some((l) => l.startsWith("Thinking mode")));
     expect(rowsOf(lastFrame), "the query accumulated both rebound characters").toContain("th");
-    // Two rows are on screen and nothing windows them, so ANY pointer in this frame is a live row cursor.
+    // ANY pointer in this frame would be a live row cursor, and the reason there is none is not that "two rows
+    // are on screen and nothing windows them" — that explanation has been stale since Task 5 windowed this
+    // list, and the t6b review round caught it. The real reason is structural: the `Select` is NOT MOUNTED
+    // while the query is open (SettingsDialog.tsx:279-281 renders the filtered rows as plain `<Text>` instead,
+    // deliberately, so `j`/`k`/enter/space stay text). The two rows painted here are that plain branch's.
     expect(stripAnsi(frame(lastFrame)), "…and no row cursor moved under it").not.toContain(POINTER);
   });
 

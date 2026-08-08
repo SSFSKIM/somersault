@@ -2295,6 +2295,11 @@ describe("<ChatApp> — retained source", () => {
 // all. The fixtures are right as they are — the gate is a mount/unmount question and a minimal one answers it
 // fastest — so the titles moved instead. The mechanisms are pinned where they can be: resize-dialogs.test.tsx
 // windows each dialog from the height it is given, and the derivations live in ChatApp's own gate comment.
+//   THAT SENTENCE WAS WRITTEN WHEN THIS BLOCK HELD FOUR CASES AND WENT STALE AS IT GREW TO SIX (t6b review
+// round). `resize-dialogs.test.tsx` covered `ModelPicker`, `SessionPicker`, `RewindPicker` and `PlanDialog` —
+// NOT `SettingsDialog` (t5) and not `PermissionsDialog` (t6b), the two newest members of this class, whose
+// live-resize path was therefore unpinned. Closed rather than qualified: that file now carries one `rerender`
+// case per missing dialog, in the same shape as `ModelPicker`'s own.
 //
 // AND THE LAST CASE PINS THE OTHER DIRECTION. Every mutation above REMOVES a term; adding one — someone gating
 // `/theme` in a later round — would hide the task panel behind a dialog whose height is a function of its

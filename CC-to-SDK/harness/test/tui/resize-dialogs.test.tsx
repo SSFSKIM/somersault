@@ -18,6 +18,7 @@
 // pre-fix picker reads the real `process.stdout`, whose size in a vitest worker is whatever the runner's
 // stdio reports. Two directions cannot both be satisfied by a constant.
 import React from "react";
+import { Box } from "ink";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -25,6 +26,9 @@ import { tmpdir } from "node:os";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { ModelPicker, type ModelInfo } from "../../src/tui/ModelPicker.js";
+import { SettingsDialog } from "../../src/tui/SettingsDialog.js";
+import { PermissionsDialog } from "../../src/tui/PermissionsDialog.js";
+import type { AddDirVerdict } from "../../src/tui/addDir.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
 import type { RewindAnchor, RewindDryRun } from "../../src/session/chatSession.js";
@@ -83,6 +87,97 @@ describe("ModelPicker re-derives its geometry from the size it is given", () => 
     r.rerender(<ModelPicker models={MANY} onPick={() => {}} onCancel={() => {}} savePrefs={() => {}} rows={14} columns={200} />);
     await tick();
     expect(modelRowCount(frame(r.lastFrame))).toBe(3);                 // clampVisible(10, 14, 2) — two rows of chrome per option
+    r.unmount();
+  });
+});
+
+// ── WAVE S t5 / t6b, ADDED IN THE t6b REVIEW ROUND ────────────────────────────────────────────────────────
+// Two dialogs joined the windowed class after this file was written — `SettingsDialog` (t5 windowed its Config
+// list) and `PermissionsDialog` (t6b windowed its rule and workspace lists) — and neither was added here. The
+// gap was invisible because `chat.test.tsx`'s gate block says in prose that "resize-dialogs.test.tsx windows
+// each dialog from the height it is given", which was true of the four members this file had and not of the
+// two newest. The behaviour was fine when the review checked it by hand; what was missing was the pin. Both
+// cases below follow `ModelPicker`'s "windows its list from the height it is given" shape exactly — a live
+// `rerender` with a new `rows`, asserted in BOTH directions so a build stuck at one height cannot satisfy it.
+
+/** The Config catalog is a FIXED five rows (settingsRows.ts's `buildRows`), so `settingsVisibleRows` — which
+ *  is `max(1, rows − 11)` — saturates at five from a pane of 16 up. 40 shows all five and 13 shows two. */
+const configRowCount = (f: string) => strip(f).split("\n").filter((l) => /(Theme|Model|Output style|Default permission mode|Thinking mode)/.test(l)).length;
+const settingsProps = {
+  tab: "Config", onTabChange: () => {}, model: "opus", mode: "default", thinkLevel: "off", outputStyle: "default",
+  onDone: () => {}, applyMode: async () => {}, setThink: async () => {}, applyOutputStyle: async () => {},
+  fetchStatus: async () => [], fetchUsage: async () => [], fetchStats: async () => [],
+  onOpenModelPicker: () => {}, savePrefs: () => {},
+};
+
+describe("SettingsDialog re-derives its geometry from the size it is given", () => {
+  it("windows its Config list from the height it is given", async () => {
+    const r = renderWithKeymap(<SettingsDialog {...settingsProps} rows={40} columns={200} />);
+    await waitFor(() => strip(frame(r.lastFrame)).includes("❯ Theme"));
+    expect(configRowCount(frame(r.lastFrame))).toBe(5);
+    r.rerender(<SettingsDialog {...settingsProps} rows={13} columns={200} />);
+    await tick();
+    expect(configRowCount(frame(r.lastFrame))).toBe(2);                // settingsVisibleRows(13) = 13 − 11
+    r.rerender(<SettingsDialog {...settingsProps} rows={40} columns={200} />);
+    await tick();
+    expect(configRowCount(frame(r.lastFrame))).toBe(5);
+    r.unmount();
+  });
+});
+
+/** Twelve removable rules plus the `Add a new rule…` affordance row — thirteen options, so the pane and not
+ *  the catalog is what decides how many print at every height swept. */
+const PERM_RULES = { sources: [{ source: "flagSettings", settings: { permissions: { allow: Array.from({ length: 12 }, (_, i) => `Bash(cmd${i}:*)`) } } }] };
+const permProps = {
+  tab: "Allow", onTabChange: () => {}, denials: [], cwd: "/tmp",
+  fetchSettings: async () => PERM_RULES as unknown,
+  fetchDirs: async () => [] as { path: string; source: "cwd" | "launch" | "session" }[],
+  addRule: async () => {}, removeRule: async () => {}, removeDir: async () => {},
+  addDirValidate: async () => ({ kind: "missing", abs: "" }) as AddDirVerdict,
+  confirmAddDir: async () => {}, cancelAddDir: () => {}, onDone: () => {},
+};
+const permRowCount = (f: string) => strip(f).split("\n").filter((l) => /Bash\(cmd\d+:\*\)/.test(l)).length;
+
+describe("PermissionsDialog re-derives its geometry from the size it is given", () => {
+  it("windows its rule list from the height it is given", async () => {
+    const r = renderWithKeymap(<PermissionsDialog {...permProps} rows={30} columns={200} />);
+    await waitFor(() => strip(frame(r.lastFrame)).includes("❯ Add a new rule…"));
+    expect(permRowCount(frame(r.lastFrame))).toBe(12);                 // permissionsVisibleRows(30) = 17, all of them
+    r.rerender(<PermissionsDialog {...permProps} rows={20} columns={200} />);
+    await tick();
+    expect(permRowCount(frame(r.lastFrame))).toBe(6);                  // 20 − 13, less the affordance row
+    r.rerender(<PermissionsDialog {...permProps} rows={30} columns={200} />);
+    await tick();
+    expect(permRowCount(frame(r.lastFrame))).toBe(12);
+    r.unmount();
+  });
+
+  /** …and the WIDTH half, which `PermissionsDialog` grew in the t6b review round: a row body wider than the
+   *  frame used to WRAP, and a wrapped row breaks the window's one-option-one-line invariant.
+   *
+   *  Widths are 100 and 80, not this file's usual 200/40, and the `<Box width>` wrapper is load-bearing —
+   *  `ink-testing-library`'s fake stdout reports a fixed 100 columns whatever a test says, and a width-less
+   *  Ink box shrink-wraps its content, so without both the row would simply widen the box instead of wrapping.
+   *  The rule is 54 columns; with two spaces and `From command line arguments` (29) the row is 85, which fits
+   *  the body at 100 columns (94) and overflows it at 80 (74), while the Allow intro, the tab strip and the
+   *  footer all fit on one line at both — so the frame's line count moves only if a ROW wrapped. */
+  const LONG = "Bash(/Users/someone/GitHub/repo/pkgs/run-the-thing:*)".padEnd(54, "x");
+  const one = { sources: [{ source: "flagSettings", settings: { permissions: { allow: [LONG] } } }] };
+  const permAt = (cols: number) => (
+    <Box width={cols}><PermissionsDialog {...permProps} fetchSettings={async () => one as unknown} rows={40} columns={cols} /></Box>
+  );
+
+  it("re-clips its row bodies when the width changes", async () => {
+    const r = renderWithKeymap(permAt(100));
+    await waitFor(() => strip(frame(r.lastFrame)).includes(`${LONG}  From command line arguments`));
+    const tall = strip(frame(r.lastFrame)).split("\n").length;
+    r.rerender(permAt(80));
+    await tick();
+    expect(strip(frame(r.lastFrame)), "the dim provenance span is what the clip eats into first").not.toContain("From command line arguments");
+    expect(strip(frame(r.lastFrame)).split("\n").length, "the clipped row is still ONE line").toBe(tall);
+    r.rerender(permAt(100));
+    await tick();
+    expect(strip(frame(r.lastFrame)), "…and the widening brings it back").toContain(`${LONG}  From command line arguments`);
     r.unmount();
   });
 });

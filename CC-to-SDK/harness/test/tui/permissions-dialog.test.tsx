@@ -14,8 +14,9 @@
 // claims is a behaviour `Select` had to preserve rather than quietly re-break, the delete-cursor one above all.
 import { describe, it, expect } from "vitest";
 import React from "react";
+import { Box } from "ink";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
-import { PermissionsDialog, PERMISSIONS_CHROME_ROWS, permissionsVisibleRows } from "../../src/tui/PermissionsDialog.js";
+import { PermissionsDialog, PERMISSIONS_CHROME_ROWS, PERMISSIONS_ROW_INSET, permissionsRowWidth, permissionsVisibleRows } from "../../src/tui/PermissionsDialog.js";
 import { POINTER } from "../../src/tui/select/Select.js";
 import type { AddDirVerdict } from "../../src/tui/addDir.js";
 
@@ -120,6 +121,31 @@ describe("PermissionsDialog — row identity (Wave S t6a)", () => {
     expect(pointed[0], "the cursor holds its POSITION — the row that took the deleted one's place, not the top of the list").toMatch(/^❯ Bash\(d\)/);
   });
 
+  // …AND THE HALF THE CASE ABOVE CANNOT REACH (review round). It deletes a MIDDLE row, where index 3 of five
+  // is still index 3 of four: the index simply PERSISTS and `normalize()`'s clamp never fires — mutating that
+  // clamp to reset to zero leaves the case above green, which is how the review found the comment in
+  // PermissionsDialog.tsx crediting it for coverage it did not have. Deleting the row at the BOTTOM is the one
+  // that falls out of range, so this is the case the clamp actually owns. Verified red against that same
+  // mutation (the cursor lands on the affordance row at the top instead of on `Bash(b)`).
+  it("clamps the cursor to the new last row when the row it deleted WAS the last one", async () => {
+    let allow = ["Bash(a)", "Bash(b)", "Bash(c)"];
+    const removed: string[] = [];
+    const { stdin, lastFrame } = render(<PermissionsDialog {...props({
+      fetchSettings: async () => ({ sources: [{ source: "flagSettings", settings: { permissions: { allow } } }] }) as unknown,
+      removeRule: async (_b: unknown, rule: string) => { removed.push(rule); allow = allow.filter((r) => r !== rule); },
+    })} />);
+    await waitFor(() => plain(lastFrame).includes("❯ Add a new rule…"), "the rule list to load");
+    for (const want of ["Bash(a)", "Bash(b)", "Bash(c)"]) {
+      stdin.write(DOWN); await waitFor(() => plain(lastFrame).includes(`❯ ${want}`), `the cursor to reach ${want}`);
+    }
+    stdin.write(ENTER); await waitFor(() => frame(lastFrame).includes("Delete allowed tool?"), "the delete confirm to open");
+    stdin.write(ENTER); await waitFor(() => !plain(lastFrame).includes("Bash(c)"), "the refetched list to drop the deleted rule");
+    expect(removed, "the confirm's Enter deleted the row the cursor was on — the LAST one").toEqual(["Bash(c)"]);
+    const pointed = pointerRows(lastFrame);
+    expect(pointed, "exactly one row wears the pointer").toHaveLength(1);
+    expect(pointed[0], "the out-of-range index clamps to the new bottom row, not to the top of the list").toMatch(/^❯ Bash\(b\)/);
+  });
+
   // THE ONE NEW CLAIM OF 6a. `ruleRows` emits one row per (source, rule) pair, so the same rule string
   // declared by two settings layers is two rows with identical text — the naive `rule:${it.row.rule}` identity
   // collapses them, and a value cursor that cannot tell them apart gets STUCK on the first (its "move down"
@@ -156,6 +182,43 @@ describe("PermissionsDialog — row identity (Wave S t6a)", () => {
     expect(rows, "both duplicates render as their own row").toHaveLength(2);
     expect(rows[0].startsWith("❯"), "the cursor left the first duplicate").toBe(false);
     expect(rows[1].startsWith("❯"), "…and landed on the second").toBe(true);
+  });
+
+  // THE STRAY-SPACE INVARIANT, PINNED AT LAST (review round). `onSubKey` keeps the six sub-views PHYSICAL
+  // precisely so a space cannot act as Enter inside a destructive confirm — `select:accept` is bound to
+  // {enter, SPACE} and four of the six sub-views ARE destructive confirms — and nothing in the shipped suite
+  // held it: the review mutated the deleteConfirm branch to take `key.return || input === " "` and the whole
+  // file stayed green. The case above ("a stray space over a rule…") covers the TOP LEVEL, where space is a
+  // deliberate widening; these two cover the confirms, where it must do nothing at all. Both verified red
+  // against that mutation.
+  it("a space inside the delete confirm deletes nothing and leaves the confirm up", async () => {
+    const removed: string[] = [];
+    const { stdin, lastFrame } = render(<PermissionsDialog {...props({ removeRule: async (_b: unknown, rule: string) => { removed.push(rule); } })} />);
+    await waitFor(() => plain(lastFrame).includes("❯ Add a new rule…"));
+    stdin.write(DOWN); await waitFor(() => plain(lastFrame).includes("❯ Bash(ls)"), "the cursor to reach the rule");
+    stdin.write(ENTER); await waitFor(() => frame(lastFrame).includes("Delete allowed tool?"), "the delete confirm to open");
+    stdin.write(SPACE); await tick(); await tick();
+    expect(removed, "space is not Enter inside a destructive confirm").toEqual([]);
+    expect(frame(lastFrame), "…and it did not dismiss the confirm either").toContain("Delete allowed tool?");
+    // The confirm's OWN Enter still works, so the emptiness above is a real absence and not a dead dialog.
+    stdin.write(ENTER); await waitFor(() => removed.length === 1, "the confirm's Enter to reach removeRule");
+    expect(removed).toEqual(["Bash(ls)"]);
+  });
+
+  it("a space inside the remove-directory confirm removes nothing and leaves the confirm up", async () => {
+    const removed: string[] = [];
+    const dirs = [{ path: "/tmp/ws/added", source: "session" as const }];
+    const { stdin, lastFrame } = render(<PermissionsDialog {...props({
+      tab: "Workspace", fetchDirs: async () => dirs, removeDir: async (p: string) => { removed.push(p); },
+    })} />);
+    await waitFor(() => plain(lastFrame).includes("❯ Add directory…"), "the workspace list to load");
+    stdin.write(DOWN); await waitFor(() => plain(lastFrame).includes("❯ /tmp/ws/added"), "the cursor to reach the directory");
+    stdin.write(ENTER); await waitFor(() => frame(lastFrame).includes("Remove directory from workspace?"), "the remove confirm to open");
+    stdin.write(SPACE); await tick(); await tick();
+    expect(removed, "space is not Enter inside a destructive confirm").toEqual([]);
+    expect(frame(lastFrame), "…and it did not dismiss the confirm either").toContain("Remove directory from workspace?");
+    stdin.write(ENTER); await waitFor(() => removed.length === 1, "the confirm's Enter to reach removeDir");
+    expect(removed).toEqual(["/tmp/ws/added"]);
   });
 
   it("a cursor from one tab does not carry into another tab's list", async () => {
@@ -253,14 +316,18 @@ describe("PermissionsDialog — the rule list windows from the height it is give
     const before = focusedRow(r.lastFrame);
     expect(before).toBe("Add a new rule…");
     r.stdin.write(PAGE_DOWN); await tick(); await tick();
-    expect(focusedRow(r.lastFrame), "pagedown moved off the top row").not.toBe(before);
+    // NAMES WHAT THE CURSOR LANDED ON rather than what it left (review round): `focusedRow` answers `""` when
+    // NO row wears the pointer, so a bare `.not.toBe(before)` also passes on a frame that lost the cursor
+    // entirely. A rule row is the only correct answer here, and it cannot be spelled by an empty frame.
+    expect(focusedRow(r.lastFrame), "pagedown moved off the top row and onto a rule").toMatch(/^Bash\(cmd\d+:\*\)/);
     r.stdin.write(END); await tick(); await tick();
     // LAST BY `ruleRows`' OWN ORDER, which is lexicographic — `Bash(cmd9:*)`, not `cmd29`. Written against
     // `cmd29` first and caught red by the assertion above, which is the reason the End claim names the row
     // rather than saying "not the one before".
     expect(focusedRow(r.lastFrame), "end jumps to the last rule").toBe(LAST_RULE);
     r.stdin.write(PAGE_UP); await tick(); await tick();
-    expect(focusedRow(r.lastFrame), "pageup came back off the end").not.toBe(LAST_RULE);
+    expect(focusedRow(r.lastFrame), "pageup came back off the end, onto another rule").toMatch(/^Bash\(cmd\d+:\*\)/);
+    expect(focusedRow(r.lastFrame), "…which is not the one End left it on").not.toBe(LAST_RULE);
     r.stdin.write(HOME); await tick(); await tick();
     expect(focusedRow(r.lastFrame), "home jumps to the top row").toBe("Add a new rule…");
     r.unmount();
@@ -302,13 +369,30 @@ describe("PermissionsDialog — the rule list windows from the height it is give
 
   // The Workspace tab is the fourth unbounded list and it is a DIFFERENT item kind (`dir` rows carry
   // `RenderLine` segments, not a plain string), so it gets its own window pin rather than riding on the rules'.
+  //   IT NAMES THE EXACT COUNT, not merely "fewer than twenty" (review round). The loose form pinned "something
+  // windows this list" rather than "THIS budget windows it": deleting `visibleOptionCount` outright leaves
+  // `Select`'s own `clampVisible` reserving 8 rows, which shows 12 of the 21 options at a pane of 20 — still
+  // fewer than twenty, still green. `permissionsVisibleRows(20)` is 7, and the counted indicator has to agree
+  // with it, so both assertions below go red under that mutation.
   it("windows the Workspace directory list too", async () => {
     const dirs = Array.from({ length: 20 }, (_, i) => ({ path: `/tmp/ws/dir-${i}`, source: "session" as const }));
     const r = render(<PermissionsDialog {...props({ tab: "Workspace", fetchDirs: async () => dirs })} rows={20} columns={80} />);
     await waitFor(() => plain(r.lastFrame).includes("Add directory…"), "the workspace list to load");
     expect(plain(r.lastFrame)).toMatch(/↓ \d+ more below/);
-    expect(plain(r.lastFrame).split("\n").filter((l) => l.includes("/tmp/ws/dir-")).length).toBeLessThan(dirs.length);
+    expect(plain(r.lastFrame).split("\n").filter((l) => l.includes("/tmp/ws/dir-")).length)
+      .toBe(permissionsVisibleRows(20) - 1);                    // less the "Add directory…" affordance row
+    expect(plain(r.lastFrame)).toContain(`↓ ${dirs.length + 1 - permissionsVisibleRows(20)} more below`);
     r.unmount();
+  });
+
+  it("takes its row width from the frame's own inset, and never returns a width of zero", () => {
+    // 6 = `borderStyle="round"`'s two rules + `paddingX={1}`'s two columns + the one column `Select` spends on
+    // its pointer gutter and the one its `gap={1}` spends (Select.tsx:347-352). Read off a rendered 80-column
+    // frame: the row body occupies exactly 74 columns.
+    expect(PERMISSIONS_ROW_INSET).toBe(6);
+    expect(permissionsRowWidth(80)).toBe(74);
+    expect(permissionsRowWidth(6)).toBe(1);                      // the floor, not 0 — truncateLabel needs a column
+    expect(permissionsRowWidth(2)).toBe(1);
   });
 
   it("takes its chrome budget from an enumeration, and never returns a window of zero", () => {
@@ -323,5 +407,73 @@ describe("PermissionsDialog — the rule list windows from the height it is give
     expect(permissionsVisibleRows(14)).toBe(1);                  // 14 − 13
     expect(permissionsVisibleRows(13)).toBe(1);                  // the floor, not 0 — a one-row list beats none
     expect(permissionsVisibleRows(4)).toBe(1);
+  });
+});
+
+// ── REVIEW ROUND — THE HORIZONTAL HALF OF THE WINDOW ──────────────────────────────────────────────────────
+// The window reserves ROWS and counts OPTIONS, which only adds up while ONE OPTION IS ONE LINE. A row wider
+// than the frame breaks that: it still counts as one option and costs two lines, and the frame grows by
+// however many wrapped rows the window happens to be holding — measured on the fixture below, before the clip,
+// the real ChatApp behind /permissions drew a full-screen `clearTerminal` on EVERY cursor move at EVERY pane
+// from 15 to 24 at 80 columns. The repair is the clip in `renderItem`, not a budget term (a term can only
+// subtract a constant, and this shortfall is not one).
+//
+// EACH CASE HOLDS THE FRAME'S LINE COUNT FIXED ACROSS TWO WIDTHS, which is the invariant stated directly:
+// pick a pair of widths at which every wrappable CHROME literal wraps identically, and the count can then move
+// only if a ROW wrapped. Both cases were verified red by handing `renderItem` an unbounded width.
+//
+// THE `<Box width>` WRAPPER IS LOAD-BEARING, not decoration. `ink-testing-library`'s fake stdout reports a
+// FIXED 100 columns whatever a test says, and an Ink box with no width shrink-wraps its content — so a dialog
+// handed `columns={70}` still lays out inside 100 and an unclipped 67-column row simply widens the box instead
+// of wrapping. Pinning the parent's width is what makes the wrap real, and it is what makes the line-count
+// assertion below a measurement rather than a formality.
+const frameLines = (f: () => string | undefined) => plain(f).split("\n").length;
+
+describe("PermissionsDialog — a row body is clipped to the width it is given (review round)", () => {
+  /** 67 columns. It FITS the row body at 80 columns (74) and overflows it at 70 (64), while the Workspace
+   *  intro (89) wraps to two lines at BOTH — its content width is `columns − 4`, so 66 and 76 alike — and
+   *  `DEFAULT_FOOTER` (65) fits on one line at both. */
+  const WS = (i: number) => `/Users/someone/Developer/GitHub/repo/packages/workspace-directory-${i}`;
+  const wsDirs = Array.from({ length: 8 }, (_, i) => ({ path: WS(i), source: "session" as const }));
+  const at = (cols: number, over: Partial<Parameters<typeof PermissionsDialog>[0]>) => (
+    <Box width={cols}><PermissionsDialog {...props(over)} rows={40} columns={cols} /></Box>
+  );
+
+  it("keeps a workspace row to one line at a width its path does not fit", async () => {
+    const ws = { tab: "Workspace", fetchDirs: async () => wsDirs };
+    const wide = render(at(80, ws));
+    await waitFor(() => plain(wide.lastFrame).includes(WS(0)), "the workspace list at 80 columns");
+    const tall = frameLines(wide.lastFrame);
+    wide.unmount();
+    const narrow = render(at(70, ws));
+    await waitFor(() => plain(narrow.lastFrame).includes("/Users/someone"), "the workspace list at 70 columns");
+    // `truncateLabel` reserves one column for its own `…`, so a 64-column body keeps 63 columns of the path.
+    expect(plain(narrow.lastFrame), "the path that no longer fits is clipped, ellipsis and all").toContain(`${WS(0).slice(0, 63)}…`);
+    expect(plain(narrow.lastFrame), "…and the whole path is gone from the frame").not.toContain(WS(0));
+    expect(frameLines(narrow.lastFrame), "…and the frame is no taller for it — one option is still one line").toBe(tall);
+    narrow.unmount();
+  });
+
+  /** The same invariant on a RULE row, which is the reason the clip lives in this dialog's `renderItem` and not
+   *  in `permissionsModel`'s `workspaceRows`: a workspace path is one of four row kinds that can overflow, and
+   *  a clip in that formatter would have fixed exactly one of them. 54 columns of rule plus two spaces plus
+   *  `From command line arguments` (29) is an 85-column row: it fits the body at 100 columns (94) and
+   *  overflows it at 80 (74), while the Allow intro (49), the tab strip and the footer (65) fit on one line at
+   *  both. */
+  const RULE = (i: number) => `Bash(/Users/someone/GitHub/repo/pkgs/thing-${i}:*)`.padEnd(54, "x");
+  const wideRules = { sources: [{ source: "flagSettings", settings: { permissions: { allow: Array.from({ length: 6 }, (_, i) => RULE(i)) } } }] };
+
+  it("keeps a rule row to one line at a width its rule plus provenance does not fit", async () => {
+    const rules = { fetchSettings: async () => wideRules as unknown };
+    const wide = render(at(100, rules));
+    await waitFor(() => plain(wide.lastFrame).includes(`${RULE(0)}  From command line arguments`), "the rule list at 100 columns");
+    const tall = frameLines(wide.lastFrame);
+    wide.unmount();
+    const narrow = render(at(80, rules));
+    await waitFor(() => plain(narrow.lastFrame).includes(RULE(0)), "the rule list at 80 columns");
+    expect(plain(narrow.lastFrame), "the DIM provenance span is what the clip eats into first").not.toContain("From command line arguments");
+    expect(plain(narrow.lastFrame), "…leaving the rule itself, which still fits").toContain(RULE(0));
+    expect(frameLines(narrow.lastFrame), "…and the frame is no taller for it").toBe(tall);
+    narrow.unmount();
   });
 });
