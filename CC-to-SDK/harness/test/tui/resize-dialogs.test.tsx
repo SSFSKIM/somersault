@@ -123,6 +123,31 @@ describe("SettingsDialog re-derives its geometry from the size it is given", () 
     expect(configRowCount(frame(r.lastFrame))).toBe(5);
     r.unmount();
   });
+
+  /** …and the WIDTH half, the row-clip round's own defect: a Config row wider than the frame used to WRAP, and
+   *  a wrapped row breaks the window's one-option-one-line invariant. `settingsProps` sets `model: "opus"`, so
+   *  the row here is `Model  opus   For a specific model ID, use /model.` (50 columns) — it fits the body at
+   *  80 (74) and overflows it at 50 (44). This case asserts the CLIP and not the frame height, because
+   *  `NORMAL_FOOTER` (49) takes a second line at 50 too — settings-dialog.test.tsx holds the height invariant,
+   *  at a pair of widths where every chrome literal wraps identically. Both directions, like every case here.
+   *    THE DISCRIMINATOR IS `/model.`, NOT `use /model.`, and the difference is the whole point: Ink WORD-wraps,
+   *  so the unclipped row breaks between `use` and `/model.` and a frame that wrapped still contains neither
+   *  `use /model.` nor `use   /model.` — an assertion on the joined phrase passes with the clip removed, which
+   *  is how this case was first written and how it was caught. `/model.` survives the wrap on the second line
+   *  and is absent entirely once the row is clipped (`…for a specific model ID, use …`). */
+  const settingsAt = (cols: number) => <Box width={cols}><SettingsDialog {...settingsProps} rows={40} columns={cols} /></Box>;
+
+  it("re-clips its Config row bodies when the width changes", async () => {
+    const r = renderWithKeymap(settingsAt(80));
+    await waitFor(() => strip(frame(r.lastFrame)).includes("For a specific model ID, use /model."));
+    r.rerender(settingsAt(50));
+    await tick();
+    expect(strip(frame(r.lastFrame)), "the dim hint is what the clip eats into first").not.toContain("/model.");
+    r.rerender(settingsAt(80));
+    await tick();
+    expect(strip(frame(r.lastFrame)), "…and the widening brings it back").toContain("For a specific model ID, use /model.");
+    r.unmount();
+  });
 });
 
 /** Twelve removable rules plus the `Add a new rule…` affordance row — thirteen options, so the pane and not

@@ -51,11 +51,13 @@
 // this dialog crossed into ChatApp's pane-owning class and `state.settings.open` joined its `paneOwned` gate.
 import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
+import stringWidth from "string-width";
 import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import { useRefState } from "./keys/refState.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
-import { buildRows, filterRows, cycleEnum, THINKING_WARNING, type SettingsRowCtx } from "./settingsRows.js";
+import { buildRows, filterRows, cycleEnum, THINKING_WARNING, type SettingsRow, type SettingsRowCtx } from "./settingsRows.js";
+import { clipRowText } from "./rewindModel.js";
 import type { RenderLine } from "./render.js";
 import { Line } from "./Transcript.js";
 import { ACCENT, currentTheme } from "./theme.js";
@@ -77,6 +79,58 @@ const NORMAL_FOOTER = "Enter/Space to change · / to search · Esc to close";
 // chord so the footer never advertises a focus move that doesn't happen.
 const SEARCH_FOOTER = "Type to filter · Enter/↓ to select · Esc to clear";
 const READONLY_FOOTER = "Tab/←/→ to switch tabs · Esc to close";
+
+/** WAVE S t5, ROW-CLIP ROUND — THE HORIZONTAL HALF OF THE WINDOW, and the same repair (and the same reasoning)
+ *  as `PERMISSIONS_ROW_INSET` (PermissionsDialog.tsx:172-196). `SETTINGS_CHROME_ROWS` reserves ROWS and
+ *  `Select`'s window counts OPTIONS, which only adds up while ONE OPTION IS ONE LINE. The Model row breaks it:
+ *  `Model` + two spaces + `Default (recommended)` + three spaces + `For a specific model ID, use /model.` is
+ *  67 columns, and the body it is drawn into is `columns − 6`, so it takes a second LINE below 73 while still
+ *  counting as one option — and the frame grows by however many wrapped rows the window happens to hold. That
+ *  shortfall is not a constant (it scales with the window), so a budget term cannot express it; the repair
+ *  belongs where the invariant breaks, which is the row body.
+ *
+ *  MEASURED on the non-debug clear-counting instrument `SETTINGS_CHROME_ROWS` describes, walking the whole
+ *  five-row list twice: before the clip the composed `ChatApp` frame behind `/config` drew a full-screen
+ *  `clearTerminal` at panes 12, 13 and 14 at BOTH 60 and 70 columns (2 per ten cursor moves), and none at 80 or
+ *  100 — which is exactly where the arithmetic above says the Model row stops fitting. After the clip: zero at
+ *  every pane from 12 to 30 at all four widths.
+ *
+ *  IT LIVES HERE AND NOT IN `settingsRows.ts`, deliberately, and the same three reasons Task 6 gave for
+ *  `PermissionsDialog` hold — the middle one harder here than there. (1) It is not a Model-row problem: the
+ *  Theme row carries a hint too (44 columns, wraps below 50) and `permissionMode`/`outputStyle` take whatever
+ *  value the engine reports, so every row kind can overflow and a clip aimed at one of them fixes one of five.
+ *  (2) `buildRows`' `value` IS NOT ONLY A DISPLAY STRING — `useChat` snapshots `buildRows(ctx)` on open and
+ *  again on close and diffs the two row-by-row to build the Esc-close change summary, which `summarizeChanges`
+ *  prints into the TRANSCRIPT as `Set Model to <value>`. A clip applied in the model would make that diff
+ *  width-dependent (a resize between open and close would read as a change) and would print an ellipsised
+ *  value into a permanent transcript row. `settingsRows.ts` says in its own header that it holds no React and
+ *  no geometry, and `test/tui/settingsRows.test.ts` reads it as a width-free formatter. (3) The precedent both
+ *  dialogs follow, `RewindPicker`'s `AnchorLine`, clips in the COMPONENT with the shared primitive and leaves
+ *  its own model (`anchorLabel`) width-free. Same division, same layer as its sibling — two dialogs clipping in
+ *  different layers would be the real cost.
+ *
+ *  THE INSET IS SIX, and the six are the same six the permissions row spends: `borderStyle="round"`'s two rules
+ *  plus `paddingX={1}`'s two columns (4), and inside that `Select`'s node row spends one column on the pointer
+ *  gutter and one on its `gap={1}` (Select.tsx:347-352). Verified against a rendered 60-column frame: the body
+ *  occupies exactly 54 columns. The `/` search arm's own list is drawn OUTSIDE the `Select` with a two-space
+ *  indent instead of that gutter+gap pair, so its body is the same 6 columns in and shares this number. */
+export const SETTINGS_ROW_INSET = 6;
+export const settingsRowWidth = (columns: number = process.stdout.columns ?? 80): number =>
+  Math.max(1, columns - SETTINGS_ROW_INSET);
+
+/** One Config row's body, clipped to `width` and spent left to right across its two spans — the plain
+ *  `label  value` head and the dim `   hint` tail, which is what the clip eats into first. `clipRowText`
+ *  (rewindModel.ts:263) is the shared grapheme-wise clip `RewindPicker`, `HelpDialog` and `TaskPanel` all use,
+ *  and its newline arm ends the row wherever a newline falls — the rest of that string would be a second line
+ *  the window never budgeted for, and an engine-reported model id or output-style name is not ours to promise
+ *  is single-line. Rendered as a FRAGMENT, not a `<Text>`: both call sites already wrap it in one that carries
+ *  the focus colour, and a nested `<Text>` here would change nothing but the tree. */
+function RowBody({ row, width }: { row: SettingsRow; width: number }) {
+  const head = clipRowText(`${row.label}  ${row.value}`, width);
+  const left = width - stringWidth(head);
+  const hint = row.hint !== undefined && left > 0 ? clipRowText(`   ${row.hint}`, left) : "";
+  return <>{head}{hint ? <Text dimColor>{hint}</Text> : null}</>;
+}
 
 /** WAVE S t5 — the rows this dialog spends on everything that is NOT the list, counted against the composed
  *  `ChatApp` frame rather than against `SettingsDialog` alone. That denominator is Wave S t4's finding
@@ -102,10 +156,15 @@ const READONLY_FOOTER = "Tab/←/→ to switch tabs · Esc to close";
  *      occupy. Reserving the two that CAN coexist unconditionally is still right, for the reason the rewind
  *      budget reserves its own pair: the indicators toggle as a consequence of scrolling, and a budget that
  *      dropped them would grow the window at the top of the list and shrink it again on the first step down —
- *      resizing the list under a moving cursor. RESIDUAL, stated rather than fixed: the warning literal is 84
- *      columns and wraps to two lines below ~90, and this budget is height-only (no `rewindWrapRows`
- *      equivalent). Not worth one here — the Config catalog is a FIXED FIVE ROWS, so `Math.min` with the row
- *      count, not this budget, is what decides the window at every pane of 16 or more.
+ *      resizing the list under a moving cursor.
+ *        THE MUTUAL-EXCLUSION ARGUMENT IS CORRECT AND THE TWO IS STILL NOT ENOUGH, which the row-clip round
+ *      measured and this line used to get wrong. `above` and the warning are NOT mutually exclusive, and the
+ *      state that draws both — the cursor on the Thinking row of a list scrolled past its top — is the ordinary
+ *      one at any pane short enough to window five rows. That state costs `above` (1) + the option (1) + the
+ *      warning (1) = three lines where the budget reserved two, so with the warning up the composed frame
+ *      REACHES the pane: measured 2 clears per ten cursor moves at panes 12, 13 and 14 at 100 columns, and 4 at
+ *      panes 12 through 15 at 60, 70 and 80, where the warning takes a second line as well. See the RESIDUAL
+ *      paragraph below — it is left stated rather than fixed, with the two measured closures and their costs.
  *    · +1 — `ChatStatusBar`, the one sibling this budget models because it is the only UNCONDITIONAL one
  *      (ChatApp's last row). Everything else ChatApp can draw beside this dialog is handled by its `paneOwned`
  *      gate, which Wave S t5 extends to `state.settings.open` precisely because this dialog now sizes itself
@@ -118,15 +177,50 @@ const READONLY_FOOTER = "Tab/←/→ to switch tabs · Esc to close";
  *  so a frame's line count there is `staticLines + outputHeight`, not the quantity Ink compares against the
  *  pane. Under `ChatApp` the `❯ /config` command echo is a static item, so every height read that way is one
  *  row too tall. The instrument that settles it instead is `stdout.write` on a REAL (non-debug) Ink render,
- *  counting `ansiEscapes.clearTerminal` writes: swept panes 10 → 26 at 100 columns in three cursor states
- *  (top of list; bottom; bottom with the warning up), this budget draws ZERO clears at every pane of 12 or
- *  more in all three. The worst state at the tightest pane is a frame of 11 against a pane of 12 — the strict
- *  inequality, with the slack of exactly one the budget is built to leave. Below 12 the window is already at
- *  its floor of one row and no budget can help.
+ *  counting `ansiEscapes.clearTerminal` writes, with `CI` deleted from the environment first (Ink's `isInCi`
+ *  branch returns BEFORE the pane check and would silence every clear) and 45 ms between keypresses (in
+ *  non-debug mode Ink throttles its render callback at 32 ms, so a harness that awaits one macrotask coalesces
+ *  several cursor moves into ONE render and reports zero while the frame is measurably over the pane).
+ *
+ *  RE-MEASURED BY THE ROW-CLIP ROUND, AND THE CLAIM THIS PARAGRAPH USED TO MAKE — "ZERO CLEARS AT EVERY PANE OF
+ *  12 OR MORE" — WAS TRUE ONLY AT 80 COLUMNS AND UP, AND ONLY WITH THE WARNING DOWN. Both halves of that are
+ *  now measured, sweeping panes 12 → 30 at 60, 70, 80 and 100 columns, walking the whole five-row list twice
+ *  (ten cursor moves, two laps — `Select` wraps at the ends, so a walk visits every row AND every window
+ *  position, which the old "top of list / bottom" pair did not):
+ *    · WARNING DOWN — before the row clip, 2 clears per walk at panes 12, 13 and 14 at BOTH 60 and 70 columns
+ *      (the Model row wrapping; see `SETTINGS_ROW_INSET` above), and zero at 80 and 100. AFTER the clip, ZERO
+ *      at every one of the 76 cells swept. That is what this budget can now claim, and the width qualifier is
+ *      gone because the clip removed the width dependence rather than the budget absorbing it.
+ *    · WARNING UP — still clears, and the clip only narrows it: panes 12 → 15 at 60, 70 and 80 columns and
+ *      12 → 14 at 100 (before the clip, 12 → 16 at 60/70, 12 → 15 at 80, 12 → 14 at 100). The RESIDUAL
+ *      paragraph below has the two closures and what each costs.
  *
  *  IT WAS 12 UNTIL THE t5 REVIEW, by both errors at once: three conditional rows reserved where only two can
  *  ever coexist, and a `lastFrame()` measurement inflated by that static echo. 12 cost one row of visible list
  *  at panes 13 through 16 and bought nothing at any pane.
+ *
+ *  THE RESIDUAL IS `THINKING_WARNING`, NAMED WITH ITS NUMBERS AND DELIBERATELY NOT FIXED IN THE ROW-CLIP ROUND.
+ *  It fires only after the user toggles the Thinking row in THIS dialog session (`thinkingTouched`), and only
+ *  while the cursor sits on that row in a list scrolled past its top; both are then permanent for the session.
+ *  Two closures were measured on the instrument above, and neither is free:
+ *    (a) CLIP THE WARNING the way the row body is clipped, one `clipRowText` call at `settingsRowWidth`. It
+ *        makes the residual uniform — panes 12, 13 and 14 at EVERY width instead of 12 → 15 below 94 columns —
+ *        and adding `+1` to this constant on top of it leaves ONLY pane 12, which is the window's own floor
+ *        (`Math.max(1, …)` saturates there and no budget can help). Measured: 2 clears at 60×12 and 100×12 and
+ *        zero at every other cell from 13 to 30. NOT TAKEN, and the measurement is the reason rather than a
+ *        preference: the warning is 84 columns and the body at 60 is 54, so the clipped line reads "Changing
+ *        thinking mode mid-conversation will incre…" — the instrument's own `latency` probe goes false. A
+ *        truncated safety warning at exactly the widths where it fires is a product call, not a geometry one,
+ *        and it is the same call `permissionsWrapRows` declines for its footer.
+ *    (b) RESERVE THE WARNING INSTEAD — this constant at 12 plus a `permissionsWrapRows`-shaped
+ *        `settingsWrapRows(columns)` charging the extra line it takes below 94 columns. Keeps every word of the
+ *        warning. Measured as its two endpoints (12 at 100 columns, 13 at 60 and 80): zero from pane 14 up at
+ *        60 and 80 and from pane 13 up at 100, leaving the floor again. IT COSTS ONE ROW OF VISIBLE LIST AT
+ *        PANES 13 → 16 FOR EVERYONE — including the overwhelmingly common session that never touches the
+ *        Thinking row — which is exactly the trade the t5 review reverted when it took this constant from 12
+ *        back to 11. Charging it only while `thinkingTouched` avoids that and does not resize the list under a
+ *        moving cursor (unlike the indicators, the warning toggles on an explicit user action, once), but that
+ *        is a budget change and belongs to whoever owns the next round on this dialog, not to the row clip.
  *
  *  NOTE THE CLAMP INTERACTION: `Select`'s own `clampVisible` (selectModel.ts:18,28) already reserves 8 rows
  *  and takes the `min()` of the two — so this number does not solely govern the window. It is the ceiling this
@@ -281,7 +375,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
                what makes `defaultFocusValue` pick up the row the search selected when the query closes. */
             filtered.map((row) => (
               <Box key={row.id} flexDirection="column">
-                <Text>{"  "}{row.label}  {row.value}{row.hint ? <Text dimColor>   {row.hint}</Text> : null}</Text>
+                <Text>{"  "}<RowBody row={row} width={settingsRowWidth(columns)} /></Text>
                 {row.id === "thinking" && thinkingTouched ? <Text dimColor>    {THINKING_WARNING}</Text> : null}
               </Box>
             ))
@@ -298,7 +392,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
                   // it renders `❯ ❯ Theme` and breaks every frame assertion that greps for `❯ Theme`.
                   node: (focused: boolean) => (
                     <Box flexDirection="column">
-                      <Text color={focused ? ACCENT : undefined}>{r.label}  {r.value}{r.hint ? <Text dimColor>   {r.hint}</Text> : null}</Text>
+                      <Text color={focused ? ACCENT : undefined}><RowBody row={r} width={settingsRowWidth(columns)} /></Text>
                       {r.id === "thinking" && thinkingTouched ? <Text dimColor>    {THINKING_WARNING}</Text> : null}
                     </Box>
                   ),
