@@ -549,21 +549,26 @@ describe("F2 final review — a custom rebind drives the dialogs' semantic ops, 
     confirmAddDir: async () => {}, cancelAddDir: () => {}, onDone: () => {},
   });
 
+  // WAVE S t5 — the SettingsDialog cases below strip ANSI before matching `❯ <row>`, and the PermissionsDialog
+  // ones deliberately do not. Settings' Config list is a `Select` now, so its pointer is the list's own gutter
+  // span and the raw frame reads `❯\x1b[39m Theme`; PermissionsDialog still renders the pointer inside the
+  // row's own `<Text>`, where the two characters are still contiguous. The claim each case makes — a rebind
+  // resolving to a semantic op, and that op moving the cursor — is unchanged; only the match is.
   it("SettingsDialog: `x` bound to select:next moves the row cursor (and `z` to select:previous moves it back)", async () => {
     const { stdin, lastFrame } = render(<SettingsDialog {...settingsProps()} />, { userLayers: settingsLayer({ x: "select:next", z: "select:previous" }) });
-    await waitFor(() => frame(lastFrame).includes("❯ Theme"));
-    stdin.write("x"); await waitFor(() => frame(lastFrame).includes("❯ Model"));
-    stdin.write("x"); await waitFor(() => frame(lastFrame).includes("❯ Output style"));
-    stdin.write("z"); await waitFor(() => frame(lastFrame).includes("❯ Model"));
+    await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Theme"));
+    stdin.write("x"); await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Model"));
+    stdin.write("x"); await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Output style"));
+    stdin.write("z"); await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Model"));
   });
 
   it("SettingsDialog: the rebound key is still LITERAL TEXT inside the `/` search query (the mode branch stays physical)", async () => {
     const { stdin, lastFrame } = render(<SettingsDialog {...settingsProps()} />, { userLayers: settingsLayer({ x: "select:next", z: "select:previous" }) });
-    await waitFor(() => frame(lastFrame).includes("❯ Theme"));
+    await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Theme"));
     stdin.write("/"); await waitFor(() => frame(lastFrame).includes("Search settings…"));
     stdin.write("x"); await waitFor(() => frame(lastFrame).includes("Type to filter"));
     expect(frame(lastFrame), "the query accumulated the character").toContain("x");
-    expect(frame(lastFrame), "…and no row cursor moved under it").not.toContain("❯ Model");
+    expect(stripAnsi(frame(lastFrame)), "…and no row cursor moved under it").not.toContain("❯ Model");
   });
 
   it("PermissionsDialog: `x` bound to select:next moves the row cursor", async () => {
@@ -626,7 +631,7 @@ describe("F6 task 2 — Settings/Permissions adopt <Tabs> with no behavioural ch
 
   it("SettingsDialog: the active tab is an inverse+bold chip, and tab/← still cycle the strip", async () => {
     const { stdin, lastFrame } = render(<SettingsHost />);
-    await waitFor(() => frame(lastFrame).includes("❯ Theme"));
+    await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Theme"));
     expect(frame(lastFrame)).toContain(chip("Config"));
     expect(frame(lastFrame)).toContain(" Status ");
     stdin.write("\t"); await waitFor(() => frame(lastFrame).includes(chip("Usage")));
@@ -636,7 +641,7 @@ describe("F6 task 2 — Settings/Permissions adopt <Tabs> with no behavioural ch
 
   it("SettingsDialog: the `/` query still swallows tab/←/→ — the strip is handed disableNavigation", async () => {
     const { stdin, lastFrame } = render(<SettingsHost />);
-    await waitFor(() => frame(lastFrame).includes("❯ Theme"));
+    await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Theme"));
     stdin.write("/"); await waitFor(() => frame(lastFrame).includes("Search settings…"));
     // ASSERT AFTER EVERY KEY, never once at the end: tab/→/←/shift+tab pressed as a batch walk the strip in a
     // circle and land back on Config, so a single end-state check passes against a strip with no gating at all

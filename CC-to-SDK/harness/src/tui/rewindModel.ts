@@ -199,8 +199,10 @@ export const REWIND_FOOTER_EMPTY = "esc to cancel";
  *  `REWIND_SUMMARY_WINDOW`), which is long enough that a list sitting silently after Enter reads as a dead
  *  key. The wording is the pre-F6 picker's own, kept rather than invented twice over. */
 export const REWIND_CHECKING = "checking file changes…";
-export const moreAbove = (n: number): string => `↑ ${n} more above`;
-export const moreBelow = (n: number): string => `↓ ${n} more below`;
+// Wave S t5 moved these two to `select/overflow.ts` — the Settings list is the second windowed surface that
+// needs them, and a dialog importing the REWIND picker's model for a string would be the wrong dependency.
+// Re-exported rather than relocated outright so this module's existing importers (RewindPicker) are untouched.
+export { moreAbove, moreBelow } from "./select/overflow.js";
 
 /** `kXa`'s `isCurrent` branch (L487294). */
 export const CURRENT_LABEL = "(current)";

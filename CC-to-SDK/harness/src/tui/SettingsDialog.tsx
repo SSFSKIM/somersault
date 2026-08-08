@@ -37,9 +37,18 @@
 // across that remount) — useChat's `openSettings`/`closeSettings` instead snapshot `SettingsRowCtx` on open
 // and diff it against a fresh snapshot on close, which survives fine across any number of sub-dialog visits
 // because that snapshot lives in the HOOK, not in this component. Only `tab` (which also must survive the
-// Model round-trip) is hook state too (`state.settings.tab`); everything else here (`idx`/`search`/`sub`/
-// the per-tab fetch cache/`thinkingTouched`) is ordinary component state — losing it on a Model-row detour
-// is a minor, acceptable UX cost (row cursor resets, a since-visited Status/Usage/Stats tab re-fetches).
+// Model round-trip) is hook state too (`state.settings.tab`); everything else here (`focusId`/`view`/`search`/
+// `sub`/the per-tab fetch cache/`thinkingTouched`) is ordinary component state — losing it on a Model-row
+// detour is a minor, acceptable UX cost (row cursor resets, a since-visited Status/Usage/Stats tab re-fetches).
+//
+// WAVE S t5: the Config tab's BROWSE list is the shared `Select` (select/Select.tsx), not a hand-rolled
+// cursor. That is what gives it a WINDOW sized from the terminal height (`settingsVisibleRows` below), the
+// counted `↑ N more above` / `↓ N more below` indicators, and the four paging keys — pageup/pagedown/home/end
+// — that the `Settings` context binds nowhere and this component never had. Binding those four onto the old
+// unwindowed list instead would have been the "resolves but moves nothing" defect F2 exists to remove: with
+// five rows always on screen there is no page to turn. The `/` search arm keeps its own static list and
+// deliberately does NOT mount the Select (see the render). Because the list now sizes itself from `rows`,
+// this dialog crossed into ChatApp's pane-owning class and `state.settings.open` joined its `paneOwned` gate.
 import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
@@ -54,6 +63,9 @@ import { ThemeDialog } from "./ThemeDialog.js";
 import { OutputStylePicker } from "./OutputStylePicker.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
 import { Tabs } from "./select/Tabs.js";
+import { Select } from "./select/Select.js";
+import { moreAbove, moreBelow, overflowRows } from "./select/overflow.js";
+import type { SelectView } from "./select/selectModel.js";
 
 const TABS = ["Status", "Config", "Usage", "Stats"] as const;
 type Tab = typeof TABS[number];
@@ -66,7 +78,50 @@ const NORMAL_FOOTER = "Enter/Space to change · / to search · Esc to close";
 const SEARCH_FOOTER = "Type to filter · Enter/↓ to select · Esc to clear";
 const READONLY_FOOTER = "Tab/←/→ to switch tabs · Esc to close";
 
-export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outputStyle, onDone, applyMode, setThink, applyOutputStyle, fetchStatus, fetchUsage, fetchStats, onOpenModelPicker, savePrefs = realSavePrefs }: {
+/** WAVE S t5 — the rows this dialog spends on everything that is NOT the list, counted against the composed
+ *  `ChatApp` frame rather than against `SettingsDialog` alone. That denominator is Wave S t4's finding
+ *  (`REWIND_CHROME_ROWS`, rewindModel.ts:60-99) and it is the whole reason the number is not 9: a budget
+ *  counted from the dialog's own box composes into a frame that REACHES the pane, and Ink 5.2.1 answers
+ *  `outputHeight >= stdout.rows` (`ink.js:121`) with `clearTerminal + fullStaticOutput + output` — a
+ *  full-screen wipe and a whole-transcript re-dump on every render, i.e. on every cursor move.
+ *
+ *  9 + 1 + 1 + 1, each term against this file's own render tree (`:171-207`):
+ *    · 9 — the dialog's own chrome:
+ *        1-2  the `borderStyle="round"` box's top and bottom rules
+ *        3    the bold `Settings` title
+ *        4    the `<Tabs>` strip
+ *        5    the blank spacer under the strip
+ *        6    `↑ N more above`
+ *        7    `↓ N more below`
+ *        8    the blank spacer above the footer
+ *        9    `NORMAL_FOOTER`
+ *      Rows 6 and 7 are reserved UNCONDITIONALLY, for the reason the rewind budget reserves its pair: they
+ *      toggle as a consequence of scrolling, and a budget that dropped them would grow the window at the top
+ *      of the list and shrink it again on the first step down — resizing the list under a moving cursor.
+ *    · +1 — `ChatStatusBar`, the one sibling this budget models because it is the only UNCONDITIONAL one
+ *      (ChatApp's last row). Everything else ChatApp can draw beside this dialog is handled by its `paneOwned`
+ *      gate, which Wave S t5 extends to `state.settings.open` precisely because this dialog now sizes itself
+ *      from `rows`. A budget could not model those anyway: the task panel alone is seven rows.
+ *    · +1 — the `>=` above: the frame must end up STRICTLY shorter than the pane, not equal to it.
+ *    · +1 — `THINKING_WARNING` (`:193`), the conditional row the Thinking-mode row grows once it is toggled.
+ *      RESIDUAL, stated rather than fixed: that literal is 84 columns and wraps to two lines below ~90, and
+ *      this budget is height-only (no `rewindWrapRows` equivalent). It is not worth one here — the Config
+ *      catalog is a FIXED FIVE ROWS, so `Math.min` with the row count, not this budget, is what decides the
+ *      window at every pane of 17 or more.
+ *
+ *  NOTE THE CLAMP INTERACTION: `Select`'s own `clampVisible` (selectModel.ts:18,28) already reserves 8 rows
+ *  and takes the `min()` of the two — so this number does not solely govern the window. It is the ceiling this
+ *  dialog contributes, and being the larger of the two it is the one that binds. */
+export const SETTINGS_CHROME_ROWS = 12;
+/** THE DEFAULT IS LOAD-BEARING, do not drop it. `rows` is an optional prop and existing tests render this
+ *  dialog with no size props at all (keys-migration-dialogs.test.tsx:553). Without it
+ *  `settingsVisibleRows(undefined)` is NaN, which threads through `clampVisible` and `windowBounds` to
+ *  `{start: NaN, end: 1}` and `options.slice(NaN, 1)` — a list permanently stuck at ONE row with navigation
+ *  broken. `Select` defaults its own `rows` the same way (Select.tsx:146). */
+export const settingsVisibleRows = (rows: number = process.stdout.rows ?? 24): number =>
+  Math.max(1, rows - SETTINGS_CHROME_ROWS);
+
+export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outputStyle, onDone, applyMode, setThink, applyOutputStyle, fetchStatus, fetchUsage, fetchStats, onOpenModelPicker, savePrefs = realSavePrefs, rows, columns }: {
   tab: string;
   onTabChange: (tab: string) => void;
   model?: string;
@@ -82,9 +137,15 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   fetchStats: () => Promise<RenderLine[]>;
   onOpenModelPicker: () => void;
   savePrefs?: typeof realSavePrefs;
+  /** The terminal's size, threaded by `ChatApp` from Wave R task 1's size state — the same pair every other
+   *  geometry-taking dialog in that chain gets. Optional so a bare-rendered test keeps working; the default
+   *  lives in `settingsVisibleRows`/`Select`, not here, so both readers agree on it. */
+  rows?: number; columns?: number;
 }) {
   const activeTab = (TABS as readonly string[]).includes(tab) ? (tab as Tab) : "Config";
-  const [idx, setIdx] = useState(0);
+  // Keyed by row ID, not index: the `/` search picks a ROW, and `Select`'s `defaultFocusValue` is a value.
+  const [focusId, setFocusId] = useState<string>("theme");
+  const [view, setView] = useState<SelectView | undefined>(undefined);
   // Both are ref-backed (keys/refState.ts): the key handler BRANCHES on them and the query ACCUMULATES into
   // them, and one stdin chunk dispatches several events with no render — a closure read would be one chunk stale.
   const [search, setSearch, searchRef] = useRefState<string | null>(null);   // null = browsing; "" = searching, empty query
@@ -104,8 +165,10 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   }, [activeTab]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const ctx: SettingsRowCtx = { theme: currentTheme(), model, outputStyle, mode, thinkLevel };
-  const rows = buildRows(ctx);
-  const filtered = search !== null ? filterRows(rows, search) : rows;
+  // NOT `rows` any more (Wave S t5): that name is the TERMINAL HEIGHT prop now, and two things called `rows`
+  // in one component is how a geometry bug hides.
+  const configRows = buildRows(ctx);
+  const filtered = search !== null ? filterRows(configRows, search) : configRows;
 
   // The `/` search query is a TEXT-ENTRY surface: while it is open EVERY route — action handler or keymap
   // fallback — lands here and is read as characters, which is the whole reason the scopes stay pushed while
@@ -118,9 +181,17 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
     if (key.escape) { setSearch(null); return; }                    // "Esc to clear" — stays on Config, just exits search
     if (key.upArrow) { setSearch(null); return; }                   // "↑ to tabs" — simplified: no header-focus mode shipped (Global Constraints line 28)
     if (key.return || key.downArrow) {
-      const picked = filterRows(rows, q)[0];                        // re-filtered from the LIVE query, not this render's
+      const picked = filterRows(configRows, q)[0];                  // re-filtered from the LIVE query, not this render's
+      // THE ONE LINE OF THIS HANDLER WAVE S t5 CHANGED (everything else here is byte-identical): the focus is
+      // keyed by row ID now, so the pick IS the id and the `findIndex` lookup it used to need is gone.
+      //   AND IT MOVED ABOVE `setSearch(null)`, which is not cosmetic. Closing the query is what REMOUNTS the
+      // `Select`, and `defaultFocusValue` is read once, in that mount's `useState` initializer. Under Ink's
+      // reconciler these two updates are not reliably batched — with the old order the Select mounted on
+      // `focusId` still "theme", and its own mount-time `onFocus` report then wrote that back over the pending
+      // pick, so the search selected a row and the list stayed on the first one (caught red by
+      // settings-dialog.test.tsx's "hands the row the search picked back to the remounted list").
+      if (picked) setFocusId(picked.id);
       setSearch(null);
-      if (picked) { const i = rows.findIndex((r) => r.id === picked.id); if (i >= 0) setIdx(i); }
       return;
     }
     if (key.backspace || key.delete) { setSearch(q.slice(0, -1)); return; }
@@ -136,8 +207,9 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   };
   /** Rows and the search box exist only on the Config tab — the other three render a formatter's output. */
   const onConfig = (op: () => void) => () => { if (activeTab === "Config") op(); };
-  const acceptRow = () => {
-    const row = rows[idx]; if (!row) return;
+  /** Takes the row from the value `Select` hands back, rather than re-reading an index it no longer owns. */
+  const acceptRow = (id: string) => {
+    const row = configRows.find((r) => r.id === id); if (!row) return;
     if (row.type === "boolean") { setThinkingTouched(true); void setThink(row.value === "true" ? "off" : "default"); }
     else if (row.type === "enum") { void applyMode(cycleEnum(row)); }
     else if (row.id === "theme") setSub("theme");
@@ -147,15 +219,15 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   // The scopes stay pushed in every state (their null bindings are this overlay's gate).
   useKeyScope("Settings");
   useKeyScope("Tabs");
-  // Each handler performs its OWN operation now instead of re-reading the physical key out of a shared body:
-  // that re-read is what made `"x": "select:next"` in a user's keybindings.json resolve, match, reach this
-  // component and move nothing (final review, P2). Browsing is byte-identical under the defaults because each
-  // op takes exactly the keys its action is bound to — `select:accept` is {enter, space}, which is the pair
-  // the old accept branch tested for by hand.
+  // WAVE S t5 — MOVEMENT AND ACCEPTANCE BELONG TO THE INNER `Select` NOW (W-S3). It pushes the `Select`
+  // context innermost, so its eight actions resolve there, including the four — select:pageUp/pageDown/first/
+  // last — this component never had at all. Registering them here as well would only shadow it, and the
+  // migration is the fix rather than binding four new handlers: this list renders every row it has today, so
+  // bound paging keys would resolve, match, reach a handler and move nothing.
+  //   Both surfaces this component still owns keep their registrations, both still `route()`d. While the `/`
+  // query is open the `Select` is NOT MOUNTED, so select:* resolves to an action with no handler and falls
+  // through to the fallback below — which is `route` → `onSearchKey`, exactly where those keys landed before.
   useKeyActions({
-    "select:previous": route(onConfig(() => setIdx((i) => Math.max(0, i - 1)))),
-    "select:next": route(onConfig(() => setIdx((i) => Math.min(rows.length - 1, i + 1)))),
-    "select:accept": route(onConfig(acceptRow)),
     "settings:search": route(onConfig(() => setSearch(""))),
     "confirm:no": route(() => onDone()),
     // `tabs:next`/`tabs:previous` belong to the embedded <Tabs> now (see the header). Enum rows still cycle
@@ -183,16 +255,47 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
           ) : null}
           {search !== null && filtered.length === 0 ? (
             <Text dimColor>{`No settings match "${search}"`}</Text>
-          ) : (
-            (search !== null ? filtered : rows).map((row) => (
+          ) : search !== null ? (
+            /* THE `/` QUERY'S OWN LIST, UNCHANGED — and the `Select` is deliberately not mounted over it.
+               While the query is open every key is text (that is why the scopes stay pushed), and a mounted
+               `Select` would eat `j`/`k`/enter/space before they could reach the query. Unmounting is also
+               what makes `defaultFocusValue` pick up the row the search selected when the query closes. */
+            filtered.map((row) => (
               <Box key={row.id} flexDirection="column">
-                <Text color={search === null && row.id === rows[idx]?.id ? ACCENT : undefined}>
-                  {search === null && row.id === rows[idx]?.id ? "❯ " : "  "}{row.label}  {row.value}
-                  {row.hint ? <Text dimColor>   {row.hint}</Text> : null}
-                </Text>
+                <Text>{"  "}{row.label}  {row.value}{row.hint ? <Text dimColor>   {row.hint}</Text> : null}</Text>
                 {row.id === "thinking" && thinkingTouched ? <Text dimColor>    {THINKING_WARNING}</Text> : null}
               </Box>
             ))
+          ) : (
+            <>
+              {view && overflowRows(view, configRows.length).above > 0
+                ? <Text dimColor>{moreAbove(overflowRows(view, configRows.length).above)}</Text> : null}
+              <Select
+                options={configRows.map((r) => ({
+                  value: r.id, label: r.label,
+                  // `focused` is USED, not ignored: the focused row has been ACCENT since W3 t5 and dropping
+                  // that would leave the pointer gutter as the only focus affordance. The `❯ `/`  ` prefix is
+                  // NOT reproduced here — `Select` draws it in its own gutter (Select.tsx:282), and repeating
+                  // it renders `❯ ❯ Theme` and breaks every frame assertion that greps for `❯ Theme`.
+                  node: (focused: boolean) => (
+                    <Box flexDirection="column">
+                      <Text color={focused ? ACCENT : undefined}>{r.label}  {r.value}{r.hint ? <Text dimColor>   {r.hint}</Text> : null}</Text>
+                      {r.id === "thinking" && thinkingTouched ? <Text dimColor>    {THINKING_WARNING}</Text> : null}
+                    </Box>
+                  ),
+                }))}
+                hideIndexes
+                visibleOptionCount={settingsVisibleRows(rows)}
+                defaultFocusValue={focusId}
+                onFocus={setFocusId}
+                onViewChange={setView}
+                onChange={acceptRow}
+                onCancel={onDone}
+                rows={rows} columns={columns}
+              />
+              {view && overflowRows(view, configRows.length).below > 0
+                ? <Text dimColor>{moreBelow(overflowRows(view, configRows.length).below)}</Text> : null}
+            </>
           )}
           <Text> </Text>
           <Text dimColor>{search !== null ? SEARCH_FOOTER : NORMAL_FOOTER}</Text>

@@ -1263,6 +1263,13 @@ describe("<ChatApp>", () => {
   });
 
   // W3 T5: /config
+  //
+  // WAVE S t5 — EVERY `❯ <row>` WAIT BELOW STRIPS ANSI FIRST, and the change is not cosmetic. The Config list
+  // is a `Select` now, so the pointer is the list's own GUTTER (`<Text color=…>❯</Text>`, Select.tsx:282) and
+  // the label is a separate span: the raw frame reads `❯\x1b[39m Thinking mode`, with a colour reset between
+  // the two characters this file used to match as one literal. A raw `includes("❯ Model")` therefore goes
+  // false forever — including the NEGATIVE one in keys-migration-dialogs.test.tsx, which would have gone
+  // vacuously green instead of red. The rendered TEXT is unchanged, which is what these tests are about.
   it("/config opens the Settings dialog at the Config tab, showing all 5 rows and the normal-mode footer", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
@@ -1290,7 +1297,7 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("Thinking mode"));
     // Row order is theme, model, outputStyle, permissionMode, thinking — 4 downs from the theme (default) row.
     for (let i = 0; i < 4; i++) stdin.write("\x1b[B");
-    await waitFor(() => frame(lastFrame).includes("❯ Thinking mode"));
+    await waitFor(() => stripAnsiAll(frame(lastFrame)).includes("❯ Thinking mode"));
     stdin.write("\r");                                              // enter/space toggles: initial value is "true" (thinkLevel defaults to "default", not "off")
     await waitFor(() => frame(lastFrame).includes("Changing thinking mode mid-conversation will increase latency and may reduce quality."));
     stdin.write("\x1b");                                            // Esc closes with the change summary
@@ -1408,7 +1415,7 @@ describe("<ChatApp>", () => {
     stdin.write("\r");                                              // a combined "text\r" chunk reads as a PASTE (embedded \n), not Enter — write separately
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
     stdin.write("\x1b[B");                                          // Theme(0) → Model(1)
-    await waitFor(() => frame(lastFrame).includes("❯ Model"));
+    await waitFor(() => stripAnsiAll(frame(lastFrame)).includes("❯ Model"));
     stdin.write("\r");                                              // Enter on the Model row → onOpenModelPicker → the SHARED top-level ModelPicker
     await waitFor(() => frame(lastFrame).includes("Select model"));
     stdin.write("\r");                                              // pick the only model — resolveModelAlias("opus") → "claude-opus-5"
@@ -1439,7 +1446,7 @@ describe("<ChatApp>", () => {
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
     stdin.write("\x1b[B");                                          // Theme(0) → Model(1)
-    await waitFor(() => frame(lastFrame).includes("❯ Model"));
+    await waitFor(() => stripAnsiAll(frame(lastFrame)).includes("❯ Model"));
     stdin.write("\r");                                              // Enter on Model → onOpenModelPicker
     await waitFor(() => frame(lastFrame).includes("Select model"));
     stdin.write("\r");                                              // pick the only model — session.setModel(...) is now blocked on `gate`
@@ -1502,7 +1509,7 @@ describe("<ChatApp>", () => {
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
     stdin.write("\x1b[B"); stdin.write("\x1b[B");                    // Theme(0) → Model(1) → Output style(2)
-    await waitFor(() => frame(lastFrame).includes("❯ Output style"));
+    await waitFor(() => stripAnsiAll(frame(lastFrame)).includes("❯ Output style"));
     stdin.write("\r");                                                // Enter opens the embedded OutputStylePicker
     await waitFor(() => frame(lastFrame).includes("Preferred output style"));
     stdin.write("\x1b[B");                                            // ↓ to "Proactive" (index 1)
@@ -1534,7 +1541,7 @@ describe("<ChatApp>", () => {
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
     stdin.write("\x1b[B"); stdin.write("\x1b[B"); stdin.write("\x1b[B"); stdin.write("\x1b[B");   // Theme(0)→Model(1)→Output style(2)→Default permission mode(3)→Thinking mode(4)
-    await waitFor(() => frame(lastFrame).includes("❯ Thinking mode"));
+    await waitFor(() => stripAnsiAll(frame(lastFrame)).includes("❯ Thinking mode"));
     stdin.write("\r");                                              // toggle it — session.setMaxThinkingTokens(...) is now blocked on `gate`
     await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes("Thinking mode  false"));   // the row already reflects the toggle
     stdin.write("\x1b");                                            // close Settings WHILE the engine call is still unresolved
@@ -1567,7 +1574,7 @@ describe("<ChatApp>", () => {
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));
     stdin.write("\x1b[B"); stdin.write("\x1b[B");                    // Theme(0) → Model(1) → Output style(2)
-    await waitFor(() => frame(lastFrame).includes("❯ Output style"));
+    await waitFor(() => stripAnsiAll(frame(lastFrame)).includes("❯ Output style"));
     stdin.write("\r");                                                // Enter opens the embedded OutputStylePicker
     await waitFor(() => frame(lastFrame).includes("Preferred output style"));
     stdin.write("\x1b[B");                                            // ↓ to "Proactive" (index 1)
@@ -2287,9 +2294,14 @@ describe("<ChatApp> — retained source", () => {
 // windows each dialog from the height it is given, and the derivations live in ChatApp's own gate comment.
 //
 // AND THE LAST CASE PINS THE OTHER DIRECTION. Every mutation above REMOVES a term; adding one — someone gating
-// `/theme` or `/settings` in a later round — would hide the task panel behind a dialog whose height is a
-// function of its CONTENT, which is the half of the partition this gate deliberately excludes, and no test
-// above would notice. The `/theme` case is that pin.
+// `/theme` in a later round — would hide the task panel behind a dialog whose height is a function of its
+// CONTENT, which is the half of the partition this gate deliberately excludes, and no test above would notice.
+// The `/theme` case is that pin.
+//
+// WAVE S t5 ADDED A SIXTH MEMBER, `/config`, and it is the reason the negative pin above is not paranoia: the
+// dialog that case names as a hypothetical over-fire ("`/theme` or `/settings`", as this comment read before)
+// legitimately crossed the partition one wave later, because t5 windowed its Config list. The membership
+// question is decided by measurement, not by which list a name has always been on.
 describe("<ChatApp> — the paneOwned gate hides the task panel behind every pane-sizing dialog", () => {
   const TODO = /◻\s+todo-item-one/;
   /** The todo panel's own wire pair (taskList.ts), wrapped in a turn so `state.busy` lands back at false. */
@@ -2346,6 +2358,22 @@ describe("<ChatApp> — the paneOwned gate hides the task panel behind every pan
     await gateCycle("plan", {}, {},
       async (r, fake) => { fake.parkPermission(entry); await waitFor(() => frame(r.lastFrame).includes("Ready to code?")); },
       async (r, fake) => { fake.settlePermission("p1", "someone-else", "deny"); await waitFor(() => !frame(r.lastFrame).includes("Ready to code?")); });
+  });
+
+  /** WAVE S t5 ADDED THIS MEMBER. `/config`'s Config list is windowed now (`settingsVisibleRows`), so the
+   *  dialog sizes itself from `rows` and moved out of the excluded half of ChatApp's partition into this one.
+   *  Measured on this fixture at 100 columns before the term was added: the dialog alone is 11 → 14 rows over
+   *  panes 12 → 17 and flat 14 above, but WITH the five-task panel beside it the composed frame is 18 → 21 and
+   *  REACHES the pane at every height from 12 through 20 — nine of the fourteen heights swept — which is Ink's
+   *  `clearTerminal + fullStaticOutput + output` on every cursor move.
+   *
+   *  SABOTAGE-CHECKED like every other member, by writing this case with `|| state.settings.open` absent from
+   *  the disjunction: it fails on the open half ("the task panel is still mounted beside a pane-sizing
+   *  dialog") and every other case in the file stays green. */
+  it("/config — the task panel unmounts while the Settings dialog is up and comes back when it closes", async () => {
+    await gateCycle("/config", {}, {},
+      async (r) => { r.stdin.write("/config"); await waitFor(() => frame(r.lastFrame).includes("/config")); r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("Enter/Space to change")); },
+      async (r) => { r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("Enter/Space to change")); });
   });
 
   /** THE NEGATIVE PIN. `/theme` is a content-sized dialog — a constant 17 rows at every pane — so it is on the

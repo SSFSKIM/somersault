@@ -446,7 +446,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //
   // WHAT IS IN THE CLASS: a surface whose HEIGHT IS A FUNCTION OF `rows`. It has already claimed the pane, so
   // a sibling beside it is not a near miss but a guaranteed overflow, and no budget it could carry would help.
-  // Six, each read off `ChatApp`'s own frame line count at 18/20/22/24/26/30/40/50 rows:
+  // Seven, each read off `ChatApp`'s own frame line count at 18/20/22/24/26/30/40/50 rows — except the last,
+  // whose curve lives entirely BELOW that sweep and had to be measured from 12 up (see its own note):
   //   · the pager       — `rows − 6` by construction (above);
   //   · `RewindPicker`  — `rewindVisibleRows(rows, columns)`; 15 → 36 rows as the pane goes 18 → 40;
   //   · `SessionPicker` — `resumeVisibleRows(rows)`; 15 → 30 as the pane goes 20 → 50;
@@ -464,14 +465,32 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //                       ON THE PLAN in exactly the way `ModelPicker` is on the catalog. `planRegionRows` is
   //                       a MAXIMUM, and `planWindow` returns only as many lines as the plan HAS, so a short
   //                       plan is a flat 21 at every pane. Re-measured with a 60-line plan: 21 → 47 over panes
-  //                       16 → 50. Same conclusion, same caveat about fixtures.
+  //                       16 → 50. Same conclusion, same caveat about fixtures;
+  //   · `SettingsDialog` — `settingsVisibleRows(rows)`; 11 → 14 over panes 12 → 17. MOVED HERE BY WAVE S t5,
+  //                       which windowed its Config list onto `Select`; until that task it was a constant 14
+  //                       and sat in the excluded list below. ITS TRACKING IS THE MOST CONTINGENT OF THE
+  //                       THREE, and the contingency is STRUCTURAL rather than fixtural: `buildRows` returns a
+  //                       FIXED FIVE rows (settingsRows.ts), so `min(5, rows − SETTINGS_CHROME_ROWS)`
+  //                       saturates at a pane of 17 and the frame is a flat 14 over the whole 18 → 50 sweep
+  //                       the six above were measured on — which is exactly the number the excluded list used
+  //                       to record for it. So do not read this entry as "it tracks the pane like the others";
+  //                       it tracks only where the pane is short, and nowhere else.
+  //                         IT IS GATED ANYWAY, and the measurement is why. With the five-task panel beside it
+  //                       the composed frame is 18 → 21 rows and REACHES the pane at every height from 12 to
+  //                       20 — nine of the fourteen heights swept at 100 columns, mid-list with both
+  //                       indicators up. That is the wipe, on the surface whose whole job is a moving cursor.
+  //                       No budget buys it back: the panel is seven rows against a slack of one.
   // AND WHAT IS NOT, deliberately. This list is the OTHER half of a PARTITION of the dialog chain below —
   // every surface in that chain appears in exactly one of the two lists, and a new one has to be placed in
   // one of them. It is every dialog whose height is a function of its CONTENT: `BgTasksPanel` (13 rows),
   // `ShortcutsOverlay` (18), `BypassConsent` (18), `ThemeDialog` (17), `HistorySearchOverlay` (15, the
-  // `/history` picker), `SettingsDialog` (14), the inline `PermissionDialog`/`QuestionDialog` pair (12),
+  // `/history` picker), the inline `PermissionDialog`/`QuestionDialog` pair (12),
   // `PermissionsDialog` (9), `AddDirDialog`, and `RestoringModal` (1) — every one of them measured CONSTANT
-  // across that whole range. Those are a different defect with a different repair: a fixed-height dialog too
+  // across that whole range. `SettingsDialog` (14) WAS ON THIS LIST and is not any more: Wave S t5 windowed
+  // its Config list, which is what a new member of the other half looks like from here — a change that adds a
+  // `rows`-derived height to a dialog moves it across this partition, and the two lists have to be edited in
+  // the same breath as the disjunction below or one of them starts lying.
+  //   Those are a different defect with a different repair: a fixed-height dialog too
   // tall for a short pane overflows on its OWN (`ShortcutsOverlay` and `BypassConsent`, the joint-tallest of
   // them, each reach the pane at 18 rows with no task panel in the tree at all, and `HistorySearchOverlay`
   // composes to 22 WITH one up and so reaches every pane from 18 to 22; `HelpDialog`'s general tab reaches it
@@ -489,6 +508,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // of the two renders — which is correct here, because the one that renders in every such pair is itself
   // pane-owning. The cost of being wrong is one hidden task panel, not an overflow.
   const paneOwned = transcriptOpen || state.helpOpen || state.rewindPicker.open || state.modelPicker.open || state.picker.open
+    || state.settings.open                                        // Wave S t5 — its Config list is windowed now
     || (inputOwnerRef.current === "decision" && state.pending?.kind === "plan");
   return (
     <Box flexDirection="column">
@@ -611,7 +631,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     model={state.model} mode={state.mode} thinkLevel={state.thinkLevel} outputStyle={state.outputStyle}
                     onDone={closeSettings} applyMode={applyMode} setThink={setThink} applyOutputStyle={applyOutputStyle}
                     fetchStatus={fetchSettingsStatus} fetchUsage={fetchSettingsUsage} fetchStats={fetchSettingsStats}
-                    onOpenModelPicker={openModelPicker} savePrefs={deps?.savePrefs} />
+                    // WAVE S t5: the Config list is windowed now, so this dialog joins the set that is handed
+                    // Task 1's size state rather than falling through to `process.stdout` behind the app's
+                    // pin (the ModelPicker arm above spells the whole argument out).
+                    onOpenModelPicker={openModelPicker} savePrefs={deps?.savePrefs} rows={terminalRows()} columns={terminalColumns()} />
                 : state.permissions.open
                 ? <PermissionsDialog tab={state.permissions.tab ?? "Allow"} onTabChange={setPermissionsTab}
                     denials={state.denials} cwd={cwd}

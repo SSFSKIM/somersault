@@ -49,6 +49,7 @@ import { ModelPicker, type ModelInfo } from "../../src/tui/ModelPicker.js";
 import { SessionPicker } from "../../src/tui/SessionPicker.js";
 import { BgTasksPanel } from "../../src/tui/BgTasksPanel.js";
 import { HelpDialog } from "../../src/tui/HelpDialog.js";
+import { SettingsDialog } from "../../src/tui/SettingsDialog.js";
 import { POINTER } from "../../src/tui/select/Select.js";
 import { NBSP } from "../../src/tui/composerFrame.js";
 import { createPermissionGate } from "../../src/permissions/gate.js";
@@ -318,14 +319,23 @@ describe("F6 acceptance #5 — every rewind row carries its file-change summary 
 // ── ACCEPTANCE #6 ───────────────────────────────────────────────────────────────────────────────────────
 // "`j`/`k`, `ctrl+n`/`ctrl+p`, PageUp/PageDown and Home/End move the selection in every list in the app."
 //
-// **NARROWED, and the narrowing is the honest part.** What is true is "every list THIS WAVE SHIPPED" — the
-// seven surfaces below, uniform because each of them mounts T1's `Select`. Two older overlays are NOT
-// covered and would fail two of the five groups: `SettingsDialog` and `PermissionsDialog` push the `Settings`
-// context, which binds `up`/`down`/`j`/`k`/`ctrl+p`/`ctrl+n` but **no `pageup`/`pagedown`/`home`/`end` at
-// all** (bindings.ts), and their key fallback swallows the unresolved keys rather than passing them on — so
-// those four are dead there. That is a real shortfall against the criterion's literal wording, it is recorded
-// in the parity doc's F6 divergence table, and it is stated here rather than hidden behind a helper that
-// simply never visits those two surfaces.
+// **NARROWED, and the narrowing is the honest part** — but it is one surface narrower than it was. What is
+// true is "every list on T1's `Select`", which as of Wave S t5 is the EIGHT surfaces below.
+//
+// WAVE S t5 CLOSED HALF OF THE ORIGINAL SHORTFALL. This block used to name two older overlays that would fail
+// two of the five groups: `SettingsDialog` and `PermissionsDialog` push the `Settings` context, which binds
+// `up`/`down`/`j`/`k`/`ctrl+p`/`ctrl+n` but **no `pageup`/`pagedown`/`home`/`end` at all** (bindings.ts), and
+// their key fallback swallows the unresolved keys rather than passing them on. `SettingsDialog`'s Config list
+// is a `Select` now, and the fix was the MIGRATION rather than four new bindings on the `Settings` context:
+// the inner `Select` pushes the `Select` context innermost, where those four keys already resolve, and it
+// brings the WINDOW that makes a page mean something (an unwindowed five-row list has no page to turn — that
+// is the "resolves but moves nothing" defect F2 exists to remove). Its five rows are pinned below like every
+// other member.
+//
+// `PermissionsDialog` IS STILL SHORT, and stays named here rather than hidden behind a helper that never
+// visits it: it hand-rolls its own cursor, so those four keys remain dead there. That is the remaining
+// shortfall against the criterion's literal wording and it is recorded in the parity doc's F6 divergence
+// table. Settings' half of that entry is now stale and comes out with the next parity refresh.
 //
 // Each key group gets a FRESH MOUNT rather than a walk from one state to the next, because a surface whose
 // last row is a `type:"input"` row (the plan dialog) deregisters every movement action while that row has the
@@ -463,6 +473,20 @@ const CATALOG: CommandEntry[] = [
   { name: "brainstorm", description: "explore a design", source: "catalog" },
   { name: "compact", description: "summarize the conversation", source: "local" },
 ];
+// WAVE S t5 — the Config tab's five rows, at a pane tall enough that the whole catalog is on screen (the
+// windowing itself is settings-dialog.test.tsx's; what this pins is that all five key groups now arrive here).
+const SETTINGS_PROPS = {
+  tab: "Config", onTabChange: () => {}, mode: "default", thinkLevel: "default", outputStyle: "default",
+  onDone: () => {}, applyMode: async () => {}, setThink: async () => {}, applyOutputStyle: async () => {},
+  fetchStatus: async () => [], fetchUsage: async () => [], fetchStats: async () => [],
+  onOpenModelPicker: () => {}, savePrefs: () => {},
+};
+pinsListNavigation(
+  "the Settings dialog's Config list",
+  () => opened(<SettingsDialog {...SETTINGS_PROPS} rows={40} columns={100} />, "Thinking mode"),
+  ["Theme", "Model", "Output style", "Default permission mode", "Thinking mode"],
+);
+
 pinsListNavigation(
   "the help dialog's command browser",
   async () => {
