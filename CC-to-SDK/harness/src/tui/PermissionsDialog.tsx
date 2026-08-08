@@ -98,6 +98,53 @@ type Item =
   | { kind: "dir"; d: WorkspaceDir; line: RenderLine }
   | { kind: "denial"; e: DenialEntry };
 
+/** A row's stable identity — what the cursor tracks instead of an index (Wave S t6a), and what round 6b's
+ *  `Select` will address rows by. An index cannot carry the cursor: every mutation refetches and REBUILDS
+ *  `items`, so "row 3" means a different row afterwards. Each value is derived from what the row already is
+ *  — permissionsModel's own `RuleRow`/`DenialEntry` fields and listDirs' path — never from a parallel
+ *  numbering, so it survives a rebuild that changes the list around it. `\0` is the tag/join byte because no
+ *  rule string, path or tool display can contain one — so a `dir` value can never alias a `rule` one, a
+ *  rule's source can never run into its text, and the two affordance rows (whose values START with it) can
+ *  never be spelled by any data row. */
+function itemValue(it: Item): string {
+  switch (it.kind) {
+    case "addRule": return "\0addRule";
+    case "addDir": return "\0addDir";
+    case "rule": return `rule\0${it.row.source}\0${it.row.rule}`;
+    case "dir": return `dir\0${it.d.path}`;
+    // `DenialEntry` is `{display, by, at}` (permissionsModel.ts:84) — no toolUseID, no command, and no single
+    // field unique on its own. This is the composite the row's React key already used.
+    case "denial": return `denial\0${it.e.at}\0${it.e.display}`;
+  }
+}
+/** …and the collision rule, because NOTHING upstream of here guarantees uniqueness: `ruleRows` emits one row
+ *  per (source, rule) pair and one settings file may list the same rule twice, and two denials can share a
+ *  millisecond and a display string. Repeats get an occurrence suffix, so a value still depends only on the
+ *  row's own content plus how many byte-identical rows precede it — stable across any rebuild that does not
+ *  add or drop one of those identical twins, and collision-free within the tab either way. Two rows the user
+ *  cannot tell apart are the only ones whose identities can swap, and swapping those is unobservable. */
+function itemValues(items: Item[]): string[] {
+  const seen = new Map<string, number>();
+  return items.map((it) => {
+    const base = itemValue(it), n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return n === 0 ? base : `${base}\0#${n}`;
+  });
+}
+/** One row's BODY, with NO `❯ `/`  ` gutter and no colour — the caller owns both. 6b hands this to `Select`
+ *  as a `node`, and `Select` draws the pointer in its own gutter (`Select.tsx:282`), so a body that kept the
+ *  prefix would render `❯ ❯ Add a new rule…`. Colour stays on the caller's `<Text>` for a second reason: the
+ *  gutter and the body have to sit inside ONE styled span or an SGR reset lands between them, and every
+ *  pre-existing `❯ <label>` frame assertion is written against the raw bytes. 6b's node is therefore
+ *  `(focused) => <Text color={focused ? ACCENT : undefined}>{renderItem(it)}</Text>`. */
+function renderItem(it: Item): React.ReactNode {
+  if (it.kind === "addRule") return "Add a new rule…";
+  if (it.kind === "addDir") return "Add directory…";
+  if (it.kind === "rule") return <>{it.row.rule}  <Text dimColor>From {SOURCE_LABELS[it.row.source] ?? it.row.source}</Text></>;
+  if (it.kind === "dir") return it.line.segments ? it.line.segments.map((s, si) => <Text key={si} dimColor={s.dim}>{s.text}</Text>) : it.line.text;
+  return <>{it.e.display}  <Text dimColor>by {it.e.by}</Text></>;
+}
+
 export function PermissionsDialog({
   tab, onTabChange, denials, cwd,
   fetchSettings, fetchDirs, addRule, removeRule, removeDir,
@@ -122,7 +169,11 @@ export function PermissionsDialog({
   onDone: () => void;
 }) {
   const activeTab = (TABS as readonly string[]).includes(tab) ? (tab as Tab) : "Allow";
-  const [idx, setIdx] = useState(0);
+  // The row cursor is a VALUE, not an index (t6a) — see `itemValue`. Ref-backed for the same reason `sub` is:
+  // one stdin chunk dispatches several events with no render in between, and `↓↓` must move two rows, so the
+  // second handler has to see where the first one left the cursor rather than the render's stale copy.
+  // `undefined` = "never moved", which reads as the top row (`cursorAt`).
+  const [focusValue, setFocusValue, focusRef] = useRefState<string | undefined>(undefined);
   // Ref-backed (keys/refState.ts): `sub` is what every key handler branches on and `ruleText` is what one
   // accumulates into, and a single stdin chunk dispatches several events before any render.
   const [sub, setSub, subRef] = useRefState<Sub>("none");
@@ -137,7 +188,7 @@ export function PermissionsDialog({
   async function refreshSettings() { try { setSettings(await fetchSettings()); } catch { setSettings({}); } }
   async function refreshDirs() { try { setDirs(await fetchDirs()); } catch { setDirs([]); } }
   useEffect(() => { void refreshSettings(); void refreshDirs(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setIdx(0); }, [activeTab]);                          // a row cursor from one tab must not carry into another tab's (differently-sized) list
+  useEffect(() => { setFocusValue(undefined); }, [activeTab]);           // a row cursor from one tab must not carry into another tab's (differently-sized) list
 
   const behavior = BEHAVIOR_OF[activeTab];
   const dirList = dirs ?? [];
@@ -147,8 +198,13 @@ export function PermissionsDialog({
     : activeTab === "Workspace" ? [{ kind: "addDir" }, ...dirList.map((d, i): Item => ({ kind: "dir", d, line: dirLines[i] }))]
     : behavior ? [{ kind: "addRule" }, ...ruleRows(settings, behavior).map((row): Item => ({ kind: "rule", row }))]
     : [];
-  const clampedIdx = Math.min(idx, Math.max(0, items.length - 1));
-  const selectedItem = items[clampedIdx];
+  const values = itemValues(items);
+  /** The ONE rule the cursor, the footer and `activate` all read, so they can never disagree about which row
+   *  is current: an unset cursor — or one whose row a refetch took away (deleting the rule you were on) —
+   *  means the top row, which is what the old `Math.min(idx, …)` clamp degenerated to on an empty list. */
+  const cursorAt = (value: string | undefined): number => { const i = value === undefined ? -1 : values.indexOf(value); return i < 0 ? 0 : i; };
+  const focusIdx = cursorAt(focusValue);
+  const selectedItem = items[focusIdx];
 
   /** The six sub-views, verbatim from the pre-review handler and deliberately still PHYSICAL (final review):
    *  two of them are text entry (the rule name), and the other four are modal prompts whose only keys are the
@@ -207,8 +263,15 @@ export function PermissionsDialog({
     if (subRef.current !== "none") { onSubKey(e); return; }
     op();
   };
-  const activate = () => {
-    const item = items[clampedIdx];
+  /** Moves the cursor by whole rows off the LIVE value (`focusRef`), not the render's. `values` is safe to
+   *  read from the render closure: only a fetch changes it, and a fetch re-renders. */
+  const move = (delta: number) => {
+    const next = Math.min(values.length - 1, Math.max(0, cursorAt(focusRef.current) + delta));
+    if (next >= 0) setFocusValue(values[next]);
+  };
+  /** Takes the row's VALUE (`undefined` before the first keypress — the footer's row, i.e. the top one). */
+  const activate = (value: string | undefined) => {
+    const item = items[cursorAt(value)];
     if (!item) return;
     if (item.kind === "addRule") { setRuleText(""); setSub("addRuleText"); return; }
     if (item.kind === "addDir") { setSub("addDir"); return; }
@@ -227,9 +290,9 @@ export function PermissionsDialog({
   // old hand-rolled branch tested `key.return` alone. Nothing destructive is one keypress away — every
   // delete/remove still needs its own Enter inside the modal prompt that opens.
   useKeyActions(sub === "addDir" ? NO_ACTIONS : {
-    "select:previous": route(() => setIdx((i) => Math.max(0, i - 1))),
-    "select:next": route(() => setIdx((i) => Math.min(Math.max(0, items.length - 1), i + 1))),
-    "select:accept": route(activate),
+    "select:previous": route(() => move(-1)),
+    "select:next": route(() => move(+1)),
+    "select:accept": route(() => activate(focusRef.current)),
     "confirm:no": route(() => onDone()),
     "settings:search": route(() => {}),                // `/` opens no query here — this dialog has no search
     // `tabs:next`/`tabs:previous` belong to the embedded <Tabs> now (see the header).
@@ -312,26 +375,12 @@ export function PermissionsDialog({
       <Text dimColor>{INTRO[activeTab]}</Text>
       {activeTab === "Recently denied" && denials.length === 0 ? <Text dimColor>{RECENT_EMPTY}</Text> : null}
       <Text> </Text>
+      {/* Still hand-rolled and still unwindowed (6b mounts the `Select`); what changed in 6a is that the row
+          bodies live in `renderItem` and the React key is the row's own identity, so duplicate rules stop
+          colliding there too. The gutter stays INSIDE this <Text> — see renderItem's note. */}
       {loading ? <Text dimColor>Loading…</Text> : items.map((item, i) => {
-        const selected = i === clampedIdx;
-        if (item.kind === "addRule") return <Text key="add-rule" color={selected ? ACCENT : undefined}>{selected ? "❯ " : "  "}Add a new rule…</Text>;
-        if (item.kind === "addDir") return <Text key="add-dir" color={selected ? ACCENT : undefined}>{selected ? "❯ " : "  "}Add directory…</Text>;
-        if (item.kind === "rule") return (
-          <Text key={item.row.rule} color={selected ? ACCENT : undefined}>
-            {selected ? "❯ " : "  "}{item.row.rule}  <Text dimColor>From {SOURCE_LABELS[item.row.source] ?? item.row.source}</Text>
-          </Text>
-        );
-        if (item.kind === "dir") return (
-          <Text key={item.d.path} color={selected ? ACCENT : undefined}>
-            {selected ? "❯ " : "  "}
-            {item.line.segments ? item.line.segments.map((s, si) => <Text key={si} dimColor={s.dim}>{s.text}</Text>) : item.line.text}
-          </Text>
-        );
-        return (
-          <Text key={`${item.e.at}-${item.e.display}`} color={selected ? ACCENT : undefined}>
-            {selected ? "❯ " : "  "}{item.e.display}  <Text dimColor>by {item.e.by}</Text>
-          </Text>
-        );
+        const focused = i === focusIdx;
+        return <Text key={values[i]} color={focused ? ACCENT : undefined}>{focused ? "❯ " : "  "}{renderItem(item)}</Text>;
       })}
       <Text> </Text>
       <Text dimColor>{activeTab === "Recently denied" ? RECENT_FOOTER : activeTab === "Workspace" && selectedItem?.kind === "dir" && selectedItem.d.source !== "session" ? MANAGED_DIR_FOOTER : DEFAULT_FOOTER}</Text>
