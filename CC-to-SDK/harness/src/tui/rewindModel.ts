@@ -148,8 +148,11 @@ const wrapLines = (text: string, width: number): number =>
  *  which prefixes `! `), so no anchor row can wrap however long its prompt is — the clip, not this budget, is
  *  what holds it to one line. `SummaryLine` is data, and a wide-enough `<basename> +i -d` DOES wrap at 36
  *  columns — but that is NOT a geometry hazard and an earlier version of this comment was wrong to call it
- *  one. `Select.tsx:348` gives every `node` row `height: rowHeight, overflow:"hidden"`, so the list block is a
- *  fixed `REWIND_ROW_HEIGHT · visible` whatever the rows contain: measured, a `RewindPicker` at 36 columns is
+ *  one. `Select.tsx:348` spreads `height: rowHeight, overflow:"hidden"` onto a `node` row ONLY WHEN a
+ *  `rowHeight` prop was passed (the row is unconstrained without one, and an earlier wording here said "every
+ *  `node` row", which is not what that line does) — and `RewindPicker.tsx:245` passes `REWIND_ROW_HEIGHT`, so
+ *  for THIS dialog the conclusion holds unchanged: the list block is a fixed `REWIND_ROW_HEIGHT · visible`
+ *  whatever the rows contain. Measured, a `RewindPicker` at 36 columns is
  *  19 rows with a blank summary, with a two-line one, with a three-line one and with a six-line one alike. No
  *  budget term here would do anything at all.
  *

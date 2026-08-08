@@ -199,7 +199,8 @@ describe("a dialog on screen when the terminal resizes follows the new size", ()
     // Eight anchors plus the synthetic `(current)` row: `rewindVisibleRows` is
     // max(2, floor((rows − REWIND_CHROME_ROWS − rewindWrapRows(columns)) / 3)) — the chrome constant counted
     // against the COMPOSED frame (dialog + status bar) in Wave S t4's fix round, plus the wrap allowance its
-    // wrap round added, and the shipped call site in ChatApp ALWAYS passes `columns`. (The columns-omitted
+    // wrap round added, and the shipped call site — `RewindPicker.tsx:245`, not `ChatApp`, which threads
+    // `columns` to the DIALOG and never calls this helper — ALWAYS passes `columns`. (The columns-omitted
     // branch is the older height-only budget, and it is what a bare `floor((rows−12)/3)` would describe.) At
     // this fixture's 200 columns the wrap allowance is 0 either way, so 40 has room for nine — which is all
     // the options there are — and 14 shows two. The catalog never decides.

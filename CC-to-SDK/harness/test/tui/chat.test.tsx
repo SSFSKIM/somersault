@@ -2277,6 +2277,19 @@ describe("<ChatApp> — retained source", () => {
 // four by the panel itself, because a height assertion needs a budget to measure against and these four have
 // none in our code: each was sabotage-checked by deleting its own term from the disjunction and confirming
 // that this test — and only this test — went red.
+//
+// EACH TITLE NAMES WHAT ITS ASSERTION CHECKS, WHICH IS THE GATE — not the windowing mechanism that puts the
+// dialog in the class (review fix round). Three of them used to name the mechanism, and their fixtures do not
+// exercise it: two description-less models, one saved session and a two-line plan each leave the dialog at its
+// FIXED MINIMUM height, so nothing here measures `clampVisible`, `resumeVisibleRows` or `planRegionRows` at
+// all. The fixtures are right as they are — the gate is a mount/unmount question and a minimal one answers it
+// fastest — so the titles moved instead. The mechanisms are pinned where they can be: resize-dialogs.test.tsx
+// windows each dialog from the height it is given, and the derivations live in ChatApp's own gate comment.
+//
+// AND THE LAST CASE PINS THE OTHER DIRECTION. Every mutation above REMOVES a term; adding one — someone gating
+// `/theme` or `/settings` in a later round — would hide the task panel behind a dialog whose height is a
+// function of its CONTENT, which is the half of the partition this gate deliberately excludes, and no test
+// above would notice. The `/theme` case is that pin.
 describe("<ChatApp> — the paneOwned gate hides the task panel behind every pane-sizing dialog", () => {
   const TODO = /◻\s+todo-item-one/;
   /** The todo panel's own wire pair (taskList.ts), wrapped in a turn so `state.busy` lands back at false. */
@@ -2310,13 +2323,13 @@ describe("<ChatApp> — the paneOwned gate hides the task panel behind every pan
     r.unmount();
   };
 
-  it("/model — ModelPicker windows through Select's clampVisible(visible, rows, …)", async () => {
+  it("/model — the task panel unmounts while the model picker is up and comes back when it closes", async () => {
     await gateCycle("/model", { capabilities: () => ({ models: MODELS, commands: [], mcpServers: [] }) }, {},
       async (r) => { r.stdin.write("/model"); await waitFor(() => frame(r.lastFrame).includes("/model")); r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("Select model")); },
       async (r) => { r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("Select model")); });
   });
 
-  it("/resume — SessionPicker windows through resumeVisibleRows(rows)", async () => {
+  it("/resume — the task panel unmounts while the session picker is up and comes back when it closes", async () => {
     await gateCycle("/resume", {}, { listSessions: async () => SESSIONS, getSessionMessages: async () => [] },
       async (r) => { r.stdin.write("/resume"); await waitFor(() => frame(r.lastFrame).includes("/resume")); r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("Resume session")); },
       async (r) => { r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("Resume session")); });
@@ -2328,10 +2341,30 @@ describe("<ChatApp> — the paneOwned gate hides the task panel behind every pan
       async (r) => { r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("For more help:")); });
   });
 
-  it("exit-plan-mode — PlanDialog's body IS rows minus its option box minus chrome", async () => {
+  it("exit-plan-mode — the task panel unmounts while the plan dialog is up and comes back when it settles", async () => {
     const entry: PendingEntry = { sessionId: "s", toolUseID: "p1", toolName: "ExitPlanMode", kind: "plan", input: { plan: "step one\n\nstep two" }, createdAt: Date.now() } as PendingEntry;
     await gateCycle("plan", {}, {},
       async (r, fake) => { fake.parkPermission(entry); await waitFor(() => frame(r.lastFrame).includes("Ready to code?")); },
       async (r, fake) => { fake.settlePermission("p1", "someone-else", "deny"); await waitFor(() => !frame(r.lastFrame).includes("Ready to code?")); });
+  });
+
+  /** THE NEGATIVE PIN. `/theme` is a content-sized dialog — a constant 17 rows at every pane — so it is on the
+   *  excluded side of the partition ChatApp's gate comment draws, and the task panel must stay mounted beside
+   *  it. Sabotage-checked the way the four above were, but in the opposite direction: ADDING
+   *  `|| state.themeDialog.open` to `paneOwned` turns this test red (`the /theme dialog is content-sized …`)
+   *  and leaves every other test in the suite green — which is exactly the hole this closes, since a term
+   *  added by a later round is invisible to a suite whose every case only checks that the panel is GONE. */
+  it("/theme — the task panel SURVIVES behind a content-sized dialog (the gate must not over-fire)", async () => {
+    const fake = fakeRemote();
+    const r = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/tmp" />);
+    await waitFor(() => frame(r.lastFrame).includes("❯\u00a0"));
+    seedTodo(fake);
+    await waitFor(() => TODO.test(frame(r.lastFrame)));
+    r.stdin.write("/theme"); await waitFor(() => frame(r.lastFrame).includes("/theme"));
+    r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("Choose the text style"));
+    expect(frame(r.lastFrame), "the /theme dialog is content-sized — the paneOwned gate must not hide the task panel behind it").toMatch(TODO);
+    r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("Choose the text style"));
+    expect(frame(r.lastFrame)).toMatch(TODO);
+    r.unmount();
   });
 });

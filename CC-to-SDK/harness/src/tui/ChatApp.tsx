@@ -451,19 +451,38 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //   · `RewindPicker`  — `rewindVisibleRows(rows, columns)`; 15 → 36 rows as the pane goes 18 → 40;
   //   · `SessionPicker` — `resumeVisibleRows(rows)`; 15 → 30 as the pane goes 20 → 50;
   //   · `ModelPicker`   — `Select`'s own `clampVisible(visible, rows, …)`; 17 → 21, i.e. it tracks every pane
-  //                       short enough to matter and stops only at `MODEL_VISIBLE_MAX`;
+  //                       short enough to matter and stops only at `MODEL_VISIBLE_MAX`. THE TRACKING IS
+  //                       CATALOG-CONTINGENT, and the unqualified claim this line used to make is not true of
+  //                       every catalog: `clampVisible`'s divisor is `perOptionRows`, which is 2 only while
+  //                       some option carries a `description`. Re-measured — with descriptions, 15 → 21 over
+  //                       panes 16 → 28 (the 17 → 21 above is that same curve over the 18 → 50 sweep);
+  //                       WITHOUT them `perOptionRows` is 1 and the frame is a flat 21 at every pane. The
+  //                       classification is unchanged, because a real catalog carries descriptions — but a
+  //                       description-less FIXTURE measures the floor, not the tracking;
   //   · `HelpDialog`    — `browserVisibleRows(rows)`; its browse tab is 20 → 35 over that same range;
-  //   · `PlanDialog`    — `planRegionRows(rows, …)` IS `rows − optionBox − chrome`; 21 → 37.
-  // AND WHAT IS NOT, deliberately: every dialog whose height is a function of its CONTENT — `BgTasksPanel`
-  // (13 rows), `ShortcutsOverlay` (18), `SettingsDialog` (14), `ThemeDialog` (17), `PermissionsDialog` (9),
-  // `AddDirDialog`, `BypassConsent`, and the inline `PermissionDialog`/`QuestionDialog` pair (12) — every one
-  // of them measured CONSTANT across that whole range. Those are a different defect with a different repair: a
-  // fixed-height dialog too tall for a short pane overflows on its OWN (`ShortcutsOverlay` reaches the pane at
-  // 18 rows with no task panel in the tree at all; `HelpDialog`'s general tab does at any pane of 28 or less),
-  // and what that needs is a window, not the removal of its neighbours. Gating them would also cost what this
-  // gate costs, and cost it where it is not worth paying: a decision dialog is drawn in the transcript FLOW
-  // precisely so the turn's own context stays on screen while you answer it, and the task panel and the
-  // spinner are that context.
+  //   · `PlanDialog`    — `planRegionRows(rows, …)` IS `rows − optionBox − chrome`; 21 → 37 — and CONTINGENT
+  //                       ON THE PLAN in exactly the way `ModelPicker` is on the catalog. `planRegionRows` is
+  //                       a MAXIMUM, and `planWindow` returns only as many lines as the plan HAS, so a short
+  //                       plan is a flat 21 at every pane. Re-measured with a 60-line plan: 21 → 47 over panes
+  //                       16 → 50. Same conclusion, same caveat about fixtures.
+  // AND WHAT IS NOT, deliberately. This list is the OTHER half of a PARTITION of the dialog chain below —
+  // every surface in that chain appears in exactly one of the two lists, and a new one has to be placed in
+  // one of them. It is every dialog whose height is a function of its CONTENT: `BgTasksPanel` (13 rows),
+  // `ShortcutsOverlay` (18), `BypassConsent` (18), `ThemeDialog` (17), `HistorySearchOverlay` (15, the
+  // `/history` picker), `SettingsDialog` (14), the inline `PermissionDialog`/`QuestionDialog` pair (12),
+  // `PermissionsDialog` (9), `AddDirDialog`, and `RestoringModal` (1) — every one of them measured CONSTANT
+  // across that whole range. Those are a different defect with a different repair: a fixed-height dialog too
+  // tall for a short pane overflows on its OWN (`ShortcutsOverlay` and `BypassConsent`, the joint-tallest of
+  // them, each reach the pane at 18 rows with no task panel in the tree at all, and `HistorySearchOverlay`
+  // composes to 22 WITH one up and so reaches every pane from 18 to 22; `HelpDialog`'s general tab reaches it
+  // at any pane of 28 or less), and what that needs is a window, not the removal of its neighbours. Gating
+  // them would also cost what this gate costs, and cost it where it is not worth paying: a decision dialog is
+  // drawn in the transcript FLOW precisely so the turn's own context stays on screen while you answer it, and
+  // the task panel and the spinner are that context. THE EXCLUSION IS PINNED, not merely intended:
+  // chat.test.tsx's `/theme` case asserts the task panel SURVIVES behind a content-sized dialog, and it was
+  // sabotage-checked by ADDING `|| state.themeDialog.open` to the disjunction below — that one term turns it
+  // red and leaves the other 101 cases in that file green. Every pin the gate had before this one asserts the
+  // panel is GONE, so a term added by a later round would have been invisible to all of them.
   //
   // A FLAT DISJUNCTION, not a walk of the chain below. Two of these flags can in principle be set at once
   // (`/settings`'s Model row deliberately opens `modelPicker` over it), and then the gate is on for whichever
@@ -640,7 +659,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           rewind picker, `/model`, `/resume` or `/help` up produced no exit hint and no change of frame height,
           and escape is each surface's own cancel. So this gate hides nothing a user can produce today — it is
           written anyway because `keybindings.json` is a USER file (F2 task 6), so "unreachable" here is a
-          property of the default table rather than of this tree. */}
+          property of the default table rather than of this tree.
+            AND SO NO TEST CAN COVER THESE TWO CLAUSES — stated here because the fix round that re-read this
+          comment confirmed the reasoning rather than repairing it, and an unstated hole reads as an oversight.
+          A hint that cannot be ARMED behind any of the six cannot be observed being hidden either, so deleting
+          `!paneOwned` from either line below leaves the suite green, and would under any fixture the default
+          table can reach. These two are carried by the measurement above and by nothing else, deliberately;
+          the other four `!paneOwned` sites are each observable directly, and are pinned. */}
       {exitArmed && !paneOwned ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
       {escArmed && !paneOwned ? <Box paddingX={1}><Text dimColor>Press Esc again to rewind</Text></Box> : null}
       {/* `composerOwnsKeys` is the SAME render-time disjunction the composer's own guard reads, handed to the
