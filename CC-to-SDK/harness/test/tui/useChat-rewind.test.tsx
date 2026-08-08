@@ -447,4 +447,50 @@ describe("useChat: rewind flow", () => {
     await new Promise((r) => setTimeout(r, 40));   // long enough for a stray broadcast-driven second read to land
     expect(reads).toBe(1);
   });
+
+  // W-S5 (Wave S task 8): the mildest of the three stale-percentage paths — the discarded turns are gone but
+  // their measurement described them. 16 is the pair's whole point: the reset is pinned to the DOCUMENT
+  // boundary (replaceDocument), not to "a rewind happened", so the scope that changes no conversation state
+  // keeps the number it legitimately measured. Move the reset into confirmRewind and 16 goes red.
+  it("15. a CONVERSATION rewind drops the measured percentage; the next turn end measures a fresh one (A8)", async () => {
+    let ctx = { totalTokens: 5, maxTokens: 100 };
+    const msgs = [{ type: "user", uuid: "u-keep", message: { content: [{ type: "text", text: "the surviving prompt" }] }, timestamp: "2026-07-28T08:00:00.000Z" }];
+    const session = fakeRewindSession({ rewind: async () => {} }, { getContextUsage: async () => ctx });
+    const deps = { getSessionMessages: async () => msgs, clearScreen: () => {} };
+    const api: Parameters<typeof RewindHost>[0]["api"] & { run?: (p: string) => void } = {};
+    function H() {
+      const c = useChat(() => session, {}, deps);
+      api.confirmRewind = (c as any).confirmRewind; (api as any).run = c.submit;
+      return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");                                                       // a real turn, so a real 5% exists to lose
+    await waitFor(() => frame(lastFrame).includes("ctx:5"));
+    ctx = { totalTokens: 42, maxTokens: 100 };
+    api.confirmRewind!(ANCHOR, "both");
+    await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
+    expect(frame(lastFrame)).toContain("ctx:-");                          // half one
+    api.run!("again");
+    await waitFor(() => frame(lastFrame).includes("ctx:42"));             // half two: measured, not restored
+  });
+
+  it("16. a CODE-ONLY rewind leaves the percentage alone — the conversation it measured is untouched", async () => {
+    const session = fakeRewindSession({ rewind: async () => {} }, { getContextUsage: async () => ({ totalTokens: 5, maxTokens: 100 }) });
+    const deps = { getSessionMessages: async () => [], clearScreen: () => {} };
+    const api: Parameters<typeof RewindHost>[0]["api"] & { run?: (p: string) => void } = {};
+    function H() {
+      const c = useChat(() => session, {}, deps);
+      api.confirmRewind = (c as any).confirmRewind; (api as any).run = c.submit;
+      return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("ctx:5"));
+    api.confirmRewind!(ANCHOR, "code");
+    await waitFor(() => frame(lastFrame).includes("code restored"));
+    await new Promise((r) => setTimeout(r, 30));                          // long enough for a stray reset to land
+    expect(frame(lastFrame)).toContain("ctx:5");
+  });
 });

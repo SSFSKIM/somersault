@@ -434,7 +434,27 @@ export function useChat(
   }
   /** The terminal boundary: a completed rewind, `/clear`, or a REAL session swap. Clear Ink's Static FIRST
    *  (never reset state values into an already-mounted <Static> — it would replay the whole history), then
-   *  mount a fresh one and reconcile the new document from scratch. */
+   *  mount a fresh one and reconcile the new document from scratch.
+   *
+   *  W-S5 — and the reason the measured context percentage is dropped HERE rather than at the three call
+   *  sites that discard the conversation (`clear`, `resumeInto`'s real-session swap, `rebuildAfterRewind`):
+   *  this function IS the "the conversation on screen is no longer the one that was measured" boundary, so a
+   *  fourth path that discards it inherits the reset by construction instead of having to remember. Two
+   *  consequences worth naming. A code-only rewind never reaches here (confirmRewind returns before the
+   *  rebuild, and the host emits no `rewound` broadcast for scope "code"), which is right — it changes no
+   *  conversation state, so its measurement still describes what is on screen; and neither does resuming the
+   *  SAME session into itself, which appends to the existing document rather than replacing it, for the same
+   *  reason. `/status` reads the same `ctxPct`, so it is fixed by this one reset too.
+   *
+   *  HIDDEN until the next turn end measures a real one (`refreshCtx`), rather than refreshed on the spot:
+   *  refreshing would also be honest and costs one call, but it puts a surface back on screen that has
+   *  nothing true to say yet.
+   *
+   *  DIVERGENCE, recorded (W-S5): upstream has NO persistent context chip at all — its indicator returns
+   *  null unless the context level is not "ok" (bundle L488912-922), and surfaces instead as a transient
+   *  warning (`Context low (N% remaining) · Run /compact to compact & continue`, L489324). So ccx shows a
+   *  chip upstream never shows, before and after this change: it does NOT make us match upstream, it stops
+   *  our own chip lying. Whether to keep the inline percentage at all is parked for a later wave. */
   function replaceDocument(next: TranscriptDocument): void {
     if (disposed.current) return;
     opts.clearStaticTranscript?.();
@@ -447,6 +467,7 @@ export function useChat(
     // Same rule for the latched counters and the held hint (F3 Task 4): a rebuilt transcript reuses the very
     // same tool-use ids as anchors, so a maximum latched before the swap would ride onto a run re-read from disk.
     pendingStateRef.current!.reset();
+    setCtxPct(undefined);               // W-S5, see above: measured against a conversation that is gone
 
     setStaticItems([]); setPendingItems([]);
     setStaticEpoch((e) => e + 1);

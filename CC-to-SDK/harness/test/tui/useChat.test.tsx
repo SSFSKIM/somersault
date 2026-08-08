@@ -2239,3 +2239,60 @@ describe("useChat: F3 final review", () => {
     expect(frame(lastFrame)).toContain("Done (2 tool uses · 4.2k tokens · 4s)");   // from the wire, not from our clock
   });
 });
+
+// W-S5 (Wave S task 8). `ctxPct` had exactly one writer — turn end's refreshCtx — and no reset, so the last
+// measurement outlived every conversation it described. Both halves of A8 on each path: the percentage GOES
+// (never a build that simply never had one — each test measures a real 5% first), and the next turn end
+// brings back a DIFFERENT, freshly measured number, so a restored stale value could not pass for it. The
+// reset lives in replaceDocument, which is the boundary all these paths already share.
+describe("W-S5: the context percentage never outlives the conversation it measured", () => {
+  it("/clear hides the measured percentage — /status too — and the next turn end measures a fresh one (A8)", async () => {
+    let ctx = { totalTokens: 5, maxTokens: 100 };
+    const fake = fakeRemote({ getContextUsage: async () => ctx });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { clearViewport: () => {} }); api.run = c.submit; return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");                                                     // a real turn — its end is what measures the context
+    await waitFor(() => frame(lastFrame).includes("ctx:5"));
+    api.run!("/status");
+    await waitFor(() => flat(lastFrame).includes("context 5% used"));   // /status reads the same state
+    ctx = { totalTokens: 42, maxTokens: 100 };                          // the NEXT measurement differs from the stale one
+    api.run!("/clear");
+    await waitFor(() => !frame(lastFrame).includes("Status"));          // the document wipe landed
+    expect(frame(lastFrame)).toContain("ctx:-");                        // half one: the chip is gone
+    api.run!("/status");
+    await waitFor(() => frame(lastFrame).includes("Status"));
+    expect(flat(lastFrame)).not.toContain("% used");                    // …and so is the /status row
+    api.run!("second");
+    await waitFor(() => frame(lastFrame).includes("ctx:42"));           // half two: MEASURED anew, not restored
+  });
+
+  it("/resume onto a DIFFERENT session drops the previous session's percentage, and the first turn there measures its own (A8)", async () => {
+    // The worst of the three: not a stale number about this conversation, the OTHER one's number rendered
+    // against this one. The two fakes report deliberately different usage so the assertion names which.
+    const oldSession = fakeRemote({ getContextUsage: async () => ({ totalTokens: 5, maxTokens: 100 }) });
+    const newSession = fakeRemote({ sessionId: "old1234567890", getContextUsage: async () => ({ totalTokens: 42, maxTokens: 100 }) });
+    const makeSession = (resume?: string) => (resume ? newSession : oldSession);
+    const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
+    let pick: ((s: any) => void) | undefined;
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(makeSession, {}, deps);
+      pick = (c as any).pickSession; api.run = c.submit;
+      return <Text>ctx:{c.state.ctxPct ?? "-"} {c.state.picker.open ? `PICKER:${c.state.picker.sessions.length}` : "NOPICK"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => frame(lastFrame).includes("NOPICK"));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("ctx:5"));            // measured against the session we are leaving
+    api.run!("/resume");
+    await waitFor(() => frame(lastFrame).includes("PICKER:1"));
+    pick!({ sessionId: "old1234567890", summary: "prior", lastModified: 1 });
+    await waitFor(() => flat(lastFrame).includes("❯ prior prompt"));    // the swap landed
+    expect(frame(lastFrame)).toContain("ctx:-");                        // half one: 5% described the session we left
+    api.run!("carry on");
+    await waitFor(() => frame(lastFrame).includes("ctx:42"));           // half two: the RESUMED session's own measurement
+  });
+});
