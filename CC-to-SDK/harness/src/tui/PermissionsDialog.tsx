@@ -30,7 +30,7 @@
 // top-level slot the way Settings reuses `modelPicker` would need the opposite ordering; embedding sidesteps
 // that entirely and reuses the exact same addDirValidate/confirmAddDir/cancelAddDir callbacks useChat.ts
 // already exposes for the standalone /add-dir path — including their existing transcript-notice behavior).
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
@@ -121,8 +121,13 @@ function itemValue(it: Item): string {
  *  per (source, rule) pair and one settings file may list the same rule twice, and two denials can share a
  *  millisecond and a display string. Repeats get an occurrence suffix, so a value still depends only on the
  *  row's own content plus how many byte-identical rows precede it — stable across any rebuild that does not
- *  add or drop one of those identical twins, and collision-free within the tab either way. Two rows the user
- *  cannot tell apart are the only ones whose identities can swap, and swapping those is unobservable. */
+ *  add or drop one of those identical twins, and unique within the tab for any realistic input. Two rows the
+ *  user cannot tell apart are the only ones whose identities can swap, and swapping those is unobservable.
+ *  NOT unique by construction, though, and the counter-example is worth naming here so nobody rediscovers it
+ *  as a bug: the suffix is spelled `\0#<n>`, so a single source listing `["X\0#1", "X", "X"]` hands the third
+ *  row the value the first already has. That is the same premise `itemValue` rests on above — it takes a
+ *  literal NUL byte inside a rule string in a settings file — so the `seen` map is deliberately not re-probed
+ *  for a free slot. If a NUL ever becomes spellable here, that probe is the fix. */
 function itemValues(items: Item[]): string[] {
   const seen = new Map<string, number>();
   return items.map((it) => {
@@ -169,11 +174,27 @@ export function PermissionsDialog({
   onDone: () => void;
 }) {
   const activeTab = (TABS as readonly string[]).includes(tab) ? (tab as Tab) : "Allow";
-  // The row cursor is a VALUE, not an index (t6a) — see `itemValue`. Ref-backed for the same reason `sub` is:
-  // one stdin chunk dispatches several events with no render in between, and `↓↓` must move two rows, so the
-  // second handler has to see where the first one left the cursor rather than the render's stale copy.
-  // `undefined` = "never moved", which reads as the top row (`cursorAt`).
+  // The row cursor is a VALUE, not an index (t6a) — see `itemValue`. `undefined` = "never moved", which reads
+  // as the top row (`cursorAt`). Ref-backed to match `sub` and `ruleText` below, and because `activate` reads
+  // the cursor SYNCHRONOUSLY out of a key handler: through the ref that read is right by construction rather
+  // than by the surrounding machinery happening to have re-rendered first.
+  // NOT because a chunk's events would otherwise race a render — that hazard is real for the text-entry
+  // fallback (keys/refState.ts) but NOT on this action path, and the round-6a report claimed it here in error.
+  // Measured, not argued: swapping this for a plain `useState` whose `move`/`activate` read the RENDER CLOSURE
+  // (no functional updater, no ref) passes the whole `test:tui` suite, back-to-back `↓↓` included, because
+  // `useRegistration` refreshes the handler entry during render (keys/KeymapProvider.tsx:362-370) and Ink
+  // flushes those renders synchronously between iterations of the dispatch loop. Don't re-derive a hazard from
+  // this comment; if you want to change the shape, the reason to keep the ref is the one above.
   const [focusValue, setFocusValue, focusRef] = useRefState<string | undefined>(undefined);
+  /** The index that cursor value last RESOLVED to, carried alongside it. A value answers "which row is mine"
+   *  across a rebuild that KEEPS the row; when the row is GONE — and the commonest rebuild here is the refetch
+   *  after you deleted the row you were standing on — a value can answer nothing, and a position is the only
+   *  meaningful reply: the row that took the deleted one's place. Falling back to 0 instead sent the cursor to
+   *  the top of the list after every delete (and, once 6b windows the list, the viewport with it), so deleting
+   *  a run of rules cost an arrow press per row you had descended instead of being hold-Enter.
+   *  6b hands this job to `Select`, which stores focus as an index and clamps it to `count - 1` when `options`
+   *  shrinks — the same answer — so this ref goes away there and the test keeps the behaviour pinned. */
+  const lastIdxRef = useRef(0);
   // Ref-backed (keys/refState.ts): `sub` is what every key handler branches on and `ruleText` is what one
   // accumulates into, and a single stdin chunk dispatches several events before any render.
   const [sub, setSub, subRef] = useRefState<Sub>("none");
@@ -188,7 +209,7 @@ export function PermissionsDialog({
   async function refreshSettings() { try { setSettings(await fetchSettings()); } catch { setSettings({}); } }
   async function refreshDirs() { try { setDirs(await fetchDirs()); } catch { setDirs([]); } }
   useEffect(() => { void refreshSettings(); void refreshDirs(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setFocusValue(undefined); }, [activeTab]);           // a row cursor from one tab must not carry into another tab's (differently-sized) list
+  useEffect(() => { setFocusValue(undefined); lastIdxRef.current = 0; }, [activeTab]);   // a row cursor from one tab must not carry into another tab's (differently-sized) list — neither half of it
 
   const behavior = BEHAVIOR_OF[activeTab];
   const dirList = dirs ?? [];
@@ -200,9 +221,15 @@ export function PermissionsDialog({
     : [];
   const values = itemValues(items);
   /** The ONE rule the cursor, the footer and `activate` all read, so they can never disagree about which row
-   *  is current: an unset cursor — or one whose row a refetch took away (deleting the rule you were on) —
-   *  means the top row, which is what the old `Math.min(idx, …)` clamp degenerated to on an empty list. */
-  const cursorAt = (value: string | undefined): number => { const i = value === undefined ? -1 : values.indexOf(value); return i < 0 ? 0 : i; };
+   *  is current. A value that still names a row wins and is remembered; otherwise the remembered POSITION
+   *  answers, clamped — exactly the old `Math.min(idx, items.length - 1)`, which is why an unset cursor (and
+   *  an empty list) still degenerates to the top row. Recording on the way through is idempotent — it is a
+   *  function of `values` and `value` alone — so calling this from a render is safe. */
+  const cursorAt = (value: string | undefined): number => {
+    const i = value === undefined ? -1 : values.indexOf(value);
+    if (i >= 0) { lastIdxRef.current = i; return i; }
+    return Math.min(lastIdxRef.current, Math.max(0, values.length - 1));
+  };
   const focusIdx = cursorAt(focusValue);
   const selectedItem = items[focusIdx];
 

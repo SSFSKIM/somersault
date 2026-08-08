@@ -20,9 +20,16 @@ const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
  *  pointer in its own coloured span, and a test that pins the raw bytes would then fail for no behavioural
  *  reason (the trap this wave hit twice). */
 const plain = (f: () => string | undefined) => stripAnsi(frame(f));
-async function waitFor(cond: () => boolean, timeout = 2000) {
+/** One frame's rows, border chrome and padding stripped — the frame's own answer to "what is on screen". */
+const rowsOf = (f: () => string | undefined) => plain(f).split("\n").map((l) => l.replace(/[│╭╮╰╯]/g, "").trim());
+/** …and just the row(s) wearing the pointer. Naming the row the cursor IS on beats asserting it is not on some
+ *  other one: when it goes wrong the diff says where it actually landed, instead of leaving that to guesswork. */
+const pointerRows = (f: () => string | undefined) => rowsOf(f).filter((l) => l.startsWith("❯"));
+/** `what` names the thing being waited for, so a hang reads as "waitFor timeout: the delete confirm" rather
+ *  than a bare timeout that could be any of a dozen lines above it. */
+async function waitFor(cond: () => boolean, what = "condition", timeout = 2000) {
   const start = Date.now();
-  for (;;) { if (cond()) { await tick(); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
+  for (;;) { if (cond()) { await tick(); return; } if (Date.now() - start > timeout) throw new Error(`waitFor timeout: ${what}`); await new Promise((r) => setTimeout(r, 5)); }
 }
 
 const DOWN = "\x1b[B", ENTER = "\r", ESC = "\x1b", SPACE = " ", RIGHT = "\x1b[C", LEFT = "\x1b[D";
@@ -47,12 +54,18 @@ describe("PermissionsDialog — row identity (Wave S t6a)", () => {
   it("still opens the delete confirm on Enter over a rule, and Esc still backs out", async () => {
     const { stdin, lastFrame } = render(<PermissionsDialog {...props()} />);
     await waitFor(() => plain(lastFrame).includes("❯ Add a new rule…"));
-    stdin.write(DOWN); await waitFor(() => plain(lastFrame).includes("❯ Bash(ls)"));   // row 0 is "Add a new rule…"
-    stdin.write(ENTER); await waitFor(() => frame(lastFrame).includes("Delete allowed tool?"));
+    stdin.write(DOWN); await waitFor(() => plain(lastFrame).includes("❯ Bash(ls)"), "the cursor to reach the rule");   // row 0 is "Add a new rule…"
+    stdin.write(ENTER); await waitFor(() => frame(lastFrame).includes("Delete allowed tool?"), "the delete confirm to open");
     expect(frame(lastFrame)).toContain("Enter to delete");
-    stdin.write(ESC); await waitFor(() => plain(lastFrame).includes("❯ Bash(ls)"));
-    expect(frame(lastFrame)).not.toContain("Enter to delete");
-    expect(frame(lastFrame), "…and Esc backed out to the LIST, not out of the dialog").toContain("Permissions");
+    // Wait on the REPAINT, not on the thing being asserted. Waiting for "❯ Bash(ls)" made the two claims below
+    // true by construction, so a mutation that got Esc wrong surfaced as a bare "waitFor timeout" with no clue
+    // what the frame did say; wait for any repaint at all and each claim fails as itself, with the diff.
+    const confirmFrame = plain(lastFrame);
+    stdin.write(ESC); await waitFor(() => plain(lastFrame) !== confirmFrame, "Esc to repaint anything at all");
+    const after = plain(lastFrame);
+    expect(after, "Esc closed the delete confirm").not.toContain("Enter to delete");
+    expect(after, "…and landed back on the LIST, cursor still on the rule").toContain("❯ Bash(ls)");
+    expect(after, "…and Esc backed out to the LIST, not out of the dialog").toContain("Permissions");
   });
 
   it("a stray space over a rule opens the confirm but never removes it", async () => {
@@ -70,6 +83,35 @@ describe("PermissionsDialog — row identity (Wave S t6a)", () => {
     // absence rather than a callback nobody ever calls.
     stdin.write(ENTER); await waitFor(() => removed.length === 1);
     expect(removed).toEqual(["Bash(ls)"]);
+  });
+
+  // The value cursor's PURPOSE is to survive a rebuild that KEEPS your row — but every rebuild here comes from
+  // a mutation, and the commonest one deletes the row you are standing on. `values.indexOf` then misses, and a
+  // value has no answer left; only a position does. The pre-6a index cursor (an index plus a clamp) left the
+  // pointer on the row that took the deleted one's place, which is what makes deleting a run of rules a
+  // hold-Enter operation instead of one arrow press per row you had descended. 6a's first cut fell back to 0
+  // and sent the cursor to the top affordance row instead — this test is red against it.
+  //
+  // It OUTLIVES the fallback it was written for: 6b hands focus to `Select`, which stores focus as an index and
+  // clamps it to `count - 1` when `options` shrinks, so the fallback goes away and this stays as the proof that
+  // `Select` preserved the behaviour rather than quietly re-breaking it.
+  it("leaves the cursor on the row that replaced the one it just deleted", async () => {
+    let allow = ["Bash(a)", "Bash(b)", "Bash(c)", "Bash(d)"];
+    const removed: string[] = [];
+    const { stdin, lastFrame } = render(<PermissionsDialog {...props({
+      fetchSettings: async () => ({ sources: [{ source: "flagSettings", settings: { permissions: { allow } } }] }) as unknown,
+      removeRule: async (_b: unknown, rule: string) => { removed.push(rule); allow = allow.filter((r) => r !== rule); },
+    })} />);
+    await waitFor(() => plain(lastFrame).includes("❯ Add a new rule…"), "the rule list to load");
+    for (const want of ["Bash(a)", "Bash(b)", "Bash(c)"]) {
+      stdin.write(DOWN); await waitFor(() => plain(lastFrame).includes(`❯ ${want}`), `the cursor to reach ${want}`);
+    }
+    stdin.write(ENTER); await waitFor(() => frame(lastFrame).includes("Delete allowed tool?"), "the delete confirm to open");
+    stdin.write(ENTER); await waitFor(() => !plain(lastFrame).includes("Bash(c)"), "the refetched list to drop the deleted rule");
+    expect(removed, "the confirm's Enter deleted the rule the cursor was actually on").toEqual(["Bash(c)"]);
+    const pointed = pointerRows(lastFrame);
+    expect(pointed, "exactly one row wears the pointer").toHaveLength(1);
+    expect(pointed[0], "the cursor holds its POSITION — the row that took the deleted one's place, not the top of the list").toMatch(/^❯ Bash\(d\)/);
   });
 
   // THE ONE NEW CLAIM OF 6a. `ruleRows` emits one row per (source, rule) pair, so the same rule string
@@ -117,10 +159,14 @@ describe("PermissionsDialog — row identity (Wave S t6a)", () => {
     }
     const { stdin, lastFrame } = render(<Host />);
     await waitFor(() => plain(lastFrame).includes("❯ Add a new rule…"));
-    stdin.write(DOWN); await waitFor(() => plain(lastFrame).includes("❯ Bash(ls)"));
-    stdin.write(RIGHT); await waitFor(() => frame(lastFrame).includes("Claude Code will always ask for confirmation before using these tools."));
-    stdin.write(LEFT); await waitFor(() => frame(lastFrame).includes("Claude Code won't ask before using allowed tools."));
-    await waitFor(() => plain(lastFrame).includes("❯ Add a new rule…"));
-    expect(plain(lastFrame), "back on Allow, the cursor is on the top row again").not.toContain("❯ Bash(ls)");
+    stdin.write(DOWN); await waitFor(() => plain(lastFrame).includes("❯ Bash(ls)"), "the cursor to reach the rule");
+    stdin.write(RIGHT); await waitFor(() => frame(lastFrame).includes("Claude Code will always ask for confirmation before using these tools."), "the Ask tab");
+    stdin.write(LEFT); await waitFor(() => frame(lastFrame).includes("Claude Code won't ask before using allowed tools."), "the Allow tab to come back");
+    // Wait for the LIST, then name the row the cursor is on. Waiting for "❯ Add a new rule…" and then asserting
+    // "not ❯ Bash(ls)" put the whole claim in the waiting: a broken reset could only ever time out.
+    await waitFor(() => plain(lastFrame).includes("Bash(ls)"), "the Allow tab's rule list to repaint");
+    const pointed = pointerRows(lastFrame);
+    expect(pointed, "exactly one row wears the pointer").toHaveLength(1);
+    expect(pointed[0], "back on Allow the cursor is on the TOP row, not where this tab left it").toBe("❯ Add a new rule…");
   });
 });
