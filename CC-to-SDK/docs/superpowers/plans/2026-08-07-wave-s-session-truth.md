@@ -1816,6 +1816,32 @@ git commit -m "f5(waveS-t7): /cost reports the seven ModelUsage fields it was dr
 
 ## Task 8: EP-S5b — the context chip stops lying after `/clear` (P1)
 
+> **WIDENED BEFORE DISPATCH (controller).** The text below scopes this to `/clear`. I grepped first:
+> **`setCtxPct` has exactly one writer in the whole file — `useChat.ts:690`, at turn end — and no reset
+> anywhere.** So the identical lie is live on every path that discards or replaces the conversation, not
+> just `/clear`:
+> - **`/clear`** (`clear()`, ≈`:1629`) — the case the epic names.
+> - **`/resume` and `--continue`** (`resumeInto`, ≈`:1010`; `doContinue`, ≈`:1034`) — **the worst of the
+>   three**, because it is not a stale number about *this* conversation, it is the *previous* session's
+>   percentage displayed against a *different* one.
+> - **A conversation rewind** (`rebuildAfterRewind`) — the discarded turns are gone but their measurement
+>   is still on screen.
+>
+> Fix the class, with the same rule everywhere: hide until a real one is measured. Three resets, not one.
+> Refreshing immediately would also be honest and costs one call, but it puts a surface back on screen
+> that has nothing true to say yet — pick one and say which in the code, once, rather than per site.
+>
+> **Both halves of A8 apply to each path.** The negative half alone ("no percentage after X") passes on a
+> build that never sets one; each path needs its positive half too — a freshly measured percentage arriving
+> when the next turn ends. Note that `formatStatus` reads `ctxPct` as well (`:796`, `:1206`), so `/status`
+> carries the same stale number and is fixed by the same reset; assert that at least once.
+>
+> Everything below still governs on the divergence note (W-S5), the code comment, and the shape of the fix.
+> Line numbers in the older text have drifted — `clear()` is at ≈`:1629`, not `:1599`, and the writer is at
+> `:690`, not `:680`. Find them by symbol.
+>
+> ---
+
 **Why.** `ctxPct` is written only at turn end (`useChat.ts:680`) and `clear()` (`:1599`) never touches it,
 so after `/clear` the status bar keeps showing a percentage measured against a context that no longer
 exists. The chip is gated on `ctxPct != null` (`ChatStatusBar.tsx:41`), so hiding it is one state reset.
