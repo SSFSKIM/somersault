@@ -1,7 +1,7 @@
 // The shared upstream formatter ports (`src/tui/format.ts`). These are verbatim ports of NAMED 2.1.220
 // functions, so every case here is a byte pinned against the bundle rather than a taste call.
 import { describe, expect, it } from "vitest";
-import { formatCompactNumber, formatUsd } from "../../src/tui/format.js";
+import { formatCompactNumber, formatTokens, formatUsd } from "../../src/tui/format.js";
 
 describe("formatCompactNumber (upstream `yd`, bundle 229070611)", () => {
   // `yd(e){let t=e>=1000;return fOg(t).format(e).toLowerCase()}` with
@@ -19,6 +19,31 @@ describe("formatCompactNumber (upstream `yd`, bundle 229070611)", () => {
     expect(formatCompactNumber(907)).toBe("907");
     expect(formatCompactNumber(0)).toBe("0");
     expect(formatCompactNumber(999)).toBe("999");
+  });
+});
+
+describe("formatTokens (upstream `va`, L107095 — `_d` with the mandatory tenth stripped)", () => {
+  // `va(e){return _d(e).replace(".0","")}`. The SECOND deliberate compact form, and the one every
+  // context/compaction token readout upstream spells (`Wcn` L315889, the `/context` grid L444440–444745,
+  // `Compacting at auto window` L308455). Pinned against `formatCompactNumber` above, case for case, so a
+  // change to either port that breaks the `_d`→`va` delegation shows up here as a divergence.
+  it("strips the tenth `_d` was forced to add", () => {
+    expect(formatTokens(1000)).toBe("1k");
+    expect(formatTokens(12000)).toBe("12k");
+    expect(formatTokens(200000)).toBe("200k");
+    expect(formatTokens(1200000)).toBe("1.2m");
+  });
+
+  it("keeps a fraction that is not `.0`, and leaves sub-1000 alone", () => {
+    expect(formatTokens(18500)).toBe("18.5k");
+    expect(formatTokens(24100)).toBe("24.1k");
+    expect(formatTokens(907)).toBe("907");
+    expect(formatTokens(0)).toBe("0");
+  });
+
+  it("is exactly the `_d` port with `.0` removed — never a re-derivation", () => {
+    for (const n of [0, 1, 999, 1000, 1049, 12000, 18500, 24100, 200000, 999999, 1200000, 1000000])
+      expect(formatTokens(n)).toBe(formatCompactNumber(n).replace(".0", ""));
   });
 });
 

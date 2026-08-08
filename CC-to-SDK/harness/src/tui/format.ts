@@ -33,12 +33,29 @@ export function formatFileSize(bytes: number): string {
  *  `24.1k`, `1200000` reads `1.2m`. The fraction digit is not merely ALLOWED, it is MANDATORY at or above
  *  1000: `yd(e){let t=e>=1000;return fOg(t).format(e).toLowerCase()}` picks between two cached formatters
  *  (`fOg`, 229072863) that differ only in `minimumFractionDigits` — `1` above the threshold, `0` below it. So
- *  `12000` reads `12.0k` (NOT `12k`) while `907` stays `907`. Used by the Agent `Done (…)` token clause. */
+ *  `12000` reads `12.0k` (NOT `12k`) while `907` stays `907`. Upstream's own export map (L107029) names it
+ *  `formatNumber`, and it is the RARER of the two compact forms — three call sites in 2.1.220: `/cost`'s
+ *  usage block `E0y` (L217696), the Agent `Done (…)` / in-progress token clauses (L429650, L422190,
+ *  L429708) and the activity panel's cumulative `In: … · Out: …` totals (L444140/444145/444263). Everything
+ *  else takes `formatTokens` below — see its note for which surface takes which and why. */
 const compactFormats = [
   new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1, minimumFractionDigits: 0 }),
   new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1, minimumFractionDigits: 1 }),
 ];
 export const formatCompactNumber = (value: number): string => compactFormats[value >= 1000 ? 1 : 0]!.format(value).toLowerCase();
+
+/** Upstream `va` (L107095), which its own export map (L107029) names `formatTokens`: `_d` with the mandatory
+ *  tenth stripped — `va(e){return _d(e).replace(".0","")}` — so `200000` reads `200k` and `31000` reads
+ *  `31k`, while `24100` keeps the `24.1k` it earned. This is a deliberate SECOND form, not drift, and it is
+ *  the DOMINANT one: `_d` has three call sites left in 2.1.220 (listed above) and `va` has thirty-odd,
+ *  including every token readout in the context/compaction family — `/context`'s markdown (`Wcn` L315889,
+ *  `` `**Tokens:** ${va(n)} / ${va(o)} (${i}%)` ``), `/context`'s interactive grid (L444440–444745), the
+ *  auto-compact window rows (`Compacting at auto window (${va(o)} tokens)` L308455; `/autocompact`
+ *  L314729–314755) and `P7`'s `~N` estimate (L107101). It DELEGATES to the `_d` port rather than repeating
+ *  the two-formatter arithmetic, exactly as upstream does, so the pair can never drift apart: change the
+ *  rounding rule in one place and both forms move together. The `.replace` is upstream's — non-global and
+ *  unanchored — and is safe because `_d` only ever emits `.0` as the fraction of a compacted value. */
+export const formatTokens = (value: number): string => formatCompactNumber(value).replace(".0", "");
 
 /** Upstream `pZu` (L217680-217682), the money spelling of `/cost`'s total row and every per-model row:
  *  `` `$${e > 0.5 ? A0y(e,100).toFixed(2) : e.toFixed(t)}` `` with `A0y(e,t) = Math.round(e*t)/t`. The

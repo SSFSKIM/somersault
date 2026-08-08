@@ -55,7 +55,18 @@ export function pickVerb(rand: number = Math.random()): string {
   return SPINNER_VERBS[i];
 }
 
-/** "3s" under a minute, else "1m 05s". */
+/** "3s" under a minute, else "1m 05s".
+ *
+ *  KNOWN DEFECT, recorded W-S t7 (correction pass) and deliberately NOT fixed there — it is out of that
+ *  task's scope, and it is a shipped surface, so it is written down rather than left to be rediscovered.
+ *  This is our port of upstream `$st` (`cli.pretty.js` L107079, exported as `formatBarElapsed` at L107029),
+ *  and it diverges in two ways:
+ *    1. Separator. Upstream emits `1m05s` — no space. We emit `1m 05s`. (Do not "fix" this by pointing at
+ *       `format.ts`'s `formatDuration`: that is a port of a DIFFERENT function, `ra`, which spells the same
+ *       duration `1m 5s` — unpadded and spaced. Three spellings exist upstream; this one owes `$st`.)
+ *    2. Missing units. Upstream rolls over at an hour (`1h05m`) and a day (`2d03h`); we stop at minutes, so
+ *       a session running 25 hours and 1 second reads `1501m 01s` instead of `1d01h`.
+ *  Whoever next touches the spinner tail should port `$st` whole rather than patching one branch. */
 export function formatElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return s + "s";

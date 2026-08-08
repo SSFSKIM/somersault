@@ -3,7 +3,7 @@ import type { CompactOutcome, ContextUsageSummary } from "../index.js";
 import type { RenderLine } from "./render.js";
 import { THINK_LEVELS } from "./thinkLevels.js";
 import type { CommandEntry } from "./commandComplete.js";
-import { formatCompactNumber, formatDuration, formatUsd, plural } from "./format.js";
+import { formatCompactNumber, formatTokens, formatDuration, formatUsd, plural } from "./format.js";
 import type { SettingsRow } from "./settingsRows.js";
 import { THEME_LABELS } from "./theme.js";   // leaf module, no React — safe to import into this pure file
 
@@ -86,12 +86,27 @@ const ALIAS_TO_NAME = new Map(COMMANDS.flatMap((c) => (c.aliases ?? []).map((a) 
  *  command meets the dispatch switch, so every arm keeps matching on canonical names only. */
 export const canonicalCommand = (name: string): string => ALIAS_TO_NAME.get(name) ?? name;
 
-// `tokenCount` — our hand-rolled `n >= 1000 ? Math.round(n/100)/10 + "k" : n` — was RETIRED in W-S t7. Its
-// own doc comment already forbade a second spelling of a token count, and `format.ts` turned out to hold the
-// first: `formatCompactNumber` is the verbatim port of upstream's `_d` (L107091) that `/cost` and the agent
-// `Done (…)` clause both spell. The two disagreed at and above 1000 (`31k` vs upstream's mandatory `31.0k`)
-// and badly above a million, where ours never rolled over to `m` and printed `1234.6k` for `1.2m`. Every
-// caller here and in `sessionTools.ts` now imports `formatCompactNumber` directly, so there is one name.
+// TWO compact number forms, both upstream's, deliberately kept apart. This note replaces W-S t7's "one
+// spelling for every token count" rule, which was WRONG and briefly made `/context` read `200.0k` where
+// upstream reads `200k`. Upstream's export map (`cli.pretty.js` L107029) names them itself:
+//   * `_d` = `formatNumber` (L107091) — ported as `formatCompactNumber`. `minimumFractionDigits` is 1 at or
+//     above 1000, so `31000` reads `31.0k` and the tenth is MANDATORY.
+//   * `va` = `formatTokens` (L107095) — ported as `formatTokens`. Literally `_d(e).replace(".0","")`, so the
+//     same number reads `31k`. Three `_d` call sites survive in 2.1.220; `va` has thirty-odd.
+// Which form a surface takes is upstream's per-surface choice, not a house style we get to unify:
+//   * `/cost` (`formatCost` below) keeps `formatCompactNumber`. Its usage block IS `E0y` (L217696), one of
+//     the three `_d` sites. This is the surface the bundle settles unambiguously.
+//   * `/context` (`formatContext`) and `/compact` (`formatCompact`) take `formatTokens`: upstream's context
+//     and compaction readouts are `va` throughout — `Wcn` L315889, the `/context` grid L444440–444745, and
+//     `Compacting at auto window (${va(o)} tokens)` L308455.
+//   * `/stats` (`sessionTools.ts`) stays on `formatCompactNumber`. Upstream's `/stats` is an ALIAS of
+//     `/usage`/`/cost` (L351877), and our line is cumulative per-model input/output totals — which upstream
+//     spells with `_d` in the very same activity panel (`In: ${_d(l.inputTokens)} · Out: …`, L444263).
+// The `tokenCount` this all replaced — our hand-rolled `n >= 1000 ? Math.round(n/100)/10 + "k" : n`, which
+// never rolled over to `m` and printed `1234.6k` for `1.2m` — was a THIRD spelling with no upstream name at
+// all. That is the drift its own comment was guarding against: an unnamed re-derivation of a form upstream
+// already names. Two named ports, one delegating to the other, with a documented call-site rule each, are
+// not that — and collapsing them onto one is what produced the regression.
 
 // `formatHelp()` — the plain `commands:` listing — was deleted in F6 T15. F6 T14 made `/help` a tabbed
 // DIALOG (`RNa`, L459684) whose Commands tab browses the LIVE catalog, which left the listing with no caller
@@ -117,12 +132,20 @@ export function formatModelSet(name: string, saveDefault: boolean): RenderLine[]
 export function formatThink(next?: string, current?: string): RenderLine[] {
   return next ? [{ text: `thinking → ${next}` }] : [{ text: `thinking: ${current ?? "default"}`, dim: true }];
 }
+/** The one surface here with NO verbatim upstream counterpart: upstream's post-compact notice (`Fl_`,
+ *  L314674) prints the word `Compacted` plus hint clauses and no numbers at all, so this before→after pair
+ *  is ours. `formatTokens` is the reasoned choice, not a coin flip — every compaction-adjacent token readout
+ *  upstream does print is `va` (`Compacting at auto window (${va(o)} tokens)` L308455, and the whole
+ *  `/autocompact` block L314729–314755), so a number in this family reading `31.0k` would be the odd one. */
 export function formatCompact(o: CompactOutcome): RenderLine[] {
-  return o.ok ? [{ text: `✦ compacted ${formatCompactNumber(o.preTokens ?? 0)} → ${formatCompactNumber(o.postTokens ?? 0)}` }]
+  return o.ok ? [{ text: `✦ compacted ${formatTokens(o.preTokens ?? 0)} → ${formatTokens(o.postTokens ?? 0)}` }]
               : [{ text: `compact: ${o.error ?? "nothing to compact"}`, dim: true }];
 }
+/** Our one-line digest of upstream's `/context`. The token pair is upstream's own to the formatter: `Wcn`
+ *  (L315889) prints `` `**Tokens:** ${va(n)} / ${va(o)} (${i}%)` `` — same used/max/percent triple, same
+ *  `formatTokens`; the interactive grid (L444440–444745) spells every cell with `va` too. */
 export function formatContext(s: ContextUsageSummary): RenderLine[] {
-  return [{ text: `ctx ${s.percentUsed}% · ${formatCompactNumber(s.tokensUsed)} / ${formatCompactNumber(s.maxTokens)} · ${s.status}`, dim: true }];
+  return [{ text: `ctx ${s.percentUsed}% · ${formatTokens(s.tokensUsed)} / ${formatTokens(s.maxTokens)} · ${s.status}`, dim: true }];
 }
 
 /** The session-cumulative usage shape from `Session.usage()` — a subset of `SDKControlGetUsageResponse`
@@ -181,6 +204,11 @@ export function formatCost(u: SessionUsage): RenderLine[] {
     { text: "Total cost:".padEnd(COST_COL) + (cost === 0 && u.subscription_type ? `included in your ${u.subscription_type} plan` : formatUsd(cost)), dim: true },
     { text: "Total duration (API):".padEnd(COST_COL) + formatDuration(s.total_api_duration_ms ?? 0), dim: true },
     { text: "Total duration (wall):".padEnd(COST_COL) + formatDuration(s.total_duration_ms ?? 0), dim: true },
+    // UNCONDITIONAL, on purpose. The W-S t7 brief carried a checkbox asserting this row is omitted when
+    // nothing was edited; upstream `Aze` prints `Total code changes: 0 lines added, 0 lines removed` with no
+    // guard, and the re-cut's own rule was to follow upstream's omission rule rather than the plan's. The
+    // only clause upstream omits in this whole block is the web-search one below. Do not re-add a zero-guard
+    // here citing that checkbox — the checkbox is the thing that was wrong.
     { text: "Total code changes:".padEnd(COST_COL) + `${added} ${plural(added, "line")} added, ${removed} ${plural(removed, "line")} removed`, dim: true },
   ];
   const models = foldByModel(s.model_usage ?? {});

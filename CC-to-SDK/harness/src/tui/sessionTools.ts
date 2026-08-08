@@ -3,7 +3,11 @@
 import type { RenderLine } from "./render.js";
 import { rowKind, promptText } from "../sessions/rows.js";
 import { type SessionUsage } from "./commands.js";
-import { formatCompactNumber as kk } from "./format.js";   // W-S t7: `tokenCount` retired for the verbatim `_d` port
+// `_d`, not its `va` sibling — deliberate, see the two-forms note in `commands.ts`. `/stats` is an ALIAS of
+// `/usage`/`/cost` upstream (L351877) and this is its cumulative per-model in/out pair, which upstream's own
+// activity panel spells `In: ${_d(l.inputTokens)} · Out: ${_d(l.outputTokens)}` (L444263). Only the
+// context/compaction family takes `va`.
+import { formatCompactNumber as kk } from "./format.js";
 
 const FILE_KEYS = ["file_path", "path", "notebook_path"] as const;
 const toolFile = (b: any): string | undefined => {

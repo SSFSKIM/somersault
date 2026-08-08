@@ -400,7 +400,7 @@ describe("useChat", () => {
     const { lastFrame } = render(<CmdHost makeSession={() => fake} api={api} />);
     await waitFor(() => frame(lastFrame).includes("IDLE"));
     api.run!("/model opus");   await waitFor(() => frame(lastFrame).includes("model → claude-opus-5"));
-    api.run!("/compact");      await waitFor(() => frame(lastFrame).includes("✦ compacted 9.0k → 2.0k"));   // W-S t7: upstream `_d` forces the fraction digit
+    api.run!("/compact");      await waitFor(() => frame(lastFrame).includes("✦ compacted 9k → 2k"));   // W-S t7 corr.: the compaction family is upstream `va`, which strips the `.0`
     api.run!("/context");      await waitFor(() => frame(lastFrame).includes("ctx 25%"));
     api.run!("/help");         await waitFor(() => frame(lastFrame).includes("/model"));
     api.run!("/zzz");          await waitFor(() => frame(lastFrame).includes("Unknown command: /zzz"));

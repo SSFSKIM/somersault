@@ -24,14 +24,18 @@ describe("formatters", () => {
     expect(formatModel(undefined, "sonnet")).toEqual([{ text: "model: sonnet", dim: true }]);
   });
   it("compact: success shows before→after, failure is dim", () => {
-    // `31.0k`, not `31k`: W-S t7 retired our hand-rolled `tokenCount` for `formatCompactNumber`, the verbatim
-    // port of upstream's `_d`, whose `minimumFractionDigits` is 1 at or above 1000 (`format.test.ts` pins it).
-    expect(formatCompact({ ok: true, preTokens: 31000, postTokens: 6000 })).toEqual([{ text: "✦ compacted 31.0k → 6.0k" }]);
+    // `31k`, not `31.0k`: the compaction family takes `formatTokens` (upstream `va`), not `formatCompactNumber`
+    // (upstream `_d`) — W-S t7's "one spelling everywhere" rule was wrong and this is the assertion it moved.
+    // See the two-forms note in `commands.ts`; `/cost` below still keeps the tenth because `E0y` does.
+    expect(formatCompact({ ok: true, preTokens: 31000, postTokens: 6000 })).toEqual([{ text: "✦ compacted 31k → 6k" }]);
     expect(formatCompact({ ok: false, error: "Not enough messages" })[0].dim).toBe(true);
   });
   it("context renders a one-line digest", () => {
+    // `200k`, not `200.0k`, and `18.5k` keeps the tenth it earned: `formatTokens` is upstream's `va`, which
+    // `Wcn` (L315889) spells this exact used/max pair with. Both halves in one assertion on purpose — the
+    // regression this pins is a whole-number rounding up to `.0`, which only shows next to a real fraction.
     expect(formatContext({ percentUsed: 9, tokensUsed: 18500, maxTokens: 200000, tokensRemaining: 181500, status: "ok" }))
-      .toEqual([{ text: "ctx 9% · 18.5k / 200.0k · ok", dim: true }]);
+      .toEqual([{ text: "ctx 9% · 18.5k / 200k · ok", dim: true }]);
   });
   it("unknown", () => {
     expect(formatUnknown("zzz")).toEqual([{ text: "Unknown command: /zzz · try /help", color: "red" }]);
