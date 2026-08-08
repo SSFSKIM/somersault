@@ -388,19 +388,21 @@ describe("useChat: rewind flow", () => {
     function H() { const c = useChat(() => session, {}, deps); api.confirmRewind = (c as any).confirmRewind; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
-    const t0 = Date.now();
     api.confirmRewind!({ uuid: "u1", prevUuid: null, text: "ONE", index: 0 }, "conversation");
     await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
     // Without the `cleared` arm, truncateAtAnchor(rows, null) returns every row (null is falsy) and the
     // discarded conversation re-renders. Timing alone would not catch that — these assertions do.
     expect(frame(lastFrame)).not.toContain("TWO");
     expect(frame(lastFrame)).not.toContain("one-reply");
-    // `reads === 0` is what pins the SKIPPED poll — the bound below does not, and must not be read as if it
-    // did: this reader returns rows, so even an unmodified `attempts = retry.attempts` breaks the loop on
-    // attempt 0 and finishes just as fast. The bound is a cheap backstop against a future reader shape that
-    // returns nothing, kept for that reason alone.
+    // `reads === 0` is what pins the SKIPPED poll, and it pins it COMPLETELY: the poll's only side effect is
+    // a read per attempt, so zero reads is zero attempts. A `Date.now() - t0 < 200` bound stood here as a
+    // "cheap backstop" and was deleted — it pinned nothing (this reader returns rows, so even an unmodified
+    // `attempts = retry.attempts` breaks the loop on attempt 0 and finishes just as fast) and it was the ONLY
+    // wall-clock assertion in test/tui, every other Date.now() in the suite being a waitFor poll with a 2s
+    // budget. A decorative assertion that can go red under parallel load is worse than no assertion: it
+    // spends the gate's credibility without buying coverage. If a future reader shape returns nothing and the
+    // poll needs re-pinning, count the attempts — do not time them.
     expect(reads).toBe(0);                                         // no disk read at all: the old file is a trap, not a source
-    expect(Date.now() - t0).toBeLessThan(200);
   });
 
   // W-S8 review, Minor 5. The middle arm of `opts.cleared ? 0 : opts.prevUuid !== null ? retry.attempts : 1`
