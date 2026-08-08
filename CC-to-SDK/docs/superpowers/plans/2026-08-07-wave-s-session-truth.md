@@ -1423,9 +1423,52 @@ sub-views are destructive confirms whose only keys are Enter and Esc — dispatc
 would delete a permission rule on a stray space), and the `NO_ACTIONS` behaviour while the embedded
 `AddDirDialog` is up.
 
+**THE SAME CROSS-TASK MOVE TASK 5 MADE, AND FOR THE SAME REASON — this is round 6b's work, not optional.**
+Task 4 added a `paneOwned` gate in `ChatApp.tsx` that hides the task panel, spinner, queue echo, armed
+hints and the transcript's live region while a **pane-owning** dialog is open, because Ink 5.2.1 answers
+`outputHeight >= stdout.rows` (`ink.js:121`) with `clearTerminal + fullStaticOutput + output` — a
+full-screen wipe and whole-transcript re-dump **on every render**. That gate's comment declares its two
+lists an explicit **partition** of the dialog chain, and lists **`PermissionsDialog` (9)** in the
+*not*-gated half, measured constant across panes 18→50.
+
+Windowing the rule list makes that false: the dialog's height becomes a function of `rows`, which is the
+partition's stated membership criterion. So 6b must also add `state.permissions.open` to the disjunction
+(`ChatApp.tsx`), move the entry across with a freshly measured curve, and pin it with an open/close test
+asserting the task panel is GONE behind `/permissions`. Verify the term red-then-green: with it absent the
+new pin must fail. Task 5 did exactly this for `SettingsDialog` — read that entry and match its shape.
+
+**MEASURE IT WITH THE RIGHT INSTRUMENT.** Do **not** derive the curve by counting `lastFrame()` lines.
+`ink-testing-library` renders Ink with `debug: true` (`ink-testing-library/build/index.js:74`), and in
+debug mode Ink writes `fullStaticOutput + output` and **returns before** the `outputHeight >= stdout.rows`
+check (`ink.js:104-109`) — so `lastFrame()`'s line count is `staticLines + outputHeight`, not
+`outputHeight`, and any fixture that opens the dialog by typing a slash command counts the echo. Task 5's
+budget was one row too large for exactly this reason. Instead instrument `stdout.write` on a **non-debug**
+Ink render and count `clearTerminal` writes across a pane sweep, with the gate on and off.
+
+**Two corrections to this task's own premises, checked before dispatch:**
+- `test/tui/small-permissions.test.tsx` is **not** a `PermissionsDialog` component test — it covers the
+  four permission-*kind* dialogs (`FetchPermission`, `SkillPermission`, `MonitorPermission`,
+  `GenericPermission`) plus `PermissionDialog`. There is **no** existing component test for this dialog;
+  create the new file. `permissionsModel.test.ts` is the pure row model, also not it.
+- `PermissionsDialog` currently takes **no** `rows`/`columns` props (`:101-106`). Add them and thread them
+  from `ChatApp.tsx:647`, the way Task 5 threaded Settings'.
+
+**A trap Task 5 hit that this task will hit harder, because it has more rows.** Mounting `Select` changes
+how the pointer is emitted: it renders `❯` as its **own coloured span**, so the raw frame carries the
+pointer, an SGR reset, then the label — and every pre-existing assertion matching `❯ <label>` breaks even
+though the row body correctly omits the prefix. Fix those by stripping ANSI with the file's existing
+helper. **And audit every `not.` assertion you touch**: Task 5 found one that had been vacuous all along
+(its query filtered the list to nothing, so the absence it asserted was unconditional). A negative
+assertion that stops being able to fail looks identical to a healthy one.
+
 **Files:**
 - Modify: `harness/src/tui/PermissionsDialog.tsx`
-- Test: `harness/test/tui/permissions-dialog.test.tsx` (new — check for an existing component test first)
+- Modify: `harness/src/tui/ChatApp.tsx` — the `paneOwned` disjunction, the partition comment, and the
+  size-prop threading (6b only)
+- Modify: `docs/parity/tui-ux.md:1083` — the F6 divergence entry still says the four paging keys are dead
+  in `PermissionsDialog`. Task 5 closed the `SettingsDialog` half and left this half explicitly to Task 6.
+- Test: `harness/test/tui/permissions-dialog.test.tsx` (new), `harness/test/tui/chat.test.tsx` (the gate
+  pin, 6b only)
 
 **Interfaces:**
 - Consumes: `moreAbove`, `moreBelow`, `overflowRows` from `src/tui/select/overflow.js` (Task 5).
