@@ -450,3 +450,21 @@ Pending — written at finish.
 - **`Ctrl+B` (all branches)** pending CTRL-B-1.
 - **Interruptible `/compact`** — `session.compact()` is a capped-timeout op over the UDS with no cancel
   path; a cancel is a wire change.
+- **STREAM-OVERFLOW-1 — the live streaming region is unbounded, and it is a bigger instance of the very
+  defect Task 4 spent four rounds closing.** Found by the `paneOwned` gate's reviewer while measuring
+  something else, and named here rather than left in a review transcript because nothing in the codebase
+  records it. `LiveTurn.snapshot()` (`tui/liveTurn.ts:100-104,:149-150`) flat-maps the **full** markdown
+  render of the accumulated in-flight text with no window and no clip. Measured: eight long paragraphs
+  streaming into a 40-row pane produce a **47-row dynamic frame** — with **no dialog open at all**. So
+  `ChatApp` already trips Ink's `outputHeight >= rows` branch (`ink.js:121` → `clearTerminal +
+  fullStaticOutput + output`) on **every delta** of any answer longer than the terminal: a full-screen
+  wipe and whole-transcript re-dump, continuously, during ordinary use.
+  **Three things make this a deferral rather than a defect to fix here.** It is entirely pre-existing —
+  the `paneOwned` gate is a strict improvement on it, never a cause. It is out of Wave S's subject
+  (session truth), and squarely in the chrome/geometry wave's. And the fix is not a constant or a gate but
+  a windowed live region — the streamed text has to become scrollable or tail-clipped, which is a design
+  question about what a user should see while a long answer arrives, not an arithmetic one.
+  **What it costs us in the meantime, stated honestly:** Task 4's invariant test promises that `ChatApp`
+  with the rewind picker open never renders a frame reaching the pane, and that promise holds only because
+  the fixture has no streaming turn in it. The invariant is real for the geometry it covers and silent
+  about this one. Whoever picks this up should widen that same matrix rather than write a new one.
