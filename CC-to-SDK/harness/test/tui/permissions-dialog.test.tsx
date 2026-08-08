@@ -16,7 +16,7 @@ import { describe, it, expect } from "vitest";
 import React from "react";
 import { Box } from "ink";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
-import { PermissionsDialog, PERMISSIONS_CHROME_ROWS, PERMISSIONS_ROW_INSET, permissionsRowWidth, permissionsVisibleRows } from "../../src/tui/PermissionsDialog.js";
+import { PermissionsDialog, PERMISSIONS_CHROME_ROWS, PERMISSIONS_FRAME_INSET, PERMISSIONS_ROW_INSET, permissionsRowWidth, permissionsVisibleRows, permissionsWrapRows } from "../../src/tui/PermissionsDialog.js";
 import { POINTER } from "../../src/tui/select/Select.js";
 import type { AddDirVerdict } from "../../src/tui/addDir.js";
 
@@ -374,14 +374,18 @@ describe("PermissionsDialog — the rule list windows from the height it is give
   // `Select`'s own `clampVisible` reserving 8 rows, which shows 12 of the 21 options at a pane of 20 — still
   // fewer than twenty, still green. `permissionsVisibleRows(20)` is 7, and the counted indicator has to agree
   // with it, so both assertions below go red under that mutation.
+  //   THE CALL IT NAMES IS THE TAB-AWARE ONE (chrome-wrap round): at 80 columns this tab's own 89-column intro
+  // wraps, so the window is `20 − 13 − 1` and not `20 − 13`. Spelling the same call the component makes is what
+  // keeps this a pin on the WINDOW rather than on a number that happens to match at one width.
   it("windows the Workspace directory list too", async () => {
     const dirs = Array.from({ length: 20 }, (_, i) => ({ path: `/tmp/ws/dir-${i}`, source: "session" as const }));
+    const visible = permissionsVisibleRows(20, "Workspace", 80);
     const r = render(<PermissionsDialog {...props({ tab: "Workspace", fetchDirs: async () => dirs })} rows={20} columns={80} />);
     await waitFor(() => plain(r.lastFrame).includes("Add directory…"), "the workspace list to load");
     expect(plain(r.lastFrame)).toMatch(/↓ \d+ more below/);
     expect(plain(r.lastFrame).split("\n").filter((l) => l.includes("/tmp/ws/dir-")).length)
-      .toBe(permissionsVisibleRows(20) - 1);                    // less the "Add directory…" affordance row
-    expect(plain(r.lastFrame)).toContain(`↓ ${dirs.length + 1 - permissionsVisibleRows(20)} more below`);
+      .toBe(visible - 1);                                       // less the "Add directory…" affordance row
+    expect(plain(r.lastFrame)).toContain(`↓ ${dirs.length + 1 - visible} more below`);
     r.unmount();
   });
 
@@ -407,6 +411,49 @@ describe("PermissionsDialog — the rule list windows from the height it is give
     expect(permissionsVisibleRows(14)).toBe(1);                  // 14 − 13
     expect(permissionsVisibleRows(13)).toBe(1);                  // the floor, not 0 — a one-row list beats none
     expect(permissionsVisibleRows(4)).toBe(1);
+  });
+
+  // ── CHROME-WRAP ROUND ───────────────────────────────────────────────────────────────────────────────────
+  // The constant above counts ONE row per chrome line, which is what a line costs at a comfortable width. The
+  // intro and the footer are literals long enough to WRAP at a narrow one, and unlike a wrapped ROW (which the
+  // review round CLIPPED, because its cost scales with how many wrapped rows the window holds and a term can
+  // only subtract a constant) each of them renders exactly ONCE per frame — so their extra lines are a genuine
+  // constant and a term is exactly right. `rewindWrapRows`' shape, made TAB-DEPENDENT because this dialog has
+  // five intros and three footers where the rewind picker has one of each.
+  it("adds the rows the intro and the footer actually wrap to, per TAB", () => {
+    expect(PERMISSIONS_FRAME_INSET).toBe(4);                     // border ×2 + paddingX ×2 — NOT the row's 6
+    // Bands from `wrap-ansi` itself, the call Ink's own `wrap-text.js` makes; `ceil(width / inner)` is a
+    // different function and disagrees at most widths. The rendered-frame case below proves these ARE the rows
+    // the renderer spends, so nothing here rests on our reading of the wrapper.
+    expect(permissionsWrapRows("Allow", 100)).toBe(0);
+    expect(permissionsWrapRows("Allow", 69)).toBe(0);            // DEFAULT_FOOTER is 65 over an inner 65 — the last width it fits
+    expect(permissionsWrapRows("Allow", 68)).toBe(1);            // …and the first where it takes a second line
+    expect(permissionsWrapRows("Allow", 60)).toBe(1);
+    expect(permissionsWrapRows("Allow", 52)).toBe(2);            // INTRO.Allow (49) takes a second line as well
+    expect(permissionsWrapRows("Ask", 74)).toBe(0);              // INTRO.Ask (70) is the second-widest intro
+    expect(permissionsWrapRows("Ask", 73)).toBe(1);
+    expect(permissionsWrapRows("Workspace", 93)).toBe(0);        // INTRO.Workspace (89) over an inner 89
+    expect(permissionsWrapRows("Workspace", 92)).toBe(1);
+    expect(permissionsWrapRows("Workspace", 60)).toBe(2);        // the intro AND the footer, and the MAX of the two
+                                                                 // footers this tab can show — MANAGED_DIR_FOOTER (47)
+                                                                 // still fits at 60, and charging the live one would
+                                                                 // resize the list as the cursor crossed a managed row
+    expect(permissionsWrapRows("Recently denied", 60)).toBe(0);  // 53-column intro, 31-column footer: the SAME width, a
+    expect(permissionsWrapRows("Recently denied", 56)).toBe(1);  // different answer — which is why the term takes a tab
+    expect(permissionsWrapRows("nonsense", 60)).toBe(permissionsWrapRows("Allow", 60));   // the component's own activeTab fallback
+  });
+
+  it("reaches the window only when the caller knows BOTH the tab and the width", () => {
+    expect(permissionsVisibleRows(20)).toBe(7);                        // the height-only budget, unchanged
+    expect(permissionsVisibleRows(20, "Allow")).toBe(7);               // a tab with no width names no allowance
+    expect(permissionsVisibleRows(20, undefined, 60)).toBe(7);         // …and neither does a width with no tab
+    expect(permissionsVisibleRows(20, "Allow", 100)).toBe(7);          // wrap 0: a comfortable width is the same budget
+    expect(permissionsVisibleRows(20, "Allow", 60)).toBe(6);
+    expect(permissionsVisibleRows(20, "Workspace", 60)).toBe(5);       // two wrapped literals, two rows
+    expect(permissionsVisibleRows(20, "Recently denied", 60)).toBe(7); // the tab, not the width alone, decides
+    expect(permissionsVisibleRows(14, "Allow", 60)).toBe(1);           // THE RESIDUAL, pinned: the floor outvotes the
+    expect(permissionsVisibleRows(15, "Workspace", 60)).toBe(1);       // term at and below a pane of 13 + wrap, and the
+    expect(permissionsVisibleRows(14, "Workspace", 70)).toBe(1);       // frame reaches the pane there whatever we subtract
   });
 });
 
@@ -476,4 +523,80 @@ describe("PermissionsDialog — a row body is clipped to the width it is given (
     expect(frameLines(narrow.lastFrame), "…and the frame is no taller for it").toBe(tall);
     narrow.unmount();
   });
+});
+
+// ── CHROME-WRAP ROUND — THE VERTICAL COST OF THE SAME NARROW WIDTH ────────────────────────────────────────
+// The clip above holds every ROW to one line; the intro and the footer are the two lines it does NOT govern,
+// and they are the whole of what is left. `permissionsWrapRows` charges them, and these two blocks are its two
+// halves: the first proves the number is the number the RENDERER spends, the second proves that subtracting it
+// keeps the composed frame under the pane. The `<Box width>` wrapper is load-bearing in both, for the reason
+// the block above spells out.
+//
+// NEITHER BLOCK COUNTS A `lastFrame()` LINE COUNT AGAINST INK'S OWN THRESHOLD, which would be the wrong
+// quantity: `ink-testing-library` renders with `debug: true` and that branch returns BEFORE the
+// `outputHeight >= stdout.rows` check. What is asserted instead is the HEIGHT — the dialog rendered alone, so
+// there is no static half to inflate it — against the pane the budget claims it fits in, plus the one row
+// `ChatStatusBar` costs beside it. The clear-count instrument that measures Ink's actual branch is the one in
+// `PERMISSIONS_CHROME_ROWS`'s docblock, and it is what the numbers there come from.
+describe("PermissionsDialog — the chrome's wrap allowance is what the frame really spends (chrome-wrap round)", () => {
+  /** Four short rules plus the affordance row is five options and a pane of 40 shows every one of them at every
+   *  width here, so neither indicator is drawn and no row is clipped — leaving the intro and the footer as the
+   *  ONLY things a width change can move. `height(columns) − height(100)` is therefore the allowance itself,
+   *  with nothing else in the difference (`rewindWrapRows`' own subtraction, rewind-picker.test.tsx). */
+  const shortRules = { sources: [{ source: "flagSettings", settings: { permissions: { allow: ["Bash(a)", "Bash(b)", "Bash(c)", "Bash(d)"] } } }] };
+  const shortDirs = Array.from({ length: 3 }, (_, i) => ({ path: `/tmp/w${i}`, source: "session" as const }));
+  /** Three denials so the Recently-denied tab renders its LIST and not `RECENT_EMPTY`, whose 80 columns wrap on
+   *  their own and are deliberately not in the term (they can only appear while both indicator rows are off). */
+  const denials = Array.from({ length: 3 }, (_, i) => ({ display: `cmd ${i}`, by: "auto", at: 1_700_000_000_000 + i }));
+  const marker: Record<string, string> = { Allow: "Add a new rule…", Workspace: "Add directory…", "Recently denied": "cmd 0" };
+
+  it("equals the rows the RENDERED frame spends on the intro and the footer, at every tab", async () => {
+    const heightAt = async (tab: string, cols: number) => {
+      const r = render(
+        <Box width={cols}>
+          <PermissionsDialog {...props({ tab, denials, fetchSettings: async () => shortRules as unknown, fetchDirs: async () => shortDirs })} rows={40} columns={cols} />
+        </Box>,
+      );
+      await waitFor(() => plain(r.lastFrame).includes(marker[tab]!), `the ${tab} list at ${cols} columns`);
+      const h = frameLines(r.lastFrame);
+      expect(plain(r.lastFrame), "the whole catalog is on screen, so nothing but the chrome differs").not.toContain("more below");
+      r.unmount();
+      return h;
+    };
+    for (const tab of ["Allow", "Workspace", "Recently denied"]) {
+      const base = await heightAt(tab, 100);
+      for (const cols of [80, 70, 60]) {
+        expect([tab, cols, await heightAt(tab, cols) - base]).toEqual([tab, cols, permissionsWrapRows(tab, cols)]);
+      }
+    }
+  }, 20000);
+
+  /** …AND THE INVARIANT THE ALLOWANCE EXISTS FOR. Ink writes `clearTerminal + fullStaticOutput + output` when
+   *  `outputHeight >= stdout.rows` (ink.js:121) — a full-screen wipe on every cursor move — so the composed
+   *  frame has to be STRICTLY shorter than the pane. Composed here is this dialog plus the one unconditional
+   *  sibling `ChatApp` draws beside it, `ChatStatusBar`; everything else is handled by that file's `paneOwned`
+   *  gate. The state is mid-list with BOTH counted indicators up, which is the tallest this dialog reaches.
+   *
+   *  MEASURED RED WITHOUT THE TERM, and the 60-column column is the one that carries it: with the allowance
+   *  removed from `permissionsVisibleRows` the composed frame is EXACTLY `rows` there at every pane in the
+   *  sweep, which is the clear-drawing case the non-debug instrument counts at 12 clears per six cursor moves.
+   *  70 and 80 stay green without it (the Allow intro and footer both fit at those widths) and are here as the
+   *  control: a term that fired at every width would be over-subtracting, and this case would not notice. */
+  it("keeps the composed frame strictly shorter than the pane at a width where the chrome wraps", async () => {
+    const manyRules = { sources: [{ source: "flagSettings", settings: { permissions: { allow: Array.from({ length: 30 }, (_, i) => `Bash(cmd${i}:*)`) } } }] };
+    for (const cols of [60, 70, 80, 100]) {
+      for (const rows of [16, 20, 24]) {
+        const r = render(
+          <Box width={cols}><PermissionsDialog {...props({ fetchSettings: async () => manyRules as unknown })} rows={rows} columns={cols} /></Box>,
+        );
+        await waitFor(() => plain(r.lastFrame).includes("Add a new rule…"), `the rule list at ${cols}×${rows}`);
+        for (let n = 0; n < 40 && !/more above/.test(plain(r.lastFrame)); n++) { r.stdin.write(DOWN); await tick(); }
+        // Asserted, not assumed: a walk that never reached the both-indicators state would leave the tallest
+        // geometry untested and the case would pass on a shorter frame than the one that matters.
+        expect([cols, rows, /more above/.test(plain(r.lastFrame)), /more below/.test(plain(r.lastFrame))]).toEqual([cols, rows, true, true]);
+        expect([cols, rows, frameLines(r.lastFrame) + 1 < rows]).toEqual([cols, rows, true]);
+        r.unmount();
+      }
+    }
+  }, 20000);
 });

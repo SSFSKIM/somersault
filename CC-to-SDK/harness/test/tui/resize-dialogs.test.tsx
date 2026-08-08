@@ -180,6 +180,28 @@ describe("PermissionsDialog re-derives its geometry from the size it is given", 
     expect(strip(frame(r.lastFrame)), "…and the widening brings it back").toContain(`${LONG}  From command line arguments`);
     r.unmount();
   });
+
+  /** …and the width's OTHER half, which the chrome-wrap round added: the intro and the footer wrap at a narrow
+   *  width too, and each extra line they take is a row the height-only budget did not reserve. So this dialog's
+   *  window is a function of the WIDTH as well — `permissionsVisibleRows(rows, tab, columns)` — and a resize
+   *  that changes nothing about the height still has to re-window the list. At 100 columns the Allow tab wraps
+   *  nothing; at 60 `DEFAULT_FOOTER` (65 columns) takes a second line and the window loses exactly one row. */
+  const permAtWidth = (cols: number) => (
+    <Box width={cols}><PermissionsDialog {...permProps} rows={20} columns={cols} /></Box>
+  );
+
+  it("re-windows its rule list when the WIDTH changes, because its own chrome wraps", async () => {
+    const r = renderWithKeymap(permAtWidth(100));
+    await waitFor(() => strip(frame(r.lastFrame)).includes("❯ Add a new rule…"));
+    expect(permRowCount(frame(r.lastFrame))).toBe(6);                  // permissionsVisibleRows(20,"Allow",100) = 7, less the affordance row
+    r.rerender(permAtWidth(60));
+    await tick();
+    expect(permRowCount(frame(r.lastFrame)), "the wrapped footer costs the list a row").toBe(5);
+    r.rerender(permAtWidth(100));
+    await tick();
+    expect(permRowCount(frame(r.lastFrame)), "…and the widening gives it back").toBe(6);
+    r.unmount();
+  });
 });
 
 /** Open `/model` the way a user does — the composer's command line, then Enter (chat.test.tsx's own recipe). */

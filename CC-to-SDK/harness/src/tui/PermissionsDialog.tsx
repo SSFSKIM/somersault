@@ -42,6 +42,7 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import stringWidth from "string-width";
+import wrapAnsi from "wrap-ansi";
 import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import { useRefState } from "./keys/refState.js";
@@ -281,25 +282,101 @@ function itemLabel(it: Item): string {
  *  Clipping the body restores the one-option-one-line invariant at its source. Measured on the review's own
  *  fixture (eight workspace paths long enough to wrap at 80 columns): clears on EVERY cursor move at EVERY pane
  *  from 15 to 24 before the clip, ZERO at all ten after it.
- *    WHAT IS STILL OPEN is the CHROME half — the intro and the footer are the two wrappable literals, and each
- *  extra line they take is a genuine constant this budget does not reserve. Measured, Workspace tab, short
- *  paths so no row wraps: at 100 columns zero clears from a pane of 14 up; at 70-80 columns (intro on two
- *  lines) zero from 15 up and FOUR at 14; at 60 columns (intro on two lines AND `DEFAULT_FOOTER`'s 65 columns
- *  on two) the mid-list state clears at EVERY pane from 14 to 30 and Workspace at every pane up to 20. That one
- *  IS a `columns` term of `rewindWrapRows`' exact shape (`wrapLines(intro, columns − 4) − 1 + wrapLines(footer,
- *  …) − 1`, tab-dependent because both literals are) — deliberately not taken in this round, which was scoped
- *  to the row clip, and recorded here with the numbers rather than as a hypothetical.
+ *    THE CHROME HALF OF IT IS `permissionsWrapRows` BELOW, and this constant deliberately does not absorb it:
+ *  the enumeration above counts ONE row per chrome line, which is what a line costs at a comfortable width, and
+ *  folding a width-dependent number into it would make every term above stop meaning what it says. Same split,
+ *  and for the same reason, as Wave S t4's `REWIND_CHROME_ROWS` + `rewindWrapRows`.
  *
  *  NOTE THE CLAMP INTERACTION, as in Settings: `Select`'s own `clampVisible` (selectModel.ts:18,28) already
  *  reserves 8 rows and takes the `min()` of the two — so this number does not solely govern the window. It is
  *  the ceiling this dialog contributes, and being the larger of the two it is the one that binds. */
 export const PERMISSIONS_CHROME_ROWS = 13;
+
+/** The dialog's horizontal cost, and the same four `REWIND_FRAME_INSET` counts: `borderStyle="round"`'s two
+ *  rules plus `paddingX={1}`'s two columns. Everything inside the frame wraps at `columns − 4` — which is NOT
+ *  `PERMISSIONS_ROW_INSET` (6): a ROW is two columns narrower still, because `Select` spends one on its pointer
+ *  gutter and one on its `gap={1}`, and the intro and footer are drawn by this component outside that list. */
+export const PERMISSIONS_FRAME_INSET = 4;
+/** Ink's `wrap` mode verbatim (`node_modules/ink/build/wrap-text.js`), the same call `rewindModel.ts` wraps:
+ *  WORD wrap with a hard break only for a token that cannot fit at all. `Math.ceil(width / inner)` is a
+ *  DIFFERENT function and disagrees with the renderer at most widths — this wave has been bitten by that twice
+ *  already, so do not "simplify" this to division. */
+const wrapLines = (text: string, width: number): number =>
+  wrapAnsi(text, Math.max(1, width), { trim: false, hard: true }).split("\n").length;
+/** Every footer the tab can show — the MAX of which is what the term below charges. Which one is on screen
+ *  depends on the row the CURSOR is on (`MANAGED_DIR_FOOTER` only while a non-session Workspace row is
+ *  focused, see the final `return`), so charging the live one would resize the list under a moving cursor,
+ *  exactly the defect the two unconditional indicator rows above are reserved to avoid. Charging the tallest
+ *  the tab can reach holds still, and it costs nothing at any width where the two agree. */
+function tabFooters(tab: Tab): string[] {
+  if (tab === "Recently denied") return [RECENT_FOOTER];
+  if (tab === "Workspace") return [DEFAULT_FOOTER, MANAGED_DIR_FOOTER];
+  return [DEFAULT_FOOTER];
+}
+/** WAVE S t6b, CHROME-WRAP ROUND — the EXTRA rows the intro and the footer cost at `columns`, over the one
+ *  apiece `PERMISSIONS_CHROME_ROWS` already counts. `rewindWrapRows`' shape exactly, and it is a budget TERM
+ *  where the round before this one refused one, for a reason worth keeping straight: a wrapped ROW costs an
+ *  extra line per wrapped row INSIDE THE WINDOW, so its shortfall scales with the window and no constant can
+ *  express it (hence the clip in `renderItem`). The intro and the footer each appear EXACTLY ONCE per frame
+ *  whatever the window holds, so their extra lines are a genuine per-frame constant — which is what a term
+ *  subtracts.
+ *
+ *  IT IS TAB-DEPENDENT, which `rewindWrapRows` is not, because this dialog has FIVE intros and THREE footers.
+ *  The spread is the whole point: `INTRO.Workspace` is 89 columns and wraps below 93, `INTRO.Allow` is 49 and
+ *  does not wrap until 53, and `DEFAULT_FOOTER` (65) wraps below 69 while `RECENT_FOOTER` (31) holds one line
+ *  down to 34. So at 60 columns the allowance is 2 on Workspace, 1 on Allow and 0 on Recently denied — three
+ *  different numbers for one width. A tab-blind term would have to charge the worst tab at every tab, which
+ *  is a window one row shorter than it needs to be on four of the five — and the Recently-denied tab, the one
+ *  whose chrome is narrowest, is the one that would pay most.
+ *
+ *  MEASURED, on the same instrument `PERMISSIONS_CHROME_ROWS` is measured on and never on a `lastFrame()` line
+ *  count: three cursor states (Allow at the top of a 30-rule list; Allow mid-list with BOTH indicators up, the
+ *  tallest; Workspace with eight directories), short paths so no row wraps, six cursor moves per cell.
+ *  Before the term, at 60 columns — where `DEFAULT_FOOTER` takes a second line — the composed mid-list frame is
+ *  EXACTLY `rows`, which is Ink's `>=`, and every cursor move drew a clear at EVERY pane from 14 to 30 (12 per
+ *  six moves); the Workspace tab, whose intro wraps as well, drew 11 at every pane from 14 to 21, and at 70-80
+ *  columns 6 at a pane of 14. After the term: ZERO at every pane from 16 to 30 at all four widths swept
+ *  (60/70/80/100), and zero at 100 everywhere from 14 up. What is left is only the floor, below.
+ *
+ *  THE RESIDUAL IS THE WINDOW'S FLOOR, and it is arithmetic rather than an omission. `Math.max(1, …)` means the
+ *  term stops buying anything once `rows − PERMISSIONS_CHROME_ROWS − wrap` reaches 0, i.e. at and below a pane
+ *  of `13 + wrap`, and a frame holding one row plus two indicators is already as short as this dialog gets.
+ *  Measured, that predicts exactly what is left: 60 columns at a pane of 14 (wrap 1 on Allow — 6 clears at the
+ *  top of the list, 12 mid-list) and at a pane of 15 on Workspace (wrap 2 — 6), plus Workspace at a pane of 14
+ *  at 70 and 80 (wrap 1 — 6 each). So what the height-only budget called "below 14 no budget can help" is below
+ *  15 at 60 columns, and below 15 on Workspace at any width under 93. WHAT WOULD CLOSE IT is not a bigger term
+ *  but the row clip's own repair applied to the chrome: `wrap="truncate"` on the intro and the footer makes the
+ *  wrap zero by construction, and measured that way every one of those cells draws ZERO (60×14 mid-list is 13
+ *  rows instead of 14). It is not taken here because it truncates two user-visible lines — the footer at 60
+ *  columns would lose `· Esc to cancel` — which is a product call, not a geometry one.
+ *
+ *  RECENT_EMPTY IS STILL NOT A TERM, and the wrap does not change that argument WITHIN the widths this round
+ *  covers: it renders only on the Recently-denied tab with ZERO denials, where the list is empty and both
+ *  indicator rows are off, so it has two reserved rows to spend, and its 80 columns take two lines all the way
+ *  down to 45. Measured, that state is a FLAT 12-row frame at 60/70/80 columns (11 at 100) at every pane from
+ *  14 to 30, with zero clears. At 44 and below it needs a THIRD line and nothing reserves it: the frame is 14
+ *  rows there, which reaches a pane of 14 — it still draws no clear only because an empty list has no cursor to
+ *  move, and any other render at that geometry would. Same floor territory as the residual above, and named
+ *  here rather than fixed because a term for a row that only appears when both reserved rows are off would be
+ *  reserving the same two rows twice. */
+export function permissionsWrapRows(tab: string, columns: number): number {
+  const t = ((TABS as readonly string[]).includes(tab) ? tab : "Allow") as Tab;
+  const inner = columns - PERMISSIONS_FRAME_INSET;
+  return wrapLines(INTRO[t], inner) - 1 + Math.max(...tabFooters(t).map((f) => wrapLines(f, inner))) - 1;
+}
+
 /** THE DEFAULT IS LOAD-BEARING, do not drop it — `SettingsDialog.tsx:135-139` carries the full argument.
  *  `rows` is optional and plenty of existing tests render this dialog with no size props at all; without the
  *  default `permissionsVisibleRows(undefined)` is NaN, which threads through `clampVisible` and `windowBounds`
- *  to `options.slice(NaN, 1)` — a list permanently stuck at ONE row with navigation broken. */
-export const permissionsVisibleRows = (rows: number = process.stdout.rows ?? 24): number =>
-  Math.max(1, rows - PERMISSIONS_CHROME_ROWS);
+ *  to `options.slice(NaN, 1)` — a list permanently stuck at ONE row with navigation broken.
+ *
+ *  `tab` AND `columns` ARE OPTIONAL AND BOTH-OR-NEITHER: the wrap allowance is a function of the two together
+ *  (which literals, and how wide), so either one alone names nothing and the budget stays the honest height-only
+ *  one every existing caller already had — no call site changes meaning by not being updated. The shipped one,
+ *  the `<Select>` below, always has both. Order follows `rewindVisibleRows(rows, columns)`: the height first,
+ *  because it is the term that is never optional. */
+export const permissionsVisibleRows = (rows: number = process.stdout.rows ?? 24, tab?: string, columns?: number): number =>
+  Math.max(1, rows - PERMISSIONS_CHROME_ROWS - (tab === undefined || columns === undefined ? 0 : permissionsWrapRows(tab, columns)));
 
 export function PermissionsDialog({
   tab, onTabChange, denials, cwd,
@@ -572,7 +649,9 @@ export function PermissionsDialog({
               node: (focused: boolean) => <Text color={focused ? ACCENT : undefined}>{renderItem(it, permissionsRowWidth(columns))}</Text>,
             }))}
             hideIndexes
-            visibleOptionCount={permissionsVisibleRows(rows)}
+            // The tab is what makes the wrap allowance answerable (five intros, three footers) — see
+            // `permissionsWrapRows`. Both are always available here, which is the case that budget is for.
+            visibleOptionCount={permissionsVisibleRows(rows, activeTab, columns)}
             // Spread, not a bare prop: `undefined` would be passed through as an explicit "focus nothing" and
             // `options.findIndex` would answer -1 → 0 anyway, but the seed is only meaningful once `onFocus`
             // has reported something, and saying so here keeps the mount-time contract readable.
