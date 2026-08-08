@@ -446,8 +446,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //
   // WHAT IS IN THE CLASS: a surface whose HEIGHT IS A FUNCTION OF `rows`. It has already claimed the pane, so
   // a sibling beside it is not a near miss but a guaranteed overflow, and no budget it could carry would help.
-  // Seven, each swept at 18/20/22/24/26/30/40/50 rows — except the last, whose curve lives entirely BELOW that
-  // sweep and had to be measured from 12 up (see its own note).
+  // Eight, each swept at 18/20/22/24/26/30/40/50 rows — except the last two, whose curves live at or below the
+  // bottom of that sweep and had to be measured from 12 up (see their own notes).
   //   THE INSTRUMENT, and every curve below is traceable to it: `stdout.write` on a NON-DEBUG Ink render, with
   // log-update's `eraseLines` framing stripped back off, so the number quoted IS the `outputHeight` of
   // `ink.js:121` — never a `lastFrame()` line count. `ink-testing-library` renders with `debug: true`, and
@@ -502,14 +502,33 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //                       dialog would have changed. The rule still separates cleanly at the boundary that
   //                       matters: `ShortcutsOverlay` (18) and `BypassConsent` (18) are the two nearest it in
   //                       height on the other side, and nothing in either one reads `rows` at all.
+  //   · `PermissionsDialog` — `permissionsVisibleRows(rows)`; 12 → 28 over panes 14 → 30 with a 30-rule Allow
+  //                       tab, quoted at the top of the list like every entry above it and read off the same
+  //                       non-debug `stdout.write` instrument. The frame is `rows − 2` there and `rows − 1`
+  //                       mid-list, where BOTH counted indicators are up — that second state is the one
+  //                       `PERMISSIONS_CHROME_ROWS` (13) is built against, and it is what leaves the strict
+  //                       inequality its slack of exactly one. Below a pane of 14 the window is already at its
+  //                       floor of one row and no budget can help: measured 4 clears per cursor move at 12 and
+  //                       2 at 13, zero at every pane from 14 to 30 in all three states swept (Allow at the
+  //                       top; Allow mid-list with both indicators; Workspace with eight directories).
+  //                       MOVED HERE BY WAVE S t6b, which windowed its rule and workspace lists onto `Select`;
+  //                       until that task it read a constant and sat in the excluded list below (recorded
+  //                       there as 9). Its Workspace tab SATURATES at nine rows exactly as Settings' Config
+  //                       tab saturates at five — flat at 19 from a pane of 22 up — which is the same
+  //                       content-contingency, and by the derivation test the same non-issue.
+  //                         The gate is what this member needs, not a bigger budget, and the two numbers that
+  //                       show it are these: with a task panel on screen and this term ABSENT, the composed
+  //                       frame is `rows + 2` and every cursor move draws a clear at every pane from 14 to 30.
+  //                       With the term present it is the `rows − 2` above and draws none.
   // AND WHAT IS NOT, deliberately. This list is the OTHER half of a PARTITION of the dialog chain below —
   // every surface in that chain appears in exactly one of the two lists, and a new one has to be placed in
   // one of them. It is every dialog whose height is a function of its CONTENT: `BgTasksPanel` (13 rows),
   // `ShortcutsOverlay` (18), `BypassConsent` (18), `ThemeDialog` (17), `HistorySearchOverlay` (15, the
   // `/history` picker), the inline `PermissionDialog`/`QuestionDialog` pair (12),
-  // `PermissionsDialog` (9), `AddDirDialog`, and `RestoringModal` (1) — every one of them measured CONSTANT
-  // across that whole range. `SettingsDialog` (14) WAS ON THIS LIST and is not any more: Wave S t5 windowed
-  // its Config list, which is what a new member of the other half looks like from here — a change that adds a
+  // `AddDirDialog`, and `RestoringModal` (1) — every one of them measured CONSTANT
+  // across that whole range. `SettingsDialog` (14) and `PermissionsDialog` (9) WERE ON THIS LIST and are not
+  // any more: Wave S t5 windowed the first one's Config list and t6b the second one's rule and workspace
+  // lists, which is what a new member of the other half looks like from here — a change that adds a
   // `rows`-derived height to a dialog moves it across this partition, and the two lists have to be edited in
   // the same breath as the disjunction below or one of them starts lying.
   //   Those are a different defect with a different repair: a fixed-height dialog too
@@ -531,6 +550,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // pane-owning. The cost of being wrong is one hidden task panel, not an overflow.
   const paneOwned = transcriptOpen || state.helpOpen || state.rewindPicker.open || state.modelPicker.open || state.picker.open
     || state.settings.open                                        // Wave S t5 — its Config list is windowed now
+    || state.permissions.open                                     // Wave S t6b — its rule/workspace lists are windowed now
     || (inputOwnerRef.current === "decision" && state.pending?.kind === "plan");
   return (
     <Box flexDirection="column">
@@ -663,7 +683,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     fetchSettings={fetchPermSettings} fetchDirs={fetchPermDirs}
                     addRule={addPermRule} removeRule={removePermRule} removeDir={removeWorkspaceDir}
                     addDirValidate={addDirValidate} confirmAddDir={confirmAddDir} cancelAddDir={cancelAddDir}
-                    onDone={closePermissions} />
+                    // WAVE S t6b: its rule and workspace lists are windowed now, so this dialog joins the set
+                    // that is handed Task 1's size state rather than falling through to `process.stdout` behind
+                    // the app's pin (the ModelPicker arm above spells the whole argument out).
+                    onDone={closePermissions} rows={terminalRows()} columns={terminalColumns()} />
                 : state.themeDialog.open
                 ? <ThemeDialog onDone={closeThemeDialog} savePrefs={deps?.savePrefs} />
                 : state.addDir.open

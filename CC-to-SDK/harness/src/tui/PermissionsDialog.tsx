@@ -30,7 +30,16 @@
 // top-level slot the way Settings reuses `modelPicker` would need the opposite ordering; embedding sidesteps
 // that entirely and reuses the exact same addDirValidate/confirmAddDir/cancelAddDir callbacks useChat.ts
 // already exposes for the standalone /add-dir path — including their existing transcript-notice behavior).
-import React, { useEffect, useRef, useState } from "react";
+//
+// WAVE S t6b: the top-level row list is the shared `Select` (select/Select.tsx), not a hand-rolled cursor —
+// so it WINDOWS from the terminal height (`permissionsVisibleRows` below), reports what it clipped with the
+// counted `↑ N more above` / `↓ N more below` indicators, and answers pageup/pagedown/home/end, which the
+// `Settings` context binds nowhere and this dialog never had. The fix is the MIGRATION rather than four new
+// bindings: binding a page key onto a list that renders every row it has is the "resolves but moves nothing"
+// defect F2 exists to remove, and these lists are the genuinely unbounded ones (one per allow/ask/deny tab,
+// plus the workspace directory list). Because the list sizes itself from `rows`, this dialog crossed into
+// ChatApp's pane-owning class and `state.permissions.open` joined its `paneOwned` gate.
+import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
@@ -43,6 +52,9 @@ import type { AddDirVerdict } from "./addDir.js";
 import { AddDirDialog } from "./AddDirDialog.js";
 import { ACCENT } from "./theme.js";
 import { Tabs } from "./select/Tabs.js";
+import { Select } from "./select/Select.js";
+import { moreAbove, moreBelow, overflowRows } from "./select/overflow.js";
+import type { SelectView } from "./select/selectModel.js";
 
 const TABS = ["Recently denied", "Allow", "Ask", "Deny", "Workspace"] as const;
 type Tab = typeof TABS[number];
@@ -138,10 +150,12 @@ function itemValues(items: Item[]): string[] {
 }
 /** One row's BODY, with NO `❯ `/`  ` gutter and no colour — the caller owns both. 6b hands this to `Select`
  *  as a `node`, and `Select` draws the pointer in its own gutter (`Select.tsx:282`), so a body that kept the
- *  prefix would render `❯ ❯ Add a new rule…`. Colour stays on the caller's `<Text>` for a second reason: the
- *  gutter and the body have to sit inside ONE styled span or an SGR reset lands between them, and every
- *  pre-existing `❯ <label>` frame assertion is written against the raw bytes. 6b's node is therefore
- *  `(focused) => <Text color={focused ? ACCENT : undefined}>{renderItem(it)}</Text>`. */
+ *  prefix would render `❯ ❯ Add a new rule…`. The colour lives on the node's own wrapping `<Text>` (see the
+ *  `<Select>` below): `focused` is the argument `Select` passes, and dropping the ACCENT would leave the
+ *  pointer as the row's only focus affordance.
+ *  ONE CONSEQUENCE FOR TESTS, and it caught eight pre-existing assertions in this repo: the gutter and the
+ *  body are now SEPARATE styled spans, so the raw frame carries `❯`, an SGR reset, then the label. Match
+ *  `❯ <label>` against an ANSI-STRIPPED frame, never against the raw bytes. */
 function renderItem(it: Item): React.ReactNode {
   if (it.kind === "addRule") return "Add a new rule…";
   if (it.kind === "addDir") return "Add directory…";
@@ -149,12 +163,82 @@ function renderItem(it: Item): React.ReactNode {
   if (it.kind === "dir") return it.line.segments ? it.line.segments.map((s, si) => <Text key={si} dimColor={s.dim}>{s.text}</Text>) : it.line.text;
   return <>{it.e.display}  <Text dimColor>by {it.e.by}</Text></>;
 }
+/** The same row as ONE plain string — `Select`'s `label`, which a `node` row degrades to for measurement and
+ *  for the fallback render. Unused in practice here (no row carries a `description`, so `isTwoColumn` is false
+ *  and nothing measures a label column), but it is the contract's own field and a wrong one would surface as a
+ *  mis-measured column the day a description appears. */
+function itemLabel(it: Item): string {
+  if (it.kind === "addRule") return "Add a new rule…";
+  if (it.kind === "addDir") return "Add directory…";
+  if (it.kind === "rule") return `${it.row.rule}  From ${SOURCE_LABELS[it.row.source] ?? it.row.source}`;
+  if (it.kind === "dir") return it.line.segments ? it.line.segments.map((s) => s.text).join("") : it.line.text;
+  return `${it.e.display}  by ${it.e.by}`;
+}
+
+/** WAVE S t6b — the rows this dialog spends on everything that is NOT the list, counted against the composed
+ *  `ChatApp` frame rather than against `PermissionsDialog` alone. Same denominator, and for the same reason, as
+ *  `SETTINGS_CHROME_ROWS` (SettingsDialog.tsx:81-133) and Wave S t4's `REWIND_CHROME_ROWS`: a budget counted
+ *  from the box alone composes into a frame that REACHES the pane, and Ink 5.2.1 answers
+ *  `outputHeight >= stdout.rows` (`ink.js:121`) with `clearTerminal + fullStaticOutput + output` — a
+ *  full-screen wipe and a whole-transcript re-dump on every render, i.e. on every cursor move.
+ *
+ *  9 + 2 + 1 + 1, each term against this file's own render tree (the final `return` below):
+ *    · 9 — the dialog's own UNCONDITIONAL chrome. NINE, not the seven Settings spends: this dialog draws an
+ *      intro line and one more blank spacer than that one does.
+ *        1-2  the `borderStyle="round"` box's top and bottom rules
+ *        3    the bold `Permissions` title
+ *        4    the `<Tabs>` strip
+ *        5    the blank spacer under the strip
+ *        6    `INTRO[activeTab]`
+ *        7    the blank spacer above the list
+ *        8    the blank spacer above the footer
+ *        9    the footer (`RECENT_FOOTER` / `MANAGED_DIR_FOOTER` / `DEFAULT_FOOTER` — exactly one of them)
+ *    · +2 — the two indicator rows, `↑ N more above` and `↓ N more below`. BOTH, unconditionally, even though
+ *      a window at either end of the list draws only one: they toggle as a CONSEQUENCE of scrolling, so a
+ *      budget that reserved them conditionally would grow the window at the top of the list and shrink it
+ *      again on the first step down — resizing the list under a moving cursor. Same call the rewind and
+ *      settings budgets make.
+ *        `RECENT_EMPTY` (the "No recent denials…" line) is the third conditional row and is deliberately NOT
+ *      reserved: it renders only on the `Recently denied` tab with ZERO denials, which is exactly the state
+ *      whose list is empty and whose indicators are therefore both off. It cannot coexist with either.
+ *    · +1 — `ChatStatusBar`, the one sibling this budget models because it is the only UNCONDITIONAL one
+ *      (ChatApp's last row). Everything else ChatApp can draw beside this dialog is handled by its `paneOwned`
+ *      gate, which t6b extends to `state.permissions.open` precisely because this dialog now sizes itself from
+ *      `rows`. A budget could not model those anyway: the task panel alone is seven rows.
+ *    · +1 — the `>=` above: the frame must end up STRICTLY shorter than the pane, not equal to it.
+ *
+ *  MEASURED, AND NOT WITH `lastFrame()`, for the reason `SETTINGS_CHROME_ROWS` spells out in full:
+ *  `ink-testing-library` renders with `debug: true` and that branch RETURNS BEFORE the `outputHeight >=
+ *  stdout.rows` check (`ink.js:104-109`), so a frame's line count there is `staticLines + outputHeight` and any
+ *  dialog reached by TYPING a slash command reads one row too tall. The instrument is `stdout.write` on a
+ *  NON-DEBUG Ink render, counting `ansiEscapes.clearTerminal` writes. Swept panes 12 → 30 at 100 columns on the
+ *  real `ChatApp` behind `/permissions`, in three states (Allow tab at the top of a 30-rule list; Allow at the
+ *  bottom, both indicators live; Workspace with eight directories): ZERO clears at every pane of 14 or more in
+ *  all three. Below 14 the window is already at its floor of one row and no budget can help.
+ *
+ *  RESIDUAL, stated rather than fixed — the same one Settings records and it bites slightly harder here. This
+ *  budget is HEIGHT-ONLY: the Workspace intro is 88 columns and wraps to two lines below ~92, and a workspace
+ *  path longer than the content width wraps its row. Terms 3 and 4 above (`ChatStatusBar` and Ink's `>=`)
+ *  absorb one such wrap, which is what the 100-column sweep exercises for the intro; a 15-row pane at 80
+ *  columns on the Workspace tab spends both and has no slack left. A `columns` term (rewindWrapRows' shape) is
+ *  the fix if that combination ever matters.
+ *
+ *  NOTE THE CLAMP INTERACTION, as in Settings: `Select`'s own `clampVisible` (selectModel.ts:18,28) already
+ *  reserves 8 rows and takes the `min()` of the two — so this number does not solely govern the window. It is
+ *  the ceiling this dialog contributes, and being the larger of the two it is the one that binds. */
+export const PERMISSIONS_CHROME_ROWS = 13;
+/** THE DEFAULT IS LOAD-BEARING, do not drop it — `SettingsDialog.tsx:135-139` carries the full argument.
+ *  `rows` is optional and plenty of existing tests render this dialog with no size props at all; without the
+ *  default `permissionsVisibleRows(undefined)` is NaN, which threads through `clampVisible` and `windowBounds`
+ *  to `options.slice(NaN, 1)` — a list permanently stuck at ONE row with navigation broken. */
+export const permissionsVisibleRows = (rows: number = process.stdout.rows ?? 24): number =>
+  Math.max(1, rows - PERMISSIONS_CHROME_ROWS);
 
 export function PermissionsDialog({
   tab, onTabChange, denials, cwd,
   fetchSettings, fetchDirs, addRule, removeRule, removeDir,
   addDirValidate, confirmAddDir, cancelAddDir,
-  onDone,
+  onDone, rows, columns,
 }: {
   tab: string;
   onTabChange: (tab: string) => void;
@@ -172,29 +256,26 @@ export function PermissionsDialog({
   confirmAddDir: (abs: string, remember: boolean) => Promise<void>;
   cancelAddDir: (abs?: string) => void;
   onDone: () => void;
+  /** The terminal's size, threaded by `ChatApp` from Wave R task 1's size state — the same pair every other
+   *  geometry-taking dialog in that chain gets (t6b). Optional so a bare-rendered test keeps working; the
+   *  default lives in `permissionsVisibleRows`/`Select`, not here, so both readers agree on it. */
+  rows?: number; columns?: number;
 }) {
   const activeTab = (TABS as readonly string[]).includes(tab) ? (tab as Tab) : "Allow";
-  // The row cursor is a VALUE, not an index (t6a) — see `itemValue`. `undefined` = "never moved", which reads
-  // as the top row (`cursorAt`). Ref-backed to match `sub` and `ruleText` below, and because `activate` reads
-  // the cursor SYNCHRONOUSLY out of a key handler: through the ref that read is right by construction rather
-  // than by the surrounding machinery happening to have re-rendered first.
-  // NOT because a chunk's events would otherwise race a render — that hazard is real for the text-entry
-  // fallback (keys/refState.ts) but NOT on this action path, and the round-6a report claimed it here in error.
-  // Measured, not argued: swapping this for a plain `useState` whose `move`/`activate` read the RENDER CLOSURE
-  // (no functional updater, no ref) passes the whole `test:tui` suite, back-to-back `↓↓` included, because
-  // `useRegistration` refreshes the handler entry during render (keys/KeymapProvider.tsx:362-370) and Ink
-  // flushes those renders synchronously between iterations of the dispatch loop. Don't re-derive a hazard from
-  // this comment; if you want to change the shape, the reason to keep the ref is the one above.
-  const [focusValue, setFocusValue, focusRef] = useRefState<string | undefined>(undefined);
-  /** The index that cursor value last RESOLVED to, carried alongside it. A value answers "which row is mine"
-   *  across a rebuild that KEEPS the row; when the row is GONE — and the commonest rebuild here is the refetch
-   *  after you deleted the row you were standing on — a value can answer nothing, and a position is the only
-   *  meaningful reply: the row that took the deleted one's place. Falling back to 0 instead sent the cursor to
-   *  the top of the list after every delete (and, once 6b windows the list, the viewport with it), so deleting
-   *  a run of rules cost an arrow press per row you had descended instead of being hold-Enter.
-   *  6b hands this job to `Select`, which stores focus as an index and clamps it to `count - 1` when `options`
-   *  shrinks — the same answer — so this ref goes away there and the test keeps the behaviour pinned. */
-  const lastIdxRef = useRef(0);
+  // The row cursor is a VALUE, not an index (t6a) — see `itemValue`. As of t6b the cursor LIVES IN THE
+  // `Select`; this is a MIRROR of what its `onFocus` last reported, kept for the two readers that are not the
+  // list: the footer (which row's kind decides `MANAGED_DIR_FOOTER`) and the `defaultFocusValue` seed. It is
+  // deliberately NOT ref-backed any more — nothing reads it synchronously out of a key handler now that
+  // `activate` is handed the row's value by `Select`'s own `onChange`, and an unused ref is a claim about a
+  // hazard that no longer exists.
+  //   THE DELETE-CURSOR BEHAVIOUR IS `Select`'S NOW, and it is the same answer 6a's index fallback gave: focus
+  // is stored as an index (Select.tsx:160-163) and `normalize()` clamps it to `count - 1` when `options`
+  // shrinks (Select.tsx:172-175), so deleting the row you are standing on leaves the cursor on the row that
+  // took its place rather than at the top of the list. permissions-dialog.test.tsx keeps that pinned.
+  const [focusValue, setFocusValue] = useState<string | undefined>(undefined);
+  /** The window `Select` last reported, which is the only place the counted indicators can come from — the
+   *  scroll window lives in that component's reducer and a copy recomputed here would drift (Select.tsx:103). */
+  const [view, setView] = useState<SelectView | undefined>(undefined);
   // Ref-backed (keys/refState.ts): `sub` is what every key handler branches on and `ruleText` is what one
   // accumulates into, and a single stdin chunk dispatches several events before any render.
   const [sub, setSub, subRef] = useRefState<Sub>("none");
@@ -209,7 +290,12 @@ export function PermissionsDialog({
   async function refreshSettings() { try { setSettings(await fetchSettings()); } catch { setSettings({}); } }
   async function refreshDirs() { try { setDirs(await fetchDirs()); } catch { setDirs([]); } }
   useEffect(() => { void refreshSettings(); void refreshDirs(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setFocusValue(undefined); lastIdxRef.current = 0; }, [activeTab]);   // a row cursor from one tab must not carry into another tab's (differently-sized) list — neither half of it
+  // A row cursor from one tab must not carry into another tab's (differently-sized) list. THIS EFFECT ALONE
+  // DOES NOT DO IT: `Select` reads `defaultFocusValue` only in its `useState` initializers (Select.tsx:160-167)
+  // and a tab change does not remount it, so its internal `view.focus` would survive and Allow-row-20 → a short
+  // tab → back would land on row 20 again with no keypress. `key={activeTab}` on the `<Select>` is what
+  // remounts it; this effect only clears THIS component's two mirrors so the seed and the footer agree.
+  useEffect(() => { setFocusValue(undefined); setView(undefined); }, [activeTab]);
 
   const behavior = BEHAVIOR_OF[activeTab];
   const dirList = dirs ?? [];
@@ -219,19 +305,14 @@ export function PermissionsDialog({
     : activeTab === "Workspace" ? [{ kind: "addDir" }, ...dirList.map((d, i): Item => ({ kind: "dir", d, line: dirLines[i] }))]
     : behavior ? [{ kind: "addRule" }, ...ruleRows(settings, behavior).map((row): Item => ({ kind: "rule", row }))]
     : [];
+  // ONE call per render, shared by the options array and the footer's cursor — `itemValues` walks the whole
+  // list and its occurrence suffixes have to be the SAME numbering both readers see.
   const values = itemValues(items);
-  /** The ONE rule the cursor, the footer and `activate` all read, so they can never disagree about which row
-   *  is current. A value that still names a row wins and is remembered; otherwise the remembered POSITION
-   *  answers, clamped — exactly the old `Math.min(idx, items.length - 1)`, which is why an unset cursor (and
-   *  an empty list) still degenerates to the top row. Recording on the way through is idempotent — it is a
-   *  function of `values` and `value` alone — so calling this from a render is safe. */
-  const cursorAt = (value: string | undefined): number => {
-    const i = value === undefined ? -1 : values.indexOf(value);
-    if (i >= 0) { lastIdxRef.current = i; return i; }
-    return Math.min(lastIdxRef.current, Math.max(0, values.length - 1));
-  };
-  const focusIdx = cursorAt(focusValue);
-  const selectedItem = items[focusIdx];
+  /** The row the FOOTER reads (`MANAGED_DIR_FOOTER` vs `DEFAULT_FOOTER`). `?? items[0]` is load-bearing:
+   *  `focusValue` is `undefined` until `Select`'s mount-time `onFocus` fires, and the footer renders before
+   *  that — and a value whose row a refetch has just removed lands here too, one render before `Select`'s
+   *  clamp reports the replacement. Both degenerate to the top row, which is what the pre-6a clamp did. */
+  const selectedItem = items[focusValue === undefined ? -1 : values.indexOf(focusValue)] ?? items[0];
 
   /** The six sub-views, verbatim from the pre-review handler and deliberately still PHYSICAL (final review):
    *  two of them are text entry (the rule name), and the other four are modal prompts whose only keys are the
@@ -290,15 +371,10 @@ export function PermissionsDialog({
     if (subRef.current !== "none") { onSubKey(e); return; }
     op();
   };
-  /** Moves the cursor by whole rows off the LIVE value (`focusRef`), not the render's. `values` is safe to
-   *  read from the render closure: only a fetch changes it, and a fetch re-renders. */
-  const move = (delta: number) => {
-    const next = Math.min(values.length - 1, Math.max(0, cursorAt(focusRef.current) + delta));
-    if (next >= 0) setFocusValue(values[next]);
-  };
-  /** Takes the row's VALUE (`undefined` before the first keypress — the footer's row, i.e. the top one). */
-  const activate = (value: string | undefined) => {
-    const item = items[cursorAt(value)];
+  /** Takes the row's VALUE, which is what `Select`'s `onChange` hands back — the row the cursor was on when
+   *  the key was dispatched, read out of `Select`'s own live window rather than out of a render closure here. */
+  const activate = (value: string) => {
+    const item = items[values.indexOf(value)];
     if (!item) return;
     if (item.kind === "addRule") { setRuleText(""); setSub("addRuleText"); return; }
     if (item.kind === "addDir") { setSub("addDir"); return; }
@@ -310,16 +386,20 @@ export function PermissionsDialog({
   };
   useKeyScope("Settings");
   useKeyScope("Tabs");
-  // Each top-level handler performs its own operation instead of re-reading the physical key out of a shared
-  // body — that re-read is what made a user's `"x": "select:next"` resolve, match, reach this component and
-  // move nothing (final review, P2). One deliberate widening comes with it: `select:accept` is bound to
-  // {enter, space}, so space now takes the highlighted row here as it always has in SettingsDialog, where the
-  // old hand-rolled branch tested `key.return` alone. Nothing destructive is one keypress away — every
-  // delete/remove still needs its own Enter inside the modal prompt that opens.
+  // WAVE S t6b — MOVEMENT AND ACCEPTANCE BELONG TO THE INNER `Select` NOW (W-S3). It pushes the `Select`
+  // context innermost, so its eight actions resolve there, including the four — select:pageUp/pageDown/first/
+  // last — this component never had at all; registering them here as well would only shadow it. Upstream's own
+  // Permissions gets pageup/pagedown from `jr`'s raw handler and has no home/end anywhere, so the full
+  // four-key set (and the counted indicators) is a recorded divergence, W-S11.
+  //   BOTH `useKeyScope` CALLS STAY. The six sub-views render with NO `Select` mounted at all — each
+  // early-returns above it — and they rely on the `Settings`/`Tabs` contexts' null bindings to keep the six
+  // root globals unbound while they own the keyboard. Their keys also stay PHYSICAL (`onSubKey`): four of them
+  // are destructive confirms, and `select:accept` is bound to {enter, SPACE}, so dispatching them on the ACTION
+  // would delete a permission rule on a stray space.
+  //   The one deliberate widening t6a's registration introduced survives the move unchanged: space takes the
+  // highlighted row at the TOP LEVEL, exactly as it does in SettingsDialog. Nothing destructive is one keypress
+  // away — every delete/remove still needs its own Enter inside the modal prompt that opens.
   useKeyActions(sub === "addDir" ? NO_ACTIONS : {
-    "select:previous": route(() => move(-1)),
-    "select:next": route(() => move(+1)),
-    "select:accept": route(() => activate(focusRef.current)),
     "confirm:no": route(() => onDone()),
     "settings:search": route(() => {}),                // `/` opens no query here — this dialog has no search
     // `tabs:next`/`tabs:previous` belong to the embedded <Tabs> now (see the header).
@@ -402,13 +482,39 @@ export function PermissionsDialog({
       <Text dimColor>{INTRO[activeTab]}</Text>
       {activeTab === "Recently denied" && denials.length === 0 ? <Text dimColor>{RECENT_EMPTY}</Text> : null}
       <Text> </Text>
-      {/* Still hand-rolled and still unwindowed (6b mounts the `Select`); what changed in 6a is that the row
-          bodies live in `renderItem` and the React key is the row's own identity, so duplicate rules stop
-          colliding there too. The gutter stays INSIDE this <Text> — see renderItem's note. */}
-      {loading ? <Text dimColor>Loading…</Text> : items.map((item, i) => {
-        const focused = i === focusIdx;
-        return <Text key={values[i]} color={focused ? ACCENT : undefined}>{focused ? "❯ " : "  "}{renderItem(item)}</Text>;
-      })}
+      {/* WAVE S t6b — the list is the shared `Select`, windowed from `rows`, with upstream's counted overflow
+          indicators OUTSIDE it (select/overflow.ts) because the window lives in the list's own reducer.
+          `key={activeTab}` is the remount lever: `defaultFocusValue` is a MOUNT-TIME seed, so without it a
+          cursor deep in the Allow list would survive a trip through a shorter tab. */}
+      {loading ? <Text dimColor>Loading…</Text> : (
+        <>
+          {view && overflowRows(view, items.length).above > 0
+            ? <Text dimColor>{moreAbove(overflowRows(view, items.length).above)}</Text> : null}
+          <Select
+            key={activeTab}
+            options={items.map((it, i) => ({
+              value: values[i]!, label: itemLabel(it),
+              // `focused` is USED, not ignored: the focused row has been ACCENT since W3 t7 and dropping that
+              // would leave the pointer gutter as the only affordance. The `❯ `/`  ` prefix is NOT reproduced —
+              // `Select` draws it in its own gutter (Select.tsx:282); repeating it renders `❯ ❯ Add a new rule…`.
+              node: (focused: boolean) => <Text color={focused ? ACCENT : undefined}>{renderItem(it)}</Text>,
+            }))}
+            hideIndexes
+            visibleOptionCount={permissionsVisibleRows(rows)}
+            // Spread, not a bare prop: `undefined` would be passed through as an explicit "focus nothing" and
+            // `options.findIndex` would answer -1 → 0 anyway, but the seed is only meaningful once `onFocus`
+            // has reported something, and saying so here keeps the mount-time contract readable.
+            {...(focusValue !== undefined ? { defaultFocusValue: focusValue } : {})}
+            onFocus={setFocusValue}
+            onViewChange={setView}
+            onChange={activate}
+            onCancel={onDone}
+            rows={rows} columns={columns}
+          />
+          {view && overflowRows(view, items.length).below > 0
+            ? <Text dimColor>{moreBelow(overflowRows(view, items.length).below)}</Text> : null}
+        </>
+      )}
       <Text> </Text>
       <Text dimColor>{activeTab === "Recently denied" ? RECENT_FOOTER : activeTab === "Workspace" && selectedItem?.kind === "dir" && selectedItem.d.source !== "session" ? MANAGED_DIR_FOOTER : DEFAULT_FOOTER}</Text>
     </Box>

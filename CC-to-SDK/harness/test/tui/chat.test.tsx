@@ -1855,7 +1855,7 @@ describe("<ChatApp>", () => {
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Read"));           // the fetched read-only row rendered
     stdin.write("\x1b[B");                                            // ↓ from "Add a new rule…" (idx 0) to the "Read" row (idx 1)
-    await waitFor(() => frame(lastFrame).includes("❯ Read"));
+    await waitFor(() => stripAnsiAll(frame(lastFrame)).includes("❯ Read"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Rule details"));
     expect(frame(lastFrame)).toContain("This rule comes from a read-only source and cannot be modified here.");
@@ -1905,11 +1905,14 @@ describe("<ChatApp>", () => {
     await waitFor(() => writes.length === 1);                       // the ADD write landed
     expect(writes[0].path).toBe(`${process.cwd()}/.claude/settings.local.json`);
     expect(JSON.parse(writes[0].content)).toEqual({ permissions: { allow: ["WebFetch"] } });
-    await waitFor(() => frame(lastFrame).includes("❯ Add a new rule…"));   // back on the row list, cursor still at idx 0
+    // stripAnsiAll, not the raw frame: WAVE S t6b mounted a `Select` under this list, and its pointer is the
+    // list's own coloured gutter span — an SGR reset lands between `❯ ` and the label. As a `waitFor` PREDICATE
+    // a raw match here fails as a bare timeout with no diff, which reads like a hang rather than a mismatch.
+    await waitFor(() => stripAnsiAll(frame(lastFrame)).includes("❯ Add a new rule…"));   // back on the row list, cursor still on the top row
     // Refetched settings now report the rule as flagSettings-sourced (readOnly:false) — move down from
     // "Add a new rule…" (idx 0) onto it and confirm it opens the DELETE sub-view, not Rule details.
     stdin.write("\x1b[B");
-    await waitFor(() => frame(lastFrame).includes("❯ WebFetch"));
+    await waitFor(() => stripAnsiAll(frame(lastFrame)).includes("❯ WebFetch"));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Delete allowed tool?"));
     expect(frame(lastFrame)).toContain("Are you sure you want to delete this permission rule?");
@@ -1932,7 +1935,7 @@ describe("<ChatApp>", () => {
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always ask for confirmation before using these tools."));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always reject requests to use denied tools."));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Add directory…"));
-    stdin.write("\x1b[B"); await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes(`❯ ${process.cwd()}`));
+    stdin.write("\x1b[B"); await waitFor(() => stripAnsiAll(frame(lastFrame)).replace(/\n/g, " ").includes(`❯ ${process.cwd()}`));
     expect(frame(lastFrame)).not.toContain("Enter to select");
     stdin.write("\r");
     await new Promise((r) => setTimeout(r, 30));
@@ -1961,7 +1964,7 @@ describe("<ChatApp>", () => {
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Add directory…"));
     await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes(sessionDir));
     stdin.write("\x1b[B"); stdin.write("\x1b[B");                     // ↓ ↓ : Add directory…(0) → cwd row(1) → session dir row(2)
-    await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes(`❯ ${sessionDir}`));
+    await waitFor(() => stripAnsiAll(frame(lastFrame)).replace(/\n/g, " ").includes(`❯ ${sessionDir}`));
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("Remove directory from workspace?"));
     expect(frame(lastFrame)).toContain("Claude Code will no longer have access to files in this directory.");
@@ -2325,8 +2328,12 @@ describe("<ChatApp> — the paneOwned gate hides the task panel behind every pan
     deps: Record<string, unknown>,
     open: (r: { stdin: { write: (s: string) => void }; lastFrame: () => string | undefined }, fake: ReturnType<typeof fakeRemote>) => Promise<void>,
     close: (r: { stdin: { write: (s: string) => void }; lastFrame: () => string | undefined }, fake: ReturnType<typeof fakeRemote>) => Promise<void>,
+    /** WAVE S t6b — `/permissions` refuses to open at all on a session without the SettingsOps surface
+     *  (useChat.ts:961 notices "permissions unsupported" and breaks), so that member needs a
+     *  `fakeSettingsRemote`. Every other member is happy with the plain fake this defaults to. */
+    make: (o: FakeRemoteOpts) => ReturnType<typeof fakeRemote> = fakeRemote,
   ) => {
-    const fake = fakeRemote(opts);
+    const fake = make(opts);
     const r = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/tmp" deps={deps as never} />);
     await waitFor(() => frame(r.lastFrame).includes("❯ "));
     seedTodo(fake);
@@ -2377,6 +2384,27 @@ describe("<ChatApp> — the paneOwned gate hides the task panel behind every pan
     await gateCycle("/config", {}, {},
       async (r) => { r.stdin.write("/config"); await waitFor(() => frame(r.lastFrame).includes("/config")); r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("Enter/Space to change")); },
       async (r) => { r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("Enter/Space to change")); });
+  });
+
+  /** WAVE S t6b ADDED THIS MEMBER — the EIGHTH of the class ChatApp's gate comment counts, the SEVENTH
+   *  disjunct in `paneOwned`'s source order and the SIXTH case in this block. `/permissions`' rule and
+   *  workspace lists are windowed now (`permissionsVisibleRows`), so the dialog's height DERIVES from `rows`
+   *  and it moved out of the excluded half of ChatApp's partition into this one — the same crossing `/config`
+   *  made one task earlier, and for the same reason. The derivation is the criterion, not observed variance:
+   *  the Workspace tab saturates once every directory fits, exactly as the Config catalog's five rows do.
+   *
+   *  SABOTAGE-CHECKED like every other member, by deleting `|| state.permissions.open` from the disjunction:
+   *  this case fails on the OPEN half ("the task panel is still mounted beside a pane-sizing dialog") and
+   *  every other case in the file stays green. The measurement behind it is in ChatApp's gate comment — with
+   *  the term absent and a task panel up, the composed frame is `rows + 2` and Ink draws a `clearTerminal`
+   *  (full-screen wipe plus whole-transcript re-dump) on every cursor move at every pane from 14 to 30.
+   *
+   *  It needs the settings-capable fake — see `gateCycle`'s `make` parameter. */
+  it("/permissions — the task panel unmounts while the Permissions dialog is up and comes back when it closes", async () => {
+    await gateCycle("/permissions", {}, {},
+      async (r) => { r.stdin.write("/permissions"); await waitFor(() => frame(r.lastFrame).includes("/permissions")); r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("Claude Code won't ask before using allowed tools.")); },
+      async (r) => { r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("Claude Code won't ask before using allowed tools.")); },
+      (o) => fakeSettingsRemote({}, o) as unknown as ReturnType<typeof fakeRemote>);
   });
 
   /** THE NEGATIVE PIN. `/theme` is a content-sized dialog — a constant 17 rows at every pane — so it is on the

@@ -550,11 +550,13 @@ describe("F2 final review — a custom rebind drives the dialogs' semantic ops, 
     confirmAddDir: async () => {}, cancelAddDir: () => {}, onDone: () => {},
   });
 
-  // WAVE S t5 — the SettingsDialog cases below strip ANSI before matching `❯ <row>`, and the PermissionsDialog
-  // ones deliberately do not. Settings' Config list is a `Select` now, so its pointer is the list's own gutter
-  // span and the raw frame reads `❯\x1b[39m Theme`; PermissionsDialog still renders the pointer inside the
-  // row's own `<Text>`, where the two characters are still contiguous. The claim each case makes — a rebind
+  // WAVE S t5/t6b — EVERY case below strips ANSI before matching `❯ <row>`. Both dialogs' lists are a `Select`
+  // now (Settings' Config list as of t5, Permissions' rule and workspace lists as of t6b), so the pointer is
+  // the list's own gutter span and the raw frame reads `❯\x1b[39m Theme`. The claim each case makes — a rebind
   // resolving to a semantic op, and that op moving the cursor — is unchanged; only the match is.
+  //   THE FAILURE MODE IS WHY THIS NOTE EXISTS: these are `waitFor` PREDICATES, not `expect`s, so a raw match
+  // against a Select-drawn pointer surfaces as a bare "waitFor timeout" with no string diff — it reads like a
+  // hang, not a mismatch. t6b turned three of these cases red exactly that way.
   it("SettingsDialog: `x` bound to select:next moves the row cursor (and `z` to select:previous moves it back)", async () => {
     const { stdin, lastFrame } = render(<SettingsDialog {...settingsProps()} />, { userLayers: settingsLayer({ x: "select:next", z: "select:previous" }) });
     await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Theme"));
@@ -591,14 +593,14 @@ describe("F2 final review — a custom rebind drives the dialogs' semantic ops, 
 
   it("PermissionsDialog: `x` bound to select:next moves the row cursor", async () => {
     const { stdin, lastFrame } = render(<PermissionsDialog {...permProps()} />, { userLayers: settingsLayer({ x: "select:next" }) });
-    await waitFor(() => frame(lastFrame).includes("❯ Add a new rule…"));
-    stdin.write("x"); await waitFor(() => frame(lastFrame).includes("❯ Bash(ls)"));
-    stdin.write("x"); await waitFor(() => frame(lastFrame).includes("❯ WebFetch"));
+    await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Add a new rule…"));
+    stdin.write("x"); await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Bash(ls)"));
+    stdin.write("x"); await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ WebFetch"));
   });
 
   it("PermissionsDialog: the rebound key is still LITERAL TEXT in the add-rule prompt (the sub-view stays physical)", async () => {
     const { stdin, lastFrame } = render(<PermissionsDialog {...permProps()} />, { userLayers: settingsLayer({ x: "select:next" }) });
-    await waitFor(() => frame(lastFrame).includes("❯ Add a new rule…"));
+    await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Add a new rule…"));
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Enter permission rule…"));
     for (const ch of "xx") { stdin.write(ch); await tick(); }
     await waitFor(() => frame(lastFrame).includes("Add allow permission rule"));
@@ -673,7 +675,7 @@ describe("F6 task 2 — Settings/Permissions adopt <Tabs> with no behavioural ch
 
   it("PermissionsDialog: inverse chip, cycling, and a sub-view that still keeps the strip off the keyboard", async () => {
     const { stdin, lastFrame } = render(<PermissionsHost />);
-    await waitFor(() => frame(lastFrame).includes("❯ Add a new rule…"));
+    await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Add a new rule…"));
     expect(frame(lastFrame)).toContain(chip("Allow"));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes(chip("Ask")));
     stdin.write("\x1b[D"); await waitFor(() => frame(lastFrame).includes(chip("Allow")));
@@ -682,7 +684,7 @@ describe("F6 task 2 — Settings/Permissions adopt <Tabs> with no behavioural ch
       stdin.write(k); await tick();
       expect(frame(lastFrame), "the add-rule prompt still owns the keyboard").toContain("Enter permission rule…");
     }
-    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("❯ Add a new rule…"));
+    stdin.write("\x1b"); await waitFor(() => stripAnsi(frame(lastFrame)).includes("❯ Add a new rule…"));
     expect(frame(lastFrame), "and the tab never moved behind it").toContain(chip("Allow"));
   });
 });

@@ -50,6 +50,7 @@ import { SessionPicker } from "../../src/tui/SessionPicker.js";
 import { BgTasksPanel } from "../../src/tui/BgTasksPanel.js";
 import { HelpDialog } from "../../src/tui/HelpDialog.js";
 import { SettingsDialog } from "../../src/tui/SettingsDialog.js";
+import { PermissionsDialog } from "../../src/tui/PermissionsDialog.js";
 import { POINTER } from "../../src/tui/select/Select.js";
 import { NBSP } from "../../src/tui/composerFrame.js";
 import { createPermissionGate } from "../../src/permissions/gate.js";
@@ -60,6 +61,7 @@ import type { RewindAnchor, RewindDryRun } from "../../src/session/chatSession.j
 import type { SessionInfo } from "../../src/tui/useChat.js";
 import type { BgTaskRow } from "../../src/tui/bgTaskMeta.js";
 import type { CommandEntry } from "../../src/tui/commandComplete.js";
+import type { AddDirVerdict } from "../../src/tui/addDir.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -319,24 +321,22 @@ describe("F6 acceptance #5 — every rewind row carries its file-change summary 
 // ── ACCEPTANCE #6 ───────────────────────────────────────────────────────────────────────────────────────
 // "`j`/`k`, `ctrl+n`/`ctrl+p`, PageUp/PageDown and Home/End move the selection in every list in the app."
 //
-// **NARROWED, and the narrowing is the honest part** — but it is one surface narrower than it was. What is
-// true is "every list on T1's `Select`", which as of Wave S t5 is the EIGHT surfaces below.
+// **NARROWED, and the narrowing is the honest part.** What is true is "every list on T1's `Select`" — which
+// as of Wave S t6b is the NINE surfaces below, and the narrowing no longer costs this criterion a surface.
 //
-// WAVE S t5 CLOSED HALF OF THE ORIGINAL SHORTFALL. This block used to name two older overlays that would fail
-// two of the five groups: `SettingsDialog` and `PermissionsDialog` push the `Settings` context, which binds
-// `up`/`down`/`j`/`k`/`ctrl+p`/`ctrl+n` but **no `pageup`/`pagedown`/`home`/`end` at all** (bindings.ts), and
-// their key fallback swallows the unresolved keys rather than passing them on. `SettingsDialog`'s Config list
-// is a `Select` now, and the fix was the MIGRATION rather than four new bindings on the `Settings` context:
-// the inner `Select` pushes the `Select` context innermost, where those four keys already resolve, and it
-// brings the WINDOW that makes a page mean something (an unwindowed five-row list has no page to turn — that
-// is the "resolves but moves nothing" defect F2 exists to remove). Its five rows are pinned below like every
-// other member.
-//
-// `PermissionsDialog` IS STILL SHORT, and stays named here rather than hidden behind a helper that never
-// visits it: it hand-rolls its own cursor, so those four keys remain dead there. That is the remaining
-// shortfall against the criterion's literal wording and it is recorded in the parity doc's F6 divergence
-// table — which the t5 review refreshed: that entry now names `PermissionsDialog` alone and records Settings'
-// half as closed here (docs/parity/tui-ux.md, the `pageup`/`pagedown`/`home`/`end` row).
+// WAVE S t5 AND t6b CLOSED THE ORIGINAL SHORTFALL, one half each. This block used to name two older overlays
+// that failed two of the five groups: `SettingsDialog` and `PermissionsDialog` push the `Settings` context,
+// which binds `up`/`down`/`j`/`k`/`ctrl+p`/`ctrl+n` but **no `pageup`/`pagedown`/`home`/`end` at all**
+// (bindings.ts), and their key fallback swallows the unresolved keys rather than passing them on. Both are
+// `Select` lists now, and in both the fix was the MIGRATION rather than four new bindings on the `Settings`
+// context: the inner `Select` pushes the `Select` context innermost, where those four keys already resolve,
+// and it brings the WINDOW that makes a page mean something (a list that renders every row it has has no page
+// to turn — the "resolves but moves nothing" defect F2 exists to remove). t5 did Settings' five Config rows;
+// t6b did Permissions' rule and workspace lists, which are the genuinely UNBOUNDED ones here, so the window it
+// brought is load-bearing rather than nominal. Both are pinned below like every other member, and the parity
+// doc's F6 divergence row is closed with them (docs/parity/tui-ux.md, the `pageup`/`pagedown`/`home`/`end`
+// row). Upstream's own Permissions is now the narrower surface: `jr` gives it `pageup`/`pagedown` and has no
+// `home`/`end` anywhere, and it draws no counted indicators (recorded divergence, W-S11).
 //
 // Each key group gets a FRESH MOUNT rather than a walk from one state to the next, because a surface whose
 // last row is a `type:"input"` row (the plan dialog) deregisters every movement action while that row has the
@@ -486,6 +486,23 @@ pinsListNavigation(
   "the Settings dialog's Config list",
   () => opened(<SettingsDialog {...SETTINGS_PROPS} rows={40} columns={100} />, "Thinking mode"),
   ["Theme", "Model", "Output style", "Default permission mode", "Thinking mode"],
+);
+
+// WAVE S t6b — the Allow tab's rule list, at a pane tall enough that all three rows are on screen (the
+// windowing itself is permissions-dialog.test.tsx's; what this pins is that all five key groups arrive here).
+// This dialog FETCHES its rows, so `opened` waits on a rule rather than on the frame's title.
+const PERMISSIONS_PROPS = {
+  tab: "Allow", onTabChange: () => {}, denials: [], cwd: "/tmp",
+  fetchSettings: async () => ({ sources: [{ source: "userSettings", settings: { permissions: { allow: ["Bash(ls)", "WebFetch"] } } }] }) as unknown,
+  fetchDirs: async () => [],
+  addRule: async () => {}, removeRule: async () => {}, removeDir: async () => {},
+  addDirValidate: async () => ({ kind: "missing", abs: "" }) as AddDirVerdict,
+  confirmAddDir: async () => {}, cancelAddDir: () => {}, onDone: () => {},
+};
+pinsListNavigation(
+  "the Permissions dialog's Allow rule list",
+  () => opened(<PermissionsDialog {...PERMISSIONS_PROPS} rows={40} columns={100} />, "WebFetch"),
+  ["Add a new rule…", "Bash(ls)", "WebFetch"],
 );
 
 pinsListNavigation(
