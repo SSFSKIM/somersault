@@ -457,6 +457,13 @@ Pending — written at finish.
   columns a pane of 14 on Workspace. Everything else is clean — the worst case the task was scoped around,
   mid-list with both counted indicators up, draws zero clears at every pane from 15 to 30 at all four
   widths, and at 14 for 70, 80 and 100.
+  **`/settings` lands in the same place from the other direction, and the same call covers it.** After the
+  row clip and the conditional warning term, its remaining clears are panes 12–13 at 60/70/80 columns and
+  pane 12 at 100, and only while the Thinking-mode warning is on screen; everything from pane 14 up
+  (13 at 100) is zero, and the warning-down walk is zero across all 76 swept cells. Identical cause —
+  `Math.max(1, rows − 11 − wrap)` stops delivering below a pane of `12 + wrap` — and identical only-fix:
+  clipping the warning, which at 60 columns reads *"Changing thinking mode mid-conversation will incre…"*.
+  Both dialogs are therefore one decision, not two.
   **This is the window's floor, not a missing subtraction.** `Math.max(1, …)` stops buying anything once
   `rows − 13 − wrap` reaches zero, and a frame of one row plus two indicators is the shortest this dialog
   gets. A bigger constant cannot reach it. What does close it — measured live, all six cells go to zero —
