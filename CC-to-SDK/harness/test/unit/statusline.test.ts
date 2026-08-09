@@ -13,6 +13,7 @@ import type { spawn as realSpawn } from "node:child_process";
 import {
   resolveStatusLineConfig, runStatusLine, createStatusLineDriver,
   STATUS_LINE_DEBOUNCE_MS, STATUS_LINE_TIMEOUT_MS, type StatusLineConfig,
+  buildStatusLinePayload, statusLineRows, CCX_VERSION, type StatusLineSnapshot,
 } from "../../src/tui/statusLine.js";
 
 const CMD: StatusLineConfig = { type: "command", command: "my-status" };
@@ -450,5 +451,114 @@ describe("createStatusLineDriver — annex §C2.4 (`b0b`'s four triggers)", () =
     d.poke("model"); clock.advance(300);
     expect(r.runs.map((x) => x.payload)).toEqual(["payload-1", "payload-2"]);
     d.dispose();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// WAVE C TASK 10 (EP-C2b): the stdin payload and the render transform. Both are pure — the payload
+// builder takes a snapshot of ccx state and returns the object `JSON.stringify` goes over, and the
+// render transform takes the script's stdout and returns the exact strings the footer hands Ink.
+// Canon: annex §C2.2 (the documented stdin contract), §C2.3 (`H0b`/`_0b`, the authoritative builder)
+// and §C2.6 (`m3f`'s carry-forward and `wc`'s forced dim).
+
+/** A snapshot with every optional input present — the golden below is its complete transcription. */
+const FULL: StatusLineSnapshot = {
+  sessionId: "sess-1",
+  sessionName: "Fixing the parser",
+  cwd: "/repo/app",
+  projectDir: "/repo",
+  addedDirs: ["/repo/docs"],
+  model: "claude-opus-4-6",
+  modelDisplayName: "Opus 4.6",
+  outputStyle: "Explanatory",
+  thinkingEnabled: true,
+  context: { totalTokens: 40_000, maxTokens: 200_000 },
+  usage: { session: { total_cost_usd: 1.25, total_duration_ms: 9000, total_api_duration_ms: 4000, total_lines_added: 12, total_lines_removed: 3,
+    model_usage: { "claude-opus-4-6": { inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 900, cacheCreationInputTokens: 200 } } } },
+  version: "9.9.9",
+};
+
+describe("buildStatusLinePayload (annex §C2.2-§C2.3)", () => {
+  it("is the golden object, field for field, when every input is present", () => {
+    expect(buildStatusLinePayload(FULL)).toEqual({
+      session_id: "sess-1",
+      cwd: "/repo/app",
+      session_name: "Fixing the parser",
+      model: { id: "claude-opus-4-6", display_name: "Opus 4.6" },
+      workspace: { current_dir: "/repo/app", project_dir: "/repo", added_dirs: ["/repo/docs"] },
+      version: "9.9.9",
+      output_style: { name: "Explanatory" },
+      cost: { total_cost_usd: 1.25, total_duration_ms: 9000, total_api_duration_ms: 4000, total_lines_added: 12, total_lines_removed: 3 },
+      context_window: {
+        total_input_tokens: 40_000, total_output_tokens: 50, context_window_size: 200_000,
+        current_usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 200, cache_read_input_tokens: 900 },
+        used_percentage: 20, remaining_percentage: 80,
+      },
+      exceeds_200k_tokens: false,
+      thinking: { enabled: true },
+    });
+  });
+  it("carries exactly the spec's key set — no `effort`, and none of the six blocks ccx has no producer for", () => {
+    // `toEqual` treats an `undefined` value as an absent key, so the key LIST is what pins "omitted, not null".
+    expect(Object.keys(buildStatusLinePayload(FULL))).toEqual([
+      "session_id", "cwd", "session_name", "model", "workspace", "version", "output_style", "cost",
+      "context_window", "exceeds_200k_tokens", "thinking",
+    ]);
+    for (const absent of ["effort", "transcript_path", "prompt_id", "rate_limits", "vim", "fast_mode", "agent", "remote", "pr", "worktree"])
+      expect(absent in buildStatusLinePayload(FULL)).toBe(false);
+  });
+  it("pre-first-turn: `current_usage` and both percentages are NULL, and the two conditional keys are ABSENT", () => {
+    const p = buildStatusLinePayload({ cwd: "/repo", thinkingEnabled: false, version: "9.9.9" });
+    expect(p.context_window).toEqual({
+      total_input_tokens: 0, total_output_tokens: 0, context_window_size: 0,
+      current_usage: null, used_percentage: null, remaining_percentage: null,
+    });
+    expect("session_id" in p).toBe(false);            // no id until the engine hands one back
+    expect("session_name" in p).toBe(false);
+    expect(p.cost).toEqual({ total_cost_usd: 0, total_duration_ms: 0, total_api_duration_ms: 0, total_lines_added: 0, total_lines_removed: 0 });
+    expect(p.model).toEqual({ id: "", display_name: "" });
+    expect(p.workspace).toEqual({ current_dir: "/repo", project_dir: "/repo", added_dirs: [] });
+    expect(p.output_style).toEqual({ name: "default" });
+    expect(p.thinking).toEqual({ enabled: false });
+  });
+  it("`display_name` falls back to the id when no catalog entry was ever fetched", () => {
+    expect(buildStatusLinePayload({ ...FULL, modelDisplayName: undefined }).model).toEqual({ id: "claude-opus-4-6", display_name: "claude-opus-4-6" });
+  });
+  it("`exceeds_200k_tokens` is the live context size against upstream's own 200k line", () => {
+    expect(buildStatusLinePayload({ ...FULL, context: { totalTokens: 200_000, maxTokens: 1_000_000 } }).exceeds_200k_tokens).toBe(false);
+    expect(buildStatusLinePayload({ ...FULL, context: { totalTokens: 200_001, maxTokens: 1_000_000 } }).exceeds_200k_tokens).toBe(true);
+  });
+  it("defaults the version to ccx's own package version", () => {
+    expect(buildStatusLinePayload({ cwd: "/x", thinkingEnabled: false }).version).toBe(CCX_VERSION);
+    expect(CCX_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+  });
+});
+
+describe("statusLineRows (annex §C2.6 — `m3f` carry-forward + `wc`'s forced dim)", () => {
+  const DIM = "\x1b[2m";
+  it("wraps a plain line in dim and closes it, so nothing bleeds into the footer row below", () => {
+    expect(statusLineRows("~/repo (main)")).toEqual([`${DIM}~/repo (main)\x1b[0m`]);
+  });
+  it("keeps the script's OWN colour and forces dim back on AFTER every escape it emits", () => {
+    const [row] = statusLineRows("\x1b[32mok\x1b[0m done");
+    expect(row).toBe(`${DIM}\x1b[32m${DIM}ok\x1b[0m${DIM} done\x1b[0m`);
+  });
+  it("replays every earlier line's escapes as a prefix on each later line (`m3f`)", () => {
+    const rows = statusLineRows("\x1b[31mred\nsecond\nthird");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toBe(`${DIM}\x1b[31m${DIM}red\x1b[0m`);
+    expect(rows[1]).toBe(`${DIM}\x1b[31m${DIM}second\x1b[0m`);        // carried from line 1
+    expect(rows[2]).toBe(`${DIM}\x1b[31m${DIM}third\x1b[0m`);         // line 2 emitted none of its own
+  });
+  it("accumulates escapes from ALL earlier lines, in order", () => {
+    const rows = statusLineRows("\x1b[31ma\n\x1b[1mb\nc");
+    expect(rows[2]).toBe(`${DIM}\x1b[31m${DIM}\x1b[1m${DIM}c\x1b[0m`);
+  });
+  it("carries an OSC-8 hyperlink open across lines too (`E0b`'s second alternative)", () => {
+    const rows = statusLineRows("\x1b]8;;https://x\x07link\nnext");
+    expect(rows[1]).toContain("\x1b]8;;https://x\x07");
+  });
+  it("leaves an empty string alone rather than emitting a bare escape pair", () => {
+    expect(statusLineRows("")).toEqual([]);
   });
 });

@@ -64,6 +64,7 @@ import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
 import { substituteChips } from "./pasteChips.js";
 import { isEditableQueueEntry, joinQueuedForComposer, type QueueEntry } from "./queue.js";
 import { composerMode } from "./promptMode.js";
+import { buildStatusLinePayload, createStatusLineDriver, runStatusLine as realRunStatusLine, type StatusLineConfig, type StatusLineDriver, type StatusLineDriverDeps, type StatusLineSnapshot, type StatusLineUsage } from "./statusLine.js";
 import type { PastedMap } from "./editor.js";
 
 // F1 Task 2 role map: every line useChat itself emits is themed — failures `error`, the `! command`
@@ -106,7 +107,12 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
   /** Wave C Task 1/2 (EP-C1a): the notification queue's `current`, mirrored out of the store so the tree
    *  repaints on it like every other live field (the repo has no `useSyncExternalStore` idiom). The store
    *  itself is the seam producers write through — `notify`/`dismissNotification` below. */
-  notification: CcxNotification | null; }
+  notification: CcxNotification | null;
+  /** WAVE C TASK 10 (EP-C2b): the statusLine script's last SUCCESSFUL output, ANSI and all (`Footer.tsx`
+   *  does the dim-forcing). Undefined until the first run lands, and it never returns to undefined — a
+   *  failing run resolves `undefined` and the driver simply does not call back, so the row goes quietly
+   *  stale instead of blanking (statusLine.ts's header rule). */
+  statusLineText?: string; }
 
 // Tab cycles these; bypassPermissions stays off-cycle (/yolo). Single source with settingsRows.ts's own
 // permissionMode row (review finding 3) — importing it here instead of a second literal array means the
@@ -117,7 +123,13 @@ function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); retu
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
-  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void } } = {},
+  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void };
+    /** WAVE C TASK 10: the resolved `statusLine` setting, or undefined for "not configured". RESOLVED BY THE
+     *  CALLER (`chatMain.tsx`, exactly as `initialOutputStyle` is seeded from `loadPrefs()`), and for a
+     *  reason beyond symmetry: canon L154558 honours only the USER settings file, so resolving it here would
+     *  mean every test that mounts this hook reading — and running the command out of — the developer's real
+     *  `~/.claude/settings.json`. One production call site owns that read; nothing below ever touches disk. */
+    statusLine?: StatusLineConfig } = {},
   // `home`/`platform` are injectable for the same reason `now`/`columns` are: the frame-capture fixture has
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
@@ -127,7 +139,12 @@ export function useChat(
     notifications?: NotificationStore;
     /** Wave C Task 7: the duration row's verb. Upstream picks it uniformly at random (`SvH`), which would
      *  make every expected string in a test a regex — so the pick is a seam, exactly like `now`. */
-    pickTurnVerb?: () => string } = {},
+    pickTurnVerb?: () => string;
+    /** WAVE C TASK 10: the statusLine driver's own seams — a fake runner (so a test never forks a shell) and
+     *  the two timers its 300 ms debounce and its `refreshInterval` poll run on. Supplying `runStatusLine`
+     *  REPLACES the wrapper below that carries cwd/env/COLUMNS/LINES, which is the point: the wrapper is the
+     *  only thing between this hook and a real child process. */
+    statusLine?: StatusLineDriverDeps } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
@@ -481,6 +498,84 @@ export function useChat(
   // disk and its transcript stays scrollable. Both halves and their citations live in clearViewport.ts.
   const inkStdout = useStdout();
   const clearViewportFn = deps.clearViewport ?? (() => { clearViewport(inkStdout); });
+
+  // ── WAVE C TASK 10 (EP-C2b): THE STATUS LINE. Task 9 built the three pure objects (resolve / run / drive);
+  // this is the mount site they were shaped for, and it DECIDES NOTHING — the cadence lives in
+  // `createStatusLineDriver`, the payload in `buildStatusLinePayload`, the render in `Footer.tsx`. All that is
+  // here is the wiring: which ccx value answers which payload field, and which ccx event is which upstream
+  // delta. §C2.4's four triggers land as: (1) `mountRun` below, (2) the delta effect below, (3) UNREACHABLE —
+  // ccx resolves the setting once at launch and never re-reads it, so the command cannot change under a live
+  // session — and (4) the `refreshInterval` poll, which the driver arms for itself.
+  //
+  // NO ERROR BOUNDARY HERE, DELIBERATELY. `runStatusLine` never rejects, and the driver already swallows a
+  // throwing `buildPayload` and a throwing `onText` into its debug seam (statusLine.ts's `execute`). A second
+  // try/catch around either would only hide which layer failed from the one log line that reports it.
+  const [statusLineText, setStatusLineText] = useState<string | undefined>(undefined);
+  /** The last readings the payload needs, kept as REFS and not state: they are written by the same two
+   *  fire-and-forget refreshers that already run at every turn end, and re-rendering the whole tree because a
+   *  cost total moved by a cent is a cost the status line does not have to impose. The run that reads them is
+   *  scheduled by an explicit poke on the same line, so nothing goes stale for want of a render. */
+  const statusCtxRef = useRef<{ totalTokens?: number; maxTokens?: number } | undefined>(undefined);
+  const statusUsageRef = useRef<StatusLineUsage | undefined>(undefined);
+  /** model id → the catalog's display name, harvested from the ONE `capabilities()` call the command palette
+   *  already makes (below). Without it `display_name` could only repeat the id; with it the payload carries
+   *  what a status line actually wants to print. Empty until that fetch lands, and empty forever if it fails. */
+  const modelNamesRef = useRef<Map<string, string>>(new Map());
+  const statusDriverRef = useRef<StatusLineDriver | null>(null);
+  const pokeStatusLine = (reason: string): void => { statusDriverRef.current?.poke(reason); };
+  /** ccx state → the snapshot the payload builder reshapes. Rebuilt per RUN (the driver calls it inside
+   *  `execute`), so a run always carries the state at its own moment. */
+  function statusSnapshot(): StatusLineSnapshot {
+    return {
+      sessionId: session.sessionId,
+      // The same two rungs the terminal title reads (W-C T8): a `/rename` outranks the engine's ai-title.
+      sessionName: renameTitle ?? aiTitle,
+      cwd,
+      projectDir: cwd,
+      // `current_dir` carries the cwd itself, so `added_dirs` is the /add-dir GRANTS alone — `workDirs`
+      // seeds itself with `[cwd]`, and reporting it twice would make every session look like it had one.
+      addedDirs: workDirs.filter((d) => d !== cwd),
+      model,
+      modelDisplayName: model ? modelNamesRef.current.get(model) : undefined,
+      outputStyle,
+      // ccx's think ladder has an explicit `off` rung and five live ones; upstream's `thinking.enabled` is
+      // `f !== !1`, the same two-valued question asked of a richer setting.
+      thinkingEnabled: thinkLevel !== "off",
+      context: statusCtxRef.current,
+      usage: statusUsageRef.current,
+    };
+  }
+  const statusSnapshotRef = useRef(statusSnapshot); statusSnapshotRef.current = statusSnapshot;
+  useEffect(() => {
+    const cfg = opts.statusLine;
+    if (!cfg) return;
+    // THE ONLY PLACE A CHILD PROCESS CAN BE BORN. `RunStatusLineDeps`' real runtime inputs (§C2.5) are bound
+    // here because they are the mount site's to know: the session cwd, the parent env the SDK itself was
+    // given, and the LIVE terminal size — read per run, not at mount, so a resized pane reaches the script.
+    const run = deps.statusLine?.runStatusLine
+      ?? ((c, payload, d) => realRunStatusLine(c, payload, { ...d, cwd, fallbackCwd: process.cwd(), env: deps.env ?? process.env, projectDir: cwd, columns: columnsFn(), lines: inkStdout.stdout?.rows ?? 24 }));
+    const driver = createStatusLineDriver(cfg,
+      () => JSON.stringify(buildStatusLinePayload(statusSnapshotRef.current())),
+      (text) => { if (!disposed.current) setStatusLineText(text); },
+      { ...deps.statusLine, runStatusLine: run });
+    statusDriverRef.current = driver;
+    driver.mountRun();                                    // §C2.4 trigger 1: immediate and UNDEBOUNCED
+    return () => { driver.dispose(); statusDriverRef.current = null; };
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // §C2.4 trigger 2, as upstream states it: ONE effect over the delta list (`L484891`), not a poke wired into
+  // each setter. Same reason upstream chose it — `mode` alone has three writers (Shift+Tab, `/config`, the
+  // host's own `state` frame) and a per-setter poke would have to be remembered at each of them forever.
+  // First render is skipped (`W.current`), because `mountRun` above already covers it.
+  //   THE LIST IS UPSTREAM'S, MINUS WHAT CCX HAS NO PRODUCER FOR: `vimMode`, `fastMode` and `prStatus` do not
+  // exist here, and `effortValue` arrives with TASK 11 (its payload block does too). `tokenUsage` and
+  // `lastAssistantMessageId` are not React state in ccx at all — they are the two refresher refs above, which
+  // poke explicitly from their own completion. `outputStyle`/`session_name` are ccx additions to the list:
+  // both are payload fields here, and both can change with no turn in sight.
+  const statusFirstRender = useRef(true);
+  useEffect(() => {
+    if (statusFirstRender.current) { statusFirstRender.current = false; return; }
+    pokeStatusLine("state-delta");
+  }, [mode, model, thinkLevel, outputStyle, renameTitle, aiTitle]);   // eslint-disable-line react-hooks/exhaustive-deps
   const ranInitial = useRef(false);
   const ranInitialPrompt = useRef(false);
   // Set for the whole window in which THIS client's own rewind is in flight, so the host's `rewound`
@@ -846,6 +941,11 @@ export function useChat(
         // Narrow (it needs a submit during the pass), harmless (the `finally` then no-ops on an already-clear
         // state, and the `✦ compacted N → M` row still lands), and not worth a second flag to prevent.
         setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); void refreshCtx(); void refreshUsage(); drainNext();
+        // W-C T10: upstream's `lastAssistantMessageId` delta. The two refreshers above poke on their own
+        // completion, but only if they SUCCEED — and a turn that ran is news for the payload either way
+        // (the model may have changed under it, `session_name` may have just been minted). The 300 ms
+        // debounce coalesces this with whichever of the two lands first, so it costs no extra run.
+        pokeStatusLine("turn-end");
         // W-C T8: and the one read of the engine's ai-title. Here rather than at `turn:start` because the row
         // it reads is written mid-turn (probe (d) saw it land at row 6 of 20, before the first assistant
         // frame) — a fetch at start would race the engine's own write. Latched, so this is a no-op from the
@@ -900,6 +1000,9 @@ export function useChat(
       try {
         const caps = await session.capabilities();
         if (cancelled || disposed.current) return;
+        // W-C T10: the status line's `display_name`, off a response this effect was already making.
+        for (const m of (caps.models as { value?: unknown; displayName?: unknown }[] | undefined) ?? [])
+          if (typeof m?.value === "string" && typeof m?.displayName === "string") modelNamesRef.current.set(m.value, m.displayName);
         const catalog = (caps.commands as unknown[]).map(toCatalogEntry).filter((e): e is CommandEntry => !!e);
         catalogNames.current = new Set(catalog.map((c) => c.name));
         setCommandCatalog(mergeCommands(LOCAL_COMMAND_ENTRIES, catalog));
@@ -911,13 +1014,21 @@ export function useChat(
   async function refreshCtx() {
     try {
       const u = (await session.getContextUsage()) as { totalTokens?: number; maxTokens?: number };
-      if (!disposed.current && u?.maxTokens) setCtxPct(Math.round(((u.totalTokens ?? 0) / u.maxTokens) * 100));
+      if (disposed.current) return;
+      if (u?.maxTokens) setCtxPct(Math.round(((u.totalTokens ?? 0) / u.maxTokens) * 100));
+      // W-C T10: the same reading is the status line's `context_window`, and the poke is upstream's
+      // `tokenUsage` delta by another name — this is the moment the number ccx reports actually moved.
+      if (u) { statusCtxRef.current = { totalTokens: u.totalTokens, maxTokens: u.maxTokens }; pokeStatusLine("context"); }
     } catch { /* best-effort */ }
   }
   // Fire-and-forget at turn-end only — never poll (spec's no-polling rule). Drives the status-bar warning;
   // /status and /usage fetch usage() directly themselves and don't route through this.
   async function refreshUsage() {
-    try { const u = await session.usage(); if (!disposed.current) setUsageWarn(usageWarning(u)); return u; }
+    try {
+      const u = await session.usage();
+      if (!disposed.current) { setUsageWarn(usageWarning(u)); statusUsageRef.current = u as StatusLineUsage; pokeStatusLine("usage"); }   // W-C T10: `cost` + `current_usage`
+      return u;
+    }
     catch { return undefined; }
   }
 
@@ -1947,5 +2058,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, permissions, denials, workDirs, retryStatus, compacting, notification } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

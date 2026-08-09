@@ -57,6 +57,7 @@ import { PermissionDialog } from "./PermissionDialog.js";
 import { QuestionDialog } from "./QuestionDialog.js";
 import { PlanDialog } from "./PlanDialog.js";
 import { Footer } from "./Footer.js";
+import type { StatusLineConfig } from "./statusLine.js";
 
 import { IDLE_COMPOSER_FOOTER_STATE, type ComposerFooterState } from "./ChatComposer.js";
 import { SessionPicker } from "./SessionPicker.js";
@@ -144,7 +145,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  open since the panel existed, so an absent pref keeps our default rather than silently hiding a panel
    *  users already rely on. */
   initialTodosOpen?: boolean;
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; statusLine?: StatusLineConfig };
   cwd: string;
   initialResume?: InitialResume;
   initialEntries?: readonly TranscriptBootstrapEntry[];
@@ -897,9 +898,16 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         searching={footerState.searching} pasting={footerState.pasting}
         pasteExpandHint={footerState.pasteExpandHint} bashMode={footerState.bashMode}
         exitArm={exitArmed && !paneOwned ? EXIT_ARM_CTRL_C : footerState.exitArm}
-        // EP-C2 lands in Wave C Tasks 9/10; until then nothing configures a statusLine and the row never
-        // draws. Pinned false rather than omitted so the prop's absence is a decision, not an oversight.
-        statusLineConfigured={false}
+        // WAVE C TASK 10 (EP-C2b) — the statusLine, now real. CONFIGURED and TEXT are separate facts and
+        // arrive from separate places on purpose: the setting is resolved once at launch (chatMain, the only
+        // reader of the user settings file), and the text is whatever the driver's last SUCCESSFUL run
+        // published. So `? for shortcuts` disappears the moment a statusLine is configured — before, and
+        // regardless of whether, the script ever produces a line. `rows` is the pane height the guard's
+        // 15-row floor reads, threaded from Task 1's resize state like every other geometry consumer here.
+        statusLineConfigured={hookOpts?.statusLine !== undefined}
+        statusLineText={state.statusLineText}
+        statusLinePadding={hookOpts?.statusLine?.padding}
+        rows={terminalRows()}
         // ccx has no "agent needs input" signal and no completion stamp the footer could read, so only the
         // COUNT is wired — it is what replaced the old `⚙ N bg` chip. `agentsAffordance` implements both
         // flashes and its own 2500 ms window (`Lci`); a producer sets `awaiting`/`done` here and gets them.

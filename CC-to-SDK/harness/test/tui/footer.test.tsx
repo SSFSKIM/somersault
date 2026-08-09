@@ -15,6 +15,9 @@ import { MODE_TABLE, modeIndicator, modeSymbol, modeColor, modeTitle } from "../
 import { agentsAffordance, buildHintList, hintText, suppressHint, AGENTS_FLASH_MS } from "../../src/tui/footerModel.js";
 import { defaultLookup } from "../../src/tui/keys/hints.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
+import { Text } from "ink";
+import { useChat } from "../../src/tui/useChat.js";
+import { fakeRemote } from "./helpers/fakeRemote.js";
 
 const plain = (s: string | undefined): string => (s ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 const tok = (name: "inactive" | "planMode" | "autoAccept" | "warning" | "error") => resolveThemeColor(themeTokens()[name]);
@@ -200,5 +203,124 @@ describe("<Footer> — the composed row (annex §C1.1-§C1.2)", () => {
   });
   it("renders no statusLine row when nothing supplies the text", () => {
     expect(plain(render(<Footer {...home} statusLineConfigured />).lastFrame()).split("\n").filter((l) => l.trim() !== "")).toHaveLength(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// WAVE C TASK 10 (EP-C2b): the statusLine row STOPS being a placeholder. Task 2 drew the slot with a
+// bare `<Text wrap="truncate">`; this block pins what annex §C2.6 actually specifies — the script's own
+// ANSI preserved with dim FORCED over every span, `m3f`'s carry-forward across lines, and the full
+// five-term visibility guard (L494626). The frames here are read RAW: an ANSI-stripped frame cannot
+// tell a dim row from a bright one, which is exactly the property under test.
+const rawFrame = (props: Partial<React.ComponentProps<typeof Footer>> = {}): string =>
+  (render(<Footer {...home} {...props} />).lastFrame() ?? "");
+const DIM = "\x1b[2m";
+
+describe("<Footer> statusLine row — colour (annex §C2.6, `wc`'s forced dim)", () => {
+  it("paints an uncoloured script's output as plain DIM text", () => {
+    const f = rawFrame({ statusLineConfigured: true, statusLineText: "~/repo (main)" });
+    expect(f).toContain(`${DIM}~/repo (main)`);
+  });
+  // NB Ink RE-EMITS the escapes rather than passing our bytes through — its frame writer runs every line
+  // through `slice-ansi`, which tracks the open attributes and prints the minimal delta. So the exact byte
+  // string this component hands Ink is pinned in test/unit/statusline.test.ts (on `statusLineRows`), and
+  // what is asserted HERE is the property that survives that rewrite: which cells end up dim.
+  it("keeps the script's own colour AND forces dim back on over it", () => {
+    const row = (rawFrame({ statusLineConfigured: true, statusLineText: "\x1b[32mok\x1b[0m done" }).split("\n"))[0];
+    expect(row).toContain(`\x1b[32m${DIM}ok`);        // the span keeps its green and gains dim
+    // The script's own `\x1b[0m` would have ended a chalk-applied dim for good. Here the only dim CLOSE on
+    // the row is after the last character, so ` done` — everything past that reset — is still dim.
+    expect(row.indexOf("\x1b[22m")).toBeGreaterThan(row.indexOf("done"));
+  });
+  it("replays an earlier line's SGR onto the next one (`m3f`), and draws one row per line", () => {
+    const f = render(<Footer {...home} statusLineConfigured statusLineText={"\x1b[31mtop\nbottom"} />).lastFrame() ?? "";
+    const rows = f.split("\n").filter((l) => plain(l).trim() !== "");
+    expect(plain(rows[0])).toContain("top");
+    expect(plain(rows[1])).toContain("bottom");
+    expect(rows[1]).toContain(`\x1b[31m${DIM}bottom`);
+    expect(plain(rows[2])).toContain("manual mode on");     // the footer row stays last
+  });
+  it("indents the slot by `padding` on both sides (`paddingX = padding ?? 0`)", () => {
+    const at = (padding?: number) => {
+      const f = plain(render(<Footer {...home} statusLineConfigured statusLinePadding={padding} statusLineText="SL" />).lastFrame() ?? "");
+      return (f.split("\n").find((l) => l.includes("SL")) ?? "").indexOf("SL");
+    };
+    expect(at(3) - at(0)).toBe(3);          // the outer footer's own paddingLeft={2} is common to both
+  });
+});
+
+describe("<Footer> statusLine row — the visibility guard (annex §C2.6, L494626)", () => {
+  const shows = (props: Partial<React.ComponentProps<typeof Footer>>) =>
+    plain(render(<Footer {...home} statusLineConfigured statusLineText="SL" {...props} />).lastFrame()).includes("SL");
+  it("draws under the home state", () => { expect(shows({})).toBe(true); });
+  it("is hidden in BASH mode — upstream's `mode === \"prompt\"` term", () => { expect(shows({ bashMode: true })).toBe(false); });
+  it("is hidden while the exit arm is up and while a paste is in flight", () => {
+    expect(shows({ exitArm: { key: "Ctrl-C", verb: "exit" } })).toBe(false);
+    expect(shows({ pasting: true })).toBe(false);
+  });
+  it("is hidden in a pane shorter than 15 rows (`Rtl`, `nVf = 15`)", () => {
+    expect(shows({ rows: 14 })).toBe(false);
+    expect(shows({ rows: 15 })).toBe(true);
+  });
+  it("is hidden when no statusLine is configured, whatever text is handed in", () => {
+    expect(plain(render(<Footer {...home} statusLineConfigured={false} statusLineText="SL" />).lastFrame())).not.toContain("SL");
+  });
+  it("survives the `suppressHint` it causes: the row draws and `? for shortcuts` is gone", () => {
+    const f = plain(render(<Footer {...home} statusLineConfigured statusLineText="SL" />).lastFrame());
+    expect(f).toContain("SL");
+    expect(f).not.toContain("? for shortcuts");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// WAVE C TASK 10 — the driver WIRED. The two blocks above prove the row renders what it is handed;
+// this one proves something hands it anything at all. No spawn and no wall clock: the runner is a
+// fake (so the "command" never reaches a shell) and the 300 ms debounce runs on an injected clock,
+// the same discipline test/unit/statusline.test.ts holds the driver itself to.
+function slClock() {
+  let now = 0, seq = 0;
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  return {
+    deps: {
+      setTimeout: (fn: () => void, ms: number) => { const id = ++seq; timers.set(id, { at: now + ms, fn }); return id; },
+      clearTimeout: (h: unknown) => { timers.delete(h as number); },
+    },
+    pending: () => timers.size,
+    advance(ms: number) {
+      now += ms;
+      for (const [id, t] of [...timers].sort((a, b) => a[1].at - b[1].at)) if (t.at <= now) { timers.delete(id); t.fn(); }
+    },
+  };
+}
+const waitFor = async (cond: () => boolean, timeout = 2000) => {
+  const start = Date.now();
+  for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
+};
+
+describe("useChat drives the statusLine (annex §C2.4's triggers, over ccx's own deltas)", () => {
+  it("runs once undebounced at mount, publishes the text, and re-runs 300 ms after a thinking delta", async () => {
+    const fake = fakeRemote({ getContextUsage: () => ({ totalTokens: 4000, maxTokens: 200_000 }) });
+    const clock = slClock(), runs: string[] = [];
+    const api: { setThink?: (l: string) => Promise<void> } = {};
+    function SLHost() {
+      const c = useChat(() => fake, { cwd: "/repo", statusLine: { type: "command", command: "my-status" }, initialModel: "claude-opus-4-6" },
+        { home: "/fake-home", statusLine: { runStatusLine: (_c, payload) => { runs.push(payload); return Promise.resolve(`SL#${runs.length}`); }, ...clock.deps } });
+      api.setThink = c.setThink;
+      return <Text>[{c.state.statusLineText ?? "-"}]</Text>;
+    }
+    const { lastFrame } = render(<SLHost />);
+    await waitFor(() => (lastFrame() ?? "").includes("[SL#1]"));
+    const payload = JSON.parse(runs[0]);
+    expect(payload).toMatchObject({ cwd: "/repo", model: { id: "claude-opus-4-6" }, thinking: { enabled: true }, workspace: { current_dir: "/repo" } });
+    expect("effort" in payload).toBe(false);
+
+    await api.setThink!("off");
+    // The poke rides a React EFFECT (upstream's own delta list, not a per-setter call), so the debounce is
+    // armed a commit after the setter returns — wait for the timer to exist rather than for a wall clock.
+    await waitFor(() => clock.pending() > 0);
+    expect(runs).toHaveLength(1);                    // armed, still inside the 300 ms window
+    clock.advance(300);
+    await waitFor(() => (lastFrame() ?? "").includes("[SL#2]"));
+    expect(JSON.parse(runs[1])).toMatchObject({ thinking: { enabled: false } });
   });
 });

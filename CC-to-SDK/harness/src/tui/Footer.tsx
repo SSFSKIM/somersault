@@ -49,6 +49,7 @@ import { modeColor, modeIndicator, modeSymbol, isHomeMode } from "./modeTable.js
 import { buildHintList, HINT_JOINER, type AgentsState, type HintSegment } from "./footerModel.js";
 import { expandHintText, formatBindingLower } from "./keys/hints.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
+import { statusLineRows } from "./statusLine.js";
 
 /** `Pasting…` (L493764) — one ellipsis CHARACTER. Re-exported from here now that the composer no longer
  *  owns the row; `ChatComposer.tsx` keeps its own copy for the paste tests that predate this file. */
@@ -76,10 +77,19 @@ export interface FooterProps {
   /** The inline history search is open. Half of `suppressHint`, and the one thing that suppresses the
    *  paste-expand hint (L493769). */
   searching: boolean;
-  /** EP-C2's rendered line. Nothing supplies it until Wave C Task 10; the row simply does not draw. */
+  /** EP-C2's rendered line — the script's own normalized stdout, ANSI and all. `useChat`'s driver publishes
+   *  it (Wave C Task 10); undefined until the first successful run, and it never goes back to undefined,
+   *  because a failing script leaves the previous text standing (statusLine.ts's "every failure is silence"). */
   statusLineText?: string;
-  /** `Mtl` — a statusLine is configured. Suppresses the hint list all by itself (qa6-03's mechanism). */
+  /** `Mtl` — a statusLine is configured. Suppresses the hint list all by itself (qa6-03's mechanism), and it
+   *  is a SEPARATE fact from `statusLineText`: the hints go the moment the setting exists, whether or not
+   *  the command has produced a line yet. */
   statusLineConfigured: boolean;
+  /** `V = u?.padding ?? 0` (L494935) — `paddingX` on the statusLine slot alone, not on the footer row. */
+  statusLinePadding?: number;
+  /** The pane height, for the `Rtl` term of the statusLine guard below. Defaults to the POSIX 24 that
+   *  `ChatApp.readSize` falls back to, so a bare render is a normal-sized terminal. */
+  rows?: number;
   exitArm?: FooterExitArm;
   pasting: boolean;
   pasteExpandHint: boolean;
@@ -94,6 +104,9 @@ export interface FooterProps {
   now?: () => number;
 }
 
+/** `nVf` (L494585) — the pane height below which `Rtl` hides the statusLine row. */
+export const STATUS_LINE_MIN_ROWS = 15;
+
 const dimRow = (text: string) => <Box height={1} overflow="hidden"><Text dimColor>{text}</Text></Box>;
 
 /** One hint's spans. `dimColor` is `$Rr`'s default for an uncoloured run (L488834). */
@@ -101,12 +114,43 @@ function HintSpans({ hint }: { hint: HintSegment }) {
   return <>{hint.spans.map((s, i) => <Text key={i} color={s.color ? resolveThemeColor(themeTokens()[s.color]) : undefined} dimColor={s.dim}>{s.text}</Text>)}</>;
 }
 
-export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, statusLineText, statusLineConfigured, exitArm, pasting, pasteExpandHint, bashMode, agents, bindings, composerOwnsKeys = true, now }: FooterProps) {
-  // `Otl`'s gate (L494626): the statusLine row hides behind the exit arm and behind a paste, and nowhere
-  // else — notably NOT behind `suppressHint`, which it is itself an input to.
-  const statusRow = statusLineConfigured && statusLineText !== undefined && statusLineText !== "" && !exitArm && !pasting
-    ? <Box height={1} overflow="hidden"><Text wrap="truncate">{statusLineText}</Text></Box>
-    : null;
+export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, statusLineText, statusLineConfigured, statusLinePadding, rows = 24, exitArm, pasting, pasteExpandHint, bashMode, agents, bindings, composerOwnsKeys = true, now }: FooterProps) {
+  // `Otl`'s gate (L494626), all five terms — `mode === "prompt" && !Rtl && !exitMessage.show && !isPasting
+  // && statusLineConfigured`, with `Rtl = ds() && rows < 15` (`nVf = 15`, L494585). Notably NOT behind
+  // `suppressHint`, which the row is itself an input to: a configured statusLine hides `? for shortcuts`
+  // and then draws in the space that frees.
+  //   · `mode === "prompt"` IS `!bashMode` HERE. Upstream's `mode` on this line is the COMPOSER's input mode
+  //     (`mP`, the two-valued `prompt | bash` read — promptMode.ts), and ccx already carries that half of it
+  //     as the `bashMode` prop the row-replacement branch below reads. ccx's third mode (`#` memory, CM65)
+  //     has no upstream counterpart and does not reach this component at all.
+  //   · The 15-row floor is upstream's protection for a pane too short to spare a line, and it is a real
+  //     risk here for the same reason: three dialog height budgets already count the footer's one row
+  //     (`rewindModel.REWIND_CHROME_ROWS` and friends), and this is a SECOND one they do not know about.
+  //
+  // RECORDED DIVERGENCE (plan constraint 12): upstream renders `<Text>{" "}</Text>` — a RESERVED BLANK ROW —
+  // when a statusLine is configured but has produced no text yet, so the block does not grow by a line when
+  // the first run lands. ccx renders nothing, which is what Task 2 shipped and what its test pins. Keeping
+  // the blank would trade one visible jump (once, at startup, ~one command's latency) for a permanently
+  // taller footer in every session that configures a statusLine whose script is slow or broken — and the
+  // "broken" case is the one "every failure is silence" is built around. One term to add if that judgement
+  // ever flips.
+  const statusVisible = statusLineConfigured && statusLineText !== undefined && statusLineText !== ""
+    && !bashMode && !exitArm && !pasting && rows >= STATUS_LINE_MIN_ROWS;
+  // `g3f` (L484937): one `<Text dimColor wrap="truncate">` for a single line, a `flexDirection="column"` of
+  // them for several. Each row arrives from `statusLineRows` as FINISHED BYTES — see that function for why
+  // Ink's `dimColor` prop cannot express "dim over the script's own ANSI" — so these are bare `<Text>`s and
+  // no chalk wrapper gets a chance to rewrite what the script emitted. `wrap="truncate"` is Ink's own, and
+  // it ends an over-wide line with `…` rather than wrapping it onto a second row.
+  const statusRow = statusVisible ? ((): React.ReactElement => {
+    const lines = statusLineRows(statusLineText!);
+    return (
+      <Box paddingX={statusLinePadding ?? 0} gap={2}>
+        {lines.length === 1
+          ? <Text wrap="truncate">{lines[0]}</Text>
+          : <Box flexDirection="column">{lines.map((l, i) => <Text key={i} wrap="truncate">{l}</Text>)}</Box>}
+      </Box>
+    );
+  })() : null;
 
   const row = ((): React.ReactElement => {
     // `Wci`'s four early returns, in upstream's own order (L493757–L493777, L493959).

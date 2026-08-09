@@ -10,6 +10,8 @@ import { formatIssues, userBindingsPath } from "./keys/userBindings.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import type { InitialResume } from "./commands.js";
 import { loadPrefs } from "./prefs.js";
+import { readSettingsFile } from "./settingsFile.js";
+import { resolveStatusLineConfig, type StatusLineConfig } from "./statusLine.js";
 import { turnDurationEnabled } from "./durationRow.js";
 import { refreshExampleFiles } from "./placeholder.js";
 import { createCursorReports, probeReflow } from "./reflowOracle.js";
@@ -28,7 +30,7 @@ export interface ChatClientOpts {
   // single array whose order IS the total order. No parallel `initialLines`/`initialMessages` channel.
   initialEntries?: readonly TranscriptBootstrapEntry[];
   // --permission-mode / --think, threaded so the status bar and Tab ladder start on the REAL mode.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; statusLine?: StatusLineConfig };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;
@@ -345,6 +347,12 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     ...(opts.hookOpts ?? {}),
     initialOutputStyle: opts.hookOpts?.initialOutputStyle ?? prefs.outputStyle ?? "default",
     initialShowTurnDuration: opts.hookOpts?.initialShowTurnDuration ?? turnDurationEnabled(prefs),
+    // W-C T10 (EP-C2): the ONE place ccx reads a settings file for its own UI, and the one place it can be:
+    // canon L154558 honours `statusLine` from the USER file only (a checked-out project may not install a
+    // command on the machine that checks it out), and every layer below this is a pure function or a hook a
+    // test mounts — none of them may touch `~/.claude`. `resolveStatusLineConfig` also owns the
+    // `disableAllHooks` guard, so the whole setting is decided in this one expression.
+    statusLine: opts.hookOpts?.statusLine ?? resolveStatusLineConfig(readSettingsFile("userSettings", opts.cwd)),
   };
   const makeSession = opts.makeSession ?? ((resume?: string) => remoteChatSession(opts.socketPath, { ...(resume ? { resume } : {}) }));
   const output = createResumeSafeStdout(process.stdout);
