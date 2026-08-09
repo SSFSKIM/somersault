@@ -463,8 +463,14 @@ re-run gate did not fire. A2's live capture independently re-confirmed the behav
    empty to every surface keyed off the engine-minted session id until its first live turn: Esc-Esc says
    `Nothing to rewind to yet.` over three visibly replayed turns (`host.rewindAnchors` returns [] on
    unset `session.sessionId`), and Stats/stats read zeros. After one turn all surfaces are correct.
-   A session-truth lie of exactly this wave's class — fix dispatched same day
-   (`f5(waveS-t13-fix)`), see below.
+   A session-truth lie of exactly this wave's class — **fixed same day and live re-confirmed**
+   (`2d5984d5b0`): NINE surfaces were reading the unmaterialized id (rewind, stats, /status's session
+   row, /export, /session, /rename, /tag, /files, and session-scoped history writes), all healed at one
+   writer — `host.swapEngine` remembers `resumedFrom` (cleared on fresh-conversation swaps),
+   `currentSessionId()` prefers the engine's id, and `follow()`'s state replay heals the client with no
+   client change. Probe-23's finding held: a plain resume KEEPS the engine session id, so the fallback
+   is the real id early, not a guess. The fleet roster row's `sessionId` was deliberately left unchanged
+   — it feeds Task 9's sealed pending/live/unknown resolver semantics and wants its own decision.
 2. **Crashed hosts leave `working` roster rows** (Task 9's recorded residual, live-confirmed): a
    SIGKILLed pty host's row resolves to the `live` outcome and points at attach, which then fails with
    "no host listening"; `fleet gc` heals, the full UUID resumes regardless.
