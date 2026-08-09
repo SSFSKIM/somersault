@@ -18,16 +18,26 @@ export function settingsPath(target: SettingsTarget, cwd: string, deps?: Setting
   return join(deps?.home ?? homedir(), ".claude", "settings.json");
 }
 
+/** The READ side (Wave C Task 9). Missing file, unreadable file, bad JSON, or a top-level non-object (a bare
+ *  `42`, `null`, an array) all come back as `{}` — a first run and a hand-mangled file are the same thing to
+ *  every caller, and none of them should crash boot. `statusLine`'s resolver is the first reader; it asks for
+ *  `"userSettings"` because canon (L154558) refuses a project-installed statusLine, but THAT rule is the
+ *  caller's — this seam reads whichever target it is handed. */
+export function readSettingsFile(target: SettingsTarget, cwd: string, deps?: SettingsFileDeps): Record<string, unknown> {
+  const read = deps?.read ?? ((p: string) => readFileSync(p, "utf8"));
+  let parsed: unknown;
+  try { parsed = JSON.parse(read(settingsPath(target, cwd, deps))); } catch { return {}; }
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+}
+
 /** Read (missing OR corrupt → `{}`) → patch → write, pretty-printed. `patch` receives the WHOLE parsed
  *  object (or `{}`) and returns the whole next object — callers own the merge shape; `appendToArray` below
  *  is the one every /add-dir-shaped caller needs. */
 export function mergeSettingsFile(target: SettingsTarget, cwd: string, patch: (current: any) => any, deps?: SettingsFileDeps): void {
   const path = settingsPath(target, cwd, deps);
-  const read = deps?.read ?? ((p: string) => readFileSync(p, "utf8"));
   const write = deps?.write ?? ((p: string, s: string) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, s); });
-  let current: unknown;
-  try { current = JSON.parse(read(path)); } catch { current = {}; }   // ENOENT or bad JSON → patch applies fresh, same either way
-  const next = patch(current && typeof current === "object" ? current : {});
+  // ENOENT, bad JSON and a non-object top level all arrive here as `{}` — the patch applies fresh, same either way.
+  const next = patch(readSettingsFile(target, cwd, deps));
   write(path, `${JSON.stringify(next, null, 2)}\n`);
 }
 

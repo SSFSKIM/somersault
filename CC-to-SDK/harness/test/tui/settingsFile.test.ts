@@ -2,7 +2,7 @@
 // 5/7 reuse it). EVERY test supplies its own read/write/home fakes so nothing here ever touches the real
 // filesystem or the developer's actual ~/.claude/settings.json — mirroring the seam's own design contract.
 import { describe, it, expect } from "vitest";
-import { settingsPath, mergeSettingsFile, appendToArray, type SettingsFileDeps } from "../../src/tui/settingsFile.js";
+import { settingsPath, readSettingsFile, mergeSettingsFile, appendToArray, type SettingsFileDeps } from "../../src/tui/settingsFile.js";
 
 /** An in-memory fake fs: `files` is the backing store, `deps` the injectable seam under test. */
 function fakeFiles(initial: Record<string, string> = {}) {
@@ -28,6 +28,33 @@ describe("settingsPath", () => {
   });
   it("userSettings honors the injected home", () => {
     expect(settingsPath("userSettings", "/repo", { home: "/fake/home" })).toBe("/fake/home/.claude/settings.json");
+  });
+});
+
+// The READ side (Wave C Task 9): `resolveStatusLineConfig` needs the parsed user settings, and this module —
+// not `config/settings.ts`, which only resolves `settingSources` for handoff INTO the SDK — is where a
+// settings FILE is read. Same tolerance as the merge path: a missing or hand-mangled file is `{}`, never a throw.
+describe("readSettingsFile", () => {
+  it("parses the file at the target's path", () => {
+    const { deps } = fakeFiles({ "/fake/home/.claude/settings.json": JSON.stringify({ statusLine: { type: "command", command: "s.sh" } }) });
+    expect(readSettingsFile("userSettings", "/repo", deps)).toEqual({ statusLine: { type: "command", command: "s.sh" } });
+  });
+  it("missing file → {}", () => {
+    const { deps } = fakeFiles({});
+    expect(readSettingsFile("userSettings", "/repo", deps)).toEqual({});
+  });
+  it("corrupt JSON → {}", () => {
+    const { deps } = fakeFiles({ "/fake/home/.claude/settings.json": "{not json at all" });
+    expect(readSettingsFile("userSettings", "/repo", deps)).toEqual({});
+  });
+  it("a JSON scalar or array at the top level → {} (only an object is settings)", () => {
+    expect(readSettingsFile("userSettings", "/repo", fakeFiles({ "/fake/home/.claude/settings.json": "42" }).deps)).toEqual({});
+    expect(readSettingsFile("userSettings", "/repo", fakeFiles({ "/fake/home/.claude/settings.json": "null" }).deps)).toEqual({});
+    expect(readSettingsFile("userSettings", "/repo", fakeFiles({ "/fake/home/.claude/settings.json": "[1,2]" }).deps)).toEqual({});
+  });
+  it("reads the project/local paths too — the USER-only rule for statusLine is the caller's, not this seam's", () => {
+    const { deps } = fakeFiles({ "/repo/.claude/settings.local.json": JSON.stringify({ theme: "dark" }) });
+    expect(readSettingsFile("localSettings", "/repo", deps)).toEqual({ theme: "dark" });
   });
 });
 
