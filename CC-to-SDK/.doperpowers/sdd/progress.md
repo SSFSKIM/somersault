@@ -583,3 +583,30 @@ Select's focused row legitimately wears permission, and dark-theme permission ==
 and the fallback rung `sessionModel ?? current ?? fallbackModel` restoring the gate for sessions
 pinned outside the alias catalog (fallback pinned as genuinely last). The implementer corrected its
 own earlier "focus intact" claim in the report. Wave S: 12/12 build tasks closed. Task 13 begins.
+
+## 2026-08-09 — Task 13 executed; the verification's own find fixed and live-confirmed (2d5984d5b0)
+
+Step 1: typecheck clean · 1654 unit · 2962 TUI (9 keyless skips) · build green. Step 2: ANCHORS-1
+re-run gate did not fire (SDK still 0.3.220). Step 3: all eight keyless cells pass (plan drift: A7's
+`-t "cache tokens"` names no test; the `cost:` family is the coverage). Step 4: every keyed live cell
+executed under an isolated /tmp HOME through the real pty (captures in the job dir; evidence + session
+ids written into the spec's Outcomes): A1 (rewind restore + memory check — THREE never leaked),
+A2 (compacted replay shows boundary + preserved tail only), A3 (all seven surfaces incl. Settings
+Stats after a turn), A4b (first-message restore → empty conversation, ctx chip dropped — Task 8's
+reset firing on the rewind path), A8 (both halves), A9 (five outcomes: prefix + roster-short resume,
+unknown/pending/live all loud), A10, A13 (success ✦ 22.6k → 2.1k AND the failure shape, bar torn down
+both ways), probe 82 (settled), keyed /cost (canonical folding).
+
+The pass's own yield: the resumed-idle emptiness defect — NINE surfaces (not two: rewind, stats,
+/status session row, /export, /session, /rename, /tag, /files, session-scoped history writes) all
+read a client id that only materializes mid-first-turn. Fixed at ONE writer: host.swapEngine remembers
+`resumedFrom` (cleared on fresh-conversation swaps — /clear and first-message restores don't publish a
+discarded id), `currentSessionId()` = engine id ?? resumedFrom, and follow()'s state replay heals the
+client for free. Probe-23 finding re-confirmed: a plain resume KEEPS the engine session id, so the
+fallback is the real id early, not a guess. Three sabotage forms each red exactly the intended tests.
+Live re-verified through the same pty flow that found it: `session 63aa1af7` printed and three anchors
+listed in a resumed session with zero live turns. Deliberately NOT changed: the fleet roster row's
+sessionId (feeds Task 9's sealed pending/live/unknown semantics — wants its own decision; recorded).
+
+Spec Outcomes & Retrospective written; coverage.md gained the combined Wave R + S entry (R's absence
+was a standing omission, noted as such). External whole-branch review launching against f099baf4fb.
