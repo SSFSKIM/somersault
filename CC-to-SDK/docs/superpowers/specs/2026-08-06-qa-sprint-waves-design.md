@@ -624,7 +624,9 @@ which are opportunistic.
 - [x] Wave T — shipped 2026-08-07 (spec `2026-08-06-wave-t-trust-safety-design.md`)
 - [x] Wave R (incl. EP-R0 verdict) — shipped 2026-08-07 (spec `2026-08-06-wave-r-repaint-geometry-design.md`)
 - [x] Wave S — shipped 2026-08-09 (spec `2026-08-07-wave-s-session-truth-design.md`)
-- [ ] Wave C — grounding round + spec done 2026-08-09 (`2026-08-09-wave-c-chrome-composer-design.md`); plan/execution in flight
+- [x] Wave C — shipped 2026-08-10 (spec `2026-08-09-wave-c-chrome-composer-design.md`; 15 tasks,
+  A1–A15 all pass keyed+keyless; six more bundle-settles-testimony overturns incl. the
+  token-warning ceiling mis-citation; `#` memory mode and inline chips removed per D-C2/D-C3)
 - [ ] Recurring sweep #2 run against a shipped wave, delta triaged
 
 ## §10 Decision Log *(living)*

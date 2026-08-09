@@ -486,7 +486,50 @@ override) and §16's listing should be read as superseded.
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Shipped 2026-08-10.** All 15 plan tasks executed subagent-driven in strict numeric order;
+**A1–A15 all PASS** — keyless cells by the Task 15 implementer, keyed cells (A5, A6, A8, A9, A10,
+A12) by the controller against the live engine over OAuth (evidence: job tmp `waveC-A*.txt`,
+`waveC-keyed-*.txt`, `frames-A*/`). Final suites: typecheck clean, **1913 unit / 3178 tui**, build
+clean, all nine keyed `test/tui/live` e2e suites green, live suggestion suite 3/3.
+
+What shipped, epic by epic: EP-C1 the one-row footer with right-aligned region (ChatStatusBar
+deleted; Ink absolute-position drop discovered and worked around in-flow); EP-C2 the full
+statusLine stack — config resolution with field-drop semantics, silent-failure runner, 300 ms
+debounced driver, payload with upstream's key inventory, dim-forced ANSI render; EP-C3
+notifications queue (priorities, fold, invalidates, pinned dedup) + slot; EP-C4 terminal title
+(OSC 0, busy alternation, ai-title, kill switch) and the token-warning ladder on the queue; EP-C5
+the harness-generated follow-up suggestion (32-line verbatim prompt, thirteen-rule post-filter,
+warm haiku session behind a deny-all broker, off by default); EP-C6 effort surfaces end to end
+(picker row, `/effort` dialog, `set_effort` wire op → `applyFlagSettings`, engine-swap replay,
+decaying hint); EP-C7 editor ergonomics (home/end, ctrl-arrows, double-press primitives); EP-C8
+banner truth (resolved model, ` ccx v0.1.0 ` header, probe-101 billing mapping, bounded
+accountInfo race). Owner decisions D-C2/D-C3 executed: `#` memory mode removed (union collapsed),
+inline ctx%%/usageWarn/bg chips removed with the information surviving via statusLine payload,
+`/status`, and the queue.
+
+**Retrospective.**
+- *The bundle settles testimony — six more times.* This wave's count: the commander sort key
+  (annex omission), the ccx `1m05s` header comment (Task 6), two Task 7 inferred-from-silence
+  claims, the `/effort` "dialog-only" divergence that invented itself (Task 11 — the bundle had
+  the four-way router all along), and the token-warning ceiling (Task 14 — the spec's ×0.8 cited
+  a *different threshold's* buffer fraction; the real ladder is window − 33 000). Five of six were
+  caught by reviewers going back to the binary/bundle rather than trusting the annex or the report.
+- *Declared ≠ reachable, three more instances:* probe 100 (SDK suggestion channel dead headless →
+  EP-C5 built its own), probe 101 (`subscriptionType` declared, absent — billing mapping built on
+  the two real fields), probe 102 (no `setEffort`; `applyFlagSettings` validates nothing → ccx
+  validates client-side, the only zod-enum op on the wire).
+- *Measurement dies with its conversation* claimed two more scalps: the terminal title surviving
+  `resumeInto` (Task 8) and the token-warning outliving `/clear` (Task 14 HIGH — the module's own
+  docblock named the scenario; the arm just wasn't wired to `replaceDocument`).
+- *Deadlines need their own measurements:* the Task 13 fix bounded the accountInfo await at
+  300 ms while its own review measured the handshake at ~450 ms warm — the label lost every race
+  until Task 15's keyed run caught it (now 1500 ms, pinned with the numbers in the test).
+- *Keyless pty runs are not credential-isolated on macOS:* the engine can reach the Keychain
+  regardless of `HOME` isolation — keyless-run claims about auth surfaces need keyed confirmation.
+- Standing knobs for the owner (recorded, not resolved): single-slot starvation between the two
+  five-hour warnings; upstream's `/effort` extras ccx doesn't ship (`auto`/`ultracode`,
+  persistence, `help`/`current` sub-verbs); first-ever-launch billing-label omission (cold
+  fresh-HOME handshake ~1.8 s exceeds even 1500 ms).
 
 ## Revision Notes
 
