@@ -25,7 +25,7 @@ import type { KeyContextName } from "./types.js";
 export const VALID_CONTEXTS: readonly KeyContextName[] = ["Global", "Chat", "Autocomplete", "Confirmation", "Help",
   "Transcript", "HistorySearch", "Task", "ThemePicker", "Settings", "Tabs", "Attachments", "Footer",
   "MessageSelector", "DiffDialog", "DiffPanel", "ModelPicker", "Select", "SelectDecision", "SessionPicker",
-  "Plugin", "Scroll"];
+  "Plugin", "Scroll", "EffortDialog"];
 
 /** One context's bindings. `string` = an action name from `VALID_ACTIONS`; `null` = unbound in this context. */
 export interface ContextBindings { context: KeyContextName; bindings: Record<string, string | null> }
@@ -121,17 +121,32 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
     "ctrl+x ctrl+b": null,          // …and ctrl+b's chord alias with it (final review; see Select)
   }},
-  // F6 T11. Upstream's own block, transcribed from the keymap table at L186118:
-  //   { context: "ModelPicker", bindings: { left: "modelPicker:decreaseEffort", right: "modelPicker:increaseEffort",
-  //                                         s: "modelPicker:thisSessionOnly" } }
-  // The two EFFORT keys are deliberately absent: the effort axis is DG48, a probe-gated non-goal for this
-  // wave, and `VALID_ACTIONS` is pinned to exactly the table's use — an action name that validates and
-  // resolves but reaches no handler is precisely the dishonest rebind F2 exists to remove. When effort
-  // ships, left/right come back here with it. Recorded for the T15 ledger.
+  // F6 T11. Upstream's own block, transcribed WHOLE from the keymap table at L186118. F6 held the two EFFORT
+  // keys back (DG48: the effort axis was a probe-gated non-goal, and an action name that resolves but reaches
+  // no handler is the dishonest rebind F2 exists to remove); WAVE C TASK 11 ships the axis and they come back
+  // with it, handled by `ModelPicker.tsx`.
   //
   // No suppression block, and that is upstream's shape too: the picker always has a `Select` mounted inside
   // it, and `Select`'s own nulls (below) kill the six root globals for the whole time it is on screen.
-  { context: "ModelPicker", bindings: { "s": "modelPicker:thisSessionOnly" }},
+  { context: "ModelPicker", bindings: {
+    "left": "modelPicker:decreaseEffort", "right": "modelPicker:increaseEffort", "s": "modelPicker:thisSessionOnly",
+  }},
+  // WAVE C TASK 11 — the STANDALONE `/effort` dialog (annex §C6.4). Upstream has no context for it: `L447278`
+  // reads left/right/return/escape raw off its own container, exactly as the resume picker does, so ccx —
+  // which routes every key through a named context — has to give it one. Its two arrows are the SAME actions
+  // the picker binds (one handler name, two surfaces); accept/cancel REUSE `Select`'s action names rather
+  // than minting `effort:confirm`/`effort:cancel`, the same retargeting `MessageSelector` does onto
+  // `select:first`/`select:last` — the dialog has one value, not a list, so there is no `Select` inside it to
+  // answer them and no ambiguity in borrowing the names.
+  //   It DOES need the suppression block the ModelPicker block can do without, and that is the whole reason
+  // the two differ: with no inner `Select` mounted, nothing else in this dialog kills the six root globals.
+  { context: "EffortDialog", bindings: {
+    "left": "modelPicker:decreaseEffort", "right": "modelPicker:increaseEffort",
+    "enter": "select:accept", "escape": "select:cancel",
+    "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
+    "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
+    "ctrl+x ctrl+b": null,          // …and ctrl+b's chord alias with it
+  }},
   // F6 T11 — the resume picker. Upstream has NO context for it: `moi` (L476609) hangs a raw `onKeyDown` on
   // its container and reads `space`/`ctrl+r`/`/`/printables off the event, reaching for existing contexts
   // only to cancel its rename (`Mn("confirm:no", …, {context:"Settings", isActive: te==="rename"})`,
@@ -277,11 +292,12 @@ export const VALID_ACTIONS: readonly string[] = [
   // list IS a `Select` now, so moving/accepting there are Select's actions, and a name this table no longer
   // binds must not stay validatable — `keys-bindings.test.ts` pins VALID_ACTIONS to exactly the table's use.
   "messageSelector:dismiss",
-  // F6 T11. `modelPicker:decreaseEffort`/`increaseEffort` are upstream's other two ModelPicker actions and are
-  // deliberately NOT declared: the effort axis is a non-goal this wave, and this list is pinned to exactly what
-  // the table binds. The five `sessionPicker:*` names are OURS — upstream reads those keys raw (see the block);
-  // the last two arrived with Wave S T10's widen controls.
-  "modelPicker:thisSessionOnly", "sessionPicker:preview", "sessionPicker:rename", "sessionPicker:dismiss",
+  // F6 T11 + WAVE C TASK 11. `modelPicker:decreaseEffort`/`increaseEffort` are upstream's other two ModelPicker
+  // actions, held back at F6 with the effort axis and declared now that it ships (both the picker's row and the
+  // standalone EffortDialog bind them). The five `sessionPicker:*` names are OURS — upstream reads those keys
+  // raw (see the block); the last two arrived with Wave S T10's widen controls.
+  "modelPicker:thisSessionOnly", "modelPicker:decreaseEffort", "modelPicker:increaseEffort",
+  "sessionPicker:preview", "sessionPicker:rename", "sessionPicker:dismiss",
   "sessionPicker:allProjects", "sessionPicker:allWorktrees",
   "select:previous", "select:next", "select:accept", "select:cancel", "select:pageUp", "select:pageDown", "select:first", "select:last",
   "confirm:yes", "confirm:no", "confirm:previous", "confirm:next", "confirm:cycleMode", "confirm:editExternal", "confirm:toggleExplanation",

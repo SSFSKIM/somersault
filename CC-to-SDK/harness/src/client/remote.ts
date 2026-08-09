@@ -198,6 +198,9 @@ export class RemoteChatSession {
   setOutputStyleOp(style: string) { return this.send<{ ok: boolean; error?: string }>({ op: "set_output_style", style }); }
   addRuleOp(behavior: "allow" | "ask" | "deny", rule: string) { return this.send<{ ok: boolean; error?: string }>({ op: "add_rule", behavior, rule }); }
   removeRuleOp(behavior: "allow" | "ask" | "deny", rule: string) { return this.send<{ ok: boolean; error?: string }>({ op: "remove_rule", behavior, rule }); }
+  /** W-C T11: the effort flip (EP-C6). Same `…Op` shape and same never-busy-gated flag-layer group as
+   *  `setOutputStyleOp` — the host answers it with `applyFlagSettings({effortLevel})` (probe 102). */
+  setEffortOp(level: "low" | "medium" | "high" | "xhigh" | "max") { return this.send<{ ok: boolean; error?: string }>({ op: "set_effort", level }); }
 
   /** Subscribe to the host's pushed events. The first live subscription sends `follow`; the last one
    *  leaving sends `unfollow`. Followers are keyed by a per-call token, not by the callback reference,

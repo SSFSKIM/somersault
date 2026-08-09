@@ -39,6 +39,13 @@ export const COMMANDS: CommandRow[] = [
   { name: "continue", summary: "resume the most-recent session" },
   { name: "yolo", summary: "enable bypassPermissions (ungated tool access)" },
   { name: "think", summary: "<off|low|medium|high|xhigh|max|N> — set thinking budget (no arg shows current)" },
+  // DIVERGENCE: upstream's `/effort` is `local-jsx` — a DIALOG and nothing else, with no argument form at
+  // all (its effort axis cannot be driven from the prompt line). Ours takes an OPTIONAL level argument as
+  // well. Two reasons, and both are ccx-specific: it is the house shape `/think <level>` and `/model <name>`
+  // already set, and it is the only thing that makes the client-side domain gate reachable from a keyboard —
+  // the dialog can only ever produce a valid level, so without the argument form nothing could exercise the
+  // guard probe 102 says has to exist (`applyFlagSettings` accepts a bogus level in silence).
+  { name: "effort", summary: "[low|medium|high|xhigh|max] — set reasoning effort (no arg opens the picker)" },
   { name: "mcp", summary: "[reconnect <name> | toggle <name> on|off] — MCP server status / controls" },
   // F6 T13 (DG61). Upstream's row is `{name:"tasks", aliases:["bashes"], description:"View and manage
   // everything running in the background"}` (bundle L350769) — it has no `/bg` at all. Ours keeps `/bg` as the
@@ -235,12 +242,16 @@ export function formatCost(u: SessionUsage): RenderLine[] {
 }
 
 /** `/status` — a one-glance snapshot of the live session (purely local state, no SDK call). */
-export function formatStatus(s: { model?: string; mode: string; thinkLevel?: string; ctxPct?: number; sessionId?: string; cwd?: string; usage?: string }): RenderLine[] {
+export function formatStatus(s: { model?: string; mode: string; thinkLevel?: string; effort?: string; ctxPct?: number; sessionId?: string; cwd?: string; usage?: string }): RenderLine[] {
   const out: RenderLine[] = [
     { text: "Status", bold: true },
     { text: `  model      ${s.model ?? "(default)"}`, dim: true },
     { text: `  mode       ${s.mode}`, dim: true },
     { text: `  thinking   ${s.thinkLevel ?? "default"}`, dim: true },
+    // W-C T11 (EP-C6) — EP-C6's acceptance reads the effort here. UNCONDITIONAL with a `default` fallback,
+    // exactly like the `thinking` row above it and for the same reason: a session always has SOME effort in
+    // force (ccx's launch default if nothing set one), so an omitted row would read as "no such axis".
+    { text: `  effort     ${s.effort ?? "default"}`, dim: true },
   ];
   if (s.ctxPct != null) out.push({ text: `  context    ${s.ctxPct}% used`, dim: true });
   if (s.cwd) out.push({ text: `  cwd        ${s.cwd}`, dim: true });
@@ -258,10 +269,13 @@ export function formatUnknown(name: string): RenderLine[] {
 // on. Each gets an explicit message instead. /review and /doctor are DELIBERATELY absent: both are
 // prompt-type upstream, so submit-as-turn is exactly how they work. /rename and /tag are implemented
 // locally (Task 6), so they are absent too.
+// `effort` LEFT this table in W-C T11: `/effort` is a real local command now (the EffortDialog plus the
+// `set_effort` wire op onto `applyFlagSettings({effortLevel})`, probe 102). Its note redirected the user to
+// `/think`, which was honest only while the effort axis was unreachable — leaving it here would now be the
+// dishonesty the table exists to remove.
 export const CLIENT_SIDE_NOTES: Record<string, string> = {
   agents: "removed upstream — ask Claude to create/manage subagents, or edit .claude/agents/",
   color: "prompt-bar color is a Claude Code UI setting with no equivalent here",
-  effort: "effort maps to the thinking budget here — use /think <off|low|medium|high|xhigh|max|N>",
   "extra-usage": "renamed /usage-credits upstream; for plan usage here use /usage",
   fast: "fast mode is a Claude Code client toggle the Agent SDK doesn't expose",
   heapdump: "dumps the Claude Code CLI's own JS heap — not applicable to ccx",

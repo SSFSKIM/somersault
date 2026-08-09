@@ -60,6 +60,9 @@ export interface HostHandlers {
   setOutputStyle(style: string): Promise<void>;
   addRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void>;
   removeRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void>;
+  // WAVE C TASK 11 (EP-C6): the effort flip. Same flag-layer group, same no-busy-gate rule — it touches the
+  // dynamic settings layer, never the engine conversation, so it is safe mid-turn.
+  setEffort(level: "low" | "medium" | "high" | "xhigh" | "max"): Promise<void>;
 }
 
 /** A frame with no newline in sight past this is a runaway peer, not an op. Same-user only (the socket
@@ -210,6 +213,7 @@ export class HostServer {
       case "add_dir": await this.handlers.addDir(op.data.path); return { ok: true };
       case "remove_dir": await this.handlers.removeDir(op.data.path); return { ok: true };
       case "set_output_style": await this.handlers.setOutputStyle(op.data.style); return { ok: true };
+      case "set_effort": await this.handlers.setEffort(op.data.level); return { ok: true };
       case "add_rule": await this.handlers.addRule(op.data.behavior, op.data.rule); return { ok: true };
       case "remove_rule": await this.handlers.removeRule(op.data.behavior, op.data.rule); return { ok: true };
     }

@@ -299,9 +299,15 @@ describe("/config key=value (W3 T6)", () => {
 describe("U1 client-side honesty (Wave 1)", () => {
   // "config" left this list in Wave 3 task 5: /config now opens a real Settings dialog instead of printing
   // an honesty note (the note's own text said as much: "it arrives with the settings slice").
-  it("covers exactly the six remaining client-side controls", () => {
+  // "effort" left it in WAVE C TASK 11 for the same reason and by the same route: `/effort` is a real local
+  // command now — it opens the EffortDialog and drives `applyFlagSettings({effortLevel})` through the
+  // `set_effort` wire op (probe 102). Its old note redirected the user to `/think`, which was true only
+  // while the effort axis was unreachable.
+  it("covers exactly the five remaining client-side controls", () => {
     expect(Object.keys(CLIENT_SIDE_NOTES).sort()).toEqual(
-      ["agents", "color", "effort", "extra-usage", "fast", "heapdump"]);
+      ["agents", "color", "extra-usage", "fast", "heapdump"]);
+    expect(CLIENT_SIDE_NOTES).not.toHaveProperty("effort");
+    expect(LOCAL_NAMES.has("effort")).toBe(true);                // …and it dispatches locally instead
   });
   it("every note names the command and explains itself", () => {
     for (const name of Object.keys(CLIENT_SIDE_NOTES)) {

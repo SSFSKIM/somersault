@@ -74,6 +74,7 @@ import { TranscriptPager } from "./TranscriptPager.js";
 import { HistorySearchOverlay } from "./HistorySearchOverlay.js";
 import { AddDirDialog } from "./AddDirDialog.js";
 import { ThemeDialog } from "./ThemeDialog.js";
+import { EffortDialog } from "./EffortDialog.js";
 import { BypassConsent } from "./bypassConsent.js";
 import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
@@ -145,7 +146,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  open since the panel existed, so an absent pref keeps our default rather than silently hiding a panel
    *  users already rely on. */
   initialTodosOpen?: boolean;
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; statusLine?: StatusLineConfig };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; statusLine?: StatusLineConfig };
   cwd: string;
   initialResume?: InitialResume;
   initialEntries?: readonly TranscriptBootstrapEntry[];
@@ -194,7 +195,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
-  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
+  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
   // WAVE R TASK 1 (defect i) — the terminal's SIZE IS REACT STATE. Ink's own SIGWINCH handler
   // (node_modules/ink/build/ink.js:83) re-runs Yoga layout over the EXISTING element tree and re-serializes
   // it; it never re-renders components. Nothing in ccx subscribed to "resize" at all, so the reads below
@@ -330,7 +331,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ? "shortcuts"
     : transcriptOpen
       ? "transcript"
-      : state.bypassConsent.open || state.helpOpen || state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open
+      : state.bypassConsent.open || state.helpOpen || state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.effortDialog.open || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open
         ? "overlay"
         // `Fui()`'s three states (bundle L499192), as two arms of this ladder. A parked decision while the
         // draft is live is SUPPRESSED — the dialog renders nothing (`Xrl()` L499196) and the composer keeps
@@ -639,7 +640,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // one of them. It is every dialog whose height is a function of its CONTENT: `BgTasksPanel` (13 rows),
   // `ShortcutsOverlay` (18), `BypassConsent` (18), `ThemeDialog` (17), `HistorySearchOverlay` (15, the
   // `/history` picker), the inline `PermissionDialog`/`QuestionDialog` pair (12),
-  // `AddDirDialog`, and `RestoringModal` (1) — every one of them measured CONSTANT
+  // `AddDirDialog`, `EffortDialog` (Wave C Task 11 — one row plus a caveat line, the SHORTEST member of this
+  // half and about as content-contingent as `RestoringModal`), and `RestoringModal` (1) — every one of them measured CONSTANT
   // across that whole range. `SettingsDialog` (14) and `PermissionsDialog` (9) WERE ON THIS LIST and are not
   // any more: Wave S t5 windowed the first one's Config list and t6b the second one's rule and workspace
   // lists, which is what a new member of the other half looks like from here — a change that adds a
@@ -774,6 +776,20 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           ? <RewindPicker anchors={state.rewindPicker.anchors} onDryRun={rewindDryRun} onConfirm={confirmRewind} onClose={closeRewindPicker} rows={terminalRows()} columns={terminalColumns()} />
           : state.bgPanelOpen
             ? <BgTasksPanel tasks={state.bgRows} onStop={stopBgTask} onClose={closeBgPanel} columns={terminalColumns()} />
+            : state.effortDialog.open
+              // WAVE C TASK 11 (EP-C6) — the standalone `/effort` dialog. It slots HERE, between the bg panel
+              // and the model picker, and NOT after it: `modelPicker` and `settings` are deliberately
+              // adjacent (the Settings Model row hides SettingsDialog behind the picker and falls back
+              // through to it on close, see the settings arm below), so a new arm between them would break
+              // that handoff. Nothing hands off to or from this dialog — `/effort` is the only route in.
+              //   It is NOT in `paneOwned`: one row plus an optional caveat line is a fixed-height dialog,
+              // which is the other half of that partition (see the enumeration above it).
+              ? <EffortDialog level={state.effortDialog.level ?? "high"}
+                  {...(state.effortDialog.levels ? { levels: state.effortDialog.levels } : {})}
+                  defaultEffort={state.defaultEffort}
+                  {...(state.effortDialog.modelName !== undefined ? { modelName: state.effortDialog.modelName } : {})}
+                  {...(state.effortDialog.supported !== undefined ? { supported: state.effortDialog.supported } : {})}
+                  onConfirm={confirmEffort} onCancel={closeEffortDialog} />
             : state.modelPicker.open
               // F6 T11: `savePrefs` reaches the picker for the same reason it reaches SettingsDialog and
               // ThemeDialog — Enter here writes the default model, and the write seam is injectable so a
@@ -801,6 +817,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
               // fixed-height dialog does not belong in that set anyway.
               ? <ModelPicker models={state.modelPicker.models} current={state.modelPicker.current} sessionModel={state.modelPicker.sessionModel}
                   outputTokens={state.modelPicker.outputTokens} ackedAt={state.modelPicker.ackedAt} activeModel={state.modelPicker.activeModel}
+                  {...(state.effort ? { effort: state.effort } : {})} defaultEffort={state.defaultEffort} onEffortChange={applyEffort}
                   onPick={pickModel} onCancel={closeModelPicker} savePrefs={deps?.savePrefs} rows={terminalRows()} columns={terminalColumns()} />
               // W3 T4/T5/T7: the four new settings-surface dialogs slot HERE, between modelPicker and picker,
               // in the order settings → permissions → theme → addDir (plan Global Constraints line 38);

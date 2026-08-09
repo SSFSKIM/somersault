@@ -166,6 +166,11 @@ export class SessionHost {
   // both make a client-side "just call the engine" design wrong. Single accumulator, always sent whole.
   private flagPerms = { allow: [] as string[], ask: [] as string[], deny: [] as string[], additionalDirectories: [] as string[] };
   private flagOutputStyle?: string;
+  /** WAVE C TASK 11 (EP-C6): the session-scoped effort level, third member of the same accumulator and for
+   *  the same reason — a resumed engine starts with an empty flag layer and would silently drop back to the
+   *  launch level. Session-scoped only: `'max'` is explicitly non-persistable (sdk.d.ts:2368) and ccx never
+   *  writes ANY of the five to a settings file from here, so this field is the whole of its lifetime. */
+  private flagEffort?: string;
 
   private finishedResolve!: () => void;
   /** Resolves when teardown completes (server closed). runHostMain awaits this for interactive hosts. */
@@ -249,6 +254,7 @@ export class SessionHost {
         setOutputStyle: (style) => this.setOutputStyle(style),
         addRule: (behavior, rule) => this.addRule(behavior, rule),
         removeRule: (behavior, rule) => this.removeRule(behavior, rule),
+        setEffort: (level) => this.setEffort(level),
       }, hostSocketPath(process.pid, this.env));
       await this.server.listen();
     } catch (e) {
@@ -418,6 +424,7 @@ export class SessionHost {
     const hasPerms = Object.values(this.flagPerms).some((a) => a.length);
     if (hasPerms) await this.session?.applyFlagSettings?.({ permissions: { ...this.flagPerms } });
     if (this.flagOutputStyle) await this.session?.applyFlagSettings?.({ outputStyle: this.flagOutputStyle });
+    if (this.flagEffort) await this.session?.applyFlagSettings?.({ effortLevel: this.flagEffort });
   }
 
   /** Apply + commit one whole permissions object. Commit ONLY after the engine accepts it — a rejected
@@ -444,6 +451,14 @@ export class SessionHost {
   async setOutputStyle(style: string): Promise<void> {
     await this.session?.applyFlagSettings?.({ outputStyle: style });
     this.flagOutputStyle = style;
+  }
+  /** WAVE C TASK 11 (EP-C6). Commit AFTER the engine accepts, like `pushFlagPerms` — a rejected flip must
+   *  not leave an accumulator entry a later resume would re-push as if it had worked. The level arrives
+   *  already inside the domain (`ops.ts`'s enum refused everything else before dispatch reached here), which
+   *  is the whole of ccx's answer to probe 102's "the SDK validates nothing". */
+  async setEffort(level: string): Promise<void> {
+    await this.session?.applyFlagSettings?.({ effortLevel: level });
+    this.flagEffort = level;
   }
   /** cwd first (it is implicit, always granted), then the launch config's static list, then this
    *  host's own session-scoped grants — the three sources /add-dir's UI needs to tell apart. */

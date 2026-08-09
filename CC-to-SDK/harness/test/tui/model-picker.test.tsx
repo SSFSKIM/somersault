@@ -5,7 +5,7 @@ import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { ModelPicker, type ModelInfo } from "../../src/tui/ModelPicker.js";
-import { MODEL_SUBTITLE, MODEL_TITLE, modelOverflowCount, modelVisibleCount, sessionOnlyLine } from "../../src/tui/modelPickerModel.js";
+import { MAX_EFFORT_CAVEAT, MODEL_FOOTER, MODEL_SUBTITLE, MODEL_TITLE, effortRowText, effortUnsupportedText, modelOverflowCount, modelVisibleCount, sessionOnlyLine } from "../../src/tui/modelPickerModel.js";
 import { CONFIRM_CANCEL, CONFIRM_SUBTITLE, CONFIRM_TITLE, confirmAccept } from "../../src/tui/modelConfirmModel.js";
 import { formatModelSet } from "../../src/tui/commands.js";
 import { formatOverflowCount } from "../../src/tui/format.js";
@@ -45,6 +45,9 @@ function mount(props: Partial<React.ComponentProps<typeof ModelPicker>> = {}) {
       {...(props.activeModel !== undefined ? { activeModel: props.activeModel } : {})}
       {...(props.outputTokens !== undefined ? { outputTokens: props.outputTokens } : {})}
       {...(props.ackedAt !== undefined ? { ackedAt: props.ackedAt } : {})}
+      {...(props.effort !== undefined ? { effort: props.effort } : {})}
+      {...(props.defaultEffort !== undefined ? { defaultEffort: props.defaultEffort } : {})}
+      {...(props.onEffortChange !== undefined ? { onEffortChange: props.onEffortChange } : {})}
       onPick={(m, o) => picked.push({ model: m.value, saveDefault: o.saveDefault, ...(o.confirmed ? { confirmed: true } : {}) })}
       onCancel={() => { cancelled = true; }}
       savePrefs={(patch) => saved.push(patch)}
@@ -362,6 +365,85 @@ describe("ModelPicker — the mid-conversation switch confirm (EP-S8)", () => {
     r.stdin.write("\r");                                                      // the cursor opens on row 1, Opus
     await waitFor(() => flat(frame(r.lastFrame)).includes(CONFIRM_TITLE));
     expect(r.saved).toEqual([]); expect(r.picked).toEqual([]);
+  });
+});
+
+// WAVE C TASK 11 (EP-C6): the effort row — `yva`, L441142 — which sits BETWEEN the list and the footer.
+// The row reflects the FOCUSED catalog row's effort capability, because that is the model the picker is
+// about to hand back; the level itself is the session's and is applied live by ←/→ (upstream's own
+// `modelPicker:decreaseEffort`/`increaseEffort` step `x5t`, the same state the hint reads).
+describe("ModelPicker — the effort row (§C6.3, L441142)", () => {
+  const EFFORT_MODELS: ModelInfo[] = [
+    { value: "opus", displayName: "Opus 5", supportsEffort: true, supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"] },
+    { value: "haiku", displayName: "Haiku 4.5", supportsEffort: false },
+    { value: "trim", displayName: "Trimmed", supportsEffort: true, supportedEffortLevels: ["low", "medium", "high"] },
+  ];
+  function mountEffort(props: Partial<React.ComponentProps<typeof ModelPicker>> = {}) {
+    const steps: string[] = [];
+    const r = mount({ models: EFFORT_MODELS, current: "opus", ...props, effort: props.effort ?? "high",
+      defaultEffort: props.defaultEffort ?? "high", onEffortChange: (l) => steps.push(l) } as never);
+    return { ...r, steps };
+  }
+
+  it("renders `● High effort (default) ←/→ to adjust` above the footer", async () => {
+    const r = mountEffort();
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    const f = flat(frame(r.lastFrame));
+    expect(f).toContain(effortRowText("high", true));
+    expect(f.indexOf(effortRowText("high", true))).toBeLessThan(f.indexOf(MODEL_FOOTER));   // between list and footer
+  });
+
+  it("drops `(default)` when the level is not the model default, and special-cases `xHigh`", async () => {
+    const r = mountEffort({ effort: "xhigh" } as never);
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    expect(flat(frame(r.lastFrame))).toContain("◉ xHigh effort ←/→ to adjust");
+    expect(flat(frame(r.lastFrame))).not.toContain("xHigh effort (default)");
+  });
+
+  it("prints the max caveat under the row while the level is `max`", async () => {
+    const r = mountEffort({ effort: "max" } as never);
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    expect(flat(frame(r.lastFrame))).toContain("◈ Max effort ←/→ to adjust");
+    expect(flat(frame(r.lastFrame))).toContain(MAX_EFFORT_CAVEAT);
+  });
+
+  it("the FOCUSED row decides: moving onto a model without effort support swaps in the unsupported branch", async () => {
+    const r = mountEffort();
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    r.stdin.write("\x1b[B");                                                  // down → Haiku 4.5
+    await waitFor(() => flat(frame(r.lastFrame)).includes("Effort not supported"));
+    expect(flat(frame(r.lastFrame))).toContain(effortUnsupportedText("Haiku 4.5"));
+    expect(flat(frame(r.lastFrame))).not.toContain("←/→ to adjust");
+  });
+
+  // The second step computes off the level the FIRST one reported, not off the (unchanged) prop: this test's
+  // parent records the callback and never re-renders, which is exactly the shape of two arrows arriving in a
+  // single stdin chunk. high →(right) xhigh →(left) high.
+  it("→ and ← step the level and report it, and a same-chunk pair does not net one step", async () => {
+    const r = mountEffort();
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    await tick();
+    r.stdin.write("\x1b[C"); await tick();
+    r.stdin.write("\x1b[D"); await tick();
+    expect(r.steps).toEqual(["xhigh", "high"]);
+  });
+
+  it("a model with a restricted level list never steps onto one it does not support", async () => {
+    const r = mountEffort({ current: "trim" } as never);
+    await waitFor(() => frame(r.lastFrame).includes("Trimmed"));
+    await tick();
+    r.stdin.write("\x1b[C"); await tick();
+    expect(r.steps).toEqual(["low"]);                  // high → wraps, because `trim` stops at high
+  });
+
+  it("an unsupported focused row makes ←/→ inert", async () => {
+    const r = mountEffort();
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    r.stdin.write("\x1b[B");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("Effort not supported"));
+    await tick();
+    r.stdin.write("\x1b[C"); await tick();
+    expect(r.steps).toEqual([]);
   });
 });
 

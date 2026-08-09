@@ -43,6 +43,92 @@ export const MODEL_UNIT = "model";
  *  write always has somewhere to go (the ccx prefs file) — so it renders unconditionally. */
 export const MODEL_FOOTER = "enter to set as default · s to use this session only · esc to cancel";
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// WAVE C TASK 11 (EP-C6) — THE EFFORT AXIS, pure half. Annex §C6.1 (glyphs), §C6.2 (the hint), §C6.3
+// (the picker row) and §C6.4 (the standalone dialog's footer).
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// It lives beside the picker's literals because §C6.3's row IS a row of that picker, and the standalone
+// dialog (§C6.4) renders the same one. Nothing here is React — the two surfaces are `EffortRow.tsx` (the
+// three coloured spans) and `EffortDialog.tsx` (the staging + footer).
+//
+// THE ONE MECHANISM FACT BEHIND ALL OF IT (probe 102, `waveC-grounding-probes.md` §(f)): the SDK has no
+// `setEffort`. The runtime hook is `Query.applyFlagSettings({effortLevel})`, it is live mid-session, and it
+// performs NO VALIDATION — `{effortLevel:"bogus"}` resolves silently and the session keeps running at
+// whatever it was. So `isEffortLevel` below is not defensive boilerplate: it is the ONLY thing between a
+// typo and an engine that will accept it without a word. Everything that can produce a level (the `/effort`
+// argument, a rebind, an attach client) goes through it before a wire op is built.
+
+/** The five levels, in upstream's own order — the order `xrf` (L441195) steps and wraps through. Identical
+ *  to `cli/args.ts`'s `EFFORT_LEVELS` domain and to `config/validate.ts`'s enum; those two guard the launch
+ *  flag and the config file, this one guards the running session. Kept as three literals rather than one
+ *  shared constant because the two live on opposite sides of the tui/config boundary and neither package
+ *  may import the other — `test/tui/effort.test.tsx` pins them equal instead. */
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+export const EFFORT_LEVELS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+const EFFORT_SET = new Set<string>(EFFORT_LEVELS);
+/** The client-side gate. `Set.has` on a plain string — no prototype reachability to worry about, unlike the
+ *  object-literal domains `args.ts` has to use `Object.hasOwn` on. */
+export function isEffortLevel(v: unknown): v is EffortLevel { return typeof v === "string" && EFFORT_SET.has(v); }
+
+/** `F7o` (L440864). The default arm returns `ePi` (`●`), which is why an UNDEFINED level — the unsupported
+ *  row's own case — still prints a glyph; only its COLOUR changes there (`subtle`, not `claude`). */
+export function effortGlyph(level?: EffortLevel): string {
+  switch (level) {
+    case "low": return "○";
+    case "medium": return "◐";
+    case "xhigh": return "◉";
+    case "max": return "◈";
+    default: return "●";                                   // `high` and `default:` are the same arm upstream
+  }
+}
+/** `Jir` title-cases — except `xhigh`, which L441659 special-cases to the literal `xHigh` (lower x, upper H). */
+export function effortTitle(level: EffortLevel): string {
+  return level === "xhigh" ? "xHigh" : level[0].toUpperCase() + level.slice(1);
+}
+/** `$e chord={["left","right"]} action="adjust"` — `kUe` joins arrow chords with `arrowSep:"/"` (L183786,
+ *  L183849) and `$e` appends ` to adjust`. One literal for the same reason `MODEL_FOOTER` is one. */
+export const EFFORT_ADJUST_HINT = "←/→ to adjust";
+/** `TQt` (L76519), verbatim. Printed under the row while (and only while) the level is `max`. */
+export const MAX_EFFORT_CAVEAT = "May use excessive tokens resulting in long response times or overthinking. Use sparingly for the hardest tasks.";
+
+/** `yva`'s supported arm (L441142) as one string. Upstream's JSX is glyph, `" "`, the title-cased level,
+ *  `" "`, the word `effort`, then `" (default)"` ONLY when the level equals the model's default, then `" "`,
+ *  then the adjust hint — so the `(default)` clause takes its leading space with it when it goes.
+ *  `EffortRow.tsx` renders the same pieces as three coloured spans; this is what the tests pin and what any
+ *  non-coloured consumer can print. */
+export function effortRowText(level: EffortLevel, isDefault: boolean): string {
+  return `${effortGlyph(level)} ${effortTitle(level)} effort${isDefault ? " (default)" : ""} ${EFFORT_ADJUST_HINT}`;
+}
+/** `yva`'s unsupported arm: `<ivn effort={undefined}/>{" Effort not supported"}{nva ? ` for ${nva}` : ""}`.
+ *  No adjust hint — there is nothing to adjust. */
+export function effortUnsupportedText(modelName?: string): string {
+  return `${effortGlyph(undefined)} Effort not supported${modelName ? ` for ${modelName}` : ""}`;
+}
+
+/** `xrf` (L441195): step and WRAP MODULO THE SUPPORTED LIST. Upstream builds that list by filtering `max`
+ *  and `xhigh` out unless the model allows them; ours arrives pre-filtered from the catalog row's own
+ *  `supportedEffortLevels`, which is the same set by the authoritative route. A `current` the list does not
+ *  contain lands on index 0 rather than throwing — reachable when a session-scoped `max` outlives a switch
+ *  to a model that does not offer it. */
+export function stepEffort(levels: readonly EffortLevel[], current: EffortLevel, delta: 1 | -1): EffortLevel {
+  if (levels.length === 0) return current;
+  const at = levels.indexOf(current);
+  if (at < 0) return levels[0];
+  return levels[(at + delta + levels.length) % levels.length];
+}
+
+/** `prf` (L440857): `${F7o(e)} ${e} · /effort` — glyph, space, the RAW LOWERCASE level (not `Jir`'s
+ *  title case: this is the one surface that prints the level as the wire spells it), ` · `, `/effort`. */
+export function effortHint(level: EffortLevel): string { return `${effortGlyph(level)} ${level} · /effort`; }
+/** The `Nd` call's own key and deadline (L496132). The key matters as much as the text: upstream REMOVES it
+ *  and re-ADDs it on every change (L496126-134), and that remove-then-add is what restarts the ten seconds. */
+export const EFFORT_HINT_KEY = "effort-level";
+export const EFFORT_HINT_TIMEOUT_MS = 10_000;
+
+/** §C6.4's `w` useMemo (L447278), composed from the same `kUe` chord formatter as the adjust hint above. */
+export const EFFORT_DIALOG_FOOTER = "←/→ to adjust · Enter to confirm · Esc to cancel";
+
 export interface ModelRow { value: string; displayName?: string; description?: string }
 /** The row label, and the name every notice/`sessionOnlyLine` prints (upstream's `eq()`/`option.label`). */
 export const modelLabel = (m: ModelRow | undefined, fallback = ""): string => m?.displayName ?? m?.value ?? fallback;

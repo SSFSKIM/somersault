@@ -17,7 +17,7 @@ const stub = { busy: () => false, pending: () => [], answer: () => ({ ok: true }
   tasks: () => [], background: async () => true, stopTask: async () => {},
   rewindAnchors: async () => [], rewindDryRun: async () => ({ canRewind: false }), rewind: async () => {},
   getSettings: async () => ({}), listDirs: () => [], addDir: async () => {}, removeDir: async () => {},
-  setOutputStyle: async () => {}, addRule: async () => {}, removeRule: async () => {} };
+  setOutputStyle: async () => {}, addRule: async () => {}, removeRule: async () => {}, setEffort: async () => {} };
 
 const root = mkdtempSync(join(tmpdir(), "ccx-host-"));   // one temp root for the file, not one per test
 let nth = 0;

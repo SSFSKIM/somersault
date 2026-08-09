@@ -303,8 +303,6 @@ export function createStatusLineDriver(cfg: StatusLineConfig, buildPayload: () =
 // populate, omitting the conditional fields it cannot". Present: `session_id`, `cwd`, `session_name`,
 // `model`, `workspace`, `version`, `output_style`, `cost`, `context_window`, `exceeds_200k_tokens`,
 // `thinking`. Absent, each for a stated reason:
-//   · `effort` — TASK 11's, not an omission. `state.effort` does not exist yet, and a block built off a
-//     value nothing sets would be a lie a script could read (plan-review finding #18).
 //   · `transcript_path` / `prompt_id` — SDK-internal. The SDK owns the JSONL path and mints prompt ids
 //     inside the engine; ccx never sees either, and inventing a path a script might `cat` is worse than
 //     omitting one it can test for.
@@ -358,6 +356,10 @@ export interface StatusLineSnapshot {
   context?: { totalTokens?: number; maxTokens?: number };
   /** The last `session.usage()` reading. */
   usage?: StatusLineUsage;
+  /** WAVE C TASK 11 (EP-C6). The session's live effort level, or ABSENT — which is how the caller says both
+   *  "this model has no effort axis" (upstream's `Fk(y)` guard) and "this client was never told one"
+   *  (`ccx attach`, which sees no launch config). `useChat` collapses those two into the one absence. */
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
   version?: string;
 }
 
@@ -381,6 +383,7 @@ export interface StatusLinePayload {
   cost: { total_cost_usd: number; total_duration_ms: number; total_api_duration_ms: number; total_lines_added: number; total_lines_removed: number };
   context_window: StatusLineContextWindow;
   exceeds_200k_tokens: boolean;
+  effort?: { level: "low" | "medium" | "high" | "xhigh" | "max" };
   thinking: { enabled: boolean };
 }
 
@@ -448,6 +451,13 @@ export function buildStatusLinePayload(snapshot: StatusLineSnapshot): StatusLine
     },
     context_window: contextWindow(snapshot),
     exceeds_200k_tokens: (snapshot.context?.totalTokens ?? 0) > STATUS_LINE_200K,
+    // WAVE C TASK 11 (EP-C6): upstream's `...Fk(y) && { effort: { level: _5(y, p) } }` — CONDITIONAL, and in
+    // upstream's own slot (after `exceeds_200k_tokens`, before `thinking`; the `fast_mode` key that sits
+    // between them upstream is one of the blocks ccx has no producer for). The spread idiom is the same one
+    // the two conditional keys above use: a script's contract is that the key is ABSENT, not `null`, when the
+    // model has no effort axis — and `JSON.stringify` dropping an `undefined` value is not enough, because a
+    // consumer reading the object through anything else would still see the key.
+    ...(snapshot.effort ? { effort: { level: snapshot.effort } } : {}),
     thinking: { enabled: snapshot.thinkingEnabled },
   };
 }

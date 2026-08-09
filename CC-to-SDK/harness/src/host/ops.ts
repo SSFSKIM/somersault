@@ -78,6 +78,11 @@ export const hostOp = z.discriminatedUnion("op", [
   z.object({ op: z.literal("set_output_style"), style: z.string().min(1), ...withId }),
   z.object({ op: z.literal("add_rule"), behavior: z.enum(["allow", "ask", "deny"]), rule: z.string().min(1), ...withId }),
   z.object({ op: z.literal("remove_rule"), behavior: z.enum(["allow", "ask", "deny"]), rule: z.string().min(1), ...withId }),
+  // WAVE C TASK 11 (EP-C6): the effort op, in the same never-busy-gated flag-layer group as set_output_style.
+  // The value domain is CLOSED here — the one op in this union whose payload is an enum rather than a free
+  // string — and that is not symmetry, it is probe 102: `applyFlagSettings({effortLevel})` accepts a bogus
+  // level SILENTLY, so a frame that got past the client-side gate must not get past the schema too.
+  z.object({ op: z.literal("set_effort"), level: z.enum(["low", "medium", "high", "xhigh", "max"]), ...withId }),
 ]);
 export type HostOp = z.infer<typeof hostOp>;
 export type ControlOp = Extract<HostOp, { op: "set_model" | "set_permission_mode" | "set_thinking" | "capabilities" | "compact" | "usage" | "context_usage" | "mcp_status" | "mcp_reconnect" | "mcp_toggle" }>;

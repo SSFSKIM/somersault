@@ -47,8 +47,8 @@ describe("the context registry", () => {
   //   · `SessionPicker` — the resume picker's `space`/`ctrl+r` cannot live in the SHARED `Select` context,
   //     which every list pushes and which explicitly unbinds `ctrl+r` (F6 T11; pinned below).
   it("has exactly the 20 upstream contexts plus SelectDecision and SessionPicker, with no duplicates", () => {
-    expect(VALID_CONTEXTS).toHaveLength(22);
-    expect(new Set(VALID_CONTEXTS).size).toBe(22);
+    expect(VALID_CONTEXTS).toHaveLength(23);       // +EffortDialog (Wave C Task 11)
+    expect(new Set(VALID_CONTEXTS).size).toBe(23);
     expect(VALID_CONTEXTS).toContain("SelectDecision");
     expect(VALID_CONTEXTS).toContain("SessionPicker");
   });
@@ -185,13 +185,26 @@ describe("overlay gating, expressed as null bindings", () => {
     // MessageSelector plays for the rewind picker's empty state.
     expect(b["escape"]).toBe("sessionPicker:dismiss");
   });
-  // F6 T11. Upstream's ModelPicker block is `{left, right, s}` (L186118); the two EFFORT keys are held back
-  // with the effort axis itself (DG48), and this pins that the omission is deliberate rather than a
-  // half-finished transcription — VALID_ACTIONS is pinned to exactly the table's use, so declaring them
-  // without binding them would fail the actions test instead.
-  it("ModelPicker binds `s` and nothing else — the effort pair ships with the effort axis", () => {
-    expect(block("ModelPicker").bindings).toEqual({ "s": "modelPicker:thisSessionOnly" });
-    for (const a of ["modelPicker:decreaseEffort", "modelPicker:increaseEffort"]) expect(VALID_ACTIONS).not.toContain(a);
+  // F6 T11 held the two EFFORT keys back with the effort axis itself (DG48). WAVE C TASK 11 ships the axis,
+  // so the block is upstream's `{left, right, s}` (L186118) whole and both action names are declared.
+  it("ModelPicker is upstream's `{left, right, s}` block, effort pair included", () => {
+    expect(block("ModelPicker").bindings).toEqual({
+      "left": "modelPicker:decreaseEffort", "right": "modelPicker:increaseEffort", "s": "modelPicker:thisSessionOnly",
+    });
+    for (const a of ["modelPicker:decreaseEffort", "modelPicker:increaseEffort"]) expect(VALID_ACTIONS).toContain(a);
+  });
+  // WAVE C TASK 11. Upstream reads the STANDALONE effort dialog's keys raw off its container (L447278), so it
+  // has no context of its own there and ccx — which routes every key by context — has to name one, exactly as
+  // it had to for the resume picker. Its accept/cancel reuse `Select`'s action names (the same retargeting
+  // MessageSelector does onto `select:first`/`select:last`) because the dialog has one value, not a list.
+  it("EffortDialog binds the arrow pair plus enter/escape, and suppresses the root globals", () => {
+    const b = block("EffortDialog").bindings;
+    expect(b["left"]).toBe("modelPicker:decreaseEffort");
+    expect(b["right"]).toBe("modelPicker:increaseEffort");
+    expect(b["enter"]).toBe("select:accept");
+    expect(b["escape"]).toBe("select:cancel");
+    for (const k of ["ctrl+c", "ctrl+d", "ctrl+o", "ctrl+t", "ctrl+r", "ctrl+b", "alt+p", "alt+t", "ctrl+x ctrl+b"])
+      expect(b[k], `EffortDialog ${k} must be null`).toBeNull();
   });
   it("HistorySearch is an overlay owner too, but rebinds ctrl+r/ctrl+c instead of unbinding them", () => {
     const b = block("HistorySearch").bindings;

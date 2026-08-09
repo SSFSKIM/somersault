@@ -12,7 +12,7 @@
 //
 // OUR ONE RECORDED DIVERGENCE (T15): the default lands in the ccx prefs file (`prefs.ts`), not in
 // `~/.claude/settings.json`. Same promise to the user, different file — and the one the harness owns.
-import React from "react";
+import React, { useRef } from "react";
 import { Box, Text } from "ink";
 import { DialogFrame } from "./dialogs/DialogFrame.js";
 import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
@@ -22,15 +22,25 @@ import { formatOverflowCount } from "./format.js";
 import { ModelSwitchConfirm } from "./ModelSwitchConfirm.js";
 import { needsModelConfirm } from "./modelConfirmModel.js";
 import { savePrefs as realSavePrefs, type CcxPrefs } from "./prefs.js";
+import { EffortRow } from "./EffortRow.js";
 import {
-  MODEL_FOOTER, MODEL_SUBTITLE, MODEL_TITLE, MODEL_UNIT, modelLabel, modelName, modelOverflowCount,
-  modelVisibleCount, sessionOnlyLine,
+  EFFORT_LEVELS, MODEL_FOOTER, MODEL_SUBTITLE, MODEL_TITLE, MODEL_UNIT, modelLabel, modelName,
+  modelOverflowCount, modelVisibleCount, sessionOnlyLine, stepEffort, type EffortLevel,
 } from "./modelPickerModel.js";
 
 
-export interface ModelInfo { value: string; displayName?: string; description?: string }
+export interface ModelInfo {
+  value: string; displayName?: string; description?: string;
+  /** WAVE C TASK 11 (EP-C6): the catalog's own two effort fields (`sdk.d.ts` ModelInfo). They come off
+   *  `capabilities().models` — the SAME source the picker's rows already come from, which is why the effort
+   *  row needs no second capability lookup and why "does this model support effort" is answered per ROW
+   *  rather than once per session. Absent on a catalog that predates them, which reads as "unknown": the
+   *  supported arm renders and the full five-level list is what stepping wraps through. */
+  supportsEffort?: boolean;
+  supportedEffortLevels?: EffortLevel[];
+}
 
-export function ModelPicker({ models, current, sessionModel, activeModel, outputTokens = 0, ackedAt, onPick, onCancel, savePrefs = realSavePrefs, rows, columns }: {
+export function ModelPicker({ models, current, sessionModel, activeModel, outputTokens = 0, ackedAt, effort, defaultEffort, onEffortChange, onPick, onCancel, savePrefs = realSavePrefs, rows, columns }: {
   models: ModelInfo[];
   /** The row that reads as the model in force — `success` + a trailing tick, and where the cursor opens
    *  (upstream's `initial`/`defaultValue` + `defaultFocusValue`, L441127). */
@@ -53,6 +63,17 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
    *  gets it so the confirmation notice can say which of the two sentences applies. `confirmed` is set only
    *  when this pick passed the T12 switch confirm, and it is what tells `useChat` to stamp the ack — a pick
    *  that never saw the dialog must not suppress the NEXT one. */
+  /** WAVE C TASK 11 (EP-C6), the effort row's three props. `effort` is the SESSION's live level (useChat
+   *  owns it — the row reflects state, it does not hold it), `defaultEffort` is what the `(default)` clause
+   *  compares against, and `onEffortChange` fires on every ←/→ step.
+   *
+   *  STEPPING APPLIES LIVE, unlike the standalone dialog's staged Enter (EffortDialog.tsx says why): §C6.3's
+   *  row carries only "←/→ to adjust" — it has no confirm of its own, and this dialog's Enter already means
+   *  "pick this model". So a step is the whole gesture, and the hint that decays ten seconds later is the
+   *  feedback for it. */
+  effort?: EffortLevel;
+  defaultEffort?: EffortLevel;
+  onEffortChange?: (level: EffortLevel) => void;
   onPick: (m: ModelInfo, opts: { saveDefault: boolean; confirmed?: boolean }) => void;
   onCancel: () => void;
   savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void;
@@ -61,7 +82,10 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
   // Ref-backed (keys/refState.ts): `s` and the ↓ that moved onto its row can arrive in ONE stdin chunk and
   // dispatch with no render guaranteed in between, so the `s` handler must read the focus the Select last
   // REPORTED, not the one its own render closed over.
-  const [, setFocus, focusRef] = useRefState<string>(current ?? models[0]?.value ?? "");
+  // WAVE C TASK 11 reads the STATE half too (it was discarded before): the effort row is rendered output and
+  // has to repaint when the cursor moves onto a model with a different effort capability. The ref half stays
+  // what the key handlers read — see the chunk note above.
+  const [focus, setFocus, focusRef] = useRefState<string>(current ?? models[0]?.value ?? "");
   const visible = modelVisibleCount(models.length);
   // The window `Select` LAST RENDERED — it clamps `visible` again by terminal height (`clampVisible`), so on a
   // short pane the ten-row cap is not what is on screen and the counter must not quote it. State, not a ref:
@@ -101,9 +125,38 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
   // Pushed OUTSIDE the Select (this component mounts first, the Select is inner and keeps every key it
   // binds). `s` is bound in no other context, so it resolves here — and `Select` never sees it.
   useKeyScope("ModelPicker");
+  // WAVE C TASK 11: which model the effort row is ABOUT is the FOCUSED row, not `current` — the picker is a
+  // window onto the model you are considering, and upstream reads `tvn`/`nva` off the same highlighted entry
+  // its `s` key acts on. Read through the focus REF and not the rendered row for the reason the `s` handler
+  // does: `↓→` can arrive in one stdin chunk with no render between the two dispatches.
+  const rowOf = (value: string): ModelInfo | undefined => models.find((m) => m.value === value);
+  // The level the NEXT step computes from. The parent owns `effort`, but `→→` can arrive in one stdin chunk
+  // and dispatch twice with no render between them — off the prop alone the second press would recompute
+  // from the same pre-chunk level and the pair would net ONE step. Reassigned from the prop on every render,
+  // so a parent that declines to apply a step (or applies a different level) still wins at the next paint;
+  // this only bridges the gap inside a chunk. Same reason `focusRef` exists two lines up.
+  const effortRef = useRef<EffortLevel | undefined>(effort);
+  effortRef.current = effort;
+  const effortSupported = (row: ModelInfo | undefined): boolean => row?.supportsEffort !== false;
+  const stepBy = (delta: 1 | -1): void => {
+    // Three ways to be inert, all of them "there is nothing here to adjust": no parent listening, the
+    // confirm screen has replaced the list (same reason `s` is inert behind it), or the focused model has no
+    // effort axis at all.
+    const from = effortRef.current;
+    if (!onEffortChange || !from || confirmRef.current) return;
+    const row = rowOf(focusRef.current);
+    if (!effortSupported(row)) return;
+    const next = stepEffort(row?.supportedEffortLevels ?? EFFORT_LEVELS, from, delta);
+    effortRef.current = next;
+    onEffortChange(next);
+  };
   // Inert behind the confirm: the list is not on screen, so there is no focused row for `s` to mean, and a
   // second pick queued behind an unanswered warning is exactly what the warning is there to prevent.
-  useKeyActions({ "modelPicker:thisSessionOnly": () => { if (confirmRef.current) return; choose(focusRef.current, false); } });
+  useKeyActions({
+    "modelPicker:thisSessionOnly": () => { if (confirmRef.current) return; choose(focusRef.current, false); },
+    "modelPicker:decreaseEffort": () => { stepBy(-1); },
+    "modelPicker:increaseEffort": () => { stepBy(1); },
+  });
 
   // The confirm REPLACES the list, as upstream's own confirm screen does, and a decline returns to it —
   // which is what "No, go back" means. NB the list REMOUNTS on that return: `Select` is unmounted while the
@@ -145,6 +198,14 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
             the kind itself; it only reports what it drew. */}
         {overflow > 0 ? <Box paddingLeft={3}><Text dimColor>{formatOverflowCount(overflow, MODEL_UNIT)}</Text></Box> : null}
       </Box>
+      {/* `yva` L441142 — WAVE C TASK 11 (EP-C6). Sits BETWEEN the list and the footer, gated on the caller
+          having an effort axis to show at all: `ccx attach` never learns a launch level, and a parent that
+          passes none gets the picker exactly as it was before this task. */}
+      {effort ? (
+        <EffortRow level={effort} isDefault={effort === defaultEffort}
+          supported={effortSupported(rowOf(focus))}
+          {...(() => { const n = modelLabel(rowOf(focus)); return n ? { modelName: n } : {}; })()} />
+      ) : null}
       <Text dimColor>{MODEL_FOOTER}</Text>
     </DialogFrame>
   );

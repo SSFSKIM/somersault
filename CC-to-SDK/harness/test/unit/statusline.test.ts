@@ -476,6 +476,7 @@ const FULL: StatusLineSnapshot = {
   usage: { session: { total_cost_usd: 1.25, total_duration_ms: 9000, total_api_duration_ms: 4000, total_lines_added: 12, total_lines_removed: 3,
     model_usage: { "claude-opus-4-6": { inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 900, cacheCreationInputTokens: 200 } } } },
   version: "9.9.9",
+  effort: "xhigh",                                   // WAVE C TASK 11 — the conditional `effort` block (§C6/§C2.2)
 };
 
 describe("buildStatusLinePayload (annex §C2.2-§C2.3)", () => {
@@ -495,17 +496,26 @@ describe("buildStatusLinePayload (annex §C2.2-§C2.3)", () => {
         used_percentage: 20, remaining_percentage: 80,
       },
       exceeds_200k_tokens: false,
+      effort: { level: "xhigh" },
       thinking: { enabled: true },
     });
   });
-  it("carries exactly the spec's key set — no `effort`, and none of the six blocks ccx has no producer for", () => {
+  // WAVE C TASK 11 flipped this cell: `effort` was ABSENT at Task 10 because `state.effort` did not exist and
+  // a block built off a value nothing sets would be a lie a script could read. It exists now, so the block is
+  // present — CONDITIONALLY, exactly as upstream's `...Fk(y) && { effort: … }` is (a model without effort
+  // support, or a client that has never been told a level, still carries no key).
+  it("carries exactly the spec's key set — `effort` included, and none of the blocks ccx has no producer for", () => {
     // `toEqual` treats an `undefined` value as an absent key, so the key LIST is what pins "omitted, not null".
     expect(Object.keys(buildStatusLinePayload(FULL))).toEqual([
       "session_id", "cwd", "session_name", "model", "workspace", "version", "output_style", "cost",
-      "context_window", "exceeds_200k_tokens", "thinking",
+      "context_window", "exceeds_200k_tokens", "effort", "thinking",
     ]);
-    for (const absent of ["effort", "transcript_path", "prompt_id", "rate_limits", "vim", "fast_mode", "agent", "remote", "pr", "worktree"])
+    for (const absent of ["transcript_path", "prompt_id", "rate_limits", "vim", "fast_mode", "agent", "remote", "pr", "worktree"])
       expect(absent in buildStatusLinePayload(FULL)).toBe(false);
+  });
+  it("omits `effort` when the snapshot carries no level (an unsupported model, or a client never told one)", () => {
+    const { effort: _drop, ...noEffort } = FULL;
+    expect("effort" in buildStatusLinePayload(noEffort)).toBe(false);
   });
   it("pre-first-turn: `current_usage` and both percentages are NULL, and the two conditional keys are ABSENT", () => {
     const p = buildStatusLinePayload({ cwd: "/repo", thinkingEnabled: false, version: "9.9.9" });

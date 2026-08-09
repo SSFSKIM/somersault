@@ -4,7 +4,7 @@
 export type KeyContextName = "Global" | "Chat" | "Autocomplete" | "Confirmation" | "Help" | "Transcript"
   | "HistorySearch" | "Task" | "ThemePicker" | "Settings" | "Tabs" | "Attachments" | "Footer"
   | "MessageSelector" | "DiffDialog" | "DiffPanel" | "ModelPicker" | "Select" | "SelectDecision"
-  | "SessionPicker" | "Plugin" | "Scroll";
+  | "SessionPicker" | "Plugin" | "Scroll" | "EffortDialog";
 
 /** A single key press. `name` is the canon: a literal lowercase character for letters/digits/punctuation, or
  *  one of `enter escape tab space backspace delete up down left right home end pageup pagedown insert f1..f12`.

@@ -30,7 +30,7 @@ export interface ChatClientOpts {
   // single array whose order IS the total order. No parallel `initialLines`/`initialMessages` channel.
   initialEntries?: readonly TranscriptBootstrapEntry[];
   // --permission-mode / --think, threaded so the status bar and Tab ladder start on the REAL mode.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; statusLine?: StatusLineConfig };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; statusLine?: StatusLineConfig };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;

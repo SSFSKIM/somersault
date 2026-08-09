@@ -144,6 +144,23 @@ describe("remoteChatSession — SettingsOps (W3 T2)", () => {
     }
   });
 
+  // WAVE C TASK 11 (EP-C6): `set_effort` is the flag-layer op the effort surfaces drive. It rides SettingsOps
+  // and not ChatSession because it IS a flag-settings write — the host answers it with
+  // `applyFlagSettings({effortLevel})`, which probe 102 proved is the only runtime effort hook the SDK has.
+  it("9. setEffort sends {op:set_effort, level} and resolves void on {ok:true}", async () => {
+    const host = stubHost({ set_effort: { ok: true } });
+    await host.listen();
+    const adapter = remoteChatSession(host.path);
+    try {
+      await adapter.whenReady();
+      await expect(adapter.setEffort("xhigh")).resolves.toBeUndefined();
+      expect(host.seen.find((f) => f.op === "set_effort")).toMatchObject({ op: "set_effort", level: "xhigh" });
+    } finally {
+      adapter.detach();
+      host.srv.close();
+    }
+  });
+
   it("8. an {ok:false,error} reply rejects with that error — proven on addDir and removeRule", async () => {
     const host = stubHost({
       add_dir: { ok: false, error: "already tracked" },

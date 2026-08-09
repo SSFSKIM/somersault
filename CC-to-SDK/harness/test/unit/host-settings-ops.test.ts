@@ -90,6 +90,18 @@ describe("host settings ops", () => {
     await host.stop();
   });
 
+  // WAVE C TASK 11 (EP-C6). Probe 102: the SDK has NO `setEffort`; `applyFlagSettings({effortLevel})` is the
+  // whole runtime hook, and it performs no validation — so the host is the LAST place a bad level could still
+  // be caught, and the level it forwards is whatever the (already-validated) client sent.
+  it("set_effort applies {effortLevel} and records it", async () => {
+    const { calls, fake } = fakeSession();
+    const host = hostFor(fake);
+    await host.start();
+    await host.setEffort("xhigh");
+    expect(calls).toEqual([{ effortLevel: "xhigh" }]);
+    await host.stop();
+  });
+
   it("REPLAYS accumulated flag state after resumeSession", async () => {
     // Same fake session instance is reused across both opens (swapEngine's openSession call), so its
     // `calls` array observes the replay's own applyFlagSettings sends once cleared of the pre-resume ones.
@@ -98,10 +110,14 @@ describe("host settings ops", () => {
     await host.start();
     await host.addDir("/a");
     await host.setOutputStyle("concise");
+    await host.setEffort("low");
     calls.length = 0;
     await host.resumeSession("resume-1");
     expect(calls).toContainEqual({ permissions: { ...emptyPerms, additionalDirectories: ["/a"] } });
     expect(calls).toContainEqual({ outputStyle: "concise" });
+    // A resumed session is a NEW CLI process with an EMPTY flag layer, so the effort the user set has to be
+    // re-sent with the rest or the engine silently reverts to the launch level.
+    expect(calls).toContainEqual({ effortLevel: "low" });
     await host.stop();
   });
 

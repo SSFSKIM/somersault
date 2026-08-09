@@ -36,6 +36,7 @@ import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgres
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
+import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, type EffortLevel } from "./modelPickerModel.js";
 import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { truncateAtAnchor } from "./rewindRebuild.js";
@@ -57,7 +58,7 @@ import { shortCwd } from "./banner.js";
 import { NARROWED_SCOPE, RESUME_CANCELLED, type ResumeScope } from "./sessionPickerModel.js";
 import { hasWorktrees as realHasWorktrees } from "./worktrees.js";
 import { clearViewport } from "./clearViewport.js";
-import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
+import { DEFAULTS, summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
 import type { RawContextUsage, ListSessionsOpts } from "../index.js";
 import { type HistEntry, type HistoryScope } from "./historySearch.js";
 import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
@@ -87,7 +88,7 @@ export interface SessionInfo { sessionId: string; summary: string; firstPrompt?:
  *  the returned state, so this closure is how a source-backed detail projection reaches the pager without
  *  anyone reaching into the document itself. */
 export type DetailItems = (projection: "detail-all" | "detail-collapsed") => readonly RenderItem[];
-export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; /** W-C T8 — the engine's ai-title, read from disk once after the first turn (probe (d)). */ aiTitle?: string; /** W-C T8 — a successful `/rename`, which outranks `aiTitle`. */ renameTitle?: string; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; activeModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
+export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; /** W-C T8 — the engine's ai-title, read from disk once after the first turn (probe (d)). */ aiTitle?: string; /** W-C T8 — a successful `/rename`, which outranks `aiTitle`. */ renameTitle?: string; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; /** W-C T11 (EP-C6): the session's live effort level, and whether the live model has the axis at all (undefined = the catalog has not answered yet). */ effort?: EffortLevel; effortSupported?: boolean; /** What the picker's/dialog's `(default)` clause compares against — see `DEFAULT_EFFORT`. */ defaultEffort: EffortLevel; effortDialog: { open: boolean; level?: EffortLevel; levels?: readonly EffortLevel[]; supported?: boolean; modelName?: string }; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; activeModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
   /** The composer's placeholder ladder reads both (`placeholder.ts` rule 4 — upstream's `submitCount` /
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
@@ -123,7 +124,7 @@ function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); retu
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
-  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void };
+  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; /** W-C T11: the launch effort (`--effort` ?? DEFAULTS.effort), so the §C6.2 hint can post at mount. */ initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void };
     /** WAVE C TASK 10: the resolved `statusLine` setting, or undefined for "not configured". RESOLVED BY THE
      *  CALLER (`chatMain.tsx`, exactly as `initialOutputStyle` is seeded from `loadPrefs()`), and for a
      *  reason beyond symmetry: canon L154558 honours only the USER settings file, so resolving it here would
@@ -326,6 +327,42 @@ export function useChat(
   // typed anything. Stays undefined for `ccx attach` (that client never saw the host's launch config).
   const [model, setModel] = useState<string | undefined>(opts.initialModel);
   const [thinkLevel, setThinkLevel] = useState(opts.initialThink ?? "default");
+  // ── WAVE C TASK 11 (EP-C6): THE EFFORT AXIS. Three pieces of state, and the reason there are three is
+  // that "what is the level" and "does this model have the axis at all" are answered by different sources at
+  // different times.
+  //   `effort` is seeded from the launch config the same way `model` is, and for the same reason: the hint
+  // has to be able to say `● xhigh · /effort` at mount, before any turn or any catalog fetch. Undefined on
+  // `ccx attach`, which never saw a launch config — and undefined is exactly "no hint, no picker row", which
+  // is the honest answer for a client that does not know.
+  const [effort, setEffortState] = useState<EffortLevel | undefined>(
+    isEffortLevel(opts.initialEffort) ? opts.initialEffort : undefined);
+  //   The catalog's effort capability per model, harvested from the ONE `capabilities()` call the command
+  // palette already makes. Keyed by BOTH the catalog's tier alias (`opus`) and its resolved id
+  // (`claude-opus-5`), because `model` here is resolved and the rows are aliases — the same two-sided match
+  // `openModelPicker` does inline. State and not a ref: the hint's effect has to re-run when it lands.
+  const [effortCaps, setEffortCaps] = useState<ReadonlyMap<string, { supportsEffort?: boolean; levels?: EffortLevel[] }>>(new Map());
+  const effortCap = model ? effortCaps.get(model) : undefined;
+  //   Tri-state ON PURPOSE. `false` only once the catalog has SAID so; `undefined` means "not known yet",
+  //   which every consumer treats as "assume it has one".
+  //   DIVERGENCE: upstream answers this synchronously — `Fk(model)` (L76243) is a local model registry, so a
+  // model without an effort axis never shows the hint for even one frame. ccx has no such registry; the only
+  // authority is `capabilities().models[].supportsEffort`, which arrives one round-trip after mount. So on an
+  // effort-less model ccx posts the hint optimistically and WITHDRAWS it when the catalog lands, where
+  // upstream would never have posted it. Withdrawing is the honest half of the trade; the alternative —
+  // suppressing the hint until the catalog answers — would delay it on every session to spare a flicker on
+  // the rare one, and would show nothing at all if the fetch failed.
+  const effortSupported: boolean | undefined = effortCap === undefined ? undefined : effortCap.supportsEffort !== false;
+  const effortLevels: readonly EffortLevel[] = effortCap?.levels ?? EFFORT_LEVELS;
+  /** DIVERGENCE: upstream's `(default)` clause compares the level against the MODEL's default — `I5t`, off
+   *  its own per-model registry (`_5(model, value)` falls back to `high`, L76470). The SDK catalog exposes
+   *  `supportsEffort`/`supportedEffortLevels` and no default at all, so ccx compares against its own
+   *  harness-wide launch default instead (`DEFAULTS.effort`, currently `xhigh`). Same clause, same place,
+   *  one default for every model rather than one per model — and inventing a per-model table to match
+   *  upstream's shape would be a table nothing could keep true.
+   *  A CONSTANT, not state: it is the default for NEW sessions, which nothing in a running session moves. */
+  const DEFAULT_EFFORT = DEFAULTS.effort as EffortLevel;
+  /** The `/effort` dialog. Snapshotted at open time exactly as `modelPicker` is, so ChatApp reads state only. */
+  const [effortDialog, setEffortDialog] = useState<{ open: boolean; level?: EffortLevel; levels?: readonly EffortLevel[]; supported?: boolean; modelName?: string }>({ open: false });
   const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }>({ open: false, sessions: [], hasWorktree: false });
   // F6 T11: `current` is the row the picker opens on and marks as the value in force (the catalog VALUE, not
   // the resolved id — `openModelPicker` maps between them); `sessionModel` is set only by the `s` path and is
@@ -397,6 +434,21 @@ export function useChat(
   useEffect(() => notifications.subscribe(() => { if (!disposed.current) setNotification(notifications.state().current); }), [notifications]);
   const notify = (n: CcxNotification) => { notifications.add(n); };
   const dismissNotification = (key: string) => { notifications.remove(key); };
+  // ── WAVE C TASK 11 (EP-C6), §C6.2: THE DECAYING EFFORT HINT. Transcribed from L496126-134, whose shape is
+  // the whole point of this effect:
+  //     useEffect(() => { if (!tue) { hp("effort-level"); return; }
+  //                       hp("effort-level"); Nd({key:"effort-level", …, timeoutMs:1e4}); }, [tue, Nd, hp]);
+  // REMOVE-THEN-ADD, on the producer side, every time. That is what restarts the ten seconds on a change —
+  // upstream's store DEDUPS a same-key re-add outright (notifications.ts divergence 4 records that ours
+  // replaces-and-restarts instead, deliberately as a superset), so the dance is upstream's own way of making
+  // a repeated `/effort` re-display. Doing it here means ccx behaves identically on either store.
+  //   The `!tue` arm is the two absences folded into one: no level at all (`ccx attach`), or a model whose
+  // catalog row says it has no effort axis. Both mean "remove and post nothing".
+  useEffect(() => {
+    notifications.remove(EFFORT_HINT_KEY);
+    if (!effort || effortSupported === false) return;
+    notifications.add({ key: EFFORT_HINT_KEY, text: effortHint(effort), priority: "high", timeoutMs: EFFORT_HINT_TIMEOUT_MS });
+  }, [effort, effortSupported, notifications]);
   // Wave C Task 6: the spinner reads a METER, not a token count — the parenthetical needs the streamed
   // character target (for the eased estimate), the stream mode (for the arrow) and the tool/thinking
   // windows (for the phase ladder). All four come off the one `LiveTurn` that already consumes the frames.
@@ -541,6 +593,10 @@ export function useChat(
       // ccx's think ladder has an explicit `off` rung and five live ones; upstream's `thinking.enabled` is
       // `f !== !1`, the same two-valued question asked of a richer setting.
       thinkingEnabled: thinkLevel !== "off",
+      // W-C T11: upstream's `...Fk(y) && { effort: … }` guard, expressed as an absence. A model the catalog
+      // has SAID has no effort axis reports no block at all — same rule the hint follows one screen up, so
+      // the row a script prints and the hint the user sees can never disagree.
+      ...(effort && effortSupported !== false ? { effort } : {}),
       context: statusCtxRef.current,
       usage: statusUsageRef.current,
     };
@@ -575,7 +631,9 @@ export function useChat(
   useEffect(() => {
     if (statusFirstRender.current) { statusFirstRender.current = false; return; }
     pokeStatusLine("state-delta");
-  }, [mode, model, thinkLevel, outputStyle, renameTitle, aiTitle]);   // eslint-disable-line react-hooks/exhaustive-deps
+    // W-C T11: `effort` IS upstream's `effortValue` delta, and `effortSupported` rides with it because the
+    // catalog landing is the moment the block appears or disappears from the payload.
+  }, [mode, model, thinkLevel, outputStyle, renameTitle, aiTitle, effort, effortSupported]);   // eslint-disable-line react-hooks/exhaustive-deps
   const ranInitial = useRef(false);
   const ranInitialPrompt = useRef(false);
   // Set for the whole window in which THIS client's own rewind is in flight, so the host's `rewound`
@@ -1001,8 +1059,18 @@ export function useChat(
         const caps = await session.capabilities();
         if (cancelled || disposed.current) return;
         // W-C T10: the status line's `display_name`, off a response this effect was already making.
-        for (const m of (caps.models as { value?: unknown; displayName?: unknown }[] | undefined) ?? [])
-          if (typeof m?.value === "string" && typeof m?.displayName === "string") modelNamesRef.current.set(m.value, m.displayName);
+        // W-C T11: and the effort capability, off the same rows — see `effortCaps` for the two-key indexing.
+        const caps2 = new Map<string, { supportsEffort?: boolean; levels?: EffortLevel[] }>();
+        for (const m of (caps.models as { value?: unknown; displayName?: unknown; supportsEffort?: unknown; supportedEffortLevels?: unknown }[] | undefined) ?? []) {
+          if (typeof m?.value !== "string") continue;
+          if (typeof m.displayName === "string") modelNamesRef.current.set(m.value, m.displayName);
+          const levels = Array.isArray(m.supportedEffortLevels) ? m.supportedEffortLevels.filter(isEffortLevel) : undefined;
+          const entry = { ...(typeof m.supportsEffort === "boolean" ? { supportsEffort: m.supportsEffort } : {}), ...(levels?.length ? { levels } : {}) };
+          caps2.set(m.value, entry);
+          const resolved = resolveModelAlias(m.value);
+          if (resolved && resolved !== m.value) caps2.set(resolved, entry);
+        }
+        setEffortCaps(caps2);
         const catalog = (caps.commands as unknown[]).map(toCatalogEntry).filter((e): e is CommandEntry => !!e);
         catalogNames.current = new Set(catalog.map((c) => c.name));
         setCommandCatalog(mergeCommands(LOCAL_COMMAND_ENTRIES, catalog));
@@ -1158,7 +1226,7 @@ export function useChat(
         case "cost": append(formatCost((await session.usage()) as SessionUsage)); break;
         case "status": {
           const u = await session.usage().catch(() => undefined);
-          append(formatStatus({ model, mode, thinkLevel, ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined }));
+          append(formatStatus({ model, mode, thinkLevel, ...(effort ? { effort } : {}), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined }));
           break;
         }
         case "usage": append(formatUsage(await session.usage())); break;
@@ -1199,6 +1267,13 @@ export function useChat(
             if (!disposed.current) setThinkLevel(parsed.level);
             append(formatThink(parsed.level));
           } else append(formatThink(undefined, thinkLevel));
+          break;
+        // W-C T11 (EP-C6). No arg = upstream's shape, the dialog (`local-jsx`, L447278). An arg is ccx's
+        // documented divergence (commands.ts's COMMANDS entry says why) and the only keyboard route to the
+        // domain gate — a dialog cannot produce an invalid level.
+        case "effort":
+          if (cmd.args) applyEffort(cmd.args.trim());
+          else openEffortDialog();
           break;
         case "mcp": {
           const action = parseMcpArgs(cmd.args);
@@ -1463,7 +1538,13 @@ export function useChat(
       const [caps, usage] = await Promise.all([session.capabilities(), session.usage().catch(() => undefined)]);
       if (disposed.current) return;
       const outputTokens = totalOutputTokens(usage as SessionUsage | undefined);
-      const models: ModelInfo[] = (caps.models as any[]).map((m) => ({ value: String(m?.value ?? m), displayName: m?.displayName, description: m?.description }));
+      // W-C T11: the two effort fields ride along, because the picker's effort row is answered by the FOCUSED
+      // row (§C6.3's `tvn`/`nva`) and the catalog is the only place that knows.
+      const models: ModelInfo[] = (caps.models as any[]).map((m) => ({
+        value: String(m?.value ?? m), displayName: m?.displayName, description: m?.description,
+        ...(typeof m?.supportsEffort === "boolean" ? { supportsEffort: m.supportsEffort } : {}),
+        ...(Array.isArray(m?.supportedEffortLevels) ? { supportedEffortLevels: (m.supportedEffortLevels as unknown[]).filter(isEffortLevel) } : {}),
+      }));
       if (!models.length) { append([{ text: "no models available", dim: true }]); return; }
       // Which ROW is the model in force. `model` is a resolved id ("claude-opus-5") and the rows are tier
       // aliases ("opus"), so the match runs through the same resolver `pickModel` writes with — a bare
@@ -1519,6 +1600,41 @@ export function useChat(
     if (!fromSettings) append(formatModelSet(m.displayName ?? m.value, saveDefault));
     void session.setModel(v).catch(() => {});
   }
+
+  // ── WAVE C TASK 11 (EP-C6): the effort verbs. ────────────────────────────────────────────────────────
+  /** THE CLIENT-SIDE DOMAIN GATE, and the reason it exists is measured rather than defensive: probe 102
+   *  established that `Query.applyFlagSettings({effortLevel})` — the SDK's ONLY runtime effort hook, there is
+   *  no `setEffort` — performs NO VALIDATION. `{effortLevel:"bogus"}` resolves silently and the session keeps
+   *  running at whatever level it had, so a typo would look exactly like a success. ccx therefore refuses
+   *  out-of-domain levels HERE, before a frame is built: no wire op fires, and the user is told. The wire
+   *  schema (`ops.ts`) closes the same domain again as the belt to this brace.
+   *
+   *  Commit-before-await, the same ordering `pickModel`/`setThink` settled on (final review Finding 2): the
+   *  engine call is fire-and-forget with a swallowed rejection, so deferring the local commit until it
+   *  settled would buy no correctness and would open a window where the hint and the status line still read
+   *  the old level. */
+  function applyEffort(level: string): void {
+    if (disposed.current) return;
+    if (!isEffortLevel(level)) {
+      append([{ text: `effort: unknown effort level "${level}" · try low/medium/high/xhigh/max`, color: role("error") }]);
+      return;
+    }
+    setEffortState(level);
+    // Feature-tested like every other SettingsOps verb: a lib Session (whose config is fixed at construction)
+    // has no flag layer to write, and the local state above is still the truthful thing to show.
+    if (hasSettingsOps(session)) void session.setEffort(level).catch(() => {});
+  }
+  /** Snapshot at open time, exactly as `openModelPicker` does, so ChatApp reads state and nothing else. */
+  function openEffortDialog(): void {
+    if (disposed.current) return;
+    setEffortDialog({
+      open: true, level: effort ?? DEFAULT_EFFORT, levels: effortLevels,
+      supported: effortSupported !== false,
+      ...(model ? { modelName: modelNamesRef.current.get(model) ?? model } : {}),
+    });
+  }
+  function closeEffortDialog(): void { if (!disposed.current) setEffortDialog({ open: false }); }
+  function confirmEffort(level: EffortLevel): void { closeEffortDialog(); applyEffort(level); }
 
   // W3 T3: /add-dir. `addDirValidate` is the ONE place that turns a typed path into a verdict — both the
   // command-line arg path above and the dialog's own entry-phase Enter call it, so they can never drift on
@@ -1633,7 +1749,7 @@ export function useChat(
   // renders them itself, read-only.
   async function fetchSettingsStatus(): Promise<RenderLine[]> {
     const u = await session.usage().catch(() => undefined);
-    return formatStatus({ model, mode, thinkLevel, ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined });
+    return formatStatus({ model, mode, thinkLevel, ...(effort ? { effort } : {}), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined });
   }
   async function fetchSettingsUsage(): Promise<RenderLine[]> { return formatUsage(await session.usage()); }
   async function fetchSettingsStats(): Promise<RenderLine[]> {
@@ -2058,5 +2174,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

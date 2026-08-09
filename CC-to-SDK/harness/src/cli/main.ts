@@ -397,7 +397,12 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
       // engine is actually running BEFORE the first turn ends. Without it the Tab ladder's `auto` rung reads
       // an undefined model and silently downgrades the session the user asked for. `ccx attach` (above) has
       // no launch config to pass, and useChat handles that unknown by declining to switch at all.
-      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, ...(parsedThink ? { initialThink: parsedThink.level } : {}) },
+      // W-C T11 (EP-C6): `initialEffort` mirrors `resolveOptions.ts:52`'s own rule (the flag, else the
+      // harness default) for the same reason `initialModel` mirrors its model rule — the §C6.2 hint has to
+      // be able to name the level the engine is ACTUALLY running at mount, before any turn or catalog fetch.
+      // `ccx attach` (the other foreground path) passes none, and undefined there means no hint, which is
+      // the honest answer for a client that never saw a launch config.
+      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialEffort: foregroundConfig.effort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}) },
     });
   } finally {
     process.off("SIGHUP", onSignal); process.off("SIGTERM", onSignal);

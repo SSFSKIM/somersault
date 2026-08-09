@@ -72,6 +72,12 @@ export interface RewindOps {
  *  getSettings/listDirs/addDir/removeDir/setOutputStyle/addRule/removeRule exactly; the in-process lib
  *  Session does not implement this (its config is fixed at construction, like DecisionFeed's broker seam
  *  predating it) — consumers feature-test with `hasSettingsOps`. */
+/** WAVE C TASK 11 (EP-C6). Declared HERE rather than imported from `config/types.ts` (which takes it from
+ *  the SDK) for the same reason `RewindScope` is a local union: this module is the REPL-facing contract and
+ *  must not drag the SDK's type graph into every client that implements it. Same five members, and
+ *  `tui/modelPickerModel.ts`'s `EFFORT_LEVELS` is the runtime domain that guards them. */
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface SettingsOps {
   getSettings(): Promise<unknown>;
   listDirs(): Promise<{ path: string; source: "cwd" | "launch" | "session" }[]>;
@@ -80,6 +86,13 @@ export interface SettingsOps {
   setOutputStyle(style: string): Promise<void>;
   addRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void>;
   removeRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void>;
+  /** WAVE C TASK 11 (EP-C6). Effort belongs on THIS surface and not on `ChatSession` beside `setModel`
+   *  because it is not a control-channel setter at all: probe 102 established the SDK has no `setEffort`,
+   *  and the host answers this by writing the engine's dynamic FLAG LAYER — `applyFlagSettings({effortLevel})`
+   *  — which is exactly what `setOutputStyle` above does and exactly why a resumed engine has to have it
+   *  replayed. The level is already validated when it arrives (`tui/modelPickerModel.ts`'s `isEffortLevel`);
+   *  the wire schema closes the domain again because `applyFlagSettings` itself validates nothing. */
+  setEffort(level: EffortLevel): Promise<void>;
 }
 
 export function hasDecisionFeed(s: ChatSession): s is ChatSession & DecisionFeed {

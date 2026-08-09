@@ -2,7 +2,7 @@
 // makeSession() must return synchronously (ink renders immediately); every method awaits `ready`.
 import { RemoteChatSession } from "./remote.js";
 import type { HostEvent } from "../host/wire.js";
-import type { ChatSession, DecisionFeed, BgTasks, SessionEvents, RewindOps, RewindAnchor, RewindScope, SettingsOps } from "../session/chatSession.js";
+import type { ChatSession, DecisionFeed, BgTasks, SessionEvents, RewindOps, RewindAnchor, RewindScope, SettingsOps, EffortLevel } from "../session/chatSession.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { CompactOutcome } from "../compaction/index.js";
@@ -155,6 +155,9 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
     async setOutputStyle(style: string) { orFail(await (await ready).setOutputStyleOp(style)); },
     async addRule(behavior: "allow" | "ask" | "deny", rule: string) { orFail(await (await ready).addRuleOp(behavior, rule)); },
     async removeRule(behavior: "allow" | "ask" | "deny", rule: string) { orFail(await (await ready).removeRuleOp(behavior, rule)); },
+    // W-C T11 (EP-C6): the effort flip. The level is already inside the domain by the time it gets here —
+    // useChat's `applyEffort` gate is what makes that true, and `ops.ts`'s enum is what makes it enforced.
+    async setEffort(level: EffortLevel) { orFail(await (await ready).setEffortOp(level)); },
     onSessionEvent(cb) {
       if (!eventCb) { eventCb = cb; for (const ev of backlog.splice(0)) { try { cb(ev); } catch {} } }
       else eventCb = cb;                     // single consumer: a re-subscribe replaces (useChat's session swap)
