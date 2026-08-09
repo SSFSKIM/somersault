@@ -58,10 +58,12 @@ function fakeSpawn(opts: { throws?: Error } = {}) {
 function fakeClock() {
   let now = 0, seq = 0;
   const timers = new Map<number, { at: number; fn: () => void }>();
+  const delays: number[] = [];                             // every ms value ever handed to setTimeout, in order
   return {
+    delays,
     deps: {
       now: (): number => now,
-      setTimeout: (fn: () => void, ms: number): unknown => { const id = ++seq; timers.set(id, { at: now + ms, fn }); return id; },
+      setTimeout: (fn: () => void, ms: number): unknown => { delays.push(ms); const id = ++seq; timers.set(id, { at: now + ms, fn }); return id; },
       clearTimeout: (h: unknown): void => { timers.delete(h as number); },
     },
     advance(ms: number): void {
@@ -80,6 +82,19 @@ function fakeClock() {
 
 /** Let queued microtasks (the promise chain inside a run) drain. */
 const tick = (): Promise<void> => new Promise((r) => { setImmediate(r); });
+
+/** Run `fn` with an `unhandledRejection` listener installed and return whatever it caught. The listener is
+ *  load-bearing twice over: it is the assertion (an escaped rejection shows up in the array), and it stops
+ *  node's default `--unhandled-rejections=throw` from killing the worker before the expect can run — which is
+ *  what makes these two tests a RED rather than a crash. Two ticks, because node raises the event a full turn
+ *  after the microtask queue drains. */
+async function watchRejections(fn: () => void | Promise<void>): Promise<unknown[]> {
+  const seen: unknown[] = [];
+  const onRej = (e: unknown): void => { seen.push(e); };
+  process.on("unhandledRejection", onRej);
+  try { await fn(); await tick(); await tick(); } finally { process.off("unhandledRejection", onRej); }
+  return seen;
+}
 
 describe("resolveStatusLineConfig — annex §C2.1 (the zod object at L42035)", () => {
   it("a full valid config resolves with every known field", () => {
@@ -123,6 +138,16 @@ describe("resolveStatusLineConfig — annex §C2.1 (the zod object at L42035)", 
   it("unknown keys are stripped (zod strips by default) — the resolved object carries only the schema's fields", () => {
     expect(resolveStatusLineConfig({ statusLine: { type: "command", command: "s.sh", nope: 1, timeout: 30 } }))
       .toEqual({ type: "command", command: "s.sh" });
+  });
+  it("`disableAllHooks: true` un-configures a perfectly valid statusLine (§C2.5's other startup guard)", () => {
+    const valid = { type: "command", command: "s.sh", padding: 2, refreshInterval: 5 };
+    expect(resolveStatusLineConfig({ statusLine: valid, disableAllHooks: true })).toBeUndefined();
+  });
+  it("`disableAllHooks` false, absent, or merely truthy leaves the config alone — the gate is `=== true`", () => {
+    const valid = { type: "command", command: "s.sh" };
+    expect(resolveStatusLineConfig({ statusLine: valid, disableAllHooks: false })).toEqual(valid);
+    expect(resolveStatusLineConfig({ statusLine: valid })).toEqual(valid);
+    expect(resolveStatusLineConfig({ statusLine: valid, disableAllHooks: "yes" })).toEqual(valid);
   });
 });
 
@@ -361,6 +386,61 @@ describe("createStatusLineDriver — annex §C2.4 (`b0b`'s four triggers)", () =
     await tick();
     expect(texts).toEqual([]);                            // a result delivered after unmount never reaches setState
     d.dispose();                                          // idempotent
+  });
+  it("a `buildPayload` that throws inside the debounce timer skips THAT run and leaves the driver working", () => {
+    const clock = fakeClock(), r = fakeRunner();
+    let boom = true;
+    const d = createStatusLineDriver(CMD, () => { if (boom) throw new Error("no session yet"); return "{ok}"; }, () => {}, { runStatusLine: r.run, ...clock.deps });
+    d.poke("tokenUsage");
+    expect(() => clock.advance(300)).not.toThrow();        // the timer callback is bare — a throw here is uncatchable
+    expect(r.runs).toEqual([]);                            // skipped, not run with a broken payload
+    boom = false;
+    d.poke("model"); clock.advance(300);
+    expect(r.runs.map((x) => x.payload)).toEqual(["{ok}"]); // and the next poke still lands
+    d.dispose();
+  });
+  it("a `buildPayload` that throws does NOT abort the run already in flight", async () => {
+    const clock = fakeClock(), r = fakeRunner();
+    const texts: string[] = [];
+    let boom = false;
+    const d = createStatusLineDriver(CMD, () => { if (boom) throw new Error("x"); return "{}"; }, (t) => { texts.push(t); }, { runStatusLine: r.run, ...clock.deps });
+    d.mountRun();
+    boom = true;
+    d.poke("tokenUsage"); clock.advance(300);
+    expect(r.runs[0].aborted()).toBe(false);               // killing a good run for a payload we never built is pure loss
+    r.runs[0].resolve("STILL GOOD");
+    await tick();
+    expect(texts).toEqual(["STILL GOOD"]);
+    d.dispose();
+  });
+  it("an `onText` that throws is swallowed — no unhandled rejection, and later runs still deliver", async () => {
+    const clock = fakeClock();
+    const texts: string[] = [];
+    const run = (): Promise<string | undefined> => Promise.resolve("TEXT");
+    let boom = true;
+    const d = createStatusLineDriver(CMD, () => "{}", (t) => { texts.push(t); if (boom) throw new Error("setState after unmount"); }, { runStatusLine: run, ...clock.deps });
+    const seen = await watchRejections(async () => { d.mountRun(); await tick(); });
+    expect(seen).toEqual([]);
+    boom = false;
+    d.poke("model"); clock.advance(300);
+    await tick();
+    expect(texts).toEqual(["TEXT", "TEXT"]);
+    d.dispose();
+  });
+  it("a runner that REJECTS is swallowed too — the driver's contract does not depend on runStatusLine keeping its own", async () => {
+    const clock = fakeClock();
+    const run = (): Promise<string | undefined> => Promise.reject(new Error("someone rewrote runStatusLine"));
+    const d = createStatusLineDriver(CMD, () => "{}", () => {}, { runStatusLine: run, ...clock.deps });
+    const seen = await watchRejections(async () => { d.mountRun(); await tick(); });
+    expect(seen).toEqual([]);
+    d.dispose();
+  });
+  it("`refreshInterval: Infinity` (which the schema accepts) clamps to setTimeout's max instead of collapsing to 1 ms", () => {
+    const clock = fakeClock(), r = fakeRunner();
+    const d = createStatusLineDriver({ ...CMD, refreshInterval: Infinity }, () => "{}", () => {}, { runStatusLine: r.run, ...clock.deps });
+    d.mountRun();
+    expect(clock.delays).toEqual([2_147_483_647]);         // node clamps >2^31−1 to 1 ms — a hot loop that never updates
+    d.dispose();
   });
   it("the payload is rebuilt per run, so a run carries the state at ITS moment, not the driver's construction", () => {
     const clock = fakeClock(), r = fakeRunner();
