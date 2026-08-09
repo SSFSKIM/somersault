@@ -910,3 +910,29 @@ stepping test is two writes with tick between (name overpromises; regression sti
 sabotage verified). Implementer self-review caught ref-backed stepping defect pre-review. Suites:
 1837 unit / 3134 tui. Test-harness trap for later tasks: bare render() gives ChatApp NO input path
 (stdin.write silently dropped) — use renderWithKeymap(); composer caret is ❯+U+00A0 not ❯+space.
+
+## 2026-08-10 — Wave C Task 12 complete (03deb8fb66 + 7ac72123e4, review approved)
+
+The follow-up suggestion, off by default. §C5.3 prompt pinned byte-for-byte by a test that
+RE-EXTRACTS the annex block at read time (and settled the prompt at 32 lines — the plan/spec's "44"
+was a mis-count, both patched). Reviewer went past the annex to the 2.1.226 binary: all twelve
+transcribed post-filter rules char-identical to upstream's qGy INCLUDING order and the 17-word
+allowlist — and found a THIRTEENTH rule the annex missed (`done`, heads the array; no behavioral
+consequence — bare "done" also fails too_few_words — annex patched to record it). Review Medium: a
+dead warm suggester session was never replaced (submit rejects forever after engine death; feature
+silently stops until /clear — upstream can't have this, it forks per suggestion) — fixed, session
+nulled in catch with identity guard vs racing retire(), pinned by an always-throwing factory-count
+test (the old throws-once fixture passed either way — that was the gap). Also in the fix round:
+upstream's exact label-stripper regex recovered from the binary and transcribed verbatim
+(divergence note deleted — it's a transcription now; fixer re-verified provenance via strings at
+L359372), popup test renamed to the empty-buffer rule it actually pins (guard kept — upstream's
+clause equally redundant), suggestionEnabled thread pinned at ChatApp both polarities,
+disableProjectContext divergence labeled, tautological waitFor + wrong title fixed, double cast →
+typed return annotation, retire-on-disable pinned (was already implemented). Implementer's
+self-review caught the big one pre-review: bypassPermissions + allowedTools:[] would have handed
+the suggester the FULL tool preset with the broker silenced (resolveTools drops empty arrays) —
+shipped is upstream's real mechanism: default mode + deny-all broker "No tools needed for
+suggestion" (reviewer traced it to gate.ts:66, same message, tools sent never run). No /cost
+pollution (separate session, mechanically unreachable). Production factory still never executed
+keyless — the keyed live run at wave close (A9) is its verification, not a formality. Suites: 1897
+unit / 3156+1-flake tui (fixer stash-tested the flake on clean tree: 1-in-3 there too).

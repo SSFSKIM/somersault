@@ -538,7 +538,8 @@ gated on the setting), `settingsRows.ts` + `prefs.ts` (`Prompt suggestions` bool
 `promptSuggestionEnabled`, **explicit false default**); Test `test/unit/suggester.test.ts`,
 `test/tui/suggestion.test.tsx`, plus one **gated live test** `test/live/suggestion.test.ts`.
 
-**Annex:** §C5.1-C5.7 — the verbatim 44-line prompt (§C5.3; copy EXACTLY), the twelve-rule
+**Annex:** §C5.1-C5.7 — the verbatim 32-line prompt (§C5.3; copy EXACTLY; "44" was a
+mis-count corrected by the Task 12 byte-equality pin), the thirteen-rule
 post-filter table, the eligibility chain (MINUS `cache_cold`, per spec), the four-state machine +
 transitions table, placeholder render (dim, first char inverted when focused, only when buffer
 empty), accept Tab/Right on empty buffer with no completion popup, abort-on-keystroke, survives

@@ -1333,7 +1333,7 @@ if (e.toolPermissionContext.mode === "plan")           return "plan_mode";
 if (Vie().status !== "allowed")                        return "rate_limit";
 return null;
 ```
-→ generate → `empty` if blank → the twelve-rule post-filter.
+→ generate → `empty` if blank → the thirteen-rule post-filter (§C5.3's table).
 
 **There is no interrupt-triggered generation path.** An Esc during streaming returns
 `{ reason: "aborted_streaming" }` at `L238470`, before `nud` runs. QA's `Never mind, wrong
@@ -1415,11 +1415,16 @@ Format: 2-12 words, match the user's style. Or nothing.
 Reply with ONLY the suggestion, no quotes or explanation.
 ```
 
-**Post-filter `AOy` (`L235223`)** — twelve rejection rules, each logging its reason:
+**Post-filter `AOy` (`L235223`)** — thirteen rejection rules, each logging its reason
+(originally transcribed as twelve; the Task 12 review recovered the `done` rule from the
+binary — it heads the rule array, ahead of `meta_text`; no behavioral consequence for a
+transcription that omits it, since a bare `done` also fails `too_few_words`, `done` not
+being in the seventeen-word allowlist — but the table is canon, so it's recorded):
 
 | reason | test |
 |---|---|
 | `empty` | falsy |
+| `done` | lowercased text `=== "done"` |
 | `meta_text` | `nothing found` / `nothing found.` / starts `nothing to suggest` / starts `no suggestion` / `/\bsilence is\b|\bstay(s|ing)? silent\b/` / `/^\W*silence\W*$/` |
 | `meta_wrapped` | `/^\(.*\)$|^\[.*\]$/` |
 | `error_message` | starts with `api error:`, `prompt is too long`, `request timed out`, `invalid api key`, `image was too large` |

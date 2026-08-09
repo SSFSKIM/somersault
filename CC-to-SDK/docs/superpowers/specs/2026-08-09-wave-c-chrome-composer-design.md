@@ -257,7 +257,8 @@ override) and §16's listing should be read as superseded.
 
 1. **Context.** Overturns 4-6 above. Upstream contract in bundle §EP-C5: trigger fire-and-forget at
    turn end; eligibility chain (≥2 assistant messages, last result not error, cache warm, enabled,
-   no pending permission, not plan mode); the 44-line SUGGESTION-MODE prompt (verbatim in the annex);
+   no pending permission, not plan mode); the 32-line SUGGESTION-MODE prompt (verbatim in the annex;
+   "44" was a mis-count — the Task 12 byte-equality pin settled it at 32);
    twelve-rule post-filter; four-state machine (`empty → generated → shown → accepted`); renders as
    the composer placeholder (dim, first char inverted when focused); accept = Tab or Right arrow on
    an empty buffer; abort on every keystroke; survives Ctrl-C; reset on submit.
