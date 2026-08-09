@@ -988,3 +988,28 @@ justified at post site (GLb = (_, arrival) => arrival — same-key re-add IS tha
 guard added (stub maxTokens:100 fixtures would read "100% remaining" off a negative denominator).
 Noted for Task 15: "Context low (0% remaining)" at crossing is upstream's own clamp (L163991),
 faithful not a bug; coverage.md refresh owed by Task 15. Suites: 1913 unit / 3178 tui.
+
+## 2026-08-10 — Wave C Task 15 complete (evidence-only + 6e93d87689 fix; A1-A15 ALL PASS)
+
+Final verification, split keyless (implementer) / keyed (controller). Gates: typecheck clean, 1913
+unit / 3178+9skip tui, build clean. Keyless A1,A2,A3,A4,A7,A11,A13,A14,A15 all PASS (evidence
+$CLAUDE_JOB_DIR/tmp/waveC-A*.txt + frames-A*/). Keyed runs (OAuth, isolated /tmp HOMEs,
+drive-repl-args): A5 PASS — title ladder ✳ ccx → ⠂/⠐ 960ms busy alternation → ✳ {ai title} →
+cleared on exit, all in one OSC-0 capture. A6 PASS — estimate motion (↓4→21, ↓10→80 tokens),
+progressive parenthetical, and all FOUR thinking rungs (thinking → still thinking @13s → thinking
+more @23s → almost done thinking @59s). A8 PASS — ✻ Cooked for 4s after a turn; absent with
+prefs showTurnDuration:false. A9 PASS — live suggestion 3/3: the never-executed production factory
+(warm haiku + deny-all broker) produced two filter-passing suggestions from ONE warm session;
+abort clean. A10 PASS — /effort dialog stepping ◉ xHigh (default) → ● High (default marker
+correctly dropped) → ◐ Medium, Enter confirms, hint re-posts ◐ medium · /effort, /status shows
+effort medium (set_effort wire op end-to-end live). A12 PASS — banner `claude-opus-5 · Claude
+subscription` (probe-101 OAuth mapping) + /status + picker "Use the default model (currently
+Opus)" all agree. ONE FINDING fixed mid-task (6e93d87689): the Task 13 fix's 300ms accountInfo
+race deadline sat BELOW its own review's measured handshake (~450ms warm) — the billing label
+lost on every boot; raised to 1500ms with the measurement pinned in a test. Measured truth:
+host-path cold-fresh-HOME 1812ms (loses even 1500 — first-ever-launch omission, acceptable
+best-effort), warm 279ms (wins). The keyless implementer's phantom "API Usage Billing" sighting:
+job env is credential-clean; most plausible path is macOS Keychain (HOME isolation can't hide it)
++ a warm boot beating the old 300ms wire — keyless pty runs are NOT credential-isolated on this
+machine, worth remembering. Also keyed: all 9 test/tui/live e2e suites PASS. Suites: 1913 unit /
+3178 tui / build clean.
