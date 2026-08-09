@@ -554,3 +554,19 @@ climbs, dropped now prop pins the bar at cap instantly). Comments corrected: no 
 race, belt claim scoped to the wire path with the accepted local edge recorded, ACCENT fill recorded
 as ours against upstream's default-foreground pill. Wave S is now 11/13 closed with only Task 12's
 review verdict and Task 13 outstanding.
+
+## 2026-08-09 — Task 12 review: the ack outlives the conversation — Task 8's lesson, fourth appearance
+
+The sharpened review angle paid off exactly as aimed: `cacheMissAckedAtOutputTokens` is a ref reset
+nowhere while /clear swaps the engine and restarts usage() at zero — and our `>=` (upstream: strict
+`===`) turns that stale stamp into blanket suppression of the cache warning for the whole fresh
+conversation until it out-produces the old one (reviewer demonstrated end to end: ack 500, /clear,
+200 fresh tokens → we stay silent, upstream warns). replaceDocument is the boundary Task 8 built for
+exactly this class and the ack wasn't getting the same treatment. Also from canon: upstream re-stamps
+the ack at compaction success ($$e — the cache is already lost, so no warning), which we didn't
+replicate. Fix round dispatched: strict equality, ref reset in replaceDocument (W-S5 citation),
+post-compact re-stamp on both paths (replay-guarded on the wire), render-pins for the body sentence
+and warning role (both deletable today with a green suite), gate fallback to the resolved running
+model when no catalog row matches, two comment corrections (snapshot-vs-fresh divergence named;
+the false "focus intact" claim). Clean angles included six proof-carrying sabotage reds and the
+sessionModel-first comparison being confirmed CANON, not an invention.
