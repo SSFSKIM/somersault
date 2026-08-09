@@ -816,3 +816,19 @@ Fold-run-breaker adjudicated coherent with upstream's structure (visible row bre
 neutral — both pinned). Suites: 1758 unit / 3062 tui (one known pre-existing /copy flake, clean on
 isolated rerun). Lesson (×3 now): inferred-from-annex-silence claims about upstream are testimony —
 the binary settles; and the QA corpus already held the answer both times.
+
+## 2026-08-10 — Wave C Task 8 complete (97b1acb437 + 9f99708c06, review approved)
+
+Terminal title: OSC 0 BEL byte-pinned (constants + literal pinned against each other), ⠂/⠐ at
+960ms only-while-busy (armed()==0 at idle proven), dedupe, kill switch incl. the ""-falsy edge,
+clear on Ink teardown, REPL-only containment verified (no host/daemon path reaches the module).
+Direct-stdout adjudicated CORRECT with a sharper mechanism than the implementer wrote: a title tick
+through ResumeSafeStdout would be classified FOREIGN (non-newline-terminated) and clear the Wave R
+resize latches every 960ms — comment corrected. Review found the wave's sixth
+measurement-dies-with-its-conversation instance: aiTitle/renameTitle/the fetch latch survived
+resumeInto's session swap (old title kept forever, new title unfetchable — latch already true).
+Fixed at the swap beside the existing resets + mount-time fetch for resumed sessions (probes §(d):
+ai-title is a disk read), with the same-session-resume guard test pinning the reset's placement.
+Divergences authorized under D-C9 (ccx identity strings); SIGTERM whole-restore (raw mode + cursor
++ park + title) recorded as one follow-up ticket — patching the title alone at the signal would be
+the wrong seam. Suites: 1779 unit / 3076 tui.
