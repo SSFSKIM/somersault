@@ -763,3 +763,19 @@ useChat.ts:1759 killAgents timestamp-ref double-press with a hardcoded chord lit
 derives (L499289) — good follow-up, useChat.ts not in the banned-chord sweep; (I2) ← gesture has no
 busy gate (probably right, undocumented); (I3) ESC_CLEAR_HINT_MS 1000 is unreachable as a timing —
 say so in the docblock.
+
+## 2026-08-10 — Wave C Task 5 complete (752e723a08 + 43307fe4c0, review approved)
+
+CLI surface: --version/-v (0.1.0 (cc-harness), package.json-read, survives the built artifact from a
+foreign cwd), commander-shaped --help (Usage/Arguments/Options/Commands, layout constants verified
+line-by-line), doctor (honest identity block, exit 0 unconditional), unknown flags exit 1 with the
+strict >0.4 suggestion gate (reviewer differentially FUZZED ccx's suggestSimilar against commander's
+own extracted from the bundle — 20,000 tokens, zero mismatches). Review found one Medium: the option
+sort key was BACKWARDS (short-first vs canon long-first) because the annex quoted compareOptions'
+wrapper but omitted its key function — the test had pinned the wrong order with a false citation.
+Fixed + annex patched with the missing quote (annex omissions propagate into pinned tests — the
+lesson). Also fixed: help/version now outrank unknown AND unsupported flags (commander's precedence,
+verified against installed 2.1.226), the term-overflow hanging-indent arm, the Arguments: section,
+and the reviewer's 4-line bidirectional drift guard (every parser case literal must be advertised in
+CCX_OPTIONS — passes with zero exceptions). Deferring the unknown-throw exposed a wrong-token blame
+in the excess-operand path; fixed to commander's check order. Suites: 1745 unit / 3009 tui.
