@@ -490,6 +490,21 @@ ccx — recorded in `closePicker`). Rolled to the external whole-branch review: 
 the `paneOwned` exhaustive-partition claim being mechanically unenforced, the `expect.poll`-vs-`waitFor`
 idiom split, and Task 9's full-UUID-of-a-live-session resolving to resume rather than `live`.
 
+### The external whole-branch review (codex, gpt-5.6-sol, base f099baf4fb)
+
+Three findings, all real, all closed same day (`72e683571c`): a UUID/prefix naming a LIVE session's
+transcript booted a second engine over it (liveness was only checked in the roster branch — now every
+resolution path cross-checks the fleet roster and returns `live` for a non-terminal row); the widened
+picker's preview/resume/rename still acted through the launch cwd, so an all-projects row from another
+project previewed empty and refused to resume (the row's own `cwd` now travels with all three actions
+— and note the SDK's returned shape carries `cwd`, not `projectPath`, which is an SDK-internal
+discovery name that never escapes); and a foreign-project roster short id resolved then died quietly
+in a fresh REPL — now a fourth outcome that names the actual project: `Session <short> belongs to
+another project: <path> — resume it from there`, exit 1. One residual stated in code: a cross-project
+pick replays the transcript in THIS host's working directory rather than moving projects — whether the
+engine resolves a foreign transcript is live-only knowledge; upstream ships the same widening, which
+is the reason to believe it does.
+
 ### What the wave taught (the compressed version)
 
 The measurement-must-die-with-its-conversation principle earned its fourth and fifth appearances (Task 12's

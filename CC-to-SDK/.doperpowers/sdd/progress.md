@@ -625,3 +625,20 @@ to remove, reachable through the one branch that skipped the cwd-scoped cross-ch
 verified real by the controller against the code; one fix round dispatched covering all three.
 Also: two background runs (the full suite, the first review attempt) were killed externally mid-run —
 the review rerun went through nohup-detached and completed; noting the pattern for future long runs.
+
+## 2026-08-09 — WAVE S CLOSED (72e683571c)
+
+The external review's three findings fixed in one round, each sabotage-verified: liveness
+cross-checked on EVERY resolution path (UUID, prefix, roster — a live transcript can no longer boot a
+second engine; crashed-host false-live accepted and documented as one failed attach vs a corrupted
+transcript); the widened picker's three actions carry the row's own cwd (and the fixer corrected my
+dispatch: the SDK's returned field is `cwd` — `projectPath` is discovery-internal and never escapes;
+verified against sdk.d.ts + sdk.mjs); foreign roster ids get a FOURTH outcome naming the actual
+project at exit 1 rather than a false "no conversation found" about a row `ccx agents` plainly lists.
+Gates: typecheck clean · 1669 unit · 2964 TUI. One live-only residual stated in code at pickSession
+(cross-project pick replays here rather than moving projects — engine-side resolution is unverifiable
+keyless; upstream ships the same widening).
+
+Wave S final: 13/13 tasks + the verification's own find + the external round. Spec Outcomes complete,
+coverage.md updated, memory written. main is ~120 commits ahead, unpushed (no push without explicit
+request). Wave C is the sprint's remaining wave.
