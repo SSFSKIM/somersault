@@ -488,7 +488,7 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("go");   await waitFor(() => frame(lastFrame).includes("go"));
-    stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("⟳"));
+    stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("esc to interrupt"));
     stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Transcript"));   // ctrl+o opens the pager
     stdin.write("\x18"); stdin.write("\x02");                                            // ctrl+x ctrl+b inside it
     await new Promise((r) => setTimeout(r, 30));

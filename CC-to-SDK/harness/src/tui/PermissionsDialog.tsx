@@ -256,8 +256,11 @@ function itemLabel(it: Item): string {
  *        `RECENT_EMPTY` (the "No recent denials…" line) is the third conditional row and is deliberately NOT
  *      reserved: it renders only on the `Recently denied` tab with ZERO denials, which is exactly the state
  *      whose list is empty and whose indicators are therefore both off. It cannot coexist with either.
- *    · +1 — `ChatStatusBar`, the one sibling this budget models because it is the only UNCONDITIONAL one
- *      (ChatApp's last row). Everything else ChatApp can draw beside this dialog is handled by its `paneOwned`
+ *    · +1 — THE FOOTER ROW (`Footer.tsx`, Wave C Task 2 — `ChatStatusBar` until then), the one sibling this
+ *      budget models because it is the only UNCONDITIONAL one (ChatApp's last row). re-measured for Wave C Task 2 in a real pty at 100×40 under an isolated HOME: with the dialog up, ChatApp's last child is the ONE footer row (`  ⏸ manual mode on`) and nothing else — the statusLine row has no producer until Task 10 and the notification overlay lives inside the composer, which this dialog unmounts. Same one row, same budget term.
+ *      The footer's two OPTIONAL rows are not counted and cannot appear here: the statusLine row has no
+ *      producer until Task 10, and the notification overlay is mounted inside the composer, which this
+ *      dialog unmounts. Everything else ChatApp can draw beside this dialog is handled by its `paneOwned`
  *      gate, which t6b extends to `state.permissions.open` precisely because this dialog now sizes itself from
  *      `rows`. A budget could not model those anyway: the task panel alone is seven rows.
  *    · +1 — the `>=` above: the frame must end up STRICTLY shorter than the pane, not equal to it.

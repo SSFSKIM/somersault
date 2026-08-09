@@ -56,9 +56,9 @@ export const REWIND_MIN_ROWS = 2;
  *  9 visible rows at a geometry where upstream's own frame shows 2. Ours is 9 + 1 + 1 + 1, each term counted
  *  below against our own tree, and nothing but arithmetic accident makes the totals agree.
  *
- *  THE DIALOG DOES NOT OWN THE PANE. `rows` here is the WHOLE terminal height, and `ChatApp` draws
- *  `ChatStatusBar` one line below the picker, unconditionally (`<ChatStatusBar>`, the last row of ChatApp's
- *  tree). A budget counted from `RewindFrame` alone — t4's nine — therefore composes into a frame that
+ *  THE DIALOG DOES NOT OWN THE PANE. `rows` here is the WHOLE terminal height, and `ChatApp` draws the
+ *  FOOTER one line below the picker, unconditionally (`<Footer>`, the last row of ChatApp's tree — it was
+ *  `<ChatStatusBar>` before Wave C Task 2 and is the same single row after it). A budget counted from `RewindFrame` alone — t4's nine — therefore composes into a frame that
  *  REACHES the pane; measured on the real `ChatApp`, at two of every three heights at the bottom of the list
  *  and at every height once the checking row is up.
  *
@@ -77,12 +77,15 @@ export const REWIND_MIN_ROWS = 2;
  *       7    `↓ N more below`
  *       8    the footer box's `marginTop={1}` blank
  *       9    the footer itself
- *   · +1 — `ChatStatusBar`. THIS IS NOT AN ENUMERATION OF WHAT SHARES THE PANE, and an earlier wording that
+ *   · +1 — THE FOOTER ROW (`Footer.tsx`, Wave C Task 2 — `ChatStatusBar` until then; re-measured for Wave C Task 2 in a real pty at 100×40 under an isolated HOME: with the dialog up, ChatApp's last child is the ONE footer row (`  ⏸ manual mode on`) and nothing else — the statusLine row has no producer until Task 10 and the notification overlay lives inside the composer, which this dialog unmounts. Same one row, same budget
+ *     term, only a different component drawing it). THIS IS NOT AN ENUMERATION OF WHAT SHARES THE PANE, and an earlier wording that
  *     read like one is how the next round's finding got in: the status bar is the only sibling the budget
  *     models, because it is the only one that is UNCONDITIONAL. Everything else `ChatApp` can draw beside
  *     this dialog — the task panel, the turn spinner or retry row, the queue echo, the transcript's
  *     pending/streaming region, the two armed hints — is handled by `ChatApp`'s `paneOwned` gate, which
- *     unmounts all of it while a pane-owning surface is up, and none of it is counted here. A budget cannot
+ *     unmounts all of it while a pane-owning surface is up, and none of it is counted here. The footer's own
+ *     two OPTIONAL rows are in that same category: the statusLine row (EP-C2, no producer until Task 10) and
+ *     the notification overlay, which is mounted inside the composer and therefore unmounted with it. A budget cannot
  *     model them anyway: the task panel alone is seven rows against a total slack, below, of one.
  *   · +1 — the `>=` above: the pane must end up STRICTLY taller than the frame, not equal to it. This is the
  *     only genuine headroom in the budget; the status-bar row never was any (an earlier comment counted it

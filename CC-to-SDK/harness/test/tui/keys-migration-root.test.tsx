@@ -11,6 +11,7 @@ import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
+import { ComposerWithFooter } from "./helpers/composerFooter.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import { UNDO_COALESCE_MS } from "../../src/tui/editor.js";
@@ -44,7 +45,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("go"); await waitFor(() => frame(lastFrame).includes("go"));
-    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("esc to interrupt"));
     stdin.write("\x1b");
     await waitFor(() => interrupted === 1);
     expect(frame(lastFrame)).not.toContain("Press Esc again to rewind");   // busy Esc interrupts, never arms
@@ -83,15 +84,19 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
   });
 
   it("(c2) alt+t toggles thinking through the same setThink flow /think uses", async () => {
+    // WAVE C TASK 2: the `think <level>` chip left the always-on row with `ChatStatusBar` — it has no upstream
+    // footer counterpart (spec EP-C1's owner-decision list), and `/status` and `/think` still report the
+    // level. So this case reads the WIRE instead of the chrome: `setMaxThinkingTokens`, which is what
+    // "through the same setThink flow" actually claims, and a stronger pin than a chip ever was.
     const budgets: (number | null)[] = [];
     const fake = fakeRemote({ setMaxThinkingTokens: (n: number | null) => { budgets.push(n); } });
     const { stdin, lastFrame } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => plain(frame(lastFrame)).includes("think default"));
+    await waitFor(() => plain(frame(lastFrame)).includes("? for shortcuts"));
     stdin.write("\x1bt");
-    await waitFor(() => plain(frame(lastFrame)).includes("think off"));
+    await waitFor(() => budgets.length === 1);
     expect(budgets).toEqual([0]);
     stdin.write("\x1bt");
-    await waitFor(() => plain(frame(lastFrame)).includes("think default"));
+    await waitFor(() => budgets.length === 2);
     expect(budgets).toEqual([0, null]);
   });
 
@@ -157,7 +162,8 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
 
   it("(g) ctrl+d exits only on an empty buffer, and only on the second press inside the arm window", async () => {
     let exits = 0;
-    const { stdin, lastFrame } = renderWithKeymap(<ChatComposer onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} onExit={() => { exits++; }} />);
+    // WAVE C TASK 2: the Ctrl-D arm is a FOOTER state now, so this renders the pair the app composes.
+    const { stdin, lastFrame } = renderWithKeymap(<ComposerWithFooter onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} onExit={() => { exits++; }} />);
     await tick();
     stdin.write("x"); await waitFor(() => frame(lastFrame).includes("x"));
     stdin.write("\x04");                                      // ctrl+d with text: nothing at all
@@ -165,7 +171,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     expect(exits).toBe(0);
     expect(frame(lastFrame)).not.toContain("Press Ctrl-D again to exit");
     expect(frame(lastFrame)).toContain("x");                  // and it certainly did not insert
-    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("? help"));
+    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("? for shortcuts"));
     stdin.write("\x04");                                      // empty buffer: first press arms
     await waitFor(() => frame(lastFrame).includes("Press Ctrl-D again to exit"));
     expect(exits).toBe(0);
@@ -186,7 +192,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     await tick();
     expect(background).not.toHaveBeenCalled();
     stdin.write("go"); await waitFor(() => frame(lastFrame).includes("go"));
-    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("esc to interrupt"));
     stdin.write("\x18"); stdin.write("\x02");                 // busy: Task binds ctrl+x ctrl+b
     await waitFor(() => background.mock.calls.length === 1);
   });
@@ -253,7 +259,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     );
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("go"); await waitFor(() => frame(lastFrame).includes("go"));
-    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("esc to interrupt"));
     stdin.write("\x1bc"); await waitFor(() => interrupted === 1);
   });
 
@@ -265,13 +271,13 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("draft"); await waitFor(() => frame(lastFrame).includes("draft"));
     stdin.write("\x1bk"); await waitFor(() => !frame(lastFrame).includes("draft"));
-    expect(frame(lastFrame)).toContain("? help");
+    expect(frame(lastFrame)).toContain("? for shortcuts");
   });
 
   it("(k4) a rebound app:exit runs the KB3 double-press arm on an empty composer, and nothing with text", async () => {
     let exits = 0;
     const { stdin, lastFrame } = renderWithKeymap(
-      <ChatComposer onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} onExit={() => { exits++; }} />,
+      <ComposerWithFooter onSubmit={() => {}} cwd={process.cwd()} commandCatalog={[]} onExit={() => { exits++; }} />,
       { userLayers: [{ context: "Chat", bindings: { "ctrl+d": null, "alt+q": "app:exit" } }] },
     );
     await tick();
@@ -279,7 +285,7 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     stdin.write("\x1bq"); await tick();                              // with text: no arm, no exit
     expect(exits).toBe(0);
     expect(frame(lastFrame)).not.toContain("again to exit");
-    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("? help"));
+    stdin.write("\x7f"); await waitFor(() => frame(lastFrame).includes("? for shortcuts"));
     stdin.write("\x1bq"); await waitFor(() => frame(lastFrame).includes("again to exit"));
     expect(exits).toBe(0);
     stdin.write("\x1bq"); await waitFor(() => exits === 1);

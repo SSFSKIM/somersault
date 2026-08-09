@@ -16,7 +16,8 @@ import React from "react";
 import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
-import { ChatStatusBar } from "../../src/tui/ChatStatusBar.js";
+import { Footer } from "../../src/tui/Footer.js";
+import { defaultLookup } from "../../src/tui/keys/hints.js";
 import { ROWS } from "../../src/tui/ShortcutsOverlay.js";
 import { applyKey, initialEditorState, inputMode, UNDO_COALESCE_MS, type EditorState } from "../../src/tui/editor.js";
 import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
@@ -159,10 +160,11 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     const modes: string[] = [];
     const session = fakeRemote({ setPermissionMode: (m: string) => { modes.push(m); } });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => session} client={{ kind: "loopback" }} cwd={process.cwd()} />);
-    await waitFor(() => frame(lastFrame).includes("mode"));
+    await waitFor(() => frame(lastFrame).includes("manual mode on"));
     stdin.write("\x1b[Z");                           // Shift+Tab
     await waitFor(() => modes.includes("acceptEdits"));
-    await waitFor(() => frame(lastFrame).includes("acceptEdits"));   // status bar reflects the real mode change
+    // WAVE C TASK 2: the chip prints upstream's own words (`⏵⏵ accept edits on`), not the wire key.
+    await waitFor(() => frame(lastFrame).includes("accept edits on"));
   },
 
   "Esc": async () => {
@@ -262,7 +264,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "t1", task_type: "bash", description: "d1" }] });
-    await waitFor(() => frame(lastFrame).includes("⚙ 1 bg"));
+    await waitFor(() => frame(lastFrame).includes("← for agents"));
     stdin.write("\x18"); await settle(); stdin.write("\x0b");   // first Ctrl-X Ctrl-K chord: arms killAgents' own confirm
     await waitFor(() => frame(lastFrame).includes("Press Ctrl-X Ctrl-K again to stop background agents"));
     expect(stopped).toEqual([]);
@@ -350,42 +352,45 @@ it("every advertised chord has a proof", () => {
 });
 for (const [k] of ROWS) it(`"${k}" is live`, async () => { await PROOFS[k](); });
 
-it("the composer-owned footer and contextual hints only advertise chords that ROWS carries", async () => {
-  // F5 Task 2 (CM20): the invented `\⏎ newline` rung became upstream's own `Z_a` ladder, so all THREE of
-  // its strings map onto the same row — whichever rung the ladder is standing on still has to be a chord
-  // ROWS can prove. The proof itself is unchanged: `\`+Return and Ctrl-J both split the line.
+it("the footer and the composer's contextual hints only advertise chords that ROWS carries", async () => {
+  // WAVE C TASK 2 REWROTE THE CORPUS, NOT THE RULE. The eleven-row hint stack this test used to sweep is
+  // gone: hint row 1 (`⏎ send · @ files · …`) had no upstream counterpart and was deleted outright, and the
+  // rest became either the ONE footer row (`Footer.tsx`) or queue notifications. So the tokens changed and
+  // the subject changed — the audit is the same, and it is still the thing that makes a lying string fail a
+  // test rather than a review. Each token below is one the live footer can print; each maps to the ROWS key
+  // whose proof above shows the chord actually works.
   const FOOTER_TOKEN_TO_ROW: Record<string, string> = {
-    "⏎ send": "⏎", "@ files": "@", "/ commands": "/",
-    "backslash (\\) + return (⏎) for newline": "\\⏎ / Ctrl-J", "\\⏎ for newline": "\\⏎ / Ctrl-J", "shift + ⏎ for newline": "\\⏎ / Ctrl-J",
-    "! bash": "!", "⇧Tab mode": "⇧Tab", "Esc rewind": "Esc", "Esc clear": "Esc", "Esc interrupt": "Esc", "? help": "?",
+    "? for shortcuts": "?", "! for shell mode": "!", "(shift+tab to cycle)": "⇧Tab",
   };
+  // `esc to interrupt` is NOT here on purpose: `footerModel.buildHintList` builds it (it is what crowds
+  // `? for shortcuts` out while a turn runs) and `Footer.tsx` filters it back out, because ccx's spinner tail
+  // already carries the same offer — see that filter's comment. Its honesty is audited where it is printed:
+  // the `Esc` row's own proof above drives a real interrupt.
+  // ONE LIVE AFFORDANCE IS DELIBERATELY NOT IN THAT MAP, and this is the record of it rather than a hole:
+  // `← for agents` (annex §C1.4). Upstream's `←` detaches to the agents view; **ccx has no `←` binding** —
+  // the background pane opens on `task:background` — so the glyph is a shape borrowed from upstream, not a
+  // chord this table can prove, and putting it in the map above would fail this test by design. It renders
+  // only when background agents actually exist (`footerModel.agentsAffordance` returns null otherwise), so
+  // the home state carries no unbacked promise. Wiring the gesture needs `keys/doublePress.ts` (Wave C Task
+  // 3) plus a composer-empty key scope; until then this comment is the honest statement of the gap. The
+  // assertion below pins the gate, so a change that started rendering it unconditionally fails here.
   const rowKeys = new Set(ROWS.map(([k]) => k));
-  const savedTerm = process.env.TERM_PROGRAM;
-  const composer = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} />);
-  await settle();
-  const frames = [frame(composer.lastFrame)];
-  composer.stdin.write("draft"); await waitFor(() => frame(composer.lastFrame).includes("draft"));
-  frames.push(frame(composer.lastFrame));
-  // Each ladder rung is a DIFFERENT advertised string, so each one needs a frame of its own: the terse rung
-  // only appears once `\`+Return has been used, and the shift rung only on an Apple_Terminal.
-  composer.stdin.write("\\"); await waitFor(() => frame(composer.lastFrame).includes("draft\\"));
-  composer.stdin.write("\r"); await waitFor(() => stripAnsi(frame(composer.lastFrame)).includes("\\⏎ for newline"));
-  frames.push(frame(composer.lastFrame));
-  try {
-    process.env.TERM_PROGRAM = "Apple_Terminal";
-    composer.rerender(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} />);
-    await waitFor(() => stripAnsi(frame(composer.lastFrame)).includes("shift + ⏎ for newline"));
-    frames.push(frame(composer.lastFrame));
-  } finally { if (savedTerm === undefined) delete process.env.TERM_PROGRAM; else process.env.TERM_PROGRAM = savedTerm; }
-  composer.rerender(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} busy />);
-  await waitFor(() => frame(composer.lastFrame).includes("Esc interrupt"));
-  frames.push(frame(composer.lastFrame));
+  const foot = (over: Partial<React.ComponentProps<typeof Footer>>) => stripAnsi(frame(render(
+    <Footer mode="default" busy={false} draftNonEmpty={false} isInputEmpty searching={false}
+      statusLineConfigured={false} pasting={false} pasteExpandHint={false} bashMode={false}
+      agents={{ count: 0 }} bindings={defaultLookup} {...over} />).lastFrame));
+  const frames = [
+    foot({}),                                    // home: `⏸ manual mode on · ? for shortcuts`
+    foot({ mode: "plan" }),                      // non-default: the cycle parenthetical
+    foot({ busy: true }),                        // running: `esc to interrupt`
+    foot({ bashMode: true }),                    // `! for shell mode`
+  ];
+  expect(foot({ agents: { count: 0 } })).not.toContain("← for agents");
+  expect(foot({ agents: { count: 2 } })).toContain("← for agents");
 
-  // UNWRAP before looking for tokens. The ladder row is one logical line that Ink breaks at the terminal
-  // width, and the break lands mid-row once the verbose newline rung is standing (`? \n help`) — matching
-  // per physical line silently loses whichever token straddles the break, which reads as "the footer stopped
-  // advertising it" rather than "the frame is 100 columns wide".
-  const unwrapped = frames.map((raw) => stripAnsi(raw).replace(/\s*\n\s*/g, " "));
+  // UNWRAP before looking for tokens: the row is one logical line Ink breaks at the terminal width, and a
+  // per-physical-line match silently loses whichever token straddles the break.
+  const unwrapped = frames.map((raw) => raw.replace(/\s*\n\s*/g, " "));
   const liveTokens = new Set(Object.keys(FOOTER_TOKEN_TO_ROW).filter((token) => unwrapped.some((f) => f.includes(token))));
   for (const token of liveTokens) {
     const row = FOOTER_TOKEN_TO_ROW[token];
@@ -393,16 +398,24 @@ it("the composer-owned footer and contextual hints only advertise chords that RO
     expect(rowKeys.has(row), `footer token "${token}" maps to missing row "${row}"`).toBe(true);
   }
   for (const token of Object.keys(FOOTER_TOKEN_TO_ROW)) {
-    expect(liveTokens.has(token), `"${token}" is in the mapping but no live composer footer/hint advertises it`).toBe(true);
+    expect(liveTokens.has(token), `"${token}" is in the mapping but no live footer state advertises it`).toBe(true);
   }
 });
 
-it("the status bar never advertises composer-local keys", () => {
-  const status = render(<ChatStatusBar mode="default" busy={true} ctxPct={42} />).lastFrame() ?? "";
+it("the footer never advertises a composer-local key it cannot deliver", () => {
+  // WAVE C TASK 2: same rule, new subject. The footer renders under every dialog, so the chord-bearing half
+  // of it (the cycle parenthetical, the whole hint list) is gated on `composerOwnsKeys`; the mode chip is a
+  // statement about the session and carries no chord, so it survives — which is exactly what is asserted.
+  const status = stripAnsi(frame(render(
+    <Footer mode="plan" busy draftNonEmpty={false} isInputEmpty searching={false} statusLineConfigured={false}
+      pasting={false} pasteExpandHint={false} bashMode={false} agents={{ count: 3 }}
+      bindings={defaultLookup} composerOwnsKeys={false} />).lastFrame));
+  expect(status).toContain("⏸ plan mode on");
   expect(status).not.toContain("[y/n");
-  expect(status).not.toContain("Esc interrupt");
-  expect(status).not.toContain("Esc rewind");
-  expect(status).not.toContain("? help");
+  expect(status).not.toContain("to cycle");
+  expect(status).not.toContain("to interrupt");
+  expect(status).not.toContain("? for shortcuts");
+  expect(status).not.toContain("← for agents");
 });
 
 afterAll(() => { for (const d of honestyRoots.splice(0)) rmSync(d, { recursive: true, force: true }); });

@@ -59,7 +59,9 @@ const props = { onDryRun: never, onConfirm: () => {}, onClose: () => {}, rows: 4
 // C=9 gives 4; at 23, C=11 gives 4.
 describe("rewindVisibleRows — the budget is our own chrome, counted", () => {
   it("sizes its window from the chrome the composed frame actually costs", () => {
-    expect(REWIND_CHROME_ROWS).toBe(12);           // 9 dialog chrome + ChatStatusBar + the `>=` row + REWIND_CHECKING
+    expect(REWIND_CHROME_ROWS).toBe(12);           // 9 dialog chrome + the footer row + the `>=` row + REWIND_CHECKING
+  // WAVE C TASK 2: that `+1 ChatStatusBar` term is the FOOTER row now — re-measured in a real pty at
+  // 100×40 with the dialog up, ChatApp's last child is one row either way, so the number is unchanged.
     expect(REWIND_MIN_ROWS).toBe(2);               // upstream's `Math.max(2, …)` floor (L487056)
     expect(rewindVisibleRows(21)).toBe(3);         // floor((21−12)/3) — 4 at t4's C=9, 2 at C=13
     expect(rewindVisibleRows(23)).toBe(3);         // floor((23−12)/3) — 4 at C=11, so 11 is excluded too
@@ -91,7 +93,8 @@ describe("rewindVisibleRows — the budget is our own chrome, counted", () => {
 
 // WAVE S T4, FIX ROUND — THE PROPERTY, of which the constant above is only the current satisfaction. The t4
 // re-derivation measured the dialog against the wrong denominator: `RewindPicker` does not own the pane.
-// `ChatApp` renders `ChatStatusBar` one line below it, unconditionally, and hands the dialog the WHOLE
+// `ChatApp` renders the FOOTER one line below it, unconditionally (`ChatStatusBar` before Wave C Task 2 —
+// one row either way), and hands the dialog the WHOLE
 // terminal height — so a budget counted from `RewindFrame` alone composes into a frame that reaches the pane.
 //
 // Ink does not clip that. `node_modules/ink/build/ink.js:121` (5.2.1) branches on

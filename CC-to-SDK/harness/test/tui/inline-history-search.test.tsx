@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderWithKeymap } from "./keysTestUtil.js";
 import { ChatComposer, PASTE_EXPAND_HINT } from "../../src/tui/ChatComposer.js";
+import { ComposerWithFooter } from "./helpers/composerFooter.js";
 import { appendHistory } from "../../src/tui/promptHistory.js";
 import { bufferText, initialEditorState, type EditorState, type PastedMap } from "../../src/tui/editor.js";
 import { findInlineMatch, offsetToCursor, cursorToOffset, installMatch, restoreDraft, NO_MATCH_PROMPT, SEARCH_PROMPT } from "../../src/tui/historySearchInline.js";
@@ -150,8 +151,11 @@ describe("<ChatComposer> — CM58's inline reverse-i-search", () => {
   afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
   const seed = (...displays: string[]) => { for (const display of displays) appendHistory({ display, project: PROJECT }, env); };
+  // WAVE C TASK 2: the paste-expand hint and the search-suppression that gates it are FOOTER concerns now
+  // (`Wci`'s third early return, `pasteExpandHint && !searching`), so the mount composes the pair the app
+  // does. `InlineSearchRow` itself still renders inside the composer — see `Footer.tsx`'s divergence 4.
   const mount = (over: Partial<React.ComponentProps<typeof ChatComposer>> = {}) =>
-    renderWithKeymap(<ChatComposer onSubmit={() => {}} cwd={PROJECT} project={PROJECT} historyEnv={env} commandCatalog={[]} columns={() => 72} rows={() => 24} {...over} />);
+    renderWithKeymap(<ComposerWithFooter onSubmit={() => {}} cwd={PROJECT} project={PROJECT} historyEnv={env} commandCatalog={[]} columns={() => 72} rows={() => 24} {...over} />);
 
   it("ctrl+r opens the INLINE search, not the picker — its dim `search prompts:` row, in the composer", async () => {
     seed("run typecheck");
@@ -307,7 +311,9 @@ describe("<ChatComposer> — CM58's inline reverse-i-search", () => {
     await waitFor(() => strip(frame(lastFrame)).includes(PASTE_EXPAND_HINT));
     stdin.write(CTRL_R);
     await waitFor(() => strip(frame(lastFrame)).includes(SEARCH_PROMPT));
-    expect(strip(frame(lastFrame))).not.toContain(PASTE_EXPAND_HINT);
+    // WAVE C TASK 2: `isSearching` reaches the footer through the composer's `onFooterState` effect, so the
+    // suppression lands one flush after the search row itself. Same assertion, waited for.
+    await waitFor(() => !strip(frame(lastFrame)).includes(PASTE_EXPAND_HINT));
     stdin.write(CTRL_C);                                             // cancel → the hint's own window is still open
     await waitFor(() => strip(frame(lastFrame)).includes(PASTE_EXPAND_HINT));
   });

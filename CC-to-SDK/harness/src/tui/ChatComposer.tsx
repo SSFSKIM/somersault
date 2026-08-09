@@ -14,8 +14,10 @@ import { composerMode } from "./promptMode.js";
 import { collectEntries, mentionWalkRoot, type AsyncReaddirFn, type DirEnt } from "./fileComplete.js";
 import { commandKind, type CommandEntry } from "./commandComplete.js";
 import { editExternal as realEditExternal } from "./externalEditor.js";
-import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, newlineHint } from "./composerFrame.js";
+import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor } from "./composerFrame.js";
 import { InlineSearchRow, useInlineHistorySearch } from "./InlineHistorySearch.js";
+import { NotificationSlot } from "./NotificationSlot.js";
+import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope, usePasting, useSuspendInput, type SuspendInput } from "./keys/KeymapProvider.js";
 import { expandHintText, formatBindings } from "./keys/hints.js";
@@ -33,11 +35,10 @@ const DEFAULT_COLUMNS = 80;
 /** The popup's height is a function of the terminal's, so an unthreaded `rows` needs a stand-in for the same
  *  reason `columns` does. 24 is the VT100 default every terminal still reports when it has nothing better. */
 const DEFAULT_ROWS = 24;
-/** CM25, bundle L493764: `Pasting…` — one ellipsis CHARACTER, not three dots, dim, below the frame. */
-const PASTING_TEXT = "Pasting…";
-/** CM24, bundle L493772: the dim row that advertises paste-again-to-expand. Exported because the pin in
- *  test/tui/paste-expand.test.tsx has to assert the literal, and a second copy of it there would drift. */
-export const PASTE_EXPAND_HINT = "paste again to expand";
+/** CM24, bundle L493772. Both this and `Pasting…` are FOOTER strings since Wave C Task 2 — the row that
+ *  printed them moved to `Footer.tsx`, which owns the literals now. Re-exported from here because
+ *  test/tui/paste-expand.test.tsx imports it from this module, and one re-export beats a second copy. */
+export { FOOTER_PASTE_EXPAND_HINT as PASTE_EXPAND_HINT } from "./Footer.js";
 /** `k0`'s 8000 ms (L495759). The hint's whole life; the EXPAND itself has no deadline (pasteChips.ts). */
 const PASTE_HINT_MS = 8000;
 /** CM56, the DESCRIPTION half of upstream's second-Up hint (bundle L489537): `<bn action="history:search"
@@ -47,6 +48,14 @@ const PASTE_HINT_MS = 8000;
 export const HISTORY_SEARCH_HINT = "search history";
 /** `Lli` (L489464) — the `timeoutMs` upstream puts on that notification. */
 const HISTORY_HINT_MS = 5000;
+/** The two queue keys this component posts, from the annex §C1.6 inventory: `left-arrow…`-style stable names
+ *  so a producer can pull its own row back (`dismissSearchHint`) without knowing what else is queued. */
+export const SEARCH_HINT_KEY = "search-history-hint";
+export const YANK_HINT_KEY = "kill-paste-hint";
+/** `escape-again-to-clear` (annex §C1.6, L395624) — upstream's own key for the Esc-Esc arm's feedback. */
+export const ESC_CLEAR_KEY = "escape-again-to-clear";
+/** L395652, verbatim. */
+export const YANK_HINT_TEXT = "Ctrl+Y to paste deleted text";
 
 /** How long the external-edit chord waits for Ink to actually WRITE the in-flight row before the sync editor
  *  freezes the loop. One Ink throttle window (32ms, ink/build/ink.js:39) plus a little — see the deferral in
@@ -216,7 +225,26 @@ const popupDrawn = (s: ReturnType<typeof suggestProps>): boolean => s !== null &
  *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
 export type ComposerEditExternal = (text: string) => string | null | Promise<string | null>;
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+/** The composer's half of `Footer`'s props (Wave C Task 2): upstream's `Ltl` (isSearching), `isPasting`,
+ *  `showExpandPasteHint`, `mode === "bash"` and `exitMessage` — whose `key` is a STRING FROM THE ARM SITE,
+ *  never a literal inside the footer.
+ *
+ *  THE DRAFT SIGNAL IS DELIBERATELY NOT IN HERE, and the reason is a defect this shape prevents rather than a
+ *  preference. `q1b`/`DMr` travel on the EXISTING `onInputActivity` callback, which fires synchronously from
+ *  `commitState` — inside the same stdin handler as the keystroke — so the hint list collapses in the very
+ *  frame the character appears. This object travels on an effect, which is a flush later. When BOTH carried
+ *  the draft, the effect's copy (computed from the render that ran before the composer's own state landed)
+ *  overwrote the synchronous one and put the stale hint list back for exactly one frame — which is precisely
+ *  what `chat.test.tsx`'s "never paints a stale editor hint in ANY frame" sweep exists to catch. One field,
+ *  one owner. */
+export interface ComposerFooterState {
+  searching: boolean; pasting: boolean; pasteExpandHint: boolean;
+  bashMode: boolean; exitArm?: { key: string; verb: string };
+}
+/** What the footer shows with no composer mounted (a dialog owns the screen): none of the four states. */
+export const IDLE_COMPOSER_FOOTER_STATE: ComposerFooterState = { searching: false, pasting: false, pasteExpandHint: false, bashMode: false };
+
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
   /** Upstream's `onInputChange` → `Z1t(value.trim().length > 0)` (bundle L547796-802): the composer reports
    *  whether its buffer is non-empty EVERY time the text changes, and the app turns that into the typing
    *  activity flag that suppresses a parked dialog. Reported from `commitState`, the one writer, and only on a
@@ -274,7 +302,18 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   queueHintCountedRef?: React.MutableRefObject<boolean>;
   /** The `Try "…"` suggestion's frozen inputs, app-scoped for the same lifetime reason: upstream's `Vr`
    *  memoizes the pick once per PROCESS, so it must survive this component's remounts. */
-  placeholderMemoRef?: React.MutableRefObject<PlaceholderMemo> }) {
+  placeholderMemoRef?: React.MutableRefObject<PlaceholderMemo>;
+  /** WAVE C TASK 2 (EP-C1b): the notification queue this composer POSTS its transient hints to and RENDERS
+   *  the current entry of, in the one-row overlay above the frame. `ChatApp` passes `useChat`'s single
+   *  store; a bare render falls back to a local one so the hints still work with no app above (the same
+   *  local-fallback shape `searchHintFiredRef` uses one hook down). */
+  notifications?: NotificationStore;
+  /** WAVE C TASK 2: everything the FOOTER needs that only this component knows. The footer row lives in
+   *  `ChatApp` (see `Footer.tsx`'s divergence 2 — three dialog height budgets count it as their one
+   *  unconditional sibling), so the four early-return states and the draft signal have to travel up. Fired
+   *  from an effect on change, and once more with the idle value on unmount, so a dialog that replaces this
+   *  component cannot leave a stale `Pasting…` on the footer row. */
+  onFooterState?: (s: ComposerFooterState) => void }) {
   const historyProject = project ?? cwd;
   const historyEnvRef = useRef(historyEnv ?? process.env); historyEnvRef.current = historyEnv ?? process.env;
   const historyProjectRef = useRef(historyProject); historyProjectRef.current = historyProject;
@@ -316,8 +355,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     return ended;
   };
   const disposed = useRef(false);
-  const [yankHint, setYankHint] = useState(false);
-  const yankTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // WAVE C TASK 2 — THE ONE STORE THIS COMPONENT POSTS TO AND RENDERS FROM. `useState`'s lazy initialiser so
+  // the fallback store is created once per mount, never per render.
+  const [localStore] = useState<NotificationStore>(() => createNotificationStore());
+  const store = notifications ?? localStore;
+  const [notice, setNotice] = useState<CcxNotification | null>(() => store.state().current);
+  useEffect(() => { setNotice(store.state().current); return store.subscribe(() => setNotice(store.state().current)); }, [store]);
   // CM24's hint (`Rpk`/`Yg`/`lh` in the bundle). Its own state + timer, the yank hint's shape exactly.
   const [pasteHint, setPasteHint] = useState(false);
   const pasteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -330,11 +373,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // same lifetime mismatch the disk seed hit two hooks above, and it takes the same answer: the flag lives in
   // an APP-scoped ref threaded down (ChatApp owns it, exactly as it owns `consumedPrefillTokenRef`). The
   // local fallback keeps a bare test render — and any future standalone mount — working unchanged.
-  const [searchHint, setSearchHint] = useState(false);
   const localSearchHintFiredRef = useRef(false);
   const searchHintFired = searchHintFiredRef ?? localSearchHintFiredRef;
-  const searchHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { disposed.current = true; if (yankTimer.current) clearTimeout(yankTimer.current); if (pasteTimer.current) clearTimeout(pasteTimer.current); if (searchHintTimer.current) clearTimeout(searchHintTimer.current); }, []);
+  useEffect(() => () => { disposed.current = true; if (pasteTimer.current) clearTimeout(pasteTimer.current); }, []);
   // ── CM58, the ctrl+r inline reverse-i-search (F5 task 12). A HOOK, not an overlay: see
   // InlineHistorySearch.tsx's header for why, and historySearchInline.ts's for the bundle transcription and
   // the four divergences. `submitBuffer` is threaded through a ref because it is `handleKey(ENTER)` and
@@ -345,7 +386,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     submitBuffer: () => submitBufferRef.current(),
     onDraftStart: () => onDraftStartRef.current?.(),
     // `dismissSearchHint` (`z`, bundle L489630): using the chord retires the row that advertised it.
-    onOpen: () => { setSearchHint(false); if (searchHintTimer.current) { clearTimeout(searchHintTimer.current); searchHintTimer.current = null; } },
+    onOpen: () => { store.remove(SEARCH_HINT_KEY); },
   });
   // F2 task 8 removed the `mounted` one-flush guard that used to sit here. Its whole job was the readable-
   // before-data window: Ink reads stdin on "readable" and the keymap listens for "data" (emitted second), so
@@ -377,6 +418,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const yankHintMsRef = useRef(yankHintMs); yankHintMsRef.current = yankHintMs;
   const pasteHintMsRef = useRef(pasteHintMs); pasteHintMsRef.current = pasteHintMs;
   const searchHintMsRef = useRef(searchHintMs); searchHintMsRef.current = searchHintMs;
+  // `handleKey` runs from a passive-effect stdin listener, so it reads BOTH of these through a ref for the
+  // reason `stateRef` exists: a closure capture lags one render behind the live prop.
+  const storeRef = useRef(store); storeRef.current = store;
+  const searchHintRowRef = useRef("");                      // written during render, below — the DERIVED chord row
   const escClearMsRef = useRef(escClearMs); escClearMsRef.current = escClearMs;
   const exitArmMsRef = useRef(exitArmMs); exitArmMsRef.current = exitArmMs;
   // Read through a ref for the same reason as stateRef/busyRef: `handleKey` runs from the keymap's passive-
@@ -628,9 +673,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // would have produced. A paste-tagged event is the only consumer (editor.ts's `KeyFlags.paste` arm).
     const r = applyKey(s, input, key, Date.now(), rowsRef.current?.());
     if (key.ctrl && input === "u" && r.killed && r.killed.text.length >= 3) {
-      setYankHint(true);
-      if (yankTimer.current) clearTimeout(yankTimer.current);
-      yankTimer.current = setTimeout(() => setYankHint(false), yankHintMsRef.current);
+      // WAVE C TASK 2: `kill-paste-hint` (annex §C1.6, L395652) — `immediate`, 5000 ms. The queue owns the
+      // deadline now, so this site holds no timer of its own; `yankHintMs` became its `timeoutMs`.
+      storeRef.current.add({ key: YANK_HINT_KEY, text: YANK_HINT_TEXT, priority: "immediate", timeoutMs: yankHintMsRef.current });
     }
     // CM24, `k0`'s tail (bundle L495753-L495762). Only a chip at or under `lgr` raises the hint, because only
     // one at or under `lgr` can actually be expanded (`bDo`'s cap). An over-cap chip is transcribed to leave
@@ -663,9 +708,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     const beforeAt = historyPosition(s)?.index ?? 0, afterAt = historyPosition(r.state)?.index ?? 0;
     if (afterAt >= 2 && afterAt > beforeAt && !searchHintFired.current) {
       searchHintFired.current = true;
-      setSearchHint(true);
-      if (searchHintTimer.current) clearTimeout(searchHintTimer.current);
-      searchHintTimer.current = setTimeout(() => { setSearchHint(false); searchHintTimer.current = null; }, searchHintMsRef.current);
+      // WAVE C TASK 2: upstream's own placement for this row — `addNotification` (L489537) with `Lli` as its
+      // `timeoutMs`, which is exactly what the divergence comment that used to sit in the render below
+      // promised. The chord half is still derived (`searchHintRow`), so an unbind still removes the hint.
+      if (searchHintRowRef.current !== "") storeRef.current.add({ key: SEARCH_HINT_KEY, text: searchHintRowRef.current, priority: "immediate", timeoutMs: searchHintMsRef.current });
     }
     if (s.lines.length === 1 && s.lines[0] === "" && !(r.state.lines.length === 1 && r.state.lines[0] === "")) onDraftStartRef.current?.();
     if (r.historyAppend) persistHistory(r.historyAppend);
@@ -896,38 +942,69 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const suggest = suggestProps(state, historyEnvRef.current);
   const ghost = ghostText(state);
   const argHint = commandArgumentHint(bufferText(state), commandCatalog);
-  // The editor owns these affordances: derive them from this render's state so the first draft/popup
-  // frame cannot inherit an out-of-date parent status-bar hint through a passive effect. The footer and the
-  // suggestion region are ALTERNATIVES sharing one slot — upstream's `Ptl` branch; see `popupDrawn`.
-  // `owns` joins the two upstream conditions for the same reason ChatStatusBar takes `composerOwnsKeys`: both
-  // rows advertise Chat-context chords (`⏎ send`, `esc rewind`, `? help`), and F0's honesty rule is that a hint
-  // is only true relative to its focused owner. In the settled tree this component never renders while it does
-  // NOT own (a visible dialog unmounts it — see the ownership gate above), so the clause is defensive rather
-  // than load-bearing today: the pin that proves the rows are gone under a dialog ("hides the global composer
-  // hint under permission, question, and plan input owners", chat.test.tsx) passes on the unmount alone.
-  const showFooter = owns && mode === "normal" && !popupDrawn(suggest);
+  // WAVE C TASK 2 — THE HINT STACK IS GONE, AND WITH IT `showFooter`. Ten of the eleven rows this component
+  // used to paint below its frame are now the ONE footer row `ChatApp` mounts (`Footer.tsx`) plus the ONE
+  // overlay row above the frame (the notification queue). What survives here is `InlineSearchRow`, which
+  // upstream also keeps beside the footer content rather than above it (annex §C1.2, `RMr`) — see the
+  // `searching` note in `Footer.tsx`'s header for why it stays one row up in ccx.
+  //
+  // TWO DELIBERATE DELETIONS, recorded per plan constraint 12 because neither is a migration:
+  //  · HINT ROW 1 — `⏎ send · <newline rung> · @ files · / commands · ! bash · <cycle> mode[ · ? help]`.
+  //    Upstream's home-state footer has NO such row; its affordances live behind `? for shortcuts` (annex
+  //    §C4.c's canonical `⏸ manual mode on · ? for shortcuts · ← for agents`). It was a ccx invention and the
+  //    single biggest reason the block changed height as the user typed. Its content is not lost: every rung
+  //    of it is a row of the `?` shortcuts grid, which is exactly what the surviving hint points at. The
+  //    newline ladder (`newlineHint`) still renders there — `keys/hints.ts`'s `ladder` cell.
+  //  · HINT ROW 2 — the persistent `esc rewind · ? help` / `esc clear` / `esc interrupt` line, together with
+  //    the double-press arm above it (`esc again to clear`). Upstream carries none of them as a persistent
+  //    row: `esc to interrupt` is a HINT-LIST member while a turn runs (`footerModel.buildHintList`, which
+  //    does render it), and `Esc again to clear` is a QUEUE entry (`escape-again-to-clear`, immediate/1000 ms,
+  //    annex §C1.6). EP-C7 (Wave C Task 4) owns posting it. **Until that task lands no esc hint renders at
+  //    all** — an accepted intermediate state, named here so the gap reads as a scheduled handoff.
+  //
+  // A third row went with them and is NOT deleted work: `# memory — appends a note to CLAUDE.md`. Memory mode
+  // is a ccx extra with no upstream counterpart at 2.1.220 and the Wave C spec removes it outright (Task 14);
+  // there is no upstream footer state to migrate it into, so the `remember`-coloured frame is its only
+  // affordance in the meantime.
+  //
+  // `owns` is still read below, for the ownership half of the same honesty rule: it is what tells `ChatApp`
+  // whether the footer may advertise a Chat-context chord.
   // F2 task 10: every chord this component prints comes from the LIVE table, not from literals typed here —
-  // rebind chat:cycleMode and the rung follows it; unbind it and the rung says `(unbound)` instead of promising
-  // a key that no longer works. That covers the footer ladder, the Esc hint and both double-press arms (the
-  // autocomplete popup's own footer was a fourth until F5 t10 removed it — `DXe` has none). The rest of the
-  // ladder is editor-owned (`⏎`, `\⏎`, the `@`/`/`/`!` prefixes, `?`), which no context binds, so it stays literal.
-  const cycleKey = formatBindings(bindings("chat:cycleMode"));
+  // rebind app:exit and the arm follows it; unbind it and it says `(unbound)` rather than promising a dead key.
+  const exitKey = formatBindings(bindings("app:exit"));                 // the KB3 double-press arm, now a FOOTER state
   const escKey = formatBindings(bindings("chat:cancel"));
-  const exitKey = formatBindings(bindings("app:exit"));                 // the KB3 double-press arm below
+  // WAVE C TASK 2 — the Esc-Esc arm's feedback moved from a hint ROW to the QUEUE, which is upstream's own
+  // placement for it (`escape-again-to-clear`, `immediate`, annex §C1.6). Not a deletion and not an
+  // invention: the string is the same derived one the row printed, and the arm's own window (`escClearMs`)
+  // is its `timeoutMs`, so it appears and expires exactly when it did. EP-C7 (Task 4) rebuilds the arm on
+  // the `Pee` double-press primitive and owns upstream's 1000 ms; the destination does not change again.
+  const clearVisible = clearArmed && clearArm.current !== 0 && !busy;
+  useEffect(() => {
+    if (clearVisible) storeRef.current.add({ key: ESC_CLEAR_KEY, text: `${escKey} again to clear`, priority: "immediate", timeoutMs: escClearMsRef.current });
+    else storeRef.current.remove(ESC_CLEAR_KEY);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clearVisible, escKey]);
   // CM56's chord, DERIVED — `(ctrl+r to search history)` under the defaults, `` when `history:search` is
-  // unbound (`expandHintText`'s own three-state contract), never a literal.
+  // unbound (`expandHintText`'s own three-state contract), never a literal. Read by `handleKey` through
+  // `searchHintRowRef` when it posts the hint to the queue.
   const searchHintRow = expandHintText(bindings("history:search"), process.platform, HISTORY_SEARCH_HINT);
+  searchHintRowRef.current = searchHintRow;
   // CM4: the live walk position owns the top rule. The `label` prop stays as the fallback slot Task 2 built —
   // nothing else writes it today, and a caller that does should not be silently overridden while idle.
   const ruleLabel = historyLabel(state) ?? label;
-  const keyboardHint = busy ? `${escKey} interrupt` : isEmptyNow ? `${escKey} rewind · ? help` : `${escKey} clear`;
-  // CM20: the ladder replaces the invented `\⏎ newline` rung — same slot, upstream's three strings. Read
-  // per render off THIS render's editor state, so the rung shortens on the very frame `\`+Return lands.
-  // Upstream renders `Z_a()` in the `?` help list (L459545) rather than in a composer footer; our footer
-  // is a compressed invention that already carried a newline rung, so the ladder lands there — one hint,
-  // not two. (editor.ts's `markBackslashReturnUsed` note already points at "the composer's newline hint".)
-  const newlineRung = newlineHint(state.hasUsedBackslashReturn);
-  const clearVisible = clearArmed && clearArm.current !== 0 && !busy;
+  // WAVE C TASK 2 — the footer's composer-owned half, reported UP. An effect and not a render-time call: a
+  // parent setState during render is illegal, and the one frame it costs is invisible next to Ink's own 32 ms
+  // throttle. The cleanup fires the IDLE value, so a dialog that unmounts this component cannot leave a stale
+  // `Pasting…` or exit arm on the footer row.
+  const footerState: ComposerFooterState = {
+    searching: search.searching, pasting, pasteExpandHint: pasteHint, bashMode: mode === "bash",
+    ...(dArmed && isEmptyNow ? { exitArm: { key: exitKey, verb: "exit" } } : {}),
+  };
+  const onFooterStateRef = useRef(onFooterState); onFooterStateRef.current = onFooterState;
+  useEffect(() => { onFooterStateRef.current?.(footerState); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [footerState.searching, footerState.pasting, footerState.pasteExpandHint, footerState.bashMode, footerState.exitArm?.key, footerState.exitArm?.verb, owns]);
+  useEffect(() => () => { onFooterStateRef.current?.(IDLE_COMPOSER_FOOTER_STATE); }, []);
   // CM8's early return, upstream's own shape (L496236): while the editor holds the terminal the composer
   // is JUST the framed literal — no glyph, no input, and none of the hint rows below, because upstream
   // returns before it builds any of them. Placed after every hook so the hook order is unconditional.
@@ -941,6 +1018,29 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
           mount can be driven into this state without an owner ref. marginLeft 2, not the paddingX 1 the hint
           rows below use: those are ours, this one is transcribed. */}
       {waitingForPermission ? <Box marginTop={1} marginLeft={2}><Text dimColor>{WAITING_FOR_PERMISSION}</Text></Box> : null}
+      {/* WAVE C TASK 2 (EP-C1a/b) — THE NOTIFICATION OVERLAY, and the one place this task diverged from the
+          annex on MEASURED evidence rather than on preference.
+            Upstream's slot is an ABSOLUTELY-POSITIONED row (L496241): `position:"absolute", marginTop:-1,
+          width:"100%", paddingLeft:2, paddingRight:1, overflow:"hidden"`, height collapsing to 0 — it paints
+          into the blank line above the composer's top rule and displaces nothing. `src/tui/` had zero uses of
+          Ink's `position:"absolute"`, so the plan required it be measured before anything was built on it
+          (the Wave R rule: geometry is settled by measurement). It was, in BOTH instruments the plan named:
+            · ink-testing-library, Ink 5.2.1 — right-flush ✓, no flow displacement ✓ (5 frame lines with and
+              without the overlay), zero height when empty ✓;
+            · a real pty at 100×20 through the same minimal tree — identical on all three.
+          BUT the same measurement found the disqualifying case. `marginTop:-1` puts the row one line ABOVE the
+          parent's flow position, and when that line is outside the dynamic output — the very first row of the
+          frame, or a row belonging to Ink's `<Static>` region — **the notification is silently dropped and
+          renders nowhere**. Both probes reproduce it. That is not an edge case for ccx: on a fresh session the
+          transcript's pending/streaming region, the task panel, the spinner and the queue echo are all empty,
+          so the composer IS the first row of the dynamic frame, and every hint posted at the home state would
+          vanish. (Upstream is safe from it because its composer block reserves the blank row the overlay
+          lands in.)
+            So this is the plan's own sanctioned fallback: a NORMAL IN-FLOW ROW, right-flushed, that renders
+          only while a notification is live and costs no line when it is not. `NotificationSlot` returns null
+          when empty, so nothing is mounted in the idle state and the block is exactly as tall as it was. The
+          visible difference from upstream is one row of vertical position while a hint is up. */}
+      {notice ? <Box width={cols} paddingLeft={2} paddingRight={1} flexDirection="row" justifyContent="flex-end" overflow="hidden"><NotificationSlot notification={notice} /></Box> : null}
       <ComposerFrame columns={cols} borderToken={borderToken} label={ruleLabel}>
         <PromptGlyph mode={mode} busy={busy} />
         {/* CM5 (`t_p`, L395963): an empty buffer paints the PLACEHOLDER with its first character inverted —
@@ -950,24 +1050,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
           ? <PlaceholderCursor text={placeholder ?? ""} />
           : <Box flexDirection="column">{renderBuffer(state, ghost?.visible ? ghost.suffix : null, argHint)}</Box>}
       </ComposerFrame>
-      {mode === "bash" ? <Box paddingX={1}><Text color={role("bashBorder")} dimColor>! bash mode — runs locally in cwd (Enter to run)</Text></Box> : null}
-      {mode === "memory" ? <Box paddingX={1}><Text color={role("remember")} dimColor># memory — appends a note to CLAUDE.md (Enter to save)</Text></Box> : null}
-      {pasting ? <Box paddingX={1}><Text dimColor>{PASTING_TEXT}</Text></Box> : null}
-      {/* `if (Rpk && !xMr)` (bundle L493769): upstream gates the expand hint on NOT searching, because both
-          rows live in the same slot and the search field is the one that matters (t5 review carry-forward). */}
-      {pasteHint && !search.searching ? <Box paddingX={1}><Text dimColor>{PASTE_EXPAND_HINT}</Text></Box> : null}
-      {/* …and `xMr && <Mel …>` on the very next line (L493783) is this row. */}
+      {/* `xMr && <Mel …>` (L493783). The ONE survivor of the old hint stack: upstream renders it as the first
+          child of the footer ROW (annex §C1.2); ccx keeps it here, one line up, because the search query and
+          its failed-match flag live in this component's hook — see `Footer.tsx`'s divergence 4. */}
       {search.searching ? <InlineSearchRow query={search.query} failed={search.failed} /> : null}
-      {/* RECORDED DIVERGENCE (F7 owns the fix): upstream pushes this through the notification queue
-          (`addNotification`, L489537), which renders it in the queue's own slot below the composer and lets
-          `dismissSearchHint` pull it when the history-search overlay opens. No notification queue here yet,
-          so it renders in the composer's hint-row stack — same place, same dim paint, same 5 s life. */}
-      {searchHint && searchHintRow ? <Box paddingX={1}><Text dimColor>{searchHintRow}</Text></Box> : null}
-      {yankHint ? <Box paddingX={1}><Text dimColor>Ctrl+Y to paste deleted text</Text></Box> : null}
-      {clearVisible ? <Box paddingX={1}><Text dimColor>{`${escKey} again to clear`}</Text></Box> : null}
-      {dArmed && isEmptyNow ? <Box paddingX={1}><Text dimColor>{`Press ${exitKey} again to exit`}</Text></Box> : null}
-      {showFooter ? <Box paddingX={1}><Text dimColor>{`⏎ send · ${newlineRung} · @ files · / commands · ! bash · ${cycleKey} mode${isEmptyNow ? " · ? help" : ""}`}</Text></Box> : null}
-      {showFooter ? <Box paddingX={1}><Text dimColor>{keyboardHint}</Text></Box> : null}
       {suggest ? <SuggestPopup {...suggest} columns={cols} rows={termRows} /> : null}
     </Box>
   );

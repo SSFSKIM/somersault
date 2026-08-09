@@ -81,11 +81,12 @@ describe("theme.ts", () => {
   it("removes bare color words from F1's four named consumers", async () => {
     // Match ANY bare-ANSI string literal, not just one assigned to a `color`-named property. Three of
     // the sixteen bare-colour sites in these files are indirected and would escape an attribute-anchored
-    // pattern: ChatStatusBar's `modeColor()` and `ctxColor()` RETURN "red"|"cyan"|"yellow"|"green", and
+    // pattern: the mode chip's `modeColor()` RETURNED "red"|"cyan"|"yellow"|"green" (it lived in
+    // ChatStatusBar.tsx until Wave C Task 2 retired that file; `modeTable.ts` owns it now), and
     // ChatComposer has `const border = mode === "bash" ? "magenta" : mode === "memory" ? "blue" : undefined`.
     // Those are the permission-mode chip and the composer border — two of the roles §2.2 names — so an
     // attribute-anchored guard would go green with the requirement unmet. Safe once migration is complete.
-    for (const file of ["render.ts", "markdown.ts", "ChatStatusBar.tsx", "ChatComposer.tsx"]) {
+    for (const file of ["render.ts", "markdown.ts", "Footer.tsx", "modeTable.ts", "ChatComposer.tsx"]) {
       const source = await readFile(new URL(`../../src/tui/${file}`, import.meta.url), "utf8");
       expect(source, file).not.toMatch(/["'](?:red|green|yellow|blue|magenta|cyan|white|black|gray|grey)(?:Bright)?["']/);
     }

@@ -72,7 +72,7 @@ describe("Escape semantics (CM15, F0 acceptance 2)", () => {
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("go"); await waitFor(() => frame(lastFrame).includes("go"));
     stdin.write("\r");                                                // start the hanging turn
-    await waitFor(() => frame(lastFrame).includes("⟳"));
+    await waitFor(() => frame(lastFrame).includes("esc to interrupt"));
     stdin.write("typed during turn");
     await waitFor(() => frame(lastFrame).includes("typed during turn"));
     stdin.write("\x1b");

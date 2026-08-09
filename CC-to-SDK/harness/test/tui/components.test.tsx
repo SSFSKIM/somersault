@@ -12,12 +12,13 @@ import { join } from "node:path";
 import { Transcript } from "../../src/tui/Transcript.js";
 import { TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
-import { ChatStatusBar, modeColor, ctxColor } from "../../src/tui/ChatStatusBar.js";
+import { modeColor } from "../../src/tui/modeTable.js";
+import { ComposerWithFooter } from "./helpers/composerFooter.js";
 import { TurnSpinner } from "../../src/tui/TurnSpinner.js";
 import type { PermissionDecision } from "../../src/index.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 
-const tok = (name: "success" | "warning" | "error" | "permission") => resolveThemeColor(themeTokens()[name]);
+const tok = (name: "success" | "warning" | "error" | "permission" | "inactive" | "planMode" | "autoAccept") => resolveThemeColor(themeTokens()[name]);
 
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
@@ -132,57 +133,18 @@ describe("<PermissionDialog>", () => {
     expect(got[1]).toEqual({ kind: "deny" });
   });
 });
-describe("<ChatStatusBar>", () => {
-  it("shows the mode and ctx%", () => {
-    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} ctxPct={42} />);
-    expect(lastFrame()).toContain("default");
-    expect(lastFrame()).toContain("42%");
-  });
-  it("shows the model and a live streaming indicator while busy", () => {
-    const { lastFrame } = render(<ChatStatusBar model="claude-sonnet-4-6" mode="default" busy={true} ctxPct={34} />);
-    const f = lastFrame() ?? "";
-    expect(f).toContain("claude-sonnet-4-6");
-    expect(f).toContain("⟳ streaming");
-    expect(f).toContain("ctx 34%");
-  });
-  it("hides the streaming indicator and model segment when idle/absent", () => {
-    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} ctxPct={10} />);
-    const f = lastFrame() ?? "";
-    expect(f).not.toContain("streaming");
-    expect(f).not.toContain("model ");
-  });
-  it("warns about auto-compact once context is near the window", () => {
-    const f = render(<ChatStatusBar mode="default" busy={false} ctxPct={85} />).lastFrame() ?? "";
-    expect(f).toContain("85%");
-    expect(f).toContain("auto-compact soon");
-    const lo = render(<ChatStatusBar mode="default" busy={false} ctxPct={20} />).lastFrame() ?? "";
-    expect(lo).not.toContain("auto-compact");
-  });
-  it("shows the thinking level", () => {
-    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} thinkLevel="high" />);
-    expect(lastFrame()).toContain("think");
-    expect(lastFrame()).toContain("high");
-  });
-  it("shows the bg-task count when bgCount is set", () => {
-    const { lastFrame } = render(<ChatStatusBar mode="default" busy={false} bgCount={2} />);
-    expect(lastFrame()).toContain("⚙ 2 bg");
-  });
-  it("hides the bg-task count when bgCount is 0/undefined", () => {
-    const zero = render(<ChatStatusBar mode="default" busy={false} bgCount={0} />).lastFrame() ?? "";
-    expect(zero).not.toContain("bg");
-    const absent = render(<ChatStatusBar mode="default" busy={false} />).lastFrame() ?? "";
-    expect(absent).not.toContain("bg");
-  });
-  it("renders status metadata without editor-owned keyboard affordances", () => {
-    const f = render(<ChatStatusBar mode="default" busy={true} ctxPct={42} />).lastFrame() ?? "";
-    expect(f).toContain("mode");
-    expect(f).toContain("⟳ streaming");
-    expect(f).not.toContain("Esc interrupt");
-    expect(f).not.toContain("Esc rewind");
-    expect(f).not.toContain("Esc clear");
-    expect(f).not.toContain("? help");
-  });
-});
+// WAVE C TASK 2 (EP-C1b) — THE `<ChatStatusBar>` BLOCK THAT STOOD HERE RETIRED WITH THE COMPONENT. Its
+// nine cases did not vanish; they went one of three ways, and every one of them is named so this reads as a
+// migration rather than a deletion:
+//   · mode chip, cycle parenthetical, bg count → `test/tui/footer.test.tsx`, in upstream's own shapes
+//     (`⏸ manual mode on`, `(shift+tab to cycle)`, `← for agents` — the last is what `⚙ N bg` became);
+//   · the `model` / `think` segments → they have NO upstream footer counterpart and left the always-on row
+//     with the bar (spec EP-C1, the owner-decision list). `/status` and `/model` still report both;
+//   · `ctx N%`, `⚠ auto-compact soon` and `usageWarn` → the SAME decision, but they come BACK as queued
+//     notifications (upstream's `token-warning`, annex §C1.6) in Wave C Task 14, which owns their removal
+//     suite. `ctxColor` died with the chip and its two cases go there with it — deliberately not re-pinned
+//     here against a component that no longer exists.
+
 // The SessionPicker and ModelPicker blocks that stood here retired with F6 T11: both pickers were rebuilt on
 // the `Select` primitive and grew surfaces these four-line smoke tests could not describe (search, preview,
 // rename; the default-vs-session split, the ten-row window and its overflow counter). They are covered in
@@ -194,19 +156,16 @@ describe("<ChatStatusBar>", () => {
 // three-glyph smoke test cannot describe it. `task-panel.test.tsx` covers it in full — moved, not dropped.
 
 describe("modeColor", () => {
-  it("maps each permission mode to its §2.2 semantic token, resolved for Ink", () => {
-    expect(modeColor("default")).toBe(tok("success"));
-    expect(modeColor("acceptEdits")).toBe(tok("warning"));
-    expect(modeColor("auto")).toBe(tok("permission"));
+  // WAVE C TASK 2: `modeColor` moved from `ChatStatusBar.tsx` to `modeTable.ts` and its mapping is now
+  // upstream's `gGl` table (annex §C4.c) rather than our invented one. TWO entries moved with it: `default`
+  // was `success` and is `inactive` (upstream paints the home chip grey, not green), `auto` was `permission`
+  // and is `warning`. `plan`, which the old function had no entry for at all, is `planMode`.
+  it("maps each permission mode to upstream's own §2.2 token, resolved for Ink", () => {
+    expect(modeColor("default")).toBe(tok("inactive"));
+    expect(modeColor("plan")).toBe(tok("planMode"));
+    expect(modeColor("acceptEdits")).toBe(tok("autoAccept"));
+    expect(modeColor("auto")).toBe(tok("warning"));
     expect(modeColor("bypassPermissions")).toBe(tok("error"));
-  });
-});
-
-describe("ctxColor", () => {
-  it("escalates unstyled → `warning` → `error` as context fills", () => {
-    expect(ctxColor(20)).toBeUndefined();
-    expect(ctxColor(60)).toBe(tok("warning"));
-    expect(ctxColor(85)).toBe(tok("error"));
   });
 });
 
@@ -394,9 +353,12 @@ describe("ChatComposer", () => {
     b.stdin.write("\t"); await new Promise((r) => setTimeout(r, 30));               // Tab → completes, not cycle
     expect(cycles).toBe(0);
   });
+  // WAVE C TASK 2: the Ctrl-D arm's row moved off the composer and onto the footer (`Wci`'s first early
+  // return), so these three render the composer WITH the footer the app puts under it. Every assertion is
+  // unchanged; only the tree they read is — see `helpers/composerFooter.tsx`.
   it("Ctrl-D on an empty composer needs two presses (KB3): first arms a hint and does not exit, second within the window exits; with text it does nothing", async () => {
     let exits = 0;
-    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} />);
+    const { stdin, lastFrame } = render(<ComposerWithFooter onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} />);
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("\x04");                                  // first Ctrl-D on empty → arms, does not exit
     await waitFor(() => (lastFrame() ?? "").includes("Press Ctrl-D again to exit"));
@@ -410,11 +372,13 @@ describe("ChatComposer", () => {
   });
   it("Ctrl-D stays armed across an intervening key but only advertises an executable exit", async () => {
     let exits = 0;
-    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} exitArmMs={10000} />);
+    const { stdin, lastFrame } = render(<ComposerWithFooter onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} exitArmMs={10000} />);
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("\x04"); await waitFor(() => (lastFrame() ?? "").includes("Press Ctrl-D again to exit"));
     stdin.write("x"); await waitFor(() => (lastFrame() ?? "").includes("x"));
-    expect(lastFrame() ?? "").not.toContain("Press Ctrl-D again to exit");
+    // WAVE C TASK 2: the arm's row is the footer's now, and the composer reports it up from an effect — so
+    // it clears one flush after the keystroke rather than in the same render. Same assertion, waited for.
+    await waitFor(() => !(lastFrame() ?? "").includes("Press Ctrl-D again to exit"));
     stdin.write("\x04");                                      // Ctrl-D is a no-op while text makes exit impossible
     await new Promise((r) => setTimeout(r, 30));
     expect(exits).toBe(0);
@@ -424,7 +388,7 @@ describe("ChatComposer", () => {
   });
   it("Ctrl-D's arm expires after exitArmMs — a press after the window re-arms instead of exiting", async () => {
     let exits = 0;
-    const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} exitArmMs={40} />);
+    const { stdin, lastFrame } = render(<ComposerWithFooter onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} onExit={() => { exits++; }} exitArmMs={40} />);
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("\x04");
     await waitFor(() => (lastFrame() ?? "").includes("Press Ctrl-D again to exit"));
@@ -433,7 +397,7 @@ describe("ChatComposer", () => {
     await waitFor(() => (lastFrame() ?? "").includes("Press Ctrl-D again to exit"));   // re-armed, not exited
     expect(exits).toBe(0);
   });
-  it("shows the placeholder + footer hint when empty, and hides them once you type", async () => {
+  it("shows the placeholder when empty and hides it once you type", async () => {
     const { stdin, lastFrame } = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
     await new Promise((r) => setTimeout(r, 20));
     // F5 task 8: the placeholder is CM47's ladder now, not one literal — a fresh composer (nothing
@@ -441,20 +405,26 @@ describe("ChatComposer", () => {
     // The first char is inverted and the rest dim, so the two halves are separated by SGR in the raw frame.
     expect(lastFrame() ?? "").toContain("\x1b[7mT\x1b[27m");
     expect(lastFrame() ?? "").toContain("ry \"");
-    expect(lastFrame() ?? "").toContain("⏎ send");
-    expect(lastFrame() ?? "").toContain("Esc rewind · ? help");
+    // WAVE C TASK 2: the `⏎ send` / `Esc rewind · ? help` half of this case retired with the composer's hint
+    // stack — upstream's home footer has neither row, and what replaced them (`⏸ manual mode on ·
+    // ? for shortcuts`, and its collapse to the chip alone while typing) is pinned in `footer.test.tsx`.
+    // What is LEFT here is the half this component still owns: the placeholder ladder.
     stdin.write("hi");
     await waitFor(() => (lastFrame() ?? "").includes("hi"));
     expect(lastFrame() ?? "").not.toContain("ry \"");                  // placeholder gone once typing (rule 1)
-    expect(lastFrame() ?? "").not.toContain("? help");                 // '?' inserts in a non-empty draft
   });
   it("hides the Esc-clear hint on the first busy render and does not resurrect after idle", async () => {
     const view = render(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} busy={false} />);
     await new Promise((r) => setTimeout(r, 20));
     view.stdin.write("draft"); await waitFor(() => (view.lastFrame() ?? "").includes("draft"));
     view.stdin.write("\x1b"); await waitFor(() => (view.lastFrame() ?? "").includes("Esc again to clear"));
+    // WAVE C TASK 2: the arm's feedback is a QUEUE entry now (upstream's `escape-again-to-clear`), so its
+    // removal lands in an effect rather than in the same synchronous render. `waitFor` and not a bare
+    // `expect` for that reason alone — the assertion itself is the same one, and the frame after the flush
+    // is what the user sees. The `does not resurrect` half below is unchanged and is what still catches a
+    // hint that comes back.
     view.rerender(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} busy />);
-    expect(view.lastFrame() ?? "").not.toContain("Esc again to clear");
+    await waitFor(() => !(view.lastFrame() ?? "").includes("Esc again to clear"));
     view.rerender(<ChatComposer onSubmit={() => {}} cwd="/" commandCatalog={[]} busy={false} />);
     expect(view.lastFrame() ?? "").not.toContain("Esc again to clear");
     view.stdin.write("\x1b"); await waitFor(() => (view.lastFrame() ?? "").includes("Esc again to clear"));
@@ -497,18 +467,20 @@ describe("ChatComposer", () => {
     await waitFor(() => currentInterrupt === 1);
     expect(oldInterrupt).toBe(0);
   });
-  it("shows the bash-mode indicator on a leading '!' and the memory-mode on '#'", async () => {
-    const bash = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
+  it("shows the bash-mode indicator on a leading '!'", async () => {
+    // WAVE C TASK 2: the indicator is upstream's own footer literal now (`! for shell mode`, L493959) in
+    // `bashBorder`, drawn by `<Footer>` as one of `Wci`'s four early-return states — so this renders the
+    // composed pair and asserts the string upstream prints, not the invented
+    // `! bash mode — runs locally in cwd (Enter to run)` row that used to sit under the frame.
+    //   THE `#` MEMORY HALF IS GONE WITH ITS ROW, and that is a scheduled removal, not a regression: memory
+    // mode is a ccx extra with no upstream counterpart at 2.1.220, the Wave C spec removes it outright, and
+    // Task 14 owns the removal (`src/tui/memory.ts` is on that task's delete list). There is no upstream
+    // footer state to migrate the row into, so until then the `remember`-coloured frame is its indicator —
+    // which `composer-frame.test.tsx` pins directly.
+    const bash = render(<ComposerWithFooter onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
     await new Promise((r) => setTimeout(r, 20));
     bash.stdin.write("!");
-    await waitFor(() => (bash.lastFrame() ?? "").includes("bash mode"));
-    expect(bash.lastFrame() ?? "").toContain("runs locally");
-
-    const mem = render(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
-    await new Promise((r) => setTimeout(r, 20));
-    mem.stdin.write("#");
-    await waitFor(() => (mem.lastFrame() ?? "").includes("memory"));
-    expect(mem.lastFrame() ?? "").toContain("CLAUDE.md");
+    await waitFor(() => (bash.lastFrame() ?? "").includes("! for shell mode"));
   });
   it("opens the @-popup listing files from the fixture cwd", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-comp-"));
@@ -624,7 +596,10 @@ describe("Wave-1 keymap wiring", () => {
     stdin.write("\x07");
     await waitFor(() => (lastFrame() ?? "").includes("from-editor"));
     expect(lastFrame() ?? "").not.toContain("Press Esc again to rewind");
-    expect(lastFrame() ?? "").toContain("Esc clear");
+    // WAVE C TASK 2: `Esc clear` was hint row 2, the persistent line that retired with the hint stack (there
+    // is no upstream row like it). The behaviour it stood for — a non-empty draft makes Escape a CLEAR arm
+    // rather than a rewind arm — is unchanged and is what the next two lines prove, through the arm's own
+    // feedback, which is now a queue entry in the overlay above the frame.
     stdin.write("\x1b");
     await waitFor(() => (lastFrame() ?? "").includes("Esc again to clear"));
   });

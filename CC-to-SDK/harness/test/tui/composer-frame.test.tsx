@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
+import { ComposerWithFooter } from "./helpers/composerFooter.js";
 import { ComposerFrame, PlaceholderCursor, promptGlyph, newlineHint, EDITOR_IN_FLIGHT_TEXT, NBSP, POINTER } from "../../src/tui/composerFrame.js";
 import { setTheme, themeTokens, resolveThemeColor } from "../../src/tui/theme.js";
 
@@ -174,8 +175,9 @@ describe("ChatComposer wears the frame", () => {
     const bash = renderWithKeymap(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 40} />);
     await settle();
     bash.stdin.write("!");
-    await waitFor(() => frame(bash.lastFrame).includes("bash mode"));
-    expect(strip(frame(bash.lastFrame))).toContain("!" + NBSP);
+    // WAVE C TASK 2: `! bash mode — runs locally…` was a composer row and is now the footer's own
+    // `! for shell mode`, so this waits on the glyph swap itself — which is this test's subject anyway.
+    await waitFor(() => strip(frame(bash.lastFrame)).includes("!" + NBSP));
     expect(frame(bash.lastFrame)).not.toContain(GLYPH);
   });
   it("paints the label into the top rule when given one, and nothing when not", async () => {
@@ -186,16 +188,15 @@ describe("ChatComposer wears the frame", () => {
     await settle();
     expect(strip(frame(without.lastFrame)).split("\n")[0]).toBe("─".repeat(40));
   });
-  it("carries the Z_a ladder in the footer and shortens it once \\+Return has been used", async () => {
+  it("the Z_a ladder still shortens once \\+Return has been used — now only in the `?` grid", async () => {
+    // WAVE C TASK 2: the ladder's composer ROW went with hint row 1 (upstream's home footer has no such
+    // row), so it is no longer readable off a composer frame. The LADDER itself is untouched and still has
+    // three rungs; `composerFrame.newlineHint` is the one derivation, and `keys/hints.ts`'s `ladder` cell in
+    // the `?` shortcuts grid is now its only render site. This case therefore pins the function, which is
+    // what the row was reading, and `shortcuts-grid.test.tsx` pins the grid that draws it.
     delete process.env.TERM_PROGRAM;
-    const { stdin, lastFrame } = renderWithKeymap(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 120} />);
-    await settle();
-    expect(strip(frame(lastFrame))).toContain("backslash (\\) + return (⏎) for newline");
-    stdin.write("a\\");
-    await waitFor(() => strip(frame(lastFrame)).includes("a\\"));
-    stdin.write("\r");                                                 // `\` + Return = the continuation
-    await waitFor(() => strip(frame(lastFrame)).includes("\\⏎ for newline"));
-    expect(strip(frame(lastFrame))).not.toContain("backslash (\\) + return (⏎) for newline");
+    expect(newlineHint(false)).toBe("backslash (\\) + return (⏎) for newline");
+    expect(newlineHint(true)).toBe("\\⏎ for newline");
   });
 });
 
@@ -351,8 +352,9 @@ describe("ChatComposer — paste chips and the Pasting… row", () => {
     await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1 +1 lines]"));
   });
   it("paints the dim `Pasting…` row while a paste is torn across chunks, and drops it on release", async () => {
+    // WAVE C TASK 2: `Pasting…` is `Wci`'s second early-return FOOTER state now, so this composes the pair.
     const { stdin, lastFrame } = renderWithKeymap(
-      <ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 60} rows={() => 24} />,
+      <ComposerWithFooter onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 60} rows={() => 24} />,
     );
     await settle();
     expect(strip(frame(lastFrame))).not.toContain("Pasting…");

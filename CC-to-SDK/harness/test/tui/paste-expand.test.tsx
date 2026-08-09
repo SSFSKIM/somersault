@@ -17,6 +17,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderWithKeymap } from "./keysTestUtil.js";
+import { ComposerWithFooter } from "./helpers/composerFooter.js";
 import { ChatComposer, PASTE_EXPAND_HINT } from "../../src/tui/ChatComposer.js";
 import { applyKey, initialEditorState, type EditorState } from "../../src/tui/editor.js";
 import { PASTE_LIMIT, expandRepeatedPaste, ingestPaste } from "../../src/tui/pasteChips.js";
@@ -130,9 +131,11 @@ describe("ingestPaste's short-circuit — before the id is minted (k0's order)",
 // ————— the composer: the cache write, the hint, and the window that gates only the hint —————
 
 describe("ChatComposer — the paste cache and `paste again to expand`", () => {
+  // WAVE C TASK 2: `paste again to expand` is `Wci`'s third early-return FOOTER state now, so the mount is
+  // the composer WITH the footer the app puts under it. Every assertion below is unchanged.
   const mount = (over: Partial<React.ComponentProps<typeof ChatComposer>> = {}) =>
     renderWithKeymap(
-      <ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 60} rows={() => 24} {...over} />,
+      <ComposerWithFooter onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 60} rows={() => 24} {...over} />,
     );
 
   // ————— CM26's cache write, RELOCATED by t7 —————

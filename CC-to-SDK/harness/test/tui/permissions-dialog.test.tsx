@@ -402,7 +402,7 @@ describe("PermissionsDialog — the rule list windows from the height it is give
   it("takes its chrome budget from an enumeration, and never returns a window of zero", () => {
     // 13 = 9 unconditional box rows (border ×2, title, tab strip, blank, intro, blank, blank, footer) + 2 for
     // the pair of counted indicators, which unlike Settings' third conditional row CAN coexist mid-list + 1
-    // ChatStatusBar + 1 for Ink's `>=`. Measured, not asserted: on the real `ChatApp` behind `/permissions`
+    // the footer row (`ChatStatusBar` before Wave C Task 2) + 1 for Ink's `>=`. Measured, not asserted: on the real `ChatApp` behind `/permissions`
     // at 100 columns the composed frame is `rows − 2` at the top of the list and `rows − 1` mid-list with
     // both indicators up, and draws zero `clearTerminal` writes at every pane from 14 to 30.
     expect(PERMISSIONS_CHROME_ROWS).toBe(13);
@@ -536,7 +536,7 @@ describe("PermissionsDialog — a row body is clipped to the width it is given (
 // quantity: `ink-testing-library` renders with `debug: true` and that branch returns BEFORE the
 // `outputHeight >= stdout.rows` check. What is asserted instead is the HEIGHT — the dialog rendered alone, so
 // there is no static half to inflate it — against the pane the budget claims it fits in, plus the one row
-// `ChatStatusBar` costs beside it. The clear-count instrument that measures Ink's actual branch is the one in
+// the footer row costs beside it (`ChatStatusBar` before Wave C Task 2 — one row either way). The clear-count instrument that measures Ink's actual branch is the one in
 // `PERMISSIONS_CHROME_ROWS`'s docblock, and it is what the numbers there come from.
 describe("PermissionsDialog — the chrome's wrap allowance is what the frame really spends (chrome-wrap round)", () => {
   /** Four short rules plus the affordance row is five options and a pane of 40 shows every one of them at every
@@ -574,7 +574,7 @@ describe("PermissionsDialog — the chrome's wrap allowance is what the frame re
   /** …AND THE INVARIANT THE ALLOWANCE EXISTS FOR. Ink writes `clearTerminal + fullStaticOutput + output` when
    *  `outputHeight >= stdout.rows` (ink.js:121) — a full-screen wipe on every cursor move — so the composed
    *  frame has to be STRICTLY shorter than the pane. Composed here is this dialog plus the one unconditional
-   *  sibling `ChatApp` draws beside it, `ChatStatusBar`; everything else is handled by that file's `paneOwned`
+   *  sibling `ChatApp` draws beside it, the footer row; everything else is handled by that file's `paneOwned`
    *  gate. The state is mid-list with BOTH counted indicators up, which is the tallest this dialog reaches.
    *
    *  MEASURED RED WITHOUT THE TERM, and the 60-column column is the one that carries it: with the allowance

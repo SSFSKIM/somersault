@@ -443,17 +443,23 @@ describe("through ChatComposer", () => {
     expect(plain).not.toContain("see /review");                      // `isAtEnd()` is false → nothing drawn
   });
 
-  // I2 (t10 review). The footer and the suggestion region are alternatives sharing one slot (`Ptl`,
-  // bundle L494604), so the footer must go only when something is actually DRAWN. Keying it off the raw
-  // presence of `state.command` meant a mid-text `/zzz` that matches nothing — or any visible ghost — took
-  // two rows away and put nothing in their place.
-  const FOOTER = "⏎ send";
-  it("the composer footer survives a mid-text `/` that draws nothing (Ptl, L494604)", async () => {
+  // I2 (t10 review), RESTATED BY WAVE C TASK 2. The subject is unchanged — a mid-text `/` that draws nothing
+  // must cost the frame nothing — but the evidence moved. Upstream's `Ptl` branch (L494609) returns the
+  // suggestion box INSTEAD of the whole below-composer block, so its footer row and the popup alternate;
+  // this port's footer row lives in `ChatApp` (`Footer.tsx`, and the three dialog budgets that count it as
+  // their one unconditional sibling), and it does NOT alternate — a drawn popup is drawn ABOVE it.
+  // RECORDED DIVERGENCE, deliberate: implementing the alternation would mean the popup's appearance and the
+  // footer's disappearance landing in two different flushes (the composer reports its state up through an
+  // effect), i.e. trading one honest extra row for a two-step layout jump. So these cases assert the
+  // property that actually matters and that the old `⏎ send` needle was standing in for: FRAME HEIGHT.
+  const lineCount = (f: string | undefined) => lines(f).length;
+  it("a mid-text `/` that draws nothing costs the frame nothing (Ptl, L494604)", async () => {
     const { stdin, lastFrame } = render(wrap(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} />));
     await tick();
+    const before = lineCount(lastFrame());
     stdin.write("see /zzz");
     await tick();
-    expect(lastFrame()).toContain(FOOTER);
+    expect(lineCount(lastFrame())).toBe(before);
     expect(lastFrame()).not.toContain("No commands match");        // head-only; nothing is drawn here
   });
 
@@ -471,17 +477,17 @@ describe("through ChatComposer", () => {
     for (let i = 0; i < 3; i++) stdin.write("\x7f");
     stdin.write("revi");                                            // `see /revi` → a visible ghost
     await tick();
-    expect(lastFrame()).toContain(FOOTER);
     expect(plain()).toBe(noTrigger);
   });
 
-  it("a head `/` that DOES draw takes the footer's slot, as upstream's Ptl branch does", async () => {
+  it("a head `/` that DOES draw adds the popup rows", async () => {
     const { stdin, lastFrame } = render(wrap(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} />));
     await tick();
+    const before = lineCount(lastFrame());
     stdin.write("/revi");
     await tick();
     expect(lastFrame()).toContain("/review");
-    expect(lastFrame()).not.toContain(FOOTER);
+    expect(lineCount(lastFrame())).toBeGreaterThan(before);
   });
 
   // DG55: the lane only exists because the SLASH source feeds a kind (`VJa`, L490007), and `VJa` feeds one

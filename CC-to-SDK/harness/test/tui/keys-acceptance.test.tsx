@@ -27,7 +27,7 @@ import { parseKeySpec } from "../../src/tui/keys/normalize.js";
 import { SHORTCUT_ROWS, UNBOUND, defaultLookup, formatBinding, formatBindingLower, shortcutGrid, shortcutRows, withModSep } from "../../src/tui/keys/hints.js";
 import { newlineHint } from "../../src/tui/composerFrame.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
-import { ChatStatusBar } from "../../src/tui/ChatStatusBar.js";
+import { Footer } from "../../src/tui/Footer.js";
 import type { KeyEvent } from "../../src/tui/keys/types.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 
@@ -149,7 +149,7 @@ describe("F2 acceptance 2 — an open overlay owns the keyboard", () => {
     h.stdin.write(ESC);                                              // Help's one binding
     await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     expect(frame(h.lastFrame)).not.toContain("hello");               // the composer came back EMPTY
-    expect(frame(h.lastFrame)).toContain("? help");
+    expect(frame(h.lastFrame)).toContain("? for shortcuts");
     h.unmount();
   });
 
@@ -170,7 +170,7 @@ describe("F2 acceptance 2 — an open overlay owns the keyboard", () => {
       { task_id: "task-aaa", task_type: "bash", description: "alpha-task" },
       { task_id: "task-bbb", task_type: "bash", description: "beta-task" },
     ] });
-    await waitFor(() => frame(h.lastFrame).includes("⚙ 2 bg"));
+    await waitFor(() => frame(h.lastFrame).includes("← for agents"));
     h.stdin.write(CTRL_B);                                           // idle ctrl+b opens the panel (Select context)
     // Two shells and nothing else, so the dialog draws BARE ROWS — the `Shells (n)` header only appears when a
     // second category is present (F6 T13-fix, bundle L481255). The rows themselves are the marker.
@@ -206,7 +206,7 @@ describe("F2 acceptance 3 — the ctrl+x chord machine, on the real chat surface
     const h = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />, clock.deps);
     await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "t1", task_type: "bash", description: "d1" }] });
-    await waitFor(() => frame(h.lastFrame).includes("⚙ 1 bg"));
+    await waitFor(() => frame(h.lastFrame).includes("← for agents"));
 
     // The arm notice is a TRANSCRIPT line, so it stays on screen once printed — the detector is how many
     // times it has been printed, plus what actually got stopped, never "the text is absent".
@@ -223,7 +223,7 @@ describe("F2 acceptance 3 — the ctrl+x chord machine, on the real chat surface
 
     // (b) escape cancels: the pending head is dropped, so the NEXT ctrl+k is an ordinary key again.
     fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "t2", task_type: "bash", description: "d2" }] });
-    await waitFor(() => frame(h.lastFrame).includes("⚙ 1 bg"));
+    await waitFor(() => frame(h.lastFrame).includes("← for agents"));
     h.stdin.write(CTRL_X);
     h.stdin.write(ESC);
     h.stdin.write(CTRL_K);
@@ -253,13 +253,15 @@ describe("F2 acceptance 4 — rebinding an action rewrites its hints, with no co
   it("a default-mode session prints no parenthetical; the first cycle is what brings it on", async () => {
     const h = renderWithKeymap(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
-    expect(stripAnsi(frame(h.lastFrame))).toContain("mode default");
+    // WAVE C TASK 2: the chip is upstream's `{symbol} {indicator} on` (annex §C4.c) — `mode default` was our
+    // own wording. The third line went with hint row 1: the composer no longer carries a mode-independent
+    // `<cycleKey> mode` rung, and upstream's home footer has no such row.
+    expect(stripAnsi(frame(h.lastFrame))).toContain("⏸ manual mode on");
     expect(stripAnsi(frame(h.lastFrame))).not.toContain("to cycle");    // upstream: default mode, no rung 10
-    expect(stripAnsi(frame(h.lastFrame))).toContain("⇧Tab mode");       // the composer ladder is mode-independent
     h.stdin.write(SHIFT_TAB);
-    await settleUntil(() => stripAnsi(frame(h.lastFrame)).includes("mode acceptEdits"));
-    expect(stripAnsi(frame(h.lastFrame))).toContain("mode acceptEdits");
-    expect(stripAnsi(frame(h.lastFrame))).toContain("⇧Tab to cycle");   // the DEFAULT hint, derived
+    await settleUntil(() => stripAnsi(frame(h.lastFrame)).includes("accept edits on"));
+    expect(stripAnsi(frame(h.lastFrame))).toContain("⏵⏵ accept edits on");
+    expect(stripAnsi(frame(h.lastFrame))).toContain("shift+tab to cycle");   // the DEFAULT hint, derived
     h.unmount();
   });
 
@@ -269,15 +271,18 @@ describe("F2 acceptance 4 — rebinding an action rewrites its hints, with no co
       { userLayers: MOVE_CYCLE_MODE },
     );
     await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
-    expect(stripAnsi(frame(h.lastFrame))).toContain("Alt-M mode");             // composer footer ladder
+    // WAVE C TASK 2: the `Alt-M mode` rung was hint row 1's, which is gone — so the rebinding's ONLY chrome
+    // is the chip parenthetical, and that is what this now watches, in upstream's own lower-case `$e`
+    // grammar (`alt+m`/`opt+m`, not the title-case `Alt-M` the shortcuts grid uses).
+    expect(stripAnsi(frame(h.lastFrame))).toContain("⏸ manual mode on");
     h.stdin.write(SHIFT_TAB);                                                  // the unbound default does nothing
     await settle();
-    expect(stripAnsi(frame(h.lastFrame))).toContain("mode default");
+    expect(stripAnsi(frame(h.lastFrame))).toContain("⏸ manual mode on");
     h.stdin.write(ALT_M);                                                      // …the user's own key cycles
-    await settleUntil(() => stripAnsi(frame(h.lastFrame)).includes("mode acceptEdits"));
+    await settleUntil(() => stripAnsi(frame(h.lastFrame)).includes("accept edits on"));
     const bar = stripAnsi(frame(h.lastFrame));
-    expect(bar).toContain("mode acceptEdits");                                 // the rebinding FIRES, not just prints
-    expect(bar).toContain("Alt-M to cycle");                                   // status-bar mode chip
+    expect(bar).toContain("⏵⏵ accept edits on");                               // the rebinding FIRES, not just prints
+    expect(bar).toContain(`${process.platform === "darwin" ? "opt" : "alt"}+m to cycle`);   // the footer mode chip
     expect(bar).not.toContain("⇧Tab");
     h.stdin.write("?");
     await waitFor(() => frame(h.lastFrame).includes("Keyboard shortcuts"));
@@ -347,20 +352,20 @@ describe("F2 — the mode-chip parenthetical is honest about who owns the keyboa
     const h = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     h.stdin.write(SHIFT_TAB);                                        // off `default` — otherwise there is no hint to hide
-    await settleUntil(() => stripAnsi(frame(h.lastFrame)).includes("⇧Tab to cycle"));
-    expect(stripAnsi(frame(h.lastFrame))).toContain("⇧Tab to cycle");
+    await settleUntil(() => stripAnsi(frame(h.lastFrame)).includes("shift+tab to cycle"));
+    expect(stripAnsi(frame(h.lastFrame))).toContain("shift+tab to cycle");
 
     h.stdin.write("?");
     await waitFor(() => frame(h.lastFrame).includes("Keyboard shortcuts"));
-    // Asserted while the overlay is STILL up: the status bar renders under it, and shift+tab reaches nothing
+    // Asserted while the overlay is STILL up: the FOOTER renders under it, and shift+tab reaches nothing
     // from here (Help swallows), so advertising it would be the lie this gate exists to prevent.
     expect(stripAnsi(frame(h.lastFrame))).not.toContain("to cycle");
     expect(frame(h.lastFrame)).toContain("Keyboard shortcuts");
     h.stdin.write(ESC);
-    await waitFor(() => stripAnsi(frame(h.lastFrame)).includes("⇧Tab to cycle"));   // the composer owns it again
+    await waitFor(() => stripAnsi(frame(h.lastFrame)).includes("shift+tab to cycle"));   // the composer owns it again
 
     fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "task-aaa", task_type: "bash", description: "alpha-task" }] });
-    await waitFor(() => frame(h.lastFrame).includes("⚙ 1 bg"));
+    await waitFor(() => frame(h.lastFrame).includes("← for agents"));
     h.stdin.write(CTRL_B);                                           // idle ctrl+b opens the picker over the composer
     await waitFor(() => stripAnsi(frame(h.lastFrame)).includes("alpha-task"));   // one category → bare rows
     expect(stripAnsi(frame(h.lastFrame))).not.toContain("to cycle");
@@ -368,12 +373,15 @@ describe("F2 — the mode-chip parenthetical is honest about who owns the keyboa
     h.unmount();
   });
 
-  it("a <ChatStatusBar> with no provider above it never claims a cycle key", async () => {
-    // A bare render has no input path at all — no provider, no composer, nothing that could deliver the key.
-    // The mode is deliberately NON-default here, so the mode gate cannot be what makes this pass.
-    const bare = render(<ChatStatusBar mode="acceptEdits" busy />);
+  it("a <Footer> that does not own the keyboard never claims a cycle key", async () => {
+    // WAVE C TASK 2: the subject moved from `ChatStatusBar` to `Footer`, and so did the gate — the footer is
+    // rendered by `ChatApp` under every dialog, so `composerOwnsKeys` is what decides whether the chip may
+    // carry its chord. The mode is deliberately NON-default here, so the mode gate cannot be what passes it.
+    const bare = render(<Footer mode="acceptEdits" busy draftNonEmpty={false} isInputEmpty searching={false}
+      statusLineConfigured={false} pasting={false} pasteExpandHint={false} bashMode={false}
+      agents={{ count: 0 }} bindings={defaultLookup} composerOwnsKeys={false} />);
     await tick();
-    expect(stripAnsi(frame(bare.lastFrame))).toContain("mode acceptEdits");
+    expect(stripAnsi(frame(bare.lastFrame))).toContain("accept edits on");
     expect(stripAnsi(frame(bare.lastFrame))).not.toContain("to cycle");
     bare.unmount();
   });
@@ -499,7 +507,7 @@ describe("F2 — hint derivation coverage", () => {
     const src = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
     // F6 T14 adds `HelpDialog.tsx` to the swept set: it prints the dismiss chord in its footer, and that chord
     // must come from the table like every other one on screen.
-    for (const file of ["../../src/tui/ChatComposer.tsx", "../../src/tui/ChatStatusBar.tsx", "../../src/tui/ShortcutsOverlay.tsx", "../../src/tui/HelpDialog.tsx"]) {
+    for (const file of ["../../src/tui/ChatComposer.tsx", "../../src/tui/Footer.tsx", "../../src/tui/ShortcutsOverlay.tsx", "../../src/tui/HelpDialog.tsx"]) {
       // Comments are not rendered, so they are not lies — whole `//` / `/*` / jsdoc-`*` lines drop out, and so
       // does the tail of a line-end `//` comment, which is what lets these files keep explaining what they
       // derive and why. Cutting at `//` can over-strip (a `://` inside a string), which would only ever HIDE a

@@ -152,7 +152,7 @@ describe("SettingsDialog — the Config list windows from the height it is given
 
   it("takes its chrome budget from an enumeration, and never returns a window of zero", () => {
     // 11 = 7 unconditional box rows + 2 (the two COUNTED INDICATOR rows, both reserved unconditionally
-    // because they toggle as a consequence of scrolling) + 1 ChatStatusBar + 1 for Ink's `>=`. It was 12
+    // because they toggle as a consequence of scrolling) + 1 footer row (`ChatStatusBar` before Wave C Task 2) + 1 for Ink's `>=`. It was 12
     // until the t5 review; each expectation below is recomputed, not adjusted. `THINKING_WARNING` is NOT in
     // the 2 — the row-clip round measured that it coexists with `↑ N more above`, and the warning-term round
     // charges it separately and only while the Thinking row has been touched (`settingsWrapRows`, pinned in

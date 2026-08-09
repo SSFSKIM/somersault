@@ -205,7 +205,10 @@ describe("<ChatComposer> — CM48's drain (Uge, L495509)", () => {
     await settle();
     stdin.write(UP);
     await waitFor(() => strip(frame(lastFrame)).includes("!git status"));
-    expect(strip(frame(lastFrame))).toContain("bash mode");
+    // WAVE C TASK 2: the mode's own row is the footer's `! for shell mode` now, and this mount is a bare
+    // composer — so the evidence for BASH mode here is the composer's own: the `!`+NBSP prompt glyph that
+    // `promptGlyph` paints only in that mode (composerFrame.tsx), which is a stronger pin than a hint row.
+    expect(strip(frame(lastFrame))).toContain("!\u00a0");
   });
 });
 

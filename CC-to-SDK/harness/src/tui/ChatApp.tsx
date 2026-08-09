@@ -38,7 +38,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import { suspendProcess } from "./suspend.js";
-import { useKeyActions, useKeyScope, useKeySuspend, useSwallowKeys } from "./keys/KeymapProvider.js";
+import { useBindingLookup, useKeyActions, useKeyScope, useKeySuspend, useSwallowKeys } from "./keys/KeymapProvider.js";
 import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
@@ -54,7 +54,9 @@ import { isEditableQueueEntry } from "./queue.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { QuestionDialog } from "./QuestionDialog.js";
 import { PlanDialog } from "./PlanDialog.js";
-import { ChatStatusBar } from "./ChatStatusBar.js";
+import { Footer } from "./Footer.js";
+
+import { IDLE_COMPOSER_FOOTER_STATE, type ComposerFooterState } from "./ChatComposer.js";
 import { SessionPicker } from "./SessionPicker.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { TaskPanel } from "./TaskPanel.js";
@@ -86,6 +88,13 @@ import type { RenderLine } from "./render.js";
  *  scope and its ctrl+x ctrl+b chord would survive the hold. */
 /** `$jp = 2` (bundle L426022) — the `paddingX` `wqo` puts around a queued prompt in normal layout. */
 const QUEUE_PAD = 2;
+/** WAVE C TASK 2 — the Esc-Esc rewind arm's queue entry. The KEY is upstream's own (`escape-again-to-clear`,
+ *  annex §C1.6); the TEXT is ccx's, because the gesture is ccx's (upstream's second Esc clears the draft, and
+ *  EP-C7 / Task 4 is what reconciles the two). `ESC_ARM_MS` is the arm window itself, so the entry and the
+ *  arm it advertises expire together — one number, not a hint outliving what it promises. */
+const ESC_REWIND_KEY = "escape-again-to-clear";
+const ESC_REWIND_TEXT = "Press Esc again to rewind";
+const ESC_ARM_MS = 1500;
 /** `fs = 1500` (bundle L547654, the local const beside `Qo = mMr()`): how long after the LAST keystroke the
  *  composer's typing-activity flag stays set, and therefore how long a decision that arrived mid-draft stays
  *  suppressed. Injectable (`typingIdleMs`) for the same reason `yankHintMs`/`escClearMs`/`pasteHintMs` are —
@@ -161,7 +170,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
-  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
+  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
   // WAVE R TASK 1 (defect i) — the terminal's SIZE IS REACT STATE. Ink's own SIGWINCH handler
   // (node_modules/ink/build/ink.js:83) re-runs Yoga layout over the EXISTING element tree and re-serializes
   // it; it never re-renders components. Nothing in ccx subscribed to "resize" at all, so the reads below
@@ -190,6 +199,18 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const terminalRows = () => size.rows;
   const queueWidth = Math.max(8, terminalColumns() - QUEUE_PAD * 2);
   const [exitArmed, setExitArmed] = useState(false);
+  // WAVE C TASK 2 — the composer's half of the footer (the four early-return states plus the draft signal).
+  // It lives up here rather than in the composer for the same reason the typing debounce does: the composer
+  // is unmounted by every dialog, and its own cleanup reports IDLE so nothing stale survives the unmount.
+  const [footerState, setFooterState] = useState<ComposerFooterState>(IDLE_COMPOSER_FOOTER_STATE);
+  // The draft half of the footer's inputs, on its own channel — see `ComposerFooterState`'s docblock for why
+  // it must not ride the effect the other four states use.
+  const [draftNonEmpty, setDraftNonEmpty] = useState(false);
+  // Every chord the footer prints is DERIVED from the live table through this, never typed in `Footer.tsx`.
+  const bindings = useBindingLookup();
+  /** ChatApp's own ctrl+c arm, in upstream's own hyphenated spelling (`Ctrl-C`, plan constraint 11). It is a
+   *  VALUE here rather than a literal in the footer for the reason `Footer.tsx`'s header gives. */
+  const EXIT_ARM_CTRL_C = { key: "Ctrl-C", verb: "exit" };
   const [todosOpen, setTodosOpen] = useState(initialTodosOpen);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   // Durable per-app editor state survives a temporary composer unmount; autocomplete is normalized by the
@@ -228,7 +249,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingIdleMsRef = useRef(typingIdleMs); typingIdleMsRef.current = typingIdleMs;
   const noteInputActivity = (nonEmpty: boolean) => {
+    // WAVE C TASK 2 — THE DRAFT SIGNAL IS PATCHED IN SYNCHRONOUSLY, and this is the reason: the composer's
+    // `onFooterState` effect is a flush behind, so the frame that first shows a keystroke would still be
+    // carrying the previous frame's hint list. `chat.test.tsx`'s "never paints a stale editor hint in ANY
+    // frame" sweep catches exactly that, correctly — a hint that is wrong for one paint is still wrong.
+    // This callback runs from the composer's own `commitState`, i.e. inside the same stdin handler, so React
+    // batches it with the composer's own setState and the collapse lands in the SAME frame as the character.
+    // The effect still reports the whole state; it agrees with this by the time it runs.
     if (typingTimer.current) { clearTimeout(typingTimer.current); typingTimer.current = null; }
+    setDraftNonEmpty(nonEmpty);
     setTypingActive(nonEmpty);
     if (nonEmpty) typingTimer.current = setTimeout(() => { typingTimer.current = null; setTypingActive(false); }, typingIdleMsRef.current);
   };
@@ -303,7 +332,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     if (escArmed) { disarmEsc(); void openRewind(); return; }
     setEscArmed(true);
     if (escTimer.current) clearTimeout(escTimer.current);
-    escTimer.current = setTimeout(() => setEscArmed(false), 1500);
+    escTimer.current = setTimeout(() => setEscArmed(false), ESC_ARM_MS);
   };
   const onCycleMode = () => { cycleMode(); disarm(); };   // Shift+Tab cycles the permission ladder (default → acceptEdits → plan → auto)
   // Ctrl-Z is process-level for EVERY visible owner: the provider intercepts it before context dispatch,
@@ -437,7 +466,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //
   // WAVE S T4, FINAL ROUND — THE SAME PHYSICS, NOW THE WHOLE CLASS. The pager is not the only surface that
   // spends the pane, and the rewind picker is the proof that a per-dialog BUDGET cannot stand in for this
-  // gate. That budget (`REWIND_CHROME_ROWS`) counts the dialog's own chrome, `ChatStatusBar` and one row for
+  // gate. That budget (`REWIND_CHROME_ROWS`) counts the dialog's own chrome, the footer row and one row for
   // Ink's `>=`, so its slack is EXACTLY ONE ROW by construction — and the task panel is seven (a header, a
   // leading blank, up to five windowed rows), which overflows it at every height and every width. Measured on
   // the real `ChatApp` at 21×100, mid-list with both indicators and the checking row up: 20 rows with no
@@ -556,6 +585,18 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     || state.settings.open                                        // Wave S t5 — its Config list is windowed now
     || state.permissions.open                                     // Wave S t6b — its rule/workspace lists are windowed now
     || (inputOwnerRef.current === "decision" && state.pending?.kind === "plan");
+  // WAVE C TASK 2 — the rewind arm's feedback moved from its own ROW to the notification QUEUE, which is
+  // upstream's placement for every "press it again" message (annex §C1.6's `escape-again-to-clear` and
+  // `left-arrow-again-for-agents` are both `immediate` feedback entries, not permanent lines). Same string,
+  // same window, same `!paneOwned` gate — only the slot changed, to the one-row overlay above the composer.
+  // Declared HERE, below `paneOwned`, because it reads it. EP-C7 (Wave C Task 4) rebuilds the arm itself on
+  // `keys/doublePress.ts`; the destination does not change again.
+  const escArmVisible = escArmed && !paneOwned;
+  useEffect(() => {
+    if (escArmVisible) notify({ key: ESC_REWIND_KEY, text: ESC_REWIND_TEXT, priority: "immediate", timeoutMs: ESC_ARM_MS });
+    else dismissNotification(ESC_REWIND_KEY);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [escArmVisible]);
   return (
     <Box flexDirection="column">
       <Transcript key={state.staticEpoch} staticItems={state.staticItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />
@@ -741,27 +782,44 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // there. Undefined in the product, where the composer falls back to `process.env`.
                       historyEnv={deps?.env}
                       queuePop={popQueueToComposer} queueHasEditable={state.queue.some(isEditableQueueEntry)}
-                      submitCount={state.submitCount} hasMessages={state.hasMessages} queueHintCountedRef={queueHintCountedRef} placeholderMemoRef={placeholderMemoRef} />}
-      {/* Wave S t4 final round: the two armed hints are `paneOwned` chrome like everything above — one row
-          each, against a budget whose slack is one row. Under the DEFAULT keymap neither arm can currently be
-          set behind any of the six: measured on the composed app at 40×100, a ctrl+c with the pager, the
-          rewind picker, `/model`, `/resume` or `/help` up produced no exit hint and no change of frame height,
-          and escape is each surface's own cancel. So this gate hides nothing a user can produce today — it is
-          written anyway because `keybindings.json` is a USER file (F2 task 6), so "unreachable" here is a
-          property of the default table rather than of this tree.
-            AND SO NO TEST CAN COVER THESE TWO CLAUSES — stated here because the fix round that re-read this
-          comment confirmed the reasoning rather than repairing it, and an unstated hole reads as an oversight.
-          A hint that cannot be ARMED behind any of the six cannot be observed being hidden either, so deleting
-          `!paneOwned` from either line below leaves the suite green, and would under any fixture the default
-          table can reach. These two are carried by the measurement above and by nothing else, deliberately;
-          the other four `!paneOwned` sites are each observable directly, and are pinned. */}
-      {exitArmed && !paneOwned ? <Box paddingX={1}><Text dimColor>Press Ctrl-C again to exit</Text></Box> : null}
-      {escArmed && !paneOwned ? <Box paddingX={1}><Text dimColor>Press Esc again to rewind</Text></Box> : null}
-      {/* `composerOwnsKeys` is the SAME render-time disjunction the composer's own guard reads, handed to the
-          bar as a prop: its mode-chip parenthetical advertises a Chat-context key, so it must vanish the frame
-          a dialog or overlay takes the keyboard. A prop and not a registry read, because this value is derived
-          from state during render and therefore repaints with it — see ChatStatusBar's own header. */}
-      <ChatStatusBar model={state.model} mode={state.mode} busy={state.busy} ctxPct={state.ctxPct} thinkLevel={state.thinkLevel} bgCount={state.bgTasks.length} usageWarn={state.usageWarn} composerOwnsKeys={composerOwns(inputOwnerRef.current)} />
+                      submitCount={state.submitCount} hasMessages={state.hasMessages} queueHintCountedRef={queueHintCountedRef} placeholderMemoRef={placeholderMemoRef}
+                      // WAVE C TASK 2: one queue for the whole app (useChat owns it), and the composer's
+                      // footer-state channel. Both are how the one-row footer and the one-row overlay stay
+                      // in sync with a component that unmounts behind every dialog.
+                      notifications={notifications} onFooterState={setFooterState} />}
+      {/* WAVE C TASK 2 (EP-C1b) — ONE FOOTER ROW, where `ChatStatusBar` and two armed-hint rows used to be.
+          It stays UNCONDITIONAL, exactly as the status bar was, because three dialog height budgets count it
+          as their one unconditional sibling (`rewindModel.REWIND_CHROME_ROWS` and the two dialog constants
+          each enumerate a `+1` for this row). `composerOwnsKeys` is the SAME render-time disjunction the
+          composer's own guard reads: the mode chip is a fact and always draws, while the chord-bearing
+          content — the `(shift+tab to cycle)` parenthetical and the whole hint list — must vanish the frame a
+          dialog or overlay takes the keyboard. A prop and not a registry read, because this value is derived
+          from state during render and therefore repaints with it (`Footer.tsx`'s divergence 2).
+
+          THE EXIT ARM'S KEY IS A STRING FROM HERE, never a literal inside `Footer.tsx` — upstream's own
+          arrangement (its input hook passes `Dci.key` into `exitMessage`, L493757) and what lets the footer
+          source join `keys-acceptance.test.tsx`'s banned-chord sweep. Two arms feed the one slot: ChatApp's
+          own ctrl+c arm, and the composer's ctrl+d arm arriving through `footerState`. Ctrl-C wins when both
+          are up, because it is the one that ends the process rather than the session.
+
+          `Press Esc again to rewind` HAS NO ROW HERE ANY MORE, deliberately (plan constraint 12): upstream
+          carries that affordance as a QUEUE entry, not a persistent line (`escape-again-to-clear`, immediate,
+          1000 ms — annex §C1.6), and EP-C7 / Wave C Task 4 owns posting it. No esc hint renders between this
+          task and that one; the gesture itself is untouched. */}
+      <Footer
+        mode={state.mode} busy={state.busy}
+        draftNonEmpty={draftNonEmpty} isInputEmpty={!draftNonEmpty}
+        searching={footerState.searching} pasting={footerState.pasting}
+        pasteExpandHint={footerState.pasteExpandHint} bashMode={footerState.bashMode}
+        exitArm={exitArmed && !paneOwned ? EXIT_ARM_CTRL_C : footerState.exitArm}
+        // EP-C2 lands in Wave C Tasks 9/10; until then nothing configures a statusLine and the row never
+        // draws. Pinned false rather than omitted so the prop's absence is a decision, not an oversight.
+        statusLineConfigured={false}
+        // ccx has no "agent needs input" signal and no completion stamp the footer could read, so only the
+        // COUNT is wired — it is what replaced the old `⚙ N bg` chip. `agentsAffordance` implements both
+        // flashes and its own 2500 ms window (`Lci`); a producer sets `awaiting`/`done` here and gets them.
+        agents={{ count: state.bgTasks.length }}
+        bindings={bindings} composerOwnsKeys={composerOwns(inputOwnerRef.current)} />
     </Box>
   );
 }

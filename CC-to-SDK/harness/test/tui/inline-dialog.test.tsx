@@ -260,11 +260,11 @@ describe("plan dialog availability — the wiring ChatApp owns", () => {
   it("the bypass arm follows the LAUNCH mode, and survives the live mode moving off it", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = app(fake, IDLE_SHORT, { initialMode: "bypassPermissions" });
-    await waitFor(() => flat(lastFrame).includes("mode bypassPermissions"));
+    await waitFor(() => flat(lastFrame).includes("bypass permissions on"));   // WAVE C TASK 2: upstream's chip words
     // bypassPermissions is OFF the Tab ladder (useChat's `ladderNext`), so shift+tab re-enters at `default`:
     // the live mode is now something the launch flag is not.
     stdin.write("\x1b[Z");
-    await waitFor(() => flat(lastFrame).includes("mode default"));
+    await waitFor(() => flat(lastFrame).includes("manual mode on"));
     fake.parkPermission(planEntry());
     await waitFor(() => frame(lastFrame).includes("Ready to code?"));
     expect(flat(lastFrame)).toContain("Yes, and bypass permissions");
@@ -278,7 +278,10 @@ describe("plan dialog availability — the wiring ChatApp owns", () => {
   it("the auto arm follows the model ChatApp hands down", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = app(fake, IDLE_SHORT, { initialModel: "claude-opus-5" });   // autoModel.ts's live-verified set
-    await waitFor(() => flat(lastFrame).includes("model claude-opus-5"));
+    // WAVE C TASK 2: the `model <id>` segment left the always-on row with `ChatStatusBar` (no upstream footer
+    // counterpart), so the settle marker is the footer's own home state instead. The model still reaches the
+    // dialog — which is this case's actual subject, asserted two lines down.
+    await waitFor(() => flat(lastFrame).includes("manual mode on"));
     fake.parkPermission(planEntry());
     await waitFor(() => frame(lastFrame).includes("Ready to code?"));
     expect(flat(lastFrame)).toContain("Yes, and use auto mode");

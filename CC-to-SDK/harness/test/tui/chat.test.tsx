@@ -154,12 +154,14 @@ describe("<ChatApp>", () => {
     await waitFor(() => !frame(lastFrame).includes("Edit file"));
     fake.parkPermission({ sessionId: "s", toolUseID: "q", toolName: "AskUserQuestion", kind: "question", input: { questions: [{ question: "Continue?", options: [{ label: "yes" }], multiSelect: false }] }, createdAt: Date.now() });
     await waitFor(() => frame(lastFrame).includes("Continue?"));
-    expect(frame(lastFrame)).not.toContain("Esc rewind");
+    // WAVE C TASK 2: `Esc rewind` was hint row 2, which retired with the composer's hint stack. The rule it
+    // stood for is unchanged and still asserted one line down: a dialog owner sees no Chat-context chord.
+    expect(frame(lastFrame)).not.toContain("? for shortcuts");
     fake.settlePermission("q", "me", "question_answer");
     await waitFor(() => !frame(lastFrame).includes("Continue?"));
     fake.parkPermission({ sessionId: "s", toolUseID: "r", toolName: "ExitPlanMode", kind: "plan", input: { plan: "ship it" }, createdAt: Date.now() });
     await waitFor(() => frame(lastFrame).includes("Ready to code?"));
-    expect(frame(lastFrame)).not.toContain("? help");
+    expect(frame(lastFrame)).not.toContain("? for shortcuts");
   });
 
   it("never paints a stale editor hint in any frame after a draft or autocomplete takes input ownership", async () => {
@@ -169,8 +171,9 @@ describe("<ChatApp>", () => {
       const owned = frames.filter((f) => f.includes(marker));
       expect(owned.length, `no emitted frame rendered ${JSON.stringify(marker)}`).toBeGreaterThan(0);
       for (const rendered of owned) {
-        expect(rendered).not.toContain("Esc rewind");
-        expect(rendered).not.toContain("? help");
+        // WAVE C TASK 2: `Esc rewind` retired with hint row 2; `? for shortcuts` is the surviving
+        // Chat-context chord the footer can print, and the one this sweep now watches.
+        expect(rendered).not.toContain("? for shortcuts");
       }
     };
 
@@ -396,7 +399,7 @@ describe("<ChatApp>", () => {
     stdin.write("one"); await waitFor(() => frame(lastFrame).includes("one"));
     stdin.write("\x15"); await waitFor(() => !frame(lastFrame).includes("one"));
     stdin.write("two"); await waitFor(() => frame(lastFrame).includes("two"));
-    stdin.write("\x15"); await waitFor(() => frame(lastFrame).includes("? help"));
+    stdin.write("\x15"); await waitFor(() => frame(lastFrame).includes("? for shortcuts"));
     stdin.write("\x19"); await waitFor(() => frame(lastFrame).includes("two"));
     stdin.write("\x1a"); await waitFor(() => suspend.mock.calls.length === 1);
     stdin.write("\x1by"); await waitFor(() => frame(lastFrame).includes("one"));
@@ -510,16 +513,22 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).toContain("No tasks currently running");
   });
 
-  it("the status bar shows a live bg-task count and updates on tasks_changed", async () => {
+  // WAVE C TASK 2: `⚙ N bg` retired with the status bar. Upstream's shape for the same fact is the footer's
+  // `← for agents` affordance (annex §C1.4), which renders only while background agents exist — so the
+  // presence/absence contract this case was written for is the same one, in upstream's own words. The COUNT
+  // is no longer on the row (upstream shows a number only during its awaiting/done flash, which ccx has no
+  // producer for yet — see `footerModel.agentsAffordance`), so the count half is pinned in `footer.test.tsx`
+  // against the pure function instead of against a live app frame.
+  it("the footer advertises background agents only while some exist, and updates on tasks_changed", async () => {
     const fake = fakeRemote();
     const { lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
-    expect(frame(lastFrame)).not.toContain("⚙");
+    expect(frame(lastFrame)).not.toContain("← for agents");
     fake.pushEvent({ kind: "tasks_changed", tasks: [
       { task_id: "a", task_type: "local_bash", description: "x" },
       { task_id: "b", task_type: "agent", description: "y" },
     ] });
-    await waitFor(() => frame(lastFrame).includes("⚙ 2 bg"));
+    await waitFor(() => frame(lastFrame).includes("← for agents"));
   });
 
   it("Esc on an idle composer arms 'Press Esc again to rewind'; second Esc opens the picker (rewindAnchors called); while busy Esc interrupts and never arms", async () => {
@@ -970,7 +979,6 @@ describe("<ChatApp>", () => {
     stdin.write("\x1b");                                         // Esc ACCEPTS: the match stays, the search closes
     await waitFor(() => !frame(lastFrame).includes("search prompts:"));
     expect(stripAnsiAll(frame(lastFrame))).toContain("redo the build");
-    expect(frame(lastFrame)).toContain("Esc clear");
 
     stdin.write("\x1b");                                         // first Escape clears/arms locally; it cannot rewind
     await waitFor(() => frame(lastFrame).includes("Esc again to clear"));
@@ -2039,7 +2047,7 @@ describe("<ChatApp>", () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("start"); await waitFor(() => frame(lastFrame).includes("start"));
-    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("esc to interrupt"));
     for (const text of ["queued one", "queued two"]) {
       stdin.write(text); await waitFor(() => frame(lastFrame).includes(text));
       stdin.write("\r"); await waitFor(() => isQueued(lastFrame, text));
@@ -2062,10 +2070,10 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     await new Promise((r) => setTimeout(r, 20));
     stdin.write(" edited"); await waitFor(() => frame(lastFrame).includes("queued two edited"));
-    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("? help"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("? for shortcuts"));
 
     stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Transcript"));
-    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("? help"));
+    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("? for shortcuts"));
   });
 
   it("Esc with a running turn and 3 queued messages: composer holds all three newline-joined, queue empty, turn interrupted (F0 acceptance 1, CM49)", async () => {
@@ -2083,7 +2091,7 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("start"); await waitFor(() => frame(lastFrame).includes("start"));
     stdin.write("\r");
-    await waitFor(() => frame(lastFrame).includes("⟳"));
+    await waitFor(() => frame(lastFrame).includes("esc to interrupt"));
     for (const q of ["first queued", "second queued", "third queued"]) {
       stdin.write(q); await waitFor(() => frame(lastFrame).includes(q));
       stdin.write("\r");
@@ -2118,7 +2126,7 @@ describe("<ChatApp>", () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("start"); await waitFor(() => frame(lastFrame).includes("start"));
-    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("⟳"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("esc to interrupt"));
     stdin.write("queued-one"); await waitFor(() => frame(lastFrame).includes("queued-one"));
     stdin.write("\r"); await waitFor(() => isQueued(lastFrame, "queued-one"));
     stdin.write("/"); await waitFor(() => frame(lastFrame).includes("/"));
