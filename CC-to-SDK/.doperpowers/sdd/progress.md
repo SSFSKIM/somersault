@@ -495,3 +495,20 @@ A11 pick test resumes the CURRENT session so the append branch preserves any wro
 the whole TUI suite; the empty state is scope-aware per L476609 (worktree axis deliberately does not
 move the copy — it says nothing about which projects were searched) with the Ctrl+A hint recorded as
 living in our footer. keys-migration-dialogs pinned the old wording — updated as intended fallout.
+
+## 2026-08-09 — Task 11 built (02c346da50); review + Task 12 impl pipelined
+
+T11 landed green: compactionBar.ts with the theatre-labelled curve, CompactionRow modelled on RetryRow,
+ChatState.compacting set from the wire (auto path) and locally (typed /compact — whose boundary never
+reaches the client; the implementer's finally-clear is the correction to the plan's assumption that the
+boundary could clear it), belt-clear at turn end, slot gate widened to busy||compacting (typed /compact
+runs no turn — gating on busy alone would have shown nothing for the whole pass; pinned by test).
+Precedence retry > compacting > spinner, argued from the QA fleet's 72-second-outage lesson. One clock
+end to end via deps.now. Task 8's re-measure untouched. Review dispatched (angles: curve-value and
+monotonicity pins, canon transcription diff, lifecycle leak hunt incl. /clear-while-stuck, paneOwned
+interaction, second-compaction ratio reset, deletion completeness). Task 12 impl pipelined concurrently
+(reviewer read-only; T12 is the only writer). T12 dispatch carried the staged corrections: no sum()
+helper exists (export totalOutputTokens instead), no cumulative counter in useChat (fetch usage() in
+openModelPicker alongside capabilities, degrade to 0 on failure = no spurious dialog), ack lives in
+useChat stamped on accepted pick, confirm stays OUT of paneOwned (fixed height), settings route shares
+the gate.
