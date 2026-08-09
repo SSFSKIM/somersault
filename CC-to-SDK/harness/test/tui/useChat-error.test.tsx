@@ -7,7 +7,8 @@
 // render.ts:205). It is NOT the `JG`/`lca` warning bullet: `JG_PREFIXES` (species.ts:462-466) matches only
 // text that STARTS WITH `API Error` or one of the four cloud-credential prefixes, and this text starts
 // with "Failed to authenticate.", so `errorSentinelLines` returns undefined and species.ts:578 never
-// fires. (`is_api_error_message` is not read anywhere in `src/`.) Verified by calling both functions on
+// fires. (`is_api_error_message` is not read anywhere in `src/` — W-C T7 briefly read it to suppress the
+// duration row, and that arm is deleted.) Verified by calling both functions on
 // the exact text below. The
 // SECOND line only appeared on the uuid-less variant, where nothing settled the waiter and readLoop's
 // `finally` rejected it "session disposed" — a line that named the wrong cause. Task 14 makes both
@@ -32,7 +33,9 @@ async function runFailedTurn(endError?: string): Promise<string[]> {
   const fake = fakeRemote();
   let rows: string[] = [];
   function H() {
-    const c = useChat(() => fake);
+    // Clock and verb injected so the duration row below the failure is one fixed string, not a regex over
+    // eight verbs and whatever the wall clock spent between two `setTimeout`s.
+    const c = useChat(() => fake, {}, { now: () => 1000, pickTurnVerb: () => "Crunched" });
     rows = [...c.state.staticItems, ...c.state.pendingItems].flatMap(itemLines).filter((l) => l.trim());
     return <Text>x</Text>;
   }
@@ -49,7 +52,10 @@ async function runFailedTurn(endError?: string): Promise<string[]> {
 describe("useChat: an API failure renders exactly one honest failure line", () => {
   it("the terminal api_error frame paints ONE row and no ✗ duplicate under it", async () => {
     const rows = await runFailedTurn();
-    expect(rows).toEqual([API_ERROR_TEXT]);
+    // The duration row rides UNDER it, because upstream's own emission is a `finally` gated only on the
+    // aborted signal: a turn that died at the API still prints `✻ Crunched for 0s`. ccx briefly suppressed
+    // it on `is_api_error_message` — an invented divergence, deleted (W-C T7 fix pass).
+    expect(rows).toEqual([API_ERROR_TEXT, "Crunched for 0s"]);
     // The count is the assertion. A second row — a `✗` echo of the same text, or a "session disposed"
     // that names the wrong cause — is the defect this pins against.
     expect(rows.filter((l) => l.includes(API_ERROR_TEXT))).toHaveLength(1);

@@ -71,25 +71,10 @@ export function isInterruptSentinelFrame(m: unknown): boolean {
   return texts.some((t) => { const kind = classifyUserText(t.trim()); return kind === "interrupt-plain" || kind === "interrupt-tool"; });
 }
 
-/** Does this wire frame say the turn FAILED at the API?
- *
- *  Probe 96 / P80: a hard API failure (a 401, a blackholed endpoint, an over-window prompt) arrives as a
- *  synthetic `type:"assistant"` frame carrying `is_api_error_message:true` and the error text, and the
- *  transcript already paints that text as its own row. The turn's `result` frame is `is_error:true` — but
- *  `Session.readLoop` eats every `type:"result"`, so this synthetic assistant frame is the only evidence a
- *  client gets, and it is the first thing in `src/` to read the flag.
- *
- *  DECISION, unverified against upstream and recorded as such: ccx suppresses the duration row here. Whether
- *  the CLI still emits its `turn_duration` message after an API failure is not something the bundle says and
- *  not something a probe can settle cheaply (it needs a real 401). The spec's own wording is "renders as a
- *  transcript row when a turn completes", a turn that died at the API did not, and `✻ Crunched for 0s`
- *  under a red authentication failure reads as noise. Delete this arm if a live failure ever shows upstream
- *  printing one. */
-export function isApiErrorFrame(m: unknown): boolean {
-  const mm = m as { type?: unknown; is_api_error_message?: unknown } | null | undefined;
-  return !!mm && mm.type === "assistant" && mm.is_api_error_message === true;
-}
-
-/** The one question the turn-end arm asks of every frame: did this frame disqualify the turn from a duration
- *  row? Two ways, both of them "the turn did not complete" rather than "it completed badly". */
-export const disqualifiesTurnDuration = (m: unknown): boolean => isInterruptSentinelFrame(m) || isApiErrorFrame(m);
+// NOT DISQUALIFYING, and deliberately so: an API failure. The shipped 2.1.226 client emits its
+// `turn_duration` message from a `finally` gated on nothing but `!signal.aborted`, so a turn that died at
+// the API — a 401, a blackholed endpoint, an over-window prompt (probe 96's synthetic
+// `is_api_error_message` assistant frame) — still prints `✻ Crunched for 0s` under its red error row. ccx
+// briefly suppressed that on the flag, reasoning from the spec's "when a turn completes" wording rather
+// than from upstream; the review read the emission site, so the arm is gone and `is_api_error_message` is
+// once again read nowhere in `src/`. The INTERRUPT arm above stays — it IS upstream's aborted-signal gate.

@@ -31,8 +31,8 @@ import { THEMES, type ThemeId } from "./theme.js";
 /** `showTurnDuration` is Wave-C T7's end-of-turn `✻ Worked for 4s` row, and upstream's own setting name
  *  (bundle L42035 schema, L428650 read). DEFAULT TRUE — absent means shown, only an explicit `false` removes
  *  the row, which is what `durationRow.ts`'s `turnDurationEnabled` encodes. Upstream keeps it in the settings
- *  FILE (`~/.claude/settings.json`) and exposes no `/config` row for it; ours lives here, the client-side
- *  seam this module already owns, and gets a row (recorded divergence, see `settingsRows.ts`). */
+ *  FILE (`~/.claude/settings.json`) and surfaces it as the `Show turn duration` `/config` row; ours lives
+ *  here, the client-side seam this module already owns, behind that same row and label. */
 export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }

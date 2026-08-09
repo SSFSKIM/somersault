@@ -16,7 +16,7 @@ import { mergeSettingsFile, appendToArray, type SettingsFileDeps, type SettingsT
 import { appendDenial, removeFromArray, type DenialEntry } from "./permissionsModel.js";
 import type { CcxPrefs } from "./prefs.js";
 import { loadPrefs, savePrefs as realSavePrefs } from "./prefs.js";
-import { disqualifiesTurnDuration, pickTurnVerb as realPickTurnVerb, turnDurationLine } from "./durationRow.js";
+import { isInterruptSentinelFrame, pickTurnVerb as realPickTurnVerb, turnDurationLine } from "./durationRow.js";
 import { AUTO_MODE_DESCRIPTION, AUTO_MODE_NOTICE_DELAY_MS, shouldShowAutoModeNotice } from "./autoModeNotice.js";
 import { hasAcceptedBypass } from "./bypassConsent.js";
 import { currentTheme, resolveThemeColor, setTheme, themeTokens, type ThemeId } from "./theme.js";
@@ -657,6 +657,13 @@ export function useChat(
       }
       else if (ev.kind === "message") {
         const data = ev.data as any;
+        // W-C T7: a MID-TURN JOINER may not measure a turn that began before it connected. `follow()` hands
+        // it a SYNTHETIC `turn:start` (host.ts:490) — which stamped the clock above with the ATTACH instant —
+        // and then the buffer so far, every frame of it marked `replay` precisely so a joiner does not clock
+        // history (host.ts:501). Dropping the clock on the first such frame is the honest answer: the joined
+        // turn gets NO row, exactly as a replayed Agent call gets no duration clause. Unconditional rather
+        // than first-only — re-clearing an already-cleared ref is the same act.
+        if (ev.replay) turnStartRef.current = undefined;
         // Wave T Task 12 (probe 96). The SDK emits one `system/api_retry` frame per attempt, and it is
         // LIVE-TURN chrome, not history: a ten-attempt ladder is ONE replaced spinner row, not ten notices.
         // Hence the early return — the frame must not reach `systemNoticeLines` (which already paints
@@ -689,11 +696,10 @@ export function useChat(
           if (partial) { partial.ingest(data); setStreaming(partial.snapshot()); setTurnMeter(partial.meter()); if (partial.model) setModel(partial.model); }
           return;
         }
-        // W-C T7: an interrupt sentinel or an API-failure frame disqualifies the turn that carried it from
-        // the duration row — neither turn COMPLETED. NOT guarded on `ev.replay`: the only replay that arrives
-        // while a turn is being clocked is `follow()`'s mid-turn drain, whose frames belong to that very
-        // turn; every other replay lands with no clock running and cannot produce a row anyway.
-        if (disqualifiesTurnDuration(data)) turnDisqualifiedRef.current = true;
+        // W-C T7: an interrupt sentinel disqualifies the turn that carried it from the duration row —
+        // upstream's own emission is gated on the aborted signal. An API FAILURE is not disqualifying (see
+        // durationRow.ts): upstream prints the row under the error, and so do we.
+        if (isInterruptSentinelFrame(data)) turnDisqualifiedRef.current = true;
         // Harvest bg-task metadata (command/output-file) first: a reconnect-buffer replay carries no live
         // turn but still needs to reach the (idempotent) harvest.
         bgHarvest.current.ingestMessage(ev.data);

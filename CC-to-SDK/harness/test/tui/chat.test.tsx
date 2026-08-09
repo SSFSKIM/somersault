@@ -1450,7 +1450,7 @@ describe("<ChatApp>", () => {
     expect(f).toContain("Output style");
     expect(f).toContain("Default permission mode");
     expect(f).toContain("Thinking mode");
-    expect(f).toContain("Turn duration");                           // W-C T7's row
+    expect(f).toContain("Show turn duration");                           // W-C T7's row
     expect(f).toContain("Enter/Space to change · / to search · Esc to close");
   });
 

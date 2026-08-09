@@ -25,7 +25,7 @@ describe("settingsRows.ts", () => {
     expect(byId.permissionMode.hint).toBeUndefined();
     expect(byId.thinking.label).toBe("Thinking mode");
     expect(byId.thinking.hint).toBeUndefined();
-    expect(byId.showTurnDuration.label).toBe("Turn duration");
+    expect(byId.showTurnDuration.label).toBe("Show turn duration");
     expect(byId.showTurnDuration.hint).toBeUndefined();
   });
 
@@ -49,8 +49,8 @@ describe("settingsRows.ts", () => {
     expect(buildRows({ ...BASE_CTX, thinkLevel: "high" }).find((r) => r.id === "thinking")!.value).toBe("true");
   });
 
-  // WAVE C TASK 7 (EP-C4d). ccx's own row: upstream has no `/config` entry for `showTurnDuration` at all
-  // (it is settings-file-only, L42035), so this is a recorded divergence — see `settingsRows.ts`.
+  // WAVE C TASK 7 (EP-C4d). Upstream's own row, under upstream's own label — the shipped client's `/config`
+  // lists `Show turn duration` ungated (`docs/parity/qa-findings/frames-qa4/qa4-settings-cc.txt:24`).
   it("showTurnDuration is a boolean row echoing the pref, which defaults TRUE", () => {
     expect(buildRows(BASE_CTX).find((r) => r.id === "showTurnDuration")!.type).toBe("boolean");
     expect(buildRows(BASE_CTX).find((r) => r.id === "showTurnDuration")!.value).toBe("true");

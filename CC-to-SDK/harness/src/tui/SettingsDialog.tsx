@@ -324,7 +324,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   mode: string;
   thinkLevel: string;
   outputStyle: string;
-  /** W-C T7: the `Turn duration` row's live value and its toggle. Required rather than defaulted — the row
+  /** W-C T7: the `Show turn duration` row's live value and its toggle. Required rather than defaulted — the row
    *  is a claim about a persisted pref, and a component that quietly renders `true` while the file says
    *  otherwise would be lying in the one place `/config` exists to tell the truth. */
   showTurnDuration: boolean;

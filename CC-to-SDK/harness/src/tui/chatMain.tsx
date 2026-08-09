@@ -336,7 +336,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   if (prefs.theme) setTheme(prefs.theme);
   // W3 T5: seed the Settings dialog's Output-style row from the same saved prefs (defaulting like useChat's
   // own opts.initialOutputStyle fallback does) — client-tracked, no engine round-trip needed just to boot.
-  // W-C T7: and the Turn-duration row from the same read (`Dc("showTurnDuration", !0)` — default TRUE).
+  // W-C T7: and the `Show turn duration` row from the same read (`Dc("showTurnDuration", !0)` — default TRUE).
   const hookOpts = {
     ...(opts.hookOpts ?? {}),
     initialOutputStyle: opts.hookOpts?.initialOutputStyle ?? prefs.outputStyle ?? "default",

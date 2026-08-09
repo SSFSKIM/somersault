@@ -30,11 +30,10 @@ export const THINKING_WARNING = "Changing thinking mode mid-conversation will in
 
 /** ctx → the 6 Config rows, in the pinned display order (Global Constraints line 29).
  *
- *  RECORDED DIVERGENCE (Wave C T7): `showTurnDuration` is a row HERE and is not one upstream. Upstream
- *  declares the setting in its schema (bundle L42035) and reads it straight out of the settings file
- *  (L428650) with no `/config` entry at all — the reachable surface for it there is hand-editing JSON. ccx
- *  keeps the value in its own prefs file, so a row is the only surface it could have; it is a boolean and it
- *  rides the `thinking` row's exact shape. */
+ *  `showTurnDuration` carries UPSTREAM'S OWN LABEL, `Show turn duration` — it is a real `/config` row there,
+ *  ungated, captured in this repo's QA corpus of the shipped client
+ *  (`docs/parity/qa-findings/frames-qa4/qa4-settings-cc.txt:24`). It is a boolean and it rides the `thinking`
+ *  row's exact shape; only the storage differs (upstream's settings file vs. ccx's prefs file). */
 export function buildRows(ctx: SettingsRowCtx): SettingsRow[] {
   return [
     { id: "theme", label: "Theme", type: "managedEnum", value: ctx.theme, hint: "For custom themes, use /theme." },
@@ -42,7 +41,7 @@ export function buildRows(ctx: SettingsRowCtx): SettingsRow[] {
     { id: "outputStyle", label: "Output style", type: "managedEnum", value: ctx.outputStyle },
     { id: "permissionMode", label: "Default permission mode", type: "enum", value: ctx.mode, options: [...PERMISSION_MODE_OPTIONS] },
     { id: "thinking", label: "Thinking mode", type: "boolean", value: String(ctx.thinkLevel !== "off") },
-    { id: "showTurnDuration", label: "Turn duration", type: "boolean", value: String(ctx.showTurnDuration) },
+    { id: "showTurnDuration", label: "Show turn duration", type: "boolean", value: String(ctx.showTurnDuration) },
   ];
 }
 

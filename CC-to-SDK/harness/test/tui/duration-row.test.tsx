@@ -156,6 +156,30 @@ describe("useChat — the end-of-turn duration row", () => {
     } finally { unmount(); }
   });
 
+  it("stays silent for a MID-TURN JOINER — a replayed frame proves the clock started before this client did", async () => {
+    // `Host.follow()` (host.ts:490-501) hands a client attaching mid-turn a SYNTHETIC `turn:start`, then the
+    // turn buffer so far as `replay:true` message frames. The synthetic start stamped `turnStartRef` with the
+    // ATTACH instant, so the joined turn ended with a row measuring the attach rather than the work — the
+    // same fabrication the replayed-Agent stamps were fixed for. The first replayed frame now drops the
+    // clock: ccx cannot honestly measure this turn, so it prints no row for it at all.
+    const env = tmpRoot(), fake = fakeRemote(), sink = { text: "" }, clock = { ms: 0 };
+    const { unmount } = render(<Host fake={fake} env={env} sink={sink} clock={clock} />);
+    await tick();
+    try {
+      await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 4 }); });
+      await act(async () => { fake.pushEvent({ kind: "message", replay: true, data: { type: "assistant", uuid: "r1", message: { id: "m1", content: [{ type: "text", text: "from before the attach" }] } } }); });
+      clock.ms += 4000;
+      await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", uuid: "r2", message: { id: "m2", content: [{ type: "text", text: "live" }] } } }); });
+      await act(async () => { fake.pushEvent({ kind: "turn", phase: "end", seq: 4 }); });
+      await tick();
+      expect(sink.text).toContain("from before the attach");   // it DID render the joined turn
+      expect(sink.text).not.toContain("Worked for");           // …and measured none of it
+      // The suppression is per-turn: the first turn this client sees START TO FINISH is measured normally.
+      await runTurn(fake, clock, 3000);
+      expect(sink.text).toContain("Worked for 3s");
+    } finally { unmount(); }
+  });
+
   it("stays silent for the IDLE follow tail — a bare truncated start opens no turn, so its end clocks nothing", async () => {
     const env = tmpRoot(), fake = fakeRemote(), sink = { text: "" }, clock = { ms: 0 };
     const { unmount } = render(<Host fake={fake} env={env} sink={sink} clock={clock} />);
