@@ -543,3 +543,14 @@ doesn't apply, a belt claim only true of the wire path, an unrecorded ACCENT-fil
 upstream's default-foreground pill). Ride-along for T13's divergence file: upstream's
 compactingHintText (the dim hint under the spinner, L408164) is unported — recorded so it isn't
 rediscovered as a bug. Fix round dispatched to the T11 implementer.
+
+## 2026-08-09 — Task 11 COMPLETE (02c346da50 + 4d4be2aa0d)
+
+Fix round landed with observed reds on all four sabotages: the replay guard (delivered replay:true
+frame stays clear, live frame still arms), the throwing-compact finally pin, the paneOwned pin
+(/compact held open on a gate + /help — row must vanish), and the clock-seam pin (injected clock at
+the stamp, +90s → 63%; both sabotage forms fail distinctly — raw Date.now clamps to 0 and never
+climbs, dropped now prop pins the bar at cap instantly). Comments corrected: no phantom two-setState
+race, belt claim scoped to the wire path with the accepted local edge recorded, ACCENT fill recorded
+as ours against upstream's default-foreground pill. Wave S is now 11/13 closed with only Task 12's
+review verdict and Task 13 outstanding.
