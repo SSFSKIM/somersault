@@ -528,3 +528,18 @@ no-model-known returns false (can't claim a difference you can't name). W-S9 red
 tests failed pre-change, exactly the confirm-appearing cases. Review dispatched with the ack-lifecycle
 angle sharpened to Task 8's principle: does the ack ref outlive /clear/resume/rewind, and is that the
 same "measurement outliving the conversation" class?
+
+## 2026-08-09 — Task 11 review: transcription exact, one real leak found (replay)
+
+Reviewer verified every constant against the bundle (curve, widths, glyphs, margins, the
+percentage-vs-fraction split, the ellipsis appended by the spinner not the verb) and confirmed the
+architecture premise in host source (bare status frames die in the tap; compact op bypasses runTask).
+The real find: the wire arm is unguarded on ev.replay — follow() replays the last turn's buffer, so a
+turn interrupted mid-auto-compaction strands "Compacting conversation… 0%" forever on the next attach
+(no turn events arrive idle; the idle arm clears retryStatus but not compacting and wouldn't fire
+anyway). One-token fix + test. Also: the finally is unpinned (failure fake returns, never throws);
+paneOwned and clock-seam pins offered and taken; three comment corrections (a copied rationale that
+doesn't apply, a belt claim only true of the wire path, an unrecorded ACCENT-fill divergence from
+upstream's default-foreground pill). Ride-along for T13's divergence file: upstream's
+compactingHintText (the dim hint under the spinner, L408164) is unported — recorded so it isn't
+rediscovered as a bug. Fix round dispatched to the T11 implementer.
