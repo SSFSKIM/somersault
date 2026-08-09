@@ -512,3 +512,19 @@ helper exists (export totalOutputTokens instead), no cumulative counter in useCh
 openModelPicker alongside capabilities, degrade to 0 on failure = no spurious dialog), ack lives in
 useChat stamped on accepted pick, confirm stays OUT of paneOwned (fixed height), settings route shares
 the gate.
+
+## 2026-08-09 — Task 12 built (4abcedd023); both reviews now in flight
+
+T12 landed green on top of T11: modelConfirmModel.ts (four-condition gate + verbatim copy),
+ModelSwitchConfirm.tsx (a screen the picker swaps to, upstream's shape — keeps the gate inside choose
+ahead of the prefs write, gives both routes the confirm for free, and makes decline restore the list
+with focus intact), totalOutputTokens exported beside foldByModel (deliberately NOT folded by
+canonicalModel — a total doesn't care which rows merge), ack ref in useChat stamped from the
+SNAPSHOTTED picker-state count on confirmed picks only (a fresh read could have moved and silenced a
+warning the user never saw). Implementer corrections: resolveModelAlias returns unknown input
+UNCHANGED (my note said undefined — wrong; behavior wanted is what it already does); gate compares
+sessionModel ?? current (after an `s` pick the session-only model is what the cache belongs to);
+no-model-known returns false (can't claim a difference you can't name). W-S9 red observed: 4 ordering
+tests failed pre-change, exactly the confirm-appearing cases. Review dispatched with the ack-lifecycle
+angle sharpened to Task 8's principle: does the ack ref outlive /clear/resume/rewind, and is that the
+same "measurement outliving the conversation" class?
