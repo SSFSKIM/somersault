@@ -960,3 +960,31 @@ settle at five, all labeled ('value:"default"' vs upstream null adjudicated soun
 unwritten way to mean the same model; resolved-id-not-display-name sound — no catalog at seed
 time). Live-catalog fact for Task 11 follow-up: ABSENT supportsEffort is meaningful (haiku), not
 unknown — ModelPicker treats absence as supported. Suites: 1906 unit / 3172 tui.
+
+## 2026-08-10 — Wave C Task 14 complete (7891b46019 + 9ce73024c5, review approved)
+
+The removals + token-warning. `#` memory mode fully out (reviewer swept §qa1-10 AND grepped the
+tree — zero residue; the survivors are legitimately unrelated: species.ts's <user-memory-input>
+transcript rendering, the `remember` theme token ModelPicker/EffortDialog still use, the
+#-escape in fileOptions' rule grammar); `#note the /pla` now opens the catalog with query "pla",
+matching upstream's prompt|bash-only resolver. Union collapse real: modeOfDisplay deleted,
+composerMode the single derivation, tsc proves the InputMode narrowing propagated. Ladder shipped,
+then the review found the wave's SIXTH grounding overturn: the spec's ceiling (window×0.8, "from
+L164111-27") was a MIS-CITATION — the 0.2 fraction (Mds L164000) feeds Dds, compaction
+PRE-WARMING; the real ladder uOu L163990 uses Sfo(Tbe(...)) = window − min(maxOutputTokens,20000)
+− 13000 = window−33000 (saturating min; computable from getContextUsage().maxTokens, so the
+"one honest input" argument was moot). Corrected in code (ceiling 167k not 160k on 200k — ×0.8
+warned 7k early; fixer verified every bundle line incl. three citation refinements) and spec v5.
+Review HIGH: token-warning outlived its conversation — the 5h entry survived /clear/resume/rewind
+until the next completed turn (reviewer reproduced; the module's own docblock named the scenario
+but the arm wasn't wired to replaceDocument) — fixed beside setCtxPct(undefined); plan-usage
+warning deliberately survives (account-level). Also: usage-warning got the 5h timeout (8s default
+made a standing condition flash once and vanish; pre-Wave-C it was persistent chrome); single-slot
+starvation between the two 5h medium rows recorded as owner-taste knob, unresolved; remove-arm
+comment corrected (upstream HAS it — L489326 Tjt; the fixer's own citation corrections: Hli
+L488912, two-text choice L488935, Context-low arm L488945 gated on auto-compact DISABLED — ccx's
+zone split recorded as deliberate, no isAutoCompactEnabled flag surfaced); fold omission
+justified at post site (GLb = (_, arrival) => arrival — same-key re-add IS that). Negative-window
+guard added (stub maxTokens:100 fixtures would read "100% remaining" off a negative denominator).
+Noted for Task 15: "Context low (0% remaining)" at crossing is upstream's own clamp (L163991),
+faithful not a bug; coverage.md refresh owed by Task 15. Suites: 1913 unit / 3178 tui.

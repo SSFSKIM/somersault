@@ -82,7 +82,11 @@ override) and §16's listing should be read as superseded.
   `{key:"token-warning", priority:"medium", timeoutMs:18000000, fold, exemptFromDiffPanelHold}`
   (L489324) whenever the warning level ≠ ok, where the level ladder (`uOu`, L163990) is: **warn**
   when used tokens ≥ (auto-compact ceiling − 20 000); **compact** at the ceiling; **blocked** at
-  (window − 3 000); ceiling = window minus a 0.2 buffer fraction by default (L164111-27). Text
+  (window − 3 000); ceiling = window − min(maxOutputTokens, 20 000) − 13 000 (`Tbe` L164098 into
+  `Sfo` L163981; the saturating min is 20 000 for every current Claude model, so the ceiling is
+  effectively window − 33 000 — v5 correction: v1-v4 read "window × 0.8", citing L164111-27, but
+  the 0.2 buffer fraction there (`Mds` L164000) feeds `Dds` L163987, the compaction *pre-warming*
+  threshold, not the ladder — the Task 14 review caught the mis-citation). Text
   (L488940): `{N}% until auto-compact` (N = percent of the ceiling remaining) in the warn zone,
   escalating to the error-colored `Context low ({N}% remaining) · Run /compact to compact & continue`
   at compact/blocked. ccx computes the ladder from `getContextUsage()`. The same applies to the
@@ -486,6 +490,18 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- v5 2026-08-10 — Task 14 review: the token-warning ceiling was a mis-citation. v2 transcribed
+  "ceiling = window × 0.8 (L164111-27)", but the 0.2 buffer fraction at those lines (`Mds` L164000)
+  feeds `Dds` L163987 — the compaction pre-warming threshold, a different consumer. The ladder
+  `uOu` L163990 takes its threshold from `Sfo(Tbe(model, window))` = window − min(maxOutputTokens,
+  20 000) − 13 000 (`Tbe` L164098, `Sfo` L163981; saturates to window − 33 000 for every current
+  Claude model — computable from `getContextUsage().maxTokens` with no per-model lookup, so the
+  "ccx has only one honest input" simplification argument was moot). EP-C4's ladder text and the
+  shipped `tokenWarning.ts` both corrected (commit `9ce73024c5`); on a 200k window the ceiling is
+  167 000, not 160 000 — the ×0.8 pin warned ~7k tokens early. Also from the same review: the
+  Task 12 prompt is 32 lines not 44 (v4-era mis-count, patched in-place at EP-C5), and the annex's
+  post-filter table gained upstream's thirteenth `done` rule. Sixth
+  grounding-testimony-overturned-by-the-bundle instance this wave.
 - v4 2026-08-10 — Task 6 review: upstream's spinner elapsed is `ra`/formatDuration (`1m 5s` spaced),
   not `$st` (`1m05s`); the no-space claim traced to a stale pre-Wave-C ccx comment that the grounding
   repeated. EP-C4's duration row uses the same `ra`.
