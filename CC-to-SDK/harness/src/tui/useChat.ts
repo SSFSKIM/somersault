@@ -821,6 +821,12 @@ export function useChat(
         // totalTokens the whole window). Dropped BEFORE the re-measure, so a re-measure that fails shows
         // nothing rather than the pre-compact number. NOT the failure path: a compaction that failed changed
         // no context, so the last measurement still stands and is left alone.
+        //
+        // The premise this rests on — that `getContextUsage` called right after the boundary already
+        // reports the SHRUNKEN context, not a pre-compaction snapshot — is live-verified by probe 82
+        // (2026-08-09): reading on the compact_boundary frame gave 16970 tokens against 17852 before,
+        // while the boundary's own metadata claimed pre 17894 → post 1410 (the ~15.5k floor is fixed
+        // system/tool overhead the usage call always counts and post_tokens doesn't).
         case "compact": {
           append([{ text: "✻ compacting… (a summarization pass over the whole context — this can take a minute or two)", dim: true }]);
           const outcome = await session.compact(); append(formatCompact(outcome));
