@@ -936,3 +936,27 @@ suggestion" (reviewer traced it to gate.ts:66, same message, tools sent never ru
 pollution (separate session, mechanically unreachable). Production factory still never executed
 keyless — the keyed live run at wave close (A9) is its verification, not a formality. Suites: 1897
 unit / 3156+1-flake tui (fixer stash-tested the flake on clean tree: 1-in-3 there too).
+
+## 2026-08-10 — Wave C Task 13 complete (9cbe14fe6f + 776c0bbc86, review approved)
+
+Banner truth. The one-expression fix landed where plan-review #11 said the defect was (main.ts call
+site — resolveModelAlias(model) ?? DEFAULTS.model, same expression initialModel uses, §C8.7 by
+construction); reviewer reproduced all 18 reds and ran three sabotages. Header ` ccx v{version} `
+from package.json (no literal), offset 3, <70-col drop. Billing mapping all four branches; probe
+101's OAuth verdict re-verified LIVE (exactly {apiProvider, tokenSource}) — the field ambiguity was
+the PROBE FILE's own doing (its redactor masked tokenSource and its VERDICT line printed the
+never-arriving apiKeySource; both patched so a rerun prints truth). Review Medium: the pre-paint
+accountInfo() await was NOT a control call — it's `(await this.initialization).account`, the init
+handshake, measured 1152ms cold / ~450ms warm of blank terminal per launch, unbounded on a
+live-but-mute CLI (the SDK bounds this same promise in its own warm-pool path) — fixed with a
+300ms Promise.race on an injected delay seam; lose ⇒ billing segment omitted, launch never pays
+for chrome (sabotage: bare await made the wedged-engine test time out at 120s). Also fixed: banner
+effort clause only when the launch EXPLICITLY named an effort (defaulted launch printed "with
+xHigh effort" even for haiku, whose catalog row has no effort axis — reviewer's live catalog dump);
+picker sibling-match keys off catalog resolvedModel (field was being DROPPED in useChat's mapper —
+now forwarded), §C8.6 fixtures are live rows pinning "Use the default model (currently Opus)";
+models.ts header corrected (opus→claude-opus-5 live, remap is no-op agreement now). Divergences
+settle at five, all labeled ('value:"default"' vs upstream null adjudicated sound — no second
+unwritten way to mean the same model; resolved-id-not-display-name sound — no catalog at seed
+time). Live-catalog fact for Task 11 follow-up: ABSENT supportsEffort is meaningful (haiku), not
+unknown — ModelPicker treats absence as supported. Suites: 1906 unit / 3172 tui.
